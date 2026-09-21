@@ -8,6 +8,8 @@ Desk folders default under `~/Downloads/documents/`. API JSON goes in each episo
 
 This page is the **Cursor + folder desk** kit. You do not type raw HTTP. You open files and say yes.
 
+**Operators (Mihir, Tejas):** [Content-Operator-Guide.pdf](Content-Operator-Guide.pdf) · [Content-Operator-Guide.md](Content-Operator-Guide.md) — setup pointer, Cursor prompts, gates, `fictora-produce` commands, local captions.
+
 The process that made One More Round, Same Floor, and Sauce Left Over is the [Episode Production Runbook](runbook.md). This page is how you run that process without becoming an engineer.
 
 ## What you need

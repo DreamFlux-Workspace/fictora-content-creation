@@ -2,7 +2,7 @@
 
 Partner repo for **episode production** with Cursor or Claude Code against the hosted **Drama Generation API** (`/v1/*`). You get a desk folder (plates, boards, takes), human gates, and a CLI that calls the API—no UI, no `fictora-drama` clone, no system prompts in this tree.
 
-**Sharing with a producer?** PDF handout: [Content-Producer-Setup-Handout.pdf](docs/Content-Producer-Setup-Handout.pdf) (source: [Content-Producer-Setup-Handout.md](docs/Content-Producer-Setup-Handout.md)). Longer guide: [Episode-Production-Partner-Guide.md](docs/Episode-Production-Partner-Guide.md).
+**Sharing with a producer?** Ops PDF: [Content-Operator-Guide.pdf](docs/content-ops/Content-Operator-Guide.pdf) (source: [Content-Operator-Guide.md](docs/content-ops/Content-Operator-Guide.md)). Setup PDF: [Content-Producer-Setup-Handout.pdf](docs/Content-Producer-Setup-Handout.pdf). Longer guide: [Episode-Production-Partner-Guide.md](docs/Episode-Production-Partner-Guide.md).
 
 | Layer | This repo | Private `fictora-drama` |
 | --- | --- | --- |
