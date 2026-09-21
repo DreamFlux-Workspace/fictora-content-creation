@@ -9,3 +9,4 @@ __pycache__/
 *.swp
 e2e-runs/
 docs/Content-Producer-Setup-Handout.html
+docs/content-ops/Content-Operator-Guide.html
