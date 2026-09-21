@@ -119,6 +119,30 @@ def _terminal_error_code(terminal: dict[str, Any]) -> str | None:
     return None
 
 
+def _cast_plates_present(spine: dict[str, Any]) -> bool:
+    """Return whether every cast row has a usable portrait asset on the spine."""
+
+    cast_rows = [row for row in (spine.get("cast") or []) if isinstance(row, dict) and row.get("cast_id")]
+    if not cast_rows:
+        return False
+    assets = [row for row in (spine.get("media_assets") or []) if isinstance(row, dict)]
+    ready_cast_ids: set[str] = set()
+    for asset in assets:
+        if asset.get("relation_type") != "cast_card" or asset.get("stale"):
+            continue
+        if asset.get("url"):
+            relation_id = asset.get("relation_id")
+            if isinstance(relation_id, str) and relation_id:
+                ready_cast_ids.add(relation_id)
+    for row in cast_rows:
+        cast_id = str(row["cast_id"])
+        if cast_id in ready_cast_ids:
+            continue
+        if any(row.get(key) for key in ("image_url", "portrait_url", "full_body_url", "url")):
+            ready_cast_ids.add(cast_id)
+    return all(str(row["cast_id"]) in ready_cast_ids for row in cast_rows)
+
+
 def enrol_cast(
     run: DramaApiRunSession,
     *,
@@ -153,10 +177,15 @@ def enrol_cast(
         last_terminal = terminal
         if terminal.get("status") == "completed":
             return run.spine(spine_id)
-        if _terminal_error_code(terminal) == "plan_media_spine_version_stale" and attempt + 1 < max_attempts:
-            run.emit("cast_retry", code="plan_media_spine_version_stale", attempt=attempt + 1)
-            time.sleep(5.0)
-            continue
+        if _terminal_error_code(terminal) == "plan_media_spine_version_stale":
+            recovered = run.spine(spine_id)
+            if _cast_plates_present(recovered):
+                run.emit("cast_recover", code="plan_media_spine_version_stale", note="plates on spine")
+                return recovered
+            if attempt + 1 < max_attempts:
+                run.emit("cast_retry", code="plan_media_spine_version_stale", attempt=attempt + 1)
+                time.sleep(5.0)
+                continue
         break
     raise SystemExit(f"cast failed: {last_terminal.get('status')} code={_terminal_error_code(last_terminal)}")
 
