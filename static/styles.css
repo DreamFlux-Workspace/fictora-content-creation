@@ -1,0 +1,168 @@
+:root {
+  color-scheme: light dark;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  line-height: 1.45;
+  --bg: #0f1115;
+  --panel: #171a21;
+  --text: #eef1f6;
+  --muted: #9aa3b2;
+  --accent: #6ea8fe;
+  --ok: #3ddc97;
+  --warn: #ffb020;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9375rem;
+}
+
+header,
+main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1.25rem;
+}
+
+h1 {
+  margin: 0 0 0.25rem;
+  font-size: 2.75rem;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.5rem;
+  line-height: 1.2;
+}
+
+.lede,
+.meta {
+  color: var(--muted);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid #2a3140;
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+
+label {
+  display: block;
+  margin-bottom: 0.75rem;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+}
+
+input,
+textarea,
+select {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 0.25rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 6px;
+  border: 1px solid #3a4356;
+  background: #0c0e13;
+  color: var(--text);
+}
+
+button {
+  cursor: pointer;
+  border: 0;
+  border-radius: 6px;
+  padding: 0.55rem 0.9rem;
+  background: var(--accent);
+  color: #081018;
+  font-weight: 600;
+}
+
+button.secondary {
+  background: #2a3140;
+  color: var(--text);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.gates {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.gate-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #2a3140;
+}
+
+.gate-row strong {
+  min-width: 5rem;
+}
+
+.status-approved {
+  color: var(--ok);
+}
+
+.status-pending {
+  color: var(--warn);
+}
+
+.media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.75rem;
+}
+
+.media-grid img {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid #2a3140;
+}
+
+.block {
+  margin: 0.75rem 0;
+  white-space: pre-wrap;
+  font-size: 0.92rem;
+}
+
+.status {
+  background: #0c0e13;
+  border: 1px solid #2a3140;
+  border-radius: 8px;
+  padding: 0.75rem;
+  max-height: 240px;
+  overflow: auto;
+  font-size: 0.82rem;
+}
+
+#desk-list {
+  list-style: none;
+  padding: 0;
+}
+
+#desk-list li {
+  margin-bottom: 0.35rem;
+}
+
+#desk-list button {
+  background: transparent;
+  color: var(--accent);
+  padding: 0;
+  font-weight: 500;
+}
