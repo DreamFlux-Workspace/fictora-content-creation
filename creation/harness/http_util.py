@@ -96,6 +96,64 @@ def _payload_summary(payload: dict[str, Any]) -> str:
     return json.dumps(summary, default=str)
 
 
+def _get_json_with_transport_retries(
+    client: httpx.Client,
+    *,
+    url: str,
+    headers: dict[str, str],
+    label: str,
+    deadline: float,
+) -> dict[str, Any]:
+    """GET JSON from a poll URL, retrying transient transport failures until ``deadline``.
+
+    Parameters
+    ----------
+    client
+        Shared HTTP client.
+    url
+        Absolute job status URL.
+    headers
+        GET headers (typically without ``Content-Type``).
+    label
+        Human-readable poll label for errors.
+    deadline
+        Monotonic time after which retries stop.
+
+    Returns
+    -------
+    dict[str, Any]
+        Parsed JSON body.
+
+    Raises
+    ------
+    SystemExit
+        On HTTP error responses or when the deadline passes during retries.
+    """
+    backoff_seconds = 1.0
+    max_backoff_seconds = 30.0
+
+    while True:
+        now = time.monotonic()
+        if now >= deadline:
+            raise SystemExit(f"timed out polling {label} after transport retries")
+        try:
+            response = client.get(url, headers=headers)
+            _raise_for_status(response)
+            payload = response.json()
+            if isinstance(payload, dict):
+                return payload
+            raise SystemExit(f"poll {label}: expected JSON object, got {type(payload).__name__}")
+        except SystemExit:
+            raise
+        except httpx.HTTPError as exc:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SystemExit(f"transport error polling {label}: {exc}") from exc
+            sleep_for = min(backoff_seconds, max_backoff_seconds, remaining)
+            time.sleep(sleep_for)
+            backoff_seconds = min(backoff_seconds * 2, max_backoff_seconds)
+
+
 def poll_until_terminal(
     client: httpx.Client,
     *,
@@ -140,9 +198,13 @@ def poll_until_terminal(
     last_payload: dict[str, Any] = {}
 
     while time.monotonic() < deadline:
-        response = client.get(url, headers=poll_headers)
-        _raise_for_status(response)
-        payload = response.json()
+        payload = _get_json_with_transport_retries(
+            client,
+            url=url,
+            headers=poll_headers,
+            label=label,
+            deadline=deadline,
+        )
         last_payload = payload
         status = payload.get("status")
         progress = payload.get("progress")

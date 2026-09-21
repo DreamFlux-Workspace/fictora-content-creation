@@ -688,7 +688,7 @@ def _create_episode_folder(
     )
 
 
-def _store_path(desk: Path, image: Path) -> str:
+def _store_path(desk: Path, image: Path | str) -> str:
     """Return a path stored relative to the desk when possible.
 
     Parameters
@@ -704,7 +704,7 @@ def _store_path(desk: Path, image: Path) -> str:
         Relative path from the desk, or the absolute path.
     """
 
-    resolved = image.resolve()
+    resolved = Path(image).expanduser().resolve()
     try:
         return str(resolved.relative_to(desk.resolve()))
     except ValueError:

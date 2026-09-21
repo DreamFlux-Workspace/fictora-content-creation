@@ -94,6 +94,12 @@ def video_urls_from_payloads(
                         add(episode[key])
                         break
     if isinstance(delivery, dict):
+        for row in delivery.get("deliveries") or []:
+            if isinstance(row, dict):
+                for key in ("video_url", "final_video_url", "url"):
+                    if row.get(key):
+                        add(row[key])
+                        break
         for episode in delivery.get("episodes") or []:
             if isinstance(episode, dict):
                 for key in ("video_url", "final_video_url", "url"):

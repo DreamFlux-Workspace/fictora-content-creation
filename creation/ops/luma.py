@@ -45,9 +45,10 @@ def _rgb_pixel(sample: object, *, label: Path | str) -> tuple[int, int, int]:
     raise ValueError(f"board image is not RGB: {label}")
 
 
-def measure_board_luma(path: Path) -> BoardLumaReport:
+def measure_board_luma(path: Path | str) -> BoardLumaReport:
     """Measure mean Rec. 709 luma of a storyboard PNG or JPEG."""
 
+    path = Path(path).expanduser()
     if not path.is_file():
         raise FileNotFoundError(f"board image not found: {path}")
     return measure_board_luma_bytes(path.read_bytes(), path=path)

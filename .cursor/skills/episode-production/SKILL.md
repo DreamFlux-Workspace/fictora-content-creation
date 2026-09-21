@@ -1,97 +1,172 @@
 ---
 name: episode-production
 description: >-
-  Runs Fictora episode production through the hosted Drama Generation API with
-  human gates, versioned run folders, and MiniMax H3 lane discipline. Use when
-  starting a series, filming a take, content ops, or producing episodes with
-  Cursor — in the fictora-content-creation repo only.
+  Operates Fictora episode production via fictora-produce against the deployed
+  Drama Generation API — desk gates, configurable draft/video/estimate, MiniMax
+  H3 lane, recovery. Use for content ops, filming takes, or E2E validation in
+  fictora-content-creation.
 ---
 
-# Episode production (creation repo)
+# Episode production
 
-You are the agent in the Episode Production Runbook. The human is the gate. The folder is the review surface.
+**Repo:** `fictora-content-creation` only. **API:** deployed Drama Generation `/v1/*`. **Tool:** `uv run fictora-produce` (not hand-rolled HTTP except debugging).
 
-**Open this repository:** `fictora-content-creation`. Do **not** clone `fictora-drama`. System prompts and compilers are server-side only.
+Progressive detail: [reference.md](reference.md) · Runbook: [docs/content-ops/runbook.md](../../docs/content-ops/runbook.md) · API map: [docs/content-ops/api-map.md](../../docs/content-ops/api-map.md)
 
-Read when needed:
+## Configuration (single source of truth)
 
-- [docs/content-ops/README.md](../../docs/content-ops/README.md)
-- [docs/content-ops/runbook.md](../../docs/content-ops/runbook.md)
-- [docs/content-ops/api-map.md](../../docs/content-ops/api-map.md)
-- [docs/content-ops/checklists.md](../../docs/content-ops/checklists.md)
-- [docs/drama-api-v1.md](../../docs/drama-api-v1.md)
+All tunables live in **three layers** (later wins):
 
-## Two rules
+| Layer | Location | Purpose |
+| --- | --- | --- |
+| **Environment** | repo `.env` | Auth + optional global session |
+| **Desk config** | `<desk>/production.config.json` | Draft count, take recipe, estimate fallback, poll budgets |
+| **Desk state** | `<desk>/production.json` | Phase machine, spine id, session id, video retry suffix |
 
-1. A human says yes before money moves. Plates, then board, then take. No batched gates.
-2. Every paid unit is rendered once. A second render needs a written cause. "Try again" is not a cause.
+Example desk config: [config.example.json](config.example.json)
 
-## Never
+### Environment (`.env`)
 
-- Chain two stages in one turn.
-- Approve plates, script, or boards in the same turn you enrol them.
-- Use `run_cast_look` or any helper that auto-approves cast.
-- Overwrite a file. Use `uv run fictora-ops next-path`.
-- Print or commit `FICTORA_DRAMA_GENERATION_SERVICE_TOKEN`.
-- Clone or read `fictora-drama` for prompts or `src/`.
+| Variable | Required | Default / notes |
+| --- | --- | --- |
+| `FICTORA_DRAMA_GENERATION_API_BASE_URL` | yes | Prod URL in `.env.example` |
+| `FICTORA_DRAMA_GENERATION_SERVICE_TOKEN` | yes | Never print or commit |
+| `FICTORA_DRAMA_GENERATION_SESSION_ID` | no | If unset, `production.json` `session_id` is used |
 
-## Tools in this repo
+### `production.config.json` fields
 
-| Tool | Role |
-| --- | --- |
-| `uv run fictora-ops` | Desk folders, `QUEUE.md`, gate ledger, preflight |
-| `creation.harness.DramaApiRunSession` | HTTP to prod Drama API, JSON in `<run>/api/` |
-| `creation.harness.stages_gated` | Visual-first ep1: draft, cast, boards, estimate, video — **split enrol / approve** |
+| Field | Default | Use |
+| --- | --- | --- |
+| `draft_episode_count` | **4** | **Do not use 5** — prod plan bible materializes 4; 5 causes ordinal-5 server errors |
+| `clip_duration_seconds` | 15 | 4–15 per API |
+| `cut_tempo` | `one_shot` | `punchy`, `slow_burn`, … |
+| `caption_style` | `house` | Burn-in preset |
+| `locale` | `en-US` | Draft locale |
+| `fallback_estimate_usd` | 1.20 | When batch estimate v2 returns no USD or is skipped |
+| `poll_*_deadline_seconds` | 1800–7200 | Harness poll caps (see reference) |
 
-Credentials: `.env` with `FICTORA_DRAMA_GENERATION_SERVICE_TOKEN`. Load via `creation.harness.credentials.load_drama_api_credentials(repo_root)`.
-
-## First turn
-
-Ask where the series desk should go. Default `~/Downloads/documents/`. Then:
+Set via CLI on **start** or **bind** (writes `production.config.json`):
 
 ```bash
-uv run fictora-ops init-series --series "<name>" --band 15s --episodes <n>
+uv run fictora-produce start \
+  --series "Series Name" \
+  --prompt "<premise and visual lock>" \
+  --band 15s \
+  --preset-id modern-dark-fantasy \
+  --video-lane minimax-h3 \
+  --draft-episodes 4 \
+  --clip-seconds 15 \
+  --cut-tempo one_shot \
+  --caption-style house \
+  --fallback-estimate-usd 1.20
 ```
 
-Print the desk path and `QUEUE.md`. Wait for the brief.
+Inspect merged config:
 
-## API pattern (MiniMax H3 lane)
-
-Default `model_overrides.video=minimax-h3` (H3 Max Turbo I2V on prod). Confirm preset ids with `GET /v1/art-style-presets`.
-
-Visual-first order — **one stage per stop**:
-
-1. `start_draft` → poll plan → spine id  
-2. `enrol_cast` → download plates → **stop** → human → `approve_cast`  
-3. `approve_script` after line gate  
-4. `enrol_boards` → `measure_ep1_board_exposure` → **stop** → human → `approve_ep1_boards`  
-5. `estimate_batch` → record with `fictora-ops estimate` → preflight  
-6. `enrol_video` with `caption_style=house`, `cut_tempo=one_shot` → download take → delivery  
-
-Example session bootstrap (agent writes a small script or runs inline):
-
-```python
-from pathlib import Path
-from creation.harness.credentials import load_drama_api_credentials
-from creation.harness.session import DramaApiRunSession
-from creation.harness import stages_gated as stages
-
-repo = Path(".").resolve()
-base, token = load_drama_api_credentials(repo)
-api_dir = Path("<desk>/ep01/api")
-api_dir.mkdir(parents=True, exist_ok=True)
-run = DramaApiRunSession(base_url=base, token=token, out_dir=api_dir)
-spine_id, _ = stages.start_draft(run, prompt="...", preset_id="...", preset_version="...")
+```bash
+uv run fictora-produce config --desk <desk-path>
 ```
 
-Reuse the same `Idempotency-Key` on retries.
+### `production.json` (orchestrator — do not hand-edit unless recovering)
 
-## Spend
+| Field | Meaning |
+| --- | --- |
+| `phase` | Next allowed action (see phase table below) |
+| `session_id` | `X-Drama-Session-Id` for all `/v1` calls on this desk |
+| `spine_id` | Story spine after draft |
+| `video_idempotency_suffix` | Set by `cancel-job` / `retry-video` for a fresh take key |
 
-Take ≈ $1.20. Plate or board ≈ $0.30. First episode new series envelope ≈ $4.50. Past 2× envelope, stop.
+## Operator loop (one API enrol block per agent turn)
 
-## Aligned or deviation
+### 1. Start desk
 
-Say **aligned** or **deviation** before paid work. Deviation block required before scratch tools — see runbook.
+```bash
+uv run fictora-produce start --series "…" --prompt "…" --band 15s
+```
 
-Product board brightness: `GET .../boards/exposure`. Local `fictora-ops measure-board` is a helper only.
+Print desk path and `QUEUE.md`. Say **aligned** or **deviation** before paid work.
+
+### 2. Automated step
+
+```bash
+uv run fictora-produce step --desk <desk-path>
+```
+
+Stops at human gates. Report `ep01/run-notes.md`, downloaded paths under `plates/`, `boards/`, `takes/`.
+
+**Never** two `step` calls in one turn unless the human asked to catch up.
+
+### 3. Human gates
+
+```bash
+uv run fictora-produce approve --desk <desk> --gate plates
+uv run fictora-produce approve --desk <desk> --gate script
+uv run fictora-produce approve --desk <desk> --gate board --path <boards/file-reviewed.png>
+```
+
+Add `--accept-dim` when exposure API flagged dim and the human accepted.
+
+### 4. Spend → take
+
+```bash
+uv run fictora-produce step --desk <desk> --confirm-spend
+```
+
+Status:
+
+```bash
+uv run fictora-produce status --desk <desk>
+```
+
+## Phase machine
+
+| Phase | Agent |
+| --- | --- |
+| `new` | `step` → draft |
+| `ready_cast_enrol` | `step` → cast enrol + plate downloads |
+| `wait_plates` | Human → `approve --gate plates` |
+| `wait_script` | Human → `approve --gate script` |
+| `ready_boards_enrol` | `step` → boards + exposure |
+| `wait_board` | Human → `approve --gate board --path …` |
+| `ready_estimate` | `step` → batch estimate (or fallback USD) |
+| `wait_spend` | Human yes → `step --confirm-spend` |
+| `ready_video` | (internal) → video enrol |
+| `complete` | Done |
+| `failed` | Read `last_error`, fix config or recover (reference) |
+
+Harness auto-retries: `plan_media_spine_version_stale` (cast/boards), retryable `authoring_stalled` (plan).
+
+## Recovery (deployed API)
+
+| Situation | Action |
+| --- | --- |
+| Video stuck `running` ~50%, Restate ffmpeg errors | Poll job; `cancel-job` then `step --confirm-spend` with new suffix |
+| Plan `authoring_stalled` retryable | Re-run `step` from `new` or let harness plan retry |
+| Estimate 400 cadence | Harness skips + `fallback_estimate_usd`; take still enrols |
+| Wrong session / spine 404 | New desk + new `start`; do not reuse old spine id |
+
+```bash
+uv run fictora-produce cancel-job --desk <desk> --job-id job_video_…
+uv run fictora-produce retry-video --desk <desk> --job-id job_video_…
+uv run fictora-produce step --desk <desk> --confirm-spend
+```
+
+## Rules
+
+1. Human yes before money moves (plates, board, spend).
+2. One paid enrol per agent turn.
+3. Never clone or read `fictora-drama`.
+4. Never overwrite desk media; use versioned filenames via ops helpers.
+
+## Engineering smoke (not production gates)
+
+```bash
+uv run python scripts/smoke_live.py --phase read
+uv run python scripts/e2e_visual_first_ep1.py --out-dir e2e-runs/manual/api
+```
+
+Production path: **fictora-produce + human gates only**.
+
+## Spend (H3 lane)
+
+Take ~$1.20 · plate/board ~$0.30 · first-ep envelope ~$4.50. Stop past 2× envelope.

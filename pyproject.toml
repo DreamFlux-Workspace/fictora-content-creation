@@ -11,6 +11,7 @@ dependencies = [
 
 [project.scripts]
 fictora-ops = "creation.cli_ops:main"
+fictora-produce = "creation.cli_produce:main"
 
 [build-system]
 requires = ["hatchling"]

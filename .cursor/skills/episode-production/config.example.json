@@ -1,0 +1,12 @@
+{
+  "draft_episode_count": 4,
+  "clip_duration_seconds": 15,
+  "cut_tempo": "one_shot",
+  "caption_style": "house",
+  "locale": "en-US",
+  "fallback_estimate_usd": 1.2,
+  "poll_plan_deadline_seconds": 1800,
+  "poll_cast_deadline_seconds": 3600,
+  "poll_boards_deadline_seconds": 7200,
+  "poll_video_deadline_seconds": 7200
+}
