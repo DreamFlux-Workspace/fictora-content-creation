@@ -55,6 +55,11 @@ Preset list: `GET /v1/art-style-presets` (pin latest version on bind).
 | `production.json` | Phase machine |
 | `production.config.json` | Tunables |
 | `ep01/plates/`, `boards/`, `takes/` | Downloaded media |
+| `06_*cast_terminal*.json`, `09_*boards_terminal*.json` | Still URLs when spine GET lags after enrol |
+
+`fictora-produce step` resolves plate/board downloads from spine `media_assets` first, then the latest enrol **terminal** JSON (prod often returns URLs only in terminal output immediately after cast/boards jobs).
+
+Example desk + prompt: [examples/tram-not-tonight-ep1.md](../../docs/content-ops/examples/tram-not-tonight-ep1.md)
 
 ## Debugging (deviation — declare before use)
 

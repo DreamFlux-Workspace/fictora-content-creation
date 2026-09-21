@@ -14,6 +14,7 @@ from creation.harness.run_context import save_run_meta
 from creation.harness.session import DramaApiRunSession
 from creation.harness import stages_gated as stages
 from creation.harness.visual_first_ep1 import approve_ep1_boards, measure_ep1_board_exposure
+from creation.desk_media_urls import board_urls_for_episode, cast_plate_urls
 from creation.media_fetch import download_to_versioned
 from creation.ops.floor import approve_board, approve_script as record_script_gate, approve_series_gate
 from creation.ops.notes import append_run_note
@@ -53,43 +54,6 @@ def _resolve_preset(run: DramaApiRunSession, preset_id: str) -> tuple[str, str]:
         raise RuntimeError(f"preset not published: {preset_id!r}")
     preset = max(matches, key=lambda row: tuple(int(x) for x in str(row.get("version") or "0").split(".")))
     return str(preset["preset_id"]), str(preset["version"])
-
-
-def _cast_urls(spine: dict[str, Any]) -> list[str]:
-    urls: list[str] = []
-    for row in spine.get("cast") or []:
-        if not isinstance(row, dict):
-            continue
-        for key in ("portrait_url", "full_body_url", "reference_url", "image_url", "url"):
-            value = row.get(key)
-            if value:
-                urls.append(str(value))
-    return urls
-
-
-def _board_urls(spine: dict[str, Any], ordinal: int) -> list[str]:
-    urls: list[str] = []
-    episode_id = None
-    for summary in spine.get("episode_summaries") or []:
-        if not isinstance(summary, dict):
-            continue
-        if int(summary.get("episode_ordinal") or summary.get("ordinal") or 1) == ordinal:
-            episode_id = str(summary.get("episode_id") or "")
-            break
-    for summary in spine.get("episode_summaries") or []:
-        if not isinstance(summary, dict):
-            continue
-        if int(summary.get("episode_ordinal") or summary.get("ordinal") or 1) != ordinal:
-            continue
-        for frame in summary.get("frames") or []:
-            if isinstance(frame, dict) and frame.get("image_url"):
-                urls.append(str(frame["image_url"]))
-    for board in spine.get("boards") or []:
-        if not isinstance(board, dict):
-            continue
-        if episode_id and board.get("episode_id") == episode_id and board.get("image_url"):
-            urls.append(str(board["image_url"]))
-    return urls
 
 
 def _resume_video_delivery(
@@ -284,9 +248,10 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
                 video_lane=state.video_lane,
             )
             spine = run.spine(state.spine_id)
+            api_dir = api_dir_for_episode(desk, ep)
             fetch = httpx.Client(timeout=120.0)
             try:
-                for index, url in enumerate(_cast_urls(spine), start=1):
+                for index, url in enumerate(cast_plate_urls(spine, api_dir), start=1):
                     path = download_to_versioned(fetch, url, ep_dir / "plates", f"plate-ep{ep:02d}-{index}")
                     paths.append(str(path))
             finally:
@@ -320,9 +285,10 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
                 video_lane=state.video_lane,
             )
             spine = run.spine(state.spine_id or "")
+            api_dir = api_dir_for_episode(desk, ep)
             fetch = httpx.Client(timeout=120.0)
             try:
-                for index, url in enumerate(_board_urls(spine, ep), start=1):
+                for index, url in enumerate(board_urls_for_episode(spine, api_dir, ordinal=ep), start=1):
                     path = download_to_versioned(fetch, url, ep_dir / "boards", f"board-ep{ep:02d}-t1-{index}")
                     paths.append(str(path))
             finally:

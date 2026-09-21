@@ -64,6 +64,8 @@ uv run fictora-produce start \
 
 Omit **`--api-captions`** for the default **raw take + local captions** path. Add **`--api-captions`** only when you need Drama server burn-in (slow post-production tail).
 
+**Prod-validated example** (modern-dark-fantasy · minimax-h3 · local house captions): [docs/content-ops/examples/tram-not-tonight-ep1.md](../../docs/content-ops/examples/tram-not-tonight-ep1.md)
+
 Inspect merged config:
 
 ```bash
@@ -124,12 +126,23 @@ Do **not** wait for parent job 100% or `18_delivery.json` unless `api_captions: 
 
 ### 5. Local captions (house / Drama app style)
 
+When phase is **`complete`** and `api_captions` is false, **do not stop at the raw MP4** — finish the desk take in the same session unless the human asked to pause.
+
 After the raw take lands, follow **[docs/content-ops/local-captions.md](../../docs/content-ops/local-captions.md)**:
 
 1. Dialogue from spine / script gate.
 2. Transcribe the take; align cues to **silence-end onsets** (runbook).
 3. Burn **house** ASS with ffmpeg **libass** — yellow `#F5D547`, black edge, no box, ~62% frame height.
-4. Save captioned take under `takes/`; note in `run-notes.md`.
+4. Save captioned take under `takes/` (e.g. `take-ep01-t1-captioned-v1.mp4`); note in `run-notes.md`.
+5. **Open** the captioned file for human QC (macOS: `open <path>`).
+
+```bash
+FFMPEG=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg \
+  bash scripts/burn_house_captions.sh \
+  ep01/takes/take-ep01-t1-raw-v1.mp4 \
+  ep01/takes/take-ep01-t1-house.ass \
+  ep01/takes/take-ep01-t1-captioned-v1.mp4
+```
 
 Status:
 
