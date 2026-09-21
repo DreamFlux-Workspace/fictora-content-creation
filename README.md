@@ -47,6 +47,13 @@ OpenAPI (prod): https://fictora-drama-generation-prod-drama.up.railway.app/opena
 uv sync --group test && uv run pytest tests -q
 ```
 
+Before push (uses prod API token from `.env`):
+
+```bash
+uv run python scripts/smoke_live.py --phase read    # presets + fictora-ops desk
+uv run python scripts/smoke_live.py --phase draft   # plan job (LLM spend)
+```
+
 ## Publish
 
 ```bash

@@ -44,11 +44,10 @@ def start_draft(
         "art_style_preset_id": preset_id,
         "art_style_preset_version": preset_version,
         "duration_band": band,
-        "clip_duration_seconds": 15,
-        "aspect_ratio": "9:16",
         "locale": "en-US",
-        "model_overrides": {"video": video_lane},
     }
+    if video_lane:
+        body["model_overrides"] = {"video": video_lane}
     run.save("01_draft_request.json", body)
     draft = run.post("/v1/prompt-video-authoring-drafts", body, idempotency_key=f"{run.prefix}-draft")
     run.save("01_draft_accepted.json", draft)
