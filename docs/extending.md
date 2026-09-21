@@ -1,37 +1,37 @@
-# Extending Content Creation
+# Extending the creation layer
 
-## Architecture
+## Stack
 
 ```mermaid
 flowchart LR
-  UI[Static UI] --> BFF[content-desk FastAPI]
-  BFF --> API[Drama Generation API]
-  API --> Worker[Private drama service]
-  Worker --> Fal[Fal / providers]
+  Agent[Cursor + episode-production skill]
+  Ops[fictora-ops CLI]
+  Harness[creation.harness]
+  API[Drama Generation API]
+  Agent --> Ops
+  Agent --> Harness
+  Harness --> API
 ```
 
-Your fork or PR touches **UI** and **BFF** only. The worker owns prompts, compilers, and media pipelines.
+## Add a workflow
 
-## Typical extensions
+1. **Desk state** — extend `creation.ops.state` / `floor.py` if you need new gate types.
+2. **API steps** — add functions in `creation.harness.stages_gated` (or a new `stages_ep2.py`). Keep enrol and approve separate.
+3. **Skill** — update `.cursor/skills/episode-production/SKILL.md` so agents know the order and stop points.
 
-| Goal | Where to work |
-| --- | --- |
-| New gate or button | `static/app.js`, route in `content_desk/main.py` |
-| Multi-episode desk | `content_desk/store.py`, `content_desk/flow.py` |
-| Different default lane | `CreateDeskRequest.video_lane`, UI form |
-| Webhook on completion | New BFF route; poll or subscribe via API if exposed |
+Do not add a dependency on `fictora-drama`. If the API lacks an endpoint, log a gap in your fork's docs and use a documented **deviation** — do not copy prompts from the service repo.
 
-## API flow (episode 1, visual-first)
+## Presets and lanes
 
-1. `POST /v1/prompt-video-authoring-drafts` — plan job  
-2. `POST /v1/spines/{id}/cast/enrol` → approve cast  
-3. `POST /v1/spines/{id}/approve` — script gate  
-4. `POST /v1/spines/{id}/boards/enrol` → `GET .../boards/exposure` → approve boards  
-5. `POST /v1/spines/{id}/batches/estimate`  
-6. `POST /v1/video-generations` → `GET .../delivery`
+List presets: `GET /v1/art-style-presets`. Pin `model_overrides.video` (e.g. `minimax-h3`) on draft and reuse bodies. Lane behavior is server-defined.
 
-See [drama-api-v1.md](drama-api-v1.md) and live OpenAPI for field names.
+## Credentials
 
-## Local data
+```python
+from pathlib import Path
+from creation.harness.credentials import load_drama_api_credentials
 
-Desk JSON and debug artefacts: `CONTENT_DESK_DATA_DIR` (default `~/Downloads/content-desk-data`). Safe to delete between runs; no prompts are stored there beyond API JSON echoes.
+base, token = load_drama_api_credentials(Path(".").resolve())
+```
+
+Optional Railway CLI fallback exists in `credentials.py` for DreamFlux engineers only.

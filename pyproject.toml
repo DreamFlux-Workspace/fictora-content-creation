@@ -1,26 +1,23 @@
 [project]
 name = "fictora-content-creation"
-version = "0.1.0"
-description = "Public creation layer — Content Desk UI and BFF for the hosted Drama Generation API."
+version = "0.2.0"
+description = "Hosted Drama API harness, desk ops CLI, and Cursor skill — no prompts or service code."
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
 dependencies = [
-  "fastapi>=0.136",
   "httpx>=0.28",
-  "pydantic>=2.7",
-  "pydantic-settings>=2.14",
-  "uvicorn>=0.46",
+  "pillow>=10.0",
 ]
 
 [project.scripts]
-content-desk = "content_desk.main:run"
+fictora-ops = "creation.cli_ops:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["content_desk"]
+packages = ["creation"]
 
 [dependency-groups]
 test = ["pytest>=8.0"]
