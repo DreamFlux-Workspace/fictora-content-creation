@@ -23,6 +23,7 @@ def reuse_generation_body(
     clip_duration_seconds: int = 15,
     cut_tempo: str | None = None,
     caption_style: str | None = None,
+    api_captions: bool = False,
     video_lane: str | None = None,
     extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -74,7 +75,7 @@ def reuse_generation_body(
         body["art_style_preset_version"] = preset_version
     if cut_tempo:
         body["cut_tempo"] = cut_tempo
-    if caption_style:
+    if api_captions and caption_style:
         body["captions_enabled"] = True
         body["caption_style"] = caption_style
     if video_lane:

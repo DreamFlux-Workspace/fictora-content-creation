@@ -324,13 +324,16 @@ def enrol_video(
     preset_id: str,
     preset_version: str | None,
     caption_style: str = "house",
+    api_captions: bool = False,
     video_lane: str | None = "minimax-h3",
     clip_duration_seconds: int = 15,
     cut_tempo: str | None = "one_shot",
     video_idempotency_suffix: str = "",
     poll_deadline_seconds: float = 7200.0,
 ) -> dict[str, Any]:
-    """Film one reuse take with captions and fetch delivery."""
+    """Film one reuse take; delivery JSON or raw scene clips per ``api_captions``."""
+
+    from creation.harness.raw_video import wait_for_raw_scene_clips
 
     spine = run.spine(spine_id)
     body = reuse_generation_body(
@@ -340,7 +343,8 @@ def enrol_video(
         preset_version=preset_version,
         clip_duration_seconds=clip_duration_seconds,
         cut_tempo=cut_tempo,
-        caption_style=caption_style,
+        caption_style=caption_style if api_captions else None,
+        api_captions=api_captions,
         video_lane=video_lane,
     )
     run.save("16_video_request.json", body)
@@ -348,7 +352,11 @@ def enrol_video(
     idem = f"{run.prefix}-video{idem_suffix}" if idem_suffix else f"{run.prefix}-video"
     job = run.post("/v1/video-generations", body, idempotency_key=idem)
     run.save("16_video_enrol.json", job)
-    return finish_video_job(run, job["job_id"], poll_deadline_seconds=poll_deadline_seconds)
+    job_id = str(job["job_id"])
+    if api_captions:
+        return finish_video_job(run, job_id, poll_deadline_seconds=poll_deadline_seconds)
+    raw = wait_for_raw_scene_clips(run, job_id, deadline_seconds=poll_deadline_seconds)
+    return {"raw_scenes": raw, "primary_clip_url": raw["clips"][0]["url"] if raw.get("clips") else None}
 
 
 __all__ = [

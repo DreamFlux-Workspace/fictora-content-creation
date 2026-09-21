@@ -3,6 +3,7 @@
   "clip_duration_seconds": 15,
   "cut_tempo": "one_shot",
   "caption_style": "house",
+  "api_captions": false,
   "locale": "en-US",
   "fallback_estimate_usd": 1.2,
   "poll_plan_deadline_seconds": 1800,

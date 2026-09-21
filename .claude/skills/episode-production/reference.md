@@ -29,6 +29,8 @@ Preset list: `GET /v1/art-style-presets` (pin latest version on bind).
 | Restate `DramaPersistenceConflictError` (budget terminal) | Replay after batch terminal; often non-fatal if client poll shows `completed` |
 | Plan `failed` + `authoring_stalled` + `retryable: true` | Soft stall; safe to re-draft (harness retries) |
 | Plan 500 `season bible has no episode summary for ordinal 5` | **Set `draft_episode_count` to 4**, not 5 |
+| Plan 500 / `cast` **too_short** (one cast entry) | Premise asked for solo cast; `fictora-produce` appends cast floor — re-`step` or pull latest harness |
+| Video poll stuck at **50%** | Default **`api_captions: false`**: stop after `17_raw_scene_clips.json`; caption locally ([local-captions.md](../../docs/content-ops/local-captions.md)) |
 
 **Trust `GET /v1/video-generations/{id}` or `GET /v1/jobs/{id}`** for operator decisions, not only Restate stderr.
 

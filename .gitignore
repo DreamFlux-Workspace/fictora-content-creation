@@ -8,3 +8,4 @@ __pycache__/
 .DS_Store
 *.swp
 e2e-runs/
+docs/Content-Producer-Setup-Handout.html

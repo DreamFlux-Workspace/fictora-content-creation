@@ -40,7 +40,8 @@ Example desk config: [config.example.json](config.example.json)
 | `draft_episode_count` | **4** | **Do not use 5** — prod plan bible materializes 4; 5 causes ordinal-5 server errors |
 | `clip_duration_seconds` | 15 | 4–15 per API |
 | `cut_tempo` | `one_shot` | `punchy`, `slow_burn`, … |
-| `caption_style` | `house` | Burn-in preset |
+| `caption_style` | `house` | **Local** burn-in recipe name (see [local-captions.md](../../docs/content-ops/local-captions.md)) |
+| `api_captions` | **`false`** | When false, poll stops at **raw scene clip** (`17_raw_scene_clips.json`); caption on laptop |
 | `locale` | `en-US` | Draft locale |
 | `fallback_estimate_usd` | 1.20 | When batch estimate v2 returns no USD or is skipped |
 | `poll_*_deadline_seconds` | 1800–7200 | Harness poll caps (see reference) |
@@ -60,6 +61,8 @@ uv run fictora-produce start \
   --caption-style house \
   --fallback-estimate-usd 1.20
 ```
+
+Omit **`--api-captions`** for the default **raw take + local captions** path. Add **`--api-captions`** only when you need Drama server burn-in (slow post-production tail).
 
 Inspect merged config:
 
@@ -112,6 +115,22 @@ Add `--accept-dim` when exposure API flagged dim and the human accepted.
 uv run fictora-produce step --desk <desk> --confirm-spend
 ```
 
+With **`api_captions: false`** (default), the step finishes when **scene child jobs** complete — typically soon after MiniMax returns — and writes:
+
+- `ep01/api/17_raw_scene_clips.json` — `clips[].url` (raw MP4, no burn-in)
+- `ep01/takes/take-ep01-t1-raw*.mp4` — downloaded primary clip
+
+Do **not** wait for parent job 100% or `18_delivery.json` unless `api_captions: true`.
+
+### 5. Local captions (house / Drama app style)
+
+After the raw take lands, follow **[docs/content-ops/local-captions.md](../../docs/content-ops/local-captions.md)**:
+
+1. Dialogue from spine / script gate.
+2. Transcribe the take; align cues to **silence-end onsets** (runbook).
+3. Burn **house** ASS with ffmpeg **libass** — yellow `#F5D547`, black edge, no box, ~62% frame height.
+4. Save captioned take under `takes/`; note in `run-notes.md`.
+
 Status:
 
 ```bash
@@ -131,7 +150,7 @@ uv run fictora-produce status --desk <desk>
 | `ready_estimate` | `step` → batch estimate (or fallback USD) |
 | `wait_spend` | Human yes → `step --confirm-spend` |
 | `ready_video` | (internal) → video enrol |
-| `complete` | Done |
+| `complete` | Raw clip or API delivery on disk; local caption if `api_captions: false` |
 | `failed` | Read `last_error`, fix config or recover (reference) |
 
 Harness auto-retries: `plan_media_spine_version_stale` (cast/boards), retryable `authoring_stalled` (plan).

@@ -19,6 +19,7 @@ from creation.ops.floor import approve_board, approve_script as record_script_ga
 from creation.ops.notes import append_run_note
 from creation.ops.state import load_series
 from creation.production_config import load_production_config
+from creation.plan_prompt import ensure_plan_prompt
 from creation.production_state import (
     ProductionState,
     api_dir_for_episode,
@@ -96,8 +97,20 @@ def _resume_video_delivery(
     api_dir: Path,
     *,
     poll_deadline_seconds: float,
+    api_captions: bool,
 ) -> dict[str, Any] | None:
     """Poll or fetch delivery for an in-flight job saved in ``16_video_enrol.json``."""
+
+    raw_path = api_dir / "17_raw_scene_clips.json"
+    if raw_path.is_file() and not api_captions:
+        try:
+            raw = json.loads(raw_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            raw = None
+        if isinstance(raw, dict) and raw.get("clips"):
+            first = raw["clips"][0]
+            if isinstance(first, dict) and first.get("url"):
+                return {"raw_scenes": raw, "primary_clip_url": str(first["url"])}
 
     enrol_path = api_dir / "16_video_enrol.json"
     if not enrol_path.is_file():
@@ -109,6 +122,11 @@ def _resume_video_delivery(
     job_id = enrol.get("job_id") if isinstance(enrol, dict) else None
     if not isinstance(job_id, str) or not job_id.strip():
         return None
+    if not api_captions:
+        from creation.harness.raw_video import wait_for_raw_scene_clips
+
+        raw = wait_for_raw_scene_clips(run, job_id, deadline_seconds=poll_deadline_seconds)
+        return {"raw_scenes": raw, "primary_clip_url": raw["clips"][0]["url"] if raw.get("clips") else None}
     snapshot = run.get(f"/v1/video-generations/{job_id}")
     status = snapshot.get("status")
     if status in {"queued", "running"}:
@@ -116,6 +134,15 @@ def _resume_video_delivery(
     if status == "completed":
         return stages.delivery_for_completed_video_job(run, job_id)
     return None
+
+
+def _primary_take_url(delivery: dict[str, Any]) -> str | None:
+    """Return raw scene clip or API delivery URL from a video step result."""
+
+    primary = delivery.get("primary_clip_url")
+    if primary:
+        return str(primary)
+    return _delivery_video_url(delivery)
 
 
 def _delivery_video_url(delivery: dict[str, Any]) -> str | None:
@@ -175,7 +202,7 @@ def bind_desk(
         probe.client.close()
     state = ensure_production(
         desk,
-        prompt=prompt,
+        prompt=ensure_plan_prompt(prompt),
         preset_id=pid,
         preset_version=version,
         video_lane=video_lane,
@@ -218,9 +245,13 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
 
     try:
         if state.phase == "new":
+            effective_prompt = ensure_plan_prompt(state.prompt)
+            if effective_prompt != state.prompt:
+                state.prompt = effective_prompt
+                save_production(desk, state)
             spine_id, plan = stages.start_draft(
                 run,
-                prompt=state.prompt,
+                prompt=effective_prompt,
                 preset_id=state.preset_id,
                 preset_version=state.preset_version,
                 band=state.band,
@@ -325,6 +356,7 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
                 run,
                 api_dir_for_episode(desk, ep),
                 poll_deadline_seconds=cfg.poll_video_deadline_seconds,
+                api_captions=cfg.api_captions,
             )
             if delivery is None:
                 delivery = stages.enrol_video(
@@ -334,13 +366,14 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
                     preset_id=state.preset_id,
                     preset_version=state.preset_version,
                     caption_style=cfg.caption_style,
+                    api_captions=cfg.api_captions,
                     video_lane=state.video_lane,
                     clip_duration_seconds=cfg.clip_duration_seconds,
                     cut_tempo=cfg.cut_tempo,
                     video_idempotency_suffix=state.video_idempotency_suffix,
                     poll_deadline_seconds=cfg.poll_video_deadline_seconds,
                 )
-            url = _delivery_video_url(delivery)
+            url = _primary_take_url(delivery)
             if url:
                 fetch = httpx.Client(timeout=300.0)
                 try:
@@ -361,8 +394,10 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             state.last_video_job_id = job_id
             state.phase = "complete"
             save_production(desk, state)
-            append_run_note(ep_dir, f"Take delivery: {url}")
-            return StepResult(state.phase, f"Complete. video_url={url}", tuple(paths))
+            note = f"Take raw clip: {url}" if not cfg.api_captions else f"Take delivery: {url}"
+            append_run_note(ep_dir, note)
+            hint = " Caption locally (see episode-production skill)." if not cfg.api_captions else ""
+            return StepResult(state.phase, f"Complete. video_url={url}.{hint}", tuple(paths))
 
         if state.phase == "complete":
             return StepResult(state.phase, f"Already complete. video={state.last_delivery_url}", ())

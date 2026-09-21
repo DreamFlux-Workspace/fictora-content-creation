@@ -21,6 +21,8 @@ class ProductionConfig:
     clip_duration_seconds: int = 15
     cut_tempo: str = "one_shot"
     caption_style: str = "house"
+    #: When false, video enrol omits ``captions_enabled`` (faster API tail; caption locally).
+    api_captions: bool = False
     locale: str = "en-US"
     fallback_estimate_usd: float = 1.20
     poll_plan_deadline_seconds: float = 1800.0

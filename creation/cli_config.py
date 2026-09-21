@@ -18,7 +18,16 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--clip-seconds", type=int, default=15, help="Take length 4–15.")
     parser.add_argument("--cut-tempo", default="one_shot", help="e.g. one_shot, punchy, slow_burn.")
-    parser.add_argument("--caption-style", default="house", help="Burn-in preset when captions enabled.")
+    parser.add_argument(
+        "--caption-style",
+        default="house",
+        help="Local caption recipe name (see skill); sent to API only with --api-captions.",
+    )
+    parser.add_argument(
+        "--api-captions",
+        action="store_true",
+        help="Burn captions on the Drama API (slow post-production). Default: raw clip only.",
+    )
     parser.add_argument(
         "--fallback-estimate-usd",
         type=float,
@@ -35,5 +44,6 @@ def config_from_args(args: argparse.Namespace) -> ProductionConfig:
         clip_duration_seconds=int(args.clip_seconds),
         cut_tempo=str(args.cut_tempo),
         caption_style=str(args.caption_style),
+        api_captions=bool(args.api_captions),
         fallback_estimate_usd=float(args.fallback_estimate_usd),
     )
