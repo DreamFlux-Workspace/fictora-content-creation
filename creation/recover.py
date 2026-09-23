@@ -45,7 +45,10 @@ def cancel_video_job(desk: Path, job_id: str) -> dict:
 
 
 def prepare_video_retry(desk: Path, *, job_id: str | None = None) -> str:
-    """Mark desk ready for a new video enrol with a fresh idempotency suffix.
+    """Mark desk ready for one new video enrol with a fresh idempotency suffix.
+
+    A second call fails. Each enrol starts ffmpeg on Railway. Cancel does not
+    call this.
 
     Parameters
     ----------
@@ -58,11 +61,21 @@ def prepare_video_retry(desk: Path, *, job_id: str | None = None) -> str:
     -------
     str
         New idempotency suffix applied to the next enrol.
+
+    Raises
+    ------
+    RuntimeError
+        When this desk already has a video retry suffix.
     """
 
     from creation.production_state import load_production, save_production
 
     state = load_production(desk)
+    if "-retry-" in state.video_idempotency_suffix:
+        raise RuntimeError(
+            "This desk already retried video once. Another enrol starts another "
+            "ffmpeg job on Railway. Stop and ask engineering."
+        )
     suffix = f"-retry-{uuid.uuid4().hex[:8]}"
     state.video_idempotency_suffix = suffix
     state.phase = "ready_video"

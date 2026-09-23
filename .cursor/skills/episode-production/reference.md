@@ -25,7 +25,7 @@ Preset list: `GET /v1/art-style-presets` (pin latest version on bind).
 | Observation | Meaning |
 | --- | --- |
 | API `running` 50% for a long time | Video post-prod inspection; may still complete |
-| Restate `DramaPostProductionInspectionError` (ffmpeg) | Worker failed inspection; job may eventually `failed` or complete on retry |
+| Restate `DramaPostProductionInspectionError` (ffmpeg) | Worker failed inspection. Cancel the job. Do not enrol again. |
 | Restate `DramaPersistenceConflictError` (budget terminal) | Replay after batch terminal; often non-fatal if client poll shows `completed` |
 | Plan `failed` + `authoring_stalled` + `retryable: true` | Soft stall; safe to re-draft (harness retries) |
 | Plan 500 `season bible has no episode summary for ordinal 5` | **Set `draft_episode_count` to 4**, not 5 |
@@ -43,7 +43,7 @@ Preset list: `GET /v1/art-style-presets` (pin latest version on bind).
 | `invalid_episode_selection` (estimate) | Harness saves skip artefact; uses `fallback_estimate_usd` |
 | `idempotency_key_required` on cancel | Use `fictora-produce cancel-job` (fixed Idempotency-Key) |
 | `spine_not_found` | Session/spine mismatch; new desk |
-| Video stuck | `cancel-job` → `retry-video` or `step --confirm-spend` |
+| Video stuck | `cancel-job` only. Do not retry. A second enrol starts ffmpeg on Railway again. |
 | Poll CLI dies mid-job (`ReadError`, body from connection) | Job may still run; re-run `step` (poll retries transport) or resume poll on same `job_id` from `16_video_enrol.json` |
 
 ## Artefacts on desk

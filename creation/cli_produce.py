@@ -64,9 +64,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     cancel.add_argument("--desk", type=Path, required=True)
     cancel.add_argument("--job-id", required=True)
 
-    retry = sub.add_parser("retry-video", help="After cancel/fail: fresh idempotency + ready_video phase.")
+    retry = sub.add_parser(
+        "retry-video",
+        help="One new paid take after a human yes. Refuses a second retry.",
+    )
     retry.add_argument("--desk", type=Path, required=True)
     retry.add_argument("--job-id", default=None)
+    retry.add_argument(
+        "--new-paid-take",
+        action="store_true",
+        help="Required. Confirms this enrol is a new paid take, not a stuck-job retry.",
+    )
 
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -118,12 +126,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "cancel-job":
             payload = cancel_video_job(args.desk, args.job_id)
-            suffix = prepare_video_retry(args.desk, job_id=args.job_id)
             print(payload)
-            print(f"video_idempotency_suffix={suffix}")
-            print("Next: uv run fictora-produce step --desk … --confirm-spend")
+            print("Cancelled. Do not enrol another take.")
+            print("A new take starts another ffmpeg job on Railway.")
             return 0
         if args.command == "retry-video":
+            if not args.new_paid_take:
+                print(
+                    "Refused. retry-video starts a new paid take and another ffmpeg job on Railway.",
+                    file=sys.stderr,
+                )
+                print("Pass --new-paid-take only after a human yes for a new take.", file=sys.stderr)
+                return 2
             suffix = prepare_video_retry(args.desk, job_id=args.job_id)
             print(f"phase=ready_video suffix={suffix}")
             print("Next: uv run fictora-produce step --desk … --confirm-spend")

@@ -210,7 +210,7 @@ A **second** take needs a **named cause** (brief/board issue), not “try again.
 | Plan fails on episode 5 | Set **`draft_episode_count` to 4** only. |
 | Token / 503 / billing | Engineering — do not rotate token in chat. |
 
-Video recovery (agent, same desk): `fictora-produce cancel-job` → `retry-video` → `step --confirm-spend` (see episode-production skill).
+Video stuck in post: `fictora-produce cancel-job` and stop. Do not `retry-video`. A second enrol starts another ffmpeg job on Railway.
 
 ---
 

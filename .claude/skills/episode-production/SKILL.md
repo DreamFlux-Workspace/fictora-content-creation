@@ -79,7 +79,7 @@ uv run fictora-produce config --desk <desk-path>
 | `phase` | Next allowed action (see phase table below) |
 | `session_id` | `X-Drama-Session-Id` for all `/v1` calls on this desk |
 | `spine_id` | Story spine after draft |
-| `video_idempotency_suffix` | Set by `cancel-job` / `retry-video` for a fresh take key |
+| `video_idempotency_suffix` | Set only by `retry-video --new-paid-take`. One retry per desk. |
 
 ## Operator loop (one API enrol block per agent turn)
 
@@ -172,23 +172,29 @@ Harness auto-retries: `plan_media_spine_version_stale` (cast/boards), retryable 
 
 | Situation | Action |
 | --- | --- |
-| Video stuck `running` ~50%, Restate ffmpeg errors | Poll job; `cancel-job` then `step --confirm-spend` with new suffix |
+| Video stuck `running` ~50%, ffmpeg still going | `cancel-job` only. Do not `retry-video`. Do not `--confirm-spend` again. A second enrol starts another ffmpeg on Railway. |
 | Plan `authoring_stalled` retryable | Re-run `step` from `new` or let harness plan retry |
 | Estimate 400 cadence | Harness skips + `fallback_estimate_usd`; take still enrols |
 | Wrong session / spine 404 | New desk + new `start`; do not reuse old spine id |
 
 ```bash
 uv run fictora-produce cancel-job --desk <desk> --job-id job_video_…
-uv run fictora-produce retry-video --desk <desk> --job-id job_video_…
+```
+
+A new paid take, after a human yes, and only once per desk:
+
+```bash
+uv run fictora-produce retry-video --desk <desk> --new-paid-take
 uv run fictora-produce step --desk <desk> --confirm-spend
 ```
 
 ## Rules
 
 1. Human yes before money moves (plates, board, spend).
-2. One paid enrol per agent turn.
+2. One paid enrol per agent turn. One video job in flight.
 3. Never clone or read `fictora-drama`.
 4. Never overwrite desk media; use versioned filenames via ops helpers.
+5. Never retry a video job that is stuck in post. `cancel-job` stops it. A second enrol runs ffmpeg on Railway again.
 
 ## Engineering smoke (not production gates)
 
