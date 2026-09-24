@@ -1,6 +1,6 @@
 # Operator guide (Cursor + this repo)
 
-You do not clone `fictora-drama`. You clone **fictora-content-creation** and open it in Cursor.
+You do not clone `fictora-drama`. You clone **fictora-content-creation** and open it in Cursor. A new chat fast-forwards `main`. You do not run `git pull`.
 
 1. Copy `.env.example` → `.env` and set `FICTORA_DRAMA_GENERATION_SERVICE_TOKEN`.
 2. Tell the agent: *Open a series floor for &lt;name&gt;. Band 15s. Four episodes.*

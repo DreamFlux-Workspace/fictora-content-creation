@@ -95,7 +95,7 @@ After you start a series, the agent uses files on your desk:
    uv sync
    ```
 
-5. **Open the repo folder in Cursor.** The included **episode-production** skill tells the agent how to run production safely (human gates, one paid step per turn).
+5. **Open the repo folder in Cursor.** A new chat fast-forwards `main`. You do not run `git pull`. The included **episode-production** skill tells the agent how to run production safely (human gates, one paid step per turn).
 
 6. **Verify read-only API access (optional):**
 

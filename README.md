@@ -30,7 +30,7 @@ cp .env.example .env
 uv sync
 ```
 
-Open the repo in **Cursor**. For production work, the agent should read `.cursor/skills/episode-production/SKILL.md` (Claude Code: `.claude/skills/episode-production/SKILL.md`).
+Open the repo in **Cursor**. A new chat fast-forwards `main`. You do not run `git pull`. For production work, the agent should read `.cursor/skills/episode-production/SKILL.md` (Claude Code: `.claude/skills/episode-production/SKILL.md`).
 
 ### Start a series desk
 
