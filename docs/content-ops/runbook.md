@@ -49,7 +49,7 @@ Sound and captions are built after the take comes back, never asked of the model
 - One music bed per series, not per episode. Generated beds run about 30 seconds. Loop them and assert the mix covers the probed cut, or the tail loses its music with no error.
 - Cues are made only when the take returns quiet. Exteriors come back near-silent (−38 LUFS). Interiors with dialogue come back usable.
 - Voice-over lines are generated dry and placed on measured beats in post. They are never written into the take as fixture lines.
-- Captions: when the caption is the same language as the audio, word-by-word flicker in the safe band. When the caption is a translation, the whole line goes up and holds for exactly as long as that line is spoken. Both are yellow `0xF5D547`, black edge, no box. Whole-line preset is centred at 62% of frame height at 0.016 of frame height. On screen only while the line is spoken. Times come from silence-end onsets, not Whisper word starts across a pause.
+- Captions: when the caption is the same language as the audio, word-by-word flicker in the safe band. When the caption is a translation, the whole line goes up and holds for exactly as long as that line is spoken. Both are yellow `#FFE500`, Poppins Bold, black edge, soft shadow, no box. Text bottom sits at 70% of frame height; size is 50 px on a 1344 px frame (3.7% of height). Flicker builds up to three words, then resets. On screen only while the line is spoken. Times come from silence-end onsets, not Whisper word starts across a pause.
 - H3 cell seams are a compiler product. Post detects them with a frame-difference trace and dissolves each seam in place. Do not keep a private `soften.py`.
 
 ## The nine stages
