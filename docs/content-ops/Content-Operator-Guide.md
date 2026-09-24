@@ -29,7 +29,7 @@ You never need the private `fictora-drama` repo. Never paste the API token into 
 3. Open the **repo root** in Cursor (so the **episode-production** skill loads).
 4. Optional check (no spend): `uv run python scripts/smoke_live.py --phase read`
 5. For local yellow captions after filming, install **ffmpeg with libass** on macOS:
-   `brew install ffmpeg-full` (agent uses `/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg`).
+   `brew install ffmpeg` (use `ffmpeg-full` only if `ffmpeg -filters` lists no `ass`). `fictora-produce start` warns when it is missing.
 
 ---
 
@@ -54,7 +54,7 @@ Desk:
 Workflow:
 - One `fictora-produce step` per turn until I approve gates.
 - After boards, estimate → I say yes → `step --confirm-spend`.
-- When raw MP4 lands, burn house captions with `scripts/burn_house_captions.sh` and open the captioned take.
+- When raw MP4 lands, run `uv run fictora-produce caption --desk <desk>` (opens the captioned take).
 
 Start with `start`, print desk path and phase, wait for my "aligned" before the first paid step.
 ```
@@ -145,24 +145,15 @@ Default config: **`api_captions: false`**. Filming finishes when the **raw** sce
 | `ep01/api/17_raw_scene_clips.json` | Same clip URL |
 | `ep01/takes/take-ep01-t1-captioned-v1.mp4` | **Ship candidate** after local burn |
 
-Agent workflow ([local-captions.md](local-captions.md)):
-
-1. Line text from spine / script gate (e.g. *“Not tonight.”*).
-2. `ffmpeg` **silencedetect** on the raw take → anchor captions to **speech span**, not long pauses.
-3. Write `take-ep01-t1-house.ass` (yellow `#F5D547`, black outline, no box).
-4. Burn:
+One command ([local-captions.md](local-captions.md)):
 
 ```bash
-cd /path/to/fictora-content-creation
-FFMPEG=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg \
-  bash scripts/burn_house_captions.sh \
-  <desk>/ep01/takes/take-ep01-t1-raw-v1.mp4 \
-  <desk>/ep01/takes/take-ep01-t1-house.ass \
-  <desk>/ep01/takes/take-ep01-t1-captioned-v1.mp4
-open <desk>/ep01/takes/take-ep01-t1-captioned-v1.mp4
+uv run fictora-produce caption --desk <desk>
 ```
 
-Scrub to the spoken line; captions should flicker word-by-word in the lower centre band.
+It takes the line from the spine, anchors it on the speech span (`silencedetect`), writes `take-ep01-t1-house-v1.ass` and `take-ep01-t1-captioned-v1.mp4`, logs them in `run-notes.md` and opens the captioned take. Wrong sound picked? Re-run with `--line-start <seconds>` once per line.
+
+Scrub to the spoken line; captions build up to three words at a time, yellow, just below centre.
 
 ---
 

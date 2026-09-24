@@ -1,50 +1,57 @@
-# Local captions (Drama app / house recipe)
+# Local captions (house recipe)
 
-Use this when `production.config.json` has **`api_captions: false`** (default). The API returns a **raw scene MP4** in `ep01/api/17_raw_scene_clips.json` and `ep01/takes/take-ep01-t1-raw*.mp4`. Captions match prod **`caption_style: house`** without waiting on API post-production.
+Use this when `production.config.json` has **`api_captions: false`** (default). The API returns a **raw scene MP4** (`ep01/api/17_raw_scene_clips.json`, downloaded to `ep01/takes/take-ep01-t1-raw-vN.mp4`). Captions are burned on the operator's laptop. ffmpeg never runs on Railway for this.
 
-## House look (same as Drama app)
+## One command
+
+```bash
+uv run fictora-produce caption --desk <desk>
+```
+
+| Option | Use |
+| --- | --- |
+| `--episode N` | Episode other than 1 |
+| `--take <path>` | A specific raw MP4 (default: newest `take-epNN-t1-raw-v*.mp4`) |
+| `--line-start S` | Seconds where a line starts; once per line, in order. Overrides speech detection |
+| `--no-open` | Do not open the result |
+
+Writes, never overwriting:
+
+| File | Content |
+| --- | --- |
+| `takes/take-ep01-t1-house-vN.ass` | Caption cues |
+| `takes/take-ep01-t1-captioned-vN.mp4` | Raw take with captions burned in (audio copied) |
+| `run-notes.md` | One note with the files and each line's time span |
+
+## House look
+
+Matches the content team's reference captions (Closing Shift, Sauce Left Over, The Elevator cuts).
 
 | Property | Value |
 | --- | --- |
-| Text colour | Yellow `#F5D547` |
-| Outline | Black edge, no background box |
-| Placement | Centre band — bottom of text ~**62%** of frame height; size ~**1.6%** of frame height (whole-line preset) |
-| Same language as audio | Word-level flicker in the safe band |
-| Translation | Whole line holds for the spoken interval |
-| Timing | **Silence-end onsets** on the take audio, not raw Whisper word starts across pauses |
+| Text colour | Yellow `#FFE500` |
+| Font | Poppins Bold, bundled in `assets/fonts/` (SIL OFL) so every laptop renders the same |
+| Size | 50 px on a 1344 px-tall frame (3.7% of height), scaled to the take |
+| Edge | Black outline 3, soft 50% black shadow 1, no box |
+| Placement | Centred; bottom of text at 70% of frame height (margin 403 px on 1344) |
+| Reveal | Flicker: words build up to three on screen, then reset; each line resets |
+| Timing | On screen only while the line is spoken; last word holds 0.15 s, never into the next line |
 
-Authoritative prose: [runbook.md](runbook.md) (Sound and captions) and [api-map.md](api-map.md).
+## How timing works
 
-## Operator steps
+1. **Lines**: episode dialogue from the newest spine snapshot in `ep01/api/` that has beats (`03_spine.json`; approve receipts are skipped).
+2. **Speech spans**: `silencedetect=noise=-30dB:d=0.3` on the take. Gaps shorter than 0.12 s are clicks, not speech.
+3. **Anchor**: each line starts on the next speech span (silence-end onset) and absorbs following spans only while the pause is under 0.6 s and the line still needs time. Spans after the last line (ambience, a door, the music tail) are ignored.
+4. **Words**: spread across the line's span, weighted by word length.
 
-1. **Lines** — From `ep01/api/03_spine.json` (or `scripts/` export): episode 1 dialogue bound to the take.
-2. **Raw file** — `take-ep01-t1-raw.mp4` or the URL in `17_raw_scene_clips.json` → `clips[0].url`.
-3. **Transcribe / align** — Measure the take; align cue times to **silence boundaries** per runbook. If the automatic transcript stretches one syllable across seconds, anchor on a later word in the line.
-4. **ASS** — Generate house flicker ASS with the same compiler as prod (from a checkout of `fictora-drama`):
+No transcription model is needed: the words are already fixed at the script gate. If detection picks the wrong sound, watch the raw take, note where each line starts, and re-run with `--line-start`.
 
-   ```bash
-   cd ../fictora-drama && uv run python scripts/…  # or inline compile_ass per timed word cues
-   ```
+## Requirements
 
-   Timings: run `ffmpeg -af silencedetect=noise=-30dB:d=0.3` on the raw take; anchor the line on the **first speech span** after opening silence (silence-end → next silence-start).
+- **ffmpeg + ffprobe with libass** (`ffmpeg -filters` lists `ass`). macOS: `brew install ffmpeg`; use `ffmpeg-full` only if your build lacks `ass`. `fictora-produce start` warns when it is missing.
 
-5. **Burn** — repo helper (uses **ffmpeg-full** on macOS when plain `ffmpeg` lacks libass):
+## Low-level
 
-   ```bash
-   FFMPEG=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg \
-     bash scripts/burn_house_captions.sh \
-     ep01/takes/take-ep01-t1-raw-v1.mp4 \
-     ep01/takes/take-ep01-t1-house.ass \
-     ep01/takes/take-ep01-t1-captioned-v1.mp4
-   ```
-
-6. **Gate** — Human read on the captioned file; record in `run-notes.md` before series post approve.
-
-Prod burns the same recipe server-side when `api_captions: true` (`--api-captions` on `fictora-produce start`). Content ops default is **local** for speed and control.
-
-## Tools
-
-- **ffmpeg** with libass (Homebrew ffmpeg often needs an explicit libass build).
-- Optional: Whisper or your existing desk transcript script — always **re-anchor** timings to silence-end rules before burn.
+`scripts/burn_house_captions.sh <raw.mp4> <captions.ass> <out.mp4>` burns an existing ASS with the bundled font. Prefer the command above, which builds the ASS too.
 
 Do not ask the video model for on-screen text; captions are always post.
