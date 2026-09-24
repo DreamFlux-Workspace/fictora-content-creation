@@ -170,7 +170,7 @@ my-series-2026-09-22/
 
 - Subtitles are **not** in the model output. Default path: **local burn** after the raw take (`api_captions: false`).
 - Review **`take-ep01-t1-captioned-v*.mp4`**, not only the raw file. Agent runs `scripts/burn_house_captions.sh` (needs ffmpeg-full + libass).
-- Captions appear only around the spoken line—scrub to that beat. Style: yellow `#F5D547`, black edge, no box ([local-captions.md](content-ops/local-captions.md)).
+- Captions appear only around the spoken line—scrub to that beat. Style: yellow `#FFE500`, Poppins Bold, black edge, no box, text bottom at 70% of frame height ([local-captions.md](content-ops/local-captions.md)).
 
 ---
 

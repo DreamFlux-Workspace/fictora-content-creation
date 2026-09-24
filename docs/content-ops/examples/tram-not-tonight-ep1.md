@@ -25,13 +25,12 @@ Do **not** pass `--api-captions`; burn house captions locally after the raw take
 - Spine title **The Folded Fare**; cast **Mara Vale** + **Elias Rook** (driver, ep2-forward on screen).
 - Ep1 line on spine: **Not tonight.**
 - Board exposure ~14% mean (below 25% dim floor) — use `approve --gate board --accept-dim` when intentional night interior.
-- Raw take ~15s vertical; local caption via `scripts/burn_house_captions.sh` + silence-end ASS cues.
+- Raw take ~15s vertical; local caption via `uv run fictora-produce caption --desk <desk>` (silence-end ASS cues).
 
 ## Agent completion checklist
 
 After `step --confirm-spend` with `api_captions: false`:
 
 1. Confirm `ep01/takes/take-ep01-t1-raw-v1.mp4` and `17_raw_scene_clips.json`.
-2. Build house ASS (word flicker, speech span from `silencedetect`).
-3. Burn captioned take; **open** for human QC.
-4. Log paths in `ep01/run-notes.md`.
+2. `uv run fictora-produce caption --desk <desk>` — builds the house ASS, burns the captioned take, logs paths in `ep01/run-notes.md`, opens it.
+3. Human QC on the captioned take.

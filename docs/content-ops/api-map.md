@@ -32,7 +32,7 @@ Credentials: `FICTORA_DRAMA_GENERATION_SERVICE_TOKEN` and optional `FICTORA_DRAM
 | Voice auditions and picks | Aligned | `POST /v1/spines/{id}/cast/{cast_id}/voice-auditions` compiles 4–10 Eleven v3 candidates on the character's real spoken lines. `POST .../voice-auditions/pick` locks `DramaCastVoiceBrief`. |
 | Music + SFX | Aligned | `POST /v1/spines/{id}/audio-bed` pins `series_audio_bed_url`. Post uses that file instead of generating a new show bed. Product library beds still mix unless `FICTORA_DRAMA_AUDIO_BED=off`. |
 | Ducking under voice | Aligned | Product ffmpeg mix uses `sidechaincompress` against the processed take stem, not a static −12 dB envelope. |
-| Captions | Aligned | `caption_style=house`: yellow `0xF5D547`, black edge, no box, centre at 62% of frame height. English flickers; a translation holds the whole line. |
+| Captions | Aligned | `caption_style=house`: yellow `#FFE500`, Poppins Bold, black edge, soft shadow, no box, text bottom at 70% of frame height. English flickers; a translation holds the whole line. |
 | Hand-off frame between takes | Aligned | Every successor pastes the prior last frame into board cell 1a. A missing clip or paste fault raises and stops the take. |
 | Making-take forward lock | Aligned | An opening wordless making take's last cell must match the next take's opening (`making_take_needs_forward_lock`). Later silent sets are not making takes. Seam-reuse skips a making predecessor. `apply_forward_lock` pastes the next opening into the last cell. |
 | Intra-take H3 cell seams | Aligned | Post measures cuts with `scale=16:28` frame-diff (YAVG ≥ 25), then hold-and-fade 1/3 s. Scene detect is not the gate. |

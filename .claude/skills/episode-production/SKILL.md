@@ -128,21 +128,19 @@ Do **not** wait for parent job 100% or `18_delivery.json` unless `api_captions: 
 
 When phase is **`complete`** and `api_captions` is false, **do not stop at the raw MP4** — finish the desk take in the same session unless the human asked to pause.
 
-After the raw take lands, follow **[docs/content-ops/local-captions.md](../../docs/content-ops/local-captions.md)**:
-
-1. Dialogue from spine / script gate.
-2. Transcribe the take; align cues to **silence-end onsets** (runbook).
-3. Burn **house** ASS with ffmpeg **libass** — yellow `#F5D547`, black edge, no box, ~62% frame height.
-4. Save captioned take under `takes/` (e.g. `take-ep01-t1-captioned-v1.mp4`); note in `run-notes.md`.
-5. **Open** the captioned file for human QC (macOS: `open <path>`).
+One command, run on this machine (ffmpeg locally, never on Railway):
 
 ```bash
-FFMPEG=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg \
-  bash scripts/burn_house_captions.sh \
-  ep01/takes/take-ep01-t1-raw-v1.mp4 \
-  ep01/takes/take-ep01-t1-house.ass \
-  ep01/takes/take-ep01-t1-captioned-v1.mp4
+uv run fictora-produce caption --desk <desk>
 ```
+
+It reads the episode lines from the desk spine snapshot, finds the speech span with ffmpeg `silencedetect` (no transcription model), writes `takes/take-ep01-t1-house-vN.ass`, burns `takes/take-ep01-t1-captioned-vN.mp4`, logs both in `run-notes.md` and opens the captioned file for human QC. Versioned names; nothing is overwritten.
+
+Look: house flicker (up to three words build up, then reset), yellow `#FFE500`, Poppins Bold (bundled in `assets/fonts/`), black edge, soft shadow, no box, text bottom at 70% of frame height. Detail: [local-captions.md](../../docs/content-ops/local-captions.md).
+
+If a line lands on the wrong sound (a door, music), re-run with one `--line-start <seconds>` per line, in order.
+
+Needs **ffmpeg + ffprobe with libass** on the laptop (`brew install ffmpeg`; `ffmpeg-full` if your build lacks the `ass` filter). `start` warns when it is missing.
 
 Status:
 

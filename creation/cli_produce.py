@@ -4,17 +4,29 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Sequence
 
+from creation.captions import caption_take, find_ffmpeg
 from creation.cli_config import add_production_config_args, config_from_args
 from creation.orchestrate import approve_gate, bind_desk, run_step, status_message
 from creation.production_config import load_production_config, save_production_config
 from creation.recover import cancel_video_job, prepare_video_retry
 from creation.ops.floor import init_series_desk
 from creation.ops.folder import DEFAULT_RUN_PARENT
+from creation.ops.notes import append_run_note
+
+
+def _warn_if_no_local_ffmpeg() -> None:
+    """Warn at desk creation when this machine cannot burn local captions."""
+
+    try:
+        find_ffmpeg()
+    except RuntimeError as exc:
+        print(f"WARNING: {exc}", file=sys.stderr)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -76,6 +88,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Required. Confirms this enrol is a new paid take, not a stuck-job retry.",
     )
 
+    cap = sub.add_parser(
+        "caption",
+        help="Burn house captions on the raw take locally (ffmpeg on this machine).",
+    )
+    cap.add_argument("--desk", type=Path, required=True)
+    cap.add_argument("--episode", type=int, default=1)
+    cap.add_argument("--take", type=Path, default=None, help="Raw MP4; default newest take-epNN-t1-raw-v*.mp4.")
+    cap.add_argument(
+        "--line-start",
+        type=float,
+        action="append",
+        default=None,
+        help="Seconds where a line starts, once per line in order. Overrides speech detection.",
+    )
+    cap.add_argument("--no-open", action="store_true", help="Do not open the captioned file.")
+
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     try:
@@ -89,6 +117,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             save_production_config(desk, config_from_args(args))
             print(desk)
+            _warn_if_no_local_ffmpeg()
             print(f"bound session_id={state.session_id} phase={state.phase}")
             print("Next: uv run fictora-produce step --desk", desk)
             return 0
@@ -124,6 +153,29 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(result.message)
             return 0
+        if args.command == "caption":
+            result = caption_take(
+                args.desk,
+                episode_ordinal=args.episode,
+                take=args.take,
+                line_starts=args.line_start,
+            )
+            ep_dir = args.desk.expanduser().resolve() / f"ep{args.episode:02d}"
+            timing = "; ".join(
+                f'"{line}" {span.start:.2f}-{span.end:.2f}s' for line, span in zip(result.lines, result.anchors)
+            )
+            append_run_note(
+                ep_dir,
+                f"Local house captions: {result.video.name} (cues {result.ass.name}). Lines: {timing}.",
+            )
+            for line, span in zip(result.lines, result.anchors):
+                print(f"  {span.start:6.2f}-{span.end:6.2f}s  {line}")
+            print(f"  file: {result.ass}")
+            print(f"  file: {result.video}")
+            print("Human QC: watch the captioned take. Wrong timing? Re-run with --line-start per line.")
+            if not args.no_open and sys.platform == "darwin":
+                subprocess.run(["open", str(result.video)], check=False)
+            return 0
         if args.command == "cancel-job":
             payload = cancel_video_job(args.desk, args.job_id)
             print(payload)
@@ -142,7 +194,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"phase=ready_video suffix={suffix}")
             print("Next: uv run fictora-produce step --desk … --confirm-spend")
             return 0
-    except (RuntimeError, ValueError, FileNotFoundError, FileExistsError) as exc:
+    except (RuntimeError, ValueError, FileNotFoundError, FileExistsError, subprocess.CalledProcessError) as exc:
         print(exc, file=sys.stderr)
         return 2
     except SystemExit as exc:
