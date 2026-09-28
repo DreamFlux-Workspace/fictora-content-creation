@@ -504,8 +504,120 @@ def safe_zone_lines(frames: Sequence[Mapping[str, Any]], *, cast_names: Mapping[
     return lines
 
 
+#: A ``frame_position`` that keeps the subject out of the picture: they are not drawn in that cell.
+_OFF_FRAME = re.compile(r"\b(off[- ]?(frame|screen|camera)|out of (the )?(frame|shot)|unseen|not visible)\b", re.I)
+
+
+def frame_cast(frame: Mapping[str, Any]) -> tuple[set[str], set[str]]:
+    """Who a frame draws, and who it names but places off-frame.
+
+    Parameters
+    ----------
+    frame
+        One storyboard frame.
+
+    Returns
+    -------
+    tuple[set[str], set[str]]
+        ``(drawn, off_frame)`` cast ids: ``cast_refs`` plus ``subject_blocking``
+        entries, less any whose ``frame_position`` puts them off-frame.
+    """
+
+    raw = frame.get("visual_brief")
+    brief: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
+    named = {str(cast_id) for cast_id in frame.get("cast_refs") or [] if cast_id}
+    off: set[str] = set()
+    for blocking in brief.get("subject_blocking") or []:
+        if not isinstance(blocking, Mapping) or not blocking.get("cast_id"):
+            continue
+        cast_id = str(blocking["cast_id"])
+        if _OFF_FRAME.search(str(blocking.get("frame_position") or "")):
+            off.add(cast_id)
+        else:
+            named.add(cast_id)
+    return named - off, off
+
+
+def row_speech_lines(
+    spine: Mapping[str, Any], frames: Sequence[Mapping[str, Any]], *, row: int, cast_names: Mapping[str, str]
+) -> list[str]:
+    """Which line is spoken on one board row, by whom, and a warning when the speaker is not drawn there.
+
+    A beat's lines are anchored to one frame (``beats[].frame_id``), so they are
+    spoken on that frame's row. A speaker marked ``off_screen`` is heard, not
+    seen, and needs no place in the row.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON (the beats).
+    frames
+        One board's frames.
+    row
+        The board row.
+    cast_names
+        ``cast_id`` to display name.
+
+    Returns
+    -------
+    list[str]
+        ``row N cell K says ...`` per line, then ``!!`` warnings (never blocking).
+    """
+
+    cells = [frame for frame in frames if _row_number(frame) == row]
+    cell_of = {str(frame.get("frame_id")): index for index, frame in enumerate(cells, start=1) if frame.get("frame_id")}
+    drawn: set[str] = set()
+    off: set[str] = set()
+    for frame in cells:
+        cell_drawn, cell_off = frame_cast(frame)
+        drawn |= cell_drawn
+        off |= cell_off
+    beats = [
+        beat
+        for beat in spine.get("beats") or []
+        if isinstance(beat, Mapping) and str(beat.get("frame_id") or "") in cell_of
+    ]
+    beats.sort(key=lambda beat: int(beat.get("ordinal") or 0))
+    shown = ", ".join(sorted(cast_names.get(cast_id, cast_id) for cast_id in drawn)) or "nobody"
+    out: list[str] = []
+    for beat in beats:
+        frame_id = str(beat["frame_id"])
+        cell = cell_of[frame_id]
+        for line in beat.get("dialogue_lines") or []:
+            if not isinstance(line, Mapping):
+                continue
+            text = str(line.get("spoken_text") or line.get("text") or "").strip()
+            if not text:
+                continue
+            cast_id = str(line.get("cast_id") or "")
+            who = cast_names.get(cast_id, cast_id or "?")
+            heard = line.get("off_screen") is True
+            out.append(f'    row {row} cell {cell} says: {who}{" (off-screen)" if heard else ""}: "{text}"')
+            if heard or not cast_id:
+                continue
+            fix = (
+                f"Mark the line off-screen (`fictora-produce line --line {line.get('line_id')} --off-screen`), give it to someone "
+                "drawn here (`--speaker`), or edit the frame and redraw (warning only)"
+            )
+            if cast_id not in drawn:
+                where = "is placed off-frame" if cast_id in off else f"is not drawn (the row shows {shown})"
+                out.append(f'    !! row {row}: {who} speaks "{_clip(text)}" but {where}. {fix}')
+                continue
+            own_drawn, _ = frame_cast(next(frame for frame in cells if str(frame.get("frame_id")) == frame_id))
+            if cast_id not in own_drawn:
+                out.append(
+                    f'    !! row {row} cell {cell}: {who} speaks "{_clip(text)}" on a cell that does not draw them '
+                    f"(they are in another cell of the row). {fix}"
+                )
+    return out
+
+
+def _clip(text: str, size: int = 60) -> str:
+    return text if len(text) <= size else text[: size - 1] + "…"
+
+
 def shot_list_lines(spine: Mapping[str, Any], *, episode: int, sets: Sequence[int] | None = None) -> list[str]:
-    """The board gate's shot list: one line per row, rows that repeat size and angle, safe zones.
+    """The board gate's shot list: one line per row with who says what on it, repeated sizes, safe zones.
 
     Parameters
     ----------
@@ -533,7 +645,9 @@ def shot_list_lines(spine: Mapping[str, Any], *, episode: int, sets: Sequence[in
             continue
         rows = shot_rows(frames)
         lines.append(f"ep{episode:02d} t{set_index} board, row by row:")
-        lines += [f"  {row.one_line()}" for row in rows]
+        for row in rows:
+            lines.append(f"  {row.one_line()}")
+            lines += row_speech_lines(spine, frames, row=row.row, cast_names=cast_names)
         for above, below in zip(rows, rows[1:], strict=False):
             if (above.shot_scale, above.camera_angle) == (below.shot_scale, below.camera_angle):
                 lines.append(
@@ -554,8 +668,10 @@ __all__ = [
     "episode_api_id",
     "episode_id_for",
     "episode_summary",
+    "frame_cast",
     "frames_by_set",
     "frames_digest",
+    "row_speech_lines",
     "safe_zone_lines",
     "script_lines",
     "shot_list_lines",

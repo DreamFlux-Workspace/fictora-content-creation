@@ -6,9 +6,8 @@ Closed in product (2026-09-21): `cut_tempo=one_shot`; `clip_duration_seconds` 4â
 
 Closed 2026-09-28 by founder decision: a finished cut shorter than its 15 / 30 / 60 s band (e.g. 14.2 s after trimming a bad half-second) is allowed and is not a deviation. Takes still film at the normal clip length (`clip_duration_seconds` 4â€“15); a finished episode longer than its band is still a deviation.
 
-No open product gaps.
-
 | Stage | Gap | Why it costs money or time | Source |
 | --- | --- | --- | --- |
+| Script | No route adds or removes a dialogue line, or adds a cast member (a new off-screen voice), after the draft. `PATCH` edits existing lines only (`fictora-produce line`). | A wanted extra line or voice means a new desk and a new draft; the old spine is abandoned | SCP-173 Blink, 2026-09-26 (learnings #12) |
 
 When you add a row, name the production that hit it.

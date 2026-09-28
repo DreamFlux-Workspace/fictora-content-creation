@@ -34,7 +34,7 @@ One machine per desk, pointed at one episode (`episode_ordinal` in `production.j
 | `ready_cast_enrol` | `step` → cast plates + downloads to `ep01/plates/` (episode 1 only; books $0.30 a plate) |
 | `wait_plates` | Human yes → `approve --gate plates` |
 | `wait_script` | Human yes on the lines (printed by the draft or `author`; `epNN/api/spine.json`) → `approve --gate script` (episode 1: the whole spine; episode 2 on: `pilot-episodes/{n}/approve`) |
-| `ready_boards_enrol` | `step` → boards to `epNN/boards/board-epNN-tK-vN.png`, brightness (information only), the shot list row by row, safe-zone warnings; books $0.30 a board |
+| `ready_boards_enrol` | `step` → boards to `epNN/boards/board-epNN-tK-vN.png`, brightness (information only), the shot list row by row with the line spoken on each row and its speaker (`!!` when the speaker is not drawn on that row or is placed off-frame; off-screen lines are fine), safe-zone warnings; books $0.30 a board |
 | `wait_board` | Human yes → `approve --gate board` (the boards `step` drew; `--path` only for a board it did not draw). Or `redraw-board` |
 | `ready_estimate` | `step` → this episode's estimate, and only this episode (earlier episodes are not filmed again): the server's dated dollars, else the price table (then a loud `!! SERVER ESTIMATE FAILED` line first); always names the lane and $/s; says "$X of a $Y envelope" (warn only) |
 | `wait_spend` | Human yes → `step --confirm-spend` |
@@ -56,11 +56,11 @@ Product gap:           <one line for docs/content-ops/backlog.md>
 Extra cost:            <$ and minutes>
 ```
 
-Always a deviation: a finished episode longer than its 15 / 30 / 60 s band; any route with no command here; hand-rolled HTTP. Editing product code or settings is never acceptable. Not a deviation: a finished cut shorter than its band after trimming (e.g. 14.2 s from a 15 s episode); takes still film at the normal clip length, so say the new length and carry on. Aligned, with commands (below): episode 2 on (`arc`, `brief`, `author`), line and frame edits (`edit`), board redraws (`redraw-board`; the regenerate route takes no notes, so the change goes in first with `edit --frame` or `look-note`), one plate redrawn at the plates gate (`plates --cast NAME --cause`).
+Always a deviation: a finished episode longer than its 15 / 30 / 60 s band; any route with no command here; hand-rolled HTTP. Editing product code or settings is never acceptable. Not a deviation: a finished cut shorter than its band after trimming (e.g. 14.2 s from a 15 s episode); takes still film at the normal clip length, so say the new length and carry on. Aligned, with commands (below): episode 2 on (`arc`, `brief`, `author`), line edits (`line`), beat and frame edits (`edit`), board redraws (`redraw-board`; the regenerate route takes no notes, so the change goes in first with `edit --frame` or `look-note`), one plate redrawn at the plates gate (`plates --cast NAME --cause`).
 
 ## Script gate
 
-- Compare every brief line with the spine. The writers may cut or rewrite a line. Show the human each changed or vanished line beside the spine line. A "keep exactly" line that changed is a fault: fix it before the gate.
+- Compare every brief line with the spine. The writers may cut or rewrite a line. The draft `step` prints the brief's lines against the script (`kept`, `rewritten`, `cut`, `added`, matched by speaker and wording); show the human each line that is not `kept` beside the spine line. A "keep exactly" line that changed is a fault: fix it before the gate with `line --line N --text "…"`. A cut line cannot be added back (the API has no route): give its words to a kept line, or draft again.
 - Show each line in the language it will be spoken, with the translation beside it.
 - **Japanese / Korean:** the register follows who speaks to whom (staff to customer is 申し訳ございません / 정말 죄송합니다, not ごめんなさい). No English quip carried word for word. No notice-board noun stack in speech (「逆襲中止！」 "counterattack cancelled!") unless the character is really announcing. The server repairs that one form once; everything else is your check. Pin the exact performed line (`spoken_text`) so localization does not rewrite it. A dialect (Kansai-ben, Busan satoori) needs a native speaker's yes before the script gate; if nobody can check it, write the standard language.
 - **Captions** are English only for now (house style). Japanese / Korean captions are deferred.
@@ -128,7 +128,7 @@ The writers pick an anime expression (`reaction_kind`) for every emotional momen
 - **Visible cause.** Every action row is preceded by a visible face reacting to its cause, or shares the frame with it.
 - **Opening emotion.** Each row opens on the emotion the row before ended on. A calm smile right after the sign breaks reads wrong.
 - **The picture shows the rule.** A change the viewer must see as a jump (the statue is closer) goes in its own row: H3 blends the cells of one row into one move.
-- **Speakers.** A spoken line sits on a row where its speaker is in frame, at medium or closer. No off-screen speaker is drawn.
+- **Speakers.** A spoken line sits on a row where its speaker is in frame, at medium or closer. No off-screen speaker is drawn. The shot list prints each row's line and speaker and a `!!` when the speaker is not drawn there; fix it with `line --off-screen`, `line --speaker`, or `edit --frame` then `redraw-board`.
 - **Speaking mouths.** No clench, grit, pressed or closed mouth on a speaking row. Big acting before and after the line.
 - The hook (frame 0 mid-motion on a face), the hand-off frame (a frame with picture, never a fade or black), no readable text or digits, safe zones.
 - Brightness is information only, never a block: report it; a dark board is the human's call. (`--accept-dim` is accepted and ignored.)
@@ -309,6 +309,8 @@ Sequence `fictora-produce` runs: `POST /v1/prompt-video-authoring-drafts` (`epis
 ## Commands for edits and checks
 
 ```bash
+uv run fictora-produce line --desk D --episode N                                   # list the lines, numbered
+uv run fictora-produce line --desk D --episode N --line ID|N [--text T] [--spoken S [--subtitle S]] [--speaker NAME] [--off-screen | --on-screen] [--select-regen] [--preview]
 uv run fictora-produce edit --desk D --episode N (--beat ID|N | --frame ID|N | --line-id ID) [--intent TEXT] [--set KEY=VALUE ...] [--text T] [--spoken S] [--subtitle S] [--select-regen] [--preview]
 uv run fictora-produce look-frame --desk D --description TEXT|@FILE [--size 1088x1936]   # draw our own style frame on the server from the written look; $0.30; never pins
 uv run fictora-produce look --desk D --url https://…          # pin one style frame (the look-frame's image_url, after the human's yes); spends nothing
@@ -320,7 +322,9 @@ uv run fictora-produce check-lines --desk D --episode N [--take tK]             
 ```
 
 - `edit` before the script gate is a plain patch. After it, the server asks for a cascade: `edit` prints every item, runs the free ones, and leaves the paid ones (`tier media`) off unless `--select-regen`; it names each board that no longer matches (redraw it with `redraw-board`). `--preview` stops after the list.
-- `edit --line-id … --spoken "…" [--subtitle "…"]` pins the exact performed line on a Japanese or Korean show before the script gate; an English show refuses it. A new English `--text` on such a show is re-localized when the script is approved.
+- `line` changes one line on the server (`PATCH /v1/spines/{id}` `dialogue_lines`, or the cascade after the script gate), saves `api/spine.json` again and puts the server's lines on the desk in the same step. It prints what happened to the script approval: before the gate, the line is part of what the human approves; after it, the server keeps the script approved, but the desk's script yes was for the old line, so it is pending again and preflight will not film until `fictora-ops approve --desk D --gate script --episode N` after the human's yes. `--speaker` takes someone already in the cast; `--off-screen` marks a speaker heard, not seen. It warns when the speaker is not drawn in the frame the line plays on. The API cannot add or remove a line or add a cast member (a new off-screen voice): that needs a new draft on a new desk.
+- `fictora-ops set-lines` changes the desk only; the take still performs the server's lines. Use `line` instead.
+- `line --line … --spoken "…" [--subtitle "…"]` (or `edit --line-id …`) pins the exact performed line on a Japanese or Korean show before the script gate; an English show refuses it. A new English `--text` on such a show is re-localized when the script is approved.
 - Text flags (`--prompt`, `--description`, `--music`, `fictora-ops set-lines --lines-json`) take the words themselves, `@FILE`, or an existing file path.
 - `look-frame` sends only the description's words (1–4000 characters; inline text, `@FILE`, or an existing file path) to `POST /v1/spines/{id}/look-frame`; the server draws on the product's still model (text only: it refuses a link in the description) and answers our stored PNG. The desk saves `shared/look/look-frame-vN.png`, books the still, and prints the `image_url` for `look --url`. It never pins. The same description and size are cached on the server (re-running is free). An older server answers 404 on the route: the command stops with that message and books nothing; tell engineering.
 - `plates` redraws one character on `POST /v1/spines/{id}/cast/{cast_id}/regenerate` (the rest of the cast is not drawn or paid again) into the next `ep01/plates/plate-ep01-N-vK.png`, books $0.30 as `plate-redraw:<cast_id>`, and leaves the plates gate open. Only in phase `wait_plates`; past it the boards are drawn from the approved plates, so it is refused before anything is sent. Not the whole-cast `cast/enrol`: with no stale cast card the server answers the first drawing's job again and draws nothing. The cause is a label; "try again" is refused.
