@@ -52,7 +52,7 @@ It must:
 
 Say this to the agent:
 
-> Open a series floor for \<series name\>. Band is 15s. Four episodes. Folder under `~/Downloads/documents/`.
+> Open a series floor for \<series name\>. Band is 15s. Episode 1 only. Folder under `~/Downloads/documents/`.
 
 The agent asks where the desk should go, then runs:
 
@@ -60,26 +60,26 @@ The agent asks where the desk should go, then runs:
 uv run fictora-ops init-series \
   --series "<series name>" \
   --band 15s \
-  --episodes 4
+  --episodes 1
 ```
 
 It prints the desk path. Open `QUEUE.md`. That is the review surface. Episode folders sit side by side. Shared plates live in `shared/plates/`.
 
 A single-folder `init` still exists for one off-desk experiment. Real content work uses the floor. See [floor.md](floor.md).
 
-Then give the brief: premise, cast, set, arc, and whether plates already exist.
+Then give the brief: premise, cast (with real ages), set, the hook, the lines, and whether plates already exist. No series arc yet: the arc is chosen at episode 2.
 
 ## Spend
 
-Lane today is H3 Max. Price a 15s take at **$1.20**. A plate or board is **$0.30**.
+Lane today is H3 Max reference-to-video. Price a 15s take at **$1.20** ($0.08/s). A plate or board is **$0.30**.
 
-| Episode | Envelope |
+| Episode | Budget |
 | --- | --- |
 | Continuing 15s, existing cast | $2.50 |
-| Continuing 30s | $4.00 |
-| First episode of a new series | $4.50 |
+| Continuing 30s | $5.00 |
+| First episode of a new series | $5.50 |
 
-If spend passes twice the envelope, stop and escalate.
+Budgets warn, they never block. Past twice the budget, the agent says so and you decide.
 
 A second render of the same plate, board, or take needs a written cause in the direction. "Try again" is not a cause. "Change this" buys a fresh render at full price.
 

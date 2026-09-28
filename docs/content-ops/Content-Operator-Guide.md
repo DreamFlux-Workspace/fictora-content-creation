@@ -1,7 +1,7 @@
 # Fictora episode production — operator guide
 
-**Audience:** Mihir, Tejas, and anyone filming ep1 on prod with Cursor + this repo.  
-**Updated:** September 2026 · **Tooling:** `uv run fictora-produce` (not raw API calls).
+**Audience:** Mihir, Tejas, and anyone filming ep1 on prod with Cursor or Claude Code + this repo.  
+**Updated:** 28 September 2026 · **Tooling:** `uv run fictora-produce` (not raw API calls).
 
 **PDF:** [Content-Operator-Guide.pdf](Content-Operator-Guide.pdf) (regenerate: `bash scripts/render_operator_guide_pdf.sh`)
 
@@ -19,6 +19,13 @@ You produce **9:16 vertical ~15s takes** on Fictora’s hosted Drama API. You wo
 | **Desk folder** (`~/Downloads/documents/YYYY-MM-DD-series-slug/`) | You open **plates**, **boards**, and **takes** and approve before money moves. |
 
 You never need the private `fictora-drama` repo. Never paste the API token into chat.
+
+**Two rules above everything else:**
+
+1. **A human says yes before money moves.** Plates, script, board, the spend yes. One gate per yes. Silence is not approval.
+2. **Render once.** A second render of a plate, board or take needs a written cause naming what in the direction went wrong. "Try again" is not a cause.
+
+**Order:** Brief → Draft → Cast plates → Script yes → Board → Estimate → Take → Read → Finish.
 
 ---
 
@@ -42,9 +49,10 @@ Read `.cursor/skills/episode-production/SKILL.md` and follow it exactly.
 
 Goal: Produce episode 1 on prod Drama API — new series.
 
-Story (ep1):
+Story (ep1 only — no series arc yet):
 - Vertical 15s, modern-dark-fantasy preset, minimax-h3.
-- [Setting, beat, one speaking line, cast notes, no gore.]
+- [Setting, beat, up to three lines and who each is said to, cast with real ages, no gore.]
+- Hook: open mid-motion on a face, first line by ~0.5 s, the reveal by ~3 s.
 
 Desk:
 - `uv run fictora-produce start` with series "…" and your premise.
@@ -72,9 +80,21 @@ Start with `start`, print desk path and phase, wait for my "aligned" before the 
 | 3 | Script in chat or `ep01/api/03_spine.json` beats | **script ok** / **next** | `approve --gate script` then `step` (boards) |
 | 4 | `ep01/boards/` + exposure note in chat | **board ok** / **next** | `approve --gate board --path …` (add **`--accept-dim`** if board is dark night interior) |
 | 5 | Estimate in chat (~**$1.20** take) | **yes** | `step --confirm-spend` |
-| 6 | `ep01/takes/*captioned*.mp4` | use or **deviation** + cause | Re-board or re-film only with a named cause |
+| 6 | The raw take, then `ep01/takes/*captioned*.mp4` | **Use it**, or **Change this** + cause | `caption` on Use it; re-board or re-film only with a named cause |
 
 **Silence is not approval.** Each gate needs a fresh yes.
+
+---
+
+## What to check at each gate
+
+**Script.** Three lines at most per 15 s take. A silent comic beat (a pause, a stare) costs a line. Every line is said to someone. Any line the writers changed from your brief is shown to you beside the new one. Japanese or Korean lines sound like a native speaker in that situation; a dialect needs a native speaker's yes. Captions are English for now.
+
+**Board.** Frame 0 is mid-motion on a face. Every action follows a visible face reacting to its cause. Each row opens on the emotion the last row ended on. Each speaker is in frame, medium or closer, on the row where they speak; no off-screen speaker is drawn. No clenched or closed mouth while someone speaks. Expressions fit the moment and sit on the right face.
+
+**Social safe zones (TikTok, Reels, Shorts).** No face, eyes, mouth or key prop in the top 8%, the bottom 20%, or the right 12% of the lower two thirds. Faces do not have to be centred. Captions sit between 55% and 70% of the height. The Sokii mark goes top left.
+
+**Age.** Characters can be any age. Nobody under 18 is ever in a romance.
 
 ---
 
@@ -179,12 +199,17 @@ Scrub to the spoken line; captions build up to three words at a time, yellow, ju
 
 | Unit | ~USD |
 | --- | --- |
-| Cast plates (batch) | $0.30 |
+| Cast plate (each; full + bust per character) | $0.30 |
 | Storyboard | $0.30 |
-| 15s take | $1.20 |
-| **First ep envelope** | **~$4.50** |
+| 15s take (H3 Max R2V, $0.08/s) | $1.20 |
 
-Stop and escalate if spend goes past **2×** the envelope without a written reason.
+| Budget | USD |
+| --- | --- |
+| First episode of a new series | **$5.50** |
+| Continuing 15s | $2.50 |
+| Continuing 30s | $5.00 |
+
+Budgets warn, they never block. The agent says "$X of $Y" when an episode crosses its budget; past **2×** you decide whether to go on.
 
 A **second** take needs a **named cause** (brief/board issue), not “try again.”
 
@@ -208,6 +233,11 @@ Video stuck in post: `fictora-produce cancel-job` and stop. Do not `retry-video`
 ## Rules of the road
 
 - Open every gate file before you say ok.
+- A take is not done until the local finish ran. Never ship the raw MP4.
+- Hosted post is off. A `hosted_post_off` (or `503 restate_unavailable`) answer from post-production means finish locally; it is not an outage.
+- Compiled prompts stay on the server. The agent records job ids in `run-notes.md`; if a take needs its prompt looked at, send engineering the job id.
+- A voice that feels off is a voice change, not a new story or a new video. Never regenerate everything for it.
+- Episode 2 on: episode 1 approved first, then decide how many episodes the run is. For a long run pick an arc with a repeating engine plus a slow question. Each episode is steered by its own direction in your words.
 - One **paid** enrol per agent turn unless you explicitly ask to catch up.
 - Never commit `.env` or share the service token.
 - Never approve plates, script, and board in one message without looking.

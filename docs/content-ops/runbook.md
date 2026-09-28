@@ -20,7 +20,7 @@ The three productions behind every rule:
 
 Two rules sit above everything else:
 
-1. A human says yes before money moves. Plates, board, take, in that order. Each one shown. Each one approved. No batching of gates.
+1. A human says yes before money moves. Plates, script, board, the spend yes, in that order. Each one shown. Each one approved. No batching of gates. Silence is not consent; a yes from last time does not carry forward.
 2. Every paid unit is rendered once. A second render needs a written root cause naming what in the direction caused the fault. "Try again" is not a cause. In nine cases out of ten the fault was the brief, not the model.
 
 ## What an episode is
@@ -49,28 +49,31 @@ Sound and captions are built after the take comes back, never asked of the model
 - One music bed per series, not per episode. Generated beds run about 30 seconds. Loop them and assert the mix covers the probed cut, or the tail loses its music with no error.
 - Cues are made only when the take returns quiet. Exteriors come back near-silent (−38 LUFS). Interiors with dialogue come back usable.
 - Voice-over lines are generated dry and placed on measured beats in post. They are never written into the take as fixture lines.
-- Captions: when the caption is the same language as the audio, word-by-word flicker in the safe band. When the caption is a translation, the whole line goes up and holds for exactly as long as that line is spoken. Both are yellow `#FFE500`, Poppins Bold, black edge, soft shadow, no box. Text bottom sits at 70% of frame height; size is 50 px on a 1344 px frame (3.7% of height). Flicker builds up to three words, then resets. On screen only while the line is spoken. Times come from silence-end onsets, not Whisper word starts across a pause.
+- Captions are English only for now. Japanese and Korean captions are deferred.
+- Captions: when the caption is the same language as the audio, word-by-word flicker in the safe band. When the caption is a translation, the whole line goes up and holds for exactly as long as that line is spoken. Both are yellow `#FFE500`, Poppins Bold, black edge, soft shadow, no box. Text bottom sits at 70% of frame height, inside the social caption band (55–70%); size is 50 px on a 1344 px frame (3.7% of height). Flicker builds up to three words, then resets. On screen only while the line is spoken. Times come from silence-end onsets, not Whisper word starts across a pause.
 - H3 cell seams are a compiler product. Post detects them with a frame-difference trace and dissolves each seam in place. Do not keep a private `soften.py`.
 
 ## The nine stages
 
+This is the order `fictora-produce` runs them in.
+
 ```
-1 Brief → 2 Look → 3 Cast plates → 4 Script → 5 Board → 6 Estimate → 7 Take → 8 Read the take → 9 Post
-                                                                              ↓ fault with a named cause
-                                                                            5 Board
+1 Brief → 2 Draft → 3 Cast plates → 4 Script → 5 Board → 6 Estimate → 7 Take → 8 Read the take → 9 Finish
+                                                                        ↓ fault with a named cause
+                                                                      5 Board
 ```
 
-1. **Brief.** One line of premise, the cast, the set, the arc. If the story needs a fact the picture cannot show, that fact must be spoken in a line. Decide now.
-2. **Look.** Text-free crops of reference frames. An image sets the medium. Words do not.
+1. **Brief.** One line of premise, the cast, the set, the hook, the lines. If the story needs a fact the picture cannot show, that fact must be spoken in a line. Decide now. Episode 1 is made on its own: no series arc yet (see Series arc).
+2. **Draft.** The first `step` writes the story on the API. Compare its lines with the brief before the script gate. The desk's `draft_episode_count` (4) is the server's cadence for the estimate, not a season outline.
 3. **Cast plates.** One full-length figure plus a bust per character, plus object plates for any prop that must stay consistent, plus a location sheet for a set that recurs. Gate: show the plates, get a yes.
-4. **Script.** Beats and lines per take, three lines maximum. Gate: the lines, in the original language, with the translation.
-5. **Board.** The storyboard mosaic. Measure mean luma before showing it. Interiors below about 25% will render dim. Gate: the board image itself.
+4. **Script.** Beats and lines per take, three lines maximum. Gate: the lines, in the original language, with the translation, and every line the writers changed from the brief.
+5. **Board.** The storyboard mosaic. Measure mean luma and report it with the board; a dark board is the human's call, not a fault. Gate: the board image itself, checked against the board checks below.
 6. **Estimate.** Price the batch before enrolling it.
 7. **Take.** The only expensive call. Everything above exists to make this call succeed once.
 8. **Read the take.** Measure first: transcript, cut count, loudness, exposure. Then compare against the board. Write down every fault, including the ones you will not fix.
-9. **Post.** Voice on measured beats, cues only where silent, mix with music ducked under voice, captions, join, loudness check.
+9. **Finish.** Local, on the laptop: captions today (`fictora-produce caption`), then voice, cues and mix where the take needs them, the mark, the join. A take is not done until the finish ran. A raw take is never a deliverable.
 
-The gates at 3, 4, and 5 are not optional and are not batchable. A wrong face at the plate stage costs $0.30. The same face after the take costs $1.50 and a re-board.
+The gates at 3, 4, and 5 are not optional and are not batchable. A wrong face at the plate stage costs $0.30. The same face after the take costs a re-board and a re-take ($1.50 at today's prices: $0.30 board + $1.20 take).
 
 ## How the loop runs
 
@@ -86,23 +89,90 @@ Ask for the merged cut whenever an episode has a second take. Joining costs noth
 
 ## Spend
 
-Lane check: every take uses H3 Max Turbo I2V, `minimax/h3-max-turbo/image-to-video`. The start frame is the board mosaic. Cast plates and voice clips are not sent on this lane.
+Lane check: takes film on **H3 Max reference-to-video**, `minimax/h3-max/reference-to-video`, at 768p (the `minimax-h3` lane). The board and every cast plate go as reference images. H3 Max Turbo I2V applies only when engineering pins it for a take; never quote the Turbo price by default.
 
 | Unit | Cost | Notes |
 | --- | --- | --- |
 | Cast or object plate | $0.30 | Per image. A character needs two (full + bust). |
-| Storyboard | $0.30 | Per board. |
-| Take (15s, H3 Max) | $1.20 | The only large unit. |
-| Voice audition set | $0.30 | 8–10 candidates on the real lines. Once per character, ever. |
-| Voice lines for a take | ~$0.10 | Three lines. |
+| Storyboard | $0.30 | Per board, first draw or redraw. |
+| Take (15 s, H3 Max R2V, 768p) | $1.20 | $0.08/s. A 12 s take is $0.96. Plus $0.02048 per reference image past four (the board plus every cast plate, at most nine). The largest unit. |
+| Voice audition set | $0.30 | Candidates on the real lines. Once per character; a second set needs a written cause. |
+| Voice line | $0.10 per 1,000 characters | |
 | Music bed | ~$0.10 | Once per series. |
-| SFX cue set | $0.40–$0.70 | Only for takes that come back silent. |
+| SFX cue | $0.002 per rendered second | Only for takes that come back quiet. |
 
-Envelopes: continuing 15s $2.50. Continuing 30s $4.00. First episode of a new series $4.50. Past twice the envelope, stop and escalate.
+Budgets are **warnings, never a hard stop**: first 15 s episode of a new series **$5.50**; continuing 15 s **$2.50**; continuing 30 s **$5.00**. A first 15 s episode filmed once is about $2.80 (plates, a board, a take, cues), so the budget covers a redraw and a re-film. Say "$X of $Y" when an episode crosses its budget, not at the end. Past twice the budget, say so and the human decides whether to go on.
 
 "Change this" is billed. A retry must reuse the same idempotency key. Two jobs for one take means that key was missing. Report it.
 
 ## Craft rules that cost money when broken
+
+### Series arc and episode 2 on
+
+- Episode 1 is made on its own. Do not outline four or five episodes up front, and do not ask for an arc at the start.
+- The arc is chosen at episode 2, after episode 1 is approved. Ask the human for the intended run (how many episodes) first; the arcs are written to carry that many.
+- Check each arc can carry the run. For a long run prefer an engine (a situation that repeats with a new problem) plus a slow question. Refuse an arc that closes within a few episodes (a 25–30 episode run was once offered a one-week mystery).
+- Each later episode is steered by its **direction**: the human picks one of the offered directions or says their own, and it reaches the writer in their words. Confirm the idea is in the printed script. Series-wide memory is for standing rules ("keep every episode punchy"), never for one episode's idea.
+- Each episode's script is approved on its own. Never pre-stage scripts for later episodes.
+
+### The hook: the first three seconds
+
+- Frame 0 is mid-motion on a face: a hand already moving, a head already turning. It is the cover frame. Never an establishing wide, never a still.
+- The first line lands by about 0.5 s.
+- The premise's reveal (the thing the episode is about) is on screen or said by about 3 s.
+- Check it in the brief, the script and the board, before the board gate. A board that opens on a wide or a pause is redrawn with that as the shape note; a weak open is never fixed by re-filming.
+
+### Social safe zones
+
+Every episode goes to TikTok, Instagram Reels and YouTube Shorts with one layout. On a 9:16 frame the platforms cover:
+
+| Zone | Where | What covers it |
+| --- | --- | --- |
+| Top strip | top 8% of the height | tabs, search, camera |
+| Bottom band | bottom 20% of the height | post caption, username, music |
+| Right rail | right 12% of the width, lower two thirds of the height | like, comment, share |
+
+- Faces, eyes, mouths and key props never sit in a covered zone. Bodies, hands, floor and set may run through them. Composition is otherwise free: faces are not forced to the centre (it looked ugly).
+- Captions sit in the band 55–70% of the height.
+- The Sokii mark sits top left, just under the top strip: `23:121` on 768×1344 (x = 3% of the width, y = 9% of the height), 0.6 opacity. Never top right.
+- There is no face detector. Look at every cell of the board. A face or key prop in a zone is a redraw with the placement as the shape note.
+
+### Expression library
+
+The writers pick an anime expression (`reaction_kind`) for every emotional moment, on any cell. The creator does not pick it; the agent checks it at the board gate. The kinds and the marks each must show are in the skill's [reference.md](../../.claude/skills/episode-production/reference.md). What was learned paying for it:
+
+- Smiling rage keeps the eyes OPEN with tiny trembling pupils and the too-wide grin: the smile must stay. Drawn with blank white eyes it played as a scowl.
+- Gloom draws tatesen lines on a VISIBLE face. A hidden face or the back of a head loses it.
+- Pick by the moment, not the genre. Every kind may play in any genre. The symbolic kinds (veins, sweat drops, gloom lines, chibi squash, smiling rage) suit a light, awkward, petty or comic moment, even inside a serious show; real dread, grief, danger or tenderness gets the plainer kinds.
+- Whose face: on a cell with two or more people the writers name the face that wears the kind. A listener's expression on a speaking cell plays whole and silent on the listener. Check it on the board.
+
+### Board checks
+
+Check before the board gate:
+
+- The rows follow the declared shot plan.
+- **Visible cause.** Every action row is preceded by a visible face reacting to its cause, or shares the frame with it. "Jealousy → breaks the sign" did not read when the face was hidden and the insert showed only hands.
+- **Each row opens on the emotion the row before it ended on.** A calm smile right after the sign broke read wrong.
+- **The picture shows the rule.** A change the viewer must see as a jump goes in its own row. H3 blends the cells of one row into one move.
+- **Speakers.** The speaker is in the frame of the row their line plays on, at a medium shot or closer, or the line plays over someone else's face. No off-screen speaker is drawn: not as a sleeve, a hand, a cane or a shadow.
+- **Speaking mouths.** No clench, grit, pressed or closed mouth on a speaking row. Big physical acting goes before the line and after it; during the words the mouth moves.
+- The hook, the hand-off, the safe zones, no readable text or digits, brightness reported.
+
+### Characters and age
+
+- Characters may be any age. Write the real age ("10, primary-school kid", "sixteen") and the plate draws that age.
+- The one hard line: never romantic, sexual, suggestive or fan-service framing of any character under 18, and never a romance arc for them (no love interest, crush, dating, or someone else's romance aimed at them). The server rejects a breach as `minor_in_romance_arc`. PG staging (no kissing, embracing or face contact) applies to everyone. Asked for a minor in a romance, say no and offer the character at 18+ or the relationship as non-romantic.
+
+### Off-screen voices
+
+- Declare an off-screen voice in the brief's cast table as voice only. It is never drawn. The plate stage still draws a plate for it today: say so before the spend.
+- An off-screen voice that plays over another character's face is heard as that face speaking. Give it a source in frame (a wall grille, a phone in a hand) or a source treatment in post (band-limited intercom).
+
+### Language
+
+- A Japanese or Korean line must sound like a native speaker in that situation. The situation picks the set phrase (staff to customer: 申し訳ございません / 정말 죄송합니다, not ごめんなさい). No English quip carried word for word. No notice-board noun stack in speech (「逆襲中止！」 "counterattack cancelled!") unless the character really is announcing.
+- A dialect (Kansai-ben, Busan satoori) needs a native speaker's yes before the script gate. With no one to check it, write the standard language.
+- Pin the exact performed line so localization never rewrites it. Compare every draft line with the brief and show the human any line that changed.
 
 ### Look and medium
 
@@ -138,7 +208,8 @@ Envelopes: continuing 15s $2.50. Continuing 30s $4.00. First episode of a new se
 
 ### Dialogue
 
-- Three lines maximum per fifteen seconds.
+- Three lines maximum per fifteen seconds. A 15 s take is three beats, so a silent comic beat (a pause, a stare, a freeze) costs a line. Say so at the brief.
+- Ask who each line is said TO. A line said to nobody is exposition; give it a listener in the room or an off-screen voice.
 - A line needs its own cell with no competing business.
 - Never write a character speaking with a full mouth.
 - Direct volume as clear and audible. "Barely audible" renders at −50 dB.
@@ -153,6 +224,20 @@ Envelopes: continuing 15s $2.50. Continuing 30s $4.00. First episode of a new se
 - Music and effects are compressed under the voice, not simply turned down.
 - Check that a generated sound effect actually contains a sound.
 - A generated music bed is about 30 seconds. Loop it for anything longer.
+
+### Hosted post is off
+
+Hosted post-production is switched off on the service. Never call `POST /v1/video-generations/{id}/post-production-runs` and never pass `--api-captions`. An answer of `409 hosted_post_off`, or the older `503 restate_unavailable` from a post-production call, means finish the take locally. It does not mean the service is down; do not retry it and do not report an outage.
+
+### Change a character's voice (never regenerate the story)
+
+A voice that "feels off" is a voice change, not a new story and not a new video. The voice is a lock on the cast card. Audition candidates on the character's real lines, the human picks, re-voice the filmed takes where that character speaks, then finish again. Takes not filmed yet use the new voice as they are. Only when the dub does not sit (lips visibly wrong, a shouted line), re-film the takes where that character speaks, with a cause and a stated cost. Never the other takes, never the story.
+
+### Prompt policy
+
+- The compiled video prompt and the compiled image prompt behind every plate and board are proprietary and stay on the server. The shot description on the spine is yours to read.
+- Never fetch, save, print or quote `GET /v1/jobs/{id}/provider-spec`. Operator tokens get `403 provider_spec_internal_only`.
+- Record every job id (draft, cast, board, video) in `run-notes.md`. A take whose prompt must be looked at goes to engineering as its job id. Learnings name job ids, never prompt text.
 
 ### Choosing sound
 
@@ -201,7 +286,7 @@ Do not warn for: `clip_duration_seconds` in 4–15; `cut_tempo=one_shot`; `capti
 Money warnings:
 
 - "This re-render will cost $1.20 and here is the cause I've identified." No cause, no re-render.
-- "This episode is now at $X of a $Y envelope." Said when it crosses, not at the end.
+- "This episode is now at $X of a $Y budget." Said when it crosses, not at the end.
 - "I could not verify this; here is what I could not check."
 
 ## Folder layout
@@ -228,6 +313,7 @@ Naming: `board-ep01-t2-v3.png` is episode 1, take 2, version 3.
 
 An episode is finished when:
 
+- The local finish ran on every accepted take. A raw take is never a deliverable.
 - Every spoken line is heard, exactly as approved.
 - The film reads as one continuous move per take. Forced cuts are softened.
 - Each take opens on the frame the previous one ended on.
@@ -236,7 +322,7 @@ An episode is finished when:
 - Captions follow the transcript-vs-translation recipe. House style. On screen only while the line is spoken.
 - The last frame is saved as the hand-off for the next episode.
 - `run-notes.md` carries the ledger, the faults accepted, and the causes of anything re-filmed.
-- Spend is inside the envelope, or the overage is explained in one line.
+- Spend is inside the budget, or the overage is explained in one line.
 
 A series is finished when there is also a joined cut of every episode, one music bed, a write-up that names what the product could not do, and the learnings folded back.
 
