@@ -10,7 +10,11 @@ from typing import Any
 from urllib.parse import urljoin
 
 import httpx
-from creation.harness.http_util import api_headers, poll_until_terminal, save_json
+from creation.harness.http_util import api_error_text, api_headers, poll_until_terminal, save_json
+
+#: The compiled provider prompt is core-team only on the server (403 for operator
+#: tokens). This kit never asks for it; the take's facts come from ``take-facts``.
+PROVIDER_SPEC_SEGMENT = "/provider-spec"
 
 
 class DramaApiRunSession:
@@ -59,7 +63,19 @@ class DramaApiRunSession:
         self.client = httpx.Client(timeout=client_timeout)
 
     def url(self, path: str) -> str:
-        """Join a drama API path against the configured base URL."""
+        """Join a drama API path against the configured base URL.
+
+        Raises
+        ------
+        PermissionError
+            For any ``/provider-spec`` path: the compiled prompt stays on the
+            server. Read ``GET /v1/jobs/{id}/take-facts`` instead.
+        """
+        if PROVIDER_SPEC_SEGMENT in path.split("?", 1)[0]:
+            raise PermissionError(
+                "provider-spec is core-team only and this kit never fetches it; "
+                "use GET /v1/jobs/{take_job_id}/take-facts and hand the core team the take job id"
+            )
         return urljoin(self.base_url + "/", path.lstrip("/"))
 
     def headers(self, idempotency_key: str | None = None, *, read: bool = False) -> dict[str, str]:
@@ -86,14 +102,36 @@ class DramaApiRunSession:
         if response.is_success:
             return response.json()
         try:
-            detail = response.json()
-        except Exception:
+            detail: Any = response.json()
+        except ValueError:
             detail = response.text
-        raise SystemExit(f"HTTP {response.status_code} {response.request.method} {response.request.url}: {detail}")
+        raise SystemExit(
+            f"HTTP {response.status_code} {response.request.method} {response.request.url}: {api_error_text(detail)}"
+        )
 
     def get(self, path: str) -> dict[str, Any]:
         """GET a drama API path and return JSON."""
         return self._ok(self.client.get(self.url(path), headers=self.headers(read=True)))
+
+    def get_optional(self, path: str) -> tuple[int, Any]:
+        """GET a drama API path without raising on an error status.
+
+        Parameters
+        ----------
+        path
+            Drama API path.
+
+        Returns
+        -------
+        tuple[int, Any]
+            HTTP status and the parsed JSON body (text when it is not JSON).
+        """
+        response = self.client.get(self.url(path), headers=self.headers(read=True))
+        try:
+            body: Any = response.json()
+        except ValueError:
+            body = response.text
+        return response.status_code, body
 
     def post(self, path: str, body: dict[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
         """POST JSON to a drama API path.
@@ -134,6 +172,42 @@ class DramaApiRunSession:
         """
 
         return self._ok(self.client.put(self.url(path), headers=self.headers(), json=body))
+
+    def patch(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        """PATCH JSON to a drama API path.
+
+        Parameters
+        ----------
+        path
+            Drama API path.
+        body
+            JSON object.
+
+        Returns
+        -------
+        dict[str, Any]
+            Parsed JSON body.
+        """
+
+        return self._ok(self.client.patch(self.url(path), headers=self.headers(), json=body))
+
+    def delete(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        """DELETE a drama API path with a JSON body.
+
+        Parameters
+        ----------
+        path
+            Drama API path.
+        body
+            JSON object (the spine version, for look notes).
+
+        Returns
+        -------
+        dict[str, Any]
+            Parsed JSON body.
+        """
+
+        return self._ok(self.client.request("DELETE", self.url(path), headers=self.headers(), json=body))
 
     def poll_job(
         self,

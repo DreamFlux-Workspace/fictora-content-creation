@@ -12,6 +12,7 @@ from typing import Sequence
 
 from creation.captions import caption_take, find_ffmpeg
 from creation.cli_config import add_production_config_args, config_from_args
+from creation.episode_commands import EPISODE_COMMANDS, add_episode_parsers, dispatch_episode
 from creation.orchestrate import approve_gate, bind_desk, run_step, status_message
 from creation.production_config import load_production_config, save_production_config
 from creation.recover import cancel_video_job, prepare_video_retry
@@ -66,11 +67,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="After estimate gate, confirm spend and film the take.",
     )
 
-    ap = sub.add_parser("approve", help="Human yes on plates, script, or board.")
+    ap = sub.add_parser("approve", help="Human yes on plates, script, or board (the desk's current episode).")
     ap.add_argument("--desk", type=Path, required=True)
     ap.add_argument("--gate", required=True, choices=("plates", "script", "board"))
-    ap.add_argument("--path", type=Path, default=None)
-    ap.add_argument("--accept-dim", action="store_true")
+    ap.add_argument("--path", type=Path, default=None, help="Board file reviewed (default: the boards step made).")
+    ap.add_argument(
+        "--accept-dim",
+        action="store_true",
+        help="Ignored by the API: board brightness is information only, never a block.",
+    )
 
     cancel = sub.add_parser("cancel-job", help="Cancel a stuck video or coordinator job.")
     cancel.add_argument("--desk", type=Path, required=True)
@@ -104,7 +109,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     cap.add_argument("--no-open", action="store_true", help="Do not open the captioned file.")
 
+    add_episode_parsers(sub)
+
     args = parser.parse_args(list(argv) if argv is not None else None)
+    if args.command in EPISODE_COMMANDS:
+        try:
+            return dispatch_episode(args)
+        except (RuntimeError, ValueError, FileNotFoundError, PermissionError) as exc:
+            print(exc, file=sys.stderr)
+            return 2
 
     try:
         if args.command == "start":
@@ -194,7 +207,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"phase=ready_video suffix={suffix}")
             print("Next: uv run fictora-produce step --desk … --confirm-spend")
             return 0
-    except (RuntimeError, ValueError, FileNotFoundError, FileExistsError, subprocess.CalledProcessError) as exc:
+    except (
+        RuntimeError,
+        ValueError,
+        FileNotFoundError,
+        FileExistsError,
+        PermissionError,
+        subprocess.CalledProcessError,
+    ) as exc:
         print(exc, file=sys.stderr)
         return 2
     except SystemExit as exc:

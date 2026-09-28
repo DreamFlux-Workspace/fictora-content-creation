@@ -91,7 +91,6 @@ def main() -> int:
                 preset_version=preset_version,
                 band="15s",
                 video_lane="minimax-h3",
-                episode_count=4,
             )
             print(f"ok spine_id={spine_id} plan_status={plan.get('status')}")
             spine = run.spine(spine_id)

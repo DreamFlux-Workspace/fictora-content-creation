@@ -11,6 +11,7 @@ from typing import Sequence
 
 from creation.ops.floor import (
     add_episode,
+    confirm_preflight,
     approve_board,
     approve_post,
     approve_script,
@@ -32,7 +33,10 @@ from creation.ops.luma import measure_board_luma
 from creation.ops.notes import append_run_note
 from creation.ops.state import parse_spoken_lines
 
-PREFLIGHT_FAIL = 3
+PREFLIGHT_GATE_OPEN = 3
+"""A human gate is still open: nothing overrides it."""
+PREFLIGHT_WARNINGS = 4
+"""Warnings are open and not confirmed with ``--proceed-anyway UNIT``."""
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -121,11 +125,20 @@ def _add_floor_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser])
     ho.add_argument("--take", required=True)
     ho.add_argument("--path", type=Path, required=True)
 
-    pf = sub.add_parser("preflight", help="Block take enrol unless runbook checks pass.")
+    pf = sub.add_parser(
+        "preflight",
+        help="Before a take: human gates block (exit 3); quality checks warn (exit 4) until confirmed.",
+    )
     pf.add_argument("--desk", type=Path, required=True)
     pf.add_argument("--episode", type=int, required=True)
     pf.add_argument("--take", required=True)
     pf.add_argument("--json", action="store_true")
+    pf.add_argument(
+        "--proceed-anyway",
+        default=None,
+        metavar="UNIT",
+        help="Only on the human's words: film past the warnings for this unit (ep01-t1). Logged; next film only.",
+    )
 
     filmed = sub.add_parser("filmed", help="Mark that one take film came back.")
     filmed.add_argument("--desk", type=Path, required=True)
@@ -224,23 +237,39 @@ def _dispatch(args: argparse.Namespace) -> int:
         print(take.handoff_path)
         return 0
     if args.command == "preflight":
-        report = preflight_take(args.desk, episode=args.episode, take_id=args.take)
+        if args.proceed_anyway:
+            report = confirm_preflight(
+                args.desk, episode=args.episode, take_id=args.take, confirm_unit=args.proceed_anyway
+            )
+        else:
+            report = preflight_take(args.desk, episode=args.episode, take_id=args.take)
         if args.json:
             print(
                 json.dumps(
                     {
+                        "status": report.status(),
                         "passed": report.passed,
+                        "blocked": report.blocked,
+                        "cleared": report.cleared,
                         "line": report.one_line(),
-                        "checks": [{"code": c.code, "ok": c.ok, "detail": c.detail} for c in report.checks],
+                        "checks": [
+                            {"code": c.code, "ok": c.ok, "blocking": c.blocking, "detail": c.detail}
+                            for c in report.checks
+                        ],
                     }
                 )
             )
         else:
             print(report.one_line())
             for check in report.checks:
-                mark = "ok" if check.ok else "FAIL"
+                mark = "ok  " if check.ok else ("GATE" if check.blocking else "WARN")
                 print(f"  {mark}  {check.code}: {check.detail}")
-        return 0 if report.passed else PREFLIGHT_FAIL
+            banner = report.loud_warning()
+            if banner:
+                print(banner, file=sys.stderr)
+        if report.blocked:
+            return PREFLIGHT_GATE_OPEN
+        return 0 if report.cleared else PREFLIGHT_WARNINGS
     if args.command == "filmed":
         take = record_filmed(args.desk, episode=args.episode, take_id=args.take)
         print(f"{args.take} filmed_count={take.filmed_count}")

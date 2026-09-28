@@ -1,0 +1,565 @@
+"""Read a story spine the way the desk needs it: episodes by ordinal, lines per take, the board's shot list.
+
+Pure functions over ``GET /v1/spines/{id}`` JSON; nothing here calls the API.
+
+Episodes are found by ordinal in ``spine.episode_summaries``: episode 1 came
+back ``episode_01`` and episode 2 ``ep_02`` in the same story, so no id is built
+from the ordinal while the spine can say it.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from dataclasses import dataclass
+from typing import Any, Mapping, Sequence
+
+from creation.ops.state import SpokenLine
+
+_SET_SUFFIX = re.compile(r"_set(\d+)$")
+
+
+def episode_api_id(ordinal: int) -> str:
+    """Return ``episode_NN``: the fallback id when a spine lists no summary for the ordinal."""
+
+    return f"episode_{ordinal:02d}"
+
+
+def _summary_ordinal(summary: Mapping[str, Any]) -> int | None:
+    for key in ("ordinal", "episode_ordinal"):
+        value = summary.get(key)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+    return None
+
+
+def episode_id_for(spine: Mapping[str, Any], ordinal: int) -> str:
+    """Return an episode's API id, looked up by ordinal in ``spine.episode_summaries``.
+
+    Parameters
+    ----------
+    spine
+        ``GET /v1/spines/{id}`` JSON.
+    ordinal
+        Episode ordinal (1-based).
+
+    Returns
+    -------
+    str
+        The summary's ``episode_id``; ``episode_NN`` when the spine lists none for it.
+    """
+
+    for summary in spine.get("episode_summaries") or []:
+        if isinstance(summary, Mapping) and summary.get("episode_id") and _summary_ordinal(summary) == ordinal:
+            return str(summary["episode_id"])
+    return episode_api_id(ordinal)
+
+
+def episode_summary(spine: Mapping[str, Any], ordinal: int) -> Mapping[str, Any]:
+    """Return an episode's summary entry (empty when the spine has none).
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    ordinal
+        Episode ordinal.
+
+    Returns
+    -------
+    Mapping[str, Any]
+        ``episode_id``, ``title``, ``summary``, ``authoring_state`` ...
+    """
+
+    wanted = episode_id_for(spine, ordinal)
+    for summary in spine.get("episode_summaries") or []:
+        if isinstance(summary, Mapping) and summary.get("episode_id") == wanted:
+            return summary
+    return {}
+
+
+def storyboard_set_for_beat(beat_ordinal: int, pattern: Sequence[int]) -> int:
+    """Map a beat ordinal to its storyboard set (take) through the spine's ``beats_per_storyboard_set``.
+
+    Parameters
+    ----------
+    beat_ordinal
+        1-based beat ordinal within the episode.
+    pattern
+        Beats per set, in order.
+
+    Returns
+    -------
+    int
+        1-based set index.
+
+    Raises
+    ------
+    ValueError
+        When the ordinal falls outside the pattern.
+    """
+
+    cursor = 1
+    for set_index, count in enumerate(pattern, start=1):
+        if beat_ordinal < cursor + count:
+            if beat_ordinal < 1:
+                break
+            return set_index
+        cursor += count
+    raise ValueError(f"beat {beat_ordinal} is outside the storyboard pattern {tuple(pattern)}")
+
+
+def beats_by_take(spine: Mapping[str, Any], *, episode: int, take_count: int) -> list[list[dict[str, Any]]]:
+    """Group an episode's beats into its takes (storyboard sets), in order.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+    take_count
+        Takes on the desk for this episode (the band's count).
+
+    Returns
+    -------
+    list[list[dict[str, Any]]]
+        ``take_count`` lists of beats; a beat past the last set goes to the last take.
+    """
+
+    wanted = episode_id_for(spine, episode)
+    beats = [b for b in spine.get("beats") or [] if isinstance(b, dict) and b.get("episode_id") == wanted]
+    beats.sort(key=lambda beat: int(beat.get("ordinal") or 0))
+    pattern = tuple(int(n) for n in spine.get("beats_per_storyboard_set") or ())
+    grouped: list[list[dict[str, Any]]] = [[] for _ in range(max(1, take_count))]
+    for position, beat in enumerate(beats, start=1):
+        ordinal = int(beat.get("ordinal") or position)
+        if pattern:
+            try:
+                index = storyboard_set_for_beat(ordinal, pattern)
+            except ValueError:
+                index = len(grouped)
+        else:
+            index = (position - 1) * len(grouped) // max(1, len(beats)) + 1
+        grouped[min(index, len(grouped)) - 1].append(beat)
+    return grouped
+
+
+def spoken_lines(spine: Mapping[str, Any], beat: Mapping[str, Any]) -> list[SpokenLine]:
+    """Return a beat's lines as the take speaks them.
+
+    ``spoken_text`` (the performed line on a Japanese or Korean show) wins over
+    ``text``; the subtitle is the translation when the two differ.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON (for cast names).
+    beat
+        One beat.
+
+    Returns
+    -------
+    list[SpokenLine]
+        The beat's lines, speaker by name.
+    """
+
+    names = {c.get("cast_id"): c.get("name") for c in spine.get("cast") or [] if isinstance(c, dict)}
+    lines: list[SpokenLine] = []
+    for raw in beat.get("dialogue_lines") or []:
+        if not isinstance(raw, dict):
+            continue
+        spoken = str(raw.get("spoken_text") or raw.get("text") or "").strip()
+        if not spoken:
+            continue
+        speaker = str(names.get(raw.get("cast_id")) or raw.get("speaker") or raw.get("cast_id") or "?")
+        gloss = str(raw.get("subtitle_text") or raw.get("spoken_back_gloss") or "").strip()
+        lines.append(SpokenLine(speaker=speaker, original=spoken, translation=gloss if gloss != spoken else ""))
+    return lines
+
+
+def dialogue_line_ids(spine: Mapping[str, Any], *, episode: int, take_index: int, take_count: int) -> list[tuple[str, str]]:
+    """Return ``(line_id, performed text)`` for one take's approved lines, in order.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+    take_index
+        1-based take index.
+    take_count
+        Takes on the episode.
+
+    Returns
+    -------
+    list[tuple[str, str]]
+        Line ids with their text (text is shown to the operator only, never sent anywhere).
+    """
+
+    grouped = beats_by_take(spine, episode=episode, take_count=take_count)
+    if not 1 <= take_index <= len(grouped):
+        return []
+    found: list[tuple[str, str]] = []
+    for beat in grouped[take_index - 1]:
+        for raw in beat.get("dialogue_lines") or []:
+            if isinstance(raw, dict) and raw.get("line_id"):
+                text = str(raw.get("spoken_text") or raw.get("text") or "").strip()
+                if text:
+                    found.append((str(raw["line_id"]), text))
+    return found
+
+
+def script_lines(spine: Mapping[str, Any], *, episode: int, take_ids: Sequence[str]) -> list[str]:
+    """The script gate: per take, each beat's shot (``motion_intent``) and its lines.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+    take_ids
+        The episode's take ids.
+
+    Returns
+    -------
+    list[str]
+        Printable lines.
+    """
+
+    out: list[str] = []
+    grouped = beats_by_take(spine, episode=episode, take_count=len(take_ids))
+    for take_id, beats in zip(take_ids, grouped, strict=True):
+        out.append(f"ep{episode:02d} {take_id}")
+        for beat in beats:
+            out.append(f"  shot {beat.get('ordinal')}: {beat.get('motion_intent') or '(no shot written)'}")
+            for line in spoken_lines(spine, beat):
+                gloss = f"  ({line.translation})" if line.translation else ""
+                out.append(f"    {line.speaker}: {line.original}{gloss}")
+        count = sum(len(spoken_lines(spine, beat)) for beat in beats)
+        if count > 3:
+            out.append(f"  !! {take_id} has {count} lines; a 15 s take holds three. Say which to cut")
+    return out
+
+
+# --- Boards ------------------------------------------------------------------------------------
+
+
+def board_assets(spine: Mapping[str, Any], *, episode: int) -> list[tuple[int, str]]:
+    """Return ``(set_index, url)`` for an episode's current boards.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+
+    Returns
+    -------
+    list[tuple[int, str]]
+        ``media_assets`` with ``relation_type == "episode"`` for this episode, by
+        ``_setNN`` on the asset id; stale ones left out.
+    """
+
+    wanted = episode_id_for(spine, episode)
+    boards: list[tuple[int, str]] = []
+    for asset in spine.get("media_assets") or []:
+        if not isinstance(asset, Mapping):
+            continue
+        if asset.get("relation_type") != "episode" or asset.get("relation_id") != wanted:
+            continue
+        if asset.get("stale") or not asset.get("url"):
+            continue
+        match = _SET_SUFFIX.search(str(asset.get("asset_id") or ""))
+        boards.append((int(match.group(1)) if match else len(boards) + 1, str(asset["url"])))
+    return sorted(boards)
+
+
+def frames_by_set(spine: Mapping[str, Any], *, episode: int) -> dict[int, list[dict[str, Any]]]:
+    """Group an episode's storyboard frames by board (set), in frame order.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+
+    Returns
+    -------
+    dict[int, list[dict[str, Any]]]
+        Frames by set (``_setNN`` on ``storyboard_group_id``; set 1 when absent).
+    """
+
+    wanted = episode_id_for(spine, episode)
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    for frame in spine.get("frames") or []:
+        if not isinstance(frame, dict) or frame.get("episode_id") != wanted:
+            continue
+        match = _SET_SUFFIX.search(str(frame.get("storyboard_group_id") or ""))
+        grouped.setdefault(int(match.group(1)) if match else 1, []).append(frame)
+    for frames in grouped.values():
+        frames.sort(key=lambda frame: int(frame.get("ordinal") or 0))
+    return grouped
+
+
+def frames_digest(frames: Sequence[Mapping[str, Any]]) -> str:
+    """Digest of what a board draws: each frame's id and ``visual_brief``.
+
+    Parameters
+    ----------
+    frames
+        One set's frames.
+
+    Returns
+    -------
+    str
+        Short sha256 hex digest.
+    """
+
+    payload = [(frame.get("frame_id"), frame.get("visual_brief")) for frame in frames]
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+
+
+@dataclass(frozen=True)
+class ShotRow:
+    """One board row as the frames author wrote it (``frames[].visual_brief``)."""
+
+    row: int
+    shot_scale: str
+    camera_angle: str
+    viewpoint: str
+    camera_move: str
+    cell_roles: tuple[str, ...]
+    reaction_kinds: tuple[str, ...]
+
+    def one_line(self) -> str:
+        """Return ``row N: size · angle · viewpoint · camera move · cells · reaction``."""
+
+        reaction = ", ".join(self.reaction_kinds) or "none"
+        return (
+            f"row {self.row}: {self.shot_scale} · {self.camera_angle} · {self.viewpoint} · "
+            f"camera {self.camera_move} · cells {', '.join(self.cell_roles) or '?'} · reaction {reaction}"
+        )
+
+
+def _row_number(frame: Mapping[str, Any]) -> int:
+    raw = frame.get("board_row")
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str) and raw.isdigit():
+        return int(raw)
+    return int(frame.get("ordinal") or 0)
+
+
+def _first(briefs: Sequence[Mapping[str, Any]], key: str) -> str:
+    return next((str(brief[key]) for brief in briefs if brief.get(key)), "?")
+
+
+def shot_rows(frames: Sequence[Mapping[str, Any]]) -> list[ShotRow]:
+    """Collapse one board's frames into its rows, top to bottom.
+
+    Parameters
+    ----------
+    frames
+        One set's frames.
+
+    Returns
+    -------
+    list[ShotRow]
+        One entry per ``board_row``.
+    """
+
+    rows: dict[int, list[Mapping[str, Any]]] = {}
+    for frame in frames:
+        rows.setdefault(_row_number(frame), []).append(frame)
+    out: list[ShotRow] = []
+    for row, cells in sorted(rows.items()):
+        briefs = [cell["visual_brief"] if isinstance(cell.get("visual_brief"), Mapping) else {} for cell in cells]
+        moves = [
+            str(brief["row_direction"]["camera_move"])
+            for brief in briefs
+            if isinstance(brief.get("row_direction"), Mapping) and brief["row_direction"].get("camera_move")
+        ]
+        out.append(
+            ShotRow(
+                row=row,
+                shot_scale=_first(briefs, "shot_scale"),
+                camera_angle=_first(briefs, "camera_angle"),
+                viewpoint=_first(briefs, "viewpoint"),
+                camera_move=moves[0] if moves else "?",
+                cell_roles=tuple(str(brief.get("cell_role") or "?") for brief in briefs),
+                reaction_kinds=tuple(str(brief["reaction_kind"]) for brief in briefs if brief.get("reaction_kind")),
+            )
+        )
+    return out
+
+
+#: A placement phrase that puts a face or prop in a platform-covered zone, checked clause by clause.
+_COVERED_PLACEMENT: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("bottom band", re.compile(r"\b(bottom|lower edge|foot of the frame|lower[- ]left corner|lower fifth)\b", re.I)),
+    ("top strip", re.compile(r"\b(top edge|upper edge|very top|top of (the )?frame|top[- ](left|right) corner)\b", re.I)),
+    ("right rail", re.compile(r"\b(right edge|far right|lower[- ]right|right margin)\b", re.I)),
+)
+#: The same, anchored on the frame, for text that is not purely a position (props, the zone note).
+_COVERED_FRAME_PLACEMENT: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("bottom band", re.compile(r"\b(bottom (edge|of (the )?frame)|frame bottom|lower edge|lower[- ]left corner)\b", re.I)),
+    ("top strip", re.compile(r"\b(top edge|very top|top of (the )?frame|top[- ](left|right) corner)\b", re.I)),
+    ("right rail", re.compile(r"\b(right edge|far right|lower[- ]right corner)\b", re.I)),
+)
+#: A clause that keeps something OUT of a zone ("bottom fifth clear of faces") is not a placement.
+_CLEARS_ZONE = re.compile(r"\b(clear|away from|above|out of|avoid|avoids|keep|keeps|never|not|no)\b", re.I)
+_ZONE_WHAT = {
+    "bottom band": "the bottom 20% (post caption, username, music)",
+    "top strip": "the top 8% (tabs, search, camera)",
+    "right rail": "the right 12% of the lower two thirds (like, comment, share)",
+}
+SAFE_ZONE_BOARD_CHECK = (
+    "safe zones: TikTok, Reels and Shorts cover the top 8%, the bottom 20% and the right 12% of the lower two "
+    "thirds of every cell. This reads the placement text only (no face detector): look at the board and "
+    "check no face, eyes, mouth or key prop sits there."
+)
+
+
+def covered_placement(text: str, *, frame_anchored: bool = False) -> str | None:
+    """Return the covered zone a placement phrase puts something in, or ``None``.
+
+    Parameters
+    ----------
+    text
+        A ``frame_position``, a story object or a ``ui_safe_zone`` note.
+    frame_anchored
+        Only match phrases that name the frame (for text that is not purely a position).
+
+    Returns
+    -------
+    str | None
+        ``bottom band``, ``top strip`` or ``right rail``; ``None`` when nothing is placed in one.
+    """
+
+    patterns = _COVERED_FRAME_PLACEMENT if frame_anchored else _COVERED_PLACEMENT
+    for clause in re.split(r"[;,.]", text):
+        if _CLEARS_ZONE.search(clause):
+            continue
+        for zone, pattern in patterns:
+            if pattern.search(clause):
+                return zone
+    return None
+
+
+def safe_zone_lines(frames: Sequence[Mapping[str, Any]], *, cast_names: Mapping[str, str] | None = None) -> list[str]:
+    """Warn (never block) on faces and props whose written placement falls in a covered zone.
+
+    Parameters
+    ----------
+    frames
+        One set's frames, in board order.
+    cast_names
+        ``cast_id`` to display name.
+
+    Returns
+    -------
+    list[str]
+        One ``!!`` line per placement in a covered zone, then the human check line.
+    """
+
+    names = cast_names or {}
+    lines: list[str] = []
+    cell_in_row: dict[int, int] = {}
+    for frame in frames:
+        row = _row_number(frame)
+        cell_in_row[row] = cell_in_row.get(row, 0) + 1
+        cell = f"row {row} cell {cell_in_row[row]}"
+        raw = frame.get("visual_brief")
+        brief: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
+        found: list[tuple[str, str, str]] = []
+        for blocking in brief.get("subject_blocking") or []:
+            if not isinstance(blocking, Mapping):
+                continue
+            position = str(blocking.get("frame_position") or "")
+            zone = covered_placement(position)
+            if zone:
+                who = names.get(str(blocking.get("cast_id")), str(blocking.get("cast_id") or "a cast member"))
+                found.append((f"{who}'s face", position, zone))
+        for item in brief.get("story_objects") or []:
+            zone = covered_placement(str(item), frame_anchored=True)
+            if zone:
+                found.append(("the prop", str(item), zone))
+        note = str(brief.get("ui_safe_zone") or "")
+        zone = covered_placement(note, frame_anchored=True)
+        if zone:
+            found.append(("the safe-zone note", note, zone))
+        lines += [
+            f'  !! {cell}: {what} is placed "{text}", in {_ZONE_WHAT[zone]}; the platform covers it. '
+            "Edit the frame (edit --frame ...) and redraw (warning only)"
+            for what, text, zone in found
+        ]
+    lines.append(f"  {SAFE_ZONE_BOARD_CHECK}")
+    return lines
+
+
+def shot_list_lines(spine: Mapping[str, Any], *, episode: int, sets: Sequence[int] | None = None) -> list[str]:
+    """The board gate's shot list: one line per row, rows that repeat size and angle, safe zones.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+    sets
+        Only these boards (default every board on the episode).
+
+    Returns
+    -------
+    list[str]
+        Printable lines; empty when the spine has no frames for the episode.
+    """
+
+    lines: list[str] = []
+    cast_names = {
+        str(card.get("cast_id")): str(card.get("name") or card.get("cast_id"))
+        for card in spine.get("cast") or []
+        if isinstance(card, Mapping) and card.get("cast_id")
+    }
+    for set_index, frames in sorted(frames_by_set(spine, episode=episode).items()):
+        if sets is not None and set_index not in sets:
+            continue
+        rows = shot_rows(frames)
+        lines.append(f"ep{episode:02d} t{set_index} board, row by row:")
+        lines += [f"  {row.one_line()}" for row in rows]
+        for above, below in zip(rows, rows[1:], strict=False):
+            if (above.shot_scale, above.camera_angle) == (below.shot_scale, below.camera_angle):
+                lines.append(
+                    f"  !! rows {above.row} and {below.row} share size and angle "
+                    f"({above.shot_scale}, {above.camera_angle}): the cut will not read as a new shot"
+                )
+        lines += safe_zone_lines(frames, cast_names=cast_names)
+    return lines
+
+
+__all__ = [
+    "SAFE_ZONE_BOARD_CHECK",
+    "ShotRow",
+    "beats_by_take",
+    "board_assets",
+    "covered_placement",
+    "dialogue_line_ids",
+    "episode_api_id",
+    "episode_id_for",
+    "episode_summary",
+    "frames_by_set",
+    "frames_digest",
+    "safe_zone_lines",
+    "script_lines",
+    "shot_list_lines",
+    "shot_rows",
+    "spoken_lines",
+    "storyboard_set_for_beat",
+]

@@ -52,13 +52,14 @@ Read when you need the detail, not all on the first turn:
 | Draft | `fictora-produce step --desk D` | Compare brief lines with the spine |
 | Plates | `fictora-produce step --desk D` | `approve --desk D --gate plates` after a yes |
 | Script | (lines from the draft) | `approve --desk D --gate script` after a yes |
-| Board | `fictora-produce step --desk D` | `approve --desk D --gate board --path <boards/…png> [--accept-dim]` |
+| Board | `fictora-produce step --desk D` (prints the shot list and safe-zone warnings) | `approve --desk D --gate board`; or `redraw-board --desk D --episode N --take tK --cause "…"` |
 | Estimate | `fictora-produce step --desk D` | The human says yes to the number |
 | Take | `fictora-produce step --desk D --confirm-spend` | — |
 | Read | watch `takes/`, write every fault | Use it, or Change this + cause |
 | Finish | `fictora-produce caption --desk D [--line-start S …]` | QC the captioned file |
+| Next episode | `arc --desk D --list` / `--pick K` (episode 2), `brief --desk D --episode N` (3 on), `author --desk D --episode N --direction K` or `--line "…"` | Script yes, then the same Board → Finish loop |
 
-`fictora-produce status --desk D` any time. After each stage: report the path, append `run-notes.md` (`fictora-ops note`), stop.
+Optional after the draft, before the plates: `look --desk D --url https://…` pins one style frame; `look-note --desk D --add "…"` steers the drawings. Edits: `edit` (beat, frame, or a pinned JA/KO line; reference.md). `fictora-produce status --desk D` any time. After each stage: report the path, append `run-notes.md` (`fictora-ops note`), stop.
 
 ## Brief
 
@@ -97,7 +98,7 @@ Open the newest `boards/` file and check (full list: [checklists.md](../../../do
 - **Speakers:** a spoken line sits on a row where its speaker is in frame, medium or closer. No off-screen speaker is drawn.
 - **Speaking mouths:** no clench, grit, pressed or closed mouth on a speaking row. Big acting goes before and after the line; during the words the mouth moves.
 - **Expressions** fit the moment and the right face (library in reference.md).
-- The hook, the hand-off, the safe zones, no readable text or digits. Report brightness; a dark board is the human's call (`--accept-dim`).
+- The hook, the hand-off, the safe zones, no readable text or digits. Report brightness: information only, a dark board is the human's call. To change a board, fix the frame first (`edit --frame … --set …`), then `redraw-board` (it takes no notes).
 
 ## Spend (warn, never block)
 
@@ -124,4 +125,4 @@ A take is not done until the local finish ran. Default `api_captions: false`: th
 
 ## Episode 2 on
 
-Episode 1 approved first. Ask the human how many episodes the run should be. For a long run prefer an arc with an engine (a situation that repeats with a new problem) plus a slow question; refuse an arc that closes within a few episodes. Steer each later episode by its direction in the human's words, not by series-wide notes. Never pre-stage scripts for later episodes. Commands: reference.md.
+Episode 1 approved first. Ask the human how many episodes the run should be. For a long run prefer an arc with an engine (a situation that repeats with a new problem) plus a slow question; refuse an arc that closes within a few episodes. Steer each later episode by its direction in the human's words, not by series-wide notes. Never pre-stage scripts for later episodes. Commands: `arc --list [--episodes N]`, `arc --pick K`, `author --episode N --direction K | --line "…"`, then `approve --gate script` and the same loop (reference.md).

@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from creation import prices as _prices
+
 SCHEMA_VERSION = "fictora.content-ops.series.v1"
 SERIES_FILENAME = "series.json"
 QUEUE_FILENAME = "QUEUE.md"
@@ -18,9 +20,11 @@ TakeVerdict = Literal["pending", "use", "change"]
 
 TAKES_FOR_BAND: dict[str, int] = {"15s": 1, "30s": 2, "60s": 4}
 MAX_LINES_PER_TAKE = 3
+#: Preflight warns (never blocks) past this multiple of the envelope.
 ENVELOPE_STOP_MULTIPLIER = 2.0
-ENVELOPE_FIRST_USD = 4.50
-ENVELOPE_CONTINUING_USD: dict[str, float] = {"15s": 2.50, "30s": 4.00, "60s": 8.00}
+#: Warn-only spend envelopes, repriced for H3 Max R2V ($1.20 a 15 s take). One source: ``creation.prices``.
+ENVELOPE_FIRST_USD = _prices.ENVELOPE_FIRST_USD
+ENVELOPE_CONTINUING_USD: dict[str, float] = dict(_prices.ENVELOPE_CONTINUING_USD)
 
 SERIES_GATES = frozenset({"look", "plates"})
 EPISODE_GATES = frozenset({"script", "board", "post"})
@@ -71,6 +75,35 @@ class SpokenLine:
 
 
 @dataclass
+class PreflightOverride:
+    """An operator's explicit decision to film past preflight warnings (covers the next film only).
+
+    Parameters
+    ----------
+    at_utc
+        When the operator confirmed.
+    unit_id
+        The unit id they typed (``ep01-t1``).
+    codes
+        Warning codes that were open.
+    details
+        The warning text they were shown.
+    filmed_count
+        Films of the unit when confirmed; the override covers the next film only.
+    unit_spend_usd, episode_spend_usd
+        Spend on the unit and the episode at that moment.
+    """
+
+    at_utc: str
+    unit_id: str
+    codes: list[str]
+    details: list[str]
+    filmed_count: int
+    unit_spend_usd: float
+    episode_spend_usd: float
+
+
+@dataclass
 class TakeState:
     """One 15-second take slot on an episode.
 
@@ -105,6 +138,7 @@ class TakeState:
     change_cause: str | None = None
     handoff_path: str | None = None
     spend_usd: float = 0.0
+    overrides: list[PreflightOverride] = field(default_factory=list)
 
 
 @dataclass
@@ -542,7 +576,27 @@ def _take_from_dict(raw: dict[str, Any]) -> TakeState:
         change_cause=raw.get("change_cause"),
         handoff_path=raw.get("handoff_path"),
         spend_usd=float(raw.get("spend_usd") or 0.0),
+        overrides=[PreflightOverride(**item) for item in raw.get("overrides") or [] if isinstance(item, dict)],
     )
+
+
+def unit_id(episode: EpisodeState, take: TakeState) -> str:
+    """Return the id an operator types to confirm a unit: ``ep01-t1``.
+
+    Parameters
+    ----------
+    episode
+        Episode slot.
+    take
+        Take slot.
+
+    Returns
+    -------
+    str
+        ``<episode slug>-<take id>``.
+    """
+
+    return f"{episode.slug}-{take.take_id}"
 
 
 def _gate_from_dict(raw: dict[str, Any] | None) -> GateRecord:

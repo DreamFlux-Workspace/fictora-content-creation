@@ -13,11 +13,21 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--draft-episodes",
         type=int,
-        default=4,
-        help="Planned episodes in draft (prod cadence: 4, not 5).",
+        default=1,
+        help="Ignored: episode 1 is drafted alone; write later episodes with `author --episode N`.",
     )
     parser.add_argument("--clip-seconds", type=int, default=15, help="Take length 4–15.")
-    parser.add_argument("--cut-tempo", default="one_shot", help="e.g. one_shot, punchy, slow_burn.")
+    parser.add_argument(
+        "--cut-tempo",
+        default=None,
+        choices=("punchy", "slow_burn", "one_shot"),
+        help="Shot plan, set on the draft: punchy (coverage) or one_shot/slow_burn. Default: server's (punchy).",
+    )
+    parser.add_argument(
+        "--language",
+        default=None,
+        help="Spoken language when not English: ja or ko (captions stay English).",
+    )
     parser.add_argument(
         "--caption-style",
         default="house",
@@ -42,7 +52,8 @@ def config_from_args(args: argparse.Namespace) -> ProductionConfig:
     return ProductionConfig(
         draft_episode_count=int(args.draft_episodes),
         clip_duration_seconds=int(args.clip_seconds),
-        cut_tempo=str(args.cut_tempo),
+        cut_tempo=str(args.cut_tempo) if args.cut_tempo else None,
+        spoken_language=str(args.language) if getattr(args, "language", None) else None,
         caption_style=str(args.caption_style),
         api_captions=bool(args.api_captions),
         fallback_estimate_usd=float(args.fallback_estimate_usd),

@@ -20,6 +20,7 @@ from creation.ops.state import (
     Band,
     EpisodeState,
     GateRecord,
+    PreflightOverride,
     SeriesState,
     SpokenLine,
     TakeState,
@@ -30,6 +31,7 @@ from creation.ops.state import (
     new_series,
     save_series,
     take_by_id,
+    unit_id,
     utc_now,
 )
 
@@ -208,6 +210,9 @@ def approve_series_gate(desk: Path, gate: str, *, path: str | None = None, note:
 def approve_script(desk: Path, *, episode: int) -> GateRecord:
     """Record a human yes on the episode lines.
 
+    More than three lines on a take does not block the yes: it is recorded with
+    a loud warning in the gate note, and preflight warns again before the take.
+
     Parameters
     ----------
     desk
@@ -218,22 +223,22 @@ def approve_script(desk: Path, *, episode: int) -> GateRecord:
     Returns
     -------
     GateRecord
-        Approved script gate.
-
-    Raises
-    ------
-    ValueError
-        When any take on the episode has more than three lines.
+        Approved script gate. ``note`` starts with ``WARNING`` when a take has
+        more than three lines.
     """
 
     series = load_series(desk)
     slot = episode_by_ordinal(series, episode)
-    for take in slot.takes:
-        if len(take.lines) > MAX_LINES_PER_TAKE:
-            raise ValueError(
-                f"{slot.slug} {take.take_id} has {len(take.lines)} lines; maximum is {MAX_LINES_PER_TAKE}."
-            )
-    slot.script = GateRecord(status="approved", at_utc=utc_now(), note="lines")
+    long_takes = [
+        f"{take.take_id} has {len(take.lines)} lines" for take in slot.takes if len(take.lines) > MAX_LINES_PER_TAKE
+    ]
+    note = "lines"
+    if long_takes:
+        note = (
+            f"WARNING: {'; '.join(long_takes)}; maximum is {MAX_LINES_PER_TAKE}. "
+            "A four-line 15s take drops a line, usually the one that carries the story."
+        )
+    slot.script = GateRecord(status="approved", at_utc=utc_now(), note=note)
     save_series(desk, series)
     write_queue(desk, series)
     return slot.script
@@ -526,6 +531,65 @@ def preflight_take(desk: Path, *, episode: int, take_id: str) -> PreflightReport
     return evaluate_preflight(series, slot, take_by_id(slot, take_id), desk=desk)
 
 
+def confirm_preflight(desk: Path, *, episode: int, take_id: str, confirm_unit: str) -> PreflightReport:
+    """Record the operator's explicit decision to film past preflight warnings.
+
+    The operator must type the unit id (``ep01-t1``). A human gate that is still
+    open cannot be overridden. The override is written into ``series.json`` with
+    the warnings shown, the film count and the spend at that moment, and it
+    covers the next film only.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    episode
+        Episode ordinal.
+    take_id
+        Take id.
+    confirm_unit
+        The unit id the operator typed.
+
+    Returns
+    -------
+    PreflightReport
+        The report after the override is recorded.
+
+    Raises
+    ------
+    ValueError
+        When the typed unit id does not match, or a human gate is still open.
+    """
+
+    series = load_series(desk)
+    slot = episode_by_ordinal(series, episode)
+    take = take_by_id(slot, take_id)
+    expected = unit_id(slot, take)
+    if confirm_unit.strip() != expected:
+        raise ValueError(f"--proceed-anyway must name this unit exactly: {expected} (got {confirm_unit!r})")
+    report = evaluate_preflight(series, slot, take, desk=desk)
+    if report.blocked:
+        gate = next(check for check in report.failed() if check.blocking)
+        raise ValueError(f"{gate.code}: {gate.detail} A human gate cannot be overridden.")
+    warnings = report.warnings()
+    if not warnings or report.confirmed:
+        return report
+    take.overrides.append(
+        PreflightOverride(
+            at_utc=utc_now(),
+            unit_id=expected,
+            codes=[check.code for check in warnings],
+            details=[check.detail for check in warnings],
+            filmed_count=take.filmed_count,
+            unit_spend_usd=take.spend_usd,
+            episode_spend_usd=slot.spend_usd,
+        )
+    )
+    save_series(desk, series)
+    write_queue(desk, series)
+    return evaluate_preflight(series, slot, take, desk=desk)
+
+
 def waiting_on(series: SeriesState, episode: EpisodeState, *, desk: Path) -> str:
     """Return the next human or fix action for one episode.
 
@@ -558,8 +622,10 @@ def waiting_on(series: SeriesState, episode: EpisodeState, *, desk: Path) -> str
         if take.estimate_usd is None:
             return f"estimate:{take.take_id}"
         report = evaluate_preflight(series, episode, take, desk=desk)
-        if not report.passed:
-            return f"fix:{report.failed()[0].code}"
+        if report.blocked:
+            return f"fix:{next(c for c in report.failed() if c.blocking).code}"
+        if not report.cleared:
+            return f"warn:{report.warnings()[0].code}"
         if take.filmed_count == 0 or take.verdict == "change":
             return f"cost-yes:{take.take_id}"
         return f"take-read:{take.take_id}"
@@ -592,7 +658,7 @@ def status_rows(desk: Path) -> list[dict[str, str]]:
             {
                 "episode": episode.slug,
                 "waiting": waiting,
-                "preflight": "PASS" if report.passed else "FAIL",
+                "preflight": report.status(),
                 "spend": f"${episode.spend_usd:.2f}",
                 "envelope": f"${envelope_usd(series, episode):.2f}",
             }
