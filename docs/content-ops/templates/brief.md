@@ -29,9 +29,11 @@ Reference crops go in `reference/`. An image sets the medium. Words do not.
 
 ## Lines (three maximum per take)
 
+Fill the Beat column. To lock these lines, see the runbook, Dialogue (the lock sentence, written here, locks every row below).
+
 ### Take 1
 
-| # | Speaker | Original | Translation |
-| --- | --- | --- | --- |
+| # | Beat | Speaker | Original | Translation |
+| --- | --- | --- | --- | --- |
 
 Approved: no

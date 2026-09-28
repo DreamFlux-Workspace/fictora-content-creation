@@ -5,7 +5,7 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 ## Before the draft is sent
 
 - [ ] A new desk, never an existing one overwritten: if the date and slug already exist, the human chose (continue it, or a new name)
-- [ ] `fictora-produce start` carries `--cut-tempo` chosen from the scene (shot plan) and the nearest `--preset-id`; look notes planned for the preset's world
+- [ ] `fictora-produce start` carries `--cut-tempo` chosen from the scene (shot plan) and the nearest `--preset-id`; a look frame to pin, or look notes planned for the preset's world
 - [ ] No arc asked for and no later episode outlined (episode 1 alone)
 - [ ] Hook: frame 0 mid-motion on a face, first line by ~0.5 s, the reveal by ~3 s
 - [ ] Real ages written; nobody under 18 in any romance; voice-only characters marked in the cast table
@@ -32,7 +32,7 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] Two characters in one frame are separated by build and colour
 - [ ] Ages are written as real ages; nobody under 18 is in a romance
 - [ ] A voice-only (off-screen) cast member got no plate (every line off screen, in no frame)
-- [ ] The preset's world did not leak in (settings, props); look notes set if it did
+- [ ] The preset's world did not leak in (settings, props; expected only in plates drawn before a look frame was pinned); look notes set if it did
 - [ ] One wrong character: `redraw-plate --cast NAME --note "…"`, the note describing shapes, not judgements
 - [ ] A plate refused by image moderation (more often with a child) reported to the human with its job id, not retried blind
 - [ ] Human has opened the contact sheet and said yes
@@ -45,7 +45,7 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] Facts the picture cannot show are in a line
 - [ ] A silent comic beat was paid for with a line, and the human chose it
 - [ ] Every line is said TO someone in the room, or to an off-screen voice with a source
-- [ ] Every brief line the writers changed or dropped is shown beside the spine line
+- [ ] Every brief line the writers changed or dropped is shown beside the spine line; a "keep exactly" line that was dropped, moved to another speaker or translated is fixed
 - [ ] Japanese / Korean lines sound native for who speaks to whom; a dialect has a native speaker's yes
 - [ ] First beat carries the hook: mid-motion on a face, a line by ~0.5 s, the reveal by ~3 s
 - [ ] Human said yes to the lines
@@ -67,6 +67,7 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] Frame 0 is mid-motion on a face, not a wide or a still
 - [ ] Visible cause: every action row follows a visible face reacting to its cause, or shares its frame
 - [ ] Each row opens on the emotion the row before it ended on
+- [ ] A move the beat states is drawn nearer in the next row that shows it; a horror threat has its own insert or POV row
 - [ ] Each spoken line sits on a row with its speaker in frame, medium or closer; no off-screen speaker drawn
 - [ ] No clench, grit, pressed or closed mouth on a speaking row; big acting before and after the line
 - [ ] Expressions fit the moment (not the genre) and sit on the right face

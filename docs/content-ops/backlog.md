@@ -11,9 +11,11 @@ Closed 2026-09-28 by founder decision: a finished cut shorter than its 15 / 30 /
 | Stage | Gap | Why it costs money or time | Source |
 | --- | --- | --- | --- |
 | Take | A Turbo take redraws the board in H3's own anime finish: staging, framing, outfits and colour mood carry; drawing style does not (pastel, watercolour, cartoon boards come back anime). `finish` colour-match closes colour and light only | A creator who picks a painterly look sees a different-looking video than the board they approved; said at the look gate | Reviewer note (Paramjeet), measured 2026-09-25; carried from the internal backlog |
-| Look | A custom look still needs a preset, whose world leaks into plates; no horror preset | Look notes are the only lever | Hanakaze #7, #19; SCP-173 #4 |
-| Post | The automatic effects read only the take's Sound lines, not impacts written elsewhere in a beat | Hand cues on every horror or comedy take | SCP-173 #44, #45 |
+| Look | A custom look still needs a preset at `start`, and the horror preset (Dead Light) is a draft that cannot be picked. A pinned look frame now drops the preset's world, palette and finish (fictora-drama #461), but plates drawn before the pin still carry its world | Pin the look frame before the plates; without one, look notes are the only lever | Hanakaze #7, #19; SCP-173 #4 |
+| Post | The server now lays an impact the beat states as a cue (fictora-drama #462) and a sound note can add one sound to one take (#467), but no kit command adds or removes a sound note (`POST/DELETE /v1/spines/{id}/sound-notes`), and none fetches a take's facts again, so neither reaches a take filmed before it | Each missing impact or asked-for sound is a hand `cue` | SCP-173 #44, #45, 2026-09-28 |
+| Script | The server restores a trimmed or reworded "keep exactly" line, but a locked line the writers dropped, gave to another speaker, or translated (ja/ko) is only logged (fictora-drama #457) | Caught by hand from the draft's kept/rewritten/cut list at the script gate | SCP-173 #9, #14 |
 | Captions | Japanese / Korean captions and a CJK caption font are deferred (English only) | A Japan-market cut needs captions made by hand | Hanakaze #40, #41 |
 | Board | The safe-zone check reads placement text only; there is no measured face box | A face drawn into a covered zone with clean placement words is caught only by eye | Safe zones, 2026-09-28 |
+| Board | A stated move lost across a camera change, and a horror threat without its own row, are server log lines the board shot list does not print (fictora-drama #459) | Read every board for "does the picture show the rule" | SCP-173 #11, #28 |
 
 When you add a row, name the production that hit it.
