@@ -170,7 +170,7 @@ Check before the board gate:
 
 ### Off-screen voices
 
-- Declare an off-screen voice in the brief's cast table as voice only. It is never drawn. The plate stage still draws a plate for it today: say so before the spend.
+- Declare an off-screen voice in the brief's cast table as voice only. It is never drawn. With every line off screen and no frame showing them, the server flags the card `voice_only` and draws no plate; `plates/` and the plate count leave them out. If a plate for them turns up, a frame puts them on screen: fix the frame or accept the plate before the spend.
 - An off-screen voice that plays over another character's face is heard as that face speaking. Give it a source in frame (a wall grille, a phone in a hand) or a source treatment in post (band-limited intercom).
 
 ### Language

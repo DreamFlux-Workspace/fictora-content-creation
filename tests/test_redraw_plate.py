@@ -89,3 +89,28 @@ def test_an_unknown_character_is_named_and_nothing_is_sent(desk: Path, api: Fake
     with pytest.raises(ec.CommandStopped, match="it has: Hana, Ren"):
         ec.run_redraw_plate(desk, cast="Mira", cause=CAUSE, out=io.StringIO())
     assert api.posted(REGENERATE) == []
+
+
+def test_a_voice_only_character_before_ren_does_not_shift_rens_plate_number(desk: Path, api: FakeApi) -> None:
+    set_phase(desk, "wait_plates")
+    _serve_redraw(api)
+    api.spine_doc["cast"].insert(0, {"cast_id": "cast_intercom", "name": "Intercom", "voice_only": True})
+
+    path = ec.run_redraw_plate(desk, cast="Ren", cause=CAUSE, out=io.StringIO())
+
+    assert path.name == "plate-ep01-2-v1.png"  # plates/ numbers drawn cast only; Ren is still #2
+
+
+def test_a_voice_only_character_has_no_plate_to_redraw(desk: Path, api: FakeApi) -> None:
+    set_phase(desk, "wait_plates")
+    _serve_redraw(api)
+    api.spine_doc["cast"].append({"cast_id": "cast_intercom", "name": "Intercom", "voice_only": True})
+    for run in (
+        lambda: ec.run_redraw_plate(desk, cast="Intercom", cause=CAUSE, out=io.StringIO()),
+        lambda: ec.run_redraw_plate_with_note(desk, cast="Intercom", note="older", out=io.StringIO()),
+    ):
+        with pytest.raises(ec.CommandStopped, match="voice-only"):
+            run()
+    assert api.posted(REGENERATE) == []
+    assert api.posted("/v1/spines/sp1/cast/cast_intercom/notes") == []
+    assert load_series(desk).spend_log == []

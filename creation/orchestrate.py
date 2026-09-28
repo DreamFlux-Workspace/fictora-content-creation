@@ -19,13 +19,24 @@ from typing import Any
 import httpx
 
 from creation.brief_lines import brief_vs_spine_lines
-from creation.desk_media_urls import board_urls_for_episode, cast_plate_urls
+from creation.desk_media_urls import (
+    board_urls_for_episode,
+    cast_plate_urls,
+    drawn_cast_rows,
+)
 from creation.harness import stages_gated as stages
 from creation.harness.credentials import load_drama_api_credentials
-from creation.harness.raw_video import episode_clips, fetch_take_facts, wait_for_raw_scene_clips
+from creation.harness.raw_video import (
+    episode_clips,
+    fetch_take_facts,
+    wait_for_raw_scene_clips,
+)
 from creation.harness.run_context import save_run_meta
 from creation.harness.session import DramaApiRunSession
-from creation.harness.visual_first_ep1 import approve_episode_boards, measure_board_exposure
+from creation.harness.visual_first_ep1 import (
+    approve_episode_boards,
+    measure_board_exposure,
+)
 from creation.media_fetch import download_to_versioned
 from creation.ops.floor import (
     approve_board,
@@ -65,8 +76,8 @@ from creation.production_state import (
     save_production,
 )
 from creation.spine_view import (
-    board_assets,
     beats_by_take,
+    board_assets,
     episode_id_for,
     frames_by_set,
     frames_digest,
@@ -262,7 +273,8 @@ def table_estimate_usd(state: ProductionState, cfg: Any, *, cast_count: int, tak
     cfg
         Desk production config (take length, optional fallback).
     cast_count
-        Cast cards on the story (R2V reference-image ceiling).
+        Drawn cast cards on the story (R2V reference-image ceiling); voice-only
+        cast sends no plate, so it is not counted.
     takes
         Takes to price.
 
@@ -587,7 +599,7 @@ def board_report(
         }
     except SystemExit as exc:
         run.emit("board_exposure_unavailable", detail=str(exc)[:300])
-    cast_count = len([card for card in spine.get("cast") or [] if isinstance(card, dict)])
+    cast_count = len(drawn_cast_rows(spine))
     lane = lane_endpoint(state.video_lane, server=state.server_lane())
     references = reference_images_ceiling(cast_count, lane[0] if lane else "")
     take_price = lane_take_usd(
@@ -762,7 +774,7 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             state.remember_server_lane(server_lane(estimate))
             spine = run.spine(state.spine_id or "")
             slot = episode_by_ordinal(load_series(desk), ep)
-            cast_count = len([card for card in spine.get("cast") or [] if isinstance(card, dict)])
+            cast_count = len(drawn_cast_rows(spine))
             state.estimate_usd, source, warnings = price_estimate(
                 state, cfg, estimate, cast_count=cast_count, takes=len(slot.takes)
             )

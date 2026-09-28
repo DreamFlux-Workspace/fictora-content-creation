@@ -48,13 +48,19 @@ import httpx
 
 from creation import orchestrate as _orchestrate
 from creation.cli_text import TextArgError, text_or_file
+from creation.desk_media_urls import drawn_cast_rows
 from creation.harness import stages_gated as stages
 from creation.harness.http_util import api_error_text, describe_job_error
 from creation.harness.raw_video import wait_for_raw_scene_clips
 from creation.harness.session import DramaApiRunSession
 from creation.harness.stages_gated import scene_prompt
 from creation.harness.visual_first_ep1 import reuse_generation_body
-from creation.ops.floor import add_episode, record_estimate, record_spend, record_verdict
+from creation.ops.floor import (
+    add_episode,
+    record_estimate,
+    record_spend,
+    record_verdict,
+)
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
 from creation.ops.state import episode_by_ordinal, load_series
@@ -65,15 +71,20 @@ from creation.orchestrate import (
     download_boards,
     envelope_line,
     foreign_warning,
+    price_estimate,
     save_spine_snapshot,
     script_gate_text,
     seed_attempt_for,
     sync_spine_lines,
-    price_estimate,
 )
 from creation.prices import STILL_USD, server_lane
 from creation.production_config import load_production_config
-from creation.production_state import ProductionState, load_production, save_production, start_episode
+from creation.production_state import (
+    ProductionState,
+    load_production,
+    save_production,
+    start_episode,
+)
 from creation.spine_view import (
     beats_by_take,
     dialogue_line_ids,
@@ -1946,14 +1957,24 @@ PLATE_CAUSE_IS_A_LABEL = (
 )
 
 
+def _refuse_voice_only(card: Mapping[str, Any]) -> None:
+    """Stop before anything is sent when ``card`` is a voice-only character (heard, never drawn; no plate)."""
+
+    if card.get("voice_only") is True:
+        name = str(card.get("name") or card.get("cast_id"))
+        raise CommandStopped(f"{name} is voice-only (heard, never drawn): there is no plate to redraw")
+
+
 def _cast_card(spine: Mapping[str, Any], wanted: str) -> tuple[int, dict[str, Any]]:
     """The 1-based cast position (the ``plate-ep01-N`` number) and card named by ``wanted`` (name or cast id)."""
 
     cast = [card for card in spine.get("cast") or [] if isinstance(card, dict) and card.get("cast_id")]
     key = wanted.strip().casefold()
-    for index, card in enumerate(cast, start=1):
+    for card in cast:
         if key in {str(card["cast_id"]).casefold(), str(card.get("name") or "").strip().casefold()}:
-            return index, card
+            _refuse_voice_only(card)
+            drawn = [str(row["cast_id"]) for row in drawn_cast_rows(dict(spine))]
+            return drawn.index(str(card["cast_id"])) + 1, card
     names = ", ".join(str(card.get("name") or card["cast_id"]) for card in cast) or "none"
     raise CommandStopped(f"{wanted!r} is not on this story's cast (it has: {names})")
 
@@ -2160,16 +2181,19 @@ def run_redraw_plate_with_note(desk: Path, *, cast: str, note: str, out: Any = N
     folder, ep = _plates_home(desk)
     try:
         spine = run.spine(state.spine_id or "")
-        cards = [card for card in spine.get("cast") or [] if isinstance(card, Mapping) and card.get("cast_id")]
+        everyone = [card for card in spine.get("cast") or [] if isinstance(card, Mapping) and card.get("cast_id")]
+        cards = drawn_cast_rows(spine)
         wanted = cast.strip().casefold()
-        index, card = next(
-            ((i, c) for i, c in enumerate(cards, start=1)
+        named = next(
+            (c for c in everyone
              if wanted in {str(c["cast_id"]).casefold(), str(c.get("name") or "").casefold()}),
-            (0, None),
+            None,
         )  # fmt: skip
-        if card is None:
-            names = ", ".join(f"{c.get('name')} ({c['cast_id']})" for c in cards)
+        if named is None:
+            names = ", ".join(f"{c.get('name')} ({c['cast_id']})" for c in everyone)
             raise CommandStopped(f"no character {cast!r} on the story; the cast is: {names}")
+        _refuse_voice_only(named)
+        index, card = next((i, c) for i, c in enumerate(cards, start=1) if c["cast_id"] == named["cast_id"])
         cast_id, name = str(card["cast_id"]), str(card.get("name") or card["cast_id"])
         noted = {_note_key(str(n.get("text") or "")) for n in card.get("creator_notes") or [] if isinstance(n, Mapping)}
         if _note_key(note) in noted:
@@ -2688,7 +2712,7 @@ def _price_film(
     _save_desk_json(desk, f"film-{key}-estimate", estimate)
     state.remember_server_lane(server_lane(estimate))
     spine = run.spine(state.spine_id or "")
-    cast_count = len([card for card in spine.get("cast") or [] if isinstance(card, dict)])
+    cast_count = len(drawn_cast_rows(spine))
     usd, source, warnings = price_estimate(state, cfg, estimate, cast_count=cast_count, takes=len(take_ids))
     if warnings and take_index is not None and "reroll_take_index" in str(estimate.get("detail") or ""):
         source += "; the deployed API cannot price one take yet"
