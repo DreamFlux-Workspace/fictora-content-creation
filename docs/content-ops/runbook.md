@@ -186,7 +186,7 @@ Check before the board gate:
 - The rows follow the declared shot plan.
 - **Visible cause.** Every action row is preceded by a visible face reacting to its cause, or shares the frame with it. "Jealousy → breaks the sign" did not read when the face was hidden and the insert showed only hands.
 - **Each row opens on the emotion the row before it ended on.** A calm smile right after the sign broke read wrong.
-- **The picture shows the rule.** A change the viewer must see as a jump goes in its own row. H3 blends the cells of one row into one move.
+- **The picture shows the rule.** A change the viewer must see as a jump goes in its own row. H3 blends the cells of one row into one move. A move the beat states (closer, at arm's length) is drawn nearer in the next row that shows it; on a `punchy` horror take the threat gets its own insert or point-of-view row.
 - **Speakers.** The speaker is in the frame of the row their line plays on, at a medium shot or closer, or the line plays over someone else's face. No off-screen speaker is drawn: not as a sleeve, a hand, a cane or a shadow. The board shot list prints the line and speaker on each row and warns when the speaker is not drawn there.
 - **Speaking mouths.** No clench, grit, pressed or closed mouth on a speaking row. Big physical acting goes before the line and after it; during the words the mouth moves.
 - The hook, the hand-off, the safe zones, no readable text or digits, brightness reported.
@@ -213,7 +213,8 @@ To change a board, change what it is drawn from (`edit --frame N --set …`, `ed
 ### Look and medium
 
 - Only an image sets the medium. A reference frame as the first image decides ink or photography.
-- `--preset-id` is required at `start` even when the look will be our own frame. Pick the nearest (`modern-dark-fantasy` Cold Gate is the closest to horror). Its world (meadows, baskets, a white cat) still leaks into plates: steer it with look notes (`look-note --desk D --add "indoors, an arcade; no meadows"`, at most five) before the plates are drawn.
+- `--preset-id` is required at `start` even when the look will be our own frame. Pick the nearest: the horror preset (Dead Light) is a draft and cannot be picked yet, so horror takes Cold Gate (`modern-dark-fantasy`).
+- A pinned look frame wins over the preset: the preset keeps only its shot composition, and its world, palette, finish and reference images leave every drawing. Pin it before the plates; anything drawn earlier still carries the preset's world (meadows, baskets, a white cat). Without a look frame, steer that world with look notes (`look-note --desk D --add "indoors, an arcade; no meadows"`, at most five) before the plates are drawn.
 - Say what you want. Never name what you don't. "No mirrors" puts mirrors in the frame.
 - Redraw notes (`redraw-plate --note`, `look-note`, a frame edit) describe shapes, never judgements: "short, round and fat, two clumsy pleats", not "crooked".
 - Faces come from crops of references, never from the reference wholesale, and never from a real person's likeness.
@@ -249,6 +250,7 @@ To change a board, change what it is drawn from (`edit --frame N --set …`, `ed
 
 - Three lines maximum per fifteen seconds. A 15 s take is three beats, so a silent comic beat (a pause, a stare, a freeze) costs a line. Say so at the brief.
 - Ask who each line is said TO. A line said to nobody is exposition; give it a listener in the room or an off-screen voice.
+- To lock lines word for word, write "Keep these lines exactly as written." in the brief's Lines section, with each line's beat and take filled. The server puts back a locked line the writers trimmed or reworded; a dropped, moved or translated one is still caught at the script gate.
 - A line needs its own cell with no competing business.
 - Never write a character speaking with a full mouth.
 - Direct volume as clear and audible. "Barely audible" renders at −50 dB.

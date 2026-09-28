@@ -1,6 +1,6 @@
 # Placing sound cues
 
-`fictora-produce finish` lays the take's own sound effects from its take facts (`GET /v1/jobs/{take_job}/take-facts`, never the prompt). Those cues come from each shot's Sound lines only: an impact written somewhere else in the beat (a stone crack, a neck snap) gets no cue. Use this page when you place a cue by hand: a cue the Sound lines missed, a cue the human asked for, or a cue for a wordless making take.
+`fictora-produce finish` lays the take's own sound effects from its take facts (`GET /v1/jobs/{take_job}/take-facts`, never the prompt). Those cues come from each shot's Sound lines; with fictora-drama #462 live they also carry each impact the beat's action states (a stone crack, a neck snap), but take facts saved before it do not, and the kit cannot fetch them again yet. Use this page when you place a cue by hand: a cue the Sound lines missed, a cue the human asked for, or a cue for a wordless making take.
 
 Make it on the server, then lay it in the finish:
 
@@ -11,7 +11,7 @@ uv run fictora-produce finish --desk D --episode N --take tK --cue epNN/sfx/cue-
 
 `cue` costs about $0.002 a second (0.5 s at least), saves `epNN/sfx/cue-<words>-vN.mp3` with a sidecar, and prints the cue's RMS per half second and its shape check. The same description and length answer the same file for free: to try again, change the words. Book it with `fictora-ops spend --desk D --episode N --usd X --unit cue:<name>` when the command did not.
 
-The take's own effects are levelled or dropped with `finish --sfx-adjust` (`"door=-6"`, `"hum=drop"`, `"shot:3=+4"`), never re-rendered. A sound note only drops or levels a sound; it never adds one. To add a sound, make a cue.
+The take's own effects are levelled or dropped with `finish --sfx-adjust` (`"door=-6"`, `"hum=drop"`, `"shot:3=+4"`), never re-rendered. `--sfx-adjust` only drops or levels a sound; it never adds one. To add a sound, make a cue.
 
 Every rule here was paid for in a production.
 
