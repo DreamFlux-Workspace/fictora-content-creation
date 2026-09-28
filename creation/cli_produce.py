@@ -230,13 +230,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f'"{line}" {span.start:.2f}-{span.end:.2f}s'
                 for line, span in zip(result.lines, result.anchors)
             )
+            warnings = "".join(f" {w}." for w in result.not_english)
             append_run_note(
                 ep_dir,
                 f"Local house captions ({'whole English lines' if result.whole_lines else 'word flicker'}): "
-                f"{result.video.name} (cues {result.ass.name}). Lines: {timing}.",
+                f"{result.video.name} (cues {result.ass.name}). Lines: {timing}.{warnings}",
             )
-            for line, span in zip(result.lines, result.anchors):
-                print(f"  {span.start:6.2f}-{span.end:6.2f}s  {line}")
+            italic = result.italic or (False,) * len(result.lines)
+            for line, span, slanted in zip(result.lines, result.anchors, italic):
+                mark = "  (italic: heard, not seen)" if slanted else ""
+                print(f"  {span.start:6.2f}-{span.end:6.2f}s  {line}{mark}")
+            for warning in result.not_english:
+                print(warning)
             print(f"  file: {result.ass}")
             print(f"  file: {result.video}")
             print(
