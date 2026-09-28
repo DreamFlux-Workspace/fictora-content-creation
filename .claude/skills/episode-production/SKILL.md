@@ -126,6 +126,25 @@ It lays the take's sound effects (from `GET /v1/jobs/{take_job}/take-facts`, nev
 - A `409 hosted_post_off`, or a `503 restate_unavailable` from post-production, is not an outage: never retry it, run `finish`.
 - Captions are always the English line. On a Japanese or Korean show, `finish` / `caption` show each whole English line over its speech (no word flicker); the run note says `whole English lines`.
 
+## Local edits: deboard, soften, freeze, trim, tempo
+
+Free, on this laptop (ffmpeg + numpy). Each writes a new `take-epNN-tK-<step>-vN.mp4` and a run note; nothing is overwritten. Details and thresholds: reference.md.
+
+- **Board frames.** A Turbo take opens on a frame or two of the still board. `finish` now removes them first (`deboard`): measured against the approved board, capped at 12, replaced with the first real frame so the length and sound do not move (take-facts cues and captions keep their times). None found: nothing written. `--no-deboard` only when the human wants the board opening kept. `CAP HIT` in the report: look at the head at full rate.
+- **Order.** raw → `deboard` → `soften` / `freeze` → `finish --take-file <that file>` → `trim` / `tempo` on the finished file → watch.
+- `soften` always after `deboard` (the board-to-motion jump reads as a cut). No `--cut` detects hard cuts itself; say which cuts it found.
+- `freeze --at S --hold S` keeps the length: the held frame covers the picture, the sound plays on.
+- `trim` only on the finished file (`--take-file` is required). Check the first frame after the cut at full size. A result under 15 s is a DEVIATION; say so.
+- `tempo --factor 0.9` only for a show cut slow, and only on the finished file: `finish` lays effects at the filmed times.
+
+```bash
+uv run fictora-produce deboard --desk D [--episode N] [--take tK] [--take-file F] [--board B]
+uv run fictora-produce soften  --desk D [--take-file F] [--cut S ...]
+uv run fictora-produce freeze  --desk D [--take-file F] --at 6.2 --hold 0.6
+uv run fictora-produce trim    --desk D --take-file FINAL --cut 10.17-12.15 [--cues-json J]
+uv run fictora-produce tempo   --desk D --take-file FINAL [--factor 0.9]
+```
+
 ## Change a character's voice (never regenerate)
 
 "The voice feels off" is a voice change, not a new story and not a new video. Never re-draft or re-film everything for it.

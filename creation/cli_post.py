@@ -1,4 +1,4 @@
-"""``fictora-produce`` local post commands: voice, revoice, set-bed, finish."""
+"""``fictora-produce`` local post commands: voice, revoice, set-bed, finish, and the edits (deboard, trim, ...)."""
 
 from __future__ import annotations
 
@@ -6,10 +6,11 @@ import argparse
 import json
 from pathlib import Path
 
+from creation.post.edit_commands import EDIT_COMMANDS, add_edit_parsers, dispatch_edit
 from creation.post.finish import FINISH_INCOMPLETE, run_finish
 from creation.post.sfx import parse_adjustment
 
-POST_COMMANDS = frozenset({"voice", "revoice", "set-bed", "finish"})
+POST_COMMANDS = frozenset({"voice", "revoice", "set-bed", "finish"}) | EDIT_COMMANDS
 
 
 def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -54,13 +55,16 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     fin = sub.add_parser(
         "finish",
-        help="Finish an accepted take on this laptop: SFX, music bed, colour match to the board, mix, captions, "
+        help="Finish an accepted take on this laptop: board frames out, SFX, music bed, colour match to the board, mix, captions, "
         f"Sokii mark. Exits {FINISH_INCOMPLETE} (NOT DONE) when music, SFX or the mix did not go on.",
     )
     fin.add_argument("--desk", type=Path, required=True)
     fin.add_argument("--episode", type=int, default=1)
     fin.add_argument("--take", dest="take_id", default="t1")
     fin.add_argument("--take-file", type=Path, default=None, help="Default: the newest raw take (or a revoice file).")
+    fin.add_argument(
+        "--no-deboard", action="store_true", help="Keep the take's opening frames even when they are the board."
+    )
     fin.add_argument("--no-colour-match", action="store_true", help="Keep the take's own look.")
     fin.add_argument("--colour-strength", type=float, default=1.0, help="0..1 toward the board.")
     fin.add_argument("--bed-db", type=float, default=-16.5, help="Music bed level in the mix.")
@@ -70,6 +74,8 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     fin.add_argument("--line-start", type=float, action="append", default=None, help="Caption line start, per line.")
     fin.add_argument("--watermark-y", type=int, default=None, help="Mark top offset (never into the top 8%%).")
     fin.add_argument("--json", action="store_true", help="Print the report as JSON on stdout.")
+
+    add_edit_parsers(sub)
 
 
 def dispatch_post(args: argparse.Namespace) -> int:
@@ -90,6 +96,9 @@ def dispatch_post(args: argparse.Namespace) -> int:
     ValueError
         When the command is unknown.
     """
+
+    if args.command in EDIT_COMMANDS:
+        return dispatch_edit(args)
 
     from creation.post.bed import pin_bed
     from creation.post.voice import run_revoice, run_voice_audition, run_voice_pick
@@ -120,6 +129,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             episode=args.episode,
             take_id=args.take_id,
             take_file=args.take_file,
+            deboard=not args.no_deboard,
             colour=not args.no_colour_match,
             colour_strength=args.colour_strength,
             bed_db=args.bed_db,

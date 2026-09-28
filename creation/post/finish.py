@@ -1,8 +1,14 @@
-"""Finish one accepted take in one command: SFX, music bed, colour match, mix, captions, mark.
+"""Finish one accepted take in one command: deboard, SFX, music bed, colour match, mix, captions, mark.
 
 Hosted post-production is off on the Drama API: the raw take has the model's
 sound only. ``fictora-produce finish`` finishes it on this laptop:
 
+0. ``deboard``   - replace the storyboard frames the take opens on (Turbo's
+   start image) with the first real frame; measured against the approved
+   board, capped at 12; nothing written when there are none. The length,
+   frame count and sound are unchanged, so every later step (take-facts cue
+   times, caption timing, the voice the mix ducks under) stays on the raw
+   take's timeline. ``--no-deboard`` skips it.
 1. ``sfx``       - the take's cue plan from ``GET /v1/jobs/{take_job}/take-facts``
    (fetched and saved as ``api/take-facts-epNN-tK-vN.json`` when missing),
    rendered on the server (the audio service) and cached in ``epNN/sfx/``.
@@ -39,6 +45,7 @@ from creation.ops.notes import append_run_note
 from creation.post.audio_service import DramaApiAudio
 from creation.post.bed import DEFAULT_BED_DB, Maker, resolve_bed, service_music_maker
 from creation.post.colour import colour_match
+from creation.post.deboard import deboard as deboard_take
 from creation.post.desk import (
     approved_board,
     latest_raw_take,
@@ -203,6 +210,7 @@ def run_finish(
     episode: int = 1,
     take_id: str = "t1",
     take_file: Path | None = None,
+    deboard: bool = True,
     colour: bool = True,
     colour_strength: float = 1.0,
     bed_db: float = DEFAULT_BED_DB,
@@ -228,6 +236,8 @@ def run_finish(
         ``t1``.
     take_file
         Take to finish (e.g. a ``revoice`` output); default the newest raw take.
+    deboard
+        Replace the board frames at the head first (``--no-deboard`` turns it off).
     colour
         Match the take to its approved board.
     colour_strength
@@ -280,7 +290,10 @@ def run_finish(
     result = FinishResult(source=source, final=source)
     current = source
     bed_state: dict[str, Any] = {"path": None}
-    print(f"Finishing {source.name}: sound effects, music, look, mix, captions, mark (2-4 minutes)", file=out)
+    print(
+        f"Finishing {source.name}: board frames, sound effects, music, look, mix, captions, mark (2-4 minutes)",
+        file=out,
+    )
     append_run_note(run_dir, f"Finish chain on `{source.name}` (board: `{board.name if board else 'none'}`)")
 
     def step(name: str, doing: str, work: Callable[[Path], StepReport]) -> None:
@@ -298,6 +311,17 @@ def run_finish(
         if report.output is not None:
             current = report.output
         result.steps.append(report)
+
+    def do_deboard(take: Path) -> StepReport:
+        if not deboard:
+            return StepReport("deboard", "skipped", "--no-deboard")
+        if board is None:
+            return StepReport("deboard", "skipped", "no approved board on the desk to measure against")
+        trimmed = deboard_take(take, board, next_versioned_path(takes, f"{base}-deboard", ".mp4"))
+        append_run_note(run_dir, f"Finish · deboard against `{board.name}`: {trimmed.one_line()}")
+        if trimmed.output is None:
+            return StepReport("deboard", "ran", f"no board frames ({trimmed.leak.one_line()}); nothing written")
+        return StepReport("deboard", "ran", trimmed.one_line(), trimmed.output)
 
     def do_sfx(take: Path) -> StepReport:
         facts = saved_take_facts(desk, episode, take_id) or facts_fetcher(desk, episode, take_id)
@@ -388,6 +412,7 @@ def run_finish(
         append_run_note(run_dir, f"Watermarked -> `{marked.name}` (un-marked master `{take.name}`)")
         return StepReport("watermark", "ran", "Sokii mark top left, under the covered top strip", marked)
 
+    step("deboard", "Replacing the board frames at the head of the take", do_deboard)
     step("sfx", "Laying the take's sound effects", do_sfx)
     step("bed", "Finding the show's music bed", do_bed)
     step("colour", "Matching the look to the approved board", do_colour)

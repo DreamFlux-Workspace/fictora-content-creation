@@ -145,7 +145,7 @@ The writers pick an anime expression (`reaction_kind`) for every emotional momen
 
 The server chooses the endpoint, not the `minimax-h3` pin: Turbo unless engineering switches the deploy to R2V (a server setting; the desk cannot pick it). The estimate names it (`cost_estimate.video_endpoint_id`) and so do the take facts (`endpoint_id`); the desk remembers the last one it saw and prices that, and prices Turbo until one is seen. Quote R2V only when one of them names it.
 
-What Turbo means for the board: the take is image-to-video from the take's whole storyboard board (the board is the video's first frame). Cast plates and voice references are not sent, so faces, wardrobe and look come from the board alone, and the raw take's voice is the model's own. The first frame or two of a raw take can still show the board grid; the server trims them when it joins the episode.
+What Turbo means for the board: the take is image-to-video from the take's whole storyboard board (the board is the video's first frame). Cast plates and voice references are not sent, so faces, wardrobe and look come from the board alone, and the raw take's voice is the model's own. The first frame or two of a raw take can still show the board grid; `finish` replaces them (its `deboard` step, below).
 
 Budgets are warnings, never a hard stop: first episode of a new series **$5.50**, continuing 15 s **$2.50**, continuing 30 s **$5.00**. A first 15 s episode filmed once is about $1.90 on Turbo ($2.20 from 1 Oct; $2.80 on R2V), so the budget covers redraws and re-films. Say "$X of $Y" when the episode crosses its budget, not at the end. Past 2×, say so and let the human decide. `step` books plates, boards and takes itself (a take from its take facts: lane, seconds, reference images); `redraw-board` books its board. Book anything else by hand with `fictora-ops spend`. `fictora-ops preflight` never blocks on budget: a gate open exits 3; warnings exit 4 until the human says film anyway and you run `--proceed-anyway ep01-t1` (logged, next film only).
 
@@ -172,11 +172,12 @@ A raw take is never a deliverable. With `api_captions: false`:
 ```bash
 uv run fictora-produce finish --desk D [--episode N] [--take tK] [--take-file F] [--duck-db N] \
   [--sfx-adjust "door=-6" | "hum=drop" | "shot:3=+4"] [--bed-db -16.5] [--music "..."] \
-  [--line-start S ...] [--no-colour-match] [--colour-strength 0..1] [--watermark-y Y] [--json]
+  [--line-start S ...] [--no-deboard] [--no-colour-match] [--colour-strength 0..1] [--watermark-y Y] [--json]
 ```
 
 | Step | What it does | Writes |
 | --- | --- | --- |
+| deboard | The board frames the take opens on, measured against the approved board and replaced with the first real frame; length and sound unchanged, so nothing later shifts. None found: nothing written (`--no-deboard` skips it) | `…-deboard-vN.mp4` |
 | sfx | Cue plan from `GET /v1/jobs/{take_job}/take-facts?spine_id=` (saved as `api/take-facts-epNN-tK-vN.json`; the take job is read from `api/17_raw_scene_clips.json`). Each cue renders on the server from its Sound label (~$0.002/s), is shape-checked, cached in `epNN/sfx/`, laid at −8 dB and ducked 10 dB under speaking shots | `take-epNN-tK-sfx-vN.mp4` |
 | bed | The desk's pinned bed; else the spine's `series_audio_bed_url`; else one made once on the server (~$0.06) from the genre (or `--music "…"`), levelled here to −20 LUFS, pinned in `shared/beds/` | — |
 | colour | One Lab curve for the whole take, fitted to the approved board (gutters left out) | `…-colour-vN.mp4` + `.cube` |
@@ -189,6 +190,18 @@ A step that fails is reported and skipped; the chain carries on from the last go
 `caption --desk D [--line-start S ...]` still burns captions alone on a raw take (timing detail: [local-captions.md](../../../docs/content-ops/local-captions.md)). Needs ffmpeg + ffprobe with libass. Generated audio (effects, the bed, audition clips, dry lines, Whisper timings) is made on the server by the Drama API operator audio routes (`sfx-cues`, `audio-bed/render`, `voice-auditions/render`, `voice-lines`, `/v1/transcripts`); no provider key ever goes on this laptop and no local file is uploaded (transcripts read the take's stored URL). Rate limits and in-progress answers are waited out automatically. If a route refuses (`operator_audio_unavailable`, `budget_cap_exceeded`), `finish` still does the look, mix, captions and mark, reports `NOT DONE` and names the refusal: tell engineering, never add a key. Costs go to `run-notes.md` only; never quote them to anyone else.
 
 **Hosted post is off.** Never call `POST /v1/video-generations/{id}/post-production-runs` and never pass `--api-captions`. `409 hosted_post_off`, or the older `503 restate_unavailable` from post-production, means finish locally. It is not an outage; do not retry it.
+
+## Local edits
+
+All local, free, ffmpeg + numpy; each takes `--desk D [--episode N] [--take tK] [--take-file F]` (default: the newest raw take), writes `epNN/takes/take-epNN-tK-<step>-vN.mp4` and a run note, and never overwrites.
+
+| Command | What it does | Thresholds |
+| --- | --- | --- |
+| `deboard [--board B] [--max-frames 12]` | First step of `finish` (`--no-deboard` skips it). Each opening frame is compared with the approved board by PSNR at 192×336; a board frame sits ≥ 3 dB above the baseline (median PSNR of one frame a second from second 1 on). Those frames are replaced by clones of the first real frame: frame count, length and sound are unchanged, so take-facts cue times, caption timing and the voice the mix ducks under need no shift. The new frame 0 is re-checked; a length change or a frame 0 that is still the board is an error. | cap 12 frames (reported `CAP HIT`); no board frames → nothing written |
+| `soften [--cut S ...]` | Hard cuts from a `scale=16:28,format=gray,tblend=all_mode=difference` trace (ffmpeg scene detect misses H3 cell seams); at each, the last pre-cut frame is laid over the new shot and faded out. Length and sound unchanged. Run after `deboard`. No cut found → nothing written. | cut = mean luma difference ≥ 25; cuts < 0.4 s apart merged; fade 0.33 s |
+| `freeze --at S --hold S` | Holds the frame at `--at` (snapped to the frame grid) for `--hold`, over the picture that was there. Same length, frame count and sound. | hold > 0 and inside the take |
+| `trim --take-file FINAL --cut A-B [--cues-json J ...]` | Cuts A-B out, each edge snapped to the strongest frame change within ±0.1 s, frame-accurate (picture `select`, sound `aselect`). Prints both snaps and the shift: everything at or after B moves B−A earlier, anything inside is gone. `--cues-json` writes a shifted `<stem>-trim-vN.json` of a `[{start, end?}]` list. Finish the raw take first. | shot change = mean pixel change ≥ 12 (0–255, at 96×168) and ≥ 3× the take's median; else the nearest frame |
+| `tempo [--factor 0.9]` | Picture (`setpts`, re-timed to 24 fps) and sound (`atempo`, pitch kept) together; every time becomes time / factor. Run on the finished file. | 0.5–2.0 |
 
 ## Change a character's voice
 

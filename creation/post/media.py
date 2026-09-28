@@ -10,6 +10,9 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+import numpy.typing as npt
+
 #: The one limiter every local mix ends on (-1 dBFS ceiling).
 LIMITER = "alimiter=limit=0.891:attack=5:release=120:level=disabled"
 
@@ -209,3 +212,73 @@ def extract_wav(source: Path, out: Path, *, rate: int = 16000) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     run_ffmpeg(["-i", str(source), "-vn", "-ac", "1", "-ar", str(rate), str(out)])
     return out
+
+
+def count_frames(path: Path) -> int:
+    """Decoded video frame count (``ffprobe -count_frames``).
+
+    Parameters
+    ----------
+    path
+        Video file.
+
+    Returns
+    -------
+    int
+        Frames in the first video stream.
+
+    Raises
+    ------
+    MediaToolError
+        When ffprobe fails.
+    """
+
+    result = subprocess.run(
+        [ffprobe_bin(), "-v", "error", "-select_streams", "v:0", "-count_frames",
+         "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    if result.returncode != 0 or not result.stdout.strip():
+        raise MediaToolError(f"ffprobe could not count the frames of {path.name}: {result.stderr.strip()[-300:]}")
+    return int(result.stdout.strip().split(",")[0])
+
+
+def decode_frames(
+    path: Path, *, width: int, height: int, fps: float | None = None, max_frames: int | None = None
+) -> npt.NDArray[np.float64]:
+    """Decode a video's frames as RGB scaled to ``width`` x ``height``.
+
+    Parameters
+    ----------
+    path
+        Video file.
+    width, height
+        Analysis size.
+    fps
+        Resample to this rate first; ``None`` keeps every frame.
+    max_frames
+        Stop after this many frames.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``(frames, height, width, 3)`` floats in 0-255.
+
+    Raises
+    ------
+    MediaToolError
+        When ffmpeg fails.
+    """
+
+    vf = f"scale={width}:{height}" if fps is None else f"fps={fps},scale={width}:{height}"
+    args = [ffmpeg_bin(), "-nostdin", "-v", "error", "-i", str(path)]
+    if max_frames is not None:
+        args += ["-frames:v", str(max_frames)]
+    args += ["-vf", vf, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+    result = subprocess.run(args, capture_output=True, check=False)
+    if result.returncode != 0:
+        raise MediaToolError(f"frame decode failed on {path.name}: {result.stderr.decode(errors='replace')[-300:]}")
+    raw = np.frombuffer(result.stdout, dtype=np.uint8)
+    size = width * height * 3
+    count = raw.size // size
+    return raw[: count * size].reshape(count, height, width, 3).astype(np.float64)

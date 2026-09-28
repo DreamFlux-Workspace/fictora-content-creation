@@ -72,7 +72,8 @@ def test_finish_lays_sfx_music_mix_captions_and_mark_as_new_versions(post_desk: 
                         facts_fetcher=lambda *a: None, stream=out)  # fmt: skip
 
     assert result.complete, out.getvalue()
-    assert [s.step for s in result.steps] == ["sfx", "bed", "colour", "mix", "captions", "watermark"]
+    assert [s.step for s in result.steps] == ["deboard", "sfx", "bed", "colour", "mix", "captions", "watermark"]
+    assert "no board frames" in result.steps[0].detail and result.steps[0].output is None
     assert all(s.status == "ran" for s in result.steps), out.getvalue()
     names = sorted(p.name for p in (post_desk / "ep01" / "takes").glob("*.mp4"))
     assert names == sorted([
@@ -162,7 +163,7 @@ def test_when_the_server_refuses_audio_finish_says_not_done_and_keeps_the_ffmpeg
     assert not result.complete
     assert result.sound_missing == ("music", "SFX")
     status = {s.step: s.status for s in result.steps}
-    assert status == {"sfx": "failed", "bed": "failed", "colour": "skipped", "mix": "ran", "captions": "ran",
+    assert status == {"deboard": "skipped", "sfx": "failed", "bed": "failed", "colour": "skipped", "mix": "ran", "captions": "ran",
                       "watermark": "ran"}  # fmt: skip
     assert "operator_audio_unavailable" in out.getvalue()
     assert "$" not in out.getvalue(), "cost never reaches printed output"
