@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
+from creation.cli_text import HELP_SUFFIX, text_or_file
 from creation.post.edit_commands import EDIT_COMMANDS, add_edit_parsers, dispatch_edit
 from creation.post.finish import FINISH_INCOMPLETE, run_finish
 from creation.post.hand import parse_placed, parse_range
@@ -91,7 +92,9 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     fin.add_argument("--no-colour-match", action="store_true", help="Keep the take's own look.")
     fin.add_argument("--colour-strength", type=float, default=1.0, help="0..1 toward the board.")
     fin.add_argument("--bed-db", type=float, default=-16.5, help="Music bed level in the mix.")
-    fin.add_argument("--music", default=None, help="Describe a new bed to make (replaces the pinned one).")
+    fin.add_argument(
+        "--music", default=None, help=f"Describe a new bed to make (replaces the pinned one). {HELP_SUFFIX}"
+    )
     fin.add_argument("--duck-db", type=float, default=None, help="Duck the bed exactly N dB (1-30) under the voice.")
     fin.add_argument("--sfx-adjust", action="append", default=[], help='"door=-6", "hum=drop", "shot:3=+4".')
     fin.add_argument("--line-start", type=float, action="append", default=None, help="Caption line start, per line.")
@@ -177,7 +180,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             colour=not args.no_colour_match,
             colour_strength=args.colour_strength,
             bed_db=args.bed_db,
-            music=args.music,
+            music=text_or_file(args.music, flag="--music") if args.music else None,
             duck_db=args.duck_db,
             sfx_adjust=tuple(parse_adjustment(raw) for raw in args.sfx_adjust),
             line_starts=tuple(args.line_start) if args.line_start else None,

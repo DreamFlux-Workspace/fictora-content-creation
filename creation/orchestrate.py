@@ -53,6 +53,7 @@ from creation.prices import (
     server_lane,
     take_facts_usd,
     take_usd,
+    video_usd_per_second,
 )
 from creation.production_config import load_production_config
 from creation.production_state import (
@@ -283,6 +284,95 @@ def table_estimate_usd(state: ProductionState, cfg: Any, *, cast_count: int, tak
             else take_usd(H3_MAX_TURBO_I2V_ENDPOINT, H3_RESOLUTION, seconds, on=date.today())
         )
     return round(float(per_take or 0.0) * takes, 2)
+
+
+def lane_rate_words(state: ProductionState, *, on: date) -> str:
+    """Name what a take films on and its per-second price (``H3 Max Turbo 768P at $0.02/s``).
+
+    Parameters
+    ----------
+    state
+        Desk production state (lane pin and the server's last-named endpoint).
+    on
+        Filming day (the Turbo promo ends 2026-09-30).
+
+    Returns
+    -------
+    str
+        Lane, resolution and dollars a second; says so when the lane has no verified rate.
+    """
+
+    server = state.server_lane()
+    label = lane_label(state.video_lane, server=server)
+    endpoint = lane_endpoint(state.video_lane, server=server)
+    if endpoint is None:
+        return f"{label} (no verified $/s)"
+    rate = video_usd_per_second(endpoint[0], endpoint[1], on=on)
+    if rate is None:
+        return f"{label} {endpoint[1]} (no verified $/s)"
+    return f"{label} {endpoint[1]} at ${rate}/s"
+
+
+def price_estimate(
+    state: ProductionState, cfg: Any, estimate: dict[str, Any], *, cast_count: int, takes: int
+) -> tuple[float, str, list[str]]:
+    """Price an estimate answer, naming the lane and $/s, and warn loudly when the server's dollars are missing.
+
+    The server's dated ``cost_estimate.total_usd`` wins. Without it (the server
+    refused or skipped the estimate, or answered with no dollars) the kit's own
+    price table is used, and a ``!!`` line says so: the number is the kit's,
+    not the server's. A lane with no verified rate adds a second ``!!`` line
+    naming the rate that was used instead.
+
+    Parameters
+    ----------
+    state
+        Desk production state; call after ``remember_server_lane`` so the lane is current.
+    cfg
+        Desk production config (take length, optional fallback).
+    estimate
+        The ``batches/estimate`` answer (``estimate_skipped`` when the server refused it).
+    cast_count
+        Cast cards on the story (R2V reference-image ceiling).
+    takes
+        Takes being priced.
+
+    Returns
+    -------
+    tuple[float, str, list[str]]
+        Dollars, a source phrase (always lane + $/s), and warning lines (empty on a server answer).
+    """
+
+    today = date.today()
+    seconds = cfg.clip_duration_seconds
+    rate = lane_rate_words(state, on=today)
+    table = table_estimate_usd(state, cfg, cast_count=cast_count, takes=takes)
+    cost = estimate.get("cost_estimate") if isinstance(estimate.get("cost_estimate"), dict) else None
+    if cost is not None and _money(cost.get("total_usd")) is not None:
+        usd = _estimate_usd(estimate, fallback_usd=table)
+        source = f"server estimate priced {cost.get('priced_on')} ({cost.get('takes')} take(s)); {rate}, {seconds} s a take"
+        return usd, source, []
+    if estimate.get("estimate_skipped"):
+        why = f"the server refused it: {str(estimate.get('detail') or 'no detail')[:160]}"
+    elif cost is not None:
+        why = "the server named the lane but gave no dollars"
+    else:
+        why = "the server answer carried no dollars"
+    warnings = [
+        f"!! SERVER ESTIMATE FAILED ({why}). This number is the kit's LOCAL price table, not the server's: "
+        "check it before the human says yes."
+    ]
+    server = state.server_lane()
+    if lane_take_usd(state.video_lane, seconds, on=today, server=server) is None:
+        fallback = getattr(cfg, "fallback_estimate_usd", None)
+        instead = (
+            f"the desk's fallback ${float(fallback):.2f} a take"
+            if fallback is not None
+            else f"the H3 Max Turbo rate (${video_usd_per_second(H3_MAX_TURBO_I2V_ENDPOINT, H3_RESOLUTION, on=today)}/s)"
+        )
+        warnings.append(f"!! {lane_label(state.video_lane, server=server)} has no verified price; priced at {instead}.")
+    source = f"price table ({lane_label(state.video_lane, server=server)}, {seconds} s a take); {rate}"
+    return table, source, warnings
 
 
 def _estimate_usd(payload: dict[str, Any], *, fallback_usd: float) -> float:
@@ -528,7 +618,8 @@ def board_report(
             if lane and lane[0] == H3_MAX_R2V_ENDPOINT
             else "it opens on this board; cast plates are not sent"
         )
-        lines.append(f"A take will cost about ${take_price:.2f} on {label} ({clip_seconds} s, {what_goes}).")
+        rate = lane_rate_words(state, on=date.today())
+        lines.append(f"A take will cost about ${take_price:.2f} on {rate} ({clip_seconds} s, {what_goes}).")
     return lines
 
 
@@ -667,24 +758,20 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             spine = run.spine(state.spine_id or "")
             slot = episode_by_ordinal(load_series(desk), ep)
             cast_count = len([card for card in spine.get("cast") or [] if isinstance(card, dict)])
-            table = table_estimate_usd(state, cfg, cast_count=cast_count, takes=len(slot.takes))
-            cost = estimate.get("cost_estimate") if isinstance(estimate.get("cost_estimate"), dict) else None
-            if cost is not None and _money(cost.get("total_usd")) is not None:
-                state.estimate_usd = _estimate_usd(estimate, fallback_usd=table)
-                source = f"server estimate priced {cost.get('priced_on')} ({cost.get('takes')} take(s))"
-            else:
-                state.estimate_usd = table
-                source = f"price table ({lane_label(state.video_lane, server=state.server_lane())}, {cfg.clip_duration_seconds} s a take)"
+            state.estimate_usd, source, warnings = price_estimate(
+                state, cfg, estimate, cast_count=cast_count, takes=len(slot.takes)
+            )
             state.phase = "wait_spend"
             save_production(desk, state)
             budget = envelope_line(desk, episode=ep, next_usd=state.estimate_usd)
-            _note(ep_dir, f"Estimate ${state.estimate_usd:.2f} before take ({source}). {budget}")
+            _note(ep_dir, " ".join([*warnings, f"Estimate ${state.estimate_usd:.2f} before take ({source}). {budget}"]))
             scope = f"episode {ep} alone, {len(slot.takes)} take(s)" + (
                 f"; episodes 1-{ep - 1} are not filmed or booked again" if ep > 1 else ""
             )
             return StepResult(
                 state.phase,
-                f"Estimate ${state.estimate_usd:.2f} for {scope} ({source}).\n{budget}\n"
+                "".join(f"{line}\n" for line in warnings)
+                + f"Estimate ${state.estimate_usd:.2f} for {scope} ({source}).\n{budget}\n"
                 "Human yes, then `fictora-produce step --confirm-spend`.",
                 (),
             )

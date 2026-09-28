@@ -16,7 +16,7 @@ from creation.captions import CAPTION_BAND, build_ass, caption_margin_v, fitted_
 from creation.harness.http_util import hosted_post_off
 from creation.harness.session import DramaApiRunSession
 from creation.post.media import measure_loudness, measure_rms_windows
-from creation.post.mix import duck_expression, mix_take, pick_gain
+from creation.post.mix import CueLevel, duck_expression, mix_take, pick_gain, quiet_cue_warnings
 from creation.post.sfx import (
     SfxCue,
     SfxPlan,
@@ -72,6 +72,8 @@ def test_sfx_is_laid_under_the_take_cached_and_dropped_on_request(tmp_path: Path
     levels = measure_rms_windows(first.output, window_seconds=0.5)
     assert max(levels[4:6]) > -40.0, "the cue is heard at 2-3 s"
     assert first.rendered == 1 and first.cost_usd == pytest.approx(0.002)
+    [peak] = first.peaks_db
+    assert peak == pytest.approx(max(measure_rms_windows(tmp_path / "sfx" / f"{plan.cues[0].cache_key}.mp3")) - 8.0, abs=0.2)
 
     second = lay_sfx(take, plan, cache_dir=tmp_path / "sfx", output=tmp_path / "sfx-v2.mp4", render=render)
     assert calls == ["a door slams"] and second.rendered == 0 and second.cost_usd == 0
@@ -112,6 +114,40 @@ def test_duck_db_drops_the_bed_by_that_depth_under_the_voice(tmp_path: Path) -> 
     assert "12 dB in 1 voice window" in result.ducking
     with pytest.raises(ValueError, match="--duck-db"):
         mix_take(take, tmp_path / "bad.mp4", bed=bed, duck_db=0.5)
+
+
+def test_a_cue_far_under_the_bed_is_named_with_the_fix_and_a_heard_one_is_not() -> None:
+    bed = (-20.0,) * 4  # a 2 s bed of 0.5 s windows at -20 dB RMS; it loops under the 6 s take
+    crack = CueLevel("neck crack", 3.2, 0.5, peak_db=-39.0, gain_db=-8.0)  # 19 dB under: buried
+    door = CueLevel("a door slams", 1.0, 1.0, peak_db=-30.0, gain_db=-8.0)  # 10 dB under: heard
+
+    [warning] = quiet_cue_warnings([crack, door], bed_levels=bed, bed_db=0.0, take_gain_db=0.0)
+
+    assert warning.startswith("!! cue 'neck crack' @3.20s peaks 19 dB under the music bed (-39 dB vs -20 dB)")
+    # 13 dB to reach 6 under the bed: 8 from the cue (it tops out at 0 dB), 5 from the bed.
+    assert '`--sfx-adjust "neck crack=+8"`' in warning and "lower the bed about 5 dB (`--bed-db`)" in warning
+
+
+def test_a_cue_just_under_the_bed_is_not_warned_and_the_take_gain_counts() -> None:
+    bed = (-20.0,) * 4
+    cue = CueLevel("rain", 0.0, 2.0, peak_db=-31.0, gain_db=-8.0)
+
+    assert quiet_cue_warnings([cue], bed_levels=bed, bed_db=0.0, take_gain_db=0.0) == []  # 11 dB under
+    assert quiet_cue_warnings([cue], bed_levels=bed, bed_db=0.0, take_gain_db=-2.0) != []  # 13 dB under
+    assert quiet_cue_warnings([cue], bed_levels=(), bed_db=0.0, take_gain_db=-2.0) == []
+
+
+@needs_ffmpeg
+def test_the_mix_warns_on_a_cue_the_bed_buries(tmp_path: Path) -> None:
+    take = make_take(tmp_path / "take.mp4", seconds=6.0, tones=((1.0, 2.0, 440),))
+    bed = make_tone(tmp_path / "bed.wav", seconds=6.0, freq=220, volume=0.9)
+    buried = CueLevel("neck crack", 4.0, 0.5, peak_db=-90.0, gain_db=-8.0)  # the bed sits near -38 dB
+
+    result = mix_take(take, tmp_path / "mix.mp4", bed=bed, cues=[buried])
+
+    assert len(result.warnings) == 1 and "neck crack" in result.warnings[0]
+    assert "\n!! cue 'neck crack'" in result.one_line()
+    assert mix_take(take, tmp_path / "mix2.mp4", bed=None, cues=[buried]).warnings == ()
 
 
 def test_duck_expression_is_exact_depth_and_empty_without_windows() -> None:

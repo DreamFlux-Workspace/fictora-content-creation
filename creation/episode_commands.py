@@ -41,6 +41,7 @@ from urllib.parse import quote
 import httpx
 
 from creation import orchestrate as _orchestrate
+from creation.cli_text import TextArgError, text_or_file
 from creation.harness import stages_gated as stages
 from creation.harness.http_util import api_error_text, describe_job_error
 from creation.harness.raw_video import wait_for_raw_scene_clips
@@ -52,8 +53,6 @@ from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
 from creation.ops.state import episode_by_ordinal, load_series
 from creation.orchestrate import (
-    _estimate_usd,
-    _money,
     _open_run,
     board_report,
     collect_takes,
@@ -64,9 +63,9 @@ from creation.orchestrate import (
     script_gate_text,
     seed_attempt_for,
     sync_spine_lines,
-    table_estimate_usd,
+    price_estimate,
 )
-from creation.prices import STILL_USD, lane_label, server_lane
+from creation.prices import STILL_USD, server_lane
 from creation.production_config import load_production_config
 from creation.production_state import ProductionState, load_production, save_production, start_episode
 from creation.spine_view import dialogue_line_ids, episode_id_for, episode_summary, frames_by_set, frames_digest
@@ -1007,7 +1006,7 @@ def look_frame_route_missing(message: str) -> bool:
     return message.startswith("HTTP 404") and '"detail": "Not Found"' in message
 
 
-def run_look_frame(desk: Path, *, description_file: Path, size: str = LOOK_FRAME_DEFAULT_SIZE, out: Any = None) -> Path:
+def run_look_frame(desk: Path, *, description: str | Path, size: str = LOOK_FRAME_DEFAULT_SIZE, out: Any = None) -> Path:
     """Draw our own style frame on the server from a written description. Books one still; never pins.
 
     ``POST /v1/spines/{id}/look-frame`` draws it on the product's still model
@@ -1021,8 +1020,9 @@ def run_look_frame(desk: Path, *, description_file: Path, size: str = LOOK_FRAME
     ----------
     desk
         Series desk with a story.
-    description_file
-        The written description of the look (text, 1-4000 characters).
+    description
+        The written description of the look (1-4000 characters): the words, ``@file``
+        or an existing file path (a ``Path`` is always read as a file).
     size
         ``1088x1936`` (default), ``1936x1088`` or ``1024x1024``.
     out
@@ -1037,12 +1037,20 @@ def run_look_frame(desk: Path, *, description_file: Path, size: str = LOOK_FRAME
     out = out or sys.stdout
     if size not in LOOK_FRAME_SIZES:
         raise CommandStopped(f"--size is one of {', '.join(LOOK_FRAME_SIZES)}")
+    source = f"@{description}" if isinstance(description, Path) else description
     try:
-        description = description_file.expanduser().read_text(encoding="utf-8").strip()
-    except OSError as exc:
-        raise CommandStopped(f"cannot read the description file {description_file}: {exc}") from exc
-    if not description:
-        raise CommandStopped(f"{description_file} is empty; write the look down first")
+        words = text_or_file(source, flag="--description")
+    except TextArgError as exc:
+        raise CommandStopped(str(exc)) from exc
+    if source.startswith("@"):
+        source_name = Path(source[1:]).name
+    elif words != source.strip():
+        source_name = Path(source).name
+    else:
+        source_name = "inline text"
+    if not words:
+        raise CommandStopped("the description is empty; write the look down first")
+    description = words
     if len(description) > LOOK_FRAME_MAX_CHARS:
         raise CommandStopped(f"the description is {len(description)} characters; keep it to {LOOK_FRAME_MAX_CHARS}")
     desk, state, run = _desk_session(desk)
@@ -1076,7 +1084,7 @@ def run_look_frame(desk: Path, *, description_file: Path, size: str = LOOK_FRAME
     if cost > 0:
         record_spend(desk, episode=1, usd=cost, unit="look-frame")
     cached = " (already drawn for this description; nothing booked)" if answer.get("cached") else ""
-    _note(desk, 1, f"look-frame: {path.name} from {description_file.name}, ${cost:.2f}{cached}. {image_url}")
+    _note(desk, 1, f"look-frame: {path.name} from {source_name}, ${cost:.2f}{cached}. {image_url}")
     print(str(path), file=out)
     print(f"image_url: {image_url}", file=out)
     print(
@@ -1687,16 +1695,9 @@ def _price_film(
     state.remember_server_lane(server_lane(estimate))
     spine = run.spine(state.spine_id or "")
     cast_count = len([card for card in spine.get("cast") or [] if isinstance(card, dict)])
-    table = table_estimate_usd(state, cfg, cast_count=cast_count, takes=len(take_ids))
-    cost = estimate.get("cost_estimate") if isinstance(estimate.get("cost_estimate"), dict) else None
-    if cost is not None and _money(cost.get("total_usd")) is not None:
-        usd = _estimate_usd(estimate, fallback_usd=table)
-        source = f"server estimate priced {cost.get('priced_on')} ({cost.get('takes')} take(s))"
-    else:
-        usd = table
-        source = f"price table ({lane_label(state.video_lane, server=state.server_lane())}, {cfg.clip_duration_seconds} s a take)"
-        if take_index is not None and "reroll_take_index" in str(estimate.get("detail") or ""):
-            source += "; the deployed API cannot price one take yet"
+    usd, source, warnings = price_estimate(state, cfg, estimate, cast_count=cast_count, takes=len(take_ids))
+    if warnings and take_index is not None and "reroll_take_index" in str(estimate.get("detail") or ""):
+        source += "; the deployed API cannot price one take yet"
     fresh = load_production(desk)
     fresh.film_estimates[key] = usd
     fresh.remember_server_lane(state.server_lane())
@@ -1707,6 +1708,7 @@ def _price_film(
     earlier = f"; episodes 1-{episode - 1} are not filmed or booked again" if episode > 1 else ""
     others = "; the episode's other takes are kept as filmed" if take_index is not None else ""
     lines = [
+        *warnings,
         f"Film {scope}: about ${usd:.2f} ({source}){earlier}{others}.",
         envelope_line(desk, episode=episode, next_usd=usd),
     ]
@@ -1719,7 +1721,7 @@ def _price_film(
     )
     text = "\n".join(lines)
     print(text, file=out)
-    _note(desk, episode, f"film {what} priced ${usd:.2f} ({source}).")
+    _note(desk, episode, " ".join([*warnings, f"film {what} priced ${usd:.2f} ({source})."]))
     return text
 
 
@@ -1813,7 +1815,12 @@ def add_episode_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]
         ),
     )
     frame.add_argument("--desk", type=Path, required=True)
-    frame.add_argument("--description", type=Path, required=True, metavar="FILE", help="The look, written down (text).")
+    frame.add_argument(
+        "--description",
+        required=True,
+        metavar="TEXT|FILE",
+        help="The look, written down: the words, or @FILE / an existing file path.",
+    )
     frame.add_argument("--size", default=LOOK_FRAME_DEFAULT_SIZE, choices=LOOK_FRAME_SIZES)
 
     look = sub.add_parser("look", help="Pin the story's look: one style frame by public https URL. Spends nothing.")
@@ -1913,7 +1920,7 @@ def dispatch_episode(args: argparse.Namespace) -> int:
             )
             return 0
         if args.command == "look-frame":
-            run_look_frame(args.desk, description_file=args.description, size=args.size)
+            run_look_frame(args.desk, description=args.description, size=args.size)
             return 0
         if args.command == "look":
             run_look(args.desk, url=args.url)

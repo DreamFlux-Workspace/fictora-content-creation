@@ -36,7 +36,7 @@ One machine per desk, pointed at one episode (`episode_ordinal` in `production.j
 | `wait_script` | Human yes on the lines (printed by the draft or `author`; `epNN/api/spine.json`) → `approve --gate script` (episode 1: the whole spine; episode 2 on: `pilot-episodes/{n}/approve`) |
 | `ready_boards_enrol` | `step` → boards to `epNN/boards/board-epNN-tK-vN.png`, brightness (information only), the shot list row by row, safe-zone warnings; books $0.30 a board |
 | `wait_board` | Human yes → `approve --gate board` (the boards `step` drew; `--path` only for a board it did not draw). Or `redraw-board` |
-| `ready_estimate` | `step` → this episode's estimate, and only this episode (earlier episodes are not filmed again): the server's dated dollars, else the price table; says "$X of a $Y envelope" (warn only) |
+| `ready_estimate` | `step` → this episode's estimate, and only this episode (earlier episodes are not filmed again): the server's dated dollars, else the price table (then a loud `!! SERVER ESTIMATE FAILED` line first); always names the lane and $/s; says "$X of a $Y envelope" (warn only) |
 | `wait_spend` | Human yes → `step --confirm-spend` |
 | `ready_video` | (internal) take enrol |
 | `complete` | Every take of the episode raw on disk (`epNN/takes/take-epNN-tK-raw-vN.mp4`) with its take facts (`epNN/api/take-facts-epNN-tK-vN.json`); spend booked from the facts; video and take job ids in `run-notes.md` → `finish` per take, then the next episode |
@@ -185,7 +185,7 @@ uv run fictora-produce finish --desk D [--episode N] [--take tK] [--take-file F]
 | cues (only with `--cue`) | Hand cues laid under the take at −8 dB (or `@DB`), 10 dB lower in speaking shots and under hand lines, clamped to the take; the cue layer is measured and a silent cue fails the step | `…-cues-vN.mp4` |
 | bed | The desk's pinned bed; else the spine's `series_audio_bed_url`; else one made once on the server (~$0.06) from the genre (or `--music "…"`), levelled here to −20 LUFS, pinned in `shared/beds/` | — |
 | colour | One Lab curve for the whole take, fitted to the approved board (gutters left out) | `…-colour-vN.mp4` + `.cube` |
-| mix | Bed looped under the take at `--bed-db`, sidechain-ducked under the voice (`--duck-db N` = exactly N dB, 1–30), take gain measured to land near −18 LUFS (band −20 to −15), one limiter | `…-mix-vN.mp4` |
+| mix | Bed looped under the take at `--bed-db`, sidechain-ducked under the voice (`--duck-db N` = exactly N dB, 1–30), take gain measured to land near −18 LUFS (band −20 to −15), one limiter. A sound effect whose loudest moment sits more than 12 dB under the bed is named in a `!! cue … peaks N dB under the music bed` line with the `--sfx-adjust` / `--bed-db` fix: it is mixed but nobody hears it, so rerun `finish` with that fix | `…-mix-vN.mp4` |
 | captions | House captions timed on the take before the bed | `…-cap-vN.mp4` + `.ass` |
 | watermark | Sokii mark top left (x 3%, y 9%), never in the top 8% | `…-sokii-vN.mp4` |
 
@@ -310,7 +310,7 @@ Sequence `fictora-produce` runs: `POST /v1/prompt-video-authoring-drafts` (`epis
 
 ```bash
 uv run fictora-produce edit --desk D --episode N (--beat ID|N | --frame ID|N | --line-id ID) [--intent TEXT] [--set KEY=VALUE ...] [--text T] [--spoken S] [--subtitle S] [--select-regen] [--preview]
-uv run fictora-produce look-frame --desk D --description FILE [--size 1088x1936]   # draw our own style frame on the server from the written look; $0.30; never pins
+uv run fictora-produce look-frame --desk D --description TEXT|@FILE [--size 1088x1936]   # draw our own style frame on the server from the written look; $0.30; never pins
 uv run fictora-produce look --desk D --url https://…          # pin one style frame (the look-frame's image_url, after the human's yes); spends nothing
 uv run fictora-produce look-note --desk D (--add TEXT | --remove ID|N)   # at most five; the next drawing uses them
 uv run fictora-produce spine --desk D --refresh
@@ -321,7 +321,8 @@ uv run fictora-produce check-lines --desk D --episode N [--take tK]             
 
 - `edit` before the script gate is a plain patch. After it, the server asks for a cascade: `edit` prints every item, runs the free ones, and leaves the paid ones (`tier media`) off unless `--select-regen`; it names each board that no longer matches (redraw it with `redraw-board`). `--preview` stops after the list.
 - `edit --line-id … --spoken "…" [--subtitle "…"]` pins the exact performed line on a Japanese or Korean show before the script gate; an English show refuses it. A new English `--text` on such a show is re-localized when the script is approved.
-- `look-frame` sends only the words in FILE (1–4000 characters) to `POST /v1/spines/{id}/look-frame`; the server draws on the product's still model (text only: it refuses a link in the description) and answers our stored PNG. The desk saves `shared/look/look-frame-vN.png`, books the still, and prints the `image_url` for `look --url`. It never pins. The same description and size are cached on the server (re-running is free). An older server answers 404 on the route: the command stops with that message and books nothing; tell engineering.
+- Text flags (`--prompt`, `--description`, `--music`, `fictora-ops set-lines --lines-json`) take the words themselves, `@FILE`, or an existing file path.
+- `look-frame` sends only the description's words (1–4000 characters; inline text, `@FILE`, or an existing file path) to `POST /v1/spines/{id}/look-frame`; the server draws on the product's still model (text only: it refuses a link in the description) and answers our stored PNG. The desk saves `shared/look/look-frame-vN.png`, books the still, and prints the `image_url` for `look --url`. It never pins. The same description and size are cached on the server (re-running is free). An older server answers 404 on the route: the command stops with that message and books nothing; tell engineering.
 - `plates` redraws one character on `POST /v1/spines/{id}/cast/{cast_id}/regenerate` (the rest of the cast is not drawn or paid again) into the next `ep01/plates/plate-ep01-N-vK.png`, books $0.30 as `plate-redraw:<cast_id>`, and leaves the plates gate open. Only in phase `wait_plates`; past it the boards are drawn from the approved plates, so it is refused before anything is sent. Not the whole-cast `cast/enrol`: with no stale cast card the server answers the first drawing's job again and draws nothing. The cause is a label; "try again" is refused.
 - `redraw-board` warns when the frame briefs have not changed since the last drawing (a re-roll). A beat edit made after the board was drawn is carried into the redraw by the server. The cause is a label on the desk only.
 

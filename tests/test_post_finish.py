@@ -92,6 +92,7 @@ def test_finish_lays_sfx_music_mix_captions_and_mark_as_new_versions(post_desk: 
     )
     mix = next(s for s in result.steps if s.step == "mix")
     assert "NO MUSIC BED" not in mix.detail
+    assert "!!" not in mix.detail, "a door slam at full level is heard over the bed"
     assert out.getvalue().rstrip().splitlines()[-2] == "Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓"
     notes = (post_desk / "ep01" / "run-notes.md").read_text()
     assert "Finish summary" in notes and "NOT DONE" not in notes
@@ -100,6 +101,24 @@ def test_finish_lays_sfx_music_mix_captions_and_mark_as_new_versions(post_desk: 
                        facts_fetcher=lambda *a: None, stream=io.StringIO())  # fmt: skip
     assert again.final.name == "take-ep01-t1-sokii-v2.mp4"
     assert calls == ["a door slams"], "the cue is cached: a second finish renders nothing"
+
+
+@needs_ffmpeg
+def test_finish_warns_when_a_cue_is_buried_under_the_bed(post_desk: Path) -> None:
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(json.dumps(FACTS))
+
+    def faint(cue: SfxCue, target: Path) -> Path:  # -47 dB RMS: passes the shape check, lost under a 0 dB bed
+        return make_tone(target, seconds=cue.seconds, freq=300, volume=0.05)
+
+    out = io.StringIO()
+    result = run_finish(post_desk, sfx_render=faint, bed_maker=fake_bed, bed_db=0.0,
+                        facts_fetcher=lambda *a: None, stream=out)  # fmt: skip
+
+    mix = next(s for s in result.steps if s.step == "mix")
+    assert mix.status == "ran" and "!! cue 'a door slams' @3.00s peaks" in mix.detail
+    assert "!! cue 'a door slams'" in out.getvalue()
+    assert "!! cue 'a door slams'" in (post_desk / "ep01" / "run-notes.md").read_text()
 
 
 @needs_ffmpeg

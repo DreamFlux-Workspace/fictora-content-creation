@@ -95,6 +95,7 @@ def test_film_take_prices_that_one_take_and_films_nothing(desk30: Path, api30: F
     assert api30.posted(ESTIMATE) == [{"spine_version": "v5", "episode_ids": ["ep_02"], "reroll_take_index": 2}]
     assert api30.posted(VIDEO) == []
     assert "only t2 of episode 2: about $1.20" in text
+    assert "; H3 Max Turbo 768P at $0.0" in text and "!! SERVER ESTIMATE FAILED" not in text
     assert "episodes 1-1 are not filmed or booked again" in text
     assert load_production(desk30).film_estimates == {"ep02-t2": 1.20}
     assert "--take t2" in text and "--confirm-spend" in text
@@ -110,6 +111,7 @@ def test_a_server_that_cannot_price_one_take_is_priced_from_the_table_for_one_ta
 
     assert load_production(desk30).film_estimates["ep02-t2"] == pytest.approx(turbo_take_usd(15))  # one take, not two
     assert "cannot price one take yet" in text
+    assert "!! SERVER ESTIMATE FAILED (the server refused it: HTTP 422" in text
 
 
 def test_a_film_estimate_that_names_r2v_without_dollars_is_priced_on_r2v(desk30: Path, api30: FakeApi) -> None:
@@ -123,7 +125,8 @@ def test_a_film_estimate_that_names_r2v_without_dollars_is_priced_on_r2v(desk30:
     state = load_production(desk30)
     assert state.film_estimates["ep02-t2"] == pytest.approx(1.20)
     assert state.server_lane() == ("minimax/h3-max/reference-to-video", "768P")
-    assert "price table (H3 Max R2V, 15 s a take)" in text
+    assert "price table (H3 Max R2V, 15 s a take); H3 Max R2V 768P at $0.08/s" in text
+    assert text.startswith("!! SERVER ESTIMATE FAILED")
 
 
 def test_confirming_without_a_shown_price_sends_nothing(desk30: Path, api30: FakeApi) -> None:
