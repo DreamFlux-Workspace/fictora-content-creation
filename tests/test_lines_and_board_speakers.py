@@ -99,8 +99,8 @@ def test_line_after_the_gate_goes_through_the_cascade_and_reopens_the_desks_scri
     assert episode_by_ordinal(load_series(desk), 1).script.status == "pending"
 
 
-def test_line_cannot_add_a_cast_member_and_says_so(desk: Path, api: FakeApi) -> None:
-    with pytest.raises(ec.CommandStopped, match="cannot add or remove a line, or add a cast member"):
+def test_line_speaker_outside_the_cast_points_to_new_voice(desk: Path, api: FakeApi) -> None:
+    with pytest.raises(ec.CommandStopped, match="no cast member 'Speaker voice'.*--new-voice NAME"):
         ec.run_line(desk, episode=1, line="1", speaker="Speaker voice", out=io.StringIO())
     with pytest.raises(ec.CommandStopped, match=r"no line '9' in episode 1; its lines are:\n  1\. line_episode_01_01"):
         ec.run_line(desk, episode=1, line="9", text="x", out=io.StringIO())
