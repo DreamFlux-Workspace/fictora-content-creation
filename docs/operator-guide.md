@@ -9,6 +9,6 @@ You do not clone `fictora-drama`. You clone **fictora-content-creation** and ope
 
 Full rules: [docs/content-ops/runbook.md](content-ops/runbook.md).
 
-Spend (H3 lane): take ~$1.20, plate/board ~$0.30. See runbook envelopes.
+Spend (H3 lane): take ~$1.20, plate/board ~$0.30. See runbook budgets (warn only).
 
 Contacts: tejassingh.inbox@gmail.com, vikram@dreamflux.ai.
