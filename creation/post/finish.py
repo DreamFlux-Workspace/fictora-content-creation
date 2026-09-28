@@ -586,14 +586,16 @@ def run_finish(
             for line, a in zip(captioned.lines, captioned.anchors)
         )
         treatment = "whole English lines" if captioned.whole_lines else "word flicker"
+        # A line that is not English is left uncaptioned; the summary line says which.
+        warnings = "".join(f" · {w}" for w in captioned.not_english)
         append_run_note(
             run_dir,
-            f"Captions ({treatment}) -> `{captioned.video.name}` (cues `{captioned.ass.name}`): {timing}",
+            f"Captions ({treatment}) -> `{captioned.video.name}` (cues `{captioned.ass.name}`): {timing}{warnings}",
         )
         return StepReport(
             "captions",
             "ran",
-            f"{len(captioned.lines)} line(s), {treatment}: {timing}",
+            f"{len(captioned.lines)} line(s), {treatment}: {timing}{warnings}",
             captioned.video,
         )
 

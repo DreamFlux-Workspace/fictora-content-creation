@@ -78,7 +78,7 @@ Write it with the human (`docs/content-ops/templates/brief.md`) and check before
 - **Lines:** three at most per 15 s take, one per beat. A 15 s take is three beats, so a silent comic beat (a pause, a stare, a freeze) costs a line: say so and let the human choose. Ask who each line is said TO. To lock lines word for word, write "Keep these lines exactly as written." inside the brief's Lines section and fill each line's beat and `### Take N`; the server then puts back a locked line the writers trimmed or reworded (reference.md, Script gate).
 - **Off-screen voices:** declare as voice only; never drawn, not even a sleeve or a shadow. Over another character's face it reads as that face speaking: give it a source (a wall grille, a phone in hand) or a post treatment.
 - **Age:** any age; write the real age. Nobody under 18 in romance, ever (reference.md).
-- **Language:** JA/KO lines must sound native in that situation; pin performed lines; a dialect needs a native speaker's yes. Captions are English only for now: every JA/KO line needs an English subtitle (`line --spoken … --subtitle …`); the caption font has no Japanese or Korean glyphs and `finish` does not warn.
+- **Language:** JA/KO lines must sound native in that situation; pin performed lines; a dialect needs a native speaker's yes. Captions are English only for now: every JA/KO line needs an English subtitle (`line --spoken … --subtitle …`); the caption font has no Japanese or Korean glyphs, so a line whose caption (`subtitle_text`, else `text`) is not English is left uncaptioned and `finish` / `caption` print `NOT ENGLISH: <line id> "…"` (fix with `line --subtitle` / `edit`, then finish again).
 - **Source material:** name its licence and credit (SCP is CC BY-SA 3.0: credit the author). Never copy the look of an image that is not under that licence.
 - **Shot plan and acting** (runbook, "Shot plan per take"): every shot names its camera move with direction and size ("camera holds" only on an insert); acting written big and physical; horror never one held shot or a fixed wide (the scare gets an insert or POV, the threat comes toward the camera). At most four board rows, so at most four shots a take.
 
@@ -136,6 +136,7 @@ It lays the take's sound effects (from `GET /v1/jobs/{take_job}/take-facts`, nev
 - The last line reads `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`. `NOT DONE` and exit code **5** mean music, SFX or the mix is missing: do not hand the file over; fix what it names and run `finish` again.
 - A `409 hosted_post_off`, or a `503 restate_unavailable` from post-production, is not an outage: never retry it, run `finish`.
 - Captions are always the English line. On a Japanese or Korean show, `finish` / `caption` show each whole English line over its speech (no word flicker); the run note says `whole English lines`.
+- A voice heard, not seen (a line marked `off_screen`, or any line of a `voice_only` cast member) is captioned in Georgia italic: same drawn size, yellow, edge and place as the house caption. Every other line is Poppins Bold.
 
 ## Hand sound: stray speech, a new line, a missing cue
 

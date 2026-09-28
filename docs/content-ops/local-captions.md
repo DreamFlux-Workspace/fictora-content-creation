@@ -36,6 +36,8 @@ Matches the content team's reference captions (Closing Shift, Sauce Left Over, T
 | Placement | Centred; bottom of text at 62% of frame height (margin 511 px on 1344), block inside 55–70% (social safe zones). Never wraps: a caption too wide for one line is set smaller |
 | Reveal | Flicker: words build up to three on screen, then reset; each line resets |
 | Timing | On screen only while the line is spoken; last word holds 0.15 s, never into the next line |
+| Heard, not seen | A line marked `off_screen`, or any line of a cast member the server flags `voice_only`, is set in Georgia italic (ASS style `Italic`, not bold): same drawn size, colour, edge and place. libass sizes a face by its full line height, so the `Italic` Fontsize is scaled (32 against Poppins' 50 on 1344 px) to draw at the same em. Georgia is a system font (macOS ships it), not bundled |
+| Not English | Captions are English only. A line whose caption (`subtitle_text`, else `text`) has kana, CJK, Hangul, any other non-Latin letter, or CJK/fullwidth punctuation is timed (it keeps its speech span, so later lines stay put) but not drawn. `caption` and `finish` print ``NOT ENGLISH: <line id> "…" — add an English subtitle with `edit`/`line --subtitle` `` and write it to `run-notes.md` |
 
 ## How timing works
 

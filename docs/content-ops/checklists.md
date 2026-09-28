@@ -117,7 +117,8 @@ Then watch the file in `takes/`. A take that will be re-filmed gets no `finish`,
 - [ ] Ducking under the voice about 8–9 dB (by ear: `finish` does not measure it; `--duck-db 9` when a line must sit clearly over the bed)
 - [ ] No loudnorm anywhere; per-take gain and one limiter
 - [ ] Stray speech muted (`--mute`); every hand cue answers a visible action, inside its own take, and audible
-- [ ] Captions are English, in the 55–70% band, on screen only while the line is spoken
+- [ ] Captions are English, in the 55–70% band, on screen only while the line is spoken; no `NOT ENGLISH` in the finish summary
+- [ ] Off-screen and voice-only lines are in Georgia italic; every on-screen line is upright
 - [ ] Any `trim` / `tempo` done after `finish`, on the finished file; first frame after a cut checked; new length stated (shorter than the band is fine)
 - [ ] Join: one bed across it, 24 fps, seam steps under 5 dB
 - [ ] Un-marked master kept (`…-cap-vN.mp4`); the marked `…-sokii-vN.mp4` is the delivered copy

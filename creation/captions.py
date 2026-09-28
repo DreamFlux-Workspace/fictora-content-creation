@@ -14,6 +14,17 @@ Captions are always the English line. On a show spoken in Japanese or Korean
 against the speech, so step 3-4 show each whole line over its speech span
 instead of flickering word by word.
 
+A voice that is heard, not seen (a line marked ``off_screen``, or any line of a
+cast member the server flags ``voice_only``) is captioned in Georgia italic:
+same size, colour, edge and place as the house caption, only the face changes
+(the retired internal kit's convention for a remembered or off-screen voice).
+
+Captions are English only: the caption font has no Japanese, Chinese or Korean
+glyphs. A line whose caption text (``subtitle_text``, else ``text``) is not
+English is left uncaptioned and reported as ``NOT ENGLISH`` so the operator can
+give it an English subtitle. It still takes its place in the timing, so the
+lines after it stay on their own speech.
+
 The look matches the content team's reference captions (yellow ``#FFE500``,
 Poppins Bold, black edge, soft shadow, no box), scaled from the 768x1344 H3
 frame to the take's real size. Placement follows the TikTok / Reels / Shorts
@@ -28,6 +39,7 @@ import json
 import re
 import shutil
 import subprocess
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +58,25 @@ CAPTION_BAND = (0.55, 0.70)
 #: Left + right ASS margins, pixels.
 SIDE_MARGIN = 10
 FONT_NAME = "Poppins"
+#: Face for a voice heard, not seen (off-screen line or voice-only cast), set in italic.
+ITALIC_FONT_NAME = "Georgia"
+#: libass sets an ASS ``Fontsize`` as the face's OS/2 winAscent + winDescent, not its em,
+#: so one Fontsize draws Georgia about 1.55x larger than Poppins. Em per Fontsize unit:
+#: Poppins Bold 1000 / (1135 + 627); Georgia Italic 2048 / (1878 + 449).
+HOUSE_EM_PER_SIZE = 1000 / (1135 + 627)
+ITALIC_EM_PER_SIZE = 2048 / (1878 + 449)
+
+
+def italic_size(size: int) -> int:
+    """ASS ``Fontsize`` that draws Georgia italic at the same em as Poppins at ``size``.
+
+    Same em is how the retired internal kit set its italic caption (one font
+    size for both faces); cap heights then match within 2%.
+    """
+
+    return max(1, round(size * HOUSE_EM_PER_SIZE / ITALIC_EM_PER_SIZE))
+
+
 #: ASS colours are &HAABBGGRR: yellow #FFE500, black edge, 50% black shadow.
 PRIMARY_COLOUR = "&H0000E5FF"
 OUTLINE_COLOUR = "&H00000000"
@@ -64,6 +95,9 @@ SECONDS_PER_WORD = 0.32
 LAST_WORD_HOLD_SECONDS = 0.15
 
 FONTS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+
+#: CJK punctuation (、。「」) and fullwidth forms (！？): the caption font has no glyph for these either.
+_CJK_MARKS = re.compile("[\u3000-\u303f\uff00-\uffef]")
 
 
 @dataclass(frozen=True)
@@ -85,6 +119,126 @@ class Cue:
     start: float
     end: float
     text: str
+    #: Set in Georgia italic (a voice heard, not seen).
+    italic: bool = False
+
+
+@dataclass(frozen=True)
+class CaptionLine:
+    """One spoken line as the caption sees it.
+
+    Parameters
+    ----------
+    line_id
+        The spine's ``line_id`` (``line N`` when the line has none).
+    text
+        The caption text: ``subtitle_text`` when the line has one, else ``text``.
+    italic
+        True for a voice heard, not seen: the line is ``off_screen`` or its
+        speaker's cast card is ``voice_only``.
+    """
+
+    line_id: str
+    text: str
+    italic: bool = False
+
+    @property
+    def english(self) -> bool:
+        """Whether the caption font can set this text (see :func:`is_english`)."""
+
+        return is_english(self.text)
+
+
+def is_english(text: str) -> bool:
+    """Return False when ``text`` is not English and cannot be captioned.
+
+    Not English is any letter outside the Latin script (kana, CJK ideographs
+    and Hangul, which the server's caption check covers, and also Cyrillic,
+    Greek, Devanagari, Arabic, Thai ...) or any CJK or fullwidth punctuation
+    (、。「」！？), which the caption font has no glyph for either. Accented Latin
+    letters (café, naïve) are English here.
+
+    Parameters
+    ----------
+    text
+        Caption text.
+
+    Returns
+    -------
+    bool
+        True when every letter is Latin and there is no CJK mark.
+    """
+
+    if _CJK_MARKS.search(text):
+        return False
+    return all(
+        not ch.isalpha() or unicodedata.name(ch, "").startswith("LATIN") for ch in text
+    )
+
+
+def not_english_warning(line: CaptionLine) -> str:
+    """The operator warning for a line left uncaptioned because it is not English."""
+
+    return (
+        f'NOT ENGLISH: {line.line_id} "{line.text}" — add an English subtitle with '
+        "`edit`/`line --subtitle`"
+    )
+
+
+def episode_caption_lines(
+    spine: dict[str, Any], episode_ordinal: int
+) -> list[CaptionLine]:
+    """Return every spoken line of one episode as the caption sees it, in beat order.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON as saved on the desk (bare spine or ``{"spine": …}``).
+    episode_ordinal
+        1-based episode number.
+
+    Returns
+    -------
+    list[CaptionLine]
+        Lines with non-empty caption text, their id, and whether they are set in italic.
+    """
+
+    from creation.spine_view import episode_id_for
+
+    body = spine.get("spine", spine)
+    # Found by ordinal through episode_summaries: episode 2 can be ``ep_02``, not ``episode_02``.
+    episode_id = episode_id_for(body, episode_ordinal)
+    # The server marks a character it only ever hears with ``voice_only`` on the cast card.
+    voice_only = {
+        str(card.get("cast_id"))
+        for card in body.get("cast") or []
+        if isinstance(card, dict)
+        and card.get("cast_id")
+        and card.get("voice_only") is True
+    }
+    lines: list[CaptionLine] = []
+    for beat in body.get("beats") or []:
+        if beat.get("episode_id") != episode_id:
+            continue
+        for line in beat.get("dialogue_lines") or []:
+            # Captions are English subtitles: ``subtitle_text`` when the line has one, else ``text``.
+            # Their timing never reads words: it comes from where speech is heard on the take
+            # (``silencedetect``), so a Japanese or Korean performance is timed the same way.
+            text = str(line.get("subtitle_text") or line.get("text") or "").strip()
+            if not text:
+                continue
+            heard_not_seen = (
+                line.get("off_screen") is True
+                or str(line.get("cast_id") or "") in voice_only
+            )
+            lines.append(
+                CaptionLine(
+                    str(line.get("line_id") or f"line {len(lines) + 1}"),
+                    text,
+                    heard_not_seen,
+                )
+            )
+    return lines
 
 
 def episode_lines(spine: dict[str, Any], episode_ordinal: int) -> list[str]:
@@ -100,26 +254,10 @@ def episode_lines(spine: dict[str, Any], episode_ordinal: int) -> list[str]:
     Returns
     -------
     list[str]
-        Non-empty dialogue texts.
+        Non-empty dialogue texts (see :func:`episode_caption_lines`).
     """
 
-    from creation.spine_view import episode_id_for
-
-    body = spine.get("spine", spine)
-    # Found by ordinal through episode_summaries: episode 2 can be ``ep_02``, not ``episode_02``.
-    episode_id = episode_id_for(body, episode_ordinal)
-    lines: list[str] = []
-    for beat in body.get("beats") or []:
-        if beat.get("episode_id") != episode_id:
-            continue
-        for line in beat.get("dialogue_lines") or []:
-            # Captions are English subtitles: ``subtitle_text`` when the line has one, else ``text``.
-            # Their timing never reads words: it comes from where speech is heard on the take
-            # (``silencedetect``), so a Japanese or Korean performance is timed the same way.
-            text = str(line.get("subtitle_text") or line.get("text") or "").strip()
-            if text:
-                lines.append(text)
-    return lines
+    return [line.text for line in episode_caption_lines(spine, episode_ordinal)]
 
 
 def parse_silencedetect(stderr: str, duration: float) -> list[Span]:
@@ -244,9 +382,18 @@ def whole_line_cue(text: str, span: Span, *, hold_until: float | None = None) ->
 
 
 def build_cues(
-    lines: Sequence[str], anchors: Sequence[Span], *, whole_lines: bool = False
+    lines: Sequence[str],
+    anchors: Sequence[Span],
+    *,
+    whole_lines: bool = False,
+    italic: Sequence[bool] = (),
+    skip: Sequence[bool] = (),
 ) -> list[Cue]:
     """Cues for every line on its anchor span.
+
+    ``italic[i]`` sets line ``i``'s cues in Georgia italic; ``skip[i]`` leaves
+    line ``i`` uncaptioned (not English) while its span still bounds the hold
+    of the line before it. Missing entries mean False.
 
     English shows flicker word by word (:func:`flicker_cues`). With
     ``whole_lines`` (a show spoken in Japanese or Korean, captioned with the
@@ -258,11 +405,18 @@ def build_cues(
 
     cues: list[Cue] = []
     for i, (text, span) in enumerate(zip(lines, anchors)):
+        if i < len(skip) and skip[i]:
+            continue
         next_start = anchors[i + 1].start if i + 1 < len(anchors) else None
         if whole_lines:
-            cues.append(whole_line_cue(text, span, hold_until=next_start))
+            line_cues = [whole_line_cue(text, span, hold_until=next_start)]
         else:
-            cues.extend(flicker_cues(time_words(text, span), hold_until=next_start))
+            line_cues = flicker_cues(time_words(text, span), hold_until=next_start)
+        slanted = i < len(italic) and italic[i]
+        cues.extend(
+            Cue(c.start, c.end, c.text, italic=True) if slanted else c
+            for c in line_cues
+        )
     return cues
 
 
@@ -328,6 +482,11 @@ def fitted_size(text: str, size: int, width: int) -> int:
 def build_ass(cues: Sequence[Cue], *, width: int, height: int) -> str:
     """Render house-style ASS for a frame of ``width`` x ``height``.
 
+    Two styles: ``House`` (Poppins Bold) and ``Italic`` (Georgia italic, not
+    bold; same drawn size, colour, edge, shadow and place) for a cue with
+    ``italic``. The italic ``Fontsize`` is :func:`italic_size`, so both faces
+    draw at the same em.
+
     Captions never wrap (``WrapStyle: 2``): a cue too wide for one line gets a
     smaller ``\\fs`` so the block stays one line, bottom edge at 62%, inside
     the 55-70% band.
@@ -352,18 +511,24 @@ def build_ass(cues: Sequence[Cue], *, width: int, height: int) -> str:
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: House,{FONT_NAME},{size},{PRIMARY_COLOUR},{PRIMARY_COLOUR},{OUTLINE_COLOUR},"
         f"{SHADOW_COLOUR},-1,0,0,0,100,100,1.5,0,1,{outline},{shadow},2,{SIDE_MARGIN},{SIDE_MARGIN},{margin_v},1\n"
+        f"Style: Italic,{ITALIC_FONT_NAME},{italic_size(size)},{PRIMARY_COLOUR},{PRIMARY_COLOUR},{OUTLINE_COLOUR},"
+        f"{SHADOW_COLOUR},0,-1,0,0,100,100,1.5,0,1,{outline},{shadow},2,{SIDE_MARGIN},{SIDE_MARGIN},{margin_v},1\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
 
     def text(cue: Cue) -> str:
+        # Fit is measured in Poppins Bold; Georgia italic at the same em is narrower, so it fits too.
         fit = fitted_size(cue.text, size, width)
-        prefix = "" if fit == size else f"{{\\fs{fit}}}"
+        if fit == size:
+            prefix = ""
+        else:
+            prefix = f"{{\\fs{italic_size(fit) if cue.italic else fit}}}"
         return prefix + _ass_escape(cue.text)
 
     events = "".join(
-        f"Dialogue: 0,{_ass_time(c.start)},{_ass_time(c.end)},House,,0,0,0,,{text(c)}\n"
+        f"Dialogue: 0,{_ass_time(c.start)},{_ass_time(c.end)},{'Italic' if c.italic else 'House'},,0,0,0,,{text(c)}\n"
         for c in cues
     )
     return header + events
@@ -517,6 +682,10 @@ class CaptionResult:
     lines: tuple[str, ...]
     #: True when each line was shown whole (show spoken in Japanese or Korean), False for word flicker.
     whole_lines: bool = False
+    #: Per line (same order as ``lines``): set in Georgia italic (heard, not seen).
+    italic: tuple[bool, ...] = ()
+    #: One ``NOT ENGLISH: …`` warning per line left uncaptioned because it is not English.
+    not_english: tuple[str, ...] = ()
 
 
 def caption_take(
@@ -550,7 +719,8 @@ def caption_take(
     Returns
     -------
     CaptionResult
-        Versioned ASS + captioned MP4 under ``takes/``.
+        Versioned ASS + captioned MP4 under ``takes/``. A line that is not
+        English is timed but not captioned; ``not_english`` says which.
     """
 
     ep_dir = desk.expanduser().resolve() / f"ep{episode_ordinal:02d}"
@@ -562,17 +732,18 @@ def caption_take(
         )
     api = ep_dir / "api"
     # Newest snapshot that carries beats (approve responses are receipts without them).
-    lines: list[str] = []
+    caption_lines: list[CaptionLine] = []
     whole_lines = False
     for spine_path in sorted(
         api.glob("*spine*.json"), key=lambda p: p.name, reverse=True
     ):
         spine = json.loads(spine_path.read_text(encoding="utf-8"))
         if isinstance(spine, dict):
-            lines = episode_lines(spine, episode_ordinal)
-        if lines:
+            caption_lines = episode_caption_lines(spine, episode_ordinal)
+        if caption_lines:
             whole_lines = captions_whole_lines(spine)
             break
+    lines = [line.text for line in caption_lines]
     if not lines:
         raise ValueError(
             f"episode {episode_ordinal} has no dialogue lines in any spine snapshot in {api}"
@@ -595,12 +766,30 @@ def caption_take(
         spans = speech_spans(detect_silences(ffmpeg, source, duration), duration)
         anchors = anchor_lines(lines, spans)
 
-    cues = build_cues(lines, anchors, whole_lines=whole_lines)
+    italic = tuple(line.italic for line in caption_lines)
+    # Every line keeps its speech span (timing); only English lines are drawn.
+    cues = build_cues(
+        lines,
+        anchors,
+        whole_lines=whole_lines,
+        italic=italic,
+        skip=[not line.english for line in caption_lines],
+    )
+    not_english = tuple(
+        not_english_warning(line) for line in caption_lines if not line.english
+    )
     base = take.stem.replace("-raw", "").rsplit("-v", 1)[0]
     ass = next_versioned_path(takes, stem or f"{base}-house", ".ass")
     ass.write_text(build_ass(cues, width=width, height=height), encoding="utf-8")
     video = next_versioned_path(takes, stem or f"{base}-captioned", ".mp4")
     burn_ass(ffmpeg, take, ass, video)
     return CaptionResult(
-        ass, video, tuple(cues), tuple(anchors), tuple(lines), whole_lines
+        ass,
+        video,
+        tuple(cues),
+        tuple(anchors),
+        tuple(lines),
+        whole_lines,
+        italic,
+        not_english,
     )
