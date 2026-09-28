@@ -75,6 +75,7 @@ from creation.post.desk import (
 )
 from creation.post.media import MediaToolError, measure_loudness, probe_video
 from creation.post.mix import CueLevel, check_duck_db, mix_take
+from creation.post.take_facts import level_notes, save_take_facts, stale_facts_reason
 from creation.post.sfx import (
     Adjustment,
     Renderer,
@@ -240,13 +241,14 @@ def api_facts_fetcher(desk: Path, episode: int, take_id: str) -> Path | None:
         run.client.close()
     if facts is None:
         return None
-    path = next_versioned_path(
-        desk / f"ep{episode:02d}" / "api",
-        f"take-facts-ep{episode:02d}-{take_id}",
-        ".json",
+    found = saved_spine(desk, episode)
+    return save_take_facts(
+        desk,
+        episode=episode,
+        take_id=take_id,
+        facts=facts,
+        spine=found[0] if found else None,
     )
-    path.write_text(json.dumps(facts, indent=2) + "\n", encoding="utf-8")
-    return path
 
 
 def run_finish(
@@ -454,12 +456,31 @@ def run_finish(
                 f"no take facts: api/17_raw_scene_clips.json names no job for {take_id} and no "
                 f"api/take-facts-ep{episode:02d}-{take_id}-vN.json is saved",
             )
-        plan = plan_from_take_facts(json.loads(facts.read_text(encoding="utf-8")))
+        payload = json.loads(facts.read_text(encoding="utf-8"))
+        stale = stale_facts_reason(payload, spine, episode=episode, take_id=take_id)
+        if stale:
+            warning = (
+                f"!! the saved take facts `{facts.name}` are older than the story's sound notes: {stale}. "
+                f"This finish lays the old plan. Run `fictora-produce take-facts --desk {desk} --episode {episode} "
+                f"--take {take_id} --refresh`, then finish again"
+            )
+            print(f"[sfx] {warning}", file=out, flush=True)
+            append_run_note(run_dir, f"Finish · sfx: {warning}")
+        levels = level_notes(spine)
+        if levels and not sfx_adjust:
+            print(
+                f"[sfx] note: the story's drop/level sound notes ({'; '.join(levels)}) are applied by the server's "
+                'mix, not by finish; for the same change here pass --sfx-adjust ("hum=drop", "rain=+4")',
+                file=out,
+                flush=True,
+            )
+        plan = plan_from_take_facts(payload)
         if not plan.cues:
             return StepReport(
                 "sfx",
                 "ran",
-                f"the take facts plan no effect (every shot speaks); `{facts.name}`",
+                f"the take facts plan no effect (every shot speaks); `{facts.name}`"
+                + (f"; facts older than the sound notes ({stale})" if stale else ""),
             )
         sfx = lay_sfx(
             take,
@@ -488,8 +509,15 @@ def run_finish(
         note = f"SFX -> `{sfx.output.name}`: {cues}; rendered {sfx.rendered}, ${sfx.cost_usd:.3f}"
         note += "".join(f"\n- skipped: {s}" for s in sfx.skipped)
         append_run_note(run_dir, note)
+        older = (
+            f"; laid from facts older than the sound notes ({stale})" if stale else ""
+        )
         return StepReport(
-            "sfx", "ran", f"{len(sfx.mixed)} cue(s): {cues}", sfx.output, sfx.cost_usd
+            "sfx",
+            "ran",
+            f"{len(sfx.mixed)} cue(s): {cues}{older}",
+            sfx.output,
+            sfx.cost_usd,
         )
 
     def do_bed(_take: Path) -> StepReport:

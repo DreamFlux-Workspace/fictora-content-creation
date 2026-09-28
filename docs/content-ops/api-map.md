@@ -13,11 +13,12 @@ Do not call `scripts/drama_create_flow_smoke.py` on a content production. That w
 | Arc, brief, episode 2 on, memory | `arc`, `brief`, `author`, `memory` |
 | Line and spine edits | `line`, `edit`, `spine --refresh` |
 | Look | `look-frame`, `look`, `look-note` |
+| Sound notes, a take's facts again | `sound-note`, `take-facts --refresh` |
 | One board or one plate again | `redraw-board`, `redraw-plate` |
 | One take or one episode again | `film` |
 | Voices and paid audio | `voice`, `revoice`, `voice-line`, `cue`, `finish` (effects, bed, transcripts) |
 | Cancel a stuck job | `cancel-job` |
-| Line check (take facts) | `check-lines`, `review` |
+| Line check (take facts) | `check-lines`, `review`, `take-facts` |
 
 Credentials: `FICTORA_DRAMA_GENERATION_SERVICE_TOKEN` and optional `FICTORA_DRAMA_GENERATION_API_BASE_URL`. Never print the token.
 
@@ -47,8 +48,8 @@ Credentials: `FICTORA_DRAMA_GENERATION_SERVICE_TOKEN` and optional `FICTORA_DRAM
 | Take length other than 15s | Aligned | `clip_duration_seconds` accepts 4–15. Default remains 15. 16 is still a rejection. |
 | Inner-voice / narration track | Aligned | `PUT /v1/spines/{id}/episodes/{n}/inner-voice` replaces dry cues. Mixed in post. Take compile refuses inner-voice / voice-over / narration / V.O. as spoken fixture lines. |
 | Voice auditions and picks | Aligned | `POST /v1/spines/{id}/cast/{cast_id}/voice-auditions` compiles 4–10 Eleven v3 candidates on the character's real spoken lines, or on `text` (new wording, ≤300 characters) in `voices` (1–10 named catalog voices instead of the default slate); `.../render` takes the same body (`voice --audition --text --voices` passes both through; named `422 voice_audition_*` on a broken rule). `POST .../voice-auditions/pick` locks `DramaCastVoiceBrief`. |
-| Sound notes | Gap in the kit (no command) | `POST /v1/spines/{id}/sound-notes` `{spine_version, text}` ("less sound effects", "no purring"), `DELETE .../sound-notes/{note_id}`; at most five; saving spends nothing. Drop and level notes apply to every take's SFX cue plan. With fictora-drama #467, a note can add one sound to one take, in its words or the optional `episode_id`, `take`, `shot`, `row` fields; an add note naming no take is `422 sound_note_needs_take`. A note reaches only take facts fetched after it. |
-| Impact SFX in the cue plan | Aligned once fictora-drama #462 is live | The take facts' `sfx_cues` also carry every impact the story's action states (a beat's `end_state` or `sound_cue`, a row's `chain`, `ends` or `sound`): one short event cue per impact on the shot that prints it, not laid twice when the Sound line names it, speaking shots included. Take facts saved before it lack them. |
+| Sound notes | Aligned (`sound-note`; `take-facts --refresh` for a filmed take) | `POST /v1/spines/{id}/sound-notes` `{spine_version, text}` ("less sound effects", "no purring"), `DELETE .../sound-notes/{note_id}`; at most five; saving spends nothing. Drop and level notes apply to every take's SFX cue plan. With fictora-drama #467, a note can add one sound to one take, in its words or the optional `episode_id`, `take`, `shot`, `row` fields; an add note naming no take is `422 sound_note_needs_take`. A note reaches only take facts fetched after it: `take-facts --refresh` fetches a filmed take's facts again (new version) and `finish` warns when its facts are older than the notes. |
+| Impact SFX in the cue plan | Aligned once fictora-drama #462 is live | The take facts' `sfx_cues` also carry every impact the story's action states (a beat's `end_state` or `sound_cue`, a row's `chain`, `ends` or `sound`): one short event cue per impact on the shot that prints it, not laid twice when the Sound line names it, speaking shots included. Take facts saved before it lack them until `take-facts --refresh`. |
 | Music + SFX | Aligned | `POST /v1/spines/{id}/audio-bed` pins `series_audio_bed_url`. Post uses that file instead of generating a new show bed. Product library beds still mix unless `FICTORA_DRAMA_AUDIO_BED=off`. |
 | Ducking under voice | Aligned | Product ffmpeg mix uses `sidechaincompress` against the processed take stem, not a static −12 dB envelope. |
 | Captions | Aligned | `caption_style=house`: yellow `#FFE500`, Poppins Bold, black edge, soft shadow, no box, text bottom at 62% of frame height (block in 55–70%). English flickers; a translation holds the whole line. |

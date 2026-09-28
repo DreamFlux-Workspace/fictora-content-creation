@@ -6,13 +6,14 @@ Closed in product (2026-09-21): `cut_tempo=one_shot`; `clip_duration_seconds` 4â
 
 Closed 2026-09-28: adding or removing a line and adding an off-screen voice after the draft (fictora-drama #466, `fictora-produce line --add/--remove/--new-voice`; SCP-173 Blink learnings #12/#15).
 
+Closed 2026-09-28: the automatic effects now plan the impacts a beat states (fictora-drama #462), and a sound note can add one sound to one take (#467). The kit sends it with `sound-note`, and `take-facts --refresh` brings both into a take filmed before them (SCP-173 #44, #45).
+
 Closed 2026-09-28 by founder decision: a finished cut shorter than its 15 / 30 / 60 s band (e.g. 14.2 s after trimming a bad half-second) is allowed and is not a deviation. Takes still film at the normal clip length (`clip_duration_seconds` 4â€“15); a finished episode longer than its band is still a deviation.
 
 | Stage | Gap | Why it costs money or time | Source |
 | --- | --- | --- | --- |
 | Take | A Turbo take redraws the board in H3's own anime finish: staging, framing, outfits and colour mood carry; drawing style does not (pastel, watercolour, cartoon boards come back anime). `finish` colour-match closes colour and light only | A creator who picks a painterly look sees a different-looking video than the board they approved; said at the look gate | Reviewer note (Paramjeet), measured 2026-09-25; carried from the internal backlog |
 | Look | A custom look still needs a preset at `start`, and the horror preset (Dead Light) is a draft that cannot be picked. A pinned look frame now drops the preset's world, palette and finish (fictora-drama #461), but plates drawn before the pin still carry its world | Pin the look frame before the plates; without one, look notes are the only lever | Hanakaze #7, #19; SCP-173 #4 |
-| Post | The server now lays an impact the beat states as a cue (fictora-drama #462) and a sound note can add one sound to one take (#467), but no kit command adds or removes a sound note (`POST/DELETE /v1/spines/{id}/sound-notes`), and none fetches a take's facts again, so neither reaches a take filmed before it | Each missing impact or asked-for sound is a hand `cue` | SCP-173 #44, #45, 2026-09-28 |
 | Script | The server restores a trimmed or reworded "keep exactly" line, but a locked line the writers dropped, gave to another speaker, or translated (ja/ko) is only logged (fictora-drama #457) | Caught by hand from the draft's kept/rewritten/cut list at the script gate | SCP-173 #9, #14 |
 | Captions | Japanese / Korean captions and a CJK caption font are deferred (English only) | A Japan-market cut needs captions made by hand | Hanakaze #40, #41 |
 | Board | The safe-zone check reads placement text only; there is no measured face box | A face drawn into a covered zone with clean placement words is caught only by eye | Safe zones, 2026-09-28 |

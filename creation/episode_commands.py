@@ -17,6 +17,8 @@ desk with a versioned name, and never approves (the human's yes goes through
   does to the script approval (``line`` with no change lists the lines).
 - ``look-frame``: draw our own style frame on the server from a written description (one still).
 - ``look`` / ``look-note``: pin the style frame by URL, add or remove look notes.
+- ``sound-note``: add a sound to one take, or drop / level one on every take; ``--remove``; list.
+- ``take-facts --refresh``: read a filmed take's facts again (new sound notes, planned impacts), versioned.
 - ``spine --refresh``: save the story again.
 - ``redraw-board``: redraw one board on ``/boards/{set}/regenerate``.
 - ``plates``: retired (was ``plates --cast NAME --cause``); prints a pointer to ``redraw-plate --note`` and sends nothing.
@@ -64,6 +66,12 @@ from creation.ops.floor import (
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
 from creation.ops.state import episode_by_ordinal, load_series
+from creation.post.take_facts import (
+    save_take_facts,
+    sfx_plan_changes,
+    stale_facts_reason,
+    take_number,
+)
 from creation.orchestrate import (
     _open_run,
     board_report,
@@ -2376,6 +2384,320 @@ def run_look_note(
     return listed
 
 
+SOUND_NOTE_MAX = 160
+SOUND_NOTE_HINTS = {
+    "sound_note_needs_take": (
+        "pass --take tK (with --episode N), or name it in the words: '... at the end of episode 1 take 2'"
+    ),
+    "sound_note_scope_add_only": (
+        "a drop or level note applies to every take: send it without --take/--shot/--row "
+        "(for one take only, use finish --sfx-adjust)"
+    ),
+    "sound_notes_limit": "remove one first: sound-note --desk D --remove N (list them with sound-note --desk D)",
+    "episode_not_found": "that episode is not on the story; check --episode",
+}
+
+
+def _episode_ordinal(spine: Mapping[str, Any], episode_id: str) -> int | None:
+    for number, summary in enumerate(spine.get("episode_summaries") or [], start=1):
+        if isinstance(summary, Mapping) and summary.get("episode_id") == episode_id:
+            ordinal = summary.get("ordinal")
+            return int(ordinal) if isinstance(ordinal, int) else number
+    return None
+
+
+def _sound_note_line(
+    spine: Mapping[str, Any], number: int, note: Mapping[str, Any]
+) -> str:
+    scope = ""
+    if note.get("take") is not None:
+        ordinal = _episode_ordinal(spine, str(note.get("episode_id") or ""))
+        where = f"ep{ordinal:02d}" if ordinal else str(note.get("episode_id"))
+        scope = f"  [adds to {where} t{note.get('take')}" + (
+            f" shot {note.get('shot')}]" if note.get("shot") is not None else "]"
+        )
+    else:
+        scope = "  [every take: drop/level]"
+    return f"{number}. {note.get('note_id')}  {note.get('text')}{scope}"
+
+
+def run_sound_note(
+    desk: Path,
+    *,
+    text: str | None = None,
+    episode: int | None = None,
+    take_id: str | None = None,
+    shot: int | None = None,
+    row: int | None = None,
+    remove: str | None = None,
+    out: Any = None,
+) -> list[dict[str, Any]]:
+    """Add, remove or list the story's sound notes (``POST/DELETE /v1/spines/{id}/sound-notes``). Spends nothing.
+
+    A note that adds a sound ("add a dry stone crack at the end") lands on one
+    take: ``--take`` (with ``--episode``) and optionally ``--shot`` or ``--row``,
+    or the words ("... of episode 1 take 2"). A drop or level note ("no
+    purring", "louder rain") applies to every take and takes no scope. The
+    server's named refusal is printed as it said it, with the fix. The spine is
+    saved on the desk again afterwards.
+
+    Parameters
+    ----------
+    desk
+        Series desk with a story.
+    text
+        The note in the creator's words.
+    episode
+        Episode ordinal (default the desk's current episode).
+    take_id
+        ``t1``, ``t2`` ...: the take an added sound lands on.
+    shot
+        The shot of that take.
+    row
+        A row of the take's board (the server resolves it to its shot).
+    remove
+        A note id, or its 1-based number.
+    out
+        Text stream.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        The story's sound notes after the change.
+
+    Raises
+    ------
+    CommandStopped
+        On a bad flag combination, or when the server refuses the note.
+    """
+
+    if text is not None and remove is not None:
+        raise CommandStopped("pass a note or --remove, not both")
+    if (shot is not None or row is not None) and take_id is None:
+        raise CommandStopped(
+            "--shot and --row name a place inside a take: pass --take tK too"
+        )
+    if shot is not None and row is not None:
+        raise CommandStopped("pass --shot or --row, not both")
+    if text is None and (take_id is not None or shot is not None or row is not None):
+        raise CommandStopped(
+            "--take, --shot and --row go with a note that adds a sound"
+        )
+    out = out or sys.stdout
+    desk, state, run = _desk_session(desk)
+    episode = episode or state.episode_ordinal
+    try:
+        spine = run.spine(state.spine_id or "")
+        notes = [
+            note for note in spine.get("sound_notes") or [] if isinstance(note, Mapping)
+        ]
+        body: dict[str, Any] = {"spine_version": spine["spine_version"]}
+        changed = text is not None or remove is not None
+        if text is not None:
+            words = text.strip()
+            if not words or len(words) > SOUND_NOTE_MAX:
+                raise CommandStopped(f"a sound note is 1-{SOUND_NOTE_MAX} characters")
+            body["text"] = words
+            if take_id is not None:
+                try:
+                    body["take"] = take_number(take_id)
+                except ValueError as exc:
+                    raise CommandStopped(str(exc)) from exc
+                body["episode_id"] = episode_id_for(spine, episode)
+                if shot is not None:
+                    body["shot"] = shot
+                if row is not None:
+                    body["row"] = row
+            try:
+                run.post(f"/v1/spines/{state.spine_id}/sound-notes", body)
+            except SystemExit as exc:
+                message = (
+                    exc.code if isinstance(exc.code, str) else api_error_text(exc.code)
+                )
+                hint = next(
+                    (fix for code, fix in SOUND_NOTE_HINTS.items() if code in message),
+                    "",
+                )
+                raise CommandStopped(
+                    "the server refused the sound note, nothing was saved: "
+                    + message
+                    + (f" -> {hint}" if hint else "")
+                ) from exc
+        elif remove is not None:
+            ids = [str(note.get("note_id")) for note in notes]
+            wanted = str(remove)
+            note_id = (
+                ids[int(wanted) - 1]
+                if wanted.isdigit() and 1 <= int(wanted) <= len(ids)
+                else wanted
+            )
+            if note_id not in ids:
+                raise CommandStopped(
+                    f"no sound note {wanted!r}; the notes are: {', '.join(ids) or 'none'}"
+                )
+            run.delete(f"/v1/spines/{state.spine_id}/sound-notes/{note_id}", body)
+        fresh = run.spine(state.spine_id or "") if changed else spine
+    finally:
+        run.client.close()
+    save_spine_snapshot(desk, episode, fresh)
+    listed = [
+        dict(note)
+        for note in fresh.get("sound_notes") or []
+        if isinstance(note, Mapping)
+    ]
+    for number, note in enumerate(listed, start=1):
+        print(_sound_note_line(fresh, number, note), file=out)
+    if not listed:
+        print("no sound notes on this story", file=out)
+    if text is not None and listed:
+        new = listed[-1]
+        if new.get("take") is not None:
+            ordinal = (
+                _episode_ordinal(fresh, str(new.get("episode_id") or "")) or episode
+            )
+            take = f"t{new.get('take')}"
+            print(
+                f"Saved. A take filmed from now on carries it. An ep{ordinal:02d} {take} already on the desk keeps "
+                f"its saved facts: run `fictora-produce take-facts --desk {desk} --episode {ordinal} --take {take} "
+                f"--refresh`, then finish it again.",
+                file=out,
+            )
+        else:
+            print(
+                "Saved. It drops or levels a sound on every take in the server's mix. finish on this laptop does "
+                'not read it: for the same change there, pass finish --sfx-adjust ("hum=drop", "rain=+4").',
+                file=out,
+            )
+    if changed:
+        what = f"added '{text.strip()}'" if text is not None else f"removed {remove}"
+        _note(
+            desk,
+            episode,
+            f"sound-note: {what}; {len(listed)} sound note(s) on the story",
+        )
+    return listed
+
+
+def run_take_facts(
+    desk: Path, *, episode: int, take_id: str, refresh: bool = False, out: Any = None
+) -> Path:
+    """Show a take's saved SFX plan, or (``refresh``) fetch its current facts and say what moved. Spends nothing.
+
+    The facts are saved at filming time. A sound note added after that (or an
+    impact the server now plans) reaches the take only through a fresh read:
+    ``--refresh`` reads ``GET /v1/jobs/{take_job}/take-facts?spine_id=`` again
+    against the current story, saves it as the next
+    ``epNN/api/take-facts-epNN-tK-vN.json`` (the old file is kept) and prints
+    the SFX cues it adds and drops. ``finish`` then lays the new plan.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    episode
+        Episode ordinal.
+    take_id
+        ``t1`` ...
+    refresh
+        Fetch the facts again (else show the newest saved file).
+    out
+        Text stream.
+
+    Returns
+    -------
+    Path
+        The facts file shown or written.
+
+    Raises
+    ------
+    CommandStopped
+        When the desk has no job for the take, or the server refuses.
+    """
+
+    from creation.post.desk import saved_spine, take_job_id
+    from creation.post.sfx import saved_take_facts
+
+    out = out or sys.stdout
+    desk = desk.expanduser().resolve()
+    try:
+        take_number(take_id)
+    except ValueError as exc:
+        raise CommandStopped(str(exc)) from exc
+    old_path = saved_take_facts(desk, episode, take_id)
+    old = json.loads(old_path.read_text(encoding="utf-8")) if old_path else None
+    label = f"ep{episode:02d} {take_id}"
+    if not refresh:
+        if old_path is None or old is None:
+            raise CommandStopped(
+                f"{label}: no take facts on the desk; pass --refresh to fetch them"
+            )
+        found = saved_spine(desk, episode)
+        stale = stale_facts_reason(
+            old, found[0] if found else None, episode=episode, take_id=take_id
+        )
+        print(f"{label}: {old_path.name}", file=out)
+        for line in sfx_plan_changes(None, old):
+            print(f"  {line[2:]}", file=out)
+        if stale:
+            print(
+                f"!! older than the story's sound notes: {stale}. Run take-facts --desk {desk} --episode {episode} "
+                f"--take {take_id} --refresh",
+                file=out,
+            )
+        return old_path
+    job = take_job_id(desk, episode, take_id)
+    if job is None:
+        raise CommandStopped(
+            f"{label}: api/17_raw_scene_clips.json names no job for this take; film it first"
+        )
+    desk, state, run = _desk_session(desk)
+    try:
+        spine = run.spine(state.spine_id or "")
+        query = f"?spine_id={quote(state.spine_id or '', safe='')}"
+        status, body = run.get_optional(f"/v1/jobs/{job}/take-facts{query}")
+    finally:
+        run.client.close()
+    if not (
+        200 <= status < 300
+        and isinstance(body, dict)
+        and isinstance(body.get("take_facts"), dict)
+    ):
+        raise CommandStopped(
+            f"{label}: the server gave no take facts for job {job} (HTTP {status}: {api_error_text(body)}); "
+            "the saved facts are unchanged"
+        )
+    save_spine_snapshot(desk, episode, spine)
+    facts = dict(body["take_facts"])
+    path = save_take_facts(
+        desk, episode=episode, take_id=take_id, facts=facts, spine=spine
+    )
+    changes = sfx_plan_changes(old, facts)
+    was = f" (was {old_path.name})" if old_path else " (none saved before)"
+    print(f"{label}: saved {path.name}{was}", file=out)
+    if changes:
+        print("SFX plan changes:", file=out)
+        for line in changes:
+            print(f"  {line}", file=out)
+        print(
+            f"finish --desk {desk} --episode {episode} --take {take_id} lays the new plan (a new version; "
+            "cues already rendered are reused)",
+            file=out,
+        )
+    else:
+        cues = len(facts.get("sfx_cues") or [])
+        print(
+            f"SFX plan unchanged ({cues} cue(s)); nothing to finish again for sound",
+            file=out,
+        )
+    _note(
+        desk,
+        episode,
+        f"take-facts {label}: refreshed -> `{path.name}`{was}; {len(changes)} SFX plan change(s)"
+        + "".join(f"\n- {line}" for line in changes),
+    )
+    return path
+
+
 def run_spine_refresh(desk: Path, *, out: Any = None) -> Path:
     """Save ``GET /v1/spines/{id}`` again and say what moved.
 
@@ -3504,6 +3826,8 @@ EPISODE_COMMANDS = frozenset(
         "look-frame",
         "look",
         "look-note",
+        "sound-note",
+        "take-facts",
         "spine",
         "redraw-board",
         "plates",
@@ -3794,6 +4118,38 @@ def add_episode_parsers(
     change.add_argument("--add", default=None)
     change.add_argument("--remove", default=None, metavar="ID|N")
 
+    sound = sub.add_parser(
+        "sound-note",
+        help='Add a sound note ("add a dry stone crack at the end" on one take; "no purring" on all), '
+        "--remove one, or list them (max 5). Spends nothing.",
+    )
+    sound.add_argument("--desk", type=Path, required=True)
+    sound.add_argument(
+        "text", nargs="?", default=None, help="The note in the creator's words."
+    )
+    sound.add_argument(
+        "--episode", type=int, default=None, help="Default: the desk's episode."
+    )
+    sound.add_argument(
+        "--take", default=None, help="t1, t2 ...: the take an added sound lands on."
+    )
+    place = sound.add_mutually_exclusive_group()
+    place.add_argument("--shot", type=int, default=None, help="A shot of that take.")
+    place.add_argument(
+        "--row", type=int, default=None, help="A row of that take's board."
+    )
+    sound.add_argument("--remove", default=None, metavar="ID|N")
+
+    facts = sub.add_parser(
+        "take-facts",
+        help="Show a take's saved SFX plan, or --refresh it from the server (new version; "
+        "prints what changed). Spends nothing.",
+    )
+    facts.add_argument("--desk", type=Path, required=True)
+    facts.add_argument("--episode", type=int, required=True)
+    facts.add_argument("--take", required=True, help="t1, t2 ...")
+    facts.add_argument("--refresh", action="store_true")
+
     spine = sub.add_parser(
         "spine", help="Save the story from the server again (--refresh)."
     )
@@ -3963,6 +4319,25 @@ def dispatch_episode(args: argparse.Namespace) -> int:
         if args.command == "look-note":
             run_look_note(args.desk, add=args.add, remove=args.remove)
             return 0
+        if args.command == "sound-note":
+            run_sound_note(
+                args.desk,
+                text=args.text,
+                episode=args.episode,
+                take_id=args.take,
+                shot=args.shot,
+                row=args.row,
+                remove=args.remove,
+            )
+            return 0
+        if args.command == "take-facts":
+            run_take_facts(
+                args.desk,
+                episode=args.episode,
+                take_id=args.take,
+                refresh=args.refresh,
+            )
+            return 0
         if args.command == "spine":
             run_spine_refresh(args.desk)
             return 0
@@ -4035,6 +4410,8 @@ __all__ = [
     "run_look",
     "run_look_frame",
     "run_look_note",
+    "run_sound_note",
+    "run_take_facts",
     "run_memory",
     "plate_contact_sheet",
     "run_redraw_board",

@@ -47,11 +47,11 @@ from creation.ops.floor import (
     set_take_lines,
 )
 from creation.ops.floor import approve_script as record_script_gate
-from creation.ops.folder import next_versioned_path
 from creation.ops.luma import measure_board_luma
 from creation.ops.notes import append_run_note
 from creation.ops.state import episode_by_ordinal, load_series
 from creation.plan_prompt import ensure_plan_prompt
+from creation.post.take_facts import save_take_facts
 from creation.prices import (
     H3_MAX_R2V_ENDPOINT,
     H3_MAX_TURBO_I2V_ENDPOINT,
@@ -1027,7 +1027,6 @@ def collect_takes(
     """
 
     ep_dir = _episode_dir(desk, episode)
-    api_dir = api_dir_for_episode(desk, episode)
     episode_id = episode_id_for(spine, episode)
     foreign = [
         f"{clip.get('episode_id')} ({clip.get('job_id')})"
@@ -1067,12 +1066,8 @@ def collect_takes(
             facts = fetch_take_facts(run, str(clip["job_id"]), spine_id=state.spine_id)
             priced: tuple[float, str] | None = None
             if facts is not None:
-                facts_path = next_versioned_path(
-                    api_dir, f"take-facts-ep{episode:02d}-{take_id}", ".json"
-                )
-                facts_path.write_text(
-                    json.dumps(facts, ensure_ascii=False, indent=2) + "\n",
-                    encoding="utf-8",
+                save_take_facts(
+                    desk, episode=episode, take_id=take_id, facts=facts, spine=spine
                 )
                 priced = take_facts_usd(facts, on=today)
                 state.remember_server_lane(
