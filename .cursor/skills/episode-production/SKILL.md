@@ -162,12 +162,15 @@ uv run fictora-produce tempo   --desk D --take-file FINAL [--factor 0.9]
 
 ```bash
 uv run fictora-produce voice --desk D --cast NAME --audition [--episode N]   # 4-10 candidates on their real lines, $0.30
-uv run fictora-produce voice --desk D --cast NAME --pick N                   # after the human picks; free
+uv run fictora-produce voice --desk D --cast NAME --audition --text "…" --voices Rachel,Aria,Sarah   # one line, only those voices in the reel
+uv run fictora-produce voice --desk D --cast NAME --pick N                   # after the human picks (N or the voice's name); free
 uv run fictora-produce revoice --desk D --cast NAME --episode N --take tK   # each filmed take they speak in
 uv run fictora-produce finish --desk D --episode N --take tK --take-file <take-epNN-tK-revoice-vN.mp4>
 ```
 
-Play the candidates (`shared/voices/<cast>/audition-vN/`) to the human; a second audition set needs `--cause`. On Turbo (the default) no take carries the locked voice, because voice references are not sent: revoice each filmed take the character speaks in, including takes filmed after the pick. Only on R2V do takes not filmed yet use the new voice as they are. Re-film only a take where the dub does not sit (lips visibly wrong, a shouted line), with a cause and a stated cost; never the other takes, never the story.
+Play the listening reel (`shared/voices/<cast>/audition-vN/reel-vN.m4a`; `reel-vN.txt` says where each numbered candidate starts) to the human; a second audition set needs `--cause`. New wording: the server auditions only lines on the spine, so put the words on the line first (`edit --episode N --line-id ID --text "…"`), then `--audition --text "…"`. A set that already holds the line and the named voices makes a new reel for free. On Turbo (the default) no take carries the locked voice, because voice references are not sent: revoice each filmed take the character speaks in, including takes filmed after the pick. Only on R2V do takes not filmed yet use the new voice as they are. Re-film only a take where the dub does not sit (lips visibly wrong, a shouted line), with a cause and a stated cost; never the other takes, never the story.
+
+An off-screen voice (speaker, phone, radio) played over another character's face is heard as that face speaking: give it a source in post with `voice-fx --file F --range A-B --preset intercom|phone|radio` (local ffmpeg, $0, a new file at the same level), then `finish --take-file` on it.
 
 `revoice` finds a kana-pinned Japanese line in Whisper's kanji: on the per-word readings the server's transcript carries, or by reading shape on an older server. If a line is still reported "not heard", pass `--words-json` or re-film only that take.
 

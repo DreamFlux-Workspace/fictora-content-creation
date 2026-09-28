@@ -1,4 +1,4 @@
-"""``fictora-produce`` local post commands: voice, revoice, voice-line, cue, set-bed, finish, and the edits."""
+"""``fictora-produce`` local post commands: voice, voice-fx, revoice, voice-line, cue, set-bed, finish, and the edits."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from creation.post.hand import parse_placed, parse_range
 from creation.post.handmade import CUE_DEFAULT_SECONDS
 from creation.post.sfx import parse_adjustment
 
-POST_COMMANDS = frozenset({"voice", "revoice", "voice-line", "cue", "set-bed", "finish"}) | EDIT_COMMANDS
+POST_COMMANDS = frozenset({"voice", "voice-fx", "revoice", "voice-line", "cue", "set-bed", "finish"}) | EDIT_COMMANDS
 
 
 def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -34,10 +34,22 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     voice.add_argument("--cast", required=True, help="cast_id or name.")
     mode = voice.add_mutually_exclusive_group(required=True)
     mode.add_argument("--audition", action="store_true", help="Render a candidate set and list it.")
-    mode.add_argument("--pick", type=int, default=None, help="Lock candidate N from the newest set.")
+    mode.add_argument("--pick", default=None, metavar="N|NAME", help="Lock candidate N (or that voice) from the newest set.")
     voice.add_argument("--episode", type=int, default=None, help="Audition on this episode's lines only.")
     voice.add_argument("--count", type=int, default=8, help="Candidates, 4-10.")
     voice.add_argument("--cause", default=None, help="Why a second audition set is paid for (required for one).")
+    voice.add_argument("--text", default=None, help="Audition this one line (it must be on the spine; edit --line-id first).")
+    voice.add_argument("--voices", default=None, metavar="A,B,...", help="Only these voices in the listening reel.")
+
+    fx = sub.add_parser(
+        "voice-fx",
+        help="Give a stretch of a take's voice a source (intercom, phone, radio): local ffmpeg, $0, a new file.",
+    )
+    fx.add_argument("--file", type=Path, required=True, help="The take (or audio file) to treat.")
+    fx.add_argument("--range", dest="span", required=True, metavar="A-B", help="Seconds treated, like 0-3.5.")
+    fx.add_argument("--preset", required=True, choices=("intercom", "phone", "radio"))
+    fx.add_argument("--desk", type=Path, default=None, help="Series desk, for a run note.")
+    fx.add_argument("--episode", type=int, default=1)
 
     revoice = sub.add_parser(
         "revoice",
@@ -144,9 +156,28 @@ def dispatch_post(args: argparse.Namespace) -> int:
 
     if args.command == "voice":
         if args.audition:
-            run_voice_audition(args.desk, cast=args.cast, episode=args.episode, count=args.count, cause=args.cause)
+            run_voice_audition(
+                args.desk, cast=args.cast, episode=args.episode, count=args.count, cause=args.cause,
+                text=args.text, voices=args.voices,
+            )  # fmt: skip
         else:
+            if args.text or args.voices:
+                raise ValueError("--text and --voices go with --audition")
             run_voice_pick(args.desk, cast=args.cast, pick=args.pick)
+        return 0
+    if args.command == "voice-fx":
+        from creation.ops.notes import append_run_note
+        from creation.post.voice_fx import apply_voice_fx
+        from creation.post.voice_fx import parse_range as parse_fx_span
+
+        start, end = parse_fx_span(args.span)
+        made = apply_voice_fx(args.file.expanduser().resolve(), start=start, end=end, preset=args.preset)
+        if args.desk is not None:
+            run_dir = args.desk.expanduser().resolve() / f"ep{args.episode:02d}"
+            if (run_dir / "run-notes.md").is_file():
+                append_run_note(run_dir, f"voice-fx {args.preset} on `{args.file.name}` {start:.2f}-{end:.2f}s -> `{made.name}`, $0.")
+        print(made)
+        print("Listen to it; then finish (or caption) with --take-file on it.")
         return 0
     if args.command == "revoice":
         run_revoice(

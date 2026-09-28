@@ -7,8 +7,16 @@ on the cast card, and a take that is already filmed takes a new voice in post:
   compiles 4-10 Eleven v3 candidates on the character's real lines (voice ids
   and text). Each candidate is rendered on the server (the audio service; no
   provider key on this laptop) and saved to
-  ``shared/voices/<cast>/audition-vN/NN-<voice>.mp3`` with ``auditions.json``.
-- ``voice --pick N``: ``POST .../voice-auditions/pick`` locks candidate N on the
+  ``shared/voices/<cast>/audition-vN/NN-<voice>.mp3`` with ``auditions.json``,
+  plus one listening reel (``reel-vN.m4a``: the candidates back to back,
+  level-matched, short gaps, in candidate-number order; ``reel-vN.txt`` says
+  where each number starts). ``--text "..."`` auditions one line (it must be
+  on the spine: the server auditions only lines the character speaks, so new
+  wording goes on the line first with ``edit --line-id``); ``--voices A,B``
+  keeps only those voices in the reel (the server picks its own slate, so the
+  kit asks for the smallest slate holding them). A set that already holds the
+  line and the voices makes a new reel for free.
+- ``voice --pick N`` (or ``--pick NAME``): ``POST .../voice-auditions/pick`` locks that candidate on the
   cast card and saves the spine again. Takes filmed from now on use it.
 - ``revoice``: for a filmed take, each line that character speaks is rendered
   dry in the locked voice on the server, its window found from Whisper words on the take,
@@ -25,6 +33,8 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import unicodedata
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
@@ -54,6 +64,19 @@ MIN_CANDIDATES, MAX_CANDIDATES = 4, 10
 ELEVEN_V3_USD_PER_1000_CHARS = 0.10
 MUTE_LEAD_SECONDS = 0.08
 MUTE_TAIL_SECONDS = 0.15
+#: The server's default audition slate, in the order it fills a set of N
+#: (``DEFAULT_AUDITION_VOICE_IDS`` in the Drama API). Used only to ask for the
+#: smallest set that holds the voices a creator named; voices outside it get a
+#: full set of ``MAX_CANDIDATES`` and are reported when the server does not offer them.
+SERVER_AUDITION_SLATE = ("Rachel", "Aria", "Roger", "Sarah", "Laura", "Charlie", "George", "Callum")
+REEL_GAP_SECONDS = 0.8
+REEL_LOUDNESS_LUFS = -18.0
+NEW_WORDING_GAP = (
+    "the server auditions only lines {name} speaks on the spine (voice-auditions/render checks the line); "
+    "put the new wording on the line first, then audition it with --text: "
+    'fictora-produce edit --desk {desk} --episode N --line-id ID --text "..." '
+    "(a plain patch before the script gate; after it the cascade, paid items off). {name}'s lines: {lines}"
+)
 
 
 def _unit(prefix: str, arguments: dict[str, Any]) -> str:
@@ -102,6 +125,143 @@ class Candidate:
     seconds: float
 
 
+def _key(text: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", text).split()).casefold()
+
+
+def cast_line_rows(spine: Mapping[str, Any], cast_id: str) -> list[dict[str, Any]]:
+    """Every line the character speaks: ``{line_id, episode, text, spoken_text, subtitle_text}``, in beat order."""
+
+    ordinals = {
+        str(s.get("episode_id")): int(s.get("ordinal") or 0)
+        for s in spine.get("episode_summaries") or []
+        if isinstance(s, Mapping)
+    }
+    rows = []
+    for beat in spine.get("beats") or []:
+        for line in beat.get("dialogue_lines") or [] if isinstance(beat, Mapping) else []:
+            if isinstance(line, Mapping) and line.get("cast_id") == cast_id and str(line.get("text") or "").strip():
+                rows.append(
+                    {
+                        "line_id": str(line.get("line_id") or ""),
+                        "episode": ordinals.get(str(beat.get("episode_id")), 0),
+                        "text": str(line["text"]).strip(),
+                        "spoken_text": str(line.get("spoken_text") or "").strip(),
+                        "subtitle_text": str(line.get("subtitle_text") or "").strip(),
+                    }
+                )
+    return rows
+
+
+def spine_line_for(spine: Mapping[str, Any], cast_id: str, text: str) -> str | None:
+    """The character's spine line (``text``) that ``text`` names, matching any of its spellings; else ``None``."""
+
+    wanted = _key(text)
+    for row in cast_line_rows(spine, cast_id):
+        if wanted in {_key(row[k]) for k in ("text", "spoken_text", "subtitle_text") if row[k]}:
+            return str(row["text"])
+    return None
+
+
+def parse_voices(raw: str | Sequence[str] | None) -> list[str]:
+    """``"Rachel, aria"`` -> ``["Rachel", "aria"]``: names in order, repeats dropped, at most ``MAX_CANDIDATES``.
+
+    Raises
+    ------
+    ValueError
+        More than ``MAX_CANDIDATES`` voices.
+    """
+
+    items = raw.split(",") if isinstance(raw, str) else list(raw or [])
+    names: list[str] = []
+    for item in items:
+        name = item.strip()
+        if name and name.casefold() not in {n.casefold() for n in names}:
+            names.append(name)
+    if len(names) > MAX_CANDIDATES:
+        raise ValueError(f"--voices names {len(names)} voices; an audition set holds at most {MAX_CANDIDATES}")
+    return names
+
+
+def slate_count(voices: Sequence[str]) -> int:
+    """The smallest audition set the server fills with every named voice (``MAX_CANDIDATES`` if unknown)."""
+
+    slate = [v.casefold() for v in SERVER_AUDITION_SLATE]
+    if not all(v.casefold() in slate for v in voices):
+        return MAX_CANDIDATES
+    return max(MIN_CANDIDATES, max((slate.index(v.casefold()) + 1 for v in voices), default=MIN_CANDIDATES))
+
+
+def build_reel(clips: Sequence[tuple[int, str, Path]], out: Path, *, gap_seconds: float = REEL_GAP_SECONDS) -> list[dict[str, Any]]:
+    """Put audition clips back to back in one listening file: level-matched, a short gap after each.
+
+    Parameters
+    ----------
+    clips
+        ``(candidate number, voice, file)`` in the order they play.
+    out
+        Reel to write (``.m4a``); never overwritten.
+    gap_seconds
+        Silence after each clip.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        ``{number, voice, start, end}`` per clip, seconds into the reel.
+
+    Raises
+    ------
+    FileExistsError
+        When ``out`` exists.
+    ValueError
+        When there are no clips.
+    """
+
+    if out.exists():
+        raise FileExistsError(f"{out} exists; local post never overwrites")
+    if not clips:
+        raise ValueError("no audition clips to put in a reel")
+    inputs: list[str] = []
+    graph: list[str] = []
+    index: list[dict[str, Any]] = []
+    at = 0.0
+    for n, (number, voice, path) in enumerate(clips):
+        inputs += ["-i", str(path)]
+        graph.append(
+            f"[{n}:a]aformat=channel_layouts=mono,loudnorm=I={REEL_LOUDNESS_LUFS}:TP=-2:LRA=11,"
+            f"aresample=48000,apad=pad_dur={gap_seconds}[c{n}]"
+        )
+        seconds = media_duration(path)
+        index.append({"number": number, "voice": voice, "start": round(at, 2), "end": round(at + seconds, 2)})
+        at += seconds + gap_seconds
+    graph.append(f"{''.join(f'[c{n}]' for n in range(len(clips)))}concat=n={len(clips)}:v=0:a=1[a]")
+    run_ffmpeg([*inputs, "-filter_complex", ";".join(graph), "-map", "[a]", "-c:a", "aac", "-b:a", "160k", str(out)])
+    return index
+
+
+def _write_reel(folder: Path, listing: dict[str, Any], voices: Sequence[str], out: TextIO) -> Path:
+    """Build the set's reel (only ``voices`` when named), record it in ``auditions.json`` and print the index."""
+
+    wanted = {v.casefold() for v in voices}
+    chosen = [c for c in listing["candidates"] if not wanted or str(c["provider_voice"]).casefold() in wanted]
+    missing = [v for v in voices if v.casefold() not in {str(c["provider_voice"]).casefold() for c in listing["candidates"]}]
+    for voice in missing:
+        offered = ", ".join(str(c["provider_voice"]) for c in listing["candidates"])
+        print(f"!! {voice} is not in this set (the server's audition slate gave: {offered})", file=out)
+    if not chosen:
+        raise ValueError("none of the named voices is in the audition set; nothing to put in a reel")
+    reel = next_versioned_path(folder, "reel", ".m4a")
+    index = build_reel([(int(c["number"]), str(c["provider_voice"]), folder / c["file"]) for c in chosen], reel)
+    lines = [f"{i['number']:>2}. {i['voice']:<12} {i['start']:6.2f}-{i['end']:6.2f}s" for i in index]
+    reel.with_suffix(".txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    listing.setdefault("reels", []).append({"file": reel.name, "voices": [i["voice"] for i in index], "index": index})
+    (folder / "auditions.json").write_text(json.dumps(listing, indent=2) + "\n", encoding="utf-8")
+    print(f"Listening reel: {reel}", file=out)
+    for line in lines:
+        print(f"  {line}", file=out)
+    return reel
+
+
 def run_voice_audition(
     desk: Path,
     *,
@@ -109,10 +269,12 @@ def run_voice_audition(
     episode: int | None = None,
     count: int = 8,
     cause: str | None = None,
+    text: str | None = None,
+    voices: Sequence[str] | str | None = None,
     audio: AudioService | None = None,
     out: TextIO | None = None,
 ) -> Path:
-    """Audition voices for one character on their real lines; save candidates and a listing.
+    """Audition voices for one character on their real lines; save candidates, a listing and a listening reel.
 
     Parameters
     ----------
@@ -126,6 +288,12 @@ def run_voice_audition(
         Candidates, 4-10.
     cause
         Why a second audition set is paid for (required when one exists).
+    text
+        Audition this one line: it must be one the character speaks on the spine
+        (any of its spellings); new wording goes on the line first (``edit --line-id``).
+    voices
+        Keep only these voices in the reel (names, or ``"A,B"``). The set asked for
+        is the smallest server slate holding them; ``count`` is then ignored.
     audio
         Generated-audio service (the Drama API by default).
     out
@@ -139,10 +307,14 @@ def run_voice_audition(
     Raises
     ------
     ValueError
-        Count out of range, no lines for the character, or a second set without a cause.
+        Count out of range, no lines for the character, a line not on the spine,
+        or a second set without a cause.
     """
 
     out = out or sys.stdout
+    wanted = parse_voices(voices)
+    if wanted:
+        count = slate_count(wanted)
     if not MIN_CANDIDATES <= count <= MAX_CANDIDATES:
         raise ValueError(f"--count must be {MIN_CANDIDATES}-{MAX_CANDIDATES}")
     ledger_episode = episode or 1
@@ -152,13 +324,31 @@ def run_voice_audition(
         card = find_cast(spine, cast)
         cast_id, name = str(card["cast_id"]), str(card.get("name") or card["cast_id"])
         slug = cast_slug(cast_id)
-        lines = cast_lines(spine, cast_id, episode)[:AUDITION_MAX_LINES]
+        if text is not None and text.strip():
+            line = spine_line_for(spine, cast_id, text)
+            if line is None:
+                theirs = "; ".join(
+                    f'ep{r["episode"]} {r["line_id"]} "{r["text"]}"' for r in cast_line_rows(spine, cast_id)
+                ) or "none yet"
+                raise ValueError(NEW_WORDING_GAP.format(name=name, desk=desk, lines=theirs))
+            lines = [line]
+        else:
+            lines = cast_lines(spine, cast_id, episode)[:AUDITION_MAX_LINES]
         if not lines:
             where = f" in episode {episode}" if episode else ""
             raise ValueError(f"{name} speaks no line{where} on the spine; an audition needs their real lines")
         existing = audition_dirs(desk, slug)
         unfinished = existing[-1] if existing and not (existing[-1] / "auditions.json").is_file() else None
         finished = [path for path in existing if path != unfinished]
+        if wanted:
+            for held in reversed(finished):
+                listing = json.loads((held / "auditions.json").read_text(encoding="utf-8"))
+                offered = {str(c["provider_voice"]).casefold() for c in listing["candidates"]}
+                if listing.get("lines") == lines and all(v.casefold() in offered for v in wanted):
+                    print(f"{name}: {held.name} already holds this line in these voices; a new reel, nothing paid",
+                          file=out)  # fmt: skip
+                    _write_reel(held, listing, wanted, out)
+                    return held
         if finished and not (cause and cause.strip()):
             raise ValueError(
                 f"{name} already has an audition set ({finished[-1].name}); pick from it with --pick N, "
@@ -198,19 +388,21 @@ def run_voice_audition(
     }  # fmt: skip
     (folder / "auditions.json").write_text(json.dumps(listing, indent=2) + "\n", encoding="utf-8")
     book(desk, episode=ledger_episode, usd=cost, stream=out, unit=f"voice-audition:{slug}")
+    if made:
+        _write_reel(folder, listing, wanted, out)
     locked = str((card.get("voice_brief") or {}).get("provider_voice") or "none")
     print(f"{name}: {len(made)} candidates in {folder} (locked now: {locked})", file=out)
     for item in made:
         print(f"  {item.number:>2}. {item.provider_voice:<14} {item.seconds:5.2f}s  {item.path.name}", file=out)
     _note(desk, ledger_episode, f"voice audition: {name} ({cast_id}), {len(made)} candidates in `{folder.name}`"
           + (f"; cause: {cause}" if cause else "") + f"; cost ${cost:.3f}")  # fmt: skip
-    print(f"Next: play them to the human. Their pick: fictora-produce voice --desk {desk} --cast {cast_id} --pick N",
-          file=out)  # fmt: skip
+    print(f"Next: play the reel to the human. Their pick: fictora-produce voice --desk {desk} --cast {cast_id} "
+          "--pick N (or the voice's name)", file=out)  # fmt: skip
     return folder
 
 
-def run_voice_pick(desk: Path, *, cast: str, pick: int, out: TextIO | None = None) -> str:
-    """Lock audition candidate ``pick`` on the character's cast card (spends nothing).
+def run_voice_pick(desk: Path, *, cast: str, pick: int | str, out: TextIO | None = None) -> str:
+    """Lock audition candidate ``pick`` (its number, or its voice's name) on the character's cast card (spends nothing).
 
     Returns
     -------
@@ -222,7 +414,7 @@ def run_voice_pick(desk: Path, *, cast: str, pick: int, out: TextIO | None = Non
     FileNotFoundError
         When the character has no finished audition set on the desk.
     ValueError
-        When ``pick`` is not a candidate number.
+        When ``pick`` is not a candidate number or a voice in the newest set.
     """
 
     out = out or sys.stdout
@@ -237,10 +429,17 @@ def run_voice_pick(desk: Path, *, cast: str, pick: int, out: TextIO | None = Non
         if not listed:
             raise FileNotFoundError(f"{name} has no audition set on the desk; run voice --cast {cast_id} --audition")
         listing = json.loads(listed[-1].read_text(encoding="utf-8"))
-        chosen = next((c for c in listing["candidates"] if int(c["number"]) == pick), None)
+        wanted = str(pick).strip()
+        chosen = next(
+            (c for c in listing["candidates"]
+             if (wanted.isdigit() and int(c["number"]) == int(wanted))
+             or str(c["provider_voice"]).casefold() == wanted.casefold()),
+            None,
+        )  # fmt: skip
         if chosen is None:
-            numbers = ", ".join(str(c["number"]) for c in listing["candidates"])
-            raise ValueError(f"no candidate {pick} in {listed[-1].parent.name}; the numbers are {numbers}")
+            numbers = ", ".join(f"{c['number']} {c['provider_voice']}" for c in listing["candidates"])
+            raise ValueError(f"no candidate {pick} in {listed[-1].parent.name}; the set is {numbers}")
+        pick = int(chosen["number"])
         body = {
             "spine_version": spine["spine_version"],
             "url": chosen["url"],
