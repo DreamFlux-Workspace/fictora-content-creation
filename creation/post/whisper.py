@@ -1,11 +1,16 @@
 """Whisper word timing (made on the server), and matching approved lines to what was heard.
 
-English and Korean lines are matched word by word / syllable by syllable. A
-Japanese line is matched by reading shape: kana are folded (hiragana to
-katakana, no long-vowel mark) and a kanji Whisper heard may stand for the kana
-of a kana-pinned line (and the reverse). There is no reading dictionary here
-(the kit adds no heavy dependency), so a kanji is never actually *read*: see
-:func:`_align_japanese` for what that still misses.
+English and Korean lines are matched word by word / syllable by syllable.
+
+A Japanese line is matched on how it sounds. When the server's transcript
+carries a ``reading`` per word (katakana, made by the server's reading
+analyzer), Whisper's words are compared as those readings, so a kana-pinned
+line meets Whisper's kanji as kana. On an older server without readings the
+kit falls back to reading *shape*: kana are folded (hiragana to katakana, no
+long-vowel mark) and a kanji Whisper heard may stand for the kana of a
+kana-pinned line (and the reverse). The kit has no reading dictionary of its
+own (no heavy dependency), so it never reads a kanji itself: see
+:func:`_align_japanese` for what the fallback still misses.
 """
 
 from __future__ import annotations
@@ -30,11 +35,16 @@ Transcriber = Callable[[Path, Path], Path]
 
 @dataclass(frozen=True)
 class Word:
-    """One Whisper word with its time in seconds."""
+    """One Whisper word with its time in seconds.
+
+    ``reading`` is the server's katakana reading of a Japanese word (``None``
+    for other languages and for transcripts from servers that predate it).
+    """
 
     start: float
     end: float
     text: str
+    reading: str | None = None
 
 
 @dataclass(frozen=True)
@@ -82,7 +92,7 @@ def transcribe(
 
 
 def load_words(path: Path) -> tuple[Word, ...]:
-    """Word times from a saved transcript: the API's ``words`` (``{word, start, end}``) or Whisper ``chunks``.
+    """Word times from a saved transcript: the API's ``words`` (``{word, start, end, reading?}``) or Whisper ``chunks``.
 
     Raises
     ------
@@ -94,7 +104,8 @@ def load_words(path: Path) -> tuple[Word, ...]:
     if isinstance(payload, dict) and isinstance(payload.get("words"), list):
         return tuple(
             Word(start=float(w.get("start") or 0.0), end=float(w.get("end") or w.get("start") or 0.0),
-                 text=str(w.get("word") or "").strip())
+                 text=str(w.get("word") or "").strip(),
+                 reading=w["reading"] if isinstance(w.get("reading"), str) else None)
             for w in payload["words"]
         )  # fmt: skip
     chunks = payload.get("chunks") if isinstance(payload, dict) else None
@@ -138,6 +149,13 @@ def _tokens(text: str) -> list[str]:
         else:
             tokens.append(token)
     return tokens
+
+
+def _reading_tokens(reading: str) -> list[str]:
+    """A server reading as comparable kana: hiragana to katakana, ー and punctuation dropped, one per character."""
+
+    kana = re.sub(r"[\W_]", "", unicodedata.normalize("NFKC", reading))
+    return [_fold_kana(char) for char in kana if char != "\u30fc"]
 
 
 def _same(a: str, b: str) -> bool:
@@ -266,16 +284,57 @@ def line_windows(
     """
 
     flat = [(token, index) for index, word in enumerate(words) for token in _tokens(word.text)]
-    cursor = 0
+    if not any(word.reading is not None for word in words):
+        return _line_windows_on(words, lines, alternates, flat)  # an older server: reading shape only
+    # Japanese words as the server read them; a word without a reading keeps its text.
+    read = [
+        (token, index)
+        for index, word in enumerate(words)
+        for token in (_reading_tokens(word.reading) if word.reading is not None else _tokens(word.text))
+    ]
+    return _line_windows_on(words, lines, alternates, flat, read)
+
+
+def _line_windows_on(
+    words: tuple[Word, ...],
+    lines: tuple[str, ...],
+    alternates: tuple[tuple[str, ...], ...] | None,
+    flat: list[tuple[str, int]],
+    read: list[tuple[str, int]] | None = None,
+) -> tuple[LineWindow, ...]:
+    """:func:`line_windows` over ``flat`` (Whisper's text) and, when given, ``read`` (the server's readings).
+
+    A spelling with kana is matched on ``read``; every other spelling on
+    ``flat``. After a line is found, the other stream resumes at the next word.
+    """
+
+    streams = [flat] if read is None else [flat, read]
+    cursors = [0] * len(streams)
     found: list[LineWindow] = []
     for index, line in enumerate(lines):
         spellings = [line, *(alternates[index] if alternates and index < len(alternates) else ())]
-        matches = [m for m in (_match(flat, _tokens(s), cursor) for s in dict.fromkeys(spellings) if s) if m]
+        matches: list[tuple[int, int, float, int]] = []  # (first word, last word, ratio, stream)
+        for spelling in dict.fromkeys(spellings):
+            target = _tokens(spelling) if spelling else []
+            which = 1 if read is not None and any(_KANA.fullmatch(token) for token in target) else 0
+            stream = streams[which]
+            hit = _match(stream, target, cursors[which])
+            if hit:
+                first, last, ratio = hit
+                matches.append((first, last, ratio, which))
         if not matches:
             found.append(LineWindow(index, line, None, None, 0.0))
             continue
-        first, last, ratio = min(matches, key=lambda m: (m[0], -m[2]))
-        ids = sorted({flat[pos][1] for pos in range(first, last + 1)})
+        # Earliest word first; on one stream that is the old earliest-token order exactly.
+        first, last, ratio, which = min(
+            matches, key=lambda m: (streams[m[3]][m[0]][1], m[0] if read is None else 0, -m[2])
+        )
+        stream = streams[which]
+        ids = sorted({stream[pos][1] for pos in range(first, last + 1)})
         found.append(LineWindow(index, line, words[ids[0]].start, words[ids[-1]].end, round(ratio, 2)))
-        cursor = last + 1
+        for other, tokens in enumerate(streams):
+            if other == which:
+                cursors[other] = last + 1
+            else:
+                cursors[other] = next((pos for pos, (_t, word) in enumerate(tokens) if word > ids[-1]), len(tokens))
     return tuple(found)

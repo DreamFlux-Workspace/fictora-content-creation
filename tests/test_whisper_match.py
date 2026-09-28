@@ -77,3 +77,61 @@ def test_an_unheard_japanese_line_over_a_long_take_stays_fast() -> None:
     [window] = line_windows(words, ("ぜんぜんちがうせりふをここでいうけれどきこえない",))
     assert window.start is None
     assert time.perf_counter() - began < 5.0
+
+
+# --------------------------------------------------------------------------- #
+# The server's per-word readings (``words[].reading`` on a Japanese transcript).
+# --------------------------------------------------------------------------- #
+
+
+def _read(*items: tuple[str, str, float, float]) -> tuple[Word, ...]:
+    return tuple(Word(start, end, text, reading) for text, reading, start, end in items)
+
+
+def test_a_kana_pin_heard_as_kanji_only_is_found_on_the_readings() -> None:
+    # No kana in what Whisper wrote, so reading shape alone can never hear it.
+    assert line_windows(_words(("大丈夫", 0.4, 1.1)), ("だいじょうぶ",))[0].start is None
+    [window] = line_windows(_read(("大丈夫", "ダイジョウブ", 0.4, 1.1)), ("だいじょうぶ",))
+    assert (window.start, window.end, window.ratio) == (0.4, 1.1, 1.0)
+
+
+def test_a_different_line_with_the_same_kana_skeleton_is_not_heard_on_the_readings() -> None:
+    words = (("僕は", "ボクハ", 0.2, 0.6), ("行かない", "イカナイ", 0.6, 1.2))
+    # Reading shape lets 僕 stand for わたし; the reading says ボク.
+    assert line_windows(_words(*((t, s, e) for t, _r, s, e in words)), ("わたしはいかない",))[0].start == 0.2
+    assert line_windows(_read(*words), ("わたしはいかない",))[0].start is None
+
+
+def test_a_kanji_line_and_later_lines_are_found_on_the_readings() -> None:
+    words = _read(
+        ("東京に", "トウキョウニ", 1.0, 1.6), ("行くよ", "イクヨ", 1.6, 2.2),
+        ("らーめん", "らーめん", 3.0, 3.5), ("食べたい", "タベタイ", 3.5, 4.0),
+    )  # fmt: skip
+    windows = line_windows(words, ("東京に行くよ", "ラーメン、たべたい！"))
+    assert [(w.start, w.end, w.ratio) for w in windows] == [(1.0, 2.2, 1.0), (3.0, 4.0, 1.0)]
+
+
+def test_a_kanji_only_line_and_english_still_match_on_whisper_text_when_readings_exist() -> None:
+    words = _read(("OK", "オーケー", 0.0, 0.3), ("今夜", "コンヤ", 0.5, 0.9), ("駄目", "ダメ", 0.9, 1.3))
+    windows = line_windows(words, ("OK", "今夜駄目"))
+    assert [(w.start, w.end) for w in windows] == [(0.0, 0.3), (0.5, 1.3)]
+
+
+def test_readings_load_from_the_api_transcript_and_older_transcripts_have_none(tmp_path) -> None:
+    import json
+
+    from creation.post.whisper import load_words
+
+    new = tmp_path / "new.json"
+    new.write_text(json.dumps({"words": [{"word": "笑って", "start": 0.1, "end": 0.6, "reading": "ワラッテ"}]}))
+    old = tmp_path / "old.json"
+    old.write_text(json.dumps({"words": [{"word": "笑って", "start": 0.1, "end": 0.6}]}))
+    assert load_words(new) == (Word(0.1, 0.6, "笑って", "ワラッテ"),)
+    assert load_words(old) == (Word(0.1, 0.6, "笑って"),)
+
+
+def test_lines_stay_in_order_across_whisper_text_and_readings() -> None:
+    words = _read(("今夜", "コンヤ", 0.0, 0.4), ("ね", "ネ", 0.4, 0.5), ("今夜", "コンヤ", 2.0, 2.4))
+    # 今夜 matches Whisper's text; the kana line after it must not reuse that word's reading.
+    windows = line_windows(words, ("今夜", "こんや"))
+    assert [(w.start, w.end) for w in windows] == [(0.0, 0.4), (2.0, 2.4)]

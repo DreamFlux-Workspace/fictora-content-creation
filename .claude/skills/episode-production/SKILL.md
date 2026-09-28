@@ -124,6 +124,7 @@ It lays the take's sound effects (from `GET /v1/jobs/{take_job}/take-facts`, nev
 
 - The last line reads `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`. `NOT DONE` and exit code **5** mean music, SFX or the mix is missing: do not hand the file over; fix what it names and run `finish` again.
 - A `409 hosted_post_off`, or a `503 restate_unavailable` from post-production, is not an outage: never retry it, run `finish`.
+- Captions are always the English line. On a Japanese or Korean show, `finish` / `caption` show each whole English line over its speech (no word flicker); the run note says `whole English lines`.
 
 ## Change a character's voice (never regenerate)
 
@@ -137,6 +138,8 @@ uv run fictora-produce finish --desk D --episode N --take tK --take-file <take-e
 ```
 
 Play the candidates (`shared/voices/<cast>/audition-vN/`) to the human; a second audition set needs `--cause`. On Turbo (the default) no take carries the locked voice, because voice references are not sent: revoice each filmed take the character speaks in, including takes filmed after the pick. Only on R2V do takes not filmed yet use the new voice as they are. Re-film only a take where the dub does not sit (lips visibly wrong, a shouted line), with a cause and a stated cost; never the other takes, never the story.
+
+`revoice` finds a kana-pinned Japanese line in Whisper's kanji: on the per-word readings the server's transcript carries, or by reading shape on an older server. If a line is still reported "not heard", pass `--words-json` or re-film only that take.
 
 ## Recovery
 
