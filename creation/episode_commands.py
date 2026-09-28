@@ -21,7 +21,8 @@ desk with a versioned name, and never approves (the human's yes goes through
 - ``redraw-board``: redraw one board on ``/boards/{set}/regenerate``.
 - ``plates --cast NAME --cause``: redraw one character's plate on ``/cast/{cast_id}/regenerate``, at the plates gate.
 - ``redraw-plate --cast X --note "..."``: note one character, then redraw only their plate (one still).
-- ``check-lines``: were the approved lines in the take's instructions (take facts, never the prompt)?
+- ``check-lines``: were the approved lines in the take's instructions, which shot and board row each fell in,
+  and is its on-screen speaker in that row (take facts and board frames, never the prompt)?
 - ``film --episode N [--take tK]``: price, then (``--confirm-spend``) film episode N alone or only take K
   of it. Nothing earlier is filmed or booked again. A re-film needs a written cause.
 
@@ -74,6 +75,7 @@ from creation.prices import STILL_USD, server_lane
 from creation.production_config import load_production_config
 from creation.production_state import ProductionState, load_production, save_production, start_episode
 from creation.spine_view import (
+    beats_by_take,
     dialogue_line_ids,
     episode_id_for,
     episode_summary,
@@ -2281,11 +2283,145 @@ def lines_not_asked(
     return missing, len(approved)
 
 
+def _frame_cast_ids(frame: Mapping[str, Any]) -> set[str]:
+    """Who a frame draws: its ``cast_refs`` and the cast its ``subject_blocking`` stages."""
+
+    found = {str(ref) for ref in frame.get("cast_refs") or [] if ref}
+    brief = frame.get("visual_brief")
+    if isinstance(brief, Mapping):
+        for blocking in brief.get("subject_blocking") or []:
+            if isinstance(blocking, Mapping) and blocking.get("cast_id"):
+                found.add(str(blocking["cast_id"]))
+    return found
+
+
+def _approved_lines_with_speaker(
+    spine: Mapping[str, Any], *, episode: int, take_index: int, take_count: int
+) -> list[tuple[str, str, str, bool]]:
+    """``(line_id, text, speaker cast_id, off_screen)`` for one take's approved lines, in order."""
+
+    found: list[tuple[str, str, str, bool]] = []
+    for take_beats in beats_by_take(spine, episode=episode, take_count=take_count)[take_index - 1 : take_index]:
+        for beat in take_beats:
+            for raw in beat.get("dialogue_lines") or []:
+                if not isinstance(raw, Mapping) or not raw.get("line_id"):
+                    continue
+                text = str(raw.get("spoken_text") or raw.get("text") or "").strip()
+                if text:
+                    found.append(
+                        (str(raw["line_id"]), text, str(raw.get("cast_id") or ""), raw.get("off_screen") is True)
+                    )
+    return found
+
+
+def line_row_lines(
+    spine: Mapping[str, Any], facts: Mapping[str, Any], *, episode: int, take_index: int, take_count: int, label: str
+) -> tuple[list[str], int]:
+    """Say which shot and board row each approved line fell in, and flag a speaker out of frame.
+
+    Reads only the take facts' shot windows (``shots``) and each line's shot
+    (``lines[].shot_index``), plus the board frames on the spine. On a row board
+    the take plays one shot per row, top to bottom, so shot ``k`` is row ``k``
+    when the take has as many shots as the board has rows; otherwise the rows
+    are not matched and only the shot is reported. A line whose speaker is on
+    screen (not ``off_screen``) is flagged when neither frame of its row draws
+    that speaker: the take is then likely to play the line over someone else
+    (SCP-173 take 1: the denial over the statue's face).
+
+    Parameters
+    ----------
+    spine
+        The desk's spine snapshot.
+    facts
+        ``take_facts`` fetched with ``spine_id``.
+    episode, take_index, take_count
+        Which take.
+    label
+        Prefix for every printed line (``ep01 t1``).
+
+    Returns
+    -------
+    tuple[list[str], int]
+        Printable lines, and how many lines were flagged (speaker not in frame).
+    """
+
+    listed = facts.get("lines")
+    if not isinstance(listed, list):
+        return [], 0
+    by_id = {str(row.get("line_id")): row for row in listed if isinstance(row, Mapping)}
+    shots = sorted(
+        (shot for shot in facts.get("shots") or [] if isinstance(shot, Mapping) and shot.get("shot_index") is not None),
+        key=lambda shot: (float(shot.get("start_seconds") or 0.0), int(shot["shot_index"])),
+    )
+    position_by_shot = {int(shot["shot_index"]): position for position, shot in enumerate(shots, start=1)}
+    frames = frames_by_set(spine, episode=episode).get(take_index, [])
+    rows: dict[int, list[Mapping[str, Any]]] = {}
+    for frame in frames:
+        raw_row = frame.get("board_row")
+        rows.setdefault(int(raw_row) if str(raw_row).isdigit() else int(frame.get("ordinal") or 0), []).append(frame)
+    row_numbers = sorted(rows)
+    rows_match = bool(shots) and len(shots) == len(row_numbers) and all(
+        frame.get("board_row") is not None for frame in frames
+    )
+    names = {
+        str(card.get("cast_id")): str(card.get("name") or card.get("cast_id"))
+        for card in spine.get("cast") or []
+        if isinstance(card, Mapping)
+    }
+    out: list[str] = []
+    flagged = 0
+    for number, (line_id, text, speaker, off_screen) in enumerate(
+        _approved_lines_with_speaker(spine, episode=episode, take_index=take_index, take_count=take_count), start=1
+    ):
+        row = by_id.get(line_id) or {}
+        who = names.get(speaker, speaker or "the speaker")
+        head = f"{label}: line {number} ('{text}', {who}{', off screen' if off_screen else ''})"
+        shot_index = row.get("shot_index")
+        if not int(row.get("count") or 0):
+            continue  # the missing-line report names it
+        if shot_index is None:
+            out.append(f"{head}: not placed in a timed shot")
+            continue
+        position = position_by_shot.get(int(shot_index))
+        start, end = row.get("start_seconds"), row.get("end_seconds")
+        window = f" ({float(start):.1f}–{float(end):.1f} s)" if start is not None and end is not None else ""
+        if position is None or not rows_match:
+            out.append(
+                f"{head}: shot {shot_index}{window}; board rows not matched "
+                f"({len(shots)} shots, {len(row_numbers)} rows), so the frame check is skipped"
+            )
+            continue
+        board_row = row_numbers[position - 1]
+        cells = [_frame_cast_ids(frame) for frame in rows[board_row]]
+        if off_screen:
+            out.append(f"{head}: shot {shot_index}{window}, row {board_row} (heard, not seen)")
+            continue
+        in_cells = sum(1 for cast in cells if speaker in cast)
+        if in_cells == len(cells):
+            out.append(f"{head}: shot {shot_index}{window}, row {board_row}, {who} in frame")
+        elif in_cells:
+            out.append(
+                f"{head}: shot {shot_index}{window}, row {board_row}, {who} in {in_cells} of {len(cells)} "
+                "frames of the row (in frame for part of the shot)"
+            )
+        else:
+            flagged += 1
+            out.append(
+                f"  !! {head}: spoken in shot {shot_index}{window}, row {board_row}, but {who} is not in that row's "
+                "frames. An on-screen line needs its speaker in frame: edit the frame or the line, then redraw "
+                "(warning only)"
+            )
+    return out, flagged
+
+
 def run_check_lines(desk: Path, *, episode: int, take_id: str | None = None, out: Any = None) -> int:
-    """Say whether each approved line was in the take's instructions, from the saved take facts.
+    """Say whether each approved line was in the take's instructions, and where it fell, from the take facts.
 
     Reads ``epNN/api/take-facts-epNN-tK-vM.json`` (newest) and the episode's spine
-    snapshot. The compiled prompt is never read, printed or saved.
+    snapshot. The compiled prompt is never read, printed or saved. For each line
+    the take was asked to say it also prints the shot and board row it fell in,
+    and flags (``!!``, warning only) a line spoken on a row whose frames do not
+    draw its on-screen speaker (``line_row_lines``).
 
     Parameters
     ----------
@@ -2325,6 +2461,11 @@ def run_check_lines(desk: Path, *, episode: int, take_id: str | None = None, out
         for number, text in missing:
             print(f"ep{episode:02d} {current}: line {number} ('{text}') was not in the take's instructions", file=out)
         print(f"ep{episode:02d} {current}: {total - len(missing)} of {total} approved lines asked ({facts_path.name})", file=out)
+        placed, _flagged = line_row_lines(
+            spine, facts, episode=episode, take_index=index, take_count=len(slot.takes), label=f"ep{episode:02d} {current}"
+        )
+        for line in placed:
+            print(line, file=out)
         missing_total += len(missing)
     return missing_total
 
@@ -2902,6 +3043,7 @@ __all__ = [
     "run_arc_pick",
     "run_author",
     "run_brief",
+    "line_row_lines",
     "run_check_lines",
     "run_edit",
     "run_film",
