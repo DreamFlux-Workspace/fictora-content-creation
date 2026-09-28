@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import re
 import time
 from typing import Any, Mapping
 
 from creation.harness.http_util import HOSTED_POST_OFF_HINT, describe_job_error
+from creation.harness.video_enrol_errors import server_refused_episode_ordinal_field
 from creation.harness.session import DramaApiRunSession
 from creation.spine_view import episode_id_for
 from creation.harness.visual_first_ep1 import (
@@ -454,28 +454,6 @@ OLD_SERVER_FILM = (
     "Tell engineering, and film this episode once the deploy has #436."
 )
 
-_EPISODE_ORDINAL_FIELD = re.compile(r"\bepisode_ordinal\b")
-
-
-def _server_refused_episode_ordinal_field(text: str) -> bool:
-    """True when a 422 is the older deploy rejecting ``episode_ordinal`` on the request body.
-
-    Do not treat ``episode_ordinals`` in error ``details`` (for example
-    ``boards_not_approved_for_generation``) as a schema refusal.
-    """
-
-    if "HTTP 422" not in text:
-        return False
-    if "boards_not_approved_for_generation" in text:
-        return False
-    if "body.episode_ordinal" in text:
-        return True
-    if _EPISODE_ORDINAL_FIELD.search(text) is None:
-        return False
-    lower = text.lower()
-    return "extra input" in lower or "not permitted" in lower or "validation_error" in lower
-
-
 def _schema_has(openapi: Any, schema_suffix: str, field: str) -> bool | None:
     """Whether an OpenAPI schema named ``*schema_suffix`` lists ``field`` (``None`` when there is no such schema)."""
 
@@ -595,7 +573,7 @@ def post_video_generation(
         return run.post("/v1/video-generations", body, idempotency_key=idempotency_key)
     except SystemExit as exc:
         text = str(exc.code)
-        if _server_refused_episode_ordinal_field(text):
+        if server_refused_episode_ordinal_field(text, request_body=body):
             raise SystemExit(f"{OLD_SERVER_FILM.format(episode=episode)} (server said: {text[:400]})") from None
         raise
 
