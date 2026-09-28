@@ -327,6 +327,7 @@ uv run fictora-produce film --desk D --episode N [--cause "…"] [--confirm-spen
 | --- | --- |
 | Video stuck `running` ~50%, post still going | `fictora-produce cancel-job --desk D --job-id job_video_…` only. Never `retry-video`, never `--confirm-spend` again (a second enrol starts another ffmpeg on Railway) |
 | Poll CLI dies mid-job (`ReadError`) | Job may still run: re-run `step` on the same desk |
+| `step` failed, desk phase `failed` (a draft, plates, boards or estimate job ended failed) | Fix the cause, then `retry-step --desk D --cause "…"` (`--phase P` only when it cannot tell which stage): backs up `production.json` to `api/production-backup-vN.json`, restores the stage with a fresh idempotency key, prints the stage and its cost, sends nothing. Then `step`. A failed take: `retry-video` / `film` instead |
 | Draft `authoring_stalled`, retryable | Harness retries; else re-run `step` from `new` |
 | Draft or `author` failed `authoring_validation_failed` | The message names the rule and where. Fix the brief or the direction; do not re-run the same thing |
 | Draft 500 cast `too_short` | Premise asked for a solo cast; pull latest `main`, re-`step` |

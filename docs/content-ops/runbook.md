@@ -112,6 +112,8 @@ The folder is the review surface. The report says the path, not just the verdict
 
 Never overwrite silently. A new version is a new file: `board-ep01-t1-v2.png`. Rejected versions stay on disk.
 
+When a step fails, the desk says `failed` and names the stage. Fix the cause, then `fictora-produce retry-step --desk D --cause "…"`: it backs up `production.json`, puts that stage back with a fresh key, says whether re-running it is paid (boards $0.30 each), and sends nothing. The next `step` re-runs it. Never hand-edit `production.json`.
+
 Ask for the merged cut whenever an episode has a second take. Joining costs nothing. One music bed across the whole thing. Soften every seam. Assert 24 fps. Check loudness across each seam — a 5 dB step is audible. The merged file is a new file. Individual takes stay on disk.
 
 ## Spend

@@ -41,6 +41,8 @@ class ProductionState:
     estimate_usd: float | None = None
     last_delivery_url: str | None = None
     last_error: str | None = None
+    #: The phase whose ``step`` failed (``ready_boards_enrol`` ...) while ``phase`` is ``failed``; ``retry-step`` restores it.
+    failed_phase: str | None = None
     exposure_accept_dim: bool = False
     video_idempotency_suffix: str = ""
     last_video_job_id: str | None = None
