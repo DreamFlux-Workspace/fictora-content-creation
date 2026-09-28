@@ -164,6 +164,7 @@ Measure, then watch: every approved line heard, exactly; cut count (compare cons
 
 - A missing spoken line is the one real re-film. Name the cause first.
 - A line the take was never asked to say is a server fault: `fictora-produce check-lines --desk D --episode N [--take tK]` names it from the take facts (never the prompt). Report it with the take job id; do not re-film blind.
+- `check-lines` also prints, for every line the take was asked to say, the shot and board row it fell in. A `!!` line means an on-screen line landed on a row whose frames do not draw its speaker (off-screen lines are fine). That is a board fault, not a take fault: fix the frame or the line and redraw the board before re-filming. When the take has a different number of shots than the board has rows, the rows are not matched and the frame check is skipped.
 - Stray mumble between lines is a mute in the mix, not a re-film: `finish --mute A-B` (Hand sound, below).
 
 ## Finish
@@ -318,7 +319,7 @@ uv run fictora-produce look-note --desk D (--add TEXT | --remove ID|N)   # at mo
 uv run fictora-produce spine --desk D --refresh
 uv run fictora-produce redraw-board --desk D --episode N --take tK --cause "why"   # $0.30; back to the board gate
 uv run fictora-produce plates --desk D --cast NAME --cause "why"                  # one plate, $0.30; plates gate only
-uv run fictora-produce check-lines --desk D --episode N [--take tK]                # exit 5 when an approved line was not asked for
+uv run fictora-produce check-lines --desk D --episode N [--take tK]                # exit 5 when an approved line was not asked for; prints each line's shot + row, !! when its speaker is not in that row
 ```
 
 - `edit` before the script gate is a plain patch. After it, the server asks for a cascade: `edit` prints every item, runs the free ones, and leaves the paid ones (`tier media`) off unless `--select-regen`; it names each board that no longer matches (redraw it with `redraw-board`). `--preview` stops after the list.
