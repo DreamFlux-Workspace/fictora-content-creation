@@ -9,14 +9,15 @@ from datetime import date
 from pathlib import Path
 from typing import Sequence
 
+from creation.cli_text import json_or_file
 from creation.ops.adopt import AdoptRefused, adopt_desk
 from creation.ops.floor import (
     add_episode,
-    confirm_preflight,
     approve_board,
     approve_post,
     approve_script,
     approve_series_gate,
+    confirm_preflight,
     default_desk_parent,
     init_series_desk,
     preflight_take,
@@ -99,7 +100,11 @@ def _add_floor_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser])
     lines_p.add_argument("--desk", type=Path, required=True)
     lines_p.add_argument("--episode", type=int, required=True)
     lines_p.add_argument("--take", required=True)
-    lines_p.add_argument("--lines-json", required=True, help="JSON list of {speaker, original, translation}.")
+    lines_p.add_argument(
+        "--lines-json",
+        required=True,
+        help="JSON list of {speaker, original, translation}: the JSON text, or @FILE / an existing file path.",
+    )
 
     ap = sub.add_parser("approve", help="Record a human yes on a gate.")
     ap.add_argument("--desk", type=Path, required=True)
@@ -229,7 +234,7 @@ def _dispatch(args: argparse.Namespace) -> int:
                 )
         return 0
     if args.command == "set-lines":
-        payload = json.loads(args.lines_json)
+        payload = json_or_file(args.lines_json, flag="--lines-json")
         if not isinstance(payload, list):
             raise ValueError("lines-json must be a JSON list")
         take = set_take_lines(

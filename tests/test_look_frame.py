@@ -38,7 +38,7 @@ def test_look_frame_draws_on_the_server_saves_the_png_books_one_still_and_never_
     api.routes[("POST", ROUTE)] = ANSWER
     out = io.StringIO()
 
-    path = ec.run_look_frame(desk, description_file=_description(desk), out=out)
+    path = ec.run_look_frame(desk, description=_description(desk), out=out)
 
     assert path == desk / "shared" / "look" / "look-frame-v1.png" and path.is_file()
     ((method, called, body, key),) = [call for call in api.calls if call[0] == "POST"]
@@ -61,8 +61,8 @@ def test_the_same_description_keeps_its_key_and_a_cached_answer_books_nothing(de
     api.routes[("POST", ROUTE)] = lambda *_: answers.pop(0)
     description = _description(desk)
 
-    first = ec.run_look_frame(desk, description_file=description, out=io.StringIO())
-    second = ec.run_look_frame(desk, description_file=description, out=io.StringIO())
+    first = ec.run_look_frame(desk, description=description, out=io.StringIO())
+    second = ec.run_look_frame(desk, description=description, out=io.StringIO())
 
     keys = [key for method, _path, _body, key in api.calls if method == "POST"]
     assert len(keys) == 2 and keys[0] == keys[1]
@@ -74,8 +74,8 @@ def test_a_different_size_is_sent_and_changes_the_key(desk: Path, api: FakeApi) 
     api.routes[("POST", ROUTE)] = ANSWER
     description = _description(desk)
 
-    ec.run_look_frame(desk, description_file=description, out=io.StringIO())
-    ec.run_look_frame(desk, description_file=description, size="1936x1088", out=io.StringIO())
+    ec.run_look_frame(desk, description=description, out=io.StringIO())
+    ec.run_look_frame(desk, description=description, size="1936x1088", out=io.StringIO())
 
     posts = [(body, key) for method, _path, body, key in api.calls if method == "POST"]
     assert posts[1][0] == {"description": DESCRIPTION, "size": "1936x1088"}
@@ -88,7 +88,7 @@ def test_an_older_server_without_the_route_stops_with_a_clear_message_and_books_
     api.routes[("POST", ROUTE)] = OLD_SERVER_404
 
     with pytest.raises(ec.CommandStopped, match="no look-frame route yet") as caught:
-        ec.run_look_frame(desk, description_file=_description(desk), out=io.StringIO())
+        ec.run_look_frame(desk, description=_description(desk), out=io.StringIO())
 
     assert "never draw it with your own provider key" in str(caught.value)
     assert not (desk / "shared" / "look" / "look-frame-v1.png").exists()
@@ -101,7 +101,7 @@ def test_a_missing_story_404_is_not_mistaken_for_an_older_server(desk: Path, api
     )
 
     with pytest.raises(ec.CommandStopped) as caught:
-        ec.run_look_frame(desk, description_file=_description(desk), out=io.StringIO())
+        ec.run_look_frame(desk, description=_description(desk), out=io.StringIO())
 
     assert "spine_not_found" in str(caught.value) and "no look-frame route" not in str(caught.value)
 
@@ -120,7 +120,7 @@ def test_a_server_refusal_carries_its_hint(desk: Path, api: FakeApi) -> None:
     )
 
     with pytest.raises(ec.CommandStopped, match="take the link out of the description"):
-        ec.run_look_frame(desk, description_file=_description(desk, "like https://x.example/a.png"), out=io.StringIO())
+        ec.run_look_frame(desk, description=_description(desk, "like https://x.example/a.png"), out=io.StringIO())
 
 
 @pytest.mark.parametrize(
@@ -129,7 +129,7 @@ def test_a_server_refusal_carries_its_hint(desk: Path, api: FakeApi) -> None:
 )
 def test_bad_input_stops_before_any_call(desk: Path, api: FakeApi, text: str, size: str, why: str) -> None:
     with pytest.raises(ec.CommandStopped, match=why):
-        ec.run_look_frame(desk, description_file=_description(desk, text), size=size, out=io.StringIO())
+        ec.run_look_frame(desk, description=_description(desk, text), size=size, out=io.StringIO())
     assert not [call for call in api.calls if call[0] == "POST"]
 
 
@@ -147,3 +147,19 @@ def test_route_missing_reads_only_the_bare_not_found() -> None:
     assert ec.look_frame_route_missing(OLD_SERVER_404.code)  # type: ignore[arg-type]
     assert not ec.look_frame_route_missing("HTTP 404 POST https://api.example/x: spine_not_found: gone")
     assert not ec.look_frame_route_missing('HTTP 409 POST https://api.example/x: {"detail": "Not Found"}')
+
+
+@pytest.mark.parametrize("form", ["inline", "at-file", "path"])
+def test_the_cli_takes_the_description_as_words_at_file_or_a_path(desk: Path, api: FakeApi, form: str) -> None:
+    api.routes[("POST", ROUTE)] = ANSWER
+    value = {"inline": DESCRIPTION, "at-file": f"@{_description(desk)}", "path": str(_description(desk))}[form]
+
+    assert produce_main(["look-frame", "--desk", str(desk), "--description", value]) == 0
+
+    assert api.posted(ROUTE) == [{"description": DESCRIPTION, "size": "1088x1936"}]
+
+
+def test_a_missing_at_file_stops_before_any_call(desk: Path, api: FakeApi) -> None:
+    with pytest.raises(ec.CommandStopped, match="cannot read"):
+        ec.run_look_frame(desk, description=f"@{desk / 'nope.txt'}", out=io.StringIO())
+    assert not [call for call in api.calls if call[0] == "POST"]

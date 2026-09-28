@@ -58,7 +58,7 @@ This creates:
 | `init-series` | Open the desk |
 | `add-episode` | One more slot |
 | `status` | Review queue |
-| `set-lines` | Draft lines. Does not approve |
+| `set-lines` | Draft lines (`--lines-json` takes the JSON, `@FILE` or a file path). Does not approve |
 | `approve` | Human yes |
 | `estimate` | Price on the table |
 | `preflight` | Hard stop before the take |

@@ -13,14 +13,19 @@ from typing import Sequence
 from creation.captions import caption_take, find_ffmpeg
 from creation.cli_config import add_production_config_args, config_from_args
 from creation.cli_post import POST_COMMANDS, add_post_parsers, dispatch_post
-from creation.episode_commands import EPISODE_COMMANDS, add_episode_parsers, dispatch_episode
+from creation.cli_text import HELP_SUFFIX, text_or_file
+from creation.episode_commands import (
+    EPISODE_COMMANDS,
+    add_episode_parsers,
+    dispatch_episode,
+)
+from creation.ops.floor import init_series_desk
+from creation.ops.folder import DEFAULT_RUN_PARENT
+from creation.ops.notes import append_run_note
 from creation.orchestrate import approve_gate, bind_desk, run_step, status_message
 from creation.production_config import load_production_config, save_production_config
 from creation.recover import cancel_video_job, prepare_video_retry
 from creation.setup_check import run_setup_check
-from creation.ops.floor import init_series_desk
-from creation.ops.folder import DEFAULT_RUN_PARENT
-from creation.ops.notes import append_run_note
 
 
 def _warn_if_no_local_ffmpeg() -> None:
@@ -40,7 +45,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     start = sub.add_parser("start", help="Create desk + bind prompt (does not call API yet).")
     start.add_argument("--series", required=True)
-    start.add_argument("--prompt", required=True)
+    start.add_argument("--prompt", required=True, help=f"The premise. {HELP_SUFFIX}")
     start.add_argument("--band", default="15s", choices=("15s", "30s", "60s"))
     start.add_argument("--episodes", type=int, default=1, help="Desk episode slots (API draft plans 4 for cadence).")
     start.add_argument("--parent", type=Path, default=DEFAULT_RUN_PARENT)
@@ -50,7 +55,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     bind = sub.add_parser("bind", help="Bind API orchestration to an existing desk.")
     bind.add_argument("--desk", type=Path, required=True)
-    bind.add_argument("--prompt", required=True)
+    bind.add_argument("--prompt", required=True, help=f"The premise. {HELP_SUFFIX}")
     bind.add_argument("--preset-id", default="modern-dark-fantasy")
     bind.add_argument("--video-lane", default="minimax-h3")
     bind.add_argument("--episode", type=int, default=1)
@@ -137,7 +142,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             desk = init_series_desk(args.parent, args.series, band=args.band, episode_count=args.episodes)
             state = bind_desk(
                 desk,
-                prompt=args.prompt,
+                prompt=text_or_file(args.prompt, flag="--prompt"),
                 preset_id=args.preset_id,
                 video_lane=args.video_lane,
             )
@@ -150,7 +155,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "bind":
             state = bind_desk(
                 args.desk,
-                prompt=args.prompt,
+                prompt=text_or_file(args.prompt, flag="--prompt"),
                 preset_id=args.preset_id,
                 video_lane=args.video_lane,
                 episode_ordinal=args.episode,
