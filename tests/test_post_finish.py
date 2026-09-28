@@ -237,3 +237,131 @@ def test_when_the_server_refuses_audio_finish_says_not_done_and_keeps_the_ffmpeg
     assert "operator_audio_unavailable" in out.getvalue()
     assert "$" not in out.getvalue(), "cost never reaches printed output"
     assert "Cost (operator only)" in (post_desk / "ep01" / "run-notes.md").read_text()
+
+
+# --- mix buses: what review measures the duck depth from --------------------------------------------
+
+
+def _decoded(path: Path) -> bytes:
+    import subprocess
+
+    return subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(path), "-vn", "-f", "s16le", "-"],
+        capture_output=True,
+        check=True,
+    ).stdout
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("duck_db", [None, 9.0])
+def test_finish_writes_the_mix_buses_and_review_reads_a_duck_depth_in_band(
+    post_desk: Path, duck_db: float | None
+) -> None:
+    import subprocess
+
+    from creation.post.media import media_duration
+    from creation.post.mix import bus_paths
+    from creation.post.review import DUCK_TARGET_DB, review_take
+
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+        json.dumps(FACTS)
+    )
+    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed, duck_db=duck_db,
+                        facts_fetcher=lambda *a: None, stream=io.StringIO())  # fmt: skip
+    assert result.complete
+
+    mix = post_desk / "ep01" / "takes" / "take-ep01-t1-mix-v1.mp4"
+    buses = bus_paths(mix)
+    assert [b.name for b in buses] == [
+        "take-ep01-t1-mix-v1-raw-bus.wav",
+        "take-ep01-t1-mix-v1-ducked-bus.wav",
+        "take-ep01-t1-mix-v1-key-bus.wav",
+    ]
+    for bus in buses:
+        layout = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "stream=channels,sample_rate,codec_name",
+             "-of", "csv=p=0", str(bus)],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()  # fmt: skip
+        assert layout == "pcm_s16le,48000,1", (bus.name, layout)
+        # The compressor drops its last part-block at the end of the key: the mix got the same shorter bed.
+        slack = (
+            0.25 if bus.name.endswith("ducked-bus.wav") and duck_db is None else 0.05
+        )
+        assert abs(media_duration(bus) - 5.0) < slack, bus.name
+    assert "buses for review" in (post_desk / "ep01" / "run-notes.md").read_text()
+
+    loud = next(
+        s for s in review_take(post_desk, take_file=result.final).sections
+        if s.name == "Loudness"
+    )  # fmt: skip
+    duck = loud.data["duck"]
+    assert duck is not None, loud.details
+    low, high = DUCK_TARGET_DB
+    assert low <= duck["under_db"] <= high, duck
+    assert abs(duck["outside_db"]) < 1.5, "the bed is not ducked where nobody speaks"
+    if duck_db is not None:
+        assert abs(duck["under_db"] - duck_db) < 1.0, duck
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("duck_db", [None, 9.0])
+def test_the_mix_is_the_same_with_the_buses_on(
+    tmp_path: Path, duck_db: float | None
+) -> None:
+    from creation.post.mix import bus_paths, mix_take
+
+    take = make_take(tmp_path / "take-ep01-t1-sfx-v1.mp4", tones=TWO_LINES)
+    bed = make_tone(tmp_path / "bed.wav", seconds=6.0, freq=220, volume=0.9)
+    off = mix_take(take, tmp_path / "off-mix-v1.mp4", bed=bed, duck_db=duck_db)
+    on = mix_take(
+        take, tmp_path / "on-mix-v1.mp4", bed=bed, duck_db=duck_db, buses=True
+    )
+
+    assert off.buses == () and not bus_paths(off.output)[0].exists()
+    assert on.buses == bus_paths(on.output) and all(b.is_file() for b in on.buses)
+    assert (on.gain_db, on.passes) == (off.gain_db, off.passes)
+    assert abs(on.mix_lufs - off.mix_lufs) <= 0.2
+    if duck_db is not None:
+        # The encoded mix is not bit-stable across ffmpeg builds (CI's Linux ffmpeg differs from
+        # macOS in the last bits), so "the same" is: the difference sits >60 dB under the mix.
+        import numpy as np
+
+        a = np.frombuffer(_decoded(on.output), dtype=np.int16).astype(np.float64)
+        b = np.frombuffer(_decoded(off.output), dtype=np.int16).astype(np.float64)
+        n = min(a.size, b.size)
+        assert abs(a.size - b.size) <= 2048, (a.size, b.size)
+        signal = np.sqrt(np.mean(b[:n] ** 2))
+        diff = np.sqrt(np.mean((a[:n] - b[:n]) ** 2))
+        assert signal > 0 and diff <= signal * 1e-3, (
+            f"the buses change the mix: difference {20 * np.log10(max(diff, 1e-9) / signal):.1f} dB"
+        )
+    # The sidechain compressor is not sample-deterministic run to run (two runs without buses differ
+    # in the last bit too), so with it the mix is held to the same gain and loudness instead.
+    with pytest.raises(FileExistsError, match="raw-bus"):
+        on.output.rename(tmp_path / "moved.mp4")
+        mix_take(take, on.output, bed=bed, duck_db=duck_db, buses=True)
+
+
+@needs_ffmpeg
+def test_the_exact_duck_key_bus_is_the_voice_the_windows_were_found_in(
+    tmp_path: Path,
+) -> None:
+    from creation.post.mix import mix_take
+    from creation.post.review import measure_duck
+
+    # A line at 1-2 s, and an effect at 3.2-4.4 s the voice source does not have: the exact duck skips it.
+    voice = make_take(tmp_path / "take-ep01-t1-raw-v1.mp4", tones=((1.0, 2.0, 440),))
+    take = make_take(
+        tmp_path / "take-ep01-t1-sfx-v1.mp4", tones=((1.0, 2.0, 440), (3.2, 4.4, 300))
+    )
+    bed = make_tone(tmp_path / "bed.wav", seconds=6.0, freq=220, volume=0.9)
+    mixed = mix_take(take, tmp_path / "take-ep01-t1-mix-v1.mp4", bed=bed, duck_db=9.0,
+                     voice_source=voice, buses=True)  # fmt: skip
+
+    duck = measure_duck(*mixed.buses)
+    assert abs(duck.under_db - 9.0) < 1.0, duck
+    assert duck.windows <= 12, (
+        "only the line's windows count as voice, not the effect's"
+    )

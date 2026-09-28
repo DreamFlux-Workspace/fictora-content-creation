@@ -3,14 +3,24 @@
 Each reads one take on the desk (``--take-file``, else the newest raw take),
 writes ``epNN/takes/take-epNN-tK-<step>-vN.mp4`` (never overwriting), appends
 a run note and prints what it did. Free: ffmpeg and numpy on this laptop.
+
+When the file edited is one a finish record names (``trim`` / ``tempo`` on the
+finished take, or ``freeze`` / ``soften`` run on it), the same edit is applied
+to the record's other files first: the take before the bed (``pre_bed``) and
+the un-marked master (``take-epNN-tK-<step>-prebed-vN.mp4``,
+``-master-vN.mp4``, ``-final-vN.mp4``), then to the named file, and a new
+finish record names the edited three with the edit chain, so ``join`` still
+lays one bed across the edited take and marks once. ``freeze`` and ``soften``
+leave the sound alone, so the record keeps the same pre-bed take.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
@@ -18,16 +28,138 @@ from creation.post.deboard import BOARD_LEAK_MAX_FRAMES, deboard
 from creation.post.desk import approved_board, latest_raw_take
 from creation.post.edit import (
     SLOW_TEMPO,
+    TrimResult,
     change_tempo,
+    cut_frames,
     freeze_frame,
     measure_cuts,
     parse_cut,
+    plan_trim,
     shift_json_file,
     soften_seams,
-    trim_take,
 )
+from creation.post.finish_record import (
+    RECORD_FILES,
+    FinishRecord,
+    carry_finish_record,
+    record_for_file,
+)
+from creation.post.media import probe_video
 
 EDIT_COMMANDS = frozenset({"deboard", "trim", "freeze", "tempo", "soften"})
+#: Edits that carry a finish record onto their output.
+CARRIED = frozenset({"trim", "tempo", "freeze", "soften"})
+#: Edits that leave the sound as it was: the record keeps the same pre-bed take.
+PICTURE_ONLY = frozenset({"freeze", "soften"})
+#: Name part of each edited record file: ``take-epNN-tK-<step>-<part>-vN.mp4``.
+COMPANION = {"pre_bed": "prebed", "master": "master", "final": "final"}
+
+Apply = Callable[[Path, Path], object]
+
+
+class RecordCarry:
+    """The finish record of the file being edited, and the edited copy of each of its files.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    record
+        The record naming the edited file, or ``None`` (nothing is carried).
+    source
+        The file the operator named.
+    step
+        ``trim``, ``tempo``, ``freeze`` or ``soften``.
+    """
+
+    def __init__(
+        self, desk: Path, record: FinishRecord | None, source: Path, step: str
+    ) -> None:
+        self.desk = desk
+        self.record = record
+        self.source = source.resolve()
+        self.step = step
+        self.files: dict[str, Path | None] = {}
+        self.problem: str | None = None
+        if record is not None:
+            self.problem = self._check()
+
+    def _inputs(self) -> dict[str, Path | None]:
+        assert self.record is not None
+        return {role: self.record.resolve(self.desk, role) for role in RECORD_FILES}
+
+    def _check(self) -> str | None:
+        for role, path in self._inputs().items():
+            if path is None and role == "pre_bed":
+                continue
+            if path is None or not path.is_file():
+                return f"the {COMPANION[role]} file its finish record names is gone ({path})"
+        return None
+
+    @property
+    def active(self) -> bool:
+        """A record was found and every file it names is on the desk."""
+
+        return self.record is not None and self.problem is None
+
+    def edit_companions(self, apply: Apply) -> None:
+        """Apply the edit to every record file except the one the operator named (written first)."""
+
+        if not self.active:
+            return
+        assert self.record is not None
+        takes = self.desk / f"ep{self.record.episode:02d}" / "takes"
+        base = f"take-ep{self.record.episode:02d}-{self.record.take_id}"
+        done: dict[Path, Path] = {}
+        for role, path in self._inputs().items():
+            if path is None:
+                self.files[role] = None
+                continue
+            resolved = path.resolve()
+            if role == "pre_bed" and self.step in PICTURE_ONLY:
+                self.files[role] = resolved
+                continue
+            if resolved == self.source:
+                continue
+            if resolved not in done:
+                out = next_versioned_path(
+                    takes, f"{base}-{self.step}-{COMPANION[role]}", ".mp4"
+                )
+                apply(resolved, out)
+                done[resolved] = out
+            self.files[role] = done[resolved]
+
+    def write(self, output: Path, edit: dict[str, Any]) -> Path | None:
+        """Write the carried record once the named file is edited into ``output``."""
+
+        if not self.active:
+            return None
+        assert self.record is not None
+        for role, path in self._inputs().items():
+            if path is not None and path.resolve() == self.source:
+                if role == "pre_bed" and self.step in PICTURE_ONLY:
+                    continue
+                self.files[role] = output
+        return carry_finish_record(self.desk, self.record, files=self.files, edit=edit)
+
+    def lines(self, record: Path | None) -> list[str]:
+        """What the operator is told about the record."""
+
+        if self.record is None:
+            return []
+        if record is None:
+            return [
+                f"- No finish record for the edited file: {self.problem}. `join` refuses it; run finish "
+                "again, then edit the new finished file."
+            ]
+        sound = (
+            "the sound before the bed is unchanged"
+            if self.step in PICTURE_ONLY
+            else "the take before the bed was edited the same way"
+        )
+        return [
+            f"- Record: `{record.name}` (what `join` reads; {sound}; the un-marked master too)"
+        ]
 
 
 def _take_args(parser: argparse.ArgumentParser, *, take_file_help: str) -> None:
@@ -172,6 +304,12 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
         takes.mkdir(parents=True, exist_ok=True)
         return next_versioned_path(takes, f"{base}-{step}", ".mp4")
 
+    carry = RecordCarry(
+        desk,
+        record_for_file(desk, source) if args.command in CARRIED else None,
+        source,
+        args.command,
+    )
     lines: list[str]
     if args.command == "deboard":
         board = (
@@ -186,12 +324,40 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
         result = deboard(source, board, target("deboard"), max_frames=args.max_frames)
         lines = [f"Deboard `{source.name}` against `{board.name}`: {result.one_line()}"]
     elif args.command == "trim":
-        trimmed = trim_take(source, parse_cut(args.cut), target("trim"))
+        first, after, fps, before = plan_trim(source, parse_cut(args.cut))
+
+        def cut_same(take: Path, out: Path) -> Path:
+            rate = probe_video(take).fps or fps
+            return cut_frames(
+                take,
+                out,
+                begin=round(first.frame / fps * rate),
+                stop=round(after.frame / fps * rate),
+                fps=rate,
+            )
+
+        carry.edit_companions(cut_same)
+        trimmed = TrimResult(
+            source=source,
+            output=cut_frames(
+                source, target("trim"), begin=first.frame, stop=after.frame, fps=fps
+            ),
+            start=first,
+            end=after,
+            fps=fps,
+            duration_before=before,
+        )
+        record = carry.write(
+            trimmed.output,
+            {"op": "trim", "cut": [first.seconds, after.seconds],
+             "frames": [first.frame, after.frame], "fps": fps},
+        )  # fmt: skip
         lines = [
             f"Trim `{source.name}` -> `{trimmed.output.name}`",
             f"- cut starts: {trimmed.start.one_line()}",
             f"- cut ends:   {trimmed.end.one_line()}",
             f"- {trimmed.shift_line()}",
+            *carry.lines(record),
         ]
         for path in args.cues_json:
             shifted, notes = shift_json_file(
@@ -201,24 +367,47 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
             lines += [f"  - {note}" for note in notes]
         lines.append("Next: watch the first frame after the cut at full size.")
     elif args.command == "freeze":
+
+        def freeze_same(take: Path, out: Path) -> object:
+            return freeze_frame(take, out, at=args.at, hold=args.hold)
+
+        carry.edit_companions(freeze_same)
         frozen = freeze_frame(source, target("freeze"), at=args.at, hold=args.hold)
-        lines = [f"`{source.name}`: {frozen.one_line()}"]
+        record = carry.write(
+            frozen.output,
+            {"op": "freeze", "at": frozen.at_seconds, "hold": frozen.hold_seconds},
+        )
+        lines = [f"`{source.name}`: {frozen.one_line()}", *carry.lines(record)]
     elif args.command == "tempo":
+
+        def tempo_same(take: Path, out: Path) -> Path:
+            return change_tempo(take, out, factor=args.factor)
+
+        carry.edit_companions(tempo_same)
         slowed = change_tempo(source, target("tempo"), factor=args.factor)
+        record = carry.write(slowed, {"op": "tempo", "factor": args.factor})
         lines = [
             f"Tempo {args.factor:g}x `{source.name}` -> `{slowed.name}`: every time on the old file is now "
-            f"time / {args.factor:g}."
+            f"time / {args.factor:g}.",
+            *carry.lines(record),
         ]
     elif args.command == "soften":
         cuts = tuple(args.cut) or measure_cuts(source)
         if not cuts:
             lines = [f"No hard cuts in `{source.name}` (tblend trace); nothing written"]
         else:
+
+            def soften_same(take: Path, out: Path) -> Path:
+                return soften_seams(take, out, cuts)
+
+            carry.edit_companions(soften_same)
             softened = soften_seams(source, target("soften"), cuts)
+            record = carry.write(softened, {"op": "soften", "cuts": list(cuts)})
             found = "given" if args.cut else "found"
             lines = [
                 f"Softened {len(cuts)} cut(s) {found} at {', '.join(f'{c:.2f}s' for c in cuts)} in `{source.name}` "
-                f"-> `{softened.name}` (hold-and-fade 0.33 s; length and sound unchanged)"
+                f"-> `{softened.name}` (hold-and-fade 0.33 s; length and sound unchanged)",
+                *carry.lines(record),
             ]
     else:
         raise ValueError(f"unknown command {args.command}")

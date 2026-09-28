@@ -7,12 +7,19 @@ voice, effects, hand cues, the look) and the un-marked captioned picture
 (``master``, what the mark went on). With them the join lays ONE bed across
 all takes instead of stitching each take's own bed, and marks the joined file
 once.
+
+A take edited after ``finish`` (``trim``, ``tempo``, ``freeze``, ``soften`` on
+a file a record names) gets a new record from :func:`carry_finish_record`: the
+same edit is applied to the pre-bed take and the un-marked master, and the
+record lists every edit since ``finish`` in ``edits``, so ``join`` reads an
+edited take exactly as it reads a finished one.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
@@ -36,6 +43,8 @@ class FinishRecord:
     bed_db: float
     duck_db: float | None
     path: Path | None = None
+    #: Edits made after ``finish`` (``trim``, ``tempo``, ...), oldest first; empty on a record ``finish`` wrote.
+    edits: tuple[dict[str, Any], ...] = ()
 
     def resolve(self, desk: Path, name: str) -> Path | None:
         """Absolute path of one stored file (``pre_bed``, ``master``, ``final``, ``bed``)."""
@@ -69,6 +78,7 @@ def write_finish_record(
     bed: Path | None,
     bed_db: float,
     duck_db: float | None,
+    edits: Sequence[Mapping[str, Any]] = (),
 ) -> Path:
     """Write ``takes/take-epNN-tK-finish-vN.json`` (a new version; never overwrites).
 
@@ -88,6 +98,8 @@ def write_finish_record(
         The finished file.
     bed, bed_db, duck_db
         The bed and how it was mixed.
+    edits
+        Edits made after ``finish`` that the three files carry, oldest first.
 
     Returns
     -------
@@ -108,6 +120,7 @@ def write_finish_record(
         "bed": _stored(desk, bed),
         "bed_db": bed_db,
         "duck_db": duck_db,
+        "edits": [dict(edit) for edit in edits],
     }
     path.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
     return path
@@ -122,8 +135,13 @@ def _load(path: Path) -> FinishRecord | None:
     raw: Any = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict) or raw.get("kind") != RECORD_KIND:
         return None
-    body = {f.name: raw.get(f.name) for f in fields(FinishRecord) if f.name != "path"}
-    return FinishRecord(**body, path=path)
+    body = {
+        f.name: raw.get(f.name)
+        for f in fields(FinishRecord)
+        if f.name not in ("path", "edits")
+    }
+    edits = tuple(e for e in raw.get("edits") or () if isinstance(e, dict))
+    return FinishRecord(**body, path=path, edits=edits)
 
 
 def finish_records(desk: Path, episode: int) -> list[FinishRecord]:
@@ -159,3 +177,58 @@ def record_for_file(desk: Path, file: Path) -> FinishRecord | None:
             ):
                 hits.append(record)
     return hits[-1] if hits else None
+
+
+#: The three files a record names, in the order an edit is applied to them.
+RECORD_FILES = ("pre_bed", "master", "final")
+
+
+def carry_finish_record(
+    desk: Path,
+    record: FinishRecord,
+    *,
+    files: Mapping[str, Path | None],
+    edit: Mapping[str, Any],
+) -> Path:
+    """Write the record of an edited take: ``record`` with its files replaced by their edited copies.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    record
+        The record of the file that was edited.
+    files
+        The edited ``pre_bed``, ``master`` and ``final`` (``pre_bed`` ``None`` only when ``record`` has none).
+    edit
+        What was done (``{"op": "trim", ...}``); ``from_record`` is added.
+
+    Returns
+    -------
+    Path
+        The new record (``take-epNN-tK-finish-vN.json``, the next version).
+
+    Raises
+    ------
+    ValueError
+        When the edited master or final is missing.
+    """
+
+    master, final = files["master"], files["final"]
+    if master is None or final is None:
+        raise ValueError("an edited take needs its master and final")
+    step = dict(edit)
+    step["from_record"] = record.path.name if record.path else None
+    return write_finish_record(
+        desk,
+        episode=record.episode,
+        take_id=record.take_id,
+        complete=record.complete,
+        pre_bed=files.get("pre_bed"),
+        master=master,
+        final=final,
+        bed=record.resolve(desk, "bed"),
+        bed_db=record.bed_db,
+        duck_db=record.duck_db,
+        edits=[*record.edits, step],
+    )

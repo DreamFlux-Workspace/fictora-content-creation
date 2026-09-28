@@ -234,6 +234,87 @@ def parse_cut(raw: str) -> tuple[float, float]:
     return start, end
 
 
+def plan_trim(take: Path, cut: tuple[float, float]) -> tuple[Snap, Snap, float, float]:
+    """Snap both ends of ``A-B`` on ``take`` and check the cut, without writing anything.
+
+    Parameters
+    ----------
+    take
+        The take the operator named.
+    cut
+        ``(A, B)`` seconds on the take.
+
+    Returns
+    -------
+    tuple[Snap, Snap, float, float]
+        The first frame removed, the first frame kept after, the frame rate and the take's length.
+
+    Raises
+    ------
+    ValueError
+        When the cut is outside the take or removes all of it.
+    """
+
+    info = probe_video(take)
+    start, end = cut
+    if start < 0 or end > info.duration_seconds + 0.05:
+        raise ValueError(
+            f"--cut {start}-{end} is outside the take (0-{info.duration_seconds:.2f} s)"
+        )
+    fps, diffs = frame_differences(take)
+    first = snap_to_shot_change(start, fps=fps, diffs=diffs)
+    after = snap_to_shot_change(end, fps=fps, diffs=diffs)
+    if after.frame <= first.frame:
+        raise ValueError(
+            f"the cut snapped to nothing ({first.one_line()}; {after.one_line()})"
+        )
+    if first.frame == 0 and after.frame >= len(diffs):
+        raise ValueError("the cut removes the whole take")
+    return first, after, fps, info.duration_seconds
+
+
+def cut_frames(take: Path, out: Path, *, begin: int, stop: int, fps: float) -> Path:
+    """Remove frames ``begin`` to ``stop - 1`` (and the sound under them) from ``take`` into ``out``.
+
+    Parameters
+    ----------
+    take
+        Video (never overwritten).
+    out
+        New file.
+    begin, stop
+        First frame removed and first frame kept after it, at ``fps``.
+    fps
+        The frame rate the frame numbers count at.
+
+    Returns
+    -------
+    Path
+        ``out``.
+
+    Raises
+    ------
+    FileExistsError
+        When ``out`` exists.
+    """
+
+    if out.exists():
+        raise FileExistsError(f"{out} exists; trim never overwrites")
+    info = probe_video(take)
+    t_begin, t_stop = begin / fps, stop / fps
+    video = ["-vf", f"select='not(between(n\\,{begin}\\,{stop - 1}))',setpts=N/FRAME_RATE/TB", "-r", f"{fps:g}",
+             "-c:v", "libx264", "-crf", "16", "-preset", "medium", "-pix_fmt", "yuv420p"]  # fmt: skip
+    audio = (
+        ["-af", f"aselect='not(gte(t\\,{t_begin:.6f})*lt(t\\,{t_stop:.6f}))',asetpts=N/SR/TB",
+         "-c:a", "aac", "-b:a", "192k"]
+        if info.has_audio
+        else ["-an"]
+    )  # fmt: skip
+    out.parent.mkdir(parents=True, exist_ok=True)
+    run_ffmpeg(["-i", str(take), *video, *audio, str(out)])
+    return out
+
+
 def trim_take(take: Path, cut: tuple[float, float], out: Path) -> TrimResult:
     """Cut ``A-B`` out of a take on real shot changes, frame-accurately, into a new file.
 
@@ -259,42 +340,15 @@ def trim_take(take: Path, cut: tuple[float, float], out: Path) -> TrimResult:
         When ``out`` exists.
     """
 
-    info = probe_video(take)
-    start, end = cut
-    if start < 0 or end > info.duration_seconds + 0.05:
-        raise ValueError(
-            f"--cut {start}-{end} is outside the take (0-{info.duration_seconds:.2f} s)"
-        )
-    fps, diffs = frame_differences(take)
-    first = snap_to_shot_change(start, fps=fps, diffs=diffs)
-    after = snap_to_shot_change(end, fps=fps, diffs=diffs)
-    if after.frame <= first.frame:
-        raise ValueError(
-            f"the cut snapped to nothing ({first.one_line()}; {after.one_line()})"
-        )
-    if first.frame == 0 and after.frame >= len(diffs):
-        raise ValueError("the cut removes the whole take")
-    if out.exists():
-        raise FileExistsError(f"{out} exists; trim never overwrites")
-    begin, stop = first.frame, after.frame
-    t_begin, t_stop = begin / fps, stop / fps
-    video = ["-vf", f"select='not(between(n\\,{begin}\\,{stop - 1}))',setpts=N/FRAME_RATE/TB", "-r", f"{fps:g}",
-             "-c:v", "libx264", "-crf", "16", "-preset", "medium", "-pix_fmt", "yuv420p"]  # fmt: skip
-    audio = (
-        ["-af", f"aselect='not(gte(t\\,{t_begin:.6f})*lt(t\\,{t_stop:.6f}))',asetpts=N/SR/TB",
-         "-c:a", "aac", "-b:a", "192k"]
-        if info.has_audio
-        else ["-an"]
-    )  # fmt: skip
-    out.parent.mkdir(parents=True, exist_ok=True)
-    run_ffmpeg(["-i", str(take), *video, *audio, str(out)])
+    first, after, fps, before = plan_trim(take, cut)
+    cut_frames(take, out, begin=first.frame, stop=after.frame, fps=fps)
     return TrimResult(
         source=take,
         output=out,
         start=first,
         end=after,
         fps=fps,
-        duration_before=info.duration_seconds,
+        duration_before=before,
     )
 
 

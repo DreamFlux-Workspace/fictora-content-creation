@@ -9,8 +9,11 @@ What ``join`` does, in order:
    ``--take-file`` names finished takes in the order given. A take needs a
    finish record (``take-epNN-tK-finish-vN.json``, written by ``finish``): it
    names the take before the bed (``pre_bed``) and the un-marked captioned
-   picture (``master``). A file edited after ``finish`` (``trim``, ``tempo``)
-   has none and is refused.
+   picture (``master``). A take edited after ``finish`` (``trim``, ``tempo``,
+   ``freeze``, ``soften`` on a file the record names) has its own record, whose
+   pre-bed take and master were edited the same way, so it joins like any
+   finished take (the newest record is the edited one). A file no record names
+   is refused.
 2. **Checks, before anything is written.** Every picture 24 fps and the same
    size; the pre-bed take the same length as its picture (one frame of slack).
 3. **One bed.** Each take's pre-bed sound (voice, effects, hand cues) is joined
@@ -274,8 +277,10 @@ def file_parts(desk: Path, files: tuple[Path, ...]) -> list[JoinPart]:
             raise ValueError(
                 f"{file.name}: no finish record names this file, so its sound before the bed is unknown and "
                 "one bed cannot go across the join. Pass a file `finish` made (the -sokii final or the "
-                "un-marked -cap file). A take edited after finish (trim, tempo) cannot be joined yet: "
-                "run finish on the edited raw take instead."
+                "un-marked -cap file), or the output of trim / tempo / freeze / soften run on one of them "
+                "(those carry the record). A file edited from a file no record names (a raw take, a file "
+                "edited by hand), or edited while a file its record names was gone, has none: run finish "
+                "on the take again, then edit the new finished file."
             )
         parts.append(_part(desk, record, asked=file))
     return parts

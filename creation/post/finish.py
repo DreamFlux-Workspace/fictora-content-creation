@@ -17,6 +17,9 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
 3. ``colour``    - match the take to the board the human approved.
 4. ``mix``       - bed under the take, ducked under the voice, gain measured
    so the mix lands near -18 LUFS; ``--duck-db N`` for an exact duck depth.
+   The bed before and after ducking and the duck key are saved beside the mix
+   (``take-epNN-tK-mix-vN-{raw,ducked,key}-bus.wav``): ``review`` measures
+   the duck depth from them.
 5. ``captions``  - house captions (English), timed on the take before the bed.
 6. ``watermark`` - the Sokii mark top left, under the covered top strip.
 
@@ -559,8 +562,16 @@ def run_finish(
             duck_db=duck_db,
             voice_source=voice_state["path"] or source,
             cues=bed_state["cues"],
+            buses=True,
         )
-        append_run_note(run_dir, f"Mix -> `{mixed.output.name}`: {mixed.one_line()}")
+        buses = (
+            f" (buses for review: {', '.join(f'`{b.name}`' for b in mixed.buses)})"
+            if mixed.buses
+            else ""
+        )
+        append_run_note(
+            run_dir, f"Mix -> `{mixed.output.name}`: {mixed.one_line()}{buses}"
+        )
         return StepReport("mix", "ran", mixed.one_line(), mixed.output)
 
     def do_captions(take: Path) -> StepReport:

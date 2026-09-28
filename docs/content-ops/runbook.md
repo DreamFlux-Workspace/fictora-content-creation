@@ -71,7 +71,7 @@ Sound and captions are built after the take comes back, never asked of the model
 
 - One music bed per series, not per episode. Generated beds run about 30 seconds. `finish` loops the bed under the picture; check the music runs to the last second, or the tail loses its music with no error.
 - One bed across a join. Takes of one episode are joined under ONE bed, so the music never restarts at a seam.
-- Everything that is not the voice is ducked under it, about 8–9 dB, not simply turned down. The mix LUFS says nothing about ducking. This kit's `finish` ducks with a sidechain compressor and does not write the bus files the depth is measured from, so `review` reports it as not measured; when a line must sit clearly over the bed, pass `finish --duck-db 9` for an exact depth.
+- Everything that is not the voice is ducked under it, about 8–9 dB, not simply turned down. The mix LUFS says nothing about ducking. `finish` ducks with a sidechain compressor and saves the mix bus files beside the mix, so `review` reports the depth (6–12 dB under the voice); when a line must sit clearly over the bed, pass `finish --duck-db 9` for an exact depth.
 - Per-take gain plus one limiter. Never loudnorm on a take.
 - `finish` lays the take's own effects from its take facts. Exteriors come back near-silent (−38 LUFS) and get the most from them. A sound the Sound lines missed is a hand cue: [sound-cues.md](sound-cues.md) (one per visible action, shape measured, clamped to its own take).
 - Voice-over lines are generated dry and placed on measured beats in post. They are never written into the take as fixture lines.
@@ -307,7 +307,7 @@ Faults accepted without a re-film (calibration): a door frame in the opening sec
 - `finish` the raw take first: its effects, hand cues and hand lines are placed at the times as filmed. Then `trim` or `tempo` the finished file, never the raw take. After a trim, check the first frame after the cut at full size (a 0.04 s miss once flashed the removed shot) and say the new length; shorter than the band is fine.
 - Keep the un-marked master. `finish` writes every step to its own file; the captioned file before the mark (`…-cap-vN.mp4`) is the master, the marked file (`…-sokii-vN.mp4`) is what goes out. Never delete the master to save space.
 - The join (`fictora-produce join --desk D --episode N`, or `--episodes 1 2 3` for a series cut): one bed across every take, 24 fps, and the level step at each seam under 5 dB (a 5 dB step is audible; over it the join says `NOT DONE` and exits 5). Place cues on each take before the join, never on the joined file. Never join the marked `-sokii` files by hand: that stitches two beds and two marks.
-- `join` reads the record `finish` leaves beside each take. A take finished before the kit had `join` has no record: run `finish` on it again first. A take cut with `trim` or `tempo` after `finish` is refused by `join` for now (a follow-up); tell the human rather than work around it.
+- `join` reads the record `finish` leaves beside each take. A take finished before the kit had `join` has no record: run `finish` on it again first. A take cut with `trim` or `tempo` after `finish` carries a new record (the same cut on the take before the bed and the master), so it joins at its new length; an edit that prints `No finish record` is refused by `join`: finish again, then edit.
 
 ## Scratch tools
 

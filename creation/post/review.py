@@ -9,8 +9,8 @@ command exits 0 whatever it finds.
    and true peak (``ebur128=peak=true``). A raw take is only checked for being
    effectively silent (below ``SILENT_BELOW_LUFS``: it needs cues); a finished
    take must sit in the mix band and under ``TRUE_PEAK_MAX_DBTP``. When the
-   mix's un-ducked, ducked and key bus WAVs sit beside the file (the retired
-   internal kit wrote them; this kit's ``finish`` does not) the duck depth
+   mix's un-ducked, ducked and key bus WAVs sit beside the file or its mix
+   (``finish`` writes them beside ``take-epNN-tK-mix-vN.mp4``) the duck depth
    under the voice is measured from them too.
 2. **Cuts** - hard cuts from the ``tblend`` difference trace
    (:func:`creation.post.edit.measure_cuts`, the same detector ``soften`` uses),
@@ -401,7 +401,7 @@ def loudness_section(take: Path, kind: str, *, has_audio: bool = True) -> Sectio
         buses = find_duck_buses(take)
         if buses is None:
             details.append(
-                "duck depth: not measured (no mix bus files beside it; this kit's finish writes none)"
+                "duck depth: not measured (no mix bus files beside it or its mix; finish again to write them)"
             )
             data["duck"] = None
         else:

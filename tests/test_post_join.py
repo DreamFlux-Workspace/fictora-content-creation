@@ -415,3 +415,127 @@ def test_finish_writes_the_record_join_reads(post_desk: Path) -> None:
         result.marked is not None
         and result.marked.name == "episode-ep01-join-sokii-v1.mp4"
     )
+
+
+# --- takes edited after finish carry their record -----------------------------------------------
+
+
+def _joined_seconds(result) -> float:
+    return join_module.count_frames(result.master) / 24
+
+
+@needs_ffmpeg
+def test_a_take_trimmed_after_finish_joins_and_the_join_is_shorter_by_the_cut(
+    join_desk: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    finished_take(join_desk, 1, "t1", grey=70, tone=0.2)
+    two = finished_take(join_desk, 1, "t2", grey=90, tone=0.2, box=(0.0, 2.5))
+    noise_bed(join_desk)
+
+    code = main(["trim", "--desk", str(join_desk), "--take", "t2", "--take-file", str(two["final"]),
+                 "--cut", "0.5-1.0"])  # fmt: skip
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Record: `take-ep01-t2-finish-v2.json`" in out
+    takes = join_desk / "ep01" / "takes"
+    record = json.loads((takes / "take-ep01-t2-finish-v2.json").read_text())
+    assert record["final"] == "ep01/takes/take-ep01-t2-trim-v1.mp4"
+    assert record["master"] == "ep01/takes/take-ep01-t2-trim-master-v1.mp4"
+    assert record["pre_bed"] == "ep01/takes/take-ep01-t2-trim-prebed-v1.mp4"
+    assert record["complete"] is True
+    assert record["edits"] == [
+        {"op": "trim", "cut": [0.5, 1.0], "frames": [12, 24], "fps": 24.0,
+         "from_record": "take-ep01-t2-finish-v1.json"}
+    ]  # fmt: skip
+    for name in ("final", "master", "pre_bed"):
+        assert join_module.count_frames(join_desk / record[name]) == 48, name
+
+    result = run_join(join_desk, episodes=(1,), stream=io.StringIO())
+    assert result.complete
+    assert [p.picture.name for p in result.parts] == [
+        "take-ep01-t1-cap-v1.mp4",
+        "take-ep01-t2-trim-master-v1.mp4",
+    ]
+    assert abs(_joined_seconds(result) - 4.5) < 1.5 / 24, (
+        "2.5 s + (2.5 s - the 0.5 s cut)"
+    )
+
+    by_file = run_join(join_desk, take_files=(two["final"].with_name("take-ep01-t2-trim-v1.mp4"),
+                                              takes / "take-ep01-t1-sokii-v1.mp4"),
+                       stream=io.StringIO())  # fmt: skip
+    assert [p.pre_bed.name for p in by_file.parts] == [
+        "take-ep01-t2-trim-prebed-v1.mp4",
+        "take-ep01-t1-colour-v1.mp4",
+    ]
+
+
+@needs_ffmpeg
+def test_a_take_re_timed_after_finish_joins_at_its_new_length(
+    join_desk: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    finished_take(join_desk, 1, "t1", grey=70, tone=0.2)
+    two = finished_take(join_desk, 1, "t2", grey=90, tone=0.2)
+    noise_bed(join_desk)
+
+    assert main(["tempo", "--desk", str(join_desk), "--take", "t2", "--take-file", str(two["final"]),
+                 "--factor", "0.8"]) == 0  # fmt: skip
+    assert "Record: `take-ep01-t2-finish-v2.json`" in capsys.readouterr().out
+    record = json.loads(
+        (join_desk / "ep01" / "takes" / "take-ep01-t2-finish-v2.json").read_text()
+    )
+    assert record["pre_bed"] == "ep01/takes/take-ep01-t2-tempo-prebed-v1.mp4"
+    assert record["edits"][-1]["op"] == "tempo" and record["edits"][-1]["factor"] == 0.8
+
+    result = run_join(join_desk, episodes=(1,), stream=io.StringIO())
+    assert result.complete
+    assert abs(_joined_seconds(result) - (2.5 + 2.5 / 0.8)) < 1.5 / 24
+
+
+@needs_ffmpeg
+def test_an_edit_whose_record_lost_a_file_says_so_and_join_refuses_it(
+    join_desk: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    finished_take(join_desk, 1, "t1", grey=70, tone=0.2)
+    two = finished_take(join_desk, 1, "t2", grey=90, tone=0.2)
+    noise_bed(join_desk)
+    two["pre_bed"].unlink()
+
+    assert main(["trim", "--desk", str(join_desk), "--take", "t2", "--take-file", str(two["final"]),
+                 "--cut", "0.5-1.0"]) == 0  # fmt: skip
+    out = capsys.readouterr().out
+    assert (
+        "No finish record for the edited file: the prebed file its finish record names is gone"
+        in out
+    )
+    takes = join_desk / "ep01" / "takes"
+    assert not (takes / "take-ep01-t2-finish-v2.json").exists()
+    assert not list(takes.glob("take-ep01-t2-trim-*-v1.mp4")), (
+        "no half-carried companions"
+    )
+
+    with pytest.raises(
+        ValueError, match="edited while a file its record names was gone"
+    ):
+        run_join(join_desk, take_files=(takes / "take-ep01-t2-trim-v1.mp4",
+                                         takes / "take-ep01-t1-sokii-v1.mp4"),
+                 stream=io.StringIO())  # fmt: skip
+
+
+@needs_ffmpeg
+def test_a_freeze_on_the_finished_take_keeps_the_sound_before_the_bed(
+    join_desk: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    finished_take(join_desk, 1, "t1", grey=70, tone=0.2)
+    two = finished_take(join_desk, 1, "t2", grey=90, tone=0.2)
+    noise_bed(join_desk)
+
+    assert main(["freeze", "--desk", str(join_desk), "--take", "t2", "--take-file", str(two["master"]),
+                 "--at", "1.0", "--hold", "0.5"]) == 0  # fmt: skip
+    assert "the sound before the bed is unchanged" in capsys.readouterr().out
+    record = json.loads(
+        (join_desk / "ep01" / "takes" / "take-ep01-t2-finish-v2.json").read_text()
+    )
+    assert record["pre_bed"] == "ep01/takes/take-ep01-t2-colour-v1.mp4"
+    assert record["master"] == "ep01/takes/take-ep01-t2-freeze-v1.mp4"
+    assert record["final"] == "ep01/takes/take-ep01-t2-freeze-final-v1.mp4"
+    assert run_join(join_desk, episodes=(1,), stream=io.StringIO()).complete
