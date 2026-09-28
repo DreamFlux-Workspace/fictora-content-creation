@@ -137,3 +137,65 @@ def post_desk(tmp_path: Path) -> Path:
     (api / "03_spine.json").write_text(json.dumps(SPINE), encoding="utf-8")
     (made / "ep01" / "takes").mkdir(exist_ok=True)
     return made
+
+
+# --- synthetic pictures for the local edit tools (deboard, trim, freeze, tempo, soften) -----------
+
+EDIT_SIZE = (96, 168)
+
+
+def board_array(width: int = EDIT_SIZE[0], height: int = EDIT_SIZE[1]) -> Any:
+    """A 4x2 mosaic of flat colours: stands in for a storyboard grid."""
+
+    import numpy as np
+
+    grid = np.zeros((height, width, 3), dtype=np.uint8)
+    colours = [(230, 40, 40), (40, 230, 40), (40, 40, 230), (230, 230, 40),
+               (40, 230, 230), (230, 40, 230), (250, 250, 250), (10, 10, 10)]  # fmt: skip
+    for index, colour in enumerate(colours):
+        row, col = divmod(index, 2)
+        grid[row * height // 4 : (row + 1) * height // 4, col * width // 2 : (col + 1) * width // 2] = colour
+    return grid
+
+
+def shot_frames(count: int, tint: tuple[int, int, int], *, start: int = 0,
+                width: int = EDIT_SIZE[0], height: int = EDIT_SIZE[1]) -> list[Any]:  # fmt: skip
+    """``count`` frames of a slowly drifting tinted gradient (gentle motion, no cut inside)."""
+
+    import numpy as np
+
+    x = np.linspace(0, 1, width)[None, :, None]
+    y = np.linspace(0, 1, height)[:, None, None]
+    frames = []
+    for index in range(count):
+        value = 0.5 + 0.25 * np.sin(2 * np.pi * (x + (start + index) * 0.02)) + 0.25 * y
+        frames.append(np.clip(value * np.array(tint)[None, None, :], 0, 255).astype(np.uint8))
+    return frames
+
+
+def write_frames(path: Path, frames: list[Any], *, fps: int = 24,
+                 tones: tuple[tuple[float, float, int], ...] | None = None, tone: int = 440) -> Path:  # fmt: skip
+    """Encode RGB frames with sound: one steady sine (``tone``), or sine tones in windows (``tones``)."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    height, width = frames[0].shape[:2]
+    seconds = len(frames) / fps
+    inputs = ["-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}", "-r", str(fps), "-i", "-"]
+    if tones:
+        graph = []
+        for index, (start, end, freq) in enumerate(tones, start=1):
+            inputs += ["-f", "lavfi", "-i", f"sine=f={freq}:d={seconds}:sample_rate=48000"]
+            graph.append(f"[{index}:a]volume='if(between(t,{start},{end}),0.5,0)':eval=frame[t{index}]")
+        labels = "".join(f"[t{i}]" for i in range(1, len(tones) + 1))
+        graph.append(f"{labels}amix=inputs={len(tones)}:normalize=0[a]")
+        audio = ["-filter_complex", ";".join(graph), "-map", "0:v", "-map", "[a]"]
+    else:
+        inputs += ["-f", "lavfi", "-i", f"sine=f={tone}:d={seconds}:sample_rate=48000"]
+        audio = ["-map", "0:v", "-map", "1:a"]
+    proc = subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", *inputs, *audio, "-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv420p",
+         "-c:a", "aac", "-t", f"{seconds}", str(path)],
+        input=b"".join(frame.tobytes() for frame in frames), check=False, capture_output=True,
+    )  # fmt: skip
+    assert proc.returncode == 0, proc.stderr.decode()[-400:]
+    return path

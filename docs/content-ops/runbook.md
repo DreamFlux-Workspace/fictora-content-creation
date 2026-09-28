@@ -91,7 +91,7 @@ Ask for the merged cut whenever an episode has a second take. Joining costs noth
 
 Lane check: takes on the `minimax-h3` lane film on **H3 Max Turbo image-to-video**, `minimax/h3-max-turbo/image-to-video`, at 768p. That is the server's default; H3 Max reference-to-video (`minimax/h3-max/reference-to-video`) is an engineering-side switch on the deploy, not something the desk picks. The estimate's `cost_estimate.video_endpoint_id` and each take's facts say which one filmed; price and quote that one.
 
-On Turbo the take is image-to-video from the take's whole storyboard board: the board is the first frame and the only picture the model sees. Cast plates and voice references are not sent, so the board carries the faces and the look, and the raw take speaks in the model's own voice. A raw take can open on a frame or two of the board grid; the server trims them when it joins the episode.
+On Turbo the take is image-to-video from the take's whole storyboard board: the board is the first frame and the only picture the model sees. Cast plates and voice references are not sent, so the board carries the faces and the look, and the raw take speaks in the model's own voice. A raw take can open on a frame or two of the board grid; `fictora-produce finish` replaces them first (`deboard`, measured against the approved board, length and sound unchanged).
 
 | Unit | Cost | Notes |
 | --- | --- | --- |

@@ -106,7 +106,7 @@ Open the newest `boards/` file and check (full list: [checklists.md](../../../do
 
 Takes film on **H3 Max Turbo image-to-video** (768p) by default: **$0.30 per 15 s take through 30 Sep 2026** ($0.02/s, fal promo), **$0.60 from 1 Oct 2026** ($0.04/s); no charge for images; a take under 5 s films and bills 5 s. H3 Max reference-to-video ($1.20 a 15 s take) is an engineering-side switch: quote it only when the estimate or the take facts name `minimax/h3-max/reference-to-video`. The desk prices whatever lane the server names. A plate or board is $0.30.
 
-On Turbo the take is image-to-video from its storyboard board: the whole board is the video's first frame and is the only picture the model gets. Cast plates and voice references are not sent, so the board carries the look and the faces, and the voice in the raw take is the model's own. A raw take can open on a frame or two of the board grid; the server's episode join trims them. Budgets: first episode **$5.50**, continuing 15 s **$2.50**, continuing 30 s **$5.00**. Say "$X of $Y" when an episode crosses its budget; past 2× the human decides. Detail: reference.md.
+On Turbo the take is image-to-video from its storyboard board: the whole board is the video's first frame and is the only picture the model gets. Cast plates and voice references are not sent, so the board carries the look and the faces, and the voice in the raw take is the model's own. A raw take can open on a frame or two of the board grid; `finish` removes them first (deboard; `--no-deboard` to skip). Budgets: first episode **$5.50**, continuing 15 s **$2.50**, continuing 30 s **$5.00**. Say "$X of $Y" when an episode crosses its budget; past 2× the human decides. Detail: reference.md.
 
 ## Prompt policy
 
@@ -125,6 +125,25 @@ It lays the take's sound effects (from `GET /v1/jobs/{take_job}/take-facts`, nev
 - The last line reads `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`. `NOT DONE` and exit code **5** mean music, SFX or the mix is missing: do not hand the file over; fix what it names and run `finish` again.
 - A `409 hosted_post_off`, or a `503 restate_unavailable` from post-production, is not an outage: never retry it, run `finish`.
 - Captions are always the English line. On a Japanese or Korean show, `finish` / `caption` show each whole English line over its speech (no word flicker); the run note says `whole English lines`.
+
+## Local edits: deboard, soften, freeze, trim, tempo
+
+Free, on this laptop (ffmpeg + numpy). Each writes a new `take-epNN-tK-<step>-vN.mp4` and a run note; nothing is overwritten. Details and thresholds: reference.md.
+
+- **Board frames.** A Turbo take opens on a frame or two of the still board. `finish` now removes them first (`deboard`): measured against the approved board, capped at 12, replaced with the first real frame so the length and sound do not move (take-facts cues and captions keep their times). None found: nothing written. `--no-deboard` only when the human wants the board opening kept. `CAP HIT` in the report: look at the head at full rate.
+- **Order.** raw → `deboard` → `soften` / `freeze` → `finish --take-file <that file>` → `trim` / `tempo` on the finished file → watch.
+- `soften` always after `deboard` (the board-to-motion jump reads as a cut). No `--cut` detects hard cuts itself; say which cuts it found.
+- `freeze --at S --hold S` keeps the length: the held frame covers the picture, the sound plays on.
+- `trim` only on the finished file (`--take-file` is required). Check the first frame after the cut at full size. A result under 15 s is a DEVIATION; say so.
+- `tempo --factor 0.9` only for a show cut slow, and only on the finished file: `finish` lays effects at the filmed times.
+
+```bash
+uv run fictora-produce deboard --desk D [--episode N] [--take tK] [--take-file F] [--board B]
+uv run fictora-produce soften  --desk D [--take-file F] [--cut S ...]
+uv run fictora-produce freeze  --desk D [--take-file F] --at 6.2 --hold 0.6
+uv run fictora-produce trim    --desk D --take-file FINAL --cut 10.17-12.15 [--cues-json J]
+uv run fictora-produce tempo   --desk D --take-file FINAL [--factor 0.9]
+```
 
 ## Change a character's voice (never regenerate)
 
