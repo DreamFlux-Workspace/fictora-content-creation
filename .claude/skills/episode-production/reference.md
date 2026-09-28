@@ -267,7 +267,8 @@ Sequence `fictora-produce` runs: `POST /v1/prompt-video-authoring-drafts` (`epis
 
 ```bash
 uv run fictora-produce edit --desk D --episode N (--beat ID|N | --frame ID|N | --line-id ID) [--intent TEXT] [--set KEY=VALUE ...] [--text T] [--spoken S] [--subtitle S] [--select-regen] [--preview]
-uv run fictora-produce look --desk D --url https://…          # pin one style frame (after the draft, before plates); spends nothing
+uv run fictora-produce look-frame --desk D --description FILE [--size 1088x1936]   # draw our own style frame on the server from the written look; $0.30; never pins
+uv run fictora-produce look --desk D --url https://…          # pin one style frame (the look-frame's image_url, after the human's yes); spends nothing
 uv run fictora-produce look-note --desk D (--add TEXT | --remove ID|N)   # at most five; the next drawing uses them
 uv run fictora-produce spine --desk D --refresh
 uv run fictora-produce redraw-board --desk D --episode N --take tK --cause "why"   # $0.30; back to the board gate
@@ -276,6 +277,7 @@ uv run fictora-produce check-lines --desk D --episode N [--take tK]             
 
 - `edit` before the script gate is a plain patch. After it, the server asks for a cascade: `edit` prints every item, runs the free ones, and leaves the paid ones (`tier media`) off unless `--select-regen`; it names each board that no longer matches (redraw it with `redraw-board`). `--preview` stops after the list.
 - `edit --line-id … --spoken "…" [--subtitle "…"]` pins the exact performed line on a Japanese or Korean show before the script gate; an English show refuses it. A new English `--text` on such a show is re-localized when the script is approved.
+- `look-frame` sends only the words in FILE (1–4000 characters) to `POST /v1/spines/{id}/look-frame`; the server draws on the product's still model (text only: it refuses a link in the description) and answers our stored PNG. The desk saves `shared/look/look-frame-vN.png`, books the still, and prints the `image_url` for `look --url`. It never pins. The same description and size are cached on the server (re-running is free). An older server answers 404 on the route: the command stops with that message and books nothing; tell engineering.
 - `redraw-board` warns when the frame briefs have not changed since the last drawing (a re-roll). A beat edit made after the board was drawn is carried into the redraw by the server. The cause is a label on the desk only.
 
 ## Desk artefacts

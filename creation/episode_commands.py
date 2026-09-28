@@ -3,7 +3,7 @@
 Each command calls the deployed Drama API, saves what it read or made on the
 desk with a versioned name, and never approves (the human's yes goes through
 ``fictora-produce approve``). None of them spends except ``redraw-board``
-(one still per board) and an ``edit --select-regen`` cascade.
+(one still per board), ``look-frame`` (one still) and an ``edit --select-regen`` cascade.
 
 - ``arc --list`` / ``arc --pick N``: episode 2's series arc (``director/brief``, ``series-arc``).
 - ``brief --episode N``: the next-episode directions (for ``author --direction K``).
@@ -11,6 +11,7 @@ desk with a versioned name, and never approves (the human's yes goes through
 - ``memory --note`` / ``--thread``: standing series notes.
 - ``edit``: a beat's shot, a frame's brief, or a line (pin the performed line) —
   ``PATCH`` before the script gate, the cascade after it (paid items off by default).
+- ``look-frame``: draw our own style frame on the server from a written description (one still).
 - ``look`` / ``look-note``: pin the style frame by URL, add or remove look notes.
 - ``spine --refresh``: save the story again.
 - ``redraw-board``: redraw one board on ``/boards/{set}/regenerate``.
@@ -27,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import sys
 from dataclasses import replace
@@ -35,6 +37,9 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 from urllib.parse import quote
 
+import httpx
+
+from creation import orchestrate as _orchestrate
 from creation.harness import stages_gated as stages
 from creation.harness.http_util import api_error_text, describe_job_error
 from creation.harness.raw_video import wait_for_raw_scene_clips
@@ -69,6 +74,24 @@ ARC_LINE_MAX = 400
 MAX_LOOK_NOTES = 5
 LOOK_NOTE_MAX = 160
 PAID_TIER = "media"
+LOOK_FRAME_SIZES = ("1088x1936", "1936x1088", "1024x1024")
+LOOK_FRAME_DEFAULT_SIZE = "1088x1936"
+LOOK_FRAME_MAX_CHARS = 4000
+OLD_SERVER_LOOK_FRAME = (
+    "this Drama API has no look-frame route yet (404 on POST /v1/spines/{id}/look-frame): it is an older deploy. "
+    "Nothing was drawn or booked. Tell engineering the server needs the look-frame route; never draw it with "
+    "your own provider key. Meanwhile `look --url` still pins a frame engineering hands you"
+)
+LOOK_FRAME_HINTS = {
+    "look_frame_text_only": "a look frame is drawn from words only: take the link out of the description",
+    "look_frame_description_empty": "write the look down in the file first",
+    "operator_look_frame_unavailable": "the Drama API has no image provider configured; tell engineering",
+    "operator_audio_unavailable": "the Drama API has no media storage configured; tell engineering",
+    "operator_audio_in_progress": "the same frame is still being drawn: run the same command again in a minute (never pays twice)",
+    "operator_audio_failed": "the draw failed on the server: run the same command again (it retries; up to three attempts)",
+    "budget_cap_exceeded": "the budget cap is reached; tell engineering",
+    "rate_limited": "wait a minute and run the same command again",
+}
 """Cascade items at this ``estimated_tier`` redraw or re-film: provider money."""
 MEMORY_FIELDS = {"note": "notes", "thread": "threads"}
 MEMORY_KEYS = ("canon", "threads", "knowledge", "notes", "craft", "decisions", "last_image", "on_screen", "through_episode_ordinal")
@@ -962,6 +985,106 @@ def run_look(desk: Path, *, url: str, out: Any = None) -> Path:
     return path
 
 
+def look_frame_route_missing(message: str) -> bool:
+    """Return whether a refused POST was a 404 for the route itself (an older Drama API).
+
+    An unknown route answers FastAPI's bare ``{"detail": "Not Found"}``; a missing
+    story answers the API's error envelope (``spine_not_found``), which is not this.
+
+    Parameters
+    ----------
+    message
+        The session's refusal text (``HTTP 404 POST <url>: <body>``).
+
+    Returns
+    -------
+    bool
+        True when the server has no look-frame route.
+    """
+
+    return message.startswith("HTTP 404") and '"detail": "Not Found"' in message
+
+
+def run_look_frame(desk: Path, *, description_file: Path, size: str = LOOK_FRAME_DEFAULT_SIZE, out: Any = None) -> Path:
+    """Draw our own style frame on the server from a written description. Books one still; never pins.
+
+    ``POST /v1/spines/{id}/look-frame`` draws it on the product's still model
+    from the words alone (no image goes in, and the server refuses a link in
+    the description) and answers our stored PNG URL. This saves it as
+    ``shared/look/look-frame-vN.png`` and prints the URL; after the human's yes,
+    ``look --url <that URL>`` pins it. The same description and size are cached
+    on the server, so re-running never pays twice.
+
+    Parameters
+    ----------
+    desk
+        Series desk with a story.
+    description_file
+        The written description of the look (text, 1-4000 characters).
+    size
+        ``1088x1936`` (default), ``1936x1088`` or ``1024x1024``.
+    out
+        Text stream.
+
+    Returns
+    -------
+    Path
+        The saved frame.
+    """
+
+    out = out or sys.stdout
+    if size not in LOOK_FRAME_SIZES:
+        raise CommandStopped(f"--size is one of {', '.join(LOOK_FRAME_SIZES)}")
+    try:
+        description = description_file.expanduser().read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise CommandStopped(f"cannot read the description file {description_file}: {exc}") from exc
+    if not description:
+        raise CommandStopped(f"{description_file} is empty; write the look down first")
+    if len(description) > LOOK_FRAME_MAX_CHARS:
+        raise CommandStopped(f"the description is {len(description)} characters; keep it to {LOOK_FRAME_MAX_CHARS}")
+    desk, state, run = _desk_session(desk)
+    digest = hashlib.sha256(f"{size}\n{description}".encode()).hexdigest()[:24]
+    try:
+        try:
+            answer = run.post(
+                f"/v1/spines/{state.spine_id}/look-frame",
+                {"description": description, "size": size},
+                idempotency_key=f"{run.prefix}-look-frame-{digest}",
+            )
+        except SystemExit as exc:
+            message = exc.code if isinstance(exc.code, str) else api_error_text(exc.code)
+            if look_frame_route_missing(message):
+                raise CommandStopped(OLD_SERVER_LOOK_FRAME) from exc
+            hint = next((text for code, text in LOOK_FRAME_HINTS.items() if code in message), "")
+            raise CommandStopped(message + (f" -> {hint}" if hint else "")) from exc
+        image_url = str(answer.get("image_url") or "")
+        if not image_url.startswith("https://"):
+            raise CommandStopped(f"the look-frame answer has no image_url: {api_error_text(answer)}")
+        _save_desk_json(desk, "look-frame", answer)
+        fetch = httpx.Client(timeout=120.0)
+        try:
+            path = _orchestrate.download_to_versioned(fetch, image_url, desk / "shared" / "look", "look-frame")
+        finally:
+            fetch.close()
+    finally:
+        run.client.close()
+    # ``cost_usd`` is what this call booked on the server: 0 for a cached frame.
+    cost = float(answer.get("cost_usd") or 0.0)
+    if cost > 0:
+        record_spend(desk, episode=1, usd=cost)
+    cached = " (already drawn for this description; nothing booked)" if answer.get("cached") else ""
+    _note(desk, 1, f"look-frame: {path.name} from {description_file.name}, ${cost:.2f}{cached}. {image_url}")
+    print(str(path), file=out)
+    print(f"image_url: {image_url}", file=out)
+    print(
+        f"Show {path.name} to the human. If it is the look: fictora-produce look --desk {desk} --url {image_url} . "
+        "To change it, change the description and draw again.",
+        file=out,
+    )
+    return path
+
+
 def run_look_note(desk: Path, *, add: str | None = None, remove: str | None = None, out: Any = None) -> list[str]:
     """Add or remove one look note (at most five, 160 characters each); the next drawing uses them. Spends nothing.
 
@@ -1492,7 +1615,20 @@ def _price_film(
 # --- CLI -------------------------------------------------------------------------------------------
 
 EPISODE_COMMANDS = frozenset(
-    {"arc", "brief", "author", "memory", "edit", "look", "look-note", "spine", "redraw-board", "check-lines", "film"}
+    {
+        "arc",
+        "brief",
+        "author",
+        "memory",
+        "edit",
+        "look-frame",
+        "look",
+        "look-note",
+        "spine",
+        "redraw-board",
+        "check-lines",
+        "film",
+    }
 )
 
 
@@ -1556,6 +1692,17 @@ def add_episode_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     edit.add_argument("--subtitle", default=None, help="Line: the subtitle for the pinned line (with --spoken).")
     edit.add_argument("--select-regen", action="store_true", help="After the gate: also run paid regeneration items.")
     edit.add_argument("--preview", action="store_true", help="After the gate: print the cascade and stop.")
+
+    frame = sub.add_parser(
+        "look-frame",
+        help=(
+            "Draw our own style frame on the server from a written description (text only, 1088x1936, $0.30). "
+            "Saves shared/look/look-frame-vN.png; never pins (look --url does, after the human's yes)."
+        ),
+    )
+    frame.add_argument("--desk", type=Path, required=True)
+    frame.add_argument("--description", type=Path, required=True, metavar="FILE", help="The look, written down (text).")
+    frame.add_argument("--size", default=LOOK_FRAME_DEFAULT_SIZE, choices=LOOK_FRAME_SIZES)
 
     look = sub.add_parser("look", help="Pin the story's look: one style frame by public https URL. Spends nothing.")
     look.add_argument("--desk", type=Path, required=True)
@@ -1643,6 +1790,9 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 preview_only=args.preview,
             )
             return 0
+        if args.command == "look-frame":
+            run_look_frame(args.desk, description_file=args.description, size=args.size)
+            return 0
         if args.command == "look":
             run_look(args.desk, url=args.url)
             return 0
@@ -1678,6 +1828,7 @@ __all__ = [
     "build_patch",
     "dispatch_episode",
     "lines_not_asked",
+    "look_frame_route_missing",
     "memory_body",
     "parse_assignment",
     "run_arc_list",
@@ -1688,6 +1839,7 @@ __all__ = [
     "run_edit",
     "run_film",
     "run_look",
+    "run_look_frame",
     "run_look_note",
     "run_memory",
     "run_redraw_board",
