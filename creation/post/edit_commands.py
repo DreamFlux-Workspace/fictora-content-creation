@@ -53,7 +53,12 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "board, cap 12; length and sound unchanged). finish runs this first; no board frames = nothing written.",
     )
     _take_args(deb, take_file_help=raw_default)
-    deb.add_argument("--board", type=Path, default=None, help="Default: the take's approved board on the desk.")
+    deb.add_argument(
+        "--board",
+        type=Path,
+        default=None,
+        help="Default: the take's approved board on the desk.",
+    )
     deb.add_argument("--max-frames", type=int, default=BOARD_LEAK_MAX_FRAMES)
 
     trim = sub.add_parser(
@@ -61,8 +66,13 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Cut A-B seconds out of a FINISHED take on the real shot change (each edge snapped within 0.1 s), "
         "frame-accurate; prints how far later cues, lines and captions move.",
     )
-    _take_args(trim, take_file_help="The finished take to cut (required: finish the raw take first).")
-    trim.add_argument("--cut", required=True, help="A-B seconds on the take, e.g. 10.17-12.15.")
+    _take_args(
+        trim,
+        take_file_help="The finished take to cut (required: finish the raw take first).",
+    )
+    trim.add_argument(
+        "--cut", required=True, help="A-B seconds on the take, e.g. 10.17-12.15."
+    )
     trim.add_argument(
         "--cues-json", type=Path, action="append", default=[],
         help="A cues or captions JSON list [{start, end?, ...}] to shift: writes <stem>-trim-vN.json (repeat).",
@@ -74,16 +84,31 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "Same length, sound copied, so lines, cues and captions stay put.",
     )
     _take_args(frz, take_file_help=raw_default)
-    frz.add_argument("--at", type=float, required=True, help="Seconds into the take: the frame to hold.")
-    frz.add_argument("--hold", type=float, required=True, help="Seconds to hold it (0.6 is a comic beat).")
+    frz.add_argument(
+        "--at",
+        type=float,
+        required=True,
+        help="Seconds into the take: the frame to hold.",
+    )
+    frz.add_argument(
+        "--hold",
+        type=float,
+        required=True,
+        help="Seconds to hold it (0.6 is a comic beat).",
+    )
 
     tempo = sub.add_parser(
         "tempo",
         help="Change the speed of picture and sound together, pitch kept (0.9 = 10%% slower). Run it on the "
         "FINISHED take: finish lays the take's effects at the filmed times.",
     )
-    _take_args(tempo, take_file_help="The take to change (the finished take). Default: the newest raw take.")
-    tempo.add_argument("--factor", type=float, default=SLOW_TEMPO, help="0.5-2.0; default 0.9.")
+    _take_args(
+        tempo,
+        take_file_help="The take to change (the finished take). Default: the newest raw take.",
+    )
+    tempo.add_argument(
+        "--factor", type=float, default=SLOW_TEMPO, help="0.5-2.0; default 0.9."
+    )
 
     soft = sub.add_parser(
         "soften",
@@ -91,7 +116,13 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "Deboard first; then finish --take-file the softened file.",
     )
     _take_args(soft, take_file_help=raw_default)
-    soft.add_argument("--cut", type=float, action="append", default=[], help="Cut time in seconds (repeat).")
+    soft.add_argument(
+        "--cut",
+        type=float,
+        action="append",
+        default=[],
+        help="Cut time in seconds (repeat).",
+    )
 
 
 def _source(args: argparse.Namespace, desk: Path) -> Path:
@@ -132,7 +163,9 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
     takes = run_dir / "takes"
     base = f"take-ep{args.episode:02d}-{args.take_id}"
     if args.command == "trim" and args.take_file is None:
-        raise ValueError("trim needs --take-file: finish the raw take first, then trim the finished file")
+        raise ValueError(
+            "trim needs --take-file: finish the raw take first, then trim the finished file"
+        )
     source = _source(args, desk)
 
     def target(step: str) -> Path:
@@ -141,9 +174,15 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
 
     lines: list[str]
     if args.command == "deboard":
-        board = args.board.expanduser().resolve() if args.board else approved_board(desk, args.episode, args.take_id)
+        board = (
+            args.board.expanduser().resolve()
+            if args.board
+            else approved_board(desk, args.episode, args.take_id)
+        )
         if board is None:
-            raise FileNotFoundError(f"no board for {args.take_id} on the desk; pass --board")
+            raise FileNotFoundError(
+                f"no board for {args.take_id} on the desk; pass --board"
+            )
         result = deboard(source, board, target("deboard"), max_frames=args.max_frames)
         lines = [f"Deboard `{source.name}` against `{board.name}`: {result.one_line()}"]
     elif args.command == "trim":
@@ -155,7 +194,9 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
             f"- {trimmed.shift_line()}",
         ]
         for path in args.cues_json:
-            shifted, notes = shift_json_file(path, trimmed.start.seconds, trimmed.end.seconds)
+            shifted, notes = shift_json_file(
+                path, trimmed.start.seconds, trimmed.end.seconds
+            )
             lines.append(f"- shifted {path.name} -> `{shifted.name}`")
             lines += [f"  - {note}" for note in notes]
         lines.append("Next: watch the first frame after the cut at full size.")

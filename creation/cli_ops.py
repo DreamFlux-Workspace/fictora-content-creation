@@ -56,13 +56,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
 
-def _add_folder_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    init_p = sub.add_parser("init", help="Create one dated run folder (single episode).")
+def _add_folder_parsers(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    init_p = sub.add_parser(
+        "init", help="Create one dated run folder (single episode)."
+    )
     init_p.add_argument("--series", required=True, help="Series title.")
     init_p.add_argument("--parent", type=Path, default=DEFAULT_RUN_PARENT)
     init_p.add_argument("--date", default=None, help="Folder date YYYY-MM-DD.")
 
-    luma_p = sub.add_parser("measure-board", help="Measure storyboard mean luma (local helper).")
+    luma_p = sub.add_parser(
+        "measure-board", help="Measure storyboard mean luma (local helper)."
+    )
     luma_p.add_argument("image", type=Path)
     luma_p.add_argument("--json", action="store_true")
 
@@ -70,15 +76,21 @@ def _add_folder_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     note_p.add_argument("--run-dir", type=Path, required=True)
     note_p.add_argument("--body", required=True)
 
-    ver_p = sub.add_parser("next-path", help="Print the next unused versioned filename.")
+    ver_p = sub.add_parser(
+        "next-path", help="Print the next unused versioned filename."
+    )
     ver_p.add_argument("--dir", type=Path, required=True)
     ver_p.add_argument("--stem", required=True)
     ver_p.add_argument("--suffix", required=True)
 
 
-def _add_floor_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+def _add_floor_parsers(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
     desk_parent = default_desk_parent()
-    series_p = sub.add_parser("init-series", help="Create a series desk with parallel episode slots.")
+    series_p = sub.add_parser(
+        "init-series", help="Create a series desk with parallel episode slots."
+    )
     series_p.add_argument("--series", required=True)
     series_p.add_argument("--band", required=True, choices=("15s", "30s", "60s"))
     series_p.add_argument("--episodes", type=int, required=True)
@@ -90,7 +102,9 @@ def _add_floor_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser])
         help="This desk reuses an existing cast (continuing envelope).",
     )
 
-    sub.add_parser("add-episode", help="Open one more episode slot.").add_argument("--desk", type=Path, required=True)
+    sub.add_parser("add-episode", help="Open one more episode slot.").add_argument(
+        "--desk", type=Path, required=True
+    )
 
     status_p = sub.add_parser("status", help="Print the review queue.")
     status_p.add_argument("--desk", type=Path, required=True)
@@ -114,7 +128,9 @@ def _add_floor_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser])
 
     ap = sub.add_parser("approve", help="Record a human yes on a gate.")
     ap.add_argument("--desk", type=Path, required=True)
-    ap.add_argument("--gate", required=True, choices=("look", "plates", "script", "board", "post"))
+    ap.add_argument(
+        "--gate", required=True, choices=("look", "plates", "script", "board", "post")
+    )
     ap.add_argument("--episode", type=int, default=None)
     ap.add_argument("--take", default=None)
     ap.add_argument("--path", type=Path, default=None)
@@ -175,7 +191,9 @@ def _add_floor_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser])
         help="Make a desk from the retired internal kit openable here. Only creates files; never overwrites.",
     )
     adopt.add_argument("--desk", type=Path, required=True)
-    adopt.add_argument("--dry-run", action="store_true", help="Print the full plan and write nothing.")
+    adopt.add_argument(
+        "--dry-run", action="store_true", help="Print the full plan and write nothing."
+    )
     adopt.add_argument(
         "--force",
         action="store_true",
@@ -264,22 +282,39 @@ def _dispatch(args: argparse.Namespace) -> int:
         print("\n".join(plan.lines(dry_run=args.dry_run)))
         return 0
     if args.command == "estimate":
-        take = record_estimate(args.desk, episode=args.episode, take_id=args.take, usd=args.usd)
+        take = record_estimate(
+            args.desk, episode=args.episode, take_id=args.take, usd=args.usd
+        )
         print(f"{args.take} estimate ${take.estimate_usd:.2f}")
         return 0
     if args.command == "spend":
-        series = record_spend(args.desk, episode=args.episode, usd=args.usd, take_id=args.take, unit=args.unit)
-        label = args.unit or "unlabelled (pass --unit so the ledger says what it was for)"
-        print(f"booked ${args.usd:.2f} for {label}; series spend ${series.spend_usd:.2f}")
+        series = record_spend(
+            args.desk,
+            episode=args.episode,
+            usd=args.usd,
+            take_id=args.take,
+            unit=args.unit,
+        )
+        label = (
+            args.unit or "unlabelled (pass --unit so the ledger says what it was for)"
+        )
+        print(
+            f"booked ${args.usd:.2f} for {label}; series spend ${series.spend_usd:.2f}"
+        )
         return 0
     if args.command == "handoff":
-        take = set_handoff(args.desk, episode=args.episode, take_id=args.take, image=args.path)
+        take = set_handoff(
+            args.desk, episode=args.episode, take_id=args.take, image=args.path
+        )
         print(take.handoff_path)
         return 0
     if args.command == "preflight":
         if args.proceed_anyway:
             report = confirm_preflight(
-                args.desk, episode=args.episode, take_id=args.take, confirm_unit=args.proceed_anyway
+                args.desk,
+                episode=args.episode,
+                take_id=args.take,
+                confirm_unit=args.proceed_anyway,
             )
         else:
             report = preflight_take(args.desk, episode=args.episode, take_id=args.take)
@@ -293,7 +328,12 @@ def _dispatch(args: argparse.Namespace) -> int:
                         "cleared": report.cleared,
                         "line": report.one_line(),
                         "checks": [
-                            {"code": c.code, "ok": c.ok, "blocking": c.blocking, "detail": c.detail}
+                            {
+                                "code": c.code,
+                                "ok": c.ok,
+                                "blocking": c.blocking,
+                                "detail": c.detail,
+                            }
                             for c in report.checks
                         ],
                     }
@@ -354,7 +394,9 @@ def _dispatch_approve(args: argparse.Namespace) -> int:
         return 0
     if args.take is None or args.path is None:
         raise ValueError("board approve needs --take and --path")
-    record = approve_board(args.desk, episode=args.episode, take_id=args.take, image=args.path)
+    record = approve_board(
+        args.desk, episode=args.episode, take_id=args.take, image=args.path
+    )
     print(f"{args.take} board {record.status}  {record.note}")
     return 0
 

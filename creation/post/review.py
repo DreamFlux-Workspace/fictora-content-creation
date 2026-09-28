@@ -62,7 +62,12 @@ import numpy as np
 import numpy.typing as npt
 from PIL import Image
 
-from creation.post.deboard import BOARD_LEAK_MARGIN_DB, LEAK_ANALYSIS_SIZE, _psnr, measure_board_leak
+from creation.post.deboard import (
+    BOARD_LEAK_MARGIN_DB,
+    LEAK_ANALYSIS_SIZE,
+    _psnr,
+    measure_board_leak,
+)
 from creation.post.edit import FRAME_DIFF_CUT_THRESHOLD, measure_cuts
 from creation.post.media import (
     MediaToolError,
@@ -104,7 +109,16 @@ FREEZE_MIN_SECONDS = 0.6
 #: File steps that come after the mix: such a file is a finished take (``final``/``captions``: adopted desks).
 FINISHED_STEPS = ("mix", "cap", "sokii", "trim", "tempo", "final", "captions")
 #: File steps after which the head board frames should be gone.
-DEBOARDED_STEPS = ("deboard", "soften", "freeze", "colour", "sfx", "cues", "voice", *FINISHED_STEPS)
+DEBOARDED_STEPS = (
+    "deboard",
+    "soften",
+    "freeze",
+    "colour",
+    "sfx",
+    "cues",
+    "voice",
+    *FINISHED_STEPS,
+)
 #: Steps that move times: the take facts' shot times no longer hold.
 RETIMED_STEPS = ("trim", "tempo")
 
@@ -141,7 +155,10 @@ class Section:
     def lines(self) -> list[str]:
         """The printed lines of this section."""
 
-        return [f"{self.status} {self.name}: {self.summary}  [{self.threshold}]", *(f"    {d}" for d in self.details)]
+        return [
+            f"{self.status} {self.name}: {self.summary}  [{self.threshold}]",
+            *(f"    {d}" for d in self.details),
+        ]
 
     def as_json(self) -> dict[str, Any]:
         """JSON-able form."""
@@ -191,8 +208,14 @@ class TakeReview:
         rows = [head]
         for section in self.sections:
             rows += section.lines()
-        verdict = f"{self.warnings} section(s) to look at" if self.warnings else "nothing measured out of line"
-        rows.append(f"Numbers only: {verdict}. Watch the take, then say Use it or Change this.")
+        verdict = (
+            f"{self.warnings} section(s) to look at"
+            if self.warnings
+            else "nothing measured out of line"
+        )
+        rows.append(
+            f"Numbers only: {verdict}. Watch the take, then say Use it or Change this."
+        )
         return "\n".join(rows)
 
     def as_json(self) -> dict[str, Any]:
@@ -243,9 +266,15 @@ def measure_true_peak(path: Path) -> float:
         capture_output=True, text=True, check=False,
     )  # fmt: skip
     if result.returncode != 0:
-        raise MediaToolError(f"true-peak scan failed on {path.name}: {result.stderr.strip()[-300:]}")
+        raise MediaToolError(
+            f"true-peak scan failed on {path.name}: {result.stderr.strip()[-300:]}"
+        )
     summary = result.stderr.rsplit("True peak:", 1)
-    found = re.findall(r"Peak:\s+(-?[0-9.]+|-inf)\s+dBFS", summary[-1]) if len(summary) == 2 else []
+    found = (
+        re.findall(r"Peak:\s+(-?[0-9.]+|-inf)\s+dBFS", summary[-1])
+        if len(summary) == 2
+        else []
+    )
     if not found or found[-1] == "-inf":
         return -math.inf
     return float(found[-1])
@@ -277,7 +306,9 @@ def find_duck_buses(take: Path) -> tuple[Path, Path, Path] | None:
     def beside(path: Path) -> tuple[Path, Path, Path] | None:
         stem = path.with_suffix("")
         found = tuple(Path(f"{stem}-{bus}-bus.wav") for bus in ("raw", "ducked", "key"))
-        return (found[0], found[1], found[2]) if all(p.is_file() for p in found) else None
+        return (
+            (found[0], found[1], found[2]) if all(p.is_file() for p in found) else None
+        )
 
     direct = beside(take)
     if direct is not None:
@@ -285,7 +316,11 @@ def find_duck_buses(take: Path) -> tuple[Path, Path, Path] | None:
     base = re.match(r"(take-ep\d+-t\d+)", take.name)
     if base is None:
         return None
-    mixes = sorted(take.parent.glob(f"{base.group(1)}-*mix-v*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+    mixes = sorted(
+        take.parent.glob(f"{base.group(1)}-*mix-v*.mp4"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
     for mix in mixes:
         found = beside(mix)
         if found is not None:
@@ -303,7 +338,9 @@ def measure_duck(raw_bus: Path, ducked_bus: Path, key_bus: Path) -> DuckReading:
     """
 
     raw = np.array(measure_rms_windows(raw_bus, window_seconds=DUCK_WINDOW_SECONDS))
-    ducked = np.array(measure_rms_windows(ducked_bus, window_seconds=DUCK_WINDOW_SECONDS))
+    ducked = np.array(
+        measure_rms_windows(ducked_bus, window_seconds=DUCK_WINDOW_SECONDS)
+    )
     key = np.array(measure_rms_windows(key_bus, window_seconds=DUCK_WINDOW_SECONDS))
     size = min(len(raw), len(ducked), len(key))
     raw, ducked, key = raw[:size], ducked[:size], key[:size]
@@ -312,7 +349,9 @@ def measure_duck(raw_bus: Path, ducked_bus: Path, key_bus: Path) -> DuckReading:
     voiced = (key > DUCK_KEY_ACTIVE_DB) & audible
     silent_key = key < DUCK_KEY_ACTIVE_DB - 15.0
     settle = int(math.ceil(DUCK_RELEASE_SECONDS / DUCK_WINDOW_SECONDS))
-    settled = np.array([silent_key[max(0, i - settle) : i + 1].all() for i in range(size)], dtype=bool)
+    settled = np.array(
+        [silent_key[max(0, i - settle) : i + 1].all() for i in range(size)], dtype=bool
+    )
     quiet = settled & audible
     under = float(np.median(diff[voiced])) if voiced.any() else 0.0
     outside = float(np.median(diff[quiet])) if quiet.any() else 0.0
@@ -323,8 +362,18 @@ def loudness_section(take: Path, kind: str, *, has_audio: bool = True) -> Sectio
     """Integrated LUFS, true peak and (finished, with bus files) duck depth."""
 
     if not has_audio:
-        threshold = f"raw: silent below {SILENT_BELOW_LUFS:.0f} LUFS" if kind == "raw" else "finished: has a sound track"
-        return Section("Loudness", WARN, "no audio track in the file", threshold, data={"lufs": None})
+        threshold = (
+            f"raw: silent below {SILENT_BELOW_LUFS:.0f} LUFS"
+            if kind == "raw"
+            else "finished: has a sound track"
+        )
+        return Section(
+            "Loudness",
+            WARN,
+            "no audio track in the file",
+            threshold,
+            data={"lufs": None},
+        )
     lufs = measure_loudness(take)
     peak = measure_true_peak(take)
     lufs_text = f"{lufs:.1f} LUFS" if math.isfinite(lufs) else "silent"
@@ -351,19 +400,33 @@ def loudness_section(take: Path, kind: str, *, has_audio: bool = True) -> Sectio
             faults.append("true peak over the ceiling: listen for clipping")
         buses = find_duck_buses(take)
         if buses is None:
-            details.append("duck depth: not measured (no mix bus files beside it; this kit's finish writes none)")
+            details.append(
+                "duck depth: not measured (no mix bus files beside it; this kit's finish writes none)"
+            )
             data["duck"] = None
         else:
             duck = measure_duck(*buses)
             low_d, high_d = DUCK_TARGET_DB
-            flag = "" if low_d <= duck.under_db <= high_d else f"  OUTSIDE {low_d:.0f}-{high_d:.0f} dB"
+            flag = (
+                ""
+                if low_d <= duck.under_db <= high_d
+                else f"  OUTSIDE {low_d:.0f}-{high_d:.0f} dB"
+            )
             details.append(f"{duck.one_line()} (buses `{buses[0].name}`){flag}")
             threshold += f"; duck {low_d:.0f}-{high_d:.0f} dB under the voice"
-            data["duck"] = {"under_db": duck.under_db, "outside_db": duck.outside_db, "windows": duck.windows}
+            data["duck"] = {
+                "under_db": duck.under_db,
+                "outside_db": duck.outside_db,
+                "windows": duck.windows,
+            }
             if flag:
                 faults.append("duck depth out of band")
-    summary = f"{lufs_text}, true peak {peak_text}" + (f": {'; '.join(faults)}" if faults else "")
-    return Section("Loudness", WARN if faults else OK, summary, threshold, details, data)
+    summary = f"{lufs_text}, true peak {peak_text}" + (
+        f": {'; '.join(faults)}" if faults else ""
+    )
+    return Section(
+        "Loudness", WARN if faults else OK, summary, threshold, details, data
+    )
 
 
 # --- 2. Cuts ---------------------------------------------------------------------------------------------
@@ -373,7 +436,11 @@ def planned_shot_changes(facts: Mapping[str, Any]) -> tuple[float, ...] | None:
     """Shot-change times from take facts (each shot's start after the first), or ``None`` when no shots."""
 
     body = facts.get("take_facts", facts)
-    shots = [s for s in body.get("shots") or [] if isinstance(s, Mapping) and s.get("start_seconds") is not None]
+    shots = [
+        s
+        for s in body.get("shots") or []
+        if isinstance(s, Mapping) and s.get("start_seconds") is not None
+    ]
     if not shots:
         return None
     ordered = sorted(shots, key=lambda s: float(s["start_seconds"]))
@@ -381,7 +448,10 @@ def planned_shot_changes(facts: Mapping[str, Any]) -> tuple[float, ...] | None:
 
 
 def compare_cuts(
-    cuts: tuple[float, ...], planned: tuple[float, ...], *, tolerance: float = CUT_MATCH_SECONDS
+    cuts: tuple[float, ...],
+    planned: tuple[float, ...],
+    *,
+    tolerance: float = CUT_MATCH_SECONDS,
 ) -> tuple[list[float], list[float]]:
     """Planned shot changes with no cut near them, and cuts no planned change explains.
 
@@ -404,7 +474,13 @@ def compare_cuts(
     return missing, free
 
 
-def cuts_section(take: Path, *, head_board_frames: int, facts: Mapping[str, Any] | None, retimed: bool) -> Section:
+def cuts_section(
+    take: Path,
+    *,
+    head_board_frames: int,
+    facts: Mapping[str, Any] | None,
+    retimed: bool,
+) -> Section:
     """Hard cuts from the ``tblend`` trace, against the take facts' shot changes."""
 
     cuts = measure_cuts(take, skip_head_frames=head_board_frames)
@@ -412,19 +488,38 @@ def cuts_section(take: Path, *, head_board_frames: int, facts: Mapping[str, Any]
         f"tblend mean luma diff ≥ {FRAME_DIFF_CUT_THRESHOLD:g}; "
         f"matched to shot changes within ±{CUT_MATCH_SECONDS:g} s"
     )
-    data: dict[str, Any] = {"cuts": list(cuts), "planned": None, "missing": [], "extra": []}
+    data: dict[str, Any] = {
+        "cuts": list(cuts),
+        "planned": None,
+        "missing": [],
+        "extra": [],
+    }
     found = f"{len(cuts)} hard cut(s)" + (f" at {_times(cuts)}" if cuts else "")
     planned = planned_shot_changes(facts) if facts is not None else None
     if planned is None:
-        why = "no take facts on the desk" if facts is None else "the take facts list no shots"
-        return Section("Cuts", NONE if not cuts else OK, f"{found}; not compared ({why})", threshold, data=data)
+        why = (
+            "no take facts on the desk"
+            if facts is None
+            else "the take facts list no shots"
+        )
+        return Section(
+            "Cuts",
+            NONE if not cuts else OK,
+            f"{found}; not compared ({why})",
+            threshold,
+            data=data,
+        )
     data["planned"] = list(planned)
     if retimed:
         why = "a trim or tempo moved the times off the take facts"
-        return Section("Cuts", OK, f"{found}; not compared ({why})", threshold, data=data)
+        return Section(
+            "Cuts", OK, f"{found}; not compared ({why})", threshold, data=data
+        )
     missing, extra = compare_cuts(cuts, planned)
     data["missing"], data["extra"] = missing, extra
-    summary = f"{found}; take facts plan {len(planned)} shot change(s)" + (f" at {_times(planned)}" if planned else "")
+    summary = f"{found}; take facts plan {len(planned)} shot change(s)" + (
+        f" at {_times(planned)}" if planned else ""
+    )
     details = [
         f"no hard cut near the planned shot change at {t:.2f}s (a camera move, or a shot that never came)"
         for t in missing
@@ -433,7 +528,9 @@ def cuts_section(take: Path, *, head_board_frames: int, facts: Mapping[str, Any]
         f"extra cut at {t:.2f}s the take facts do not plan (a forced cut or an H3 cell seam: soften it)"
         for t in extra
     ]
-    return Section("Cuts", WARN if missing or extra else OK, summary, threshold, details, data)
+    return Section(
+        "Cuts", WARN if missing or extra else OK, summary, threshold, details, data
+    )
 
 
 # --- 3. Frozen / stacked frames --------------------------------------------------------------------------
@@ -452,7 +549,9 @@ def _runs(mask: npt.NDArray[np.bool_], step: float) -> list[tuple[float, float]]
     return [(round(a, 3), round(b, 3)) for a, b in runs]
 
 
-def measure_frames(take: Path) -> tuple[list[tuple[float, float]], list[tuple[float, float]], float, float]:
+def measure_frames(
+    take: Path,
+) -> tuple[list[tuple[float, float]], list[tuple[float, float]], float, float]:
     """Frozen and stacked stretches at 8 fps.
 
     Returns
@@ -466,13 +565,23 @@ def measure_frames(take: Path) -> tuple[list[tuple[float, float]], list[tuple[fl
     frames = decode_frames(take, width=width, height=height, fps=STACK_FPS) / 255.0
     step = 1.0 / STACK_FPS
     half = height // 2
-    stack_scores = np.sqrt(((frames[:, :half] - frames[:, half : half * 2]) ** 2).mean(axis=(1, 2, 3)))
-    stacked = [r for r in _runs(stack_scores < STACK_THRESHOLD, step) if r[1] - r[0] + step > STACK_MIN_SECONDS]
+    stack_scores = np.sqrt(
+        ((frames[:, :half] - frames[:, half : half * 2]) ** 2).mean(axis=(1, 2, 3))
+    )
+    stacked = [
+        r
+        for r in _runs(stack_scores < STACK_THRESHOLD, step)
+        if r[1] - r[0] + step > STACK_MIN_SECONDS
+    ]
     if len(frames) > 1:
         moves = np.sqrt(((frames[1:] - frames[:-1]) ** 2).mean(axis=(1, 2, 3)))
         # A still pair (i, i+1) freezes both samples: the stretch runs from sample i to sample i+1.
         still = [(a, b + step) for a, b in _runs(moves < FREEZE_THRESHOLD, step)]
-        frozen = [(round(a, 3), round(b, 3)) for a, b in still if b - a >= FREEZE_MIN_SECONDS - 1e-6]
+        frozen = [
+            (round(a, 3), round(b, 3))
+            for a, b in still
+            if b - a >= FREEZE_MIN_SECONDS - 1e-6
+        ]
         lowest_move = float(moves.min())
     else:
         frozen, lowest_move = [], 1.0
@@ -497,7 +606,9 @@ def frames_section(take: Path, *, steps: set[str]) -> Section:
         for a, b in stacked
     ]
     if frozen and "freeze" in steps:
-        details.append("this file went through `freeze`: the hold you asked for reads as frozen")
+        details.append(
+            "this file went through `freeze`: the hold you asked for reads as frozen"
+        )
     summary = (
         f"{len(frozen)} frozen, {len(stacked)} stacked stretch(es)"
         if frozen or stacked
@@ -505,13 +616,17 @@ def frames_section(take: Path, *, steps: set[str]) -> Section:
     )
     data = {"frozen": [list(r) for r in frozen], "stacked": [list(r) for r in stacked],
             "lowest_frame_rmse": lowest_move, "lowest_stack_rmse": lowest_stack}  # fmt: skip
-    return Section("Frames", WARN if frozen or stacked else OK, summary, threshold, details, data)
+    return Section(
+        "Frames", WARN if frozen or stacked else OK, summary, threshold, details, data
+    )
 
 
 # --- 4. Board frames anywhere ----------------------------------------------------------------------------
 
 
-def _iter_frames(take: Path, width: int, height: int) -> Iterator[npt.NDArray[np.float64]]:
+def _iter_frames(
+    take: Path, width: int, height: int
+) -> Iterator[npt.NDArray[np.float64]]:
     """Every frame at ``width`` x ``height``, one at a time (a whole take never sits in memory)."""
 
     proc = subprocess.Popen(
@@ -526,7 +641,11 @@ def _iter_frames(take: Path, width: int, height: int) -> Iterator[npt.NDArray[np
             raw = proc.stdout.read(size)
             if len(raw) < size:
                 break
-            yield np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3).astype(np.float64)
+            yield (
+                np.frombuffer(raw, dtype=np.uint8)
+                .reshape(height, width, 3)
+                .astype(np.float64)
+            )
     finally:
         proc.stdout.close()
         err = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
@@ -553,7 +672,9 @@ class BoardScan:
     baseline_db: float
 
 
-def scan_board(take: Path, board: Path, *, margin_db: float = BOARD_LEAK_MARGIN_DB) -> BoardScan:
+def scan_board(
+    take: Path, board: Path, *, margin_db: float = BOARD_LEAK_MARGIN_DB
+) -> BoardScan:
     """Find board frames anywhere in ``take``: the head as ``deboard`` counts it, then every later frame.
 
     Raises
@@ -568,7 +689,8 @@ def scan_board(take: Path, board: Path, *, margin_db: float = BOARD_LEAK_MARGIN_
     width, height = LEAK_ANALYSIS_SIZE
     with Image.open(board) as opened:
         reference = np.asarray(
-            opened.convert("RGB").resize((width, height), Image.Resampling.BILINEAR), dtype=np.float64
+            opened.convert("RGB").resize((width, height), Image.Resampling.BILINEAR),
+            dtype=np.float64,
         )
     floor = leak.baseline_db + margin_db
     later: list[tuple[int, float]] = []
@@ -581,12 +703,19 @@ def scan_board(take: Path, board: Path, *, margin_db: float = BOARD_LEAK_MARGIN_
     return BoardScan(head=leak.frames, later=tuple(later), baseline_db=leak.baseline_db)
 
 
-def board_section(take: Path, board: Path | None, *, fps: float, deboarded: bool) -> tuple[Section, int]:
+def board_section(
+    take: Path, board: Path | None, *, fps: float, deboarded: bool
+) -> tuple[Section, int]:
     """Board frames anywhere in the take; returns the section and the head count (for the cut trace)."""
 
     threshold = f"PSNR vs the board ≥ baseline + {BOARD_LEAK_MARGIN_DB:g} dB, every frame at 192x336"
     if board is None:
-        return Section("Board", NONE, "not measured: no approved board on the desk (pass --board)", threshold), 0
+        return Section(
+            "Board",
+            NONE,
+            "not measured: no approved board on the desk (pass --board)",
+            threshold,
+        ), 0
     try:
         scan = scan_board(take, board)
     except ValueError as exc:
@@ -602,17 +731,23 @@ def board_section(take: Path, board: Path | None, *, fps: float, deboarded: bool
                 f"the first {scan.head} frame(s) are still the board on a deboarded file: run deboard on the raw take"
             )
         else:
-            details.append(f"the first {scan.head} frame(s) are the board: finish removes them (deboard)")
+            details.append(
+                f"the first {scan.head} frame(s) are the board: finish removes them (deboard)"
+            )
     if scan.later:
         faults += 1
         times = ", ".join(f"{i / fps:.2f}s ({v:.1f} dB)" for i, v in scan.later[:12])
         more = f" and {len(scan.later) - 12} more" if len(scan.later) > 12 else ""
-        details.append(f"{len(scan.later)} board frame(s) after the head at {times}{more}: the board flashes mid-take")
+        details.append(
+            f"{len(scan.later)} board frame(s) after the head at {times}{more}: the board flashes mid-take"
+        )
     summary = (
         f"{scan.head} head, {len(scan.later)} later board frame(s) against `{board.name}` "
         f"(baseline {scan.baseline_db:.1f} dB)"
     )
-    return Section("Board", WARN if faults else OK, summary, threshold, details, data), scan.head
+    return Section(
+        "Board", WARN if faults else OK, summary, threshold, details, data
+    ), scan.head
 
 
 # --- 5. Script vs audio ----------------------------------------------------------------------------------
@@ -637,7 +772,9 @@ def lines_section(
     measured = False
     asked_text = StringIO()
     try:
-        missing = run_check_lines(desk, episode=episode, take_id=take_id, out=asked_text)
+        missing = run_check_lines(
+            desk, episode=episode, take_id=take_id, out=asked_text
+        )
     except (CommandStopped, FileNotFoundError, ValueError) as exc:
         asked_rows = [f"check-lines: not checked ({exc})"]
     else:
@@ -653,7 +790,9 @@ def lines_section(
             data["check_lines_flags"] = flagged
             faults = faults or missing > 0 or flagged > 0
     details += asked_rows
-    heard_rows, heard_data, heard_faults = _heard_rows(desk, episode=episode, take_id=take_id, words_json=words_json)
+    heard_rows, heard_data, heard_faults = _heard_rows(
+        desk, episode=episode, take_id=take_id, words_json=words_json
+    )
     if words_note:
         details.append(words_note)
     details += heard_rows
@@ -666,7 +805,9 @@ def lines_section(
     return Section("Lines", status, summary, threshold, details[1:], data)
 
 
-def take_lines(desk: Path, episode: int, take_id: str) -> tuple[list[dict[str, str]], str] | None:
+def take_lines(
+    desk: Path, episode: int, take_id: str
+) -> tuple[list[dict[str, str]], str] | None:
     """The take's approved lines (with every spelling) and the show's language, from the saved spine."""
 
     from creation.ops.state import episode_by_ordinal, load_series
@@ -677,9 +818,13 @@ def take_lines(desk: Path, episode: int, take_id: str) -> tuple[list[dict[str, s
     if found is None:
         return None
     spine = found[0]
-    takes = [take.take_id for take in episode_by_ordinal(load_series(desk), episode).takes]
+    takes = [
+        take.take_id for take in episode_by_ordinal(load_series(desk), episode).takes
+    ]
     index = takes.index(take_id) + 1 if take_id in takes else 1
-    ids = dialogue_line_ids(spine, episode=episode, take_index=index, take_count=len(takes) or 1)
+    ids = dialogue_line_ids(
+        spine, episode=episode, take_index=index, take_count=len(takes) or 1
+    )
     wanted = [line_id for line_id, _ in ids]
     by_id = {line["line_id"]: line for line in episode_dialogue(spine, episode)}
     lines = [by_id[line_id] for line_id in wanted if line_id in by_id]
@@ -696,7 +841,11 @@ def _heard_rows(
         return [f"heard: not read ({why})"], None, False
     found = take_lines(desk, episode, take_id)
     if found is None:
-        return ["heard: not read (no spine snapshot on the desk; run `spine --refresh`)"], None, False
+        return (
+            ["heard: not read (no spine snapshot on the desk; run `spine --refresh`)"],
+            None,
+            False,
+        )
     lines, _language = found
     if not lines:
         return [f"heard: no approved lines for {take_id} (a wordless take)"], [], False
@@ -706,16 +855,25 @@ def _heard_rows(
         alternates=tuple((line["text"], line["spoken_text"]) for line in lines),
     )
     heard = [w for w in windows if w.start is not None]
-    rows = [f"heard: {len(heard)} of {len(lines)} approved line(s) in `{words_json.name}`"]
+    rows = [
+        f"heard: {len(heard)} of {len(lines)} approved line(s) in `{words_json.name}`"
+    ]
     data: list[dict[str, Any]] = []
     for window in windows:
-        how = {"sound": " (by sound, {:.0%})", "shape": " (by reading shape, {:.0%})"}.get(window.by, "")
+        how = {
+            "sound": " (by sound, {:.0%})",
+            "shape": " (by reading shape, {:.0%})",
+        }.get(window.by, "")
         how = how.format(window.ratio)
         if window.start is None or window.end is None:
-            rows.append(f"  {window.index + 1}. MISSING  {window.line!r}: the one real re-film (name the cause)")
+            rows.append(
+                f"  {window.index + 1}. MISSING  {window.line!r}: the one real re-film (name the cause)"
+            )
         else:
             when = f"{window.start:.2f}-{window.end:.2f}s"
-            rows.append(f"  {window.index + 1}. {when}  {window.line!r}  {window.ratio:.0%}{how}")
+            rows.append(
+                f"  {window.index + 1}. {when}  {window.line!r}  {window.ratio:.0%}{how}"
+            )
         data.append({"line": window.index + 1, "text": window.line, "start": window.start, "end": window.end,
                      "ratio": window.ratio, "by": window.by})  # fmt: skip
     return rows, data, len(heard) < len(lines)
@@ -725,7 +883,11 @@ def saved_words(desk: Path, episode: int, take_id: str) -> Path | None:
     """Newest saved Whisper transcript of this take on the desk (``takes/take-epNN-tK-…words-vN.json``)."""
 
     takes = desk / f"ep{episode:02d}" / "takes"
-    found = [p for p in takes.glob(f"take-ep{episode:02d}-{take_id}-*words*-v*.json") if p.is_file()]
+    found = [
+        p
+        for p in takes.glob(f"take-ep{episode:02d}-{take_id}-*words*-v*.json")
+        if p.is_file()
+    ]
     return max(found, key=lambda p: p.stat().st_mtime) if found else None
 
 
@@ -748,7 +910,11 @@ def safe_zones_section(take: Path) -> Section:
         f"caption box clear of the top 8%, bottom 20% and right rail, inside {low:.0%}-{high:.0%} of the height, "
         f"on {SAMPLE_FRAMES} sampled frames; faces by eye on the zone sheet"
     )
-    found = [w for w in report.warnings if w.startswith("!!") or w.startswith("no house caption")]
+    found = [
+        w
+        for w in report.warnings
+        if w.startswith("!!") or w.startswith("no house caption")
+    ]
     notes = [w for w in report.warnings if w not in found]
     captioned = sum(1 for frame in report.frames if frame.caption is not None)
     summary = f"{captioned} of {len(report.frames)} sampled frame(s) show a caption" + (
@@ -759,7 +925,14 @@ def safe_zones_section(take: Path) -> Section:
         *notes,
         f"zone sheet: {report.sheet.name} (report {report.sheet.with_suffix('.json').name})",
     ]
-    return Section("Safe zones", WARN if found else OK, summary, threshold, details, {"safe_zones": report.as_json()})
+    return Section(
+        "Safe zones",
+        WARN if found else OK,
+        summary,
+        threshold,
+        details,
+        {"safe_zones": report.as_json()},
+    )
 
 
 # --- The review ---------------------------------------------------------------------------------------------
@@ -783,11 +956,17 @@ def default_take(desk: Path, episode: int, take_id: str) -> tuple[Path, str]:
 
     takes = desk / f"ep{episode:02d}" / "takes"
     finished = [
-        p for p in takes.glob(f"take-ep{episode:02d}-{take_id}-*.mp4") if p.is_file() and take_kind(p) == "finished"
+        p
+        for p in takes.glob(f"take-ep{episode:02d}-{take_id}-*.mp4")
+        if p.is_file() and take_kind(p) == "finished"
     ]
     if finished:
-        return max(finished, key=lambda p: p.stat().st_mtime), "the newest finished file"
-    return latest_raw_take(desk, episode, take_id), "the newest raw take: no finished file yet"
+        return max(
+            finished, key=lambda p: p.stat().st_mtime
+        ), "the newest finished file"
+    return latest_raw_take(
+        desk, episode, take_id
+    ), "the newest raw take: no finished file yet"
 
 
 Transcribe = Callable[[Path, int, str], Path]
@@ -817,9 +996,13 @@ def server_transcript(desk: Path, episode: int, take_id: str) -> Path:
     found = take_lines(desk, episode, take_id)
     language = found[1] if found else "en"
     takes = desk / f"ep{episode:02d}" / "takes"
-    target = next_versioned_path(takes, f"take-ep{episode:02d}-{take_id}-review-words", ".json")
+    target = next_versioned_path(
+        takes, f"take-ep{episode:02d}-{take_id}-review-words", ".json"
+    )
     audio = DramaApiAudio(desk, episode=episode)
-    return transcribe(stored, target, audio=audio, spine_id=spine_id(desk), language=language)
+    return transcribe(
+        stored, target, audio=audio, spine_id=spine_id(desk), language=language
+    )
 
 
 def review_take(
@@ -879,7 +1062,11 @@ def review_take(
     fps = info.fps or 24.0
     kind = take_kind(take)
     steps = _steps(take)
-    board_path = board.expanduser().resolve() if board else approved_board(desk, episode, take_id)
+    board_path = (
+        board.expanduser().resolve()
+        if board
+        else approved_board(desk, episode, take_id)
+    )
     facts_path = saved_take_facts(desk, episode, take_id)
     facts = json.loads(facts_path.read_text(encoding="utf-8")) if facts_path else None
     words_note = None
@@ -889,10 +1076,23 @@ def review_take(
             words_json = (transcriber or server_transcript)(desk, episode, take_id)
             words_note = f"transcript made on the server from the stored take: `{words_json.name}`"
     loud = loudness_section(take, kind, has_audio=info.has_audio)
-    board_sec, head = board_section(take, board_path, fps=fps, deboarded=bool(steps & set(DEBOARDED_STEPS)))
-    cuts = cuts_section(take, head_board_frames=head, facts=facts, retimed=bool(steps & set(RETIMED_STEPS)))
+    board_sec, head = board_section(
+        take, board_path, fps=fps, deboarded=bool(steps & set(DEBOARDED_STEPS))
+    )
+    cuts = cuts_section(
+        take,
+        head_board_frames=head,
+        facts=facts,
+        retimed=bool(steps & set(RETIMED_STEPS)),
+    )
     frames = frames_section(take, steps=steps)
-    lines = lines_section(desk, episode=episode, take_id=take_id, words_json=words_json, words_note=words_note)
+    lines = lines_section(
+        desk,
+        episode=episode,
+        take_id=take_id,
+        words_json=words_json,
+        words_note=words_note,
+    )
     sections = [loud, cuts, frames, board_sec, lines]
     if kind == "finished":
         sections.append(safe_zones_section(take))

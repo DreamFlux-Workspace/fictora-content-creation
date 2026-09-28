@@ -31,7 +31,9 @@ from creation.ops.state import (
 )
 
 #: Checks that warn loudly instead of blocking. Everything else is a human gate and blocks.
-WARNING_CODES = frozenset({"line_count", "board_luma", "estimate", "envelope", "handoff", "reroll"})
+WARNING_CODES = frozenset(
+    {"line_count", "board_luma", "estimate", "envelope", "handoff", "reroll"}
+)
 
 
 @dataclass(frozen=True)
@@ -185,7 +187,11 @@ class PreflightReport:
         if not warnings:
             return ""
         bar = "!" * 72
-        lines = [bar, f"!! PREFLIGHT WARNING — {self.unit} — this is not blocked, but read it", bar]
+        lines = [
+            bar,
+            f"!! PREFLIGHT WARNING — {self.unit} — this is not blocked, but read it",
+            bar,
+        ]
         lines += [f"!! {check.code}: {check.detail}" for check in warnings]
         retakes = max(0, self.films)
         lines += [
@@ -194,7 +200,9 @@ class PreflightReport:
             f"Spent on the episode: ${self.episode_spend_usd:.2f} of a ${self.envelope:.2f} envelope.",
         ]
         if self.confirmed and self.override is not None:
-            lines.append(f"!! Overridden by the operator at {self.override.at_utc}. Covers the next film only.")
+            lines.append(
+                f"!! Overridden by the operator at {self.override.at_utc}. Covers the next film only."
+            )
         else:
             lines.append(
                 f"!! To film anyway: fictora-ops preflight ... --proceed-anyway {self.unit}  (logged in series.json)"
@@ -231,10 +239,16 @@ def evaluate_preflight(
 
     checks = (
         _approved("look_approved", series.look.status, "Look is not approved."),
-        _approved("plates_approved", series.plates.status, "Shared plates are not approved."),
+        _approved(
+            "plates_approved", series.plates.status, "Shared plates are not approved."
+        ),
         _approved("script_approved", episode.script.status, "Lines are not approved."),
         _line_count(take),
-        _approved("board_approved", take.board.status, f"{take.take_id} board is not approved."),
+        _approved(
+            "board_approved",
+            take.board.status,
+            f"{take.take_id} board is not approved.",
+        ),
         _board_luma(episode, take, desk),
         _estimate(take),
         _envelope(series, episode, take),
@@ -255,7 +269,9 @@ def evaluate_preflight(
     )
 
 
-def covering_override(take: TakeState, open_codes: set[str]) -> PreflightOverride | None:
+def covering_override(
+    take: TakeState, open_codes: set[str]
+) -> PreflightOverride | None:
     """Return the override that covers these warnings on the next film, if one is recorded.
 
     Parameters
@@ -312,7 +328,11 @@ def evaluate_preflight_ids(
 
 
 def _approved(code: str, status: str, detail: str) -> PreflightCheck:
-    return PreflightCheck(code=code, ok=status == "approved", detail=detail if status != "approved" else "ok")
+    return PreflightCheck(
+        code=code,
+        ok=status == "approved",
+        detail=detail if status != "approved" else "ok",
+    )
 
 
 def _line_count(take: TakeState) -> PreflightCheck:
@@ -329,22 +349,34 @@ def _line_count(take: TakeState) -> PreflightCheck:
 def _board_luma(episode: EpisodeState, take: TakeState, desk: Path) -> PreflightCheck:
     if take.board.status != "approved" or not take.board.path:
         return PreflightCheck(
-            code="board_luma", ok=False, detail="Approved board path is missing; brightness unmeasured."
+            code="board_luma",
+            ok=False,
+            detail="Approved board path is missing; brightness unmeasured.",
         )
     path = _resolve(desk, episode.slug, take.board.path)
     if not path.is_file():
-        return PreflightCheck(code="board_luma", ok=False, detail=f"Board file missing: {path}")
+        return PreflightCheck(
+            code="board_luma", ok=False, detail=f"Board file missing: {path}"
+        )
     # Brightness is reported, never a warning: the human already looked at the board.
-    return PreflightCheck(code="board_luma", ok=True, detail=measure_board_luma(path).one_line())
+    return PreflightCheck(
+        code="board_luma", ok=True, detail=measure_board_luma(path).one_line()
+    )
 
 
 def _estimate(take: TakeState) -> PreflightCheck:
     if take.estimate_usd is None:
-        return PreflightCheck(code="estimate", ok=False, detail="Cost is not on the table (no batches/estimate).")
+        return PreflightCheck(
+            code="estimate",
+            ok=False,
+            detail="Cost is not on the table (no batches/estimate).",
+        )
     return PreflightCheck(code="estimate", ok=True, detail=f"${take.estimate_usd:.2f}")
 
 
-def _envelope(series: SeriesState, episode: EpisodeState, take: TakeState) -> PreflightCheck:
+def _envelope(
+    series: SeriesState, episode: EpisodeState, take: TakeState
+) -> PreflightCheck:
     envelope = envelope_usd(series, episode)
     projected = episode.spend_usd + (take.estimate_usd or 0.0)
     ceiling = envelope * ENVELOPE_STOP_MULTIPLIER
@@ -354,7 +386,9 @@ def _envelope(series: SeriesState, episode: EpisodeState, take: TakeState) -> Pr
             ok=False,
             detail=f"${projected:.2f} of ${envelope:.2f} envelope, past 2x (${ceiling:.2f}). Escalate.",
         )
-    return PreflightCheck(code="envelope", ok=True, detail=f"${projected:.2f} of ${envelope:.2f} envelope")
+    return PreflightCheck(
+        code="envelope", ok=True, detail=f"${projected:.2f} of ${envelope:.2f} envelope"
+    )
 
 
 def _handoff(episode: EpisodeState, take: TakeState, desk: Path) -> PreflightCheck:
@@ -369,7 +403,9 @@ def _handoff(episode: EpisodeState, take: TakeState, desk: Path) -> PreflightChe
         )
     path = _resolve(desk, episode.slug, take.handoff_path)
     if not path.is_file():
-        return PreflightCheck(code="handoff", ok=False, detail=f"Hand-off file missing: {path}")
+        return PreflightCheck(
+            code="handoff", ok=False, detail=f"Hand-off file missing: {path}"
+        )
     return PreflightCheck(code="handoff", ok=True, detail=str(path))
 
 

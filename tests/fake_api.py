@@ -21,7 +21,9 @@ def png_bytes(gray: int = 128) -> bytes:
     return buf.getvalue()
 
 
-def spine_fixture(*, episodes: int = 2, approved: bool = True, spoken_language: str = "en-US") -> dict[str, Any]:
+def spine_fixture(
+    *, episodes: int = 2, approved: bool = True, spoken_language: str = "en-US"
+) -> dict[str, Any]:
     """A spine like prod's: episode 1 is ``episode_01`` and episode 2 ``ep_02``."""
 
     ids = ["episode_01", "ep_02", "ep_03"][:episodes]
@@ -36,8 +38,16 @@ def spine_fixture(*, episodes: int = 2, approved: bool = True, spoken_language: 
                 "motion_intent": f"Hana wipes the counter (ep {number})",
                 "motion_direction": {"camera_move": "locked", "intensity": "low"},
                 "dialogue_lines": [
-                    {"line_id": f"line_{episode_id}_01", "cast_id": "cast_hana", "text": "We're closed."},
-                    {"line_id": f"line_{episode_id}_02", "cast_id": "cast_ren", "text": "Not for me."},
+                    {
+                        "line_id": f"line_{episode_id}_01",
+                        "cast_id": "cast_hana",
+                        "text": "We're closed.",
+                    },
+                    {
+                        "line_id": f"line_{episode_id}_02",
+                        "cast_id": "cast_ren",
+                        "text": "Not for me.",
+                    },
                 ],
             }
         )
@@ -56,7 +66,12 @@ def spine_fixture(*, episodes: int = 2, approved: bool = True, spoken_language: 
                         "cell_role": "action",
                         "row_direction": {"camera_move": "dolly_in"},
                         "subject_blocking": [
-                            {"cast_id": "cast_hana", "frame_position": "bottom edge, left" if row == 2 else "upper third"}
+                            {
+                                "cast_id": "cast_hana",
+                                "frame_position": "bottom edge, left"
+                                if row == 2
+                                else "upper third",
+                            }
                         ],
                         "story_objects": ["a cup"],
                         "ui_safe_zone": "bottom fifth clear of faces",
@@ -70,9 +85,17 @@ def spine_fixture(*, episodes: int = 2, approved: bool = True, spoken_language: 
         "spoken_language": spoken_language,
         "title": "Closing Time",
         "outline_mode": "arc_at_episode_two",
-        "cast": [{"cast_id": "cast_hana", "name": "Hana"}, {"cast_id": "cast_ren", "name": "Ren"}],
+        "cast": [
+            {"cast_id": "cast_hana", "name": "Hana"},
+            {"cast_id": "cast_ren", "name": "Ren"},
+        ],
         "episode_summaries": [
-            {"episode_id": episode_id, "ordinal": number, "title": f"Ep {number}", "authoring_state": "drafted"}
+            {
+                "episode_id": episode_id,
+                "ordinal": number,
+                "title": f"Ep {number}",
+                "authoring_state": "drafted",
+            }
             for number, episode_id in enumerate(ids, start=1)
         ],
         "beats_per_storyboard_set": [1],
@@ -89,8 +112,16 @@ def spine_fixture(*, episodes: int = 2, approved: bool = True, spoken_language: 
             for episode_id in ids
         ]
         + [
-            {"relation_type": "cast_card", "relation_id": "cast_hana", "url": "https://r2.example/hana.png"},
-            {"relation_type": "cast_card", "relation_id": "cast_ren", "url": "https://r2.example/ren.png"},
+            {
+                "relation_type": "cast_card",
+                "relation_id": "cast_hana",
+                "url": "https://r2.example/hana.png",
+            },
+            {
+                "relation_type": "cast_card",
+                "relation_id": "cast_ren",
+                "url": "https://r2.example/ren.png",
+            },
         ],
         "look_notes": [],
     }
@@ -99,7 +130,9 @@ def spine_fixture(*, episodes: int = 2, approved: bool = True, spoken_language: 
 Handler = Callable[[str, str, dict[str, Any] | None], Any]
 
 
-def openapi_doc(*, episode_ordinal: bool = True, one_take_estimate: bool = True) -> dict[str, Any]:
+def openapi_doc(
+    *, episode_ordinal: bool = True, one_take_estimate: bool = True
+) -> dict[str, Any]:
     """The slice of ``/openapi.json`` the kit reads: which request fields the deploy accepts."""
 
     film = {"episode_count": {}, "reroll_take_index": {}, "seed_attempt": {}}
@@ -128,7 +161,9 @@ class FakeApi:
         self.prefix = "pfx"
         self.spine_doc = spine if spine is not None else spine_fixture()
         self.calls: list[tuple[str, str, dict[str, Any] | None, str | None]] = []
-        self.routes: dict[tuple[str, str], Any] = {("GET", "/openapi.json"): openapi_doc()}
+        self.routes: dict[tuple[str, str], Any] = {
+            ("GET", "/openapi.json"): openapi_doc()
+        }
         self.jobs: dict[str, dict[str, Any]] = {}
         self.polled: list[tuple[str, bool]] = []
         self.client = self
@@ -137,7 +172,13 @@ class FakeApi:
     def close(self) -> None:
         """The harness closes its HTTP client."""
 
-    def _answer(self, method: str, path: str, body: dict[str, Any] | None, key: str | None = None) -> Any:
+    def _answer(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None,
+        key: str | None = None,
+    ) -> Any:
         if PROVIDER_SPEC_SEGMENT in path:
             raise AssertionError("provider-spec must never be requested")
         self.calls.append((method, path, copy.deepcopy(body), key))
@@ -164,7 +205,9 @@ class FakeApi:
         except SystemExit as exc:
             return 409, {"error": {"code": str(exc.code)}}
 
-    def post(self, path: str, body: dict[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
+    def post(
+        self, path: str, body: dict[str, Any], *, idempotency_key: str | None = None
+    ) -> dict[str, Any]:
         """POST."""
         return self._answer("POST", path, body, idempotency_key)
 
@@ -192,11 +235,17 @@ class FakeApi:
         """Log one event."""
         self.events.append((phase, payload))
 
-    def poll_job(self, job_id: str, *, label: str, video_route: bool, deadline_seconds: float) -> dict[str, Any]:
+    def poll_job(
+        self, job_id: str, *, label: str, video_route: bool, deadline_seconds: float
+    ) -> dict[str, Any]:
         """Return the job's terminal payload."""
         self.polled.append((job_id, video_route))
         return copy.deepcopy(self.jobs[job_id])
 
     def posted(self, path: str) -> list[dict[str, Any] | None]:
         """Bodies POSTed to ``path``."""
-        return [body for method, called, body, _ in self.calls if method == "POST" and called == path]
+        return [
+            body
+            for method, called, body, _ in self.calls
+            if method == "POST" and called == path
+        ]

@@ -65,7 +65,12 @@ class LineWindow:
 
 
 def transcribe(
-    audio_url: str, out_json: Path, *, audio: AudioService, spine_id: str | None = None, language: str = "en"
+    audio_url: str,
+    out_json: Path,
+    *,
+    audio: AudioService,
+    spine_id: str | None = None,
+    language: str = "en",
 ) -> Path:
     """Get Whisper word timings for a file already in our storage (the take's stored URL) and save them.
 
@@ -91,9 +96,15 @@ def transcribe(
         ``out_json``.
     """
 
-    key = "whisper-" + hashlib.sha256(f"{audio_url}|{language}".encode()).hexdigest()[:16]
-    output = audio.transcribe(audio_url=audio_url, language=language, spine_id=spine_id, key=key)
-    out_json.write_text(json.dumps(output, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    key = (
+        "whisper-" + hashlib.sha256(f"{audio_url}|{language}".encode()).hexdigest()[:16]
+    )
+    output = audio.transcribe(
+        audio_url=audio_url, language=language, spine_id=spine_id, key=key
+    )
+    out_json.write_text(
+        json.dumps(output, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     return out_json
 
 
@@ -120,9 +131,15 @@ def load_words(path: Path) -> tuple[Word, ...]:
     words: list[Word] = []
     for chunk in chunks:
         stamp = chunk.get("timestamp") or [None, None]
-        start = float(stamp[0]) if stamp[0] is not None else (words[-1].end if words else 0.0)
+        start = (
+            float(stamp[0])
+            if stamp[0] is not None
+            else (words[-1].end if words else 0.0)
+        )
         end = float(stamp[1]) if stamp[1] is not None else start
-        words.append(Word(start=start, end=end, text=str(chunk.get("text") or "").strip()))
+        words.append(
+            Word(start=start, end=end, text=str(chunk.get("text") or "").strip())
+        )
     return tuple(words)
 
 
@@ -168,7 +185,9 @@ def _same(a: str, b: str) -> bool:
     return a == b or (min(len(a), len(b)) >= 3 and (a.startswith(b) or b.startswith(a)))
 
 
-def _match(flat: list[tuple[str, int]], target: list[str], cursor: int) -> tuple[int, int, float] | None:
+def _match(
+    flat: list[tuple[str, int]], target: list[str], cursor: int
+) -> tuple[int, int, float] | None:
     if not target:
         return None
     if any(_KANA.fullmatch(token) for token in target):
@@ -179,7 +198,11 @@ def _match(flat: list[tuple[str, int]], target: list[str], cursor: int) -> tuple
         pos, matched, last = start, 0, start
         for token in target:
             probe = pos
-            while probe < len(flat) and probe - pos <= 2 and not _same(flat[probe][0], token):
+            while (
+                probe < len(flat)
+                and probe - pos <= 2
+                and not _same(flat[probe][0], token)
+            ):
                 probe += 1
             if probe < len(flat) and probe - pos <= 2:
                 matched += 1
@@ -191,7 +214,9 @@ def _match(flat: list[tuple[str, int]], target: list[str], cursor: int) -> tuple
     return None
 
 
-def _align_japanese(heard: list[str], target: list[str]) -> tuple[float, int, int] | None:
+def _align_japanese(
+    heard: list[str], target: list[str]
+) -> tuple[float, int, int] | None:
     """Best alignment of a Japanese line against heard characters starting at ``heard[0]``.
 
     Kana match kana. Without a reading dictionary a kanji cannot be read, so a
@@ -208,7 +233,9 @@ def _align_japanese(heard: list[str], target: list[str]) -> tuple[float, int, in
 
     n, m = len(target), len(heard)
     # best[i][j]: (covered, literal, last) after using target[:i] and heard[:j].
-    best: list[list[tuple[float, int, int] | None]] = [[None] * (m + 1) for _ in range(n + 1)]
+    best: list[list[tuple[float, int, int] | None]] = [
+        [None] * (m + 1) for _ in range(n + 1)
+    ]
     best[0][0] = (0.0, 0, -1)
 
     def offer(i: int, j: int, value: tuple[float, int, int]) -> None:
@@ -222,8 +249,14 @@ def _align_japanese(heard: list[str], target: list[str]) -> tuple[float, int, in
             if state is None:
                 continue
             covered, literal, last = state
-            if j < m and last >= 0:  # a heard character not in the line (never before the first match)
-                offer(i, j + 1, (covered - (1 if _KANA.fullmatch(heard[j]) else 0), literal, last))
+            if (
+                j < m and last >= 0
+            ):  # a heard character not in the line (never before the first match)
+                offer(
+                    i,
+                    j + 1,
+                    (covered - (1 if _KANA.fullmatch(heard[j]) else 0), literal, last),
+                )
             if i < n:
                 offer(i + 1, j, state)  # a character of the line not heard
             if i < n and j < m:
@@ -243,7 +276,9 @@ def _align_japanese(heard: list[str], target: list[str]) -> tuple[float, int, in
     return max(finals, key=lambda state: state[:2]) if finals else None
 
 
-def _match_japanese(flat: list[tuple[str, int]], target: list[str], cursor: int) -> tuple[int, int, float] | None:
+def _match_japanese(
+    flat: list[tuple[str, int]], target: list[str], cursor: int
+) -> tuple[int, int, float] | None:
     """:func:`_match` for a line with kana: compared by reading shape, not character for character."""
 
     n = len(target)
@@ -251,10 +286,18 @@ def _match_japanese(flat: list[tuple[str, int]], target: list[str], cursor: int)
     window = 2 * n + MAX_KANA_PER_KANJI
     for start in range(cursor, len(flat)):
         first = flat[start][0]
-        kanji_opens_line = _HAN.fullmatch(target[0]) is not None and _KANA.fullmatch(first) is not None
-        if first not in target[:2] and not _HAN.fullmatch(first) and not kanji_opens_line:
+        kanji_opens_line = (
+            _HAN.fullmatch(target[0]) is not None and _KANA.fullmatch(first) is not None
+        )
+        if (
+            first not in target[:2]
+            and not _HAN.fullmatch(first)
+            and not kanji_opens_line
+        ):
             continue
-        aligned = _align_japanese([token for token, _ in flat[start : start + window]], target)
+        aligned = _align_japanese(
+            [token for token, _ in flat[start : start + window]], target
+        )
         if aligned is None:
             continue
         covered, literal, last = aligned
@@ -289,14 +332,24 @@ def line_windows(
         One window per line; ``start is None`` when the line was not heard.
     """
 
-    flat = [(token, index) for index, word in enumerate(words) for token in _tokens(word.text)]
+    flat = [
+        (token, index)
+        for index, word in enumerate(words)
+        for token in _tokens(word.text)
+    ]
     if not any(word.reading is not None for word in words):
-        return _line_windows_on(words, lines, alternates, flat)  # an older server: reading shape only
+        return _line_windows_on(
+            words, lines, alternates, flat
+        )  # an older server: reading shape only
     # Japanese words as the server read them; a word without a reading keeps its text.
     read = [
         (token, index)
         for index, word in enumerate(words)
-        for token in (_reading_tokens(word.reading) if word.reading is not None else _tokens(word.text))
+        for token in (
+            _reading_tokens(word.reading)
+            if word.reading is not None
+            else _tokens(word.text)
+        )
     ]
     return _line_windows_on(words, lines, alternates, flat, read)
 
@@ -318,8 +371,13 @@ def _line_windows_on(
     cursors = [0] * len(streams)
     found: list[LineWindow] = []
     for index, line in enumerate(lines):
-        spellings = [line, *(alternates[index] if alternates and index < len(alternates) else ())]
-        matches: list[tuple[int, int, float, int, bool]] = []  # (first word, last word, ratio, stream, kana)
+        spellings = [
+            line,
+            *(alternates[index] if alternates and index < len(alternates) else ()),
+        ]
+        matches: list[
+            tuple[int, int, float, int, bool]
+        ] = []  # (first word, last word, ratio, stream, kana)
         for spelling in dict.fromkeys(spellings):
             target = _tokens(spelling) if spelling else []
             kana = any(_KANA.fullmatch(token) for token in target)
@@ -334,15 +392,28 @@ def _line_windows_on(
             continue
         # Earliest word first; on one stream that is the old earliest-token order exactly.
         first, last, ratio, which, kana = min(
-            matches, key=lambda m: (streams[m[3]][m[0]][1], m[0] if read is None else 0, -m[2])
+            matches,
+            key=lambda m: (streams[m[3]][m[0]][1], m[0] if read is None else 0, -m[2]),
         )
         stream = streams[which]
         ids = sorted({stream[pos][1] for pos in range(first, last + 1)})
         by = "sound" if which == 1 else "shape" if kana else "words"
-        found.append(LineWindow(index, line, words[ids[0]].start, words[ids[-1]].end, round(ratio, 2), by))
+        found.append(
+            LineWindow(
+                index,
+                line,
+                words[ids[0]].start,
+                words[ids[-1]].end,
+                round(ratio, 2),
+                by,
+            )
+        )
         for other, tokens in enumerate(streams):
             if other == which:
                 cursors[other] = last + 1
             else:
-                cursors[other] = next((pos for pos, (_t, word) in enumerate(tokens) if word > ids[-1]), len(tokens))
+                cursors[other] = next(
+                    (pos for pos, (_t, word) in enumerate(tokens) if word > ids[-1]),
+                    len(tokens),
+                )
     return tuple(found)

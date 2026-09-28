@@ -16,7 +16,11 @@ from creation.spine_view import script_lines, shot_list_lines
 from fake_api import FakeApi, spine_fixture
 
 PLAN = [
-    {"size": "extreme close-up", "subject": "Hana's hands on the counter", "camera": "handheld"},
+    {
+        "size": "extreme close-up",
+        "subject": "Hana's hands on the counter",
+        "camera": "handheld",
+    },
     {"size": "wide", "subject": "the shop", "camera": "locked", "angle": "high angle"},
 ]
 
@@ -33,21 +37,34 @@ def _server_keeps_plans(api: FakeApi) -> None:
                 elif key != "beat_id":
                     beats[edit["beat_id"]][key] = value
 
-    def on_patch(_method: str, _path: str, body: dict[str, Any] | None) -> dict[str, Any]:
+    def on_patch(
+        _method: str, _path: str, body: dict[str, Any] | None
+    ) -> dict[str, Any]:
         apply((body or {})["patch"])
         return {"spine_version": "v6"}
 
-    def on_execute(_method: str, _path: str, _body: dict[str, Any] | None) -> dict[str, Any]:
+    def on_execute(
+        _method: str, _path: str, _body: dict[str, Any] | None
+    ) -> dict[str, Any]:
         apply(previews[-1])
         return {"stale_storyboard_sets": [{"episode_ordinal": 1, "set_index": 1}]}
 
     previews: list[dict[str, Any]] = []
 
-    def on_preview(_method: str, _path: str, body: dict[str, Any] | None) -> dict[str, Any]:
+    def on_preview(
+        _method: str, _path: str, body: dict[str, Any] | None
+    ) -> dict[str, Any]:
         previews.append((body or {})["edit"]["patch"])
         return {
             "proposal_id": "prop_1",
-            "items": [{"item_id": "i_frames", "recipe_id": "frames_rewrite", "estimated_tier": "text", "selected": True}],
+            "items": [
+                {
+                    "item_id": "i_frames",
+                    "recipe_id": "frames_rewrite",
+                    "estimated_tier": "text",
+                    "selected": True,
+                }
+            ],
         }
 
     api.routes[("PATCH", "/v1/spines/sp1")] = on_patch
@@ -56,7 +73,9 @@ def _server_keeps_plans(api: FakeApi) -> None:
 
 
 def _patches(api: FakeApi) -> list[dict[str, Any]]:
-    return [body["patch"] for method, _, body, _ in api.calls if method == "PATCH" and body]
+    return [
+        body["patch"] for method, _, body, _ in api.calls if method == "PATCH" and body
+    ]
 
 
 def test_shot_flags_before_the_gate_send_only_the_plan_and_save_the_story(
@@ -72,9 +91,14 @@ def test_shot_flags_before_the_gate_send_only_the_plan_and_save_the_story(
 
     assert produce_main(argv) == 0
 
-    assert _patches(api) == [{"beats": [{"beat_id": "beat_episode_01_01", "shot_plan": PLAN}]}]
+    assert _patches(api) == [
+        {"beats": [{"beat_id": "beat_episode_01_01", "shot_plan": PLAN}]}
+    ]
     for saved in (desk / "api" / "spine.json", desk / "ep01" / "api" / "spine.json"):
-        assert json.loads(saved.read_text(encoding="utf-8"))["beats"][0]["shot_plan"] == PLAN
+        assert (
+            json.loads(saved.read_text(encoding="utf-8"))["beats"][0]["shot_plan"]
+            == PLAN
+        )
     printed = capsys.readouterr().out
     assert "shot plan on the server now:" in printed
     assert "plan shot 2: wide on the shop, locked, high angle" in printed
@@ -89,20 +113,45 @@ def test_shot_plan_json_from_a_file_equals_the_flags_and_a_repeat_changes_nothin
     plan_file = tmp_path / "plan.json"
     plan_file.write_text(json.dumps({"shot_plan": PLAN}), encoding="utf-8")
 
-    ec.run_edit(desk, episode=1, beat="1", shot_plan=sp.plan_from_json(f"@{plan_file}"), out=io.StringIO())
-    with pytest.raises(ec.CommandStopped, match="nothing to change on beat_episode_01_01"):
-        ec.run_edit(desk, episode=1, beat="1", shot_plan=sp.plan_from_json(json.dumps(PLAN)), out=io.StringIO())
+    ec.run_edit(
+        desk,
+        episode=1,
+        beat="1",
+        shot_plan=sp.plan_from_json(f"@{plan_file}"),
+        out=io.StringIO(),
+    )
+    with pytest.raises(
+        ec.CommandStopped, match="nothing to change on beat_episode_01_01"
+    ):
+        ec.run_edit(
+            desk,
+            episode=1,
+            beat="1",
+            shot_plan=sp.plan_from_json(json.dumps(PLAN)),
+            out=io.StringIO(),
+        )
 
-    assert _patches(api) == [{"beats": [{"beat_id": "beat_episode_01_01", "shot_plan": PLAN}]}]
+    assert _patches(api) == [
+        {"beats": [{"beat_id": "beat_episode_01_01", "shot_plan": PLAN}]}
+    ]
 
 
-def test_clear_sends_null_and_a_plan_travels_with_an_intent_edit(desk: Path, api: FakeApi) -> None:
+def test_clear_sends_null_and_a_plan_travels_with_an_intent_edit(
+    desk: Path, api: FakeApi
+) -> None:
     api.spine_doc = spine_fixture(approved=False)
     api.spine_doc["beats"][0]["shot_plan"] = PLAN
     _server_keeps_plans(api)
 
     ec.run_edit(desk, episode=1, beat="1", clear_shot_plan=True, out=io.StringIO())
-    ec.run_edit(desk, episode=1, beat="1", intent="Hana locks the door", shot_plan=PLAN[:1], out=io.StringIO())
+    ec.run_edit(
+        desk,
+        episode=1,
+        beat="1",
+        intent="Hana locks the door",
+        shot_plan=PLAN[:1],
+        out=io.StringIO(),
+    )
 
     first, second = _patches(api)
     assert first == {"beats": [{"beat_id": "beat_episode_01_01", "shot_plan": None}]}
@@ -111,22 +160,36 @@ def test_clear_sends_null_and_a_plan_travels_with_an_intent_edit(desk: Path, api
     assert "motion_direction" in second["beats"][0]
 
 
-def test_after_the_gate_the_plan_goes_through_the_cascade_and_names_the_board_to_redraw(desk: Path, api: FakeApi) -> None:
+def test_after_the_gate_the_plan_goes_through_the_cascade_and_names_the_board_to_redraw(
+    desk: Path, api: FakeApi
+) -> None:
     _server_keeps_plans(api)
     out = io.StringIO()
 
     ec.run_edit(desk, episode=1, beat="1", shot_plan=PLAN, out=out)
 
     preview = api.posted("/v1/spines/sp1/cascade/preview")[0]
-    assert preview["edit"]["patch"] == {"beats": [{"beat_id": "beat_episode_01_01", "shot_plan": PLAN}]}
+    assert preview["edit"]["patch"] == {
+        "beats": [{"beat_id": "beat_episode_01_01", "shot_plan": PLAN}]
+    }
     assert _patches(api) == []
     assert "redraw-board --episode 1 --take t1" in out.getvalue()
-    assert json.loads((desk / "api" / "spine.json").read_text(encoding="utf-8"))["beats"][0]["shot_plan"] == PLAN
+    assert (
+        json.loads((desk / "api" / "spine.json").read_text(encoding="utf-8"))["beats"][
+            0
+        ]["shot_plan"]
+        == PLAN
+    )
 
 
 def test_an_older_server_422_is_said_plainly(desk: Path, api: FakeApi) -> None:
     api.spine_doc = spine_fixture(approved=False)
-    body = {"error": {"code": "validation_error", "message": "patch.beats.0.shot_plan: Extra inputs are not permitted"}}
+    body = {
+        "error": {
+            "code": "validation_error",
+            "message": "patch.beats.0.shot_plan: Extra inputs are not permitted",
+        }
+    }
     api.routes[("PATCH", "/v1/spines/sp1")] = SystemExit(
         f"HTTP 422 PATCH https://drama.example/v1/spines/sp1: {ec.api_error_text(body)}"
     )
@@ -154,21 +217,46 @@ def test_a_server_that_drops_the_field_is_flagged(desk: Path, api: FakeApi) -> N
 @pytest.mark.parametrize(
     ("argv_tail", "why"),
     [
-        (["--beat", "1", *sum((["--shot", "wide|the shop"] for _ in range(5)), [])], "1-4 shots"),
+        (
+            ["--beat", "1", *sum((["--shot", "wide|the shop"] for _ in range(5)), [])],
+            "1-4 shots",
+        ),
         (["--beat", "1", "--shot", "wide"], "size|subject|camera|angle"),
-        (["--beat", "1", "--shot-plan", '[{"size": "wide", "subject": "x", "lens": "35mm"}]'], "unknown field"),
+        (
+            [
+                "--beat",
+                "1",
+                "--shot-plan",
+                '[{"size": "wide", "subject": "x", "lens": "35mm"}]',
+            ],
+            "unknown field",
+        ),
         (["--beat", "1", "--shot-plan", '[{"size": "wide"}]'], "subject is required"),
         (["--beat", "1", "--shot-plan", "null"], "--clear-shot-plan"),
-        (["--beat", "1", "--shot-plan", json.dumps([{"size": "w" * 201, "subject": "x"}])], "the most is 200"),
+        (
+            [
+                "--beat",
+                "1",
+                "--shot-plan",
+                json.dumps([{"size": "w" * 201, "subject": "x"}]),
+            ],
+            "the most is 200",
+        ),
         (["--frame", "1", "--shot", "wide|the shop"], "belong to a beat"),
     ],
 )
 def test_a_plan_the_server_would_refuse_stops_before_any_call(
-    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str], argv_tail: list[str], why: str
+    desk: Path,
+    api: FakeApi,
+    capsys: pytest.CaptureFixture[str],
+    argv_tail: list[str],
+    why: str,
 ) -> None:
     api.spine_doc = spine_fixture(approved=False)
 
-    assert produce_main(["edit", "--desk", str(desk), "--episode", "1", *argv_tail]) == 2
+    assert (
+        produce_main(["edit", "--desk", str(desk), "--episode", "1", *argv_tail]) == 2
+    )
 
     assert why in capsys.readouterr().err
     assert _patches(api) == []
@@ -181,7 +269,13 @@ def test_the_script_and_board_printouts_show_the_plan() -> None:
     script = script_lines(spine, episode=1, take_ids=["t1"])
     board = shot_list_lines(spine, episode=1)
 
-    assert "    plan shot 1: extreme close-up on Hana's hands on the counter, handheld" in script
+    assert (
+        "    plan shot 1: extreme close-up on Hana's hands on the counter, handheld"
+        in script
+    )
     assert "  beat 1 asks for (its first row is shot 1):" in board
     assert "    plan shot 2: wide on the shop, locked, high angle" in board
-    assert not any("plan shot" in line for line in script_lines(spine_fixture(), episode=1, take_ids=["t1"]))
+    assert not any(
+        "plan shot" in line
+        for line in script_lines(spine_fixture(), episode=1, take_ids=["t1"])
+    )

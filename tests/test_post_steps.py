@@ -16,7 +16,13 @@ from creation.captions import CAPTION_BAND, build_ass, caption_margin_v, fitted_
 from creation.harness.http_util import hosted_post_off
 from creation.harness.session import DramaApiRunSession
 from creation.post.media import measure_loudness, measure_rms_windows
-from creation.post.mix import CueLevel, duck_expression, mix_take, pick_gain, quiet_cue_warnings
+from creation.post.mix import (
+    CueLevel,
+    duck_expression,
+    mix_take,
+    pick_gain,
+    quiet_cue_warnings,
+)
 from creation.post.sfx import (
     SfxCue,
     SfxPlan,
@@ -41,7 +47,13 @@ def test_plan_reads_cues_and_speaking_shots_from_take_facts_only() -> None:
     )  # fmt: skip
     assert plan.speech == ((0.0, 4.0),)
     [cue] = plan.cues
-    assert (cue.sound, cue.kind, cue.start, cue.seconds, cue.gain_db) == ("rain on glass", "sustained", 4.0, 4.0, -8.0)
+    assert (cue.sound, cue.kind, cue.start, cue.seconds, cue.gain_db) == (
+        "rain on glass",
+        "sustained",
+        4.0,
+        4.0,
+        -8.0,
+    )
 
 
 def test_adjustments_parse_and_refuse_a_no_op() -> None:
@@ -54,12 +66,17 @@ def test_adjustments_parse_and_refuse_a_no_op() -> None:
 def test_shape_check_rejects_a_late_event_and_a_collapsing_hum() -> None:
     assert shape_problem("event", (-20.0, -25.0, -40.0)) is None
     assert shape_problem("event", (-60.0, -60.0, -10.0)) == "event starts late"
-    assert shape_problem("sustained", (-10.0, -80.0, -80.0, -80.0)) == "sustained sound collapses"
+    assert (
+        shape_problem("sustained", (-10.0, -80.0, -80.0, -80.0))
+        == "sustained sound collapses"
+    )
     assert shape_problem("event", (-90.0,)) == "silent"
 
 
 @needs_ffmpeg
-def test_sfx_is_laid_under_the_take_cached_and_dropped_on_request(tmp_path: Path) -> None:
+def test_sfx_is_laid_under_the_take_cached_and_dropped_on_request(
+    tmp_path: Path,
+) -> None:
     take = make_take(tmp_path / "take.mp4", tones=((0.5, 1.0, 440),))
     plan = SfxPlan((SfxCue(2, "a door slams", "event", 2.0, 1.0),), ())
     calls: list[str] = []
@@ -68,21 +85,39 @@ def test_sfx_is_laid_under_the_take_cached_and_dropped_on_request(tmp_path: Path
         calls.append(cue.sound)
         return make_tone(target, seconds=cue.seconds, freq=300, volume=0.8)
 
-    first = lay_sfx(take, plan, cache_dir=tmp_path / "sfx", output=tmp_path / "sfx-v1.mp4", render=render)
+    first = lay_sfx(
+        take,
+        plan,
+        cache_dir=tmp_path / "sfx",
+        output=tmp_path / "sfx-v1.mp4",
+        render=render,
+    )
     levels = measure_rms_windows(first.output, window_seconds=0.5)
     assert max(levels[4:6]) > -40.0, "the cue is heard at 2-3 s"
     assert first.rendered == 1 and first.cost_usd == pytest.approx(0.002)
     [peak] = first.peaks_db
-    assert peak == pytest.approx(max(measure_rms_windows(tmp_path / "sfx" / f"{plan.cues[0].cache_key}.mp3")) - 8.0, abs=0.2)
+    assert peak == pytest.approx(
+        max(measure_rms_windows(tmp_path / "sfx" / f"{plan.cues[0].cache_key}.mp3"))
+        - 8.0,
+        abs=0.2,
+    )
 
-    second = lay_sfx(take, plan, cache_dir=tmp_path / "sfx", output=tmp_path / "sfx-v2.mp4", render=render)
+    second = lay_sfx(
+        take,
+        plan,
+        cache_dir=tmp_path / "sfx",
+        output=tmp_path / "sfx-v2.mp4",
+        render=render,
+    )
     assert calls == ["a door slams"] and second.rendered == 0 and second.cost_usd == 0
 
     with pytest.raises(RuntimeError, match="no sound effect"):
         lay_sfx(take, plan, cache_dir=tmp_path / "sfx", output=tmp_path / "sfx-v3.mp4", render=render,
                 adjustments=(parse_adjustment("door=drop"),))  # fmt: skip
     with pytest.raises(FileExistsError):
-        lay_sfx(take, plan, cache_dir=tmp_path / "sfx", output=first.output, render=render)
+        lay_sfx(
+            take, plan, cache_dir=tmp_path / "sfx", output=first.output, render=render
+        )
 
 
 # --- mix -------------------------------------------------------------------------------------
@@ -95,10 +130,14 @@ def test_mix_measures_the_gain_and_lands_near_minus_18(tmp_path: Path) -> None:
     result = mix_take(take, tmp_path / "mix.mp4", bed=bed)
     assert -20.0 <= result.mix_lufs <= -15.0
     assert result.gain_db == pick_gain(result.take_lufs) != 0.0
-    assert result.passes == 1, "the measured gain lands the first mix; no correction pass needed"
+    assert result.passes == 1, (
+        "the measured gain lands the first mix; no correction pass needed"
+    )
     assert measure_loudness(result.output) == pytest.approx(result.mix_lufs, abs=0.2)
     levels = measure_rms_windows(result.output, window_seconds=0.5)
-    assert levels[9] > -70.0, "4.5-5 s (after the line, before the fade) still has the 2 s bed: it loops"
+    assert levels[9] > -70.0, (
+        "4.5-5 s (after the line, before the fade) still has the 2 s bed: it loops"
+    )
 
 
 @needs_ffmpeg
@@ -107,7 +146,9 @@ def test_duck_db_drops_the_bed_by_that_depth_under_the_voice(tmp_path: Path) -> 
     silent = make_take(tmp_path / "silent.mp4", seconds=6.0, tones=((0.0, 0.0, 440),))
     bed = make_tone(tmp_path / "bed.wav", seconds=6.0, freq=220, volume=0.2)
     # Bed only (the take is silent) but ducked on the speaking take's windows: depth is measurable.
-    result = mix_take(silent, tmp_path / "mix.mp4", bed=bed, duck_db=12.0, voice_source=take)
+    result = mix_take(
+        silent, tmp_path / "mix.mp4", bed=bed, duck_db=12.0, voice_source=take
+    )
     levels = np.array(measure_rms_windows(result.output, window_seconds=0.25))
     outside, under = float(np.median(levels[2:6])), float(np.median(levels[10:14]))
     assert outside - under == pytest.approx(12.0, abs=1.5)
@@ -117,23 +158,40 @@ def test_duck_db_drops_the_bed_by_that_depth_under_the_voice(tmp_path: Path) -> 
 
 
 def test_a_cue_far_under_the_bed_is_named_with_the_fix_and_a_heard_one_is_not() -> None:
-    bed = (-20.0,) * 4  # a 2 s bed of 0.5 s windows at -20 dB RMS; it loops under the 6 s take
-    crack = CueLevel("neck crack", 3.2, 0.5, peak_db=-39.0, gain_db=-8.0)  # 19 dB under: buried
-    door = CueLevel("a door slams", 1.0, 1.0, peak_db=-30.0, gain_db=-8.0)  # 10 dB under: heard
+    bed = (
+        -20.0,
+    ) * 4  # a 2 s bed of 0.5 s windows at -20 dB RMS; it loops under the 6 s take
+    crack = CueLevel(
+        "neck crack", 3.2, 0.5, peak_db=-39.0, gain_db=-8.0
+    )  # 19 dB under: buried
+    door = CueLevel(
+        "a door slams", 1.0, 1.0, peak_db=-30.0, gain_db=-8.0
+    )  # 10 dB under: heard
 
-    [warning] = quiet_cue_warnings([crack, door], bed_levels=bed, bed_db=0.0, take_gain_db=0.0)
+    [warning] = quiet_cue_warnings(
+        [crack, door], bed_levels=bed, bed_db=0.0, take_gain_db=0.0
+    )
 
-    assert warning.startswith("!! cue 'neck crack' @3.20s peaks 19 dB under the music bed (-39 dB vs -20 dB)")
+    assert warning.startswith(
+        "!! cue 'neck crack' @3.20s peaks 19 dB under the music bed (-39 dB vs -20 dB)"
+    )
     # 13 dB to reach 6 under the bed: 8 from the cue (it tops out at 0 dB), 5 from the bed.
-    assert '`--sfx-adjust "neck crack=+8"`' in warning and "lower the bed about 5 dB (`--bed-db`)" in warning
+    assert (
+        '`--sfx-adjust "neck crack=+8"`' in warning
+        and "lower the bed about 5 dB (`--bed-db`)" in warning
+    )
 
 
 def test_a_cue_just_under_the_bed_is_not_warned_and_the_take_gain_counts() -> None:
     bed = (-20.0,) * 4
     cue = CueLevel("rain", 0.0, 2.0, peak_db=-31.0, gain_db=-8.0)
 
-    assert quiet_cue_warnings([cue], bed_levels=bed, bed_db=0.0, take_gain_db=0.0) == []  # 11 dB under
-    assert quiet_cue_warnings([cue], bed_levels=bed, bed_db=0.0, take_gain_db=-2.0) != []  # 13 dB under
+    assert (
+        quiet_cue_warnings([cue], bed_levels=bed, bed_db=0.0, take_gain_db=0.0) == []
+    )  # 11 dB under
+    assert (
+        quiet_cue_warnings([cue], bed_levels=bed, bed_db=0.0, take_gain_db=-2.0) != []
+    )  # 13 dB under
     assert quiet_cue_warnings([cue], bed_levels=(), bed_db=0.0, take_gain_db=-2.0) == []
 
 
@@ -141,7 +199,9 @@ def test_a_cue_just_under_the_bed_is_not_warned_and_the_take_gain_counts() -> No
 def test_the_mix_warns_on_a_cue_the_bed_buries(tmp_path: Path) -> None:
     take = make_take(tmp_path / "take.mp4", seconds=6.0, tones=((1.0, 2.0, 440),))
     bed = make_tone(tmp_path / "bed.wav", seconds=6.0, freq=220, volume=0.9)
-    buried = CueLevel("neck crack", 4.0, 0.5, peak_db=-90.0, gain_db=-8.0)  # the bed sits near -38 dB
+    buried = CueLevel(
+        "neck crack", 4.0, 0.5, peak_db=-90.0, gain_db=-8.0
+    )  # the bed sits near -38 dB
 
     result = mix_take(take, tmp_path / "mix.mp4", bed=bed, cues=[buried])
 
@@ -167,7 +227,9 @@ def test_mark_sits_top_left_under_the_covered_strip() -> None:
 
 @needs_ffmpeg
 def test_mark_is_drawn_where_the_position_says(tmp_path: Path) -> None:
-    take = make_take(tmp_path / "take.mp4", colour="black", size="768x1344", seconds=1.0)
+    take = make_take(
+        tmp_path / "take.mp4", colour="black", size="768x1344", seconds=1.0
+    )
     marked = watermark(take, tmp_path / "marked.mp4")
     frame = subprocess.run(
         ["ffmpeg", "-v", "error", "-i", str(marked), "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
@@ -206,22 +268,46 @@ def test_a_caption_too_wide_for_one_line_is_set_smaller_not_wrapped() -> None:
 
 def test_hosted_post_refusals_are_recognised_and_a_real_outage_is_not() -> None:
     coded = {"error": {"code": "hosted_post_off", "message": "off"}, "request_id": "r"}
-    legacy = {"error": {"code": "restate_unavailable", "message": "Durable generation orchestration is unavailable."}}
-    assert hosted_post_off(409, coded, "https://x/v1/video-generations/j/post-production-runs")
-    assert hosted_post_off(503, legacy, "https://x/v1/video-generations/j/post-production-runs")
+    legacy = {
+        "error": {
+            "code": "restate_unavailable",
+            "message": "Durable generation orchestration is unavailable.",
+        }
+    }
+    assert hosted_post_off(
+        409, coded, "https://x/v1/video-generations/j/post-production-runs"
+    )
+    assert hosted_post_off(
+        503, legacy, "https://x/v1/video-generations/j/post-production-runs"
+    )
     assert not hosted_post_off(503, legacy, "https://x/v1/video-generations")
 
 
 @pytest.mark.parametrize(
     ("status", "body"),
     [
-        (409, {"error": {"code": "hosted_post_off", "message": "off"}, "request_id": "r"}),
-        (503, {"error": {"code": "restate_unavailable", "message": "unavailable"}, "request_id": "r"}),
+        (
+            409,
+            {"error": {"code": "hosted_post_off", "message": "off"}, "request_id": "r"},
+        ),
+        (
+            503,
+            {
+                "error": {"code": "restate_unavailable", "message": "unavailable"},
+                "request_id": "r",
+            },
+        ),
     ],
 )
-def test_the_session_tells_the_operator_to_run_finish(tmp_path: Path, status: int, body: dict) -> None:
-    run = DramaApiRunSession(base_url="https://drama.test", token="t", out_dir=tmp_path, session_id="s")
-    run.client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(status, json=body)))
+def test_the_session_tells_the_operator_to_run_finish(
+    tmp_path: Path, status: int, body: dict
+) -> None:
+    run = DramaApiRunSession(
+        base_url="https://drama.test", token="t", out_dir=tmp_path, session_id="s"
+    )
+    run.client = httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(status, json=body))
+    )
     with pytest.raises(SystemExit, match="fictora-produce finish"):
         run.post("/v1/video-generations/job_1/post-production-runs", {})
     with pytest.raises(SystemExit) as outage:
@@ -241,14 +327,21 @@ class Recorder:
         return self.answers.pop(0)
 
 
-def _service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answers: list[httpx.Response]):
+def _service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answers: list[httpx.Response]
+):
     from creation.post import audio_service
     from creation.post import desk as desk_mod
 
     recorder = Recorder(answers)
 
     def open_api(desk: Path, episode: int) -> DramaApiRunSession:
-        run = DramaApiRunSession(base_url="https://drama.test", token="t", out_dir=tmp_path, session_id="sess-1")
+        run = DramaApiRunSession(
+            base_url="https://drama.test",
+            token="t",
+            out_dir=tmp_path,
+            session_id="sess-1",
+        )
         run.client = httpx.Client(transport=httpx.MockTransport(recorder))
         return run
 
@@ -265,11 +358,25 @@ def test_each_audio_route_gets_its_path_body_session_and_idempotency_key(
 
     audio, rec, _ = _service(tmp_path, monkeypatch, [ok({"candidates": []}), ok({"audio_url": "u"}),
                                                       ok({"audio_url": "u"}), ok({"audio_url": "u"}), ok({"words": []})])  # fmt: skip
-    audio.render_auditions(spine_id="sp", cast_id="cast_k", spine_version="sha256:v", lines=["Hi."], count=4, key="k1")
-    audio.voice_line(spine_id="sp", cast_id="cast_k", text="Hi.", language="en", key="k2")
+    audio.render_auditions(
+        spine_id="sp",
+        cast_id="cast_k",
+        spine_version="sha256:v",
+        lines=["Hi."],
+        count=4,
+        key="k1",
+    )
+    audio.voice_line(
+        spine_id="sp", cast_id="cast_k", text="Hi.", language="en", key="k2"
+    )
     audio.sfx_cue(spine_id="sp", sound="a door slams", seconds=1.0, key="k3")
     audio.music_bed(spine_id="sp", brief=None, key="k4")
-    audio.transcribe(audio_url="https://media.test/tenants/t/drama/take.mp4", language="en", spine_id="sp", key="k5")
+    audio.transcribe(
+        audio_url="https://media.test/tenants/t/drama/take.mp4",
+        language="en",
+        spine_id="sp",
+        key="k5",
+    )
 
     seen = [(r.url.path, json.loads(r.content), r.headers["Idempotency-Key"], r.headers["X-Drama-Session-Id"])
             for r in rec.requests]  # fmt: skip
@@ -296,7 +403,11 @@ def test_audition_new_wording_and_named_voices_are_sent_as_the_routes_text_and_v
                            key="k2", voices=["Callum"])  # fmt: skip
 
     assert [json.loads(r.content) for r in rec.requests] == [
-        {"spine_version": "sha256:v", "text": "Do not break eye contact.", "voices": ["Sarah", "Laura"]},
+        {
+            "spine_version": "sha256:v",
+            "text": "Do not break eye contact.",
+            "voices": ["Sarah", "Laura"],
+        },
         {"spine_version": "sha256:v", "lines": ["Hi."], "voices": ["Callum"]},
     ], "text replaces lines and voices replaces the slate size; nothing padded"
 
@@ -305,7 +416,9 @@ def test_rate_limits_and_in_progress_are_waited_out_and_a_failed_render_is_repla
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def err(status: int, code: str, **h: str) -> httpx.Response:
-        return httpx.Response(status, json={"error": {"code": code, "message": "m"}}, headers=h)
+        return httpx.Response(
+            status, json={"error": {"code": code, "message": "m"}}, headers=h
+        )
 
     audio, rec, waits = _service(tmp_path, monkeypatch, [
         err(429, "rate_limited", **{"Retry-After": "6"}),
@@ -313,9 +426,14 @@ def test_rate_limits_and_in_progress_are_waited_out_and_a_failed_render_is_repla
         err(502, "operator_audio_failed"),
         httpx.Response(200, json={"audio_url": "u"}),
     ])  # fmt: skip
-    assert audio.sfx_cue(spine_id="sp", sound="hum", seconds=2.0, key="same")["audio_url"] == "u"
+    assert (
+        audio.sfx_cue(spine_id="sp", sound="hum", seconds=2.0, key="same")["audio_url"]
+        == "u"
+    )
     assert waits == [6.0, 15.0]
-    assert {r.headers["Idempotency-Key"] for r in rec.requests} == {"same"}, "every retry replays the same key"
+    assert {r.headers["Idempotency-Key"] for r in rec.requests} == {"same"}, (
+        "every retry replays the same key"
+    )
 
 
 @pytest.mark.parametrize(
@@ -334,13 +452,17 @@ def test_refusals_stop_with_a_hint_and_are_not_retried(
     from creation.post.audio_service import AudioServiceError
 
     body = {"error": {"code": code, "message": "no"}, "request_id": "r"}
-    audio, rec, waits = _service(tmp_path, monkeypatch, [httpx.Response(status, json=body)])
+    audio, rec, waits = _service(
+        tmp_path, monkeypatch, [httpx.Response(status, json=body)]
+    )
     with pytest.raises(AudioServiceError, match=hint):
         audio.voice_line(spine_id="sp", cast_id="c", text="Hi.", language="en", key="k")
     assert len(rec.requests) == 1 and waits == []
 
 
-def test_the_sfx_renderer_sends_the_authored_label_and_refuses_a_bad_shape(tmp_path: Path) -> None:
+def test_the_sfx_renderer_sends_the_authored_label_and_refuses_a_bad_shape(
+    tmp_path: Path,
+) -> None:
     from creation.post import sfx as sfx_mod
 
     asked: list[dict] = []
@@ -364,5 +486,10 @@ def test_the_sfx_renderer_sends_the_authored_label_and_refuses_a_bad_shape(tmp_p
             render(cue, tmp_path / "c.mp3")
     finally:
         sfx_mod.download = original  # type: ignore[assignment]
-    assert asked[0] == {"spine_id": "sp", "sound": "a door slams", "seconds": 0.5, "key": f"sfx-{cue.cache_key}"}
+    assert asked[0] == {
+        "spine_id": "sp",
+        "sound": "a door slams",
+        "seconds": 0.5,
+        "key": f"sfx-{cue.cache_key}",
+    }
     assert asked[0]["key"] == asked[1]["key"], "a re-run sends the same idempotency key"

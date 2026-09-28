@@ -19,7 +19,11 @@ def lines_from_spine(spine: Mapping[str, Any]) -> list[str]:
     list[str]
         ``Speaker: text`` strings in beat order.
     """
-    names = {c.get("cast_id"): c.get("name") for c in spine.get("cast") or [] if isinstance(c, dict)}
+    names = {
+        c.get("cast_id"): c.get("name")
+        for c in spine.get("cast") or []
+        if isinstance(c, dict)
+    }
     out: list[str] = []
 
     def append_from_beats(beats: Any) -> None:
@@ -28,7 +32,12 @@ def lines_from_spine(spine: Mapping[str, Any]) -> list[str]:
         for beat in beats:
             if not isinstance(beat, dict):
                 continue
-            dialogue = beat.get("dialogue") or beat.get("lines") or beat.get("dialogue_lines") or []
+            dialogue = (
+                beat.get("dialogue")
+                or beat.get("lines")
+                or beat.get("dialogue_lines")
+                or []
+            )
             if isinstance(dialogue, str):
                 dialogue = [dialogue]
             for line in dialogue:

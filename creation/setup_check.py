@@ -76,7 +76,9 @@ ApiGet = Callable[[str, str, str], tuple[int, Any]]
 
 def _api_get(base_url: str, token: str, path: str) -> tuple[int, Any]:
     with tempfile.TemporaryDirectory(prefix="setup-check-") as tmp:
-        run = DramaApiRunSession(base_url=base_url, token=token, out_dir=Path(tmp), client_timeout=30.0)
+        run = DramaApiRunSession(
+            base_url=base_url, token=token, out_dir=Path(tmp), client_timeout=30.0
+        )
         try:
             return run.get_optional(path)
         finally:
@@ -90,7 +92,9 @@ def check_python(version: tuple[int, ...] | None = None) -> Check:
     text = ".".join(str(part) for part in found)
     if found[:2] >= MIN_PYTHON:
         return Check("python", True, text)
-    return Check("python", False, f"{text}; the kit needs 3.12 or newer (uv sync installs it)")
+    return Check(
+        "python", False, f"{text}; the kit needs 3.12 or newer (uv sync installs it)"
+    )
 
 
 def check_uv(which: Callable[[str], str | None] = shutil.which) -> Check:
@@ -98,9 +102,15 @@ def check_uv(which: Callable[[str], str | None] = shutil.which) -> Check:
 
     path = which("uv")
     if not path:
-        return Check("uv", False, "not on PATH; install: https://docs.astral.sh/uv/getting-started/installation/")
+        return Check(
+            "uv",
+            False,
+            "not on PATH; install: https://docs.astral.sh/uv/getting-started/installation/",
+        )
     try:
-        version = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=30).stdout.strip()
+        version = subprocess.run(
+            [path, "--version"], capture_output=True, text=True, timeout=30
+        ).stdout.strip()
     except (OSError, subprocess.SubprocessError) as exc:
         return Check("uv", False, f"{path} does not run ({exc})")
     return Check("uv", True, version or path)
@@ -112,51 +122,102 @@ def check_tools(which: Callable[[str], str | None] = shutil.which) -> list[Check
     checks: list[Check] = []
     for tool in ("ffmpeg", "ffprobe"):
         path = which(tool)
-        checks.append(Check(tool, bool(path), path or "not on PATH; macOS: brew install ffmpeg"))
+        checks.append(
+            Check(tool, bool(path), path or "not on PATH; macOS: brew install ffmpeg")
+        )
     try:
         ffmpeg, _probe = find_ffmpeg()
     except RuntimeError as exc:
         checks.append(Check("libass (captions)", False, str(exc)))
         ffmpeg = which("ffmpeg") or ""
     else:
-        checks.append(Check("libass (captions)", True, f"the ass filter is in {ffmpeg}"))
+        checks.append(
+            Check("libass (captions)", True, f"the ass filter is in {ffmpeg}")
+        )
     if not ffmpeg:
         checks.append(Check("ffmpeg filters", False, "no ffmpeg to ask"))
         return checks
     try:
-        listing = subprocess.run([ffmpeg, "-hide_banner", "-filters"], capture_output=True, text=True, timeout=60).stdout
+        listing = subprocess.run(
+            [ffmpeg, "-hide_banner", "-filters"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout
     except (OSError, subprocess.SubprocessError) as exc:
-        checks.append(Check("ffmpeg filters", False, f"{ffmpeg} -filters did not run ({exc})"))
+        checks.append(
+            Check("ffmpeg filters", False, f"{ffmpeg} -filters did not run ({exc})")
+        )
         return checks
     have = set(re.findall(r"^\s*\S+\s+(\w+)\s", listing, re.MULTILINE))
     missing = [name for name in REQUIRED_FILTERS if name not in have]
     if missing:
         checks.append(
-            Check("ffmpeg filters", False, f"missing {', '.join(missing)}; install a full build (brew install ffmpeg)")
+            Check(
+                "ffmpeg filters",
+                False,
+                f"missing {', '.join(missing)}; install a full build (brew install ffmpeg)",
+            )
         )
     else:
         checks.append(Check("ffmpeg filters", True, ", ".join(REQUIRED_FILTERS)))
     return checks
 
 
-def check_token(env_file: Path | None = None, api_get: ApiGet = _api_get) -> list[Check]:
+def check_token(
+    env_file: Path | None = None, api_get: ApiGet = _api_get
+) -> list[Check]:
     """The token is set (``.env`` or the environment) and the deployed API accepts it. Never prints it."""
 
     load_env_file(env_file or REPO_ROOT / ".env")
     token = os.environ.get(TOKEN_ENV, "").strip()
     if not token:
-        return [Check("API token", False, f"{TOKEN_ENV} is not set; copy .env.example to .env and set it")]
+        return [
+            Check(
+                "API token",
+                False,
+                f"{TOKEN_ENV} is not set; copy .env.example to .env and set it",
+            )
+        ]
     present = Check("API token", True, f"{TOKEN_ENV} is set (value not printed)")
     base_url = os.environ.get(BASE_URL_ENV, "").strip() or DEFAULT_DRAMA_API
     try:
         status, _body = api_get(base_url, token, TOKEN_PROBE_PATH)
     except (httpx.HTTPError, OSError) as exc:
-        return [present, Check("API token accepted", False, f"could not reach {base_url} ({type(exc).__name__})")]
+        return [
+            present,
+            Check(
+                "API token accepted",
+                False,
+                f"could not reach {base_url} ({type(exc).__name__})",
+            ),
+        ]
     if status in (401, 403):
-        return [present, Check("API token accepted", False, f"HTTP {status} from {base_url}: the token is refused")]
+        return [
+            present,
+            Check(
+                "API token accepted",
+                False,
+                f"HTTP {status} from {base_url}: the token is refused",
+            ),
+        ]
     if not 200 <= status < 300:
-        return [present, Check("API token accepted", False, f"HTTP {status} from GET {TOKEN_PROBE_PATH} on {base_url}")]
-    return [present, Check("API token accepted", True, f"GET {TOKEN_PROBE_PATH} on {base_url} answered {status}")]
+        return [
+            present,
+            Check(
+                "API token accepted",
+                False,
+                f"HTTP {status} from GET {TOKEN_PROBE_PATH} on {base_url}",
+            ),
+        ]
+    return [
+        present,
+        Check(
+            "API token accepted",
+            True,
+            f"GET {TOKEN_PROBE_PATH} on {base_url} answered {status}",
+        ),
+    ]
 
 
 def run_setup_check(
@@ -199,4 +260,13 @@ def run_setup_check(
     return 1 if failed else 0
 
 
-__all__ = ["Check", "REQUIRED_FILTERS", "TOKEN_PROBE_PATH", "check_python", "check_token", "check_tools", "check_uv", "run_setup_check"]
+__all__ = [
+    "Check",
+    "REQUIRED_FILTERS",
+    "TOKEN_PROBE_PATH",
+    "check_python",
+    "check_token",
+    "check_tools",
+    "check_uv",
+    "run_setup_check",
+]

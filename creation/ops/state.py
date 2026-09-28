@@ -593,7 +593,10 @@ def series_to_dict(series: SeriesState) -> dict[str, Any]:
 
 def _fold_extra(record: dict[str, Any]) -> dict[str, Any]:
     extra = record.pop("extra", None) or {}
-    return {**record, **{key: value for key, value in extra.items() if key not in record}}
+    return {
+        **record,
+        **{key: value for key, value in extra.items() if key not in record},
+    }
 
 
 def _unmodelled(raw: dict[str, Any], cls: type) -> dict[str, Any]:
@@ -627,7 +630,11 @@ def _series_from_dict(raw: dict[str, Any]) -> SeriesState:
         spend_usd=float(raw["spend_usd"]),
         episodes=[_episode_from_dict(item) for item in raw["episodes"]],
         bed_path=raw.get("bed_path"),
-        spend_log=[_spend_from_dict(item) for item in raw.get("spend_log") or [] if isinstance(item, dict)],
+        spend_log=[
+            _spend_from_dict(item)
+            for item in raw.get("spend_log") or []
+            if isinstance(item, dict)
+        ],
         extra=_unmodelled(raw, SeriesState),
     )
 
@@ -672,7 +679,11 @@ def _take_from_dict(raw: dict[str, Any]) -> TakeState:
         change_cause=raw.get("change_cause"),
         handoff_path=raw.get("handoff_path"),
         spend_usd=float(raw.get("spend_usd") or 0.0),
-        overrides=[PreflightOverride(**item) for item in raw.get("overrides") or [] if isinstance(item, dict)],
+        overrides=[
+            PreflightOverride(**item)
+            for item in raw.get("overrides") or []
+            if isinstance(item, dict)
+        ],
         extra=_unmodelled(raw, TakeState),
     )
 

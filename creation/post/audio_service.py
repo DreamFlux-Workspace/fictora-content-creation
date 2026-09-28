@@ -85,7 +85,14 @@ class AudioService(Protocol):
         ...
 
     def voice_line(
-        self, *, spine_id: str, cast_id: str, text: str, language: str, key: str, spoken_text: str | None = None
+        self,
+        *,
+        spine_id: str,
+        cast_id: str,
+        text: str,
+        language: str,
+        key: str,
+        spoken_text: str | None = None,
     ) -> dict[str, Any]:
         """``{audio_url, seconds, provider_voice, reading: {checked, read_right, …}, cost_usd}``.
 
@@ -94,15 +101,21 @@ class AudioService(Protocol):
         """
         ...
 
-    def sfx_cue(self, *, spine_id: str, sound: str, seconds: float, key: str) -> dict[str, Any]:
+    def sfx_cue(
+        self, *, spine_id: str, sound: str, seconds: float, key: str
+    ) -> dict[str, Any]:
         """``{audio_url, kind, shape_problem, cached, cost_usd}``."""
         ...
 
-    def music_bed(self, *, spine_id: str, brief: str | None, key: str) -> dict[str, Any]:
+    def music_bed(
+        self, *, spine_id: str, brief: str | None, key: str
+    ) -> dict[str, Any]:
         """``{audio_url, seconds, cached, cost_usd}`` (not pinned on the spine)."""
         ...
 
-    def transcribe(self, *, audio_url: str, language: str, spine_id: str | None, key: str) -> dict[str, Any]:
+    def transcribe(
+        self, *, audio_url: str, language: str, spine_id: str | None, key: str
+    ) -> dict[str, Any]:
         """``{words: [{word, start, end}], text}`` for a file already in our storage."""
         ...
 
@@ -120,7 +133,13 @@ class DramaApiAudio:
         Injected for tests.
     """
 
-    def __init__(self, desk: Path, *, episode: int = 1, sleep: Callable[[float], None] = time.sleep) -> None:
+    def __init__(
+        self,
+        desk: Path,
+        *,
+        episode: int = 1,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self.desk = desk
         self.episode = episode
         self.sleep = sleep
@@ -130,7 +149,9 @@ class DramaApiAudio:
 
         run = open_api(self.desk, self.episode)
         try:
-            return post_with_retries(run.client, run.url(path), run.headers(key), body, sleep=self.sleep)
+            return post_with_retries(
+                run.client, run.url(path), run.headers(key), body, sleep=self.sleep
+            )
         finally:
             run.client.close()
 
@@ -157,24 +178,41 @@ class DramaApiAudio:
         body: dict[str, Any] = {"spine_version": spine_version}
         body.update({"text": text} if text is not None else {"lines": lines})
         body.update({"voices": list(voices)} if voices else {"candidate_count": count})
-        return self._post(f"/v1/spines/{spine_id}/cast/{cast_id}/voice-auditions/render", body, key)
+        return self._post(
+            f"/v1/spines/{spine_id}/cast/{cast_id}/voice-auditions/render", body, key
+        )
 
     def voice_line(
-        self, *, spine_id: str, cast_id: str, text: str, language: str, key: str, spoken_text: str | None = None
+        self,
+        *,
+        spine_id: str,
+        cast_id: str,
+        text: str,
+        language: str,
+        key: str,
+        spoken_text: str | None = None,
     ) -> dict[str, Any]:
         """POST ``…/voice-lines``."""
 
         body: dict[str, Any] = {"text": text, "language": language}
         if spoken_text:
             body["spoken_text"] = spoken_text
-        return self._post(f"/v1/spines/{spine_id}/cast/{cast_id}/voice-lines", body, key)
+        return self._post(
+            f"/v1/spines/{spine_id}/cast/{cast_id}/voice-lines", body, key
+        )
 
-    def sfx_cue(self, *, spine_id: str, sound: str, seconds: float, key: str) -> dict[str, Any]:
+    def sfx_cue(
+        self, *, spine_id: str, sound: str, seconds: float, key: str
+    ) -> dict[str, Any]:
         """POST ``/v1/spines/{id}/sfx-cues``."""
 
-        return self._post(f"/v1/spines/{spine_id}/sfx-cues", {"sound": sound, "seconds": seconds}, key)
+        return self._post(
+            f"/v1/spines/{spine_id}/sfx-cues", {"sound": sound, "seconds": seconds}, key
+        )
 
-    def music_bed(self, *, spine_id: str, brief: str | None, key: str) -> dict[str, Any]:
+    def music_bed(
+        self, *, spine_id: str, brief: str | None, key: str
+    ) -> dict[str, Any]:
         """POST ``/v1/spines/{id}/audio-bed/render`` (never pinned from here)."""
 
         body: dict[str, Any] = {"pin": False}
@@ -182,7 +220,9 @@ class DramaApiAudio:
             body["brief"] = brief
         return self._post(f"/v1/spines/{spine_id}/audio-bed/render", body, key)
 
-    def transcribe(self, *, audio_url: str, language: str, spine_id: str | None, key: str) -> dict[str, Any]:
+    def transcribe(
+        self, *, audio_url: str, language: str, spine_id: str | None, key: str
+    ) -> dict[str, Any]:
         """POST ``/v1/transcripts`` for a stored URL."""
 
         body: dict[str, Any] = {"audio_url": audio_url, "language": language}
@@ -193,7 +233,10 @@ class DramaApiAudio:
 
 def _retry_after(response: httpx.Response, default: float) -> float:
     try:
-        return min(MAX_WAIT_SECONDS, max(0.0, float(response.headers.get("Retry-After", default))))
+        return min(
+            MAX_WAIT_SECONDS,
+            max(0.0, float(response.headers.get("Retry-After", default))),
+        )
     except ValueError:
         return default
 
@@ -250,9 +293,17 @@ def post_with_retries(
         if response.status_code == 429 or code == "operator_audio_in_progress":
             if waits < MAX_WAITS and code != "budget_cap_exceeded":
                 waits += 1
-                sleep(_retry_after(response, 15.0 if code == "operator_audio_in_progress" else 6.0))
+                sleep(
+                    _retry_after(
+                        response, 15.0 if code == "operator_audio_in_progress" else 6.0
+                    )
+                )
                 continue
-        elif response.status_code == 502 and code == "operator_audio_failed" and replays < MAX_FAILED_REPLAYS:
+        elif (
+            response.status_code == 502
+            and code == "operator_audio_failed"
+            and replays < MAX_FAILED_REPLAYS
+        ):
             replays += 1
             continue
         hint = HINTS.get(code, "")

@@ -14,7 +14,12 @@ import pytest
 from conftest import set_phase
 from creation import episode_commands as ec
 from creation import orchestrate
-from creation.brief_lines import brief_vs_spine_lines, compare_lines, parse_brief_lines, spine_script_lines
+from creation.brief_lines import (
+    brief_vs_spine_lines,
+    compare_lines,
+    parse_brief_lines,
+    spine_script_lines,
+)
 from creation.cli_produce import main as produce_main
 from creation.ops.floor import approve_script
 from creation.ops.state import episode_by_ordinal, load_series
@@ -42,7 +47,9 @@ def _desk_lines(desk: Path) -> list[tuple[str, str]]:
     return [(line.speaker, line.original) for line in take.lines]
 
 
-def test_line_before_the_gate_patches_the_server_resaves_the_spine_and_syncs_the_desk(desk: Path, api: FakeApi) -> None:
+def test_line_before_the_gate_patches_the_server_resaves_the_spine_and_syncs_the_desk(
+    desk: Path, api: FakeApi
+) -> None:
     api.spine_doc = spine_fixture(approved=False)
     apply = _apply_line_patch(api)
 
@@ -59,7 +66,15 @@ def test_line_before_the_gate_patches_the_server_resaves_the_spine_and_syncs_the
     assert bodies == [
         {
             "spine_version": "v5",
-            "patch": {"dialogue_lines": [{"line_id": "line_episode_01_02", "text": "Not for you.", "cast_id": "cast_hana"}]},
+            "patch": {
+                "dialogue_lines": [
+                    {
+                        "line_id": "line_episode_01_02",
+                        "text": "Not for you.",
+                        "cast_id": "cast_hana",
+                    }
+                ]
+            },
         }
     ]
     assert _desk_lines(desk) == [("Hana", "We're closed."), ("Hana", "Not for you.")]
@@ -71,7 +86,9 @@ def test_line_before_the_gate_patches_the_server_resaves_the_spine_and_syncs_the
     assert "pending again" not in text
 
 
-def test_line_after_the_gate_goes_through_the_cascade_and_reopens_the_desks_script_yes(desk: Path, api: FakeApi) -> None:
+def test_line_after_the_gate_goes_through_the_cascade_and_reopens_the_desks_script_yes(
+    desk: Path, api: FakeApi
+) -> None:
     apply = _apply_line_patch(api)
     edits: list[dict[str, Any]] = []
 
@@ -89,25 +106,51 @@ def test_line_after_the_gate_goes_through_the_cascade_and_reopens_the_desks_scri
     approve_script(desk, episode=1)
     out = io.StringIO()
 
-    ec.run_line(desk, episode=1, line="line_episode_01_01", text="We're closed. Go home.", out=out)
+    ec.run_line(
+        desk,
+        episode=1,
+        line="line_episode_01_01",
+        text="We're closed. Go home.",
+        out=out,
+    )
 
-    assert edits == [{"dialogue_lines": [{"line_id": "line_episode_01_01", "text": "We're closed. Go home."}]}]
-    assert _desk_lines(desk) == [("Hana", "We're closed. Go home."), ("Ren", "Not for me.")]
+    assert edits == [
+        {
+            "dialogue_lines": [
+                {"line_id": "line_episode_01_01", "text": "We're closed. Go home."}
+            ]
+        }
+    ]
+    assert _desk_lines(desk) == [
+        ("Hana", "We're closed. Go home."),
+        ("Ren", "Not for me."),
+    ]
     text = out.getvalue()
     assert "the server keeps this script approved" in text
     assert "pending again" in text and "--gate script --episode 1" in text
     assert episode_by_ordinal(load_series(desk), 1).script.status == "pending"
 
 
-def test_line_speaker_outside_the_cast_points_to_new_voice(desk: Path, api: FakeApi) -> None:
-    with pytest.raises(ec.CommandStopped, match="no cast member 'Speaker voice'.*--new-voice NAME"):
-        ec.run_line(desk, episode=1, line="1", speaker="Speaker voice", out=io.StringIO())
-    with pytest.raises(ec.CommandStopped, match=r"no line '9' in episode 1; its lines are:\n  1\. line_episode_01_01"):
+def test_line_speaker_outside_the_cast_points_to_new_voice(
+    desk: Path, api: FakeApi
+) -> None:
+    with pytest.raises(
+        ec.CommandStopped, match="no cast member 'Speaker voice'.*--new-voice NAME"
+    ):
+        ec.run_line(
+            desk, episode=1, line="1", speaker="Speaker voice", out=io.StringIO()
+        )
+    with pytest.raises(
+        ec.CommandStopped,
+        match=r"no line '9' in episode 1; its lines are:\n  1\. line_episode_01_01",
+    ):
         ec.run_line(desk, episode=1, line="9", text="x", out=io.StringIO())
     assert [call for call in api.calls if call[0] != "GET"] == []
 
 
-def test_line_marks_a_speaker_heard_not_seen_and_warns_when_the_speaker_is_not_drawn(desk: Path, api: FakeApi) -> None:
+def test_line_marks_a_speaker_heard_not_seen_and_warns_when_the_speaker_is_not_drawn(
+    desk: Path, api: FakeApi
+) -> None:
     api.spine_doc = spine_fixture(approved=False)
     api.spine_doc["beats"][0]["frame_id"] = "frame_episode_01_01"
     apply = _apply_line_patch(api)
@@ -124,11 +167,15 @@ def test_line_marks_a_speaker_heard_not_seen_and_warns_when_the_speaker_is_not_d
     out = io.StringIO()
     ec.run_line(desk, episode=1, line="2", off_screen=True, out=out)
     body = [b for m, _, b, _ in api.calls if m == "PATCH"][-1]
-    assert body["patch"] == {"dialogue_lines": [{"line_id": "line_episode_01_02", "off_screen": True}]}
+    assert body["patch"] == {
+        "dialogue_lines": [{"line_id": "line_episode_01_02", "off_screen": True}]
+    }
     assert "does not draw" not in out.getvalue()
 
 
-def test_a_new_english_line_on_a_japanese_show_says_the_performed_line_is_rewritten(desk: Path, api: FakeApi) -> None:
+def test_a_new_english_line_on_a_japanese_show_says_the_performed_line_is_rewritten(
+    desk: Path, api: FakeApi
+) -> None:
     api.spine_doc = spine_fixture(approved=False, spoken_language="ja-JP")
     api.routes[("PATCH", "/v1/spines/sp1")] = {}
     out = io.StringIO()
@@ -139,7 +186,9 @@ def test_a_new_english_line_on_a_japanese_show_says_the_performed_line_is_rewrit
     assert "when the script is approved" in out.getvalue()
 
 
-def test_line_with_no_change_lists_the_lines_through_the_cli(desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]) -> None:
+def test_line_with_no_change_lists_the_lines_through_the_cli(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
     assert produce_main(["line", "--desk", str(desk), "--episode", "1"]) == 0
     text = capsys.readouterr().out
     assert "1. line_episode_01_01  beat 1  Hana: We're closed." in text
@@ -156,12 +205,17 @@ def _board_spine() -> dict[str, Any]:
     return spine
 
 
-def test_the_shot_list_says_who_speaks_on_each_row_and_warns_when_they_are_not_drawn() -> None:
+def test_the_shot_list_says_who_speaks_on_each_row_and_warns_when_they_are_not_drawn() -> (
+    None
+):
     lines = "\n".join(shot_list_lines(_board_spine(), episode=1))
 
     assert 'row 2 cell 1 says: Hana: "We\'re closed."' in lines
     assert 'row 2 cell 1 says: Ren: "Not for me."' in lines
-    assert '!! row 2: Ren speaks "Not for me." but is not drawn (the row shows Hana)' in lines
+    assert (
+        '!! row 2: Ren speaks "Not for me." but is not drawn (the row shows Hana)'
+        in lines
+    )
     assert "!! row 2: Hana" not in lines
     assert "row 1 cell" not in lines
 
@@ -178,7 +232,9 @@ def test_an_off_screen_speaker_needs_no_place_on_the_row() -> None:
 
 def test_a_speaker_placed_off_frame_is_warned() -> None:
     spine = _board_spine()
-    spine["frames"][1]["visual_brief"]["subject_blocking"].append({"cast_id": "cast_ren", "frame_position": "off-frame right"})
+    spine["frames"][1]["visual_brief"]["subject_blocking"].append(
+        {"cast_id": "cast_ren", "frame_position": "off-frame right"}
+    )
 
     lines = "\n".join(shot_list_lines(spine, episode=1))
 
@@ -230,11 +286,18 @@ def test_the_brief_lines_table_is_read_with_speakers_stripped_of_directions() ->
         ("D-9341", "My eyes are burning, please open the door!"),
         ("D-9341", "No no no— I'm not blinking, I'm NOT—"),
     ]
-    assert parse_brief_lines("# Brief\n\n## Lines\n\n### Take 1\n\n| # | Speaker | Original | Translation |\n| --- |") == []
+    assert (
+        parse_brief_lines(
+            "# Brief\n\n## Lines\n\n### Take 1\n\n| # | Speaker | Original | Translation |\n| --- |"
+        )
+        == []
+    )
 
 
 def test_brief_lines_are_matched_by_speaker_and_similarity() -> None:
-    matches = compare_lines(parse_brief_lines(BRIEF), spine_script_lines(_drafted(), episode=1))
+    matches = compare_lines(
+        parse_brief_lines(BRIEF), spine_script_lines(_drafted(), episode=1)
+    )
     assert [(m.verdict, m.spine.line_id if m.spine else None) for m in matches] == [
         ("kept", "l1"),
         ("cut", None),
@@ -246,14 +309,22 @@ def test_the_comparison_prints_counts_each_change_and_what_to_do() -> None:
     text = "\n".join(brief_vs_spine_lines(BRIEF, _drafted(), episode=1))
     assert "brief 3 -> script 2 (kept 1, rewritten 1, cut 1, added 0)" in text
     assert 'cut        D-9341: "My eyes are burning, please open the door!"' in text
-    assert 'script D-9341: "No no no, I\'m not blinking. Someone take over."  [l3]' in text
+    assert (
+        'script D-9341: "No no no, I\'m not blinking. Someone take over."  [l3]' in text
+    )
     assert "fictora-produce line" in text
     assert brief_vs_spine_lines("A shop at closing time.", _drafted(), episode=1) == []
 
 
 def test_step_prints_the_brief_against_the_draft(desk: Path, api: FakeApi) -> None:
-    api.spine_doc = {**api.spine_doc, "episode_summaries": api.spine_doc["episode_summaries"][:1]}
-    api.routes[("POST", "/v1/prompt-video-authoring-drafts")] = {"plan_job_id": "job_plan", "spine_id": "sp1"}
+    api.spine_doc = {
+        **api.spine_doc,
+        "episode_summaries": api.spine_doc["episode_summaries"][:1],
+    }
+    api.routes[("POST", "/v1/prompt-video-authoring-drafts")] = {
+        "plan_job_id": "job_plan",
+        "spine_id": "sp1",
+    }
     api.jobs["job_plan"] = {"status": "completed"}
     brief = (
         "## Lines\n\n| # | Speaker | Original | Translation |\n| --- | --- | --- | --- |\n"

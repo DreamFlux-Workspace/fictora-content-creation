@@ -9,8 +9,18 @@ def test_cast_plates_present_from_media_assets() -> None:
     spine = {
         "cast": [{"cast_id": "cast_a"}, {"cast_id": "cast_b"}],
         "media_assets": [
-            {"relation_type": "cast_card", "relation_id": "cast_a", "url": "https://x/a.png", "stale": False},
-            {"relation_type": "cast_card", "relation_id": "cast_b", "url": "https://x/b.png", "stale": False},
+            {
+                "relation_type": "cast_card",
+                "relation_id": "cast_a",
+                "url": "https://x/a.png",
+                "stale": False,
+            },
+            {
+                "relation_type": "cast_card",
+                "relation_id": "cast_b",
+                "url": "https://x/b.png",
+                "stale": False,
+            },
         ],
     }
     assert _cast_plates_present(spine) is True
@@ -20,7 +30,12 @@ def test_cast_plates_present_false_when_one_missing() -> None:
     spine = {
         "cast": [{"cast_id": "cast_a"}, {"cast_id": "cast_b"}],
         "media_assets": [
-            {"relation_type": "cast_card", "relation_id": "cast_a", "url": "https://x/a.png", "stale": False},
+            {
+                "relation_type": "cast_card",
+                "relation_id": "cast_a",
+                "url": "https://x/a.png",
+                "stale": False,
+            },
         ],
     }
     assert _cast_plates_present(spine) is False
@@ -36,7 +51,12 @@ def test_voice_only_cast_is_not_waited_on() -> None:
     spine = {
         "cast": [{"cast_id": "cast_a"}, {"cast_id": "cast_voice", "voice_only": True}],
         "media_assets": [
-            {"relation_type": "cast_card", "relation_id": "cast_a", "url": "https://x/a.png", "stale": False},
+            {
+                "relation_type": "cast_card",
+                "relation_id": "cast_a",
+                "url": "https://x/a.png",
+                "stale": False,
+            },
         ],
     }
     assert _cast_plates_present(spine) is True
@@ -46,7 +66,12 @@ def test_voice_only_flag_false_or_absent_still_owes_a_plate() -> None:
     spine = {
         "cast": [{"cast_id": "cast_a"}, {"cast_id": "cast_b", "voice_only": False}],
         "media_assets": [
-            {"relation_type": "cast_card", "relation_id": "cast_a", "url": "https://x/a.png", "stale": False},
+            {
+                "relation_type": "cast_card",
+                "relation_id": "cast_a",
+                "url": "https://x/a.png",
+                "stale": False,
+            },
         ],
     }
     assert _cast_plates_present(spine) is False

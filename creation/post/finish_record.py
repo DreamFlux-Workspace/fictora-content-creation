@@ -137,7 +137,9 @@ def finish_records(desk: Path, episode: int) -> list[FinishRecord]:
 def latest_finish_record(desk: Path, episode: int, take_id: str) -> FinishRecord | None:
     """The newest complete finish record of one take."""
 
-    records = [r for r in finish_records(desk, episode) if r.take_id == take_id and r.complete]
+    records = [
+        r for r in finish_records(desk, episode) if r.take_id == take_id and r.complete
+    ]
     return records[-1] if records else None
 
 
@@ -151,6 +153,9 @@ def record_for_file(desk: Path, file: Path) -> FinishRecord | None:
     for episode in episodes:
         for record in finish_records(desk, episode):
             names = ("final", "master", "pre_bed")
-            if any((p := record.resolve(desk, n)) is not None and p.resolve() == wanted for n in names):
+            if any(
+                (p := record.resolve(desk, n)) is not None and p.resolve() == wanted
+                for n in names
+            ):
                 hits.append(record)
     return hits[-1] if hits else None

@@ -57,7 +57,9 @@ def service_music_maker(audio: AudioService) -> Maker:
 
     def make(spine: Mapping[str, Any], music: str | None, target: Path) -> Path:
         spine_id = str(spine.get("spine_id") or "")
-        key = f"bed-{spine_id}" + (f"-{hashlib.sha256(music.encode()).hexdigest()[:10]}" if music else "")
+        key = f"bed-{spine_id}" + (
+            f"-{hashlib.sha256(music.encode()).hexdigest()[:10]}" if music else ""
+        )
         answer = audio.music_bed(spine_id=spine_id, brief=music, key=key)
         url = str(answer["audio_url"])
         return download(url, target)
@@ -151,13 +153,19 @@ def resolve_bed(
         path = downloader(url, next_versioned_path(beds, "series-bed", suffix))
         return Bed(pin_bed(desk, path), "the show's (spine)")
     if spine is None:
-        raise ValueError("no bed pinned and no saved spine to make one: pin a file with `set-bed --path`")
+        raise ValueError(
+            "no bed pinned and no saved spine to make one: pin a file with `set-bed --path`"
+        )
     target = next_versioned_path(beds, "show-bed", ".mp3")
     with tempfile.TemporaryDirectory() as scratch:
         raw = maker(spine, music, Path(scratch) / "raw-bed")
         level_bed(raw, target)
     target.with_suffix(".json").write_text(
-        json.dumps({"spine_id": spine.get("spine_id"), "music": music, "made_by": "drama-api"}, indent=2) + "\n",
+        json.dumps(
+            {"spine_id": spine.get("spine_id"), "music": music, "made_by": "drama-api"},
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
     return Bed(pin_bed(desk, target), "made", BED_USD)

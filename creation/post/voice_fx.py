@@ -71,11 +71,15 @@ def parse_range(raw: str) -> tuple[float, float]:
 
     match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*", raw)
     if not match or float(match[1]) >= float(match[2]):
-        raise ValueError(f"--range must be START-END in seconds with START < END (like 0-3.5); got {raw!r}")
+        raise ValueError(
+            f"--range must be START-END in seconds with START < END (like 0-3.5); got {raw!r}"
+        )
     return float(match[1]), float(match[2])
 
 
-def range_rms_db(source: Path, start: float, end: float, chain: str | None = None) -> float:
+def range_rms_db(
+    source: Path, start: float, end: float, chain: str | None = None
+) -> float:
     """RMS level (dB) of ``source``'s audio between ``start`` and ``end``, after ``chain`` if given.
 
     The chain runs on the whole file first, so its echo and compressor state
@@ -103,7 +107,9 @@ def match_gain_db(before: float, after: float) -> float:
     return max(-MAX_MATCH_DB, min(MAX_MATCH_DB, before - after))
 
 
-def apply_voice_fx(source: Path, *, start: float, end: float, preset: str, out: Path | None = None) -> Path:
+def apply_voice_fx(
+    source: Path, *, start: float, end: float, preset: str, out: Path | None = None
+) -> Path:
     """Treat ``source``'s audio between ``start`` and ``end`` with ``preset``; write a new file.
 
     Parameters
@@ -134,14 +140,20 @@ def apply_voice_fx(source: Path, *, start: float, end: float, preset: str, out: 
         raise ValueError(f"--preset is one of {', '.join(PRESETS)}; got {preset!r}")
     total = media_duration(source)
     if start >= total:
-        raise ValueError(f"the range starts at {start:.2f}s but {source.name} is {total:.2f}s long")
+        raise ValueError(
+            f"the range starts at {start:.2f}s but {source.name} is {total:.2f}s long"
+        )
     end = min(end, total)
     if out is None:
-        out = next_versioned_path(source.parent, f"{source.stem}-{preset}", source.suffix)
+        out = next_versioned_path(
+            source.parent, f"{source.stem}-{preset}", source.suffix
+        )
     if out.exists():
         raise FileExistsError(f"{out} exists; local post never overwrites")
     chosen = PRESETS[preset]
-    gain = match_gain_db(range_rms_db(source, start, end), range_rms_db(source, start, end, chosen.chain))
+    gain = match_gain_db(
+        range_rms_db(source, start, end), range_rms_db(source, start, end, chosen.chain)
+    )
     inside = f"clip((t-{start})/{EDGE_SECONDS},0,1)*clip(({end}-t)/{EDGE_SECONDS},0,1)"
     graph = ";".join(
         [
@@ -156,9 +168,22 @@ def apply_voice_fx(source: Path, *, start: float, end: float, preset: str, out: 
     has_video = source.suffix.lower() in {".mp4", ".mov", ".m4v", ".mkv"}
     if has_video:
         probe_video(source)
-        codecs = ["-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k"]
+        codecs = [
+            "-map",
+            "0:v",
+            "-map",
+            "[a]",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+        ]
     else:
-        codecs = ["-map", "[a]"] + (["-c:a", "aac", "-b:a", "192k"] if source.suffix.lower() == ".m4a" else [])
+        codecs = ["-map", "[a]"] + (
+            ["-c:a", "aac", "-b:a", "192k"] if source.suffix.lower() == ".m4a" else []
+        )
     run_ffmpeg(["-i", str(source), "-filter_complex", graph, *codecs, str(out)])
     return out
 

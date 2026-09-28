@@ -16,7 +16,9 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
         default=1,
         help="Ignored: episode 1 is drafted alone; write later episodes with `author --episode N`.",
     )
-    parser.add_argument("--clip-seconds", type=int, default=15, help="Take length 4–15.")
+    parser.add_argument(
+        "--clip-seconds", type=int, default=15, help="Take length 4–15."
+    )
     parser.add_argument(
         "--cut-tempo",
         default=None,
@@ -60,6 +62,8 @@ def config_from_args(args: argparse.Namespace) -> ProductionConfig:
         caption_style=str(args.caption_style),
         api_captions=bool(args.api_captions),
         fallback_estimate_usd=(
-            float(args.fallback_estimate_usd) if args.fallback_estimate_usd is not None else None
+            float(args.fallback_estimate_usd)
+            if args.fallback_estimate_usd is not None
+            else None
         ),
     )

@@ -46,9 +46,18 @@ def test_episode_lines_reads_only_that_episode_in_order() -> None:
     spine = {
         "spine": {
             "beats": [
-                {"episode_id": "episode_01", "dialogue_lines": [{"text": "I'm coming for you."}]},
-                {"episode_id": "episode_02", "dialogue_lines": [{"text": "Not this one."}]},
-                {"episode_id": "episode_01", "dialogue_lines": [{"text": " Second. "}, {"text": ""}]},
+                {
+                    "episode_id": "episode_01",
+                    "dialogue_lines": [{"text": "I'm coming for you."}],
+                },
+                {
+                    "episode_id": "episode_02",
+                    "dialogue_lines": [{"text": "Not this one."}],
+                },
+                {
+                    "episode_id": "episode_01",
+                    "dialogue_lines": [{"text": " Second. "}, {"text": ""}],
+                },
             ]
         }
     }
@@ -57,10 +66,16 @@ def test_episode_lines_reads_only_that_episode_in_order() -> None:
 
 def test_episode_lines_find_a_later_episode_by_ordinal_not_by_name() -> None:
     spine = {
-        "episode_summaries": [{"episode_id": "episode_01", "ordinal": 1}, {"episode_id": "ep_02", "ordinal": 2}],
+        "episode_summaries": [
+            {"episode_id": "episode_01", "ordinal": 1},
+            {"episode_id": "ep_02", "ordinal": 2},
+        ],
         "beats": [
             {"episode_id": "episode_01", "dialogue_lines": [{"text": "First."}]},
-            {"episode_id": "ep_02", "dialogue_lines": [{"text": "Second episode line."}]},
+            {
+                "episode_id": "ep_02",
+                "dialogue_lines": [{"text": "Second episode line."}],
+            },
         ],
     }
     assert episode_lines(spine, 2) == ["Second episode line."]
@@ -138,8 +153,14 @@ def test_japanese_show_shows_each_whole_english_line_over_its_speech() -> None:
 
 
 def test_whole_line_hold_stops_at_the_next_line() -> None:
-    cues = build_cues(["Wait here for me.", "No."], [Span(1.0, 2.0), Span(2.05, 2.6)], whole_lines=True)
-    assert [c.text for c in cues] == ["Wait here for me.", "No."], "never split into words"
+    cues = build_cues(
+        ["Wait here for me.", "No."],
+        [Span(1.0, 2.0), Span(2.05, 2.6)],
+        whole_lines=True,
+    )
+    assert [c.text for c in cues] == ["Wait here for me.", "No."], (
+        "never split into words"
+    )
     assert cues[0].end == pytest.approx(2.05)
 
 
@@ -154,14 +175,20 @@ def test_whole_line_hold_stops_at_the_next_line() -> None:
         ({}, False),
     ],
 )
-def test_whole_lines_follow_the_spoken_language(spine: dict[str, object], whole: bool) -> None:
+def test_whole_lines_follow_the_spoken_language(
+    spine: dict[str, object], whole: bool
+) -> None:
     assert captions_whole_lines(spine) is whole
 
 
 def test_ass_uses_house_style_scaled_to_frame() -> None:
     ass = build_ass([Cue(1.0, 1.5, "Hi")], width=768, height=1344)
-    assert "Style: House,Poppins,50,&H0000E5FF,&H0000E5FF,&H00000000,&H80000000,-1," in ass
-    assert ass.split("Style: House,")[1].split("\n")[0].endswith(",2,10,10,511,1")  # bottom edge at 62% (social safe zones)
+    assert (
+        "Style: House,Poppins,50,&H0000E5FF,&H0000E5FF,&H00000000,&H80000000,-1," in ass
+    )
+    assert (
+        ass.split("Style: House,")[1].split("\n")[0].endswith(",2,10,10,511,1")
+    )  # bottom edge at 62% (social safe zones)
     assert "Dialogue: 0,0:00:01.00,0:00:01.50,House,,0,0,0,,Hi" in ass
     half = build_ass([], width=384, height=672)
     assert "Style: House,Poppins,25," in half
@@ -172,17 +199,48 @@ def test_caption_take_end_to_end(tmp_path: Path) -> None:
     ep = tmp_path / "ep01"
     (ep / "api").mkdir(parents=True)
     (ep / "takes").mkdir()
-    spine = {"beats": [{"episode_id": "episode_01", "dialogue_lines": [{"text": "I'm coming for you."}]}]}
+    spine = {
+        "beats": [
+            {
+                "episode_id": "episode_01",
+                "dialogue_lines": [{"text": "I'm coming for you."}],
+            }
+        ]
+    }
     (ep / "api" / "03_spine.json").write_text(json.dumps(spine))
     # Later approve receipt has no beats; the older full snapshot must still be used.
-    (ep / "api" / "04_spine_approved.json").write_text(json.dumps({"approval_state": "approved"}))
+    (ep / "api" / "04_spine_approved.json").write_text(
+        json.dumps({"approval_state": "approved"})
+    )
     take = ep / "takes" / "take-ep01-t1-raw-v1.mp4"
     # 4 s clip: silence, a 1 s tone standing in for the line, silence.
     subprocess.run(
-        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=192x336:d=4",
-         "-f", "lavfi", "-i", "sine=f=440:d=4",
-         "-filter_complex", "[1:a]volume='if(between(t,1,2),1,0)':eval=frame[a]",
-         "-map", "0:v", "-map", "[a]", "-shortest", "-c:v", "libx264", "-c:a", "aac", str(take)],
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=gray:s=192x336:d=4",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=f=440:d=4",
+            "-filter_complex",
+            "[1:a]volume='if(between(t,1,2),1,0)':eval=frame[a]",
+            "-map",
+            "0:v",
+            "-map",
+            "[a]",
+            "-shortest",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            str(take),
+        ],
         check=True,
     )
     result = caption_take(tmp_path)
@@ -209,7 +267,9 @@ def _tone_take(path: Path) -> None:
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not installed")
 @pytest.mark.parametrize(("language", "whole"), [("ja-JP", True), ("en-US", False)])
-def test_caption_take_reads_the_spoken_language_from_the_spine(tmp_path: Path, language: str, whole: bool) -> None:
+def test_caption_take_reads_the_spoken_language_from_the_spine(
+    tmp_path: Path, language: str, whole: bool
+) -> None:
     ep = tmp_path / "ep01"
     (ep / "api").mkdir(parents=True)
     (ep / "takes").mkdir()
@@ -218,7 +278,9 @@ def test_caption_take_reads_the_spoken_language_from_the_spine(tmp_path: Path, l
         "beats": [{"episode_id": "episode_01", "dialogue_lines": [
             {"text": "Wait for me here, okay.", "spoken_text": "ここで待ってて", "subtitle_text": "Wait here for me, okay."}]}],
     }  # fmt: skip
-    (ep / "api" / "03_spine.json").write_text(json.dumps(spine, ensure_ascii=False), encoding="utf-8")
+    (ep / "api" / "03_spine.json").write_text(
+        json.dumps(spine, ensure_ascii=False), encoding="utf-8"
+    )
     _tone_take(ep / "takes" / "take-ep01-t1-raw-v1.mp4")
     result = caption_take(tmp_path)
     assert result.whole_lines is whole

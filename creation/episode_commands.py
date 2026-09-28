@@ -85,7 +85,13 @@ from creation.production_state import (
     save_production,
     start_episode,
 )
-from creation.shot_plan import OLDER_SERVER_HINT, ShotPlanError, plan_from_json, plan_from_shots, plan_lines
+from creation.shot_plan import (
+    OLDER_SERVER_HINT,
+    ShotPlanError,
+    plan_from_json,
+    plan_from_shots,
+    plan_lines,
+)
 from creation.spine_view import (
     beats_by_take,
     dialogue_line_ids,
@@ -121,8 +127,26 @@ LOOK_FRAME_HINTS = {
 }
 """Cascade items at this ``estimated_tier`` redraw or re-film: provider money."""
 MEMORY_FIELDS = {"note": "notes", "thread": "threads"}
-MEMORY_KEYS = ("canon", "threads", "knowledge", "notes", "craft", "decisions", "last_image", "on_screen", "through_episode_ordinal")
-MEMORY_LIST_MAX = {"canon": 60, "threads": 20, "knowledge": 30, "notes": 20, "craft": 20, "decisions": 20, "on_screen": 8}
+MEMORY_KEYS = (
+    "canon",
+    "threads",
+    "knowledge",
+    "notes",
+    "craft",
+    "decisions",
+    "last_image",
+    "on_screen",
+    "through_episode_ordinal",
+)
+MEMORY_LIST_MAX = {
+    "canon": 60,
+    "threads": 20,
+    "knowledge": 30,
+    "notes": 20,
+    "craft": 20,
+    "decisions": 20,
+    "on_screen": 8,
+}
 JOB_ID_KEYS = ("job_id", "extension_job_id")
 PLATE_DEADLINE_SECONDS = 3600.0
 """Poll cap on one plate redraw (the cast enrol's cap)."""
@@ -136,7 +160,7 @@ REDRAW_CAUSE_IS_A_LABEL = (
 
 NEW_VOICE_HINT = (
     "To add someone who is only heard (an intercom, a caller), add their line with a new voice: "
-    "`line --add --beat N --text \"...\" --new-voice NAME --role \"...\" --voice-description \"...\"`"
+    '`line --add --beat N --text "..." --new-voice NAME --role "..." --voice-description "..."`'
 )
 
 
@@ -151,7 +175,9 @@ def _desk_session(desk: Path) -> tuple[Path, ProductionState, DramaApiRunSession
     desk = desk.expanduser().resolve()
     state = load_production(desk)
     if not state.spine_id:
-        raise CommandStopped("this desk has no story on the API yet; run `fictora-produce step` (draft) first")
+        raise CommandStopped(
+            "this desk has no story on the API yet; run `fictora-produce step` (draft) first"
+        )
     save_production(desk, state)  # persists the stable idempotency prefix
     return desk, state, _open_run(desk, state)
 
@@ -160,7 +186,10 @@ def _save_desk_json(desk: Path, stem: str, payload: Any) -> Path:
     folder = desk / "api"
     folder.mkdir(parents=True, exist_ok=True)
     path = next_versioned_path(folder, stem, ".json")
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n",
+        encoding="utf-8",
+    )
     return path
 
 
@@ -230,21 +259,34 @@ def run_unit(
     state = load_production(desk)
     pending = state.pending.get(unit)
     if pending is None:
-        pending = {"key": f"{state.idempotency_prefix}-{unit}-a{state.attempts.get(unit, 0) + 1}", "job_id": None}
+        pending = {
+            "key": f"{state.idempotency_prefix}-{unit}-a{state.attempts.get(unit, 0) + 1}",
+            "job_id": None,
+        }
         state.pending[unit] = pending
         save_production(desk, state)
     job_id = pending.get("job_id")
     if job_id:
-        print(f"[{unit}] Picking up job {job_id} from the last run (same key, no second charge).", file=sys.stderr)
+        print(
+            f"[{unit}] Picking up job {job_id} from the last run (same key, no second charge).",
+            file=sys.stderr,
+        )
     else:
         response = run.post(path, body, idempotency_key=str(pending["key"]))
         job_id = admitted_job_id(response)
         if not job_id:
-            raise CommandStopped(f"{path} answered without a job id ({', '.join(sorted(response)) or 'empty body'})")
+            raise CommandStopped(
+                f"{path} answered without a job id ({', '.join(sorted(response)) or 'empty body'})"
+            )
         state = load_production(desk)
         state.pending[unit]["job_id"] = job_id
         save_production(desk, state)
-    terminal = run.poll_job(str(job_id), label=unit, video_route=video_route, deadline_seconds=deadline_seconds)
+    terminal = run.poll_job(
+        str(job_id),
+        label=unit,
+        video_route=video_route,
+        deadline_seconds=deadline_seconds,
+    )
     state = load_production(desk)
     state.pending.pop(unit, None)
     state.attempts[unit] = state.attempts.get(unit, 0) + 1
@@ -257,7 +299,9 @@ def run_unit(
 # --- Arc and briefs ------------------------------------------------------------------------------
 
 
-def _brief(run: DramaApiRunSession, spine_id: str, version: str, *, episodes: int | None) -> dict[str, Any]:
+def _brief(
+    run: DramaApiRunSession, spine_id: str, version: str, *, episodes: int | None
+) -> dict[str, Any]:
     body: dict[str, Any] = {"spine_version": version}
     if episodes is not None:
         body["season_target_episode_count"] = episodes
@@ -266,10 +310,14 @@ def _brief(run: DramaApiRunSession, spine_id: str, version: str, *, episodes: in
 
 def _check_run_length(episodes: int | None) -> None:
     if episodes is not None and not 7 <= episodes <= 240:
-        raise CommandStopped("--episodes is the intended run, 7-240 (a soft default; the season can continue past it)")
+        raise CommandStopped(
+            "--episodes is the intended run, 7-240 (a soft default; the season can continue past it)"
+        )
 
 
-def run_arc_list(desk: Path, *, episodes: int | None = None, out: Any = None) -> list[dict[str, str]]:
+def run_arc_list(
+    desk: Path, *, episodes: int | None = None, out: Any = None
+) -> list[dict[str, str]]:
     """Read the episode-2 brief and record its series arcs on the desk. Spends nothing.
 
     Parameters
@@ -292,7 +340,9 @@ def run_arc_list(desk: Path, *, episodes: int | None = None, out: Any = None) ->
     desk, state, run = _desk_session(desk)
     try:
         spine = run.spine(state.spine_id or "")
-        brief = _brief(run, state.spine_id or "", str(spine["spine_version"]), episodes=episodes)
+        brief = _brief(
+            run, state.spine_id or "", str(spine["spine_version"]), episodes=episodes
+        )
     finally:
         run.client.close()
     saved = _save_desk_json(desk, "brief-ep02-arcs", brief)
@@ -305,7 +355,10 @@ def run_arc_list(desk: Path, *, episodes: int | None = None, out: Any = None) ->
             "only on a story drafted with episode 1 alone, after episode 1 is approved and before an arc is kept. "
             f"Brief saved to {saved}."
         )
-    options = [{"arc_id": str(a["arc_id"]), "title": str(a["title"]), "line": str(a["line"])} for a in arcs]
+    options = [
+        {"arc_id": str(a["arc_id"]), "title": str(a["title"]), "line": str(a["line"])}
+        for a in arcs
+    ]
     state = load_production(desk)
     state.arc_options = options
     save_production(desk, state)
@@ -313,7 +366,10 @@ def run_arc_list(desk: Path, *, episodes: int | None = None, out: Any = None) ->
         print(f"recap: {brief['recap']}", file=out)
     for number, arc in enumerate(options, start=1):
         print(f"{number}. {arc['title']} — {arc['line']}", file=out)
-    print(f"(saved {saved.name}; paste the arcs to the human, then `arc --pick N`)", file=out)
+    print(
+        f"(saved {saved.name}; paste the arcs to the human, then `arc --pick N`)",
+        file=out,
+    )
     return options
 
 
@@ -358,7 +414,9 @@ def run_arc_pick(
     new_title = " ".join((title or "").split()) or offered["title"]
     new_line = " ".join((line or "").split()) or offered["line"]
     if len(new_title) > ARC_TITLE_MAX or len(new_line) > ARC_LINE_MAX:
-        raise CommandStopped(f"an arc title is at most {ARC_TITLE_MAX} characters and its line at most {ARC_LINE_MAX}")
+        raise CommandStopped(
+            f"an arc title is at most {ARC_TITLE_MAX} characters and its line at most {ARC_LINE_MAX}"
+        )
     desk, state, run = _desk_session(desk)
     try:
         spine = run.spine(state.spine_id or "")
@@ -368,7 +426,9 @@ def run_arc_pick(
         }
         if episodes is not None:
             body["season_target_episode_count"] = episodes
-        updated = run.post(f"/v1/spines/{quote(state.spine_id or '', safe='')}/series-arc", body)
+        updated = run.post(
+            f"/v1/spines/{quote(state.spine_id or '', safe='')}/series-arc", body
+        )
         state = load_production(desk)
         state.series_arc = {
             **body["arc"],
@@ -378,7 +438,12 @@ def run_arc_pick(
         }
         save_production(desk, state)
         _save_desk_json(desk, "series-arc", updated)
-        brief = _brief(run, state.spine_id or "", str(updated.get("spine_version") or spine["spine_version"]), episodes=None)
+        brief = _brief(
+            run,
+            state.spine_id or "",
+            str(updated.get("spine_version") or spine["spine_version"]),
+            episodes=None,
+        )
     finally:
         run.client.close()
     saved = _save_desk_json(desk, "brief-ep02", brief)
@@ -386,11 +451,16 @@ def run_arc_pick(
     print(f"kept arc {option}: {new_title} — {new_line}", file=out)
     for number, direction in enumerate(directions, start=1):
         print(f"{number}. {direction.get('title')} — {direction.get('line')}", file=out)
-    print(f"(saved {saved.name}; the human picks one: `author --episode 2 --direction N` or --line)", file=out)
+    print(
+        f"(saved {saved.name}; the human picks one: `author --episode 2 --direction N` or --line)",
+        file=out,
+    )
     return directions
 
 
-def run_brief(desk: Path, *, episode: int, episodes: int | None = None, out: Any = None) -> list[dict[str, Any]]:
+def run_brief(
+    desk: Path, *, episode: int, episodes: int | None = None, out: Any = None
+) -> list[dict[str, Any]]:
     """Read the next-episode brief and save it as ``api/brief-epNN-vK.json`` (its directions). Spends nothing.
 
     Parameters
@@ -415,15 +485,22 @@ def run_brief(desk: Path, *, episode: int, episodes: int | None = None, out: Any
     desk, state, run = _desk_session(desk)
     try:
         spine = run.spine(state.spine_id or "")
-        brief = _brief(run, state.spine_id or "", str(spine["spine_version"]), episodes=episodes)
+        brief = _brief(
+            run, state.spine_id or "", str(spine["spine_version"]), episodes=episodes
+        )
     finally:
         run.client.close()
     next_ordinal = brief.get("next_episode_ordinal")
     if isinstance(next_ordinal, int) and next_ordinal != episode:
-        print(f"!! the server's next episode is {next_ordinal}, not {episode}", file=out)
+        print(
+            f"!! the server's next episode is {next_ordinal}, not {episode}", file=out
+        )
     saved = _save_desk_json(desk, f"brief-ep{episode:02d}", brief)
     if brief.get("arc_options") and (brief.get("facts") or {}).get("arc_pick"):
-        print("!! this brief is the arc pick: run `arc --list` / `arc --pick N` first", file=out)
+        print(
+            "!! this brief is the arc pick: run `arc --list` / `arc --pick N` first",
+            file=out,
+        )
     directions = list(brief.get("directions") or [])
     for number, direction in enumerate(directions, start=1):
         print(f"{number}. {direction.get('title')} — {direction.get('line')}", file=out)
@@ -435,7 +512,12 @@ def run_brief(desk: Path, *, episode: int, episodes: int | None = None, out: Any
 
 
 def author_direction(
-    desk: Path, episode: int, *, pick: int | None = None, line: str | None = None, title: str | None = None
+    desk: Path,
+    episode: int,
+    *,
+    pick: int | None = None,
+    line: str | None = None,
+    title: str | None = None,
 ) -> dict[str, str] | None:
     """Build the author request's ``direction``: a brief direction, or the human's own words.
 
@@ -461,7 +543,9 @@ def author_direction(
     line = " ".join((line or "").split()) or None
     title = " ".join((title or "").split()) or None
     if pick is not None and line is not None:
-        raise CommandStopped("--direction N sends the brief's direction; --line sends the human's own words. Pick one")
+        raise CommandStopped(
+            "--direction N sends the brief's direction; --line sends the human's own words. Pick one"
+        )
     if pick is None:
         if line is None:
             if title is not None:
@@ -472,21 +556,39 @@ def author_direction(
         raise CommandStopped("--title goes with --line")
     briefs = sorted(
         (desk.expanduser().resolve() / "api").glob(f"brief-ep{episode:02d}-v*.json"),
-        key=lambda path: int(path.stem.rsplit("-v", 1)[1]) if path.stem.rsplit("-v", 1)[1].isdigit() else 0,
+        key=lambda path: (
+            int(path.stem.rsplit("-v", 1)[1])
+            if path.stem.rsplit("-v", 1)[1].isdigit()
+            else 0
+        ),
     )
     if not briefs:
         raise CommandStopped(
             f"no saved brief for episode {episode} (api/brief-ep{episode:02d}-vN.json); run `brief --episode {episode}` "
             "or pass the direction in the human's words with --line"
         )
-    directions = json.loads(briefs[-1].read_text(encoding="utf-8")).get("directions") or []
+    directions = (
+        json.loads(briefs[-1].read_text(encoding="utf-8")).get("directions") or []
+    )
     if not 1 <= pick <= len(directions):
-        raise CommandStopped(f"--direction must be 1..{len(directions)} (from {briefs[-1].name})")
+        raise CommandStopped(
+            f"--direction must be 1..{len(directions)} (from {briefs[-1].name})"
+        )
     chosen = directions[pick - 1]
-    return {"direction_id": str(chosen["direction_id"]), "title": str(chosen["title"]), "line": str(chosen["line"])}
+    return {
+        "direction_id": str(chosen["direction_id"]),
+        "title": str(chosen["title"]),
+        "line": str(chosen["line"]),
+    }
 
 
-def run_author(desk: Path, *, episode: int, direction: Mapping[str, str] | None = None, out: Any = None) -> Path:
+def run_author(
+    desk: Path,
+    *,
+    episode: int,
+    direction: Mapping[str, str] | None = None,
+    out: Any = None,
+) -> Path:
     """Write episode N (2 on), save the spine, put its lines on the desk, and point the desk at it. Never approves.
 
     ``POST /v1/spines/{id}/pilot-episodes/{n}/author {spine_version[, direction]}`` answers
@@ -512,11 +614,15 @@ def run_author(desk: Path, *, episode: int, direction: Mapping[str, str] | None 
     """
 
     if episode < 2:
-        raise CommandStopped("episode 1 is written by the draft (`step`); author writes episode 2 on")
+        raise CommandStopped(
+            "episode 1 is written by the draft (`step`); author writes episode 2 on"
+        )
     out = out or sys.stdout
     desk, state, run = _desk_session(desk)
     if state.phase == "ready_video":
-        raise CommandStopped("a take is in flight on this desk; finish it (`step`) before writing the next episode")
+        raise CommandStopped(
+            "a take is in flight on this desk; finish it (`step`) before writing the next episode"
+        )
     cfg = load_production_config(desk)
     while len(load_series(desk).episodes) < episode:
         opened = add_episode(desk)
@@ -526,7 +632,10 @@ def run_author(desk: Path, *, episode: int, direction: Mapping[str, str] | None 
         body: dict[str, Any] = {"spine_version": spine["spine_version"]}
         if direction:
             body["direction"] = dict(direction)
-        print(f"[author] Writing episode {episode} on the server (beats, lines, shots). Usually 1-3 minutes.", file=sys.stderr)
+        print(
+            f"[author] Writing episode {episode} on the server (beats, lines, shots). Usually 1-3 minutes.",
+            file=sys.stderr,
+        )
         terminal = run_unit(
             desk,
             run,
@@ -541,20 +650,32 @@ def run_author(desk: Path, *, episode: int, direction: Mapping[str, str] | None 
     finally:
         run.client.close()
     episode_id = episode_id_for(spine, episode)
-    if not any(isinstance(b, Mapping) and b.get("episode_id") == episode_id for b in spine.get("beats") or []):
-        raise CommandStopped(f"the job completed but the spine has no beats for {episode_id}; run `spine --refresh`")
+    if not any(
+        isinstance(b, Mapping) and b.get("episode_id") == episode_id
+        for b in spine.get("beats") or []
+    ):
+        raise CommandStopped(
+            f"the job completed but the spine has no beats for {episode_id}; run `spine --refresh`"
+        )
     path = save_spine_snapshot(desk, episode, spine)
     counts = sync_spine_lines(desk, spine, episode=episode)
     state = load_production(desk)
     start_episode(state, episode)
     save_production(desk, state)
     summary = episode_summary(spine, episode)
-    print(f"ep{episode:02d} ({episode_id}) {summary.get('title') or ''}".rstrip(), file=out)
+    print(
+        f"ep{episode:02d} ({episode_id}) {summary.get('title') or ''}".rstrip(),
+        file=out,
+    )
     if summary.get("summary"):
         print(f"  {summary['summary']}", file=out)
     print(script_gate_text(desk, spine, episode=episode), file=out)
     steer = f" Direction: {direction.get('line')}" if direction else ""
-    _note(desk, episode, f"author: {episode_id} ({summary.get('title', '')}), {sum(counts.values())} lines synced.{steer}")
+    _note(
+        desk,
+        episode,
+        f"author: {episode_id} ({summary.get('title', '')}), {sum(counts.values())} lines synced.{steer}",
+    )
     print(
         f"[author] Done -> {path}. Next: read the lines and shots above; say yes "
         f"(`fictora-produce approve --gate script`) or edit them.",
@@ -566,7 +687,9 @@ def run_author(desk: Path, *, episode: int, direction: Mapping[str, str] | None 
 # --- Memory ----------------------------------------------------------------------------------------
 
 
-def memory_body(memory: Mapping[str, Any], *, field: str, text: str) -> tuple[dict[str, Any], bool]:
+def memory_body(
+    memory: Mapping[str, Any], *, field: str, text: str
+) -> tuple[dict[str, Any], bool]:
     """Return the memory to PUT with one line appended to ``field``, and whether it was new.
 
     Only the write contract's fields are sent back, and the list caps are checked before any call.
@@ -589,7 +712,9 @@ def memory_body(memory: Mapping[str, Any], *, field: str, text: str) -> tuple[di
     line = text.strip()
     if not line:
         raise CommandStopped("the memory line is empty")
-    kept = {key: copy.deepcopy(value) for key, value in memory.items() if key in MEMORY_KEYS}
+    kept = {
+        key: copy.deepcopy(value) for key, value in memory.items() if key in MEMORY_KEYS
+    }
     lines = [str(item) for item in kept.get(field) or []]
     added = line not in lines
     if added:
@@ -597,11 +722,15 @@ def memory_body(memory: Mapping[str, Any], *, field: str, text: str) -> tuple[di
     kept[field] = lines
     for key, cap in MEMORY_LIST_MAX.items():
         if len(kept.get(key) or []) > cap:
-            raise CommandStopped(f"the series memory keeps at most {cap} {key}; remove one first")
+            raise CommandStopped(
+                f"the series memory keeps at most {cap} {key}; remove one first"
+            )
     return kept, added
 
 
-def run_memory(desk: Path, *, note: str | None = None, thread: str | None = None, out: Any = None) -> list[str]:
+def run_memory(
+    desk: Path, *, note: str | None = None, thread: str | None = None, out: Any = None
+) -> list[str]:
     """Add one standing note or one open thread to the series memory. Spends nothing.
 
     Notes are standing rules and survive approvals; threads are rebuilt at the
@@ -631,15 +760,23 @@ def run_memory(desk: Path, *, note: str | None = None, thread: str | None = None
     try:
         current = run.get(f"/v1/spines/{state.spine_id}/memory")
         stored = current.get("memory")
-        body, added = memory_body(stored if isinstance(stored, Mapping) else current, field=field, text=str(note or thread))
+        body, added = memory_body(
+            stored if isinstance(stored, Mapping) else current,
+            field=field,
+            text=str(note or thread),
+        )
         if added:
             spine = run.spine(state.spine_id or "")
             answer = run.put(
-                f"/v1/spines/{state.spine_id}/memory", {"spine_version": spine["spine_version"], "memory": body}
+                f"/v1/spines/{state.spine_id}/memory",
+                {"spine_version": spine["spine_version"], "memory": body},
             )
             _save_desk_json(desk, "memory", answer)
         else:
-            print(f"(that {flag} is already in the series memory; nothing written)", file=out)
+            print(
+                f"(that {flag} is already in the series memory; nothing written)",
+                file=out,
+            )
     finally:
         run.client.close()
     for number, line in enumerate(body[field], start=1):
@@ -672,18 +809,24 @@ def parse_assignment(raw: str) -> tuple[str, Any]:
         try:
             return key.strip(), json.loads(text)
         except json.JSONDecodeError as exc:
-            raise CommandStopped(f"--set {key.strip()}: the value looks like JSON but does not parse ({exc})") from exc
+            raise CommandStopped(
+                f"--set {key.strip()}: the value looks like JSON but does not parse ({exc})"
+            ) from exc
     return key.strip(), value
 
 
 def _apply(target: dict[str, Any], key: str, value: Any, *, label: str) -> None:
     head, _, rest = key.partition(".")
     if head not in target:
-        raise CommandStopped(f"{label} has no field {head!r}; it has: {', '.join(sorted(target))}")
+        raise CommandStopped(
+            f"{label} has no field {head!r}; it has: {', '.join(sorted(target))}"
+        )
     if rest:
         inner = target[head]
         if not isinstance(inner, dict):
-            raise CommandStopped(f"{label}.{head} is not an object, so {key!r} cannot be set")
+            raise CommandStopped(
+                f"{label}.{head} is not an object, so {key!r} cannot be set"
+            )
         _apply(inner, rest, value, label=f"{label}.{head}")
         return
     target[head] = value
@@ -694,7 +837,9 @@ def _short(value: Any, size: int = 140) -> str:
     return text if len(text) <= size else text[: size - 1] + "…"
 
 
-def _changes(before: Mapping[str, Any], after: Mapping[str, Any], prefix: str = "") -> list[str]:
+def _changes(
+    before: Mapping[str, Any], after: Mapping[str, Any], prefix: str = ""
+) -> list[str]:
     lines: list[str] = []
     for key in sorted(set(before) | set(after)):
         old, new = before.get(key), after.get(key)
@@ -705,28 +850,53 @@ def _changes(before: Mapping[str, Any], after: Mapping[str, Any], prefix: str = 
     return lines
 
 
-def _shot_plan_change(beat: Mapping[str, Any], plan: list[dict[str, str]] | None) -> list[str]:
+def _shot_plan_change(
+    beat: Mapping[str, Any], plan: list[dict[str, str]] | None
+) -> list[str]:
     """Printable lines for a beat's plan going from what it has to ``plan`` (``None`` = cleared); empty if equal."""
 
     before = beat.get("shot_plan") or None
     if before == plan:
         return []
-    old = plan_lines(before, indent="    was ") or ["    was: no plan (the frames author chooses the shots)"]
-    new = plan_lines(plan, indent="    now ") or ["    now: no plan (the frames author chooses the shots)"]
+    old = plan_lines(before, indent="    was ") or [
+        "    was: no plan (the frames author chooses the shots)"
+    ]
+    new = plan_lines(plan, indent="    now ") or [
+        "    now: no plan (the frames author chooses the shots)"
+    ]
     return ["  shot_plan:", *old, *new]
 
 
-def _find(spine: Mapping[str, Any], items: Sequence[Any], id_key: str, wanted: str, *, episode: int, kind: str) -> dict[str, Any]:
+def _find(
+    spine: Mapping[str, Any],
+    items: Sequence[Any],
+    id_key: str,
+    wanted: str,
+    *,
+    episode: int,
+    kind: str,
+) -> dict[str, Any]:
     episode_id = episode_id_for(spine, episode)
-    mine = [item for item in items if isinstance(item, dict) and item.get("episode_id") == episode_id]
+    mine = [
+        item
+        for item in items
+        if isinstance(item, dict) and item.get("episode_id") == episode_id
+    ]
     for item in mine:
-        if str(item.get(id_key)) == wanted or (wanted.isdigit() and int(item.get("ordinal") or 0) == int(wanted)):
+        if str(item.get(id_key)) == wanted or (
+            wanted.isdigit() and int(item.get("ordinal") or 0) == int(wanted)
+        ):
             return item
-    ids = ", ".join(f"{item.get(id_key)} ({item.get('ordinal')})" for item in mine) or "none"
+    ids = (
+        ", ".join(f"{item.get(id_key)} ({item.get('ordinal')})" for item in mine)
+        or "none"
+    )
     raise CommandStopped(f"no {kind} {wanted!r} on {episode_id}; there are: {ids}")
 
 
-def _find_line(spine: Mapping[str, Any], line_id: str, *, episode: int) -> dict[str, Any]:
+def _find_line(
+    spine: Mapping[str, Any], line_id: str, *, episode: int
+) -> dict[str, Any]:
     episode_id = episode_id_for(spine, episode)
     found: list[str] = []
     for beat in spine.get("beats") or []:
@@ -737,10 +907,14 @@ def _find_line(spine: Mapping[str, Any], line_id: str, *, episode: int) -> dict[
                 found.append(str(line.get("line_id")))
                 if str(line.get("line_id")) == line_id:
                     return line
-    raise CommandStopped(f"no line {line_id!r} on {episode_id}; there are: {', '.join(found) or 'none'}")
+    raise CommandStopped(
+        f"no line {line_id!r} on {episode_id}; there are: {', '.join(found) or 'none'}"
+    )
 
 
-def episode_lines(spine: Mapping[str, Any], *, episode: int) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+def episode_lines(
+    spine: Mapping[str, Any], *, episode: int
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
     """An episode's ``(beat, line)`` pairs in script order (beats by ordinal).
 
     Parameters
@@ -757,9 +931,18 @@ def episode_lines(spine: Mapping[str, Any], *, episode: int) -> list[tuple[dict[
     """
 
     episode_id = episode_id_for(spine, episode)
-    beats = [b for b in spine.get("beats") or [] if isinstance(b, dict) and b.get("episode_id") == episode_id]
+    beats = [
+        b
+        for b in spine.get("beats") or []
+        if isinstance(b, dict) and b.get("episode_id") == episode_id
+    ]
     beats.sort(key=lambda beat: int(beat.get("ordinal") or 0))
-    return [(beat, line) for beat in beats for line in beat.get("dialogue_lines") or [] if isinstance(line, dict)]
+    return [
+        (beat, line)
+        for beat in beats
+        for line in beat.get("dialogue_lines") or []
+        if isinstance(line, dict)
+    ]
 
 
 def _cast_names(spine: Mapping[str, Any]) -> dict[str, str]:
@@ -788,10 +971,14 @@ def line_listing(spine: Mapping[str, Any], *, episode: int) -> list[str]:
 
     names = _cast_names(spine)
     rows = []
-    for number, (beat, line) in enumerate(episode_lines(spine, episode=episode), start=1):
+    for number, (beat, line) in enumerate(
+        episode_lines(spine, episode=episode), start=1
+    ):
         who = names.get(str(line.get("cast_id")), str(line.get("cast_id") or "?"))
         heard = " (off-screen)" if line.get("off_screen") is True else ""
-        spoken = f"  performed: {line['spoken_text']}" if line.get("spoken_text") else ""
+        spoken = (
+            f"  performed: {line['spoken_text']}" if line.get("spoken_text") else ""
+        )
         rows.append(
             f"  {number}. {line.get('line_id')}  beat {beat.get('ordinal')}  {who}{heard}: "
             f"{line.get('text') or ''}{spoken}"
@@ -824,7 +1011,9 @@ def resolve_line_id(spine: Mapping[str, Any], ref: str, *, episode: int) -> str:
     if ref.isdigit() and 1 <= int(ref) <= len(pairs):
         return str(pairs[int(ref) - 1][1]["line_id"])
     listing = "\n".join(line_listing(spine, episode=episode)) or "  (none)"
-    raise CommandStopped(f"no line {ref!r} in episode {episode}; its lines are:\n{listing}")
+    raise CommandStopped(
+        f"no line {ref!r} in episode {episode}; its lines are:\n{listing}"
+    )
 
 
 def resolve_speaker(spine: Mapping[str, Any], who: str) -> str:
@@ -915,14 +1104,27 @@ def build_patch(
         raise CommandStopped("pass exactly one of --beat, --frame or --line-id")
     if line_id is not None:
         if assignments or intent is not None:
-            raise CommandStopped("a line takes --text, --spoken, --subtitle, --speaker and --off-screen, not --set/--intent")
+            raise CommandStopped(
+                "a line takes --text, --spoken, --subtitle, --speaker and --off-screen, not --set/--intent"
+            )
         if subtitle is not None and spoken is None:
-            raise CommandStopped("--subtitle describes a pinned line: send it with --spoken")
-        if spoken is not None and str(spine.get("spoken_language") or "en-US") == "en-US":
-            raise CommandStopped("--spoken pins a performed line on a Japanese or Korean show; this show is English")
+            raise CommandStopped(
+                "--subtitle describes a pinned line: send it with --spoken"
+            )
+        if (
+            spoken is not None
+            and str(spine.get("spoken_language") or "en-US") == "en-US"
+        ):
+            raise CommandStopped(
+                "--spoken pins a performed line on a Japanese or Korean show; this show is English"
+            )
         found = _find_line(spine, line_id, episode=episode)
         entry: dict[str, Any] = {"line_id": line_id}
-        for key, value in (("text", text), ("spoken_text", spoken), ("subtitle_text", subtitle)):
+        for key, value in (
+            ("text", text),
+            ("spoken_text", spoken),
+            ("subtitle_text", subtitle),
+        ):
             if value is not None:
                 entry[key] = value
         if speaker is not None:
@@ -943,29 +1145,55 @@ def build_patch(
         if not changed:
             raise CommandStopped(f"nothing to change on {line_id}")
         return {"dialogue_lines": [entry]}, changed
-    if any(value is not None for value in (text, spoken, subtitle, speaker, off_screen)):
-        raise CommandStopped("--text/--spoken/--subtitle/--speaker/--off-screen edit a line: pass --line-id")
+    if any(
+        value is not None for value in (text, spoken, subtitle, speaker, off_screen)
+    ):
+        raise CommandStopped(
+            "--text/--spoken/--subtitle/--speaker/--off-screen edit a line: pass --line-id"
+        )
     planning = shot_plan is not None or clear_shot_plan
     if planning and beat is None:
-        raise CommandStopped("--shot-plan/--shot/--clear-shot-plan belong to a beat: pass --beat N")
+        raise CommandStopped(
+            "--shot-plan/--shot/--clear-shot-plan belong to a beat: pass --beat N"
+        )
     if shot_plan is not None and clear_shot_plan:
         raise CommandStopped("pass a new plan or --clear-shot-plan, not both")
     if beat is not None:
-        found = _find(spine, spine.get("beats") or [], "beat_id", beat, episode=episode, kind="beat")
+        found = _find(
+            spine,
+            spine.get("beats") or [],
+            "beat_id",
+            beat,
+            episode=episode,
+            kind="beat",
+        )
         if planning:
-            plan_changed = _shot_plan_change(found, None if clear_shot_plan else shot_plan)
+            plan_changed = _shot_plan_change(
+                found, None if clear_shot_plan else shot_plan
+            )
             if intent is None and not assignments:
                 if not plan_changed:
                     raise CommandStopped(f"nothing to change on {found.get('beat_id')}")
-                return {"beats": [{"beat_id": found["beat_id"], "shot_plan": shot_plan}]}, plan_changed
+                return {
+                    "beats": [{"beat_id": found["beat_id"], "shot_plan": shot_plan}]
+                }, plan_changed
         direction = copy.deepcopy(found.get("motion_direction") or {})
-        new_intent = intent if intent is not None else str(found.get("motion_intent") or "")
+        new_intent = (
+            intent if intent is not None else str(found.get("motion_intent") or "")
+        )
         for key, value in assignments:
             _apply(direction, key, value, label="motion_direction")
-        before = {"motion_intent": found.get("motion_intent"), "motion_direction": found.get("motion_direction") or {}}
+        before = {
+            "motion_intent": found.get("motion_intent"),
+            "motion_direction": found.get("motion_direction") or {},
+        }
         after = {"motion_intent": new_intent, "motion_direction": direction}
         changed = _changes(before, after)
-        entry: dict[str, Any] = {"beat_id": found["beat_id"], "motion_intent": new_intent, "motion_direction": direction}
+        entry: dict[str, Any] = {
+            "beat_id": found["beat_id"],
+            "motion_intent": new_intent,
+            "motion_direction": direction,
+        }
         if planning:
             entry["shot_plan"] = shot_plan
             changed += plan_changed
@@ -973,15 +1201,26 @@ def build_patch(
             raise CommandStopped(f"nothing to change on {found.get('beat_id')}")
         return {"beats": [entry]}, changed
     if intent is not None:
-        raise CommandStopped("--intent is a beat field; a frame is edited with --set on its visual_brief")
-    found = _find(spine, spine.get("frames") or [], "frame_id", str(frame), episode=episode, kind="frame")
+        raise CommandStopped(
+            "--intent is a beat field; a frame is edited with --set on its visual_brief"
+        )
+    found = _find(
+        spine,
+        spine.get("frames") or [],
+        "frame_id",
+        str(frame),
+        episode=episode,
+        kind="frame",
+    )
     brief = copy.deepcopy(found.get("visual_brief") or {})
     for key, value in assignments:
         if isinstance(value, Mapping) and isinstance(brief.get(key), dict):
             brief[key] = {**brief[key], **value}
         else:
             _apply(brief, key, value, label="visual_brief")
-    changed = _changes({"visual_brief": found.get("visual_brief") or {}}, {"visual_brief": brief})
+    changed = _changes(
+        {"visual_brief": found.get("visual_brief") or {}}, {"visual_brief": brief}
+    )
     if not changed:
         raise CommandStopped(f"nothing to change on {found.get('frame_id')}")
     return {"frames": [{"frame_id": found["frame_id"], "visual_brief": brief}]}, changed
@@ -1043,23 +1282,35 @@ def line_edit_consequences(
             f"--episode {episode}`)."
         )
     if relocalized and new_line:
-        when = "before the take is filmed" if after_gate else "when the script is approved"
+        when = (
+            "before the take is filmed" if after_gate else "when the script is approved"
+        )
         out.append(
             f"  The server writes the new line's performed {_spoken_language(spine)} line {when}. To choose the "
             "words yourself, pin them with --spoken."
         )
     elif relocalized:
-        when = "before the take is filmed" if after_gate else "when the script is approved"
+        when = (
+            "before the take is filmed" if after_gate else "when the script is approved"
+        )
         out.append(
             f"  The performed {_spoken_language(spine)} line was dropped (it was written for the old English); the "
             f"server writes a new one {when}. To keep your own words, pin them with --spoken."
         )
     names = _cast_names(spine)
     for beat, line in episode_lines(spine, episode=episode):
-        if str(line.get("line_id")) != line_id or line.get("off_screen") is True or not beat.get("frame_id"):
+        if (
+            str(line.get("line_id")) != line_id
+            or line.get("off_screen") is True
+            or not beat.get("frame_id")
+        ):
             continue
         frame = next(
-            (f for f in spine.get("frames") or [] if isinstance(f, Mapping) and f.get("frame_id") == beat["frame_id"]),
+            (
+                f
+                for f in spine.get("frames") or []
+                if isinstance(f, Mapping) and f.get("frame_id") == beat["frame_id"]
+            ),
             None,
         )
         if frame is None:
@@ -1096,7 +1347,9 @@ def voice_cast_id(name: str) -> str:
 
     slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
     if not slug:
-        raise CommandStopped(f"--new-voice {name!r} needs letters or digits for its cast id")
+        raise CommandStopped(
+            f"--new-voice {name!r} needs letters or digits for its cast id"
+        )
     return f"cast_{slug}"[:64]
 
 
@@ -1156,16 +1409,28 @@ def build_line_add_remove_patch(
         The ``patch`` object and one printable line per change.
     """
 
-    voice_fields = {"--role": role, "--voice-description": voice_description, "--provider-voice": provider_voice}
+    voice_fields = {
+        "--role": role,
+        "--voice-description": voice_description,
+        "--provider-voice": provider_voice,
+    }
     if new_voice is None and any(value is not None for value in voice_fields.values()):
-        raise CommandStopped(f"{', '.join(k for k, v in voice_fields.items() if v is not None)} describe a --new-voice")
+        raise CommandStopped(
+            f"{', '.join(k for k, v in voice_fields.items() if v is not None)} describe a --new-voice"
+        )
     if not add:
         stray = {"--beat": beat, "--text": text, "--spoken": spoken, "--subtitle": subtitle, "--speaker": speaker,
                  "--new-voice": new_voice, "--off-screen/--on-screen": off_screen}  # fmt: skip
-        named = [key for key, value in stray.items() if value is not None] + (["--speaker-moves"] if speaker_moves else [])
+        named = [key for key, value in stray.items() if value is not None] + (
+            ["--speaker-moves"] if speaker_moves else []
+        )
         if named:
-            detail = " (a new voice comes with its line)" if new_voice is not None else ""
-            raise CommandStopped(f"{', '.join(named)} describe a new line: add --add{detail}")
+            detail = (
+                " (a new voice comes with its line)" if new_voice is not None else ""
+            )
+            raise CommandStopped(
+                f"{', '.join(named)} describe a new line: add --add{detail}"
+            )
         if remove is None:
             raise CommandStopped("pass --add, --remove or both")
     names = _cast_names(spine)
@@ -1180,49 +1445,95 @@ def build_line_add_remove_patch(
     if not add:
         return patch, changed
     if beat is None or text is None:
-        raise CommandStopped("--add needs --beat N and --text \"...\"")
+        raise CommandStopped('--add needs --beat N and --text "..."')
     if subtitle is not None and spoken is None:
-        raise CommandStopped("--subtitle describes a pinned line: send it with --spoken")
+        raise CommandStopped(
+            "--subtitle describes a pinned line: send it with --spoken"
+        )
     if spoken is not None and _spoken_language(spine) == "en-US":
-        raise CommandStopped("--spoken pins the performed line of a JA/KO show; this show is en-US: use --text")
-    found_beat = _find(spine, spine.get("beats") or [], "beat_id", beat, episode=episode, kind="beat")
+        raise CommandStopped(
+            "--spoken pins the performed line of a JA/KO show; this show is en-US: use --text"
+        )
+    found_beat = _find(
+        spine, spine.get("beats") or [], "beat_id", beat, episode=episode, kind="beat"
+    )
     if new_voice is not None:
         if role is None or voice_description is None:
-            raise CommandStopped("--new-voice needs --role \"...\" and --voice-description \"...\" (how the voice sounds)")
+            raise CommandStopped(
+                '--new-voice needs --role "..." and --voice-description "..." (how the voice sounds)'
+            )
         if off_screen is False:
-            raise CommandStopped("a --new-voice is heard, never seen: its line is off screen (drop --on-screen)")
+            raise CommandStopped(
+                "a --new-voice is heard, never seen: its line is off screen (drop --on-screen)"
+            )
         if speaker is not None and speaker.strip().lower() != new_voice.strip().lower():
-            raise CommandStopped(f"--new-voice {new_voice!r} speaks the added line; drop --speaker {speaker!r}")
-        taken = next((cid for cid, name in names.items() if name.strip().lower() == new_voice.strip().lower()), None)
+            raise CommandStopped(
+                f"--new-voice {new_voice!r} speaks the added line; drop --speaker {speaker!r}"
+            )
+        taken = next(
+            (
+                cid
+                for cid, name in names.items()
+                if name.strip().lower() == new_voice.strip().lower()
+            ),
+            None,
+        )
         if taken is not None:
-            raise CommandStopped(f"{new_voice!r} is already in the cast ({taken}): give them the line with --speaker")
+            raise CommandStopped(
+                f"{new_voice!r} is already in the cast ({taken}): give them the line with --speaker"
+            )
         cast_id = voice_cast_id(new_voice)
-        card: dict[str, Any] = {"cast_id": cast_id, "name": new_voice, "role": role, "voice_description": voice_description}
+        card: dict[str, Any] = {
+            "cast_id": cast_id,
+            "name": new_voice,
+            "role": role,
+            "voice_description": voice_description,
+        }
         if provider_voice is not None:
             card["provider_voice"] = provider_voice
         patch["add_voice_only_cast"] = [card]
         off_screen = True
         who = new_voice
-        voice = f", voice {provider_voice}" if provider_voice else ", voice: the first catalog voice nobody uses"
-        changed.append(f"  + voice {new_voice} ({cast_id}), heard, never drawn: {_short(role)}; sounds {_short(voice_description)}{voice}")
+        voice = (
+            f", voice {provider_voice}"
+            if provider_voice
+            else ", voice: the first catalog voice nobody uses"
+        )
+        changed.append(
+            f"  + voice {new_voice} ({cast_id}), heard, never drawn: {_short(role)}; sounds {_short(voice_description)}{voice}"
+        )
     elif speaker is None:
-        raise CommandStopped(f"--add needs --speaker NAME (someone in the cast) or --new-voice NAME. {NEW_VOICE_HINT}")
+        raise CommandStopped(
+            f"--add needs --speaker NAME (someone in the cast) or --new-voice NAME. {NEW_VOICE_HINT}"
+        )
     else:
         cast_id = resolve_speaker(spine, speaker)
         who = names.get(cast_id, cast_id)
-    entry: dict[str, Any] = {"beat_id": found_beat["beat_id"], "cast_id": cast_id, "text": text}
-    for key, value in (("spoken_text", spoken), ("subtitle_text", subtitle), ("off_screen", off_screen)):
+    entry: dict[str, Any] = {
+        "beat_id": found_beat["beat_id"],
+        "cast_id": cast_id,
+        "text": text,
+    }
+    for key, value in (
+        ("spoken_text", spoken),
+        ("subtitle_text", subtitle),
+        ("off_screen", off_screen),
+    ):
         if value is not None:
             entry[key] = value
     patch["add_dialogue_lines"] = [entry]
     heard = " (off-screen)" if off_screen else ""
     performed = f"  performed: {spoken}" if spoken else ""
-    changed.append(f"  + beat {found_beat.get('ordinal')} ({found_beat['beat_id']})  {who}{heard}: {_short(text)}{performed}")
+    changed.append(
+        f"  + beat {found_beat.get('ordinal')} ({found_beat['beat_id']})  {who}{heard}: {_short(text)}{performed}"
+    )
     if speaker_moves:
         direction = copy.deepcopy(found_beat.get("motion_direction") or {})
         before = direction.get("subject_cast_id")
         direction["subject_cast_id"] = cast_id
-        patch["beats"] = [{"beat_id": found_beat["beat_id"], "motion_direction": direction}]
+        patch["beats"] = [
+            {"beat_id": found_beat["beat_id"], "motion_direction": direction}
+        ]
         changed.append(
             f"  motion subject of {found_beat['beat_id']}: {names.get(str(before), before or 'none')}  ->  {who}"
         )
@@ -1330,24 +1641,50 @@ def _send_story_edit(
             print(line, file=out)
         cascade = spine.get("approval_state") == "approved"
         if not cascade and preview_only:
-            raise CommandStopped("--preview is for an approved script; before the script gate the edit is a plain patch")
+            raise CommandStopped(
+                "--preview is for an approved script; before the script gate the edit is a plain patch"
+            )
         try:
             if not cascade:
                 try:
-                    run.patch(f"/v1/spines/{state.spine_id}", {"spine_version": spine["spine_version"], "patch": patch})
+                    run.patch(
+                        f"/v1/spines/{state.spine_id}",
+                        {"spine_version": spine["spine_version"], "patch": patch},
+                    )
                 except SystemExit as exc:
                     if "cascade_required" not in str(exc.code):
                         raise CommandStopped(str(exc.code)) from None
                     cascade = True
-                    print("(the server asks for a cascade: the script is approved there)", file=out)
+                    print(
+                        "(the server asks for a cascade: the script is approved there)",
+                        file=out,
+                    )
             if cascade:
-                _run_cascade(desk, run, spine, patch, episode=episode, select_regen=select_regen, preview_only=preview_only, out=out)
+                _run_cascade(
+                    desk,
+                    run,
+                    spine,
+                    patch,
+                    episode=episode,
+                    select_regen=select_regen,
+                    preview_only=preview_only,
+                    out=out,
+                )
         except CommandStopped as exc:
-            raise CommandStopped(explain_refusal(str(exc), spine, episode=episode)) from None
+            raise CommandStopped(
+                explain_refusal(str(exc), spine, episode=episode)
+            ) from None
         fresh = run.spine(state.spine_id or "")
     finally:
         run.client.close()
-    return desk, save_spine_snapshot(desk, episode, fresh), fresh, cascade, what, changed
+    return (
+        desk,
+        save_spine_snapshot(desk, episode, fresh),
+        fresh,
+        cascade,
+        what,
+        changed,
+    )
 
 
 def _after_line_edit(
@@ -1361,9 +1698,14 @@ def _after_line_edit(
     new_line: bool = False,
     out: Any,
 ) -> None:
-    desk_was_approved = episode_by_ordinal(load_series(desk), episode).script.status == "approved"
+    desk_was_approved = (
+        episode_by_ordinal(load_series(desk), episode).script.status == "approved"
+    )
     counts = sync_spine_lines(desk, fresh, episode=episode)
-    print(f"desk lines synced from the server: {', '.join(f'{t} {n}' for t, n in counts.items())}", file=out)
+    print(
+        f"desk lines synced from the server: {', '.join(f'{t} {n}' for t, n in counts.items())}",
+        file=out,
+    )
     for line in line_edit_consequences(
         fresh,
         episode=episode,
@@ -1436,29 +1778,49 @@ def run_line(
     adding = add or remove is not None or new_voice is not None
     if adding:
         if line is not None:
-            raise CommandStopped("--line changes a line; --add/--remove add or drop one: run them as two commands")
+            raise CommandStopped(
+                "--line changes a line; --add/--remove add or drop one: run them as two commands"
+            )
 
         sent: dict[str, Any] = {}
 
-        def build_add(spine: Mapping[str, Any]) -> tuple[dict[str, Any], list[str], str]:
+        def build_add(
+            spine: Mapping[str, Any],
+        ) -> tuple[dict[str, Any], list[str], str]:
             patch, changed = build_line_add_remove_patch(
                 spine, episode=episode, add=add, beat=beat, text=text, spoken=spoken, subtitle=subtitle,
                 speaker=speaker, off_screen=off_screen, speaker_moves=speaker_moves, remove=remove,
                 new_voice=new_voice, role=role, voice_description=voice_description, provider_voice=provider_voice,
             )  # fmt: skip
-            what = " and ".join(part for part, on in (("add a line", add), ("remove a line", remove is not None)) if on)
+            what = " and ".join(
+                part
+                for part, on in (
+                    ("add a line", add),
+                    ("remove a line", remove is not None),
+                )
+                if on
+            )
             sent.update(patch)
             return patch, changed, what
 
         desk, path, fresh, cascade, what, changed = _send_story_edit(
-            desk, episode=episode, build=build_add, select_regen=select_regen, preview_only=preview_only, out=out
+            desk,
+            episode=episode,
+            build=build_add,
+            select_regen=select_regen,
+            preview_only=preview_only,
+            out=out,
         )
         if not preview_only:
             added = ""
             if add:
                 beat_id = sent["add_dialogue_lines"][0]["beat_id"]
                 added = next(
-                    (str(ln.get("line_id")) for b, ln in episode_lines(fresh, episode=episode) if b.get("beat_id") == beat_id),
+                    (
+                        str(ln.get("line_id"))
+                        for b, ln in episode_lines(fresh, episode=episode)
+                        if b.get("beat_id") == beat_id
+                    ),
                     "",
                 )
                 if added:
@@ -1468,26 +1830,37 @@ def run_line(
                 desk, fresh, episode=episode, line_id=added, after_gate=cascade, relocalized=relocalized,
                 new_line=True, out=out,
             )  # fmt: skip
-            _note(desk, episode, f"line: {what}: " + "; ".join(item.strip() for item in changed))
+            _note(
+                desk,
+                episode,
+                f"line: {what}: " + "; ".join(item.strip() for item in changed),
+            )
         return path
     if beat is not None or speaker_moves:
         raise CommandStopped("--beat and --speaker-moves go with --add")
     changes = (text, spoken, subtitle, speaker, off_screen)
     if line is None or all(value is None for value in changes):
         if line is not None:
-            raise CommandStopped("say what to change: --text, --spoken, --speaker, --off-screen or --on-screen")
+            raise CommandStopped(
+                "say what to change: --text, --spoken, --speaker, --off-screen or --on-screen"
+            )
         _, state, run = _desk_session(desk)
         try:
             spine = run.spine(state.spine_id or "")
         finally:
             run.client.close()
-        print(f"ep{episode:02d} lines (use the number or the id with --line or --remove):", file=out)
+        print(
+            f"ep{episode:02d} lines (use the number or the id with --line or --remove):",
+            file=out,
+        )
         for row in line_listing(spine, episode=episode) or ["  (none)"]:
             print(row, file=out)
         return None
     _, state, run = _desk_session(desk)
     try:
-        line_id = resolve_line_id(run.spine(state.spine_id or ""), line, episode=episode)
+        line_id = resolve_line_id(
+            run.spine(state.spine_id or ""), line, episode=episode
+        )
     finally:
         run.client.close()
     return run_edit(
@@ -1582,35 +1955,75 @@ def run_edit(
             shot_plan=shot_plan,
             clear_shot_plan=clear_shot_plan,
         )
-        what = f"beat {beat}" if beat is not None else (f"frame {frame}" if frame is not None else f"line {line_id}")
+        what = (
+            f"beat {beat}"
+            if beat is not None
+            else (f"frame {frame}" if frame is not None else f"line {line_id}")
+        )
         return patch, changed, what
 
     try:
         desk, path, fresh, cascade, what, changed = _send_story_edit(
-            desk, episode=episode, build=build, select_regen=select_regen, preview_only=preview_only, out=out
+            desk,
+            episode=episode,
+            build=build,
+            select_regen=select_regen,
+            preview_only=preview_only,
+            out=out,
         )
     except CommandStopped as exc:
         if planning and "HTTP 422" in str(exc):
-            raise CommandStopped(f"the server refused the shot plan: {exc}\n  {OLDER_SERVER_HINT}") from None
+            raise CommandStopped(
+                f"the server refused the shot plan: {exc}\n  {OLDER_SERVER_HINT}"
+            ) from None
         raise
     if planning and not preview_only:
-        _report_shot_plan(fresh, episode=episode, beat=str(beat), wanted=None if clear_shot_plan else shot_plan, out=out)
+        _report_shot_plan(
+            fresh,
+            episode=episode,
+            beat=str(beat),
+            wanted=None if clear_shot_plan else shot_plan,
+            out=out,
+        )
     if line_id is not None and not preview_only:
-        relocalized = text is not None and spoken is None and _spoken_language(fresh) != "en-US"
-        _after_line_edit(desk, fresh, episode=episode, line_id=line_id, after_gate=cascade, relocalized=relocalized, out=out)
+        relocalized = (
+            text is not None and spoken is None and _spoken_language(fresh) != "en-US"
+        )
+        _after_line_edit(
+            desk,
+            fresh,
+            episode=episode,
+            line_id=line_id,
+            after_gate=cascade,
+            relocalized=relocalized,
+            out=out,
+        )
     if not preview_only:
-        _note(desk, episode, f"edit {what}: " + "; ".join(line.strip() for line in changed))
+        _note(
+            desk,
+            episode,
+            f"edit {what}: " + "; ".join(line.strip() for line in changed),
+        )
     return path
 
 
 def _report_shot_plan(
-    spine: Mapping[str, Any], *, episode: int, beat: str, wanted: list[dict[str, str]] | None, out: Any
+    spine: Mapping[str, Any],
+    *,
+    episode: int,
+    beat: str,
+    wanted: list[dict[str, str]] | None,
+    out: Any,
 ) -> None:
     """Print the beat's plan as the server now holds it, and say so when it did not keep what was sent."""
 
-    found = _find(spine, spine.get("beats") or [], "beat_id", beat, episode=episode, kind="beat")
+    found = _find(
+        spine, spine.get("beats") or [], "beat_id", beat, episode=episode, kind="beat"
+    )
     held = found.get("shot_plan") or None
-    shown = plan_lines(held, indent="  ") or ["  (no plan: the frames author chooses the shots)"]
+    shown = plan_lines(held, indent="  ") or [
+        "  (no plan: the frames author chooses the shots)"
+    ]
     print(f"{found.get('beat_id')} shot plan on the server now:", file=out)
     for line in shown:
         print(line, file=out)
@@ -1634,18 +2047,33 @@ def _run_cascade(
     out: Any,
 ) -> None:
     spine_id = str(spine.get("spine_id") or load_production(desk).spine_id or "")
-    edit = {"scope": "section", "target_type": "episode", "target_id": episode_id_for(spine, episode), "patch": patch}
+    edit = {
+        "scope": "section",
+        "target_type": "episode",
+        "target_id": episode_id_for(spine, episode),
+        "patch": patch,
+    }
     try:
-        preview = run.post(f"/v1/spines/{spine_id}/cascade/preview", {"spine_version": spine["spine_version"], "edit": edit})
+        preview = run.post(
+            f"/v1/spines/{spine_id}/cascade/preview",
+            {"spine_version": spine["spine_version"], "edit": edit},
+        )
     except SystemExit as exc:
         raise CommandStopped(str(exc.code)) from None
     saved = _save_desk_json(desk, "cascade-preview", preview)
     items = [item for item in preview.get("items") or [] if isinstance(item, Mapping)]
     chosen = {
-        str(item["item_id"]): (select_regen if item.get("estimated_tier") == PAID_TIER else bool(item.get("selected", True)))
+        str(item["item_id"]): (
+            select_regen
+            if item.get("estimated_tier") == PAID_TIER
+            else bool(item.get("selected", True))
+        )
         for item in items
     }
-    print(f"cascade {preview.get('proposal_id')} ({len(items)} item(s), saved {saved.name}):", file=out)
+    print(
+        f"cascade {preview.get('proposal_id')} ({len(items)} item(s), saved {saved.name}):",
+        file=out,
+    )
     for item in items:
         relation = item.get("relation") or {}
         mark = "run " if chosen[str(item["item_id"])] else "skip"
@@ -1668,7 +2096,10 @@ def _run_cascade(
             {
                 "proposal_id": preview["proposal_id"],
                 "spine_version": spine["spine_version"],
-                "items": [{"item_id": item_id, "selected": on} for item_id, on in chosen.items()],
+                "items": [
+                    {"item_id": item_id, "selected": on}
+                    for item_id, on in chosen.items()
+                ],
             },
             idempotency_key=key,
         )
@@ -1679,9 +2110,17 @@ def _run_cascade(
         if chosen[str(item["item_id"])] and item.get("estimated_tier") == PAID_TIER:
             recipe = str(item.get("recipe_id") or "")
             if "still" in recipe or "board" in recipe:
-                record_spend(desk, episode=episode, usd=float(STILL_USD), unit=f"cascade:{item.get('item_id')}")
+                record_spend(
+                    desk,
+                    episode=episode,
+                    usd=float(STILL_USD),
+                    unit=f"cascade:{item.get('item_id')}",
+                )
             else:
-                print(f"  !! {item.get('item_id')} ran on the server and is not priced here; book it by hand", file=out)
+                print(
+                    f"  !! {item.get('item_id')} ran on the server and is not priced here; book it by hand",
+                    file=out,
+                )
     for stale in answer.get("stale_storyboard_sets") or []:
         if isinstance(stale, Mapping):
             print(
@@ -1717,11 +2156,16 @@ def run_look(desk: Path, *, url: str, out: Any = None) -> Path:
 
     out = out or sys.stdout
     if not url.startswith("https://"):
-        raise CommandStopped("--url must be a public https URL of one frame (this kit uploads nothing)")
+        raise CommandStopped(
+            "--url must be a public https URL of one frame (this kit uploads nothing)"
+        )
     desk, state, run = _desk_session(desk)
     try:
         spine = run.spine(state.spine_id or "")
-        answer = run.post(f"/v1/spines/{state.spine_id}/look-register", {"spine_version": spine["spine_version"], "url": url})
+        answer = run.post(
+            f"/v1/spines/{state.spine_id}/look-register",
+            {"spine_version": spine["spine_version"], "url": url},
+        )
         _save_desk_json(desk, "look-register", answer)
         fresh = run.spine(state.spine_id or "")
     finally:
@@ -1751,7 +2195,13 @@ def look_frame_route_missing(message: str) -> bool:
     return message.startswith("HTTP 404") and '"detail": "Not Found"' in message
 
 
-def run_look_frame(desk: Path, *, description: str | Path, size: str = LOOK_FRAME_DEFAULT_SIZE, out: Any = None) -> Path:
+def run_look_frame(
+    desk: Path,
+    *,
+    description: str | Path,
+    size: str = LOOK_FRAME_DEFAULT_SIZE,
+    out: Any = None,
+) -> Path:
     """Draw our own style frame on the server from a written description. Books one still; never pins.
 
     ``POST /v1/spines/{id}/look-frame`` draws it on the product's still model
@@ -1797,7 +2247,9 @@ def run_look_frame(desk: Path, *, description: str | Path, size: str = LOOK_FRAM
         raise CommandStopped("the description is empty; write the look down first")
     description = words
     if len(description) > LOOK_FRAME_MAX_CHARS:
-        raise CommandStopped(f"the description is {len(description)} characters; keep it to {LOOK_FRAME_MAX_CHARS}")
+        raise CommandStopped(
+            f"the description is {len(description)} characters; keep it to {LOOK_FRAME_MAX_CHARS}"
+        )
     desk, state, run = _desk_session(desk)
     digest = hashlib.sha256(f"{size}\n{description}".encode()).hexdigest()[:24]
     try:
@@ -1808,18 +2260,26 @@ def run_look_frame(desk: Path, *, description: str | Path, size: str = LOOK_FRAM
                 idempotency_key=f"{run.prefix}-look-frame-{digest}",
             )
         except SystemExit as exc:
-            message = exc.code if isinstance(exc.code, str) else api_error_text(exc.code)
+            message = (
+                exc.code if isinstance(exc.code, str) else api_error_text(exc.code)
+            )
             if look_frame_route_missing(message):
                 raise CommandStopped(OLD_SERVER_LOOK_FRAME) from exc
-            hint = next((text for code, text in LOOK_FRAME_HINTS.items() if code in message), "")
+            hint = next(
+                (text for code, text in LOOK_FRAME_HINTS.items() if code in message), ""
+            )
             raise CommandStopped(message + (f" -> {hint}" if hint else "")) from exc
         image_url = str(answer.get("image_url") or "")
         if not image_url.startswith("https://"):
-            raise CommandStopped(f"the look-frame answer has no image_url: {api_error_text(answer)}")
+            raise CommandStopped(
+                f"the look-frame answer has no image_url: {api_error_text(answer)}"
+            )
         _save_desk_json(desk, "look-frame", answer)
         fetch = httpx.Client(timeout=120.0)
         try:
-            path = _orchestrate.download_to_versioned(fetch, image_url, desk / "shared" / "look", "look-frame")
+            path = _orchestrate.download_to_versioned(
+                fetch, image_url, desk / "shared" / "look", "look-frame"
+            )
         finally:
             fetch.close()
     finally:
@@ -1828,8 +2288,16 @@ def run_look_frame(desk: Path, *, description: str | Path, size: str = LOOK_FRAM
     cost = float(answer.get("cost_usd") or 0.0)
     if cost > 0:
         record_spend(desk, episode=1, usd=cost, unit="look-frame")
-    cached = " (already drawn for this description; nothing booked)" if answer.get("cached") else ""
-    _note(desk, 1, f"look-frame: {path.name} from {source_name}, ${cost:.2f}{cached}. {image_url}")
+    cached = (
+        " (already drawn for this description; nothing booked)"
+        if answer.get("cached")
+        else ""
+    )
+    _note(
+        desk,
+        1,
+        f"look-frame: {path.name} from {source_name}, ${cost:.2f}{cached}. {image_url}",
+    )
     print(str(path), file=out)
     print(f"image_url: {image_url}", file=out)
     print(
@@ -1840,7 +2308,9 @@ def run_look_frame(desk: Path, *, description: str | Path, size: str = LOOK_FRAM
     return path
 
 
-def run_look_note(desk: Path, *, add: str | None = None, remove: str | None = None, out: Any = None) -> list[str]:
+def run_look_note(
+    desk: Path, *, add: str | None = None, remove: str | None = None, out: Any = None
+) -> list[str]:
     """Add or remove one look note (at most five, 160 characters each); the next drawing uses them. Spends nothing.
 
     Parameters
@@ -1866,27 +2336,41 @@ def run_look_note(desk: Path, *, add: str | None = None, remove: str | None = No
     desk, state, run = _desk_session(desk)
     try:
         spine = run.spine(state.spine_id or "")
-        notes = [note for note in spine.get("look_notes") or [] if isinstance(note, Mapping)]
+        notes = [
+            note for note in spine.get("look_notes") or [] if isinstance(note, Mapping)
+        ]
         body = {"spine_version": spine["spine_version"]}
         if add is not None:
             text = add.strip()
             if not text or len(text) > LOOK_NOTE_MAX:
                 raise CommandStopped(f"a look note is 1-{LOOK_NOTE_MAX} characters")
             if len(notes) >= MAX_LOOK_NOTES:
-                raise CommandStopped(f"the story already has {MAX_LOOK_NOTES} look notes (the most it keeps); remove one")
+                raise CommandStopped(
+                    f"the story already has {MAX_LOOK_NOTES} look notes (the most it keeps); remove one"
+                )
             run.post(f"/v1/spines/{state.spine_id}/look-notes", {**body, "text": text})
         else:
             wanted = str(remove)
             ids = [str(note.get("note_id")) for note in notes]
-            note_id = ids[int(wanted) - 1] if wanted.isdigit() and 1 <= int(wanted) <= len(ids) else wanted
+            note_id = (
+                ids[int(wanted) - 1]
+                if wanted.isdigit() and 1 <= int(wanted) <= len(ids)
+                else wanted
+            )
             if note_id not in ids:
-                raise CommandStopped(f"no look note {wanted!r}; the notes are: {', '.join(ids) or 'none'}")
+                raise CommandStopped(
+                    f"no look note {wanted!r}; the notes are: {', '.join(ids) or 'none'}"
+                )
             run.delete(f"/v1/spines/{state.spine_id}/look-notes/{note_id}", body)
         fresh = run.spine(state.spine_id or "")
     finally:
         run.client.close()
     save_spine_snapshot(desk, state.episode_ordinal, fresh)
-    listed = [str(note.get("text")) for note in fresh.get("look_notes") or [] if isinstance(note, Mapping)]
+    listed = [
+        str(note.get("text"))
+        for note in fresh.get("look_notes") or []
+        if isinstance(note, Mapping)
+    ]
     for number, note in enumerate(fresh.get("look_notes") or [], start=1):
         print(f"{number}. {note.get('note_id')}  {note.get('text')}", file=out)
     return listed
@@ -1912,7 +2396,11 @@ def run_spine_refresh(desk: Path, *, out: Any = None) -> Path:
     desk, state, run = _desk_session(desk)
     try:
         before_path = desk / "api" / "spine.json"
-        before = json.loads(before_path.read_text(encoding="utf-8")).get("spine_version") if before_path.is_file() else None
+        before = (
+            json.loads(before_path.read_text(encoding="utf-8")).get("spine_version")
+            if before_path.is_file()
+            else None
+        )
         spine = run.spine(state.spine_id or "")
     finally:
         run.client.close()
@@ -1931,7 +2419,9 @@ def run_spine_refresh(desk: Path, *, out: Any = None) -> Path:
 # --- Board redraw --------------------------------------------------------------------------------
 
 
-def run_redraw_board(desk: Path, *, episode: int, take_id: str, cause: str, out: Any = None) -> Path:
+def run_redraw_board(
+    desk: Path, *, episode: int, take_id: str, cause: str, out: Any = None
+) -> Path:
     """Redraw one board on ``POST /v1/spines/{id}/episodes/{n}/boards/{set}/regenerate``. Spends one still.
 
     Warns when the take's frame briefs have not changed since the last drawing
@@ -1960,7 +2450,9 @@ def run_redraw_board(desk: Path, *, episode: int, take_id: str, cause: str, out:
 
     out = out or sys.stdout
     if not cause.strip():
-        raise CommandStopped("--cause is required: why the board is redrawn (a label for the desk)")
+        raise CommandStopped(
+            "--cause is required: why the board is redrawn (a label for the desk)"
+        )
     if not (take_id.startswith("t") and take_id[1:].isdigit()):
         raise CommandStopped("--take is t1, t2 ...")
     set_index = int(take_id[1:])
@@ -1998,24 +2490,47 @@ def run_redraw_board(desk: Path, *, episode: int, take_id: str, cause: str, out:
             video_route=True,
             deadline_seconds=cfg.poll_boards_deadline_seconds,
         )
-        _save_desk_json(desk, f"boards-redraw-ep{episode:02d}-{take_id}-terminal", terminal)
+        _save_desk_json(
+            desk, f"boards-redraw-ep{episode:02d}-{take_id}-terminal", terminal
+        )
         spine = run.spine(state.spine_id or "")
         save_spine_snapshot(desk, episode, spine)
         state = load_production(desk)
         made = download_boards(desk, state, spine, episode=episode, sets=[set_index])
         if not made:
-            raise CommandStopped(f"the redraw completed but the spine has no current board for {take_id}")
-        report = board_report(desk, run, state, spine, episode=episode, made=made, redraw=True, clip_seconds=cfg.clip_duration_seconds)
+            raise CommandStopped(
+                f"the redraw completed but the spine has no current board for {take_id}"
+            )
+        report = board_report(
+            desk,
+            run,
+            state,
+            spine,
+            episode=episode,
+            made=made,
+            redraw=True,
+            clip_seconds=cfg.clip_duration_seconds,
+        )
     finally:
         run.client.close()
-    if state.episode_ordinal == episode and state.phase in {"wait_board", "ready_estimate", "wait_spend"}:
+    if state.episode_ordinal == episode and state.phase in {
+        "wait_board",
+        "ready_estimate",
+        "wait_spend",
+    }:
         if state.phase != "wait_board":
-            report.append("The board changed after its yes: the desk is back at the board gate (approve it again).")
+            report.append(
+                "The board changed after its yes: the desk is back at the board gate (approve it again)."
+            )
         state.phase = "wait_board"
     save_production(desk, state)
     for line in report:
         print(line, file=out)
-    _note(desk, episode, f"board redraw {take_id}: {made[0][1].name}, ${float(STILL_USD):.2f}. Cause (label only): {cause}")
+    _note(
+        desk,
+        episode,
+        f"board redraw {take_id}: {made[0][1].name}, ${float(STILL_USD):.2f}. Cause (label only): {cause}",
+    )
     return made[0][1]
 
 
@@ -2032,20 +2547,31 @@ def _refuse_voice_only(card: Mapping[str, Any]) -> None:
 
     if card.get("voice_only") is True:
         name = str(card.get("name") or card.get("cast_id"))
-        raise CommandStopped(f"{name} is voice-only (heard, never drawn): there is no plate to redraw")
+        raise CommandStopped(
+            f"{name} is voice-only (heard, never drawn): there is no plate to redraw"
+        )
 
 
 def _cast_card(spine: Mapping[str, Any], wanted: str) -> tuple[int, dict[str, Any]]:
     """The 1-based cast position (the ``plate-ep01-N`` number) and card named by ``wanted`` (name or cast id)."""
 
-    cast = [card for card in spine.get("cast") or [] if isinstance(card, dict) and card.get("cast_id")]
+    cast = [
+        card
+        for card in spine.get("cast") or []
+        if isinstance(card, dict) and card.get("cast_id")
+    ]
     key = wanted.strip().casefold()
     for card in cast:
-        if key in {str(card["cast_id"]).casefold(), str(card.get("name") or "").strip().casefold()}:
+        if key in {
+            str(card["cast_id"]).casefold(),
+            str(card.get("name") or "").strip().casefold(),
+        }:
             _refuse_voice_only(card)
             drawn = [str(row["cast_id"]) for row in drawn_cast_rows(dict(spine))]
             return drawn.index(str(card["cast_id"])) + 1, card
-    names = ", ".join(str(card.get("name") or card["cast_id"]) for card in cast) or "none"
+    names = (
+        ", ".join(str(card.get("name") or card["cast_id"]) for card in cast) or "none"
+    )
     raise CommandStopped(f"{wanted!r} is not on this story's cast (it has: {names})")
 
 
@@ -2123,18 +2649,29 @@ def run_redraw_plate(desk: Path, *, cast: str, cause: str, out: Any = None) -> P
         save_spine_snapshot(desk, 1, spine)
         url = _plate_url(spine, cast_id)
         if not url:
-            raise CommandStopped(f"the redraw completed but the spine has no current plate for {name} ({cast_id})")
+            raise CommandStopped(
+                f"the redraw completed but the spine has no current plate for {name} ({cast_id})"
+            )
         fetch = httpx.Client(timeout=120.0)
         try:
-            path = _orchestrate.download_to_versioned(fetch, url, desk / "ep01" / "plates", f"plate-ep01-{index}")
+            path = _orchestrate.download_to_versioned(
+                fetch, url, desk / "ep01" / "plates", f"plate-ep01-{index}"
+            )
         finally:
             fetch.close()
     finally:
         run.client.close()
     record_spend(desk, episode=1, usd=float(STILL_USD), unit=f"plate-redraw:{cast_id}")
-    _note(desk, 1, f"plate redraw {name} ({cast_id}): {path.name}, ${float(STILL_USD):.2f}. Cause (label only): {text}")
+    _note(
+        desk,
+        1,
+        f"plate redraw {name} ({cast_id}): {path.name}, ${float(STILL_USD):.2f}. Cause (label only): {text}",
+    )
     print(str(path), file=out)
-    print(f"{name}'s plate redrawn (${float(STILL_USD):.2f}). Show it; the plates gate is still open.", file=out)
+    print(
+        f"{name}'s plate redrawn (${float(STILL_USD):.2f}). Show it; the plates gate is still open.",
+        file=out,
+    )
     return path
 
 
@@ -2163,7 +2700,9 @@ def _newest(folder: Path, stem: str) -> Path | None:
     return max(found)[1] if found else None
 
 
-def plate_contact_sheet(plates: Sequence[tuple[str, Path | None]], redrawn: str, out: Path) -> Path:
+def plate_contact_sheet(
+    plates: Sequence[tuple[str, Path | None]], redrawn: str, out: Path
+) -> Path:
     """Draw every character's current plate side by side, the redrawn one framed and marked NEW.
 
     Parameters
@@ -2192,15 +2731,29 @@ def plate_contact_sheet(plates: Sequence[tuple[str, Path | None]], redrawn: str,
             with Image.open(path) as source:
                 art = source.convert("RGB")
             art = art.resize((max(1, round(art.width * height / art.height)), height))
-        tile = Image.new("RGB", (art.width + 2 * pad, height + label + 2 * pad), (18, 18, 18))
+        tile = Image.new(
+            "RGB", (art.width + 2 * pad, height + label + 2 * pad), (18, 18, 18)
+        )
         tile.paste(art, (pad, pad))
         draw = ImageDraw.Draw(tile)
         new = name == redrawn
         if new:
-            draw.rectangle((2, 2, tile.width - 3, pad + height + 2), outline=(242, 197, 92), width=6)
-        draw.text((pad, pad + height + 10), f"{name}{'  NEW' if new else ''}", fill=(242, 197, 92) if new else (230, 230, 230))
+            draw.rectangle(
+                (2, 2, tile.width - 3, pad + height + 2),
+                outline=(242, 197, 92),
+                width=6,
+            )
+        draw.text(
+            (pad, pad + height + 10),
+            f"{name}{'  NEW' if new else ''}",
+            fill=(242, 197, 92) if new else (230, 230, 230),
+        )
         tiles.append(tile)
-    sheet = Image.new("RGB", (sum(t.width for t in tiles) or 1, max((t.height for t in tiles), default=1)), (18, 18, 18))
+    sheet = Image.new(
+        "RGB",
+        (sum(t.width for t in tiles) or 1, max((t.height for t in tiles), default=1)),
+        (18, 18, 18),
+    )
     x = 0
     for tile in tiles:
         sheet.paste(tile, (x, 0))
@@ -2209,7 +2762,9 @@ def plate_contact_sheet(plates: Sequence[tuple[str, Path | None]], redrawn: str,
     return out
 
 
-def run_redraw_plate_with_note(desk: Path, *, cast: str, note: str, out: Any = None) -> Path:
+def run_redraw_plate_with_note(
+    desk: Path, *, cast: str, note: str, out: Any = None
+) -> Path:
     """Correct ONE character and redraw only their plate. Spends one still; nobody else is drawn or paid.
 
     ``POST /v1/spines/{id}/cast/{cast_id}/notes`` records the correction in the
@@ -2246,12 +2801,18 @@ def run_redraw_plate_with_note(desk: Path, *, cast: str, note: str, out: Any = N
     out = out or sys.stdout
     note = " ".join(note.split())
     if not note:
-        raise CommandStopped('--note is required: what to change about this character, in your words')
+        raise CommandStopped(
+            "--note is required: what to change about this character, in your words"
+        )
     desk, state, run = _desk_session(desk)
     folder, ep = _plates_home(desk)
     try:
         spine = run.spine(state.spine_id or "")
-        everyone = [card for card in spine.get("cast") or [] if isinstance(card, Mapping) and card.get("cast_id")]
+        everyone = [
+            card
+            for card in spine.get("cast") or []
+            if isinstance(card, Mapping) and card.get("cast_id")
+        ]
         cards = drawn_cast_rows(spine)
         wanted = cast.strip().casefold()
         named = next(
@@ -2261,13 +2822,26 @@ def run_redraw_plate_with_note(desk: Path, *, cast: str, note: str, out: Any = N
         )  # fmt: skip
         if named is None:
             names = ", ".join(f"{c.get('name')} ({c['cast_id']})" for c in everyone)
-            raise CommandStopped(f"no character {cast!r} on the story; the cast is: {names}")
+            raise CommandStopped(
+                f"no character {cast!r} on the story; the cast is: {names}"
+            )
         _refuse_voice_only(named)
-        index, card = next((i, c) for i, c in enumerate(cards, start=1) if c["cast_id"] == named["cast_id"])
+        index, card = next(
+            (i, c)
+            for i, c in enumerate(cards, start=1)
+            if c["cast_id"] == named["cast_id"]
+        )
         cast_id, name = str(card["cast_id"]), str(card.get("name") or card["cast_id"])
-        noted = {_note_key(str(n.get("text") or "")) for n in card.get("creator_notes") or [] if isinstance(n, Mapping)}
+        noted = {
+            _note_key(str(n.get("text") or ""))
+            for n in card.get("creator_notes") or []
+            if isinstance(n, Mapping)
+        }
         if _note_key(note) in noted:
-            print(f"[plate] {name} already carries this note; not added again.", file=sys.stderr)
+            print(
+                f"[plate] {name} already carries this note; not added again.",
+                file=sys.stderr,
+            )
         else:
             run.post(
                 f"/v1/spines/{state.spine_id}/cast/{cast_id}/notes",
@@ -2301,27 +2875,48 @@ def run_redraw_plate_with_note(desk: Path, *, cast: str, note: str, out: Any = N
             "",
         )  # fmt: skip
         if not url:
-            raise CommandStopped(f"the redraw completed but the spine has no current plate for {name}")
+            raise CommandStopped(
+                f"the redraw completed but the spine has no current plate for {name}"
+            )
         folder.mkdir(parents=True, exist_ok=True)
         fetch = httpx.Client(timeout=120.0)
         try:
-            path = _orchestrate.download_to_versioned(fetch, url, folder, f"plate-ep{ep:02d}-{index}")
+            path = _orchestrate.download_to_versioned(
+                fetch, url, folder, f"plate-ep{ep:02d}-{index}"
+            )
         finally:
             fetch.close()
     finally:
         run.client.close()
-    record_spend(desk, episode=ep, usd=float(STILL_USD), unit=f"plate-note-redraw:{cast_id}")
+    record_spend(
+        desk, episode=ep, usd=float(STILL_USD), unit=f"plate-note-redraw:{cast_id}"
+    )
     current = [
-        (str(c.get("name") or c["cast_id"]), path if i == index else _newest(folder, f"plate-ep{ep:02d}-{i}"))
+        (
+            str(c.get("name") or c["cast_id"]),
+            path if i == index else _newest(folder, f"plate-ep{ep:02d}-{i}"),
+        )
         for i, c in enumerate(cards, start=1)
     ]
-    sheet = plate_contact_sheet(current, name, next_versioned_path(folder, f"contact-ep{ep:02d}", ".png"))
-    _note(desk, ep, f"plate redraw: {name} ({cast_id}) alone -> `{path.name}`, ${float(STILL_USD):.2f}. Note: {note}")
+    sheet = plate_contact_sheet(
+        current, name, next_versioned_path(folder, f"contact-ep{ep:02d}", ".png")
+    )
+    _note(
+        desk,
+        ep,
+        f"plate redraw: {name} ({cast_id}) alone -> `{path.name}`, ${float(STILL_USD):.2f}. Note: {note}",
+    )
     print(str(path), file=out)
     print(f"contact sheet: {sheet}", file=out)
-    print(f"{name} redrawn alone (${float(STILL_USD):.2f}); nobody else was drawn or paid.", file=out)
+    print(
+        f"{name} redrawn alone (${float(STILL_USD):.2f}); nobody else was drawn or paid.",
+        file=out,
+    )
     if load_production(desk).phase == "wait_plates":
-        print(f"Show {sheet.name} to the human; their yes: fictora-produce approve --desk {desk} --gate plates", file=out)
+        print(
+            f"Show {sheet.name} to the human; their yes: fictora-produce approve --desk {desk} --gate plates",
+            file=out,
+        )
     elif load_series(desk).plates.status == "approved":
         print(
             f"!! the plates had a yes before this redraw: show {sheet.name} to the human and record the yes again "
@@ -2338,13 +2933,22 @@ def run_redraw_plate_with_note(desk: Path, *, cast: str, note: str, out: Any = N
 def _latest(api_dir: Path, stem: str) -> Path | None:
     found = sorted(
         api_dir.glob(f"{stem}-v*.json"),
-        key=lambda path: int(path.stem.rsplit("-v", 1)[1]) if path.stem.rsplit("-v", 1)[1].isdigit() else 0,
+        key=lambda path: (
+            int(path.stem.rsplit("-v", 1)[1])
+            if path.stem.rsplit("-v", 1)[1].isdigit()
+            else 0
+        ),
     )
     return found[-1] if found else None
 
 
 def lines_not_asked(
-    spine: Mapping[str, Any], facts: Mapping[str, Any], *, episode: int, take_index: int, take_count: int
+    spine: Mapping[str, Any],
+    facts: Mapping[str, Any],
+    *,
+    episode: int,
+    take_index: int,
+    take_count: int,
 ) -> tuple[list[tuple[int, str]], int]:
     """Return the approved lines a take's instructions did not carry, and how many were approved.
 
@@ -2370,10 +2974,22 @@ def lines_not_asked(
 
     listed = facts.get("lines")
     if not isinstance(listed, list):
-        raise CommandStopped("these take facts were read without the spine, so they carry no line ids")
-    counts = {str(row.get("line_id")): int(row.get("count") or 0) for row in listed if isinstance(row, Mapping)}
-    approved = dialogue_line_ids(spine, episode=episode, take_index=take_index, take_count=take_count)
-    missing = [(number, text) for number, (line_id, text) in enumerate(approved, start=1) if counts.get(line_id, 0) < 1]
+        raise CommandStopped(
+            "these take facts were read without the spine, so they carry no line ids"
+        )
+    counts = {
+        str(row.get("line_id")): int(row.get("count") or 0)
+        for row in listed
+        if isinstance(row, Mapping)
+    }
+    approved = dialogue_line_ids(
+        spine, episode=episode, take_index=take_index, take_count=take_count
+    )
+    missing = [
+        (number, text)
+        for number, (line_id, text) in enumerate(approved, start=1)
+        if counts.get(line_id, 0) < 1
+    ]
     return missing, len(approved)
 
 
@@ -2395,7 +3011,9 @@ def _approved_lines_with_speaker(
     """``(line_id, text, speaker cast_id, off_screen)`` for one take's approved lines, in order."""
 
     found: list[tuple[str, str, str, bool]] = []
-    for take_beats in beats_by_take(spine, episode=episode, take_count=take_count)[take_index - 1 : take_index]:
+    for take_beats in beats_by_take(spine, episode=episode, take_count=take_count)[
+        take_index - 1 : take_index
+    ]:
         for beat in take_beats:
             for raw in beat.get("dialogue_lines") or []:
                 if not isinstance(raw, Mapping) or not raw.get("line_id"):
@@ -2403,13 +3021,24 @@ def _approved_lines_with_speaker(
                 text = str(raw.get("spoken_text") or raw.get("text") or "").strip()
                 if text:
                     found.append(
-                        (str(raw["line_id"]), text, str(raw.get("cast_id") or ""), raw.get("off_screen") is True)
+                        (
+                            str(raw["line_id"]),
+                            text,
+                            str(raw.get("cast_id") or ""),
+                            raw.get("off_screen") is True,
+                        )
                     )
     return found
 
 
 def line_row_lines(
-    spine: Mapping[str, Any], facts: Mapping[str, Any], *, episode: int, take_index: int, take_count: int, label: str
+    spine: Mapping[str, Any],
+    facts: Mapping[str, Any],
+    *,
+    episode: int,
+    take_index: int,
+    take_count: int,
+    label: str,
 ) -> tuple[list[str], int]:
     """Say which shot and board row each approved line fell in, and flag a speaker out of frame.
 
@@ -2444,18 +3073,33 @@ def line_row_lines(
         return [], 0
     by_id = {str(row.get("line_id")): row for row in listed if isinstance(row, Mapping)}
     shots = sorted(
-        (shot for shot in facts.get("shots") or [] if isinstance(shot, Mapping) and shot.get("shot_index") is not None),
-        key=lambda shot: (float(shot.get("start_seconds") or 0.0), int(shot["shot_index"])),
+        (
+            shot
+            for shot in facts.get("shots") or []
+            if isinstance(shot, Mapping) and shot.get("shot_index") is not None
+        ),
+        key=lambda shot: (
+            float(shot.get("start_seconds") or 0.0),
+            int(shot["shot_index"]),
+        ),
     )
-    position_by_shot = {int(shot["shot_index"]): position for position, shot in enumerate(shots, start=1)}
+    position_by_shot = {
+        int(shot["shot_index"]): position
+        for position, shot in enumerate(shots, start=1)
+    }
     frames = frames_by_set(spine, episode=episode).get(take_index, [])
     rows: dict[int, list[Mapping[str, Any]]] = {}
     for frame in frames:
         raw_row = frame.get("board_row")
-        rows.setdefault(int(raw_row) if str(raw_row).isdigit() else int(frame.get("ordinal") or 0), []).append(frame)
+        rows.setdefault(
+            int(raw_row) if str(raw_row).isdigit() else int(frame.get("ordinal") or 0),
+            [],
+        ).append(frame)
     row_numbers = sorted(rows)
-    rows_match = bool(shots) and len(shots) == len(row_numbers) and all(
-        frame.get("board_row") is not None for frame in frames
+    rows_match = (
+        bool(shots)
+        and len(shots) == len(row_numbers)
+        and all(frame.get("board_row") is not None for frame in frames)
     )
     names = {
         str(card.get("cast_id")): str(card.get("name") or card.get("cast_id"))
@@ -2465,7 +3109,10 @@ def line_row_lines(
     out: list[str] = []
     flagged = 0
     for number, (line_id, text, speaker, off_screen) in enumerate(
-        _approved_lines_with_speaker(spine, episode=episode, take_index=take_index, take_count=take_count), start=1
+        _approved_lines_with_speaker(
+            spine, episode=episode, take_index=take_index, take_count=take_count
+        ),
+        start=1,
     ):
         row = by_id.get(line_id) or {}
         who = names.get(speaker, speaker or "the speaker")
@@ -2478,7 +3125,11 @@ def line_row_lines(
             continue
         position = position_by_shot.get(int(shot_index))
         start, end = row.get("start_seconds"), row.get("end_seconds")
-        window = f" ({float(start):.1f}–{float(end):.1f} s)" if start is not None and end is not None else ""
+        window = (
+            f" ({float(start):.1f}–{float(end):.1f} s)"
+            if start is not None and end is not None
+            else ""
+        )
         if position is None or not rows_match:
             out.append(
                 f"{head}: shot {shot_index}{window}; board rows not matched "
@@ -2488,11 +3139,15 @@ def line_row_lines(
         board_row = row_numbers[position - 1]
         cells = [_frame_cast_ids(frame) for frame in rows[board_row]]
         if off_screen:
-            out.append(f"{head}: shot {shot_index}{window}, row {board_row} (heard, not seen)")
+            out.append(
+                f"{head}: shot {shot_index}{window}, row {board_row} (heard, not seen)"
+            )
             continue
         in_cells = sum(1 for cast in cells if speaker in cast)
         if in_cells == len(cells):
-            out.append(f"{head}: shot {shot_index}{window}, row {board_row}, {who} in frame")
+            out.append(
+                f"{head}: shot {shot_index}{window}, row {board_row}, {who} in frame"
+            )
         elif in_cells:
             out.append(
                 f"{head}: shot {shot_index}{window}, row {board_row}, {who} in {in_cells} of {len(cells)} "
@@ -2508,7 +3163,9 @@ def line_row_lines(
     return out, flagged
 
 
-def run_check_lines(desk: Path, *, episode: int, take_id: str | None = None, out: Any = None) -> int:
+def run_check_lines(
+    desk: Path, *, episode: int, take_id: str | None = None, out: Any = None
+) -> int:
     """Say whether each approved line was in the take's instructions, and where it fell, from the take facts.
 
     Reads ``epNN/api/take-facts-epNN-tK-vM.json`` (newest) and the episode's spine
@@ -2537,7 +3194,11 @@ def run_check_lines(desk: Path, *, episode: int, take_id: str | None = None, out
     out = out or sys.stdout
     desk = desk.expanduser().resolve()
     api_dir = desk / f"ep{episode:02d}" / "api"
-    spine_path = api_dir / "spine.json" if (api_dir / "spine.json").is_file() else desk / "api" / "spine.json"
+    spine_path = (
+        api_dir / "spine.json"
+        if (api_dir / "spine.json").is_file()
+        else desk / "api" / "spine.json"
+    )
     if not spine_path.is_file():
         raise CommandStopped("no spine snapshot on the desk; run `spine --refresh`")
     spine = json.loads(spine_path.read_text(encoding="utf-8"))
@@ -2547,16 +3208,32 @@ def run_check_lines(desk: Path, *, episode: int, take_id: str | None = None, out
     for current in take_ids:
         facts_path = _latest(api_dir, f"take-facts-ep{episode:02d}-{current}")
         if facts_path is None:
-            print(f"ep{episode:02d} {current}: no take facts on the desk (film the take first)", file=out)
+            print(
+                f"ep{episode:02d} {current}: no take facts on the desk (film the take first)",
+                file=out,
+            )
             continue
         facts = json.loads(facts_path.read_text(encoding="utf-8"))
         index = [take.take_id for take in slot.takes].index(current) + 1
-        missing, total = lines_not_asked(spine, facts, episode=episode, take_index=index, take_count=len(slot.takes))
+        missing, total = lines_not_asked(
+            spine, facts, episode=episode, take_index=index, take_count=len(slot.takes)
+        )
         for number, text in missing:
-            print(f"ep{episode:02d} {current}: line {number} ('{text}') was not in the take's instructions", file=out)
-        print(f"ep{episode:02d} {current}: {total - len(missing)} of {total} approved lines asked ({facts_path.name})", file=out)
+            print(
+                f"ep{episode:02d} {current}: line {number} ('{text}') was not in the take's instructions",
+                file=out,
+            )
+        print(
+            f"ep{episode:02d} {current}: {total - len(missing)} of {total} approved lines asked ({facts_path.name})",
+            file=out,
+        )
         placed, _flagged = line_row_lines(
-            spine, facts, episode=episode, take_index=index, take_count=len(slot.takes), label=f"ep{episode:02d} {current}"
+            spine,
+            facts,
+            episode=episode,
+            take_index=index,
+            take_count=len(slot.takes),
+            label=f"ep{episode:02d} {current}",
         )
         for line in placed:
             print(line, file=out)
@@ -2567,7 +3244,19 @@ def run_check_lines(desk: Path, *, episode: int, take_id: str | None = None, out
 # --- Film one episode, or one take of it ---------------------------------------------------------
 
 #: Words that say "again" without naming what in the direction made the fault.
-NOT_A_CAUSE = frozenset({"again", "try again", "retry", "redo", "reroll", "re-roll", "one more", "another one", "new take"})
+NOT_A_CAUSE = frozenset(
+    {
+        "again",
+        "try again",
+        "retry",
+        "redo",
+        "reroll",
+        "re-roll",
+        "one more",
+        "another one",
+        "new take",
+    }
+)
 
 
 def _check_cause(cause: str | None, *, refilm: bool, what: str) -> str | None:
@@ -2577,14 +3266,18 @@ def _check_cause(cause: str | None, *, refilm: bool, what: str) -> str | None:
     if not text:
         raise CommandStopped(
             f"{what} was filmed already. A second render needs a written cause naming what in the direction produced "
-            "the fault (--cause \"...\"). \"Try again\" is not a cause"
+            'the fault (--cause "..."). "Try again" is not a cause'
         )
     if text.casefold().strip(" .!") in NOT_A_CAUSE or len(text) < 12:
-        raise CommandStopped(f"--cause {text!r} does not name what in the direction produced the fault")
+        raise CommandStopped(
+            f"--cause {text!r} does not name what in the direction produced the fault"
+        )
     return text
 
 
-def _film_scope(desk: Path, *, episode: int, take_id: str | None) -> tuple[list[str], int | None, str]:
+def _film_scope(
+    desk: Path, *, episode: int, take_id: str | None
+) -> tuple[list[str], int | None, str]:
     slot = episode_by_ordinal(load_series(desk), episode)
     desk_takes = [take.take_id for take in slot.takes]
     if take_id is None:
@@ -2592,7 +3285,9 @@ def _film_scope(desk: Path, *, episode: int, take_id: str | None) -> tuple[list[
     if not (take_id.startswith("t") and take_id[1:].isdigit()):
         raise CommandStopped("--take is t1, t2 ...")
     if take_id not in desk_takes:
-        raise CommandStopped(f"{take_id} is not a take on ep{episode:02d} (it has {', '.join(desk_takes)})")
+        raise CommandStopped(
+            f"{take_id} is not a take on ep{episode:02d} (it has {', '.join(desk_takes)})"
+        )
     return [take_id], int(take_id[1:]), f"ep{episode:02d}-{take_id}"
 
 
@@ -2644,9 +3339,20 @@ def run_film(
     desk, state, run = _desk_session(desk)
     if episode != state.episode_ordinal:
         run.client.close()
-        run = _open_run(desk, replace(state, episode_ordinal=episode))  # artefacts go to that episode's api/
+        run = _open_run(
+            desk, replace(state, episode_ordinal=episode)
+        )  # artefacts go to that episode's api/
     try:
-        return _run_film(desk, state, run, episode=episode, take_id=take_id, cause=cause, confirm_spend=confirm_spend, out=out)
+        return _run_film(
+            desk,
+            state,
+            run,
+            episode=episode,
+            take_id=take_id,
+            cause=cause,
+            confirm_spend=confirm_spend,
+            out=out,
+        )
     finally:
         run.client.close()
 
@@ -2665,21 +3371,32 @@ def _run_film(
     if episode < 1:
         raise CommandStopped("--episode is 1 or more")
     if state.phase == "ready_video":
-        raise CommandStopped("a take job is in flight on this desk; finish it with `step` first")
+        raise CommandStopped(
+            "a take job is in flight on this desk; finish it with `step` first"
+        )
     cfg = load_production_config(desk)
     take_ids, take_index, key = _film_scope(desk, episode=episode, take_id=take_id)
     slot = episode_by_ordinal(load_series(desk), episode)
-    no_yes = [take.take_id for take in slot.takes if take.take_id in take_ids and take.board.status != "approved"]
+    no_yes = [
+        take.take_id
+        for take in slot.takes
+        if take.take_id in take_ids and take.board.status != "approved"
+    ]
     if no_yes:
         raise CommandStopped(
             f"ep{episode:02d} {', '.join(no_yes)}: no human yes on the board yet (`approve --gate board`); "
             "a take is filmed only from an approved board"
         )
-    filmed_before = any(take.filmed_count for take in slot.takes if take.take_id in take_ids)
+    filmed_before = any(
+        take.filmed_count for take in slot.takes if take.take_id in take_ids
+    )
     what = f"ep{episode:02d} {take_id}" if take_id else f"episode {episode}"
     reason = _check_cause(cause, refilm=filmed_before, what=what)
     if take_index is None and len(take_ids) > 1 and filmed_before:
-        print(f"!! this re-films every take of episode {episode}; to re-film one take pass --take tK", file=out)
+        print(
+            f"!! this re-films every take of episode {episode}; to re-film one take pass --take tK",
+            file=out,
+        )
     if not confirm_spend:
         return _price_film(desk, state, run, cfg, episode=episode, take_ids=take_ids, take_index=take_index, key=key,
                            what=what, reason=reason, out=out)  # fmt: skip
@@ -2712,33 +3429,63 @@ def _run_film(
     if filmed_before and reason:
         for current in take_ids:
             if any(t.take_id == current and t.filmed_count for t in slot.takes):
-                record_verdict(desk, episode=episode, take_id=current, verdict="change", cause=reason)
+                record_verdict(
+                    desk,
+                    episode=episode,
+                    take_id=current,
+                    verdict="change",
+                    cause=reason,
+                )
     fresh = load_production(desk)
     pending = fresh.pending.get(unit)
     if pending is None:
-        pending = {"key": f"{fresh.idempotency_prefix}-{unit}-a{fresh.attempts.get(unit, 0) + 1}", "job_id": None}
+        pending = {
+            "key": f"{fresh.idempotency_prefix}-{unit}-a{fresh.attempts.get(unit, 0) + 1}",
+            "job_id": None,
+        }
         fresh.pending[unit] = pending
         save_production(desk, fresh)
     job_id = pending.get("job_id")
     if job_id:
-        print(f"[film] Picking up job {job_id} from the last run (same key, no second charge).", file=sys.stderr)
+        print(
+            f"[film] Picking up job {job_id} from the last run (same key, no second charge).",
+            file=sys.stderr,
+        )
     else:
-        job = stages.post_video_generation(run, body, idempotency_key=str(pending["key"]), episode=episode)
+        job = stages.post_video_generation(
+            run, body, idempotency_key=str(pending["key"]), episode=episode
+        )
         job_id = admitted_job_id(job)
         if not job_id:
-            raise CommandStopped(f"/v1/video-generations answered without a job id ({', '.join(sorted(job))})")
+            raise CommandStopped(
+                f"/v1/video-generations answered without a job id ({', '.join(sorted(job))})"
+            )
         fresh = load_production(desk)
         fresh.pending[unit]["job_id"] = job_id
         save_production(desk, fresh)
         _save_desk_json(desk, f"{unit}-enrol", job)
-    print(f"[film] Filming {what} (video job {job_id}). Usually 5-15 minutes.", file=sys.stderr)
+    print(
+        f"[film] Filming {what} (video job {job_id}). Usually 5-15 minutes.",
+        file=sys.stderr,
+    )
     raw = wait_for_raw_scene_clips(
-        run, str(job_id), deadline_seconds=cfg.poll_video_deadline_seconds, save_as=f"{unit}-raw-scene-clips.json"
+        run,
+        str(job_id),
+        deadline_seconds=cfg.poll_video_deadline_seconds,
+        save_as=f"{unit}-raw-scene-clips.json",
     )
     spine = run.spine(state.spine_id or "")
     save_spine_snapshot(desk, episode, spine)
     collecting = load_production(desk)
-    got = collect_takes(desk, run, collecting, raw, episode=episode, clip_seconds=cfg.clip_duration_seconds, spine=spine)
+    got = collect_takes(
+        desk,
+        run,
+        collecting,
+        raw,
+        episode=episode,
+        clip_seconds=cfg.clip_duration_seconds,
+        spine=spine,
+    )
     fresh = load_production(desk)
     fresh.remember_server_lane(collecting.server_lane())
     fresh.pending.pop(unit, None)
@@ -2746,14 +3493,28 @@ def _run_film(
     fresh.film_estimates.pop(key, None)
     if got.first_url is None:
         save_production(desk, fresh)
-        raise CommandStopped(f"video job {job_id} completed but no take for {what} came back")
-    if fresh.episode_ordinal == episode and take_index is None and fresh.phase in {"ready_estimate", "wait_spend"}:
+        raise CommandStopped(
+            f"video job {job_id} completed but no take for {what} came back"
+        )
+    if (
+        fresh.episode_ordinal == episode
+        and take_index is None
+        and fresh.phase in {"ready_estimate", "wait_spend"}
+    ):
         fresh.phase = "complete"
     fresh.last_video_job_id = str(job_id)
     save_production(desk, fresh)
     cause_note = f" Cause: {reason}." if reason else ""
-    _note(desk, episode, f"film {what}: video job `{job_id}`; " + "; ".join(got.jobs) + f". Booked ${got.booked_usd:.2f}.{cause_note}")
-    lines = [f"Filmed {what}: {len(got.jobs)} take(s), ${got.booked_usd:.2f} booked. Video job {job_id}."]
+    _note(
+        desk,
+        episode,
+        f"film {what}: video job `{job_id}`; "
+        + "; ".join(got.jobs)
+        + f". Booked ${got.booked_usd:.2f}.{cause_note}",
+    )
+    lines = [
+        f"Filmed {what}: {len(got.jobs)} take(s), ${got.booked_usd:.2f} booked. Video job {job_id}."
+    ]
     lines += [f"  {line}" for line in got.jobs]
     lines.append(
         f"Watch the new take in ep{episode:02d}/takes/. After the human says Use it: "
@@ -2778,13 +3539,24 @@ def _price_film(
     reason: str | None,
     out: Any,
 ) -> str:
-    estimate = stages.estimate_batch(run, spine_id=state.spine_id or "", episode=episode, reroll_take_index=take_index)
+    estimate = stages.estimate_batch(
+        run,
+        spine_id=state.spine_id or "",
+        episode=episode,
+        reroll_take_index=take_index,
+    )
     _save_desk_json(desk, f"film-{key}-estimate", estimate)
     state.remember_server_lane(server_lane(estimate))
     spine = run.spine(state.spine_id or "")
     cast_count = len(drawn_cast_rows(spine))
-    usd, source, warnings = price_estimate(state, cfg, estimate, cast_count=cast_count, takes=len(take_ids))
-    if warnings and take_index is not None and "reroll_take_index" in str(estimate.get("detail") or ""):
+    usd, source, warnings = price_estimate(
+        state, cfg, estimate, cast_count=cast_count, takes=len(take_ids)
+    )
+    if (
+        warnings
+        and take_index is not None
+        and "reroll_take_index" in str(estimate.get("detail") or "")
+    ):
         source += "; the deployed API cannot price one take yet"
     fresh = load_production(desk)
     fresh.film_estimates[key] = usd
@@ -2792,9 +3564,21 @@ def _price_film(
     save_production(desk, fresh)
     if take_index is not None:
         record_estimate(desk, episode=episode, take_id=take_ids[0], usd=usd)
-    scope = f"only {take_ids[0]} of episode {episode}" if take_index is not None else f"episode {episode} alone ({len(take_ids)} take(s))"
-    earlier = f"; episodes 1-{episode - 1} are not filmed or booked again" if episode > 1 else ""
-    others = "; the episode's other takes are kept as filmed" if take_index is not None else ""
+    scope = (
+        f"only {take_ids[0]} of episode {episode}"
+        if take_index is not None
+        else f"episode {episode} alone ({len(take_ids)} take(s))"
+    )
+    earlier = (
+        f"; episodes 1-{episode - 1} are not filmed or booked again"
+        if episode > 1
+        else ""
+    )
+    others = (
+        "; the episode's other takes are kept as filmed"
+        if take_index is not None
+        else ""
+    )
     lines = [
         *warnings,
         f"Film {scope}: about ${usd:.2f} ({source}){earlier}{others}.",
@@ -2809,7 +3593,11 @@ def _price_film(
     )
     text = "\n".join(lines)
     print(text, file=out)
-    _note(desk, episode, " ".join([*warnings, f"film {what} priced ${usd:.2f} ({source})."]))
+    _note(
+        desk,
+        episode,
+        " ".join([*warnings, f"film {what} priced ${usd:.2f} ({source})."]),
+    )
     return text
 
 
@@ -2836,7 +3624,9 @@ EPISODE_COMMANDS = frozenset(
 )
 
 
-def add_episode_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+def add_episode_parsers(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
     """Register the episode flow commands on ``fictora-produce``.
 
     Parameters
@@ -2845,31 +3635,73 @@ def add_episode_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]
         Argparse subparser set.
     """
 
-    arc = sub.add_parser("arc", help="Episode 2's series arc: --list the three, then --pick N. Spends nothing.")
+    arc = sub.add_parser(
+        "arc",
+        help="Episode 2's series arc: --list the three, then --pick N. Spends nothing.",
+    )
     arc.add_argument("--desk", type=Path, required=True)
     mode = arc.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--list", action="store_true", help="Read the brief and print its arcs.")
-    mode.add_argument("--pick", type=int, metavar="N", help="Keep arc N, then print episode 2's directions.")
-    arc.add_argument("--title", default=None, help="With --pick: the human's rewrite of the title (<=80).")
-    arc.add_argument("--line", default=None, help="With --pick: the human's rewrite of the line (<=400).")
-    arc.add_argument("--episodes", type=int, default=None, help="Intended run, 7-240 (soft default; can continue).")
+    mode.add_argument(
+        "--list", action="store_true", help="Read the brief and print its arcs."
+    )
+    mode.add_argument(
+        "--pick",
+        type=int,
+        metavar="N",
+        help="Keep arc N, then print episode 2's directions.",
+    )
+    arc.add_argument(
+        "--title",
+        default=None,
+        help="With --pick: the human's rewrite of the title (<=80).",
+    )
+    arc.add_argument(
+        "--line",
+        default=None,
+        help="With --pick: the human's rewrite of the line (<=400).",
+    )
+    arc.add_argument(
+        "--episodes",
+        type=int,
+        default=None,
+        help="Intended run, 7-240 (soft default; can continue).",
+    )
 
-    brief = sub.add_parser("brief", help="Read the next-episode brief (directions) for episode N. Spends nothing.")
+    brief = sub.add_parser(
+        "brief",
+        help="Read the next-episode brief (directions) for episode N. Spends nothing.",
+    )
     brief.add_argument("--desk", type=Path, required=True)
     brief.add_argument("--episode", type=int, required=True)
-    brief.add_argument("--episodes", type=int, default=None, help="Intended run, 7-240 (soft default).")
+    brief.add_argument(
+        "--episodes", type=int, default=None, help="Intended run, 7-240 (soft default)."
+    )
 
     author = sub.add_parser(
         "author",
         help="Write episode N (2 on) on the API, sync its lines, point the desk at it. Never approves.",
     )
     author.add_argument("--desk", type=Path, required=True)
-    author.add_argument("--episode", type=int, required=True, help="Episode ordinal, 2 or more.")
-    author.add_argument("--direction", type=int, default=None, metavar="N", help="Direction N from the newest saved brief.")
-    author.add_argument("--line", default=None, help="The human's own direction for this episode.")
-    author.add_argument("--title", default=None, help="With --line: a short name for it.")
+    author.add_argument(
+        "--episode", type=int, required=True, help="Episode ordinal, 2 or more."
+    )
+    author.add_argument(
+        "--direction",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Direction N from the newest saved brief.",
+    )
+    author.add_argument(
+        "--line", default=None, help="The human's own direction for this episode."
+    )
+    author.add_argument(
+        "--title", default=None, help="With --line: a short name for it."
+    )
 
-    memory = sub.add_parser("memory", help="Add one standing note or open thread to the series memory.")
+    memory = sub.add_parser(
+        "memory", help="Add one standing note or open thread to the series memory."
+    )
     memory.add_argument("--desk", type=Path, required=True)
     which = memory.add_mutually_exclusive_group(required=True)
     which.add_argument("--note", default=None)
@@ -2887,13 +3719,29 @@ def add_episode_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     target = edit.add_mutually_exclusive_group(required=True)
     target.add_argument("--beat", default=None, help="Beat id or ordinal.")
     target.add_argument("--frame", default=None, help="Frame id or ordinal.")
-    target.add_argument("--line-id", default=None, help="Dialogue line id (line_ep01_01).")
+    target.add_argument(
+        "--line-id", default=None, help="Dialogue line id (line_ep01_01)."
+    )
     edit.add_argument("--intent", default=None, help="A beat's new motion_intent.")
-    edit.add_argument("--set", dest="assignments", action="append", default=[], metavar="KEY=VALUE",
-                      help="motion_direction field (beat) or visual_brief field (frame); dotted keys; JSON values.")
+    edit.add_argument(
+        "--set",
+        dest="assignments",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="motion_direction field (beat) or visual_brief field (frame); dotted keys; JSON values.",
+    )
     edit.add_argument("--text", default=None, help="Line: the English script text.")
-    edit.add_argument("--spoken", default=None, help="Line: pin the exact performed line (JA/KO shows).")
-    edit.add_argument("--subtitle", default=None, help="Line: the subtitle for the pinned line (with --spoken).")
+    edit.add_argument(
+        "--spoken",
+        default=None,
+        help="Line: pin the exact performed line (JA/KO shows).",
+    )
+    edit.add_argument(
+        "--subtitle",
+        default=None,
+        help="Line: the subtitle for the pinned line (with --spoken).",
+    )
     plan = edit.add_mutually_exclusive_group()
     plan.add_argument(
         "--shot-plan", default=None, metavar="JSON",
@@ -2906,9 +3754,21 @@ def add_episode_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]
         "--shot", dest="shots", action="append", default=None, metavar="SIZE|SUBJECT|CAMERA|ANGLE",
         help="Beat: one shot of its plan, in order; repeat 1-4 times. Camera and angle optional.",
     )  # fmt: skip
-    plan.add_argument("--clear-shot-plan", action="store_true", help="Beat: remove its plan (the frames author chooses again).")
-    edit.add_argument("--select-regen", action="store_true", help="After the gate: also run paid regeneration items.")
-    edit.add_argument("--preview", action="store_true", help="After the gate: print the cascade and stop.")
+    plan.add_argument(
+        "--clear-shot-plan",
+        action="store_true",
+        help="Beat: remove its plan (the frames author chooses again).",
+    )
+    edit.add_argument(
+        "--select-regen",
+        action="store_true",
+        help="After the gate: also run paid regeneration items.",
+    )
+    edit.add_argument(
+        "--preview",
+        action="store_true",
+        help="After the gate: print the cascade and stop.",
+    )
 
     line = sub.add_parser(
         "line",
@@ -2919,37 +3779,97 @@ def add_episode_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]
         ),
         description=(
             "Change a line: --line N with --text/--spoken/--speaker/--off-screen. Add one: --add --beat N --speaker "
-            "NAME --text \"...\" [--off-screen]; a beat holds one line, so to replace it add --remove OLD in the same "
+            'NAME --text "..." [--off-screen]; a beat holds one line, so to replace it add --remove OLD in the same '
             "command. Drop one: --remove N. A new voice that is heard and never drawn comes with its line: --add --beat "
-            "N --text \"...\" --new-voice NAME --role \"...\" --voice-description \"...\" [--provider-voice X]."
+            'N --text "..." --new-voice NAME --role "..." --voice-description "..." [--provider-voice X].'
         ),
     )
     line.add_argument("--desk", type=Path, required=True)
     line.add_argument("--episode", type=int, required=True)
-    line.add_argument("--line", default=None, help="Line id (line_episode_01_02) or its number in the episode (2).")
+    line.add_argument(
+        "--line",
+        default=None,
+        help="Line id (line_episode_01_02) or its number in the episode (2).",
+    )
     line.add_argument("--text", default=None, help="The English line.")
-    line.add_argument("--spoken", default=None, help="Pin the exact performed line (JA/KO shows).")
-    line.add_argument("--subtitle", default=None, help="The subtitle for the pinned line (with --spoken).")
-    line.add_argument("--speaker", default=None, help="Someone already in the cast (name or cast id).")
+    line.add_argument(
+        "--spoken", default=None, help="Pin the exact performed line (JA/KO shows)."
+    )
+    line.add_argument(
+        "--subtitle",
+        default=None,
+        help="The subtitle for the pinned line (with --spoken).",
+    )
+    line.add_argument(
+        "--speaker", default=None, help="Someone already in the cast (name or cast id)."
+    )
     seen = line.add_mutually_exclusive_group()
-    seen.add_argument("--off-screen", dest="off_screen", action="store_const", const=True, default=None,
-                      help="The speaker is heard, not seen (a voice on a speaker, behind a door).")
-    seen.add_argument("--on-screen", dest="off_screen", action="store_const", const=False,
-                      help="The speaker is seen again.")
-    line.add_argument("--add", action="store_true", help="Add a line on --beat (with --text and --speaker or --new-voice).")
-    line.add_argument("--beat", default=None, help="With --add: the beat's number in the episode, or its id.")
-    line.add_argument("--remove", default=None, help="Drop a line: its id or number (with --add, replaces it).")
-    line.add_argument("--speaker-moves", action="store_true",
-                      help="With --add: also make the speaker the beat's motion subject (the server asks for it when "
-                           "the beat moves someone else).")
-    line.add_argument("--new-voice", default=None, help="With --add: a new character who is only heard, speaking the line.")
-    line.add_argument("--role", default=None, help="With --new-voice: who they are (\"facility intercom\").")
-    line.add_argument("--voice-description", default=None,
-                      help="With --new-voice: how the voice sounds (\"tinny, clipped, calm\").")
-    line.add_argument("--provider-voice", default=None,
-                      help="With --new-voice: an Eleven v3 voice; left out, the server picks one nobody uses.")
-    line.add_argument("--select-regen", action="store_true", help="After the gate: also run paid regeneration items.")
-    line.add_argument("--preview", action="store_true", help="After the gate: print the cascade and stop.")
+    seen.add_argument(
+        "--off-screen",
+        dest="off_screen",
+        action="store_const",
+        const=True,
+        default=None,
+        help="The speaker is heard, not seen (a voice on a speaker, behind a door).",
+    )
+    seen.add_argument(
+        "--on-screen",
+        dest="off_screen",
+        action="store_const",
+        const=False,
+        help="The speaker is seen again.",
+    )
+    line.add_argument(
+        "--add",
+        action="store_true",
+        help="Add a line on --beat (with --text and --speaker or --new-voice).",
+    )
+    line.add_argument(
+        "--beat",
+        default=None,
+        help="With --add: the beat's number in the episode, or its id.",
+    )
+    line.add_argument(
+        "--remove",
+        default=None,
+        help="Drop a line: its id or number (with --add, replaces it).",
+    )
+    line.add_argument(
+        "--speaker-moves",
+        action="store_true",
+        help="With --add: also make the speaker the beat's motion subject (the server asks for it when "
+        "the beat moves someone else).",
+    )
+    line.add_argument(
+        "--new-voice",
+        default=None,
+        help="With --add: a new character who is only heard, speaking the line.",
+    )
+    line.add_argument(
+        "--role",
+        default=None,
+        help='With --new-voice: who they are ("facility intercom").',
+    )
+    line.add_argument(
+        "--voice-description",
+        default=None,
+        help='With --new-voice: how the voice sounds ("tinny, clipped, calm").',
+    )
+    line.add_argument(
+        "--provider-voice",
+        default=None,
+        help="With --new-voice: an Eleven v3 voice; left out, the server picks one nobody uses.",
+    )
+    line.add_argument(
+        "--select-regen",
+        action="store_true",
+        help="After the gate: also run paid regeneration items.",
+    )
+    line.add_argument(
+        "--preview",
+        action="store_true",
+        help="After the gate: print the cascade and stop.",
+    )
 
     frame = sub.add_parser(
         "look-frame",
@@ -2965,36 +3885,56 @@ def add_episode_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]
         metavar="TEXT|FILE",
         help="The look, written down: the words, or @FILE / an existing file path.",
     )
-    frame.add_argument("--size", default=LOOK_FRAME_DEFAULT_SIZE, choices=LOOK_FRAME_SIZES)
+    frame.add_argument(
+        "--size", default=LOOK_FRAME_DEFAULT_SIZE, choices=LOOK_FRAME_SIZES
+    )
 
-    look = sub.add_parser("look", help="Pin the story's look: one style frame by public https URL. Spends nothing.")
+    look = sub.add_parser(
+        "look",
+        help="Pin the story's look: one style frame by public https URL. Spends nothing.",
+    )
     look.add_argument("--desk", type=Path, required=True)
     look.add_argument("--url", required=True)
 
-    note = sub.add_parser("look-note", help="Add or remove a look note (max 5). Spends nothing.")
+    note = sub.add_parser(
+        "look-note", help="Add or remove a look note (max 5). Spends nothing."
+    )
     note.add_argument("--desk", type=Path, required=True)
     change = note.add_mutually_exclusive_group(required=True)
     change.add_argument("--add", default=None)
     change.add_argument("--remove", default=None, metavar="ID|N")
 
-    spine = sub.add_parser("spine", help="Save the story from the server again (--refresh).")
+    spine = sub.add_parser(
+        "spine", help="Save the story from the server again (--refresh)."
+    )
     spine.add_argument("--desk", type=Path, required=True)
     spine.add_argument("--refresh", action="store_true", required=True)
 
-    redraw = sub.add_parser("redraw-board", help="Redraw one board (regenerate route); prints its shot list. $0.30.")
+    redraw = sub.add_parser(
+        "redraw-board",
+        help="Redraw one board (regenerate route); prints its shot list. $0.30.",
+    )
     redraw.add_argument("--desk", type=Path, required=True)
     redraw.add_argument("--episode", type=int, required=True)
     redraw.add_argument("--take", required=True, help="t1, t2 ...")
-    redraw.add_argument("--cause", required=True, help="Why: a LABEL for the desk; the server takes no redraw notes.")
+    redraw.add_argument(
+        "--cause",
+        required=True,
+        help="Why: a LABEL for the desk; the server takes no redraw notes.",
+    )
 
     plates = sub.add_parser(
         "plates",
         help="Redraw one character's plate at the plates gate (regenerate route; the rest of the cast is kept). $0.30.",
     )
     plates.add_argument("--desk", type=Path, required=True)
-    plates.add_argument("--cast", required=True, help="The character's name or cast id.")
     plates.add_argument(
-        "--cause", required=True, help="What in the direction was wrong: a LABEL; the server takes no redraw notes."
+        "--cast", required=True, help="The character's name or cast id."
+    )
+    plates.add_argument(
+        "--cause",
+        required=True,
+        help="What in the direction was wrong: a LABEL; the server takes no redraw notes.",
     )
     plate = sub.add_parser(
         "redraw-plate",
@@ -3002,7 +3942,11 @@ def add_episode_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     )
     plate.add_argument("--desk", type=Path, required=True)
     plate.add_argument("--cast", required=True, help="cast_id or name.")
-    plate.add_argument("--note", required=True, help="What to change about this character, in your words.")
+    plate.add_argument(
+        "--note",
+        required=True,
+        help="What to change about this character, in your words.",
+    )
 
     film = sub.add_parser(
         "film",
@@ -3013,11 +3957,24 @@ def add_episode_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     )
     film.add_argument("--desk", type=Path, required=True)
     film.add_argument("--episode", type=int, required=True)
-    film.add_argument("--take", default=None, help="tK: film only this take of the episode.")
-    film.add_argument("--cause", default=None, help="Required to film again: what in the direction produced the fault.")
-    film.add_argument("--confirm-spend", action="store_true", help="The human said yes to the printed number.")
+    film.add_argument(
+        "--take", default=None, help="tK: film only this take of the episode."
+    )
+    film.add_argument(
+        "--cause",
+        default=None,
+        help="Required to film again: what in the direction produced the fault.",
+    )
+    film.add_argument(
+        "--confirm-spend",
+        action="store_true",
+        help="The human said yes to the printed number.",
+    )
 
-    check = sub.add_parser("check-lines", help="Were the approved lines in the take's instructions? (take facts)")
+    check = sub.add_parser(
+        "check-lines",
+        help="Were the approved lines in the take's instructions? (take facts)",
+    )
     check.add_argument("--desk", type=Path, required=True)
     check.add_argument("--episode", type=int, required=True)
     check.add_argument("--take", default=None)
@@ -3042,13 +3999,25 @@ def dispatch_episode(args: argparse.Namespace) -> int:
             if args.list:
                 run_arc_list(args.desk, episodes=args.episodes)
             else:
-                run_arc_pick(args.desk, option=args.pick, title=args.title, line=args.line, episodes=args.episodes)
+                run_arc_pick(
+                    args.desk,
+                    option=args.pick,
+                    title=args.title,
+                    line=args.line,
+                    episodes=args.episodes,
+                )
             return 0
         if args.command == "brief":
             run_brief(args.desk, episode=args.episode, episodes=args.episodes)
             return 0
         if args.command == "author":
-            direction = author_direction(args.desk, args.episode, pick=args.direction, line=args.line, title=args.title)
+            direction = author_direction(
+                args.desk,
+                args.episode,
+                pick=args.direction,
+                line=args.line,
+                title=args.title,
+            )
             run_author(args.desk, episode=args.episode, direction=direction)
             return 0
         if args.command == "memory":
@@ -3114,7 +4083,9 @@ def dispatch_episode(args: argparse.Namespace) -> int:
             run_spine_refresh(args.desk)
             return 0
         if args.command == "redraw-board":
-            run_redraw_board(args.desk, episode=args.episode, take_id=args.take, cause=args.cause)
+            run_redraw_board(
+                args.desk, episode=args.episode, take_id=args.take, cause=args.cause
+            )
             return 0
         if args.command == "plates":
             run_redraw_plate(args.desk, cast=args.cast, cause=args.cause)
@@ -3123,15 +4094,28 @@ def dispatch_episode(args: argparse.Namespace) -> int:
             run_redraw_plate_with_note(args.desk, cast=args.cast, note=args.note)
             return 0
         if args.command == "film":
-            run_film(args.desk, episode=args.episode, take_id=args.take, cause=args.cause, confirm_spend=args.confirm_spend)
+            run_film(
+                args.desk,
+                episode=args.episode,
+                take_id=args.take,
+                cause=args.cause,
+                confirm_spend=args.confirm_spend,
+            )
             return 0
         if args.command == "check-lines":
-            return 5 if run_check_lines(args.desk, episode=args.episode, take_id=args.take) else 0
+            return (
+                5
+                if run_check_lines(args.desk, episode=args.episode, take_id=args.take)
+                else 0
+            )
     except CommandStopped as exc:
         print(f"Stopped: {exc}", file=sys.stderr)
         return 2
     except SystemExit as exc:
-        print(f"Stopped: {api_error_text(exc.code) if not isinstance(exc.code, str) else exc.code}", file=sys.stderr)
+        print(
+            f"Stopped: {api_error_text(exc.code) if not isinstance(exc.code, str) else exc.code}",
+            file=sys.stderr,
+        )
         return 2
     raise ValueError(f"unknown episode command {args.command}")
 

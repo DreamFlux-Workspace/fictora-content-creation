@@ -157,16 +157,23 @@ class FinishResult:
         """``Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`` (✗ for what did not go on)."""
 
         missing = set(self.sound_missing)
-        marks = [f"{part} {'✗' if part in missing else '✓'}" for part in ("music", "SFX", "mix")]
+        marks = [
+            f"{part} {'✗' if part in missing else '✓'}"
+            for part in ("music", "SFX", "mix")
+        ]
         marks.append(f"captions {'✓' if self._ran('captions') else '✗'}")
-        marks += [f"hand {name} {'✗' if name in missing else '✓'}" for name in self.hand_steps]
+        marks += [
+            f"hand {name} {'✗' if name in missing else '✓'}" for name in self.hand_steps
+        ]
         return "Sound: " + " · ".join(marks)
 
     def summary_lines(self) -> list[str]:
         """Final file, loudness, each step, then the sound line (cost stays in run notes only)."""
 
         lines = [f"Final: {self.final}", f"Loudness: {self.loudness or 'not measured'}"]
-        lines += [f"- {step.step}: {step.status} — {step.detail}" for step in self.steps]
+        lines += [
+            f"- {step.step}: {step.status} — {step.detail}" for step in self.steps
+        ]
         lines.append(self.sound_line())
         return lines
 
@@ -209,10 +216,14 @@ def book(
     try:
         record_spend(desk, episode=episode, usd=usd, take_id=take_id, unit=unit)
     except (FileNotFoundError, ValueError, KeyError) as exc:
-        print(f"note: a spend was not booked on the desk ledger ({exc}); see run-notes.md", file=stream or sys.stderr)
+        print(
+            f"note: a spend was not booked on the desk ledger ({exc}); see run-notes.md",
+            file=stream or sys.stderr,
+        )
         if (desk / f"ep{episode:02d}" / "run-notes.md").is_file():
             append_run_note(
-                desk / f"ep{episode:02d}", f"Not booked on the ledger: ${usd:.3f} ({exc}); fictora-ops spend"
+                desk / f"ep{episode:02d}",
+                f"Not booked on the ledger: ${usd:.3f} ({exc}); fictora-ops spend",
             )
 
 
@@ -229,7 +240,11 @@ def api_facts_fetcher(desk: Path, episode: int, take_id: str) -> Path | None:
         run.client.close()
     if facts is None:
         return None
-    path = next_versioned_path(desk / f"ep{episode:02d}" / "api", f"take-facts-ep{episode:02d}-{take_id}", ".json")
+    path = next_versioned_path(
+        desk / f"ep{episode:02d}" / "api",
+        f"take-facts-ep{episode:02d}-{take_id}",
+        ".json",
+    )
     path.write_text(json.dumps(facts, indent=2) + "\n", encoding="utf-8")
     return path
 
@@ -316,13 +331,19 @@ def run_finish(
     desk = desk.expanduser().resolve()
     check_duck_db(duck_db)
     run_dir = desk / f"ep{episode:02d}"
-    source = take_file.expanduser().resolve() if take_file else latest_raw_take(desk, episode, take_id)
+    source = (
+        take_file.expanduser().resolve()
+        if take_file
+        else latest_raw_take(desk, episode, take_id)
+    )
     if not source.is_file():
         raise FileNotFoundError(f"take not found: {source}")
     hand = HandPlan()
     if mutes or voices or cues:
         # Take seconds as filmed: deboard replaces the board frames without cutting, so no shift is applied.
-        hand = check_hand_plan(probe_video(source).duration_seconds, mutes=mutes, voices=voices, cues=cues)
+        hand = check_hand_plan(
+            probe_video(source).duration_seconds, mutes=mutes, voices=voices, cues=cues
+        )
     takes = run_dir / "takes"
     base = f"take-ep{episode:02d}-{take_id}"
     found_spine = saved_spine(desk, episode)
@@ -331,7 +352,9 @@ def run_finish(
     audio = DramaApiAudio(desk, episode=episode)
     sfx_render = sfx_render or service_renderer(audio, spine_id(desk))
     bed_maker = bed_maker or service_music_maker(audio)
-    hand_steps = (("voice",) if hand.mutes or hand.voices else ()) + (("cues",) if hand.cues else ())
+    hand_steps = (("voice",) if hand.mutes or hand.voices else ()) + (
+        ("cues",) if hand.cues else ()
+    )
     result = FinishResult(source=source, final=source, hand_steps=hand_steps)
     current = source
     bed_state: dict[str, Any] = {"path": None, "cues": ()}
@@ -342,7 +365,10 @@ def run_finish(
         f"Finishing {source.name}: board frames, sound effects, music, look, mix, captions, mark (2-4 minutes)",
         file=out,
     )
-    append_run_note(run_dir, f"Finish chain on `{source.name}` (board: `{board.name if board else 'none'}`)")
+    append_run_note(
+        run_dir,
+        f"Finish chain on `{source.name}` (board: `{board.name if board else 'none'}`)",
+    )
 
     def step(name: str, doing: str, work: Callable[[Path], StepReport]) -> None:
         nonlocal current
@@ -350,9 +376,16 @@ def run_finish(
         try:
             report = work(current)
         except STEP_ERRORS as exc:
-            report = StepReport(name, "failed", f"{type(exc).__name__}: {exc}".strip()[:300])
-            print(f"[{name}] Stopped: {report.detail}. Skipped; carrying on from the last good file", file=out)
-            append_run_note(run_dir, f"Finish · {name}: FAILED, skipped — {report.detail}")
+            report = StepReport(
+                name, "failed", f"{type(exc).__name__}: {exc}".strip()[:300]
+            )
+            print(
+                f"[{name}] Stopped: {report.detail}. Skipped; carrying on from the last good file",
+                file=out,
+            )
+            append_run_note(
+                run_dir, f"Finish · {name}: FAILED, skipped — {report.detail}"
+            )
             result.steps.append(report)
             return
         print(f"[{name}] {report.status}: {report.detail}", file=out, flush=True)
@@ -364,18 +397,32 @@ def run_finish(
         if not deboard:
             return StepReport("deboard", "skipped", "--no-deboard")
         if board is None:
-            return StepReport("deboard", "skipped", "no approved board on the desk to measure against")
-        trimmed = deboard_take(take, board, next_versioned_path(takes, f"{base}-deboard", ".mp4"))
-        append_run_note(run_dir, f"Finish · deboard against `{board.name}`: {trimmed.one_line()}")
+            return StepReport(
+                "deboard", "skipped", "no approved board on the desk to measure against"
+            )
+        trimmed = deboard_take(
+            take, board, next_versioned_path(takes, f"{base}-deboard", ".mp4")
+        )
+        append_run_note(
+            run_dir, f"Finish · deboard against `{board.name}`: {trimmed.one_line()}"
+        )
         if trimmed.output is None:
-            return StepReport("deboard", "ran", f"no board frames ({trimmed.leak.one_line()}); nothing written")
+            return StepReport(
+                "deboard",
+                "ran",
+                f"no board frames ({trimmed.leak.one_line()}); nothing written",
+            )
         return StepReport("deboard", "ran", trimmed.one_line(), trimmed.output)
 
     def do_voice(take: Path) -> StepReport:
-        voiced = lay_voice(take, next_versioned_path(takes, f"{base}-voice", ".mp4"), hand)
+        voiced = lay_voice(
+            take, next_versioned_path(takes, f"{base}-voice", ".mp4"), hand
+        )
         voice_state["path"] = voiced
         parts = [f"muted {a:.2f}-{b:.2f}s" for a, b in hand.mutes]
-        parts += [f"voice {line.one_line()} ({seconds:.2f}s)" for line, seconds in hand.voices]
+        parts += [
+            f"voice {line.one_line()} ({seconds:.2f}s)" for line, seconds in hand.voices
+        ]
         append_run_note(run_dir, f"Hand voice -> `{voiced.name}`: " + "; ".join(parts))
         return StepReport("voice", "ran", "; ".join(parts), voiced)
 
@@ -383,14 +430,23 @@ def run_finish(
         speech = list(hand.voice_windows)
         facts = saved_take_facts(desk, episode, take_id)
         if facts is not None:
-            speech += plan_from_take_facts(json.loads(facts.read_text(encoding="utf-8"))).speech
-        laid = lay_cues(take, next_versioned_path(takes, f"{base}-cues", ".mp4"), hand, speech=tuple(speech))
+            speech += plan_from_take_facts(
+                json.loads(facts.read_text(encoding="utf-8"))
+            ).speech
+        laid = lay_cues(
+            take,
+            next_versioned_path(takes, f"{base}-cues", ".mp4"),
+            hand,
+            speech=tuple(speech),
+        )
         parts = [f"{cue.one_line()} for {seconds:.2f}s" for cue, seconds in hand.cues]
         append_run_note(run_dir, f"Hand cues -> `{laid.name}`: " + "; ".join(parts))
         return StepReport("cues", "ran", "; ".join(parts), laid)
 
     def do_sfx(take: Path) -> StepReport:
-        facts = saved_take_facts(desk, episode, take_id) or facts_fetcher(desk, episode, take_id)
+        facts = saved_take_facts(desk, episode, take_id) or facts_fetcher(
+            desk, episode, take_id
+        )
         if facts is None:
             return StepReport(
                 "sfx",
@@ -400,7 +456,11 @@ def run_finish(
             )
         plan = plan_from_take_facts(json.loads(facts.read_text(encoding="utf-8")))
         if not plan.cues:
-            return StepReport("sfx", "ran", f"the take facts plan no effect (every shot speaks); `{facts.name}`")
+            return StepReport(
+                "sfx",
+                "ran",
+                f"the take facts plan no effect (every shot speaks); `{facts.name}`",
+            )
         sfx = lay_sfx(
             take,
             plan,
@@ -410,15 +470,27 @@ def run_finish(
             render=sfx_render,
         )
         if sfx.cost_usd:
-            book(desk, episode=episode, usd=sfx.cost_usd, take_id=take_id, stream=out, unit="sfx")
+            book(
+                desk,
+                episode=episode,
+                usd=sfx.cost_usd,
+                take_id=take_id,
+                stream=out,
+                unit="sfx",
+            )
         bed_state["cues"] = tuple(
-            CueLevel(c.sound, c.start, c.seconds, peak, c.gain_db) for c, peak in zip(sfx.mixed, sfx.peaks_db)
+            CueLevel(c.sound, c.start, c.seconds, peak, c.gain_db)
+            for c, peak in zip(sfx.mixed, sfx.peaks_db)
         )
-        cues = ", ".join(f"{c.sound} @{c.start:.2f}s {c.gain_db:+.0f} dB" for c in sfx.mixed)
+        cues = ", ".join(
+            f"{c.sound} @{c.start:.2f}s {c.gain_db:+.0f} dB" for c in sfx.mixed
+        )
         note = f"SFX -> `{sfx.output.name}`: {cues}; rendered {sfx.rendered}, ${sfx.cost_usd:.3f}"
         note += "".join(f"\n- skipped: {s}" for s in sfx.skipped)
         append_run_note(run_dir, note)
-        return StepReport("sfx", "ran", f"{len(sfx.mixed)} cue(s): {cues}", sfx.output, sfx.cost_usd)
+        return StepReport(
+            "sfx", "ran", f"{len(sfx.mixed)} cue(s): {cues}", sfx.output, sfx.cost_usd
+        )
 
     def do_bed(_take: Path) -> StepReport:
         bed = resolve_bed(desk, spine=spine, music=music, maker=bed_maker)
@@ -426,17 +498,27 @@ def run_finish(
         if bed.cost_usd:
             book(desk, episode=episode, usd=bed.cost_usd, stream=out, unit="bed")
         append_run_note(run_dir, f"Bed: {bed.one_line()} at {bed_db:+.1f} dB")
-        return StepReport("bed", "ran", f"{bed.one_line()} at {bed_db:+.1f} dB", None, bed.cost_usd)
+        return StepReport(
+            "bed", "ran", f"{bed.one_line()} at {bed_db:+.1f} dB", None, bed.cost_usd
+        )
 
     def do_colour(take: Path) -> StepReport:
         if not colour:
             return StepReport("colour", "skipped", "--no-colour-match")
         if board is None:
-            return StepReport("colour", "skipped", "no approved board on the desk to match")
+            return StepReport(
+                "colour", "skipped", "no approved board on the desk to match"
+            )
         matched = colour_match(
-            take, board, next_versioned_path(takes, f"{base}-colour", ".mp4"), strength=colour_strength
+            take,
+            board,
+            next_versioned_path(takes, f"{base}-colour", ".mp4"),
+            strength=colour_strength,
         )
-        append_run_note(run_dir, f"Colour match to `{board.name}` -> `{matched.output.name}`: {matched.one_line()}")
+        append_run_note(
+            run_dir,
+            f"Colour match to `{board.name}` -> `{matched.output.name}`: {matched.one_line()}",
+        )
         return StepReport("colour", "ran", matched.one_line(), matched.output)
 
     def do_mix(take: Path) -> StepReport:
@@ -465,24 +547,42 @@ def run_finish(
             )
         except ValueError as exc:
             if "no dialogue lines" in str(exc):
-                return StepReport("captions", "skipped", "no dialogue lines in the spine (wordless take)")
+                return StepReport(
+                    "captions",
+                    "skipped",
+                    "no dialogue lines in the spine (wordless take)",
+                )
             raise
         timing = "; ".join(
-            f"{a.start:.2f}-{a.end:.2f}s {line!r}" for line, a in zip(captioned.lines, captioned.anchors)
+            f"{a.start:.2f}-{a.end:.2f}s {line!r}"
+            for line, a in zip(captioned.lines, captioned.anchors)
         )
         treatment = "whole English lines" if captioned.whole_lines else "word flicker"
         append_run_note(
-            run_dir, f"Captions ({treatment}) -> `{captioned.video.name}` (cues `{captioned.ass.name}`): {timing}"
+            run_dir,
+            f"Captions ({treatment}) -> `{captioned.video.name}` (cues `{captioned.ass.name}`): {timing}",
         )
         return StepReport(
-            "captions", "ran", f"{len(captioned.lines)} line(s), {treatment}: {timing}", captioned.video
+            "captions",
+            "ran",
+            f"{len(captioned.lines)} line(s), {treatment}: {timing}",
+            captioned.video,
         )
 
     def do_watermark(take: Path) -> StepReport:
-        marked = watermark(take, next_versioned_path(takes, f"{base}-sokii", ".mp4"), y=watermark_y)
+        marked = watermark(
+            take, next_versioned_path(takes, f"{base}-sokii", ".mp4"), y=watermark_y
+        )
         record_state["master"] = take
-        append_run_note(run_dir, f"Watermarked -> `{marked.name}` (un-marked master `{take.name}`)")
-        return StepReport("watermark", "ran", "Sokii mark top left, under the covered top strip", marked)
+        append_run_note(
+            run_dir, f"Watermarked -> `{marked.name}` (un-marked master `{take.name}`)"
+        )
+        return StepReport(
+            "watermark",
+            "ran",
+            "Sokii mark top left, under the covered top strip",
+            marked,
+        )
 
     step("deboard", "Replacing the board frames at the head of the take", do_deboard)
     if "voice" in hand_steps:
@@ -517,14 +617,22 @@ def run_finish(
     summary.insert(1, f"Record: {record.name} (what `join` reads)")
     append_run_note(
         run_dir,
-        "Finish summary\n" + "\n".join(summary) + f"\nCost (operator only): ${result.cost_usd:.3f} of generated audio",
+        "Finish summary\n"
+        + "\n".join(summary)
+        + f"\nCost (operator only): ${result.cost_usd:.3f} of generated audio",
     )
     for line in summary:
         print(line, file=out)
     if not result.complete:
         missing = ", ".join(result.sound_missing)
-        append_run_note(run_dir, f"Finish NOT DONE: no {missing}. Do not deliver `{result.final.name}`.")
-        print(f"Stopped: NOT DONE: this take has no {missing}. Do not deliver {result.final.name}.", file=out)
+        append_run_note(
+            run_dir,
+            f"Finish NOT DONE: no {missing}. Do not deliver `{result.final.name}`.",
+        )
+        print(
+            f"Stopped: NOT DONE: this take has no {missing}. Do not deliver {result.final.name}.",
+            file=out,
+        )
         print(f"Fix: {INCOMPLETE_FIX}", file=out)
         print("Next: fix what is missing and run finish again.", file=out)
         return result

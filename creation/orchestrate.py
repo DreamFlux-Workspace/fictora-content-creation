@@ -114,7 +114,12 @@ def _resolve_preset(run: DramaApiRunSession, preset_id: str) -> tuple[str, str]:
     matches = [row for row in presets if row.get("preset_id") == preset_id]
     if not matches:
         raise RuntimeError(f"preset not published: {preset_id!r}")
-    preset = max(matches, key=lambda row: tuple(int(x) for x in str(row.get("version") or "0").split(".")))
+    preset = max(
+        matches,
+        key=lambda row: tuple(
+            int(x) for x in str(row.get("version") or "0").split(".")
+        ),
+    )
     return str(preset["preset_id"]), str(preset["version"])
 
 
@@ -143,7 +148,9 @@ def save_spine_snapshot(desk: Path, episode: int, spine: dict[str, Any]) -> Path
     return desk / "api" / "spine.json"
 
 
-def sync_spine_lines(desk: Path, spine: dict[str, Any], *, episode: int) -> dict[str, int]:
+def sync_spine_lines(
+    desk: Path, spine: dict[str, Any], *, episode: int
+) -> dict[str, int]:
     """Put the spine's performed lines on the desk take by take. Does not approve them.
 
     Parameters
@@ -165,7 +172,11 @@ def sync_spine_lines(desk: Path, spine: dict[str, Any], *, episode: int) -> dict
     slot = episode_by_ordinal(series, episode)
     take_ids = [take.take_id for take in slot.takes]
     counts: dict[str, int] = {}
-    for take_id, beats in zip(take_ids, beats_by_take(spine, episode=episode, take_count=len(take_ids)), strict=True):
+    for take_id, beats in zip(
+        take_ids,
+        beats_by_take(spine, episode=episode, take_count=len(take_ids)),
+        strict=True,
+    ):
         lines = [line for beat in beats for line in spoken_lines(spine, beat)]
         set_take_lines(desk, episode=episode, take_id=take_id, lines=lines)
         counts[take_id] = len(lines)
@@ -191,10 +202,16 @@ def script_gate_text(desk: Path, spine: dict[str, Any], *, episode: int) -> str:
     """
 
     slot = episode_by_ordinal(load_series(desk), episode)
-    return "\n".join(script_lines(spine, episode=episode, take_ids=[take.take_id for take in slot.takes]))
+    return "\n".join(
+        script_lines(
+            spine, episode=episode, take_ids=[take.take_id for take in slot.takes]
+        )
+    )
 
 
-def _resume_raw_clips(api_dir: Path, *, run: DramaApiRunSession, state: ProductionState, deadline: float) -> dict[str, Any] | None:
+def _resume_raw_clips(
+    api_dir: Path, *, run: DramaApiRunSession, state: ProductionState, deadline: float
+) -> dict[str, Any] | None:
     """Pick up the take job this desk already paid for, or ``None`` to enrol a new one.
 
     Only the job enrolled with the desk's current retry suffix is resumed, so a
@@ -204,7 +221,9 @@ def _resume_raw_clips(api_dir: Path, *, run: DramaApiRunSession, state: Producti
     enrol_path = api_dir / "16_video_enrol.json"
     if not enrol_path.is_file():
         return None
-    enrolled_with = state.video_enrolled_suffix if state.video_enrolled_suffix is not None else ""
+    enrolled_with = (
+        state.video_enrolled_suffix if state.video_enrolled_suffix is not None else ""
+    )
     if enrolled_with != state.video_idempotency_suffix:
         return None
     try:
@@ -220,7 +239,11 @@ def _resume_raw_clips(api_dir: Path, *, run: DramaApiRunSession, state: Producti
             raw = json.loads(raw_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             raw = None
-        if isinstance(raw, dict) and raw.get("coordinator_job_id") == job_id and raw.get("clips"):
+        if (
+            isinstance(raw, dict)
+            and raw.get("coordinator_job_id") == job_id
+            and raw.get("clips")
+        ):
             return raw
     return wait_for_raw_scene_clips(run, job_id, deadline_seconds=deadline)
 
@@ -258,7 +281,9 @@ def _money(value: Any) -> float | None:
     return None
 
 
-def table_estimate_usd(state: ProductionState, cfg: Any, *, cast_count: int, takes: int) -> float:
+def table_estimate_usd(
+    state: ProductionState, cfg: Any, *, cast_count: int, takes: int
+) -> float:
     """Price ``takes`` takes from the dated table, on the endpoint the server films on.
 
     The server's last-named endpoint wins; with none, the lane pin's default
@@ -288,13 +313,21 @@ def table_estimate_usd(state: ProductionState, cfg: Any, *, cast_count: int, tak
     lane = lane_endpoint(state.video_lane, server=server)
     references = reference_images_ceiling(cast_count, lane[0] if lane else "")
     seconds = cfg.clip_duration_seconds
-    per_take = lane_take_usd(state.video_lane, seconds, on=date.today(), reference_images=references, server=server)
+    per_take = lane_take_usd(
+        state.video_lane,
+        seconds,
+        on=date.today(),
+        reference_images=references,
+        server=server,
+    )
     if per_take is None:
         fallback = getattr(cfg, "fallback_estimate_usd", None)
         per_take = (
             float(fallback)
             if fallback is not None
-            else take_usd(H3_MAX_TURBO_I2V_ENDPOINT, H3_RESOLUTION, seconds, on=date.today())
+            else take_usd(
+                H3_MAX_TURBO_I2V_ENDPOINT, H3_RESOLUTION, seconds, on=date.today()
+            )
         )
     return round(float(per_take or 0.0) * takes, 2)
 
@@ -327,7 +360,12 @@ def lane_rate_words(state: ProductionState, *, on: date) -> str:
 
 
 def price_estimate(
-    state: ProductionState, cfg: Any, estimate: dict[str, Any], *, cast_count: int, takes: int
+    state: ProductionState,
+    cfg: Any,
+    estimate: dict[str, Any],
+    *,
+    cast_count: int,
+    takes: int,
 ) -> tuple[float, str, list[str]]:
     """Price an estimate answer, naming the lane and $/s, and warn loudly when the server's dollars are missing.
 
@@ -360,13 +398,19 @@ def price_estimate(
     seconds = cfg.clip_duration_seconds
     rate = lane_rate_words(state, on=today)
     table = table_estimate_usd(state, cfg, cast_count=cast_count, takes=takes)
-    cost = estimate.get("cost_estimate") if isinstance(estimate.get("cost_estimate"), dict) else None
+    cost = (
+        estimate.get("cost_estimate")
+        if isinstance(estimate.get("cost_estimate"), dict)
+        else None
+    )
     if cost is not None and _money(cost.get("total_usd")) is not None:
         usd = _estimate_usd(estimate, fallback_usd=table)
         source = f"server estimate priced {cost.get('priced_on')} ({cost.get('takes')} take(s)); {rate}, {seconds} s a take"
         return usd, source, []
     if estimate.get("estimate_skipped"):
-        why = f"the server refused it: {str(estimate.get('detail') or 'no detail')[:160]}"
+        why = (
+            f"the server refused it: {str(estimate.get('detail') or 'no detail')[:160]}"
+        )
     elif cost is not None:
         why = "the server named the lane but gave no dollars"
     else:
@@ -383,7 +427,9 @@ def price_estimate(
             if fallback is not None
             else f"the H3 Max Turbo rate (${video_usd_per_second(H3_MAX_TURBO_I2V_ENDPOINT, H3_RESOLUTION, on=today)}/s)"
         )
-        warnings.append(f"!! {lane_label(state.video_lane, server=server)} has no verified price; priced at {instead}.")
+        warnings.append(
+            f"!! {lane_label(state.video_lane, server=server)} has no verified price; priced at {instead}."
+        )
     source = f"price table ({lane_label(state.video_lane, server=server)}, {seconds} s a take); {rate}"
     return table, source, warnings
 
@@ -435,7 +481,9 @@ def bind_desk(
         episode_ordinal=episode_ordinal,
         band=series.band,
     )
-    save_run_meta(api_dir, session_id=state.session_id, preset_id=pid, preset_version=version)
+    save_run_meta(
+        api_dir, session_id=state.session_id, preset_id=pid, preset_version=version
+    )
     save_production(desk, state)
     return state
 
@@ -486,7 +534,9 @@ def envelope_line(desk: Path, *, episode: int, next_usd: float) -> str:
 
     series = load_series(desk)
     slot = episode_by_ordinal(series, episode)
-    envelope = envelope_usd(first_episode=_first_episode_of_series(desk, episode), band=series.band)
+    envelope = envelope_usd(
+        first_episode=_first_episode_of_series(desk, episode), band=series.band
+    )
     projected = slot.spend_usd + next_usd
     line = f"${projected:.2f} of a ${envelope:.2f} envelope for ep{episode:02d}"
     if projected > envelope * 2:
@@ -531,18 +581,36 @@ def download_boards(
     if sets is not None:
         found = [(index, url) for index, url in found if index in sets]
     if not found and sets is None:
-        found = list(enumerate(board_urls_for_episode(spine, api_dir_for_episode(desk, episode), ordinal=episode), 1))
+        found = list(
+            enumerate(
+                board_urls_for_episode(
+                    spine, api_dir_for_episode(desk, episode), ordinal=episode
+                ),
+                1,
+            )
+        )
     made: list[tuple[int, Path]] = []
     fetch = httpx.Client(timeout=120.0)
     try:
         for index, url in found:
-            made.append((index, download_to_versioned(fetch, url, ep_dir / "boards", f"board-ep{episode:02d}-t{index}")))
+            made.append(
+                (
+                    index,
+                    download_to_versioned(
+                        fetch, url, ep_dir / "boards", f"board-ep{episode:02d}-t{index}"
+                    ),
+                )
+            )
     finally:
         fetch.close()
     drawn = frames_by_set(spine, episode=episode)
     for index, path in made:
-        state.board_paths[f"t{index}"] = str(path.relative_to(desk)) if path.is_relative_to(desk) else str(path)
-        state.board_digests[f"ep{episode:02d}-t{index}"] = frames_digest(drawn.get(index, []))
+        state.board_paths[f"t{index}"] = (
+            str(path.relative_to(desk)) if path.is_relative_to(desk) else str(path)
+        )
+        state.board_digests[f"ep{episode:02d}-t{index}"] = frames_digest(
+            drawn.get(index, [])
+        )
     return made
 
 
@@ -591,7 +659,9 @@ def board_report(
     desk_takes = {take.take_id for take in slot.takes}
     brightness: dict[int, float] = {}
     try:
-        exposure = measure_board_exposure(run, spine_id=state.spine_id or "", episode=episode)
+        exposure = measure_board_exposure(
+            run, spine_id=state.spine_id or "", episode=episode
+        )
         brightness = {
             int(board.get("set_index") or 1): float(board["mean_percent"])
             for board in exposure.get("boards") or []
@@ -603,27 +673,45 @@ def board_report(
     lane = lane_endpoint(state.video_lane, server=state.server_lane())
     references = reference_images_ceiling(cast_count, lane[0] if lane else "")
     take_price = lane_take_usd(
-        state.video_lane, clip_seconds, on=date.today(), reference_images=references, server=state.server_lane()
+        state.video_lane,
+        clip_seconds,
+        on=date.today(),
+        reference_images=references,
+        server=state.server_lane(),
     )
     lines: list[str] = []
     for index, path in made:
         take_id = f"t{index}"
         on_desk = take_id in desk_takes
-        record_spend(desk, episode=episode, usd=float(STILL_USD), take_id=take_id if on_desk else None, unit="board")
+        record_spend(
+            desk,
+            episode=episode,
+            usd=float(STILL_USD),
+            take_id=take_id if on_desk else None,
+            unit="board",
+        )
         if on_desk and take_price is not None:
             record_estimate(desk, episode=episode, take_id=take_id, usd=take_price)
-        luma, source = (brightness[index], "server") if index in brightness else (
-            measure_board_luma(path).mean_percent,
-            "measured here",
+        luma, source = (
+            (brightness[index], "server")
+            if index in brightness
+            else (
+                measure_board_luma(path).mean_percent,
+                "measured here",
+            )
         )
-        lines.append(f"{take_id} board {path.name}: brightness {luma:.1f}% ({source}). Information only.")
+        lines.append(
+            f"{take_id} board {path.name}: brightness {luma:.1f}% ({source}). Information only."
+        )
     lines += shot_list_lines(spine, episode=episode, sets=[index for index, _ in made])
     cost = float(STILL_USD) * len(made)
     what = "Redrew" if redraw else "Drew"
     lines.append(f"{what} {len(made)} board(s): ${cost:.2f} booked.")
     if take_price is None:
         label = lane_label(state.video_lane, server=state.server_lane())
-        lines.append(f"{label} has no verified price in the table; the take is not estimated.")
+        lines.append(
+            f"{label} has no verified price in the table; the take is not estimated."
+        )
     else:
         label = lane_label(state.video_lane, server=state.server_lane())
         what_goes = (
@@ -632,7 +720,9 @@ def board_report(
             else "it opens on this board; cast plates are not sent"
         )
         rate = lane_rate_words(state, on=date.today())
-        lines.append(f"A take will cost about ${take_price:.2f} on {rate} ({clip_seconds} s, {what_goes}).")
+        lines.append(
+            f"A take will cost about ${take_price:.2f} on {rate} ({clip_seconds} s, {what_goes})."
+        )
     return lines
 
 
@@ -679,7 +769,10 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             spine = run.spine(spine_id)
             save_spine_snapshot(desk, ep, spine)
             counts = sync_spine_lines(desk, spine, episode=ep)
-            _note(ep_dir, f"Draft complete (episode 1 alone). spine_id={spine_id} plan={plan.get('status')}")
+            _note(
+                ep_dir,
+                f"Draft complete (episode 1 alone). spine_id={spine_id} plan={plan.get('status')}",
+            )
             gate = script_gate_text(desk, spine, episode=ep)
             versus = "\n".join(brief_vs_spine_lines(state.prompt, spine, episode=ep))
             if versus:
@@ -709,15 +802,25 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             fetch = httpx.Client(timeout=120.0)
             try:
                 for index, url in enumerate(cast_plate_urls(spine, api_dir), start=1):
-                    path = download_to_versioned(fetch, url, ep_dir / "plates", f"plate-ep{ep:02d}-{index}")
+                    path = download_to_versioned(
+                        fetch, url, ep_dir / "plates", f"plate-ep{ep:02d}-{index}"
+                    )
                     paths.append(str(path))
             finally:
                 fetch.close()
             if paths:
-                record_spend(desk, episode=ep, usd=round(float(STILL_USD) * len(paths), 2), unit=f"plates x{len(paths)}")
+                record_spend(
+                    desk,
+                    episode=ep,
+                    usd=round(float(STILL_USD) * len(paths), 2),
+                    unit=f"plates x{len(paths)}",
+                )
             state.phase = "wait_plates"
             save_production(desk, state)
-            _note(ep_dir, f"Cast enrol complete: {len(paths)} plate(s), ${float(STILL_USD) * len(paths):.2f}. Open plates/ and approve.")
+            _note(
+                ep_dir,
+                f"Cast enrol complete: {len(paths)} plate(s), ${float(STILL_USD) * len(paths):.2f}. Open plates/ and approve.",
+            )
             return StepResult(
                 state.phase,
                 "Cast drawn. Human gate: review plates/, then `fictora-produce approve --gate plates`.",
@@ -725,14 +828,21 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             )
 
         if state.phase in {"wait_plates", "wait_script", "wait_board", "wait_spend"}:
-            gate = {"wait_plates": "plates", "wait_script": "script", "wait_board": "board", "wait_spend": "spend"}[
-                state.phase
-            ]
+            gate = {
+                "wait_plates": "plates",
+                "wait_script": "script",
+                "wait_board": "board",
+                "wait_spend": "spend",
+            }[state.phase]
             if state.phase == "wait_spend" and confirm_spend:
                 state.phase = "ready_video"
                 save_production(desk, state)
                 return run_step(desk, confirm_spend=False)
-            return StepResult(state.phase, f"Waiting on human gate `{gate}` (episode {ep}). Use fictora-produce approve.", ())
+            return StepResult(
+                state.phase,
+                f"Waiting on human gate `{gate}` (episode {ep}). Use fictora-produce approve.",
+                (),
+            )
 
         if state.phase == "ready_boards_enrol":
             stages.enrol_boards(
@@ -752,10 +862,19 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             state.board_paths = {}
             made = download_boards(desk, state, spine, episode=ep)
             if not made:
-                raise RuntimeError(f"the boards job completed but the spine has no board for {episode_id_for(spine, ep)}")
+                raise RuntimeError(
+                    f"the boards job completed but the spine has no board for {episode_id_for(spine, ep)}"
+                )
             paths.extend(str(path) for _, path in made)
             report = board_report(
-                desk, run, state, spine, episode=ep, made=made, redraw=False, clip_seconds=cfg.clip_duration_seconds
+                desk,
+                run,
+                state,
+                spine,
+                episode=ep,
+                made=made,
+                redraw=False,
+                clip_seconds=cfg.clip_duration_seconds,
             )
             state.exposure_accept_dim = False
             state.phase = "wait_board"
@@ -770,7 +889,9 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             )
 
         if state.phase == "ready_estimate":
-            estimate = stages.estimate_batch(run, spine_id=state.spine_id or "", episode=ep)
+            estimate = stages.estimate_batch(
+                run, spine_id=state.spine_id or "", episode=ep
+            )
             state.remember_server_lane(server_lane(estimate))
             spine = run.spine(state.spine_id or "")
             slot = episode_by_ordinal(load_series(desk), ep)
@@ -781,9 +902,19 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             state.phase = "wait_spend"
             save_production(desk, state)
             budget = envelope_line(desk, episode=ep, next_usd=state.estimate_usd)
-            _note(ep_dir, " ".join([*warnings, f"Estimate ${state.estimate_usd:.2f} before take ({source}). {budget}"]))
+            _note(
+                ep_dir,
+                " ".join(
+                    [
+                        *warnings,
+                        f"Estimate ${state.estimate_usd:.2f} before take ({source}). {budget}",
+                    ]
+                ),
+            )
             scope = f"episode {ep} alone, {len(slot.takes)} take(s)" + (
-                f"; episodes 1-{ep - 1} are not filmed or booked again" if ep > 1 else ""
+                f"; episodes 1-{ep - 1} are not filmed or booked again"
+                if ep > 1
+                else ""
             )
             return StepResult(
                 state.phase,
@@ -797,7 +928,11 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             return _film(desk, run, state, cfg=cfg, paths=paths)
 
         if state.phase == "complete":
-            return StepResult(state.phase, f"Episode {ep} already complete. video={state.last_delivery_url}", ())
+            return StepResult(
+                state.phase,
+                f"Episode {ep} already complete. video={state.last_delivery_url}",
+                (),
+            )
 
         raise RuntimeError(f"unknown phase: {state.phase}")
     except SystemExit as exc:
@@ -821,7 +956,9 @@ class CollectedTakes:
     foreign: list[str]
 
 
-def seed_attempt_for(desk: Path, *, episode: int, take_ids: list[str] | None = None) -> int | None:
+def seed_attempt_for(
+    desk: Path, *, episode: int, take_ids: list[str] | None = None
+) -> int | None:
     """Return the next compile attempt for a re-film (the most films of the takes in scope, plus one).
 
     ``None`` when none of them was filmed yet: a first film sends no ``seed_attempt`` (the server's 1).
@@ -842,7 +979,11 @@ def seed_attempt_for(desk: Path, *, episode: int, take_ids: list[str] | None = N
     """
 
     slot = episode_by_ordinal(load_series(desk), episode)
-    films = [take.filmed_count for take in slot.takes if take_ids is None or take.take_id in take_ids]
+    films = [
+        take.filmed_count
+        for take in slot.takes
+        if take_ids is None or take.take_id in take_ids
+    ]
     most = max(films, default=0)
     return most + 1 if most else None
 
@@ -905,35 +1046,70 @@ def collect_takes(
     try:
         for position, clip in enumerate(clips, start=1):
             index = clip.get("set_index") or position
-            take_id = f"t{index}" if f"t{index}" in take_ids else (take_ids[position - 1] if position <= len(take_ids) else None)
+            take_id = (
+                f"t{index}"
+                if f"t{index}" in take_ids
+                else (take_ids[position - 1] if position <= len(take_ids) else None)
+            )
             if take_id is None:
-                run.emit("take_without_desk_slot", job_id=clip.get("job_id"), index=index)
+                run.emit(
+                    "take_without_desk_slot", job_id=clip.get("job_id"), index=index
+                )
                 continue
             path = download_to_versioned(
-                fetch, str(clip["url"]), ep_dir / "takes", f"take-ep{episode:02d}-{take_id}-raw", default_suffix=".mp4"
+                fetch,
+                str(clip["url"]),
+                ep_dir / "takes",
+                f"take-ep{episode:02d}-{take_id}-raw",
+                default_suffix=".mp4",
             )
             paths.append(str(path))
             facts = fetch_take_facts(run, str(clip["job_id"]), spine_id=state.spine_id)
             priced: tuple[float, str] | None = None
             if facts is not None:
-                facts_path = next_versioned_path(api_dir, f"take-facts-ep{episode:02d}-{take_id}", ".json")
-                facts_path.write_text(json.dumps(facts, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                facts_path = next_versioned_path(
+                    api_dir, f"take-facts-ep{episode:02d}-{take_id}", ".json"
+                )
+                facts_path.write_text(
+                    json.dumps(facts, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
                 priced = take_facts_usd(facts, on=today)
-                state.remember_server_lane(server_lane(facts))  # the caller saves the state
+                state.remember_server_lane(
+                    server_lane(facts)
+                )  # the caller saves the state
             if priced is None:
-                estimate = lane_take_usd(state.video_lane, clip_seconds, on=today, server=state.server_lane())
-                priced = (estimate, "estimate from the price table") if estimate is not None else None
+                estimate = lane_take_usd(
+                    state.video_lane, clip_seconds, on=today, server=state.server_lane()
+                )
+                priced = (
+                    (estimate, "estimate from the price table")
+                    if estimate is not None
+                    else None
+                )
             if priced is not None:
-                record_spend(desk, episode=episode, usd=priced[0], take_id=take_id, unit=f"take {clip_seconds}s")
+                record_spend(
+                    desk,
+                    episode=episode,
+                    usd=priced[0],
+                    take_id=take_id,
+                    unit=f"take {clip_seconds}s",
+                )
                 booked += priced[0]
             record_filmed(desk, episode=episode, take_id=take_id)
             jobs.append(
                 f"{take_id}: take job `{clip['job_id']}`"
-                + (f" ({priced[1]}, ${priced[0]:.2f})" if priced else " (not priced; book by hand)")
+                + (
+                    f" ({priced[1]}, ${priced[0]:.2f})"
+                    if priced
+                    else " (not priced; book by hand)"
+                )
             )
     finally:
         fetch.close()
-    return CollectedTakes(jobs, booked, paths, str(clips[0]["url"]) if clips else None, foreign)
+    return CollectedTakes(
+        jobs, booked, paths, str(clips[0]["url"]) if clips else None, foreign
+    )
 
 
 def foreign_warning(foreign: list[str]) -> str:
@@ -942,18 +1118,29 @@ def foreign_warning(foreign: list[str]) -> str:
     if not foreign:
         return ""
     return (
-        "\n!! The server also filmed another episode: " + ", ".join(foreign) + ". They were not downloaded or booked "
+        "\n!! The server also filmed another episode: "
+        + ", ".join(foreign)
+        + ". They were not downloaded or booked "
         "here. Tell engineering with the video job id (the deploy may not film one episode alone)."
     )
 
 
-def _film(desk: Path, run: DramaApiRunSession, state: ProductionState, *, cfg: Any, paths: list[str]) -> StepResult:
+def _film(
+    desk: Path,
+    run: DramaApiRunSession,
+    state: ProductionState,
+    *,
+    cfg: Any,
+    paths: list[str],
+) -> StepResult:
     """Film the current episode alone (or pick up its job), collect every take raw with its take facts, book spend."""
 
     ep = state.episode_ordinal
     ep_dir = _episode_dir(desk, ep)
     api_dir = api_dir_for_episode(desk, ep)
-    raw = _resume_raw_clips(api_dir, run=run, state=state, deadline=cfg.poll_video_deadline_seconds)
+    raw = _resume_raw_clips(
+        api_dir, run=run, state=state, deadline=cfg.poll_video_deadline_seconds
+    )
     delivery: dict[str, Any] | None = None
     if raw is None:
         state.video_enrolled_suffix = state.video_idempotency_suffix
@@ -977,19 +1164,37 @@ def _film(desk: Path, run: DramaApiRunSession, state: ProductionState, *, cfg: A
         raw = result["raw_scenes"]
         delivery = result.get("delivery")
     elif cfg.api_captions:
-        delivery = stages.fetch_delivery_optional(run, str(raw.get("coordinator_job_id") or ""))
+        delivery = stages.fetch_delivery_optional(
+            run, str(raw.get("coordinator_job_id") or "")
+        )
     video_job_id = str(raw.get("coordinator_job_id") or "")
     spine = run.spine(state.spine_id or "")
     save_spine_snapshot(desk, ep, spine)
-    got = collect_takes(desk, run, state, raw, episode=ep, clip_seconds=cfg.clip_duration_seconds, spine=spine)
+    got = collect_takes(
+        desk,
+        run,
+        state,
+        raw,
+        episode=ep,
+        clip_seconds=cfg.clip_duration_seconds,
+        spine=spine,
+    )
     if got.first_url is None:
-        raise RuntimeError(f"the take job {video_job_id} completed but no take for episode {ep} came back")
+        raise RuntimeError(
+            f"the take job {video_job_id} completed but no take for episode {ep} came back"
+        )
     paths.extend(got.paths)
     url = _delivery_video_url(delivery) if delivery else None
     if url:
         fetch = httpx.Client(timeout=300.0)
         try:
-            path = download_to_versioned(fetch, url, ep_dir / "takes", f"take-ep{ep:02d}-api-captioned", default_suffix=".mp4")
+            path = download_to_versioned(
+                fetch,
+                url,
+                ep_dir / "takes",
+                f"take-ep{ep:02d}-api-captioned",
+                default_suffix=".mp4",
+            )
         finally:
             fetch.close()
         paths.append(str(path))
@@ -997,8 +1202,15 @@ def _film(desk: Path, run: DramaApiRunSession, state: ProductionState, *, cfg: A
     state.last_video_job_id = video_job_id or None
     state.phase = "complete"
     save_production(desk, state)
-    _note(ep_dir, f"Takes filmed: video job `{video_job_id}`; " + "; ".join(got.jobs) + f". Booked ${got.booked_usd:.2f}.")
-    follow = "arc --list (pick the series arc)" if ep == 1 else f"author --episode {ep + 1}"
+    _note(
+        ep_dir,
+        f"Takes filmed: video job `{video_job_id}`; "
+        + "; ".join(got.jobs)
+        + f". Booked ${got.booked_usd:.2f}.",
+    )
+    follow = (
+        "arc --list (pick the series arc)" if ep == 1 else f"author --episode {ep + 1}"
+    )
     hint = (
         " Not done yet: after the human says Use it, run `fictora-produce finish --desk <desk> --episode "
         f"{ep} --take tK` per take (sound effects, music, mix, captions, mark; hosted post is off)."
@@ -1013,7 +1225,9 @@ def _film(desk: Path, run: DramaApiRunSession, state: ProductionState, *, cfg: A
     )
 
 
-def approve_gate(desk: Path, *, gate: str, path: Path | None = None, accept_dim: bool | None = None) -> StepResult:
+def approve_gate(
+    desk: Path, *, gate: str, path: Path | None = None, accept_dim: bool | None = None
+) -> StepResult:
     """Record a human gate and run the matching API approve when needed."""
 
     desk = desk.expanduser().resolve()
@@ -1026,20 +1240,32 @@ def approve_gate(desk: Path, *, gate: str, path: Path | None = None, accept_dim:
             if state.phase != "wait_plates":
                 raise RuntimeError(f"expected wait_plates, got {state.phase}")
             stages.approve_cast(run, spine_id=state.spine_id or "")
-            record = approve_series_gate(desk, "plates", path=str(path) if path else None)
+            record = approve_series_gate(
+                desk, "plates", path=str(path) if path else None
+            )
             state.phase = "wait_script"
             save_production(desk, state)
-            return StepResult(state.phase, f"Plates approved ({record.status}). Human: approve script lines.", ())
+            return StepResult(
+                state.phase,
+                f"Plates approved ({record.status}). Human: approve script lines.",
+                (),
+            )
 
         if gate == "script":
             if state.phase != "wait_script":
                 raise RuntimeError(f"expected wait_script, got {state.phase}")
-            spine = stages.approve_script(run, spine_id=state.spine_id or "", episode=ep)
+            spine = stages.approve_script(
+                run, spine_id=state.spine_id or "", episode=ep
+            )
             save_spine_snapshot(desk, ep, spine)
             record = record_script_gate(desk, episode=ep)
             state.phase = "ready_boards_enrol"
             save_production(desk, state)
-            warning = f"\n!! {record.note}" if record.note and record.note.startswith("WARNING") else ""
+            warning = (
+                f"\n!! {record.note}"
+                if record.note and record.note.startswith("WARNING")
+                else ""
+            )
             return StepResult(
                 state.phase,
                 f"Episode {ep} script approved on the API. Next: fictora-produce step (boards).{warning}",
@@ -1050,14 +1276,22 @@ def approve_gate(desk: Path, *, gate: str, path: Path | None = None, accept_dim:
             if state.phase != "wait_board":
                 raise RuntimeError(f"expected wait_board, got {state.phase}")
             spine = run.spine(state.spine_id or "")
-            approve_episode_boards(run, spine_id=state.spine_id or "", spine=spine, episode=ep, accept_dim=bool(accept_dim))
+            approve_episode_boards(
+                run,
+                spine_id=state.spine_id or "",
+                spine=spine,
+                episode=ep,
+                accept_dim=bool(accept_dim),
+            )
             slot = episode_by_ordinal(load_series(desk), ep)
             recorded: list[str] = []
             for take in slot.takes:
                 stored = state.board_paths.get(take.take_id)
                 image = desk / stored if stored else path
                 if image is None:
-                    raise ValueError(f"no board recorded for {take.take_id}; pass --path to the board file reviewed")
+                    raise ValueError(
+                        f"no board recorded for {take.take_id}; pass --path to the board file reviewed"
+                    )
                 approve_board(desk, episode=ep, take_id=take.take_id, image=Path(image))
                 recorded.append(take.take_id)
             state.phase = "ready_estimate"

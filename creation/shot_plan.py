@@ -31,7 +31,7 @@ _REQUIRED = ("size", "subject")
 OLDER_SERVER_HINT = (
     "HTTP 422 on a plan the kit already checked means this Drama API is older than beat shot plans "
     "(fictora-drama #464) and does not know `shot_plan`; nothing was changed. Ask for the deploy, or until "
-    "then write the shots into the beat's motion_intent (`edit --beat N --intent \"SHOT 1 - close-up, ...\"`)."
+    'then write the shots into the beat\'s motion_intent (`edit --beat N --intent "SHOT 1 - close-up, ..."`).'
 )
 
 
@@ -48,7 +48,9 @@ def _phrase(value: Any, *, where: str, key: str) -> str:
     if "\n" in text or "\r" in text:
         raise ShotPlanError(f"{where}: {key} must be one line")
     if len(text) > MAX_PHRASE_CHARS:
-        raise ShotPlanError(f"{where}: {key} is {len(text)} characters; the most is {MAX_PHRASE_CHARS}")
+        raise ShotPlanError(
+            f"{where}: {key} is {len(text)} characters; the most is {MAX_PHRASE_CHARS}"
+        )
     return text
 
 
@@ -72,9 +74,13 @@ def normalize_plan(shots: Any) -> list[dict[str, str]]:
     """
 
     if shots is None:
-        raise ShotPlanError("a shot plan of null clears nothing here: to remove the plan use --clear-shot-plan")
+        raise ShotPlanError(
+            "a shot plan of null clears nothing here: to remove the plan use --clear-shot-plan"
+        )
     if not isinstance(shots, list):
-        raise ShotPlanError(f"a shot plan is a list of shots, got {type(shots).__name__}")
+        raise ShotPlanError(
+            f"a shot plan is a list of shots, got {type(shots).__name__}"
+        )
     if not 1 <= len(shots) <= MAX_SHOTS:
         raise ShotPlanError(
             f"a shot plan holds 1-{MAX_SHOTS} shots (a row board draws at most {MAX_SHOTS} rows), got {len(shots)}; "
@@ -84,10 +90,14 @@ def normalize_plan(shots: Any) -> list[dict[str, str]]:
     for number, shot in enumerate(shots, start=1):
         where = f"shot {number}"
         if not isinstance(shot, Mapping):
-            raise ShotPlanError(f"{where} must be an object with size and subject, got {type(shot).__name__}")
+            raise ShotPlanError(
+                f"{where} must be an object with size and subject, got {type(shot).__name__}"
+            )
         unknown = sorted(set(shot) - set(SHOT_FIELDS))
         if unknown:
-            raise ShotPlanError(f"{where}: unknown field(s) {', '.join(unknown)}; a shot has {', '.join(SHOT_FIELDS)}")
+            raise ShotPlanError(
+                f"{where}: unknown field(s) {', '.join(unknown)}; a shot has {', '.join(SHOT_FIELDS)}"
+            )
         entry: dict[str, str] = {}
         for key in SHOT_FIELDS:
             value = shot.get(key)
@@ -159,7 +169,13 @@ def plan_from_shots(values: Sequence[str]) -> list[dict[str, str]]:
                 f'--shot {number} {raw!r}: write it as "size|subject|camera|angle" '
                 "(camera and angle optional, separated by |)"
             )
-        shots.append({key: part for key, part in zip(SHOT_FIELDS, parts, strict=False) if part or key in _REQUIRED})
+        shots.append(
+            {
+                key: part
+                for key, part in zip(SHOT_FIELDS, parts, strict=False)
+                if part or key in _REQUIRED
+            }
+        )
     return normalize_plan(shots)
 
 

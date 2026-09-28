@@ -55,7 +55,9 @@ def spoken_language_tag(value: str) -> str:
     for tag in SPOKEN_LANGUAGES:
         if wanted in (tag.casefold(), tag.split("-")[0].casefold()):
             return tag
-    raise ValueError(f"spoken language {value!r} is not supported; use one of {', '.join(SPOKEN_LANGUAGES)}")
+    raise ValueError(
+        f"spoken language {value!r} is not supported; use one of {', '.join(SPOKEN_LANGUAGES)}"
+    )
 
 
 def draft_request_body(
@@ -170,7 +172,12 @@ def start_draft(
             idempotency_key=f"{run.prefix}-draft{suffix}",
         )
         run.save(f"01_draft_accepted{suffix}.json", draft)
-        plan = run.poll_job(draft["plan_job_id"], label="plan", video_route=False, deadline_seconds=deadline_seconds)
+        plan = run.poll_job(
+            draft["plan_job_id"],
+            label="plan",
+            video_route=False,
+            deadline_seconds=deadline_seconds,
+        )
         run.save(f"02_plan_terminal{suffix}.json", plan)
         last_plan = plan
         if plan.get("status") == "completed":
@@ -217,7 +224,9 @@ def _cast_plates_present(spine: dict[str, Any]) -> bool:
     it is not waited on; a story whose cast is all voices owes no plate.
     """
 
-    if not any(isinstance(row, dict) and row.get("cast_id") for row in spine.get("cast") or []):
+    if not any(
+        isinstance(row, dict) and row.get("cast_id") for row in spine.get("cast") or []
+    ):
         return False
     cast_rows = drawn_cast_rows(spine)
     assets = [row for row in (spine.get("media_assets") or []) if isinstance(row, dict)]
@@ -233,7 +242,10 @@ def _cast_plates_present(spine: dict[str, Any]) -> bool:
         cast_id = str(row["cast_id"])
         if cast_id in ready_cast_ids:
             continue
-        if any(row.get(key) for key in ("image_url", "portrait_url", "full_body_url", "url")):
+        if any(
+            row.get(key)
+            for key in ("image_url", "portrait_url", "full_body_url", "url")
+        ):
             ready_cast_ids.add(cast_id)
     return all(str(row["cast_id"]) in ready_cast_ids for row in cast_rows)
 
@@ -267,7 +279,9 @@ def enrol_cast(
             idempotency_key=f"{run.prefix}-{tag}-cast-enrol{suffix}",
         )
         run.save(f"05_{tag}_cast_enrol{suffix}.json", job)
-        terminal = run.poll_job(job["job_id"], label="cast", video_route=True, deadline_seconds=3600.0)
+        terminal = run.poll_job(
+            job["job_id"], label="cast", video_route=True, deadline_seconds=3600.0
+        )
         run.save(f"06_{tag}_cast_terminal{suffix}.json", terminal)
         last_terminal = terminal
         if terminal.get("status") == "completed":
@@ -275,17 +289,27 @@ def enrol_cast(
         if _terminal_error_code(terminal) == "plan_media_spine_version_stale":
             recovered = run.spine(spine_id)
             if _cast_plates_present(recovered):
-                run.emit("cast_recover", code="plan_media_spine_version_stale", note="plates on spine")
+                run.emit(
+                    "cast_recover",
+                    code="plan_media_spine_version_stale",
+                    note="plates on spine",
+                )
                 return recovered
             if attempt + 1 < max_attempts:
-                run.emit("cast_retry", code="plan_media_spine_version_stale", attempt=attempt + 1)
+                run.emit(
+                    "cast_retry",
+                    code="plan_media_spine_version_stale",
+                    attempt=attempt + 1,
+                )
                 time.sleep(5.0)
                 continue
         break
     raise SystemExit(f"cast {describe_job_error(last_terminal)}")
 
 
-def approve_cast(run: DramaApiRunSession, *, spine_id: str, tag: str = "ep1") -> dict[str, Any]:
+def approve_cast(
+    run: DramaApiRunSession, *, spine_id: str, tag: str = "ep1"
+) -> dict[str, Any]:
     """Human yes on cast plates."""
 
     spine = run.spine(spine_id)
@@ -298,7 +322,9 @@ def approve_cast(run: DramaApiRunSession, *, spine_id: str, tag: str = "ep1") ->
     return run.spine(spine_id)
 
 
-def approve_script(run: DramaApiRunSession, *, spine_id: str, episode: int = 1) -> dict[str, Any]:
+def approve_script(
+    run: DramaApiRunSession, *, spine_id: str, episode: int = 1
+) -> dict[str, Any]:
     """Human yes on the lines: the whole spine at episode 1, one episode's own approve from episode 2.
 
     Episode 2 on is approved with ``POST /v1/spines/{id}/pilot-episodes/{n}/approve``: the
@@ -325,7 +351,8 @@ def approve_script(run: DramaApiRunSession, *, spine_id: str, episode: int = 1) 
             (
                 str(row.get("authoring_state") or "")
                 for row in spine.get("episode_summaries") or []
-                if isinstance(row, dict) and row.get("episode_id") == episode_id_for(spine, episode)
+                if isinstance(row, dict)
+                and row.get("episode_id") == episode_id_for(spine, episode)
             ),
             "",
         )
@@ -388,13 +415,25 @@ def enrol_boards(
             idempotency_key=f"{run.prefix}-{tag}-boards-enrol{suffix}",
         )
         run.save(f"08_{tag}_boards_enrol{suffix}.json", job)
-        terminal = run.poll_job(job["job_id"], label="boards", video_route=True, deadline_seconds=deadline_seconds)
+        terminal = run.poll_job(
+            job["job_id"],
+            label="boards",
+            video_route=True,
+            deadline_seconds=deadline_seconds,
+        )
         run.save(f"09_{tag}_boards_terminal{suffix}.json", terminal)
         last_terminal = terminal
         if terminal.get("status") == "completed":
             return run.spine(spine_id)
-        if _terminal_error_code(terminal) == "plan_media_spine_version_stale" and attempt + 1 < max_attempts:
-            run.emit("boards_retry", code="plan_media_spine_version_stale", attempt=attempt + 1)
+        if (
+            _terminal_error_code(terminal) == "plan_media_spine_version_stale"
+            and attempt + 1 < max_attempts
+        ):
+            run.emit(
+                "boards_retry",
+                code="plan_media_spine_version_stale",
+                attempt=attempt + 1,
+            )
             time.sleep(2.0)
             continue
         break
@@ -402,7 +441,11 @@ def enrol_boards(
 
 
 def estimate_batch(
-    run: DramaApiRunSession, *, spine_id: str, episode: int = 1, reroll_take_index: int | None = None
+    run: DramaApiRunSession,
+    *,
+    spine_id: str,
+    episode: int = 1,
+    reroll_take_index: int | None = None,
 ) -> dict[str, Any]:
     """Price what will be filmed: ``POST /v1/spines/{id}/batches/estimate`` for one episode, or one take of it.
 
@@ -432,7 +475,10 @@ def estimate_batch(
     spine = run.spine(spine_id)
     if not spine.get("episode_summaries"):
         raise SystemExit("spine has no episode_summaries")
-    body: dict[str, Any] = {"spine_version": spine["spine_version"], "episode_ids": [episode_id_for(spine, episode)]}
+    body: dict[str, Any] = {
+        "spine_version": spine["spine_version"],
+        "episode_ids": [episode_id_for(spine, episode)],
+    }
     name = f"12_ep{episode:02d}_estimate.json"
     if reroll_take_index is not None:
         body["reroll_take_index"] = reroll_take_index
@@ -442,7 +488,12 @@ def estimate_batch(
     except SystemExit as exc:
         msg = str(exc)
         one_take_unknown = reroll_take_index is not None and "reroll_take_index" in msg
-        if one_take_unknown or "invalid_episode_selection" in msg or "invalid_pilot_batch" in msg or "HTTP 400" in msg:
+        if (
+            one_take_unknown
+            or "invalid_episode_selection" in msg
+            or "invalid_pilot_batch" in msg
+            or "HTTP 400" in msg
+        ):
             estimate = {**body, "estimate_skipped": True, "detail": msg[:800]}
             run.save(name, estimate)
             return estimate
@@ -458,6 +509,7 @@ OLD_SERVER_FILM = (
     "episodes 1..{episode} again and book them. Nothing was sent and nothing was charged. "
     "Tell engineering, and film this episode once the deploy has #436."
 )
+
 
 def _schema_has(openapi: Any, schema_suffix: str, field: str) -> bool | None:
     """Whether an OpenAPI schema named ``*schema_suffix`` lists ``field`` (``None`` when there is no such schema)."""
@@ -544,7 +596,10 @@ def film_scope(
         if episode != 1:
             raise SystemExit(OLD_SERVER_FILM.format(episode=episode))
         del extra["episode_ordinal"]
-        run.emit("episode_ordinal_unsupported", note="episode 1 films alone with episode_count 1")
+        run.emit(
+            "episode_ordinal_unsupported",
+            note="episode 1 films alone with episode_count 1",
+        )
     if reroll_take_index is not None:
         extra["reroll_take_index"] = reroll_take_index
     if seed_attempt is not None:
@@ -579,11 +634,15 @@ def post_video_generation(
     except SystemExit as exc:
         text = str(exc.code)
         if server_refused_episode_ordinal_field(text, request_body=body):
-            raise SystemExit(f"{OLD_SERVER_FILM.format(episode=episode)} (server said: {text[:400]})") from None
+            raise SystemExit(
+                f"{OLD_SERVER_FILM.format(episode=episode)} (server said: {text[:400]})"
+            ) from None
         raise
 
 
-def fetch_delivery_optional(run: DramaApiRunSession, job_id: str) -> dict[str, Any] | None:
+def fetch_delivery_optional(
+    run: DramaApiRunSession, job_id: str
+) -> dict[str, Any] | None:
     """Try the hosted delivery; never raise when it is not there.
 
     Hosted post-production is off on the deployed API, so ``/delivery`` answers
@@ -607,7 +666,11 @@ def fetch_delivery_optional(run: DramaApiRunSession, job_id: str) -> dict[str, A
     if 200 <= status < 300 and isinstance(body, dict):
         run.save("18_delivery.json", body)
         return body
-    run.emit("delivery_unavailable", status=status, note="hosted post-production is off; the raw takes are the output")
+    run.emit(
+        "delivery_unavailable",
+        status=status,
+        note="hosted post-production is off; the raw takes are the output",
+    )
     return None
 
 
@@ -644,7 +707,9 @@ def finish_video_job(
     return fetch_delivery_optional(run, job_id) or {}
 
 
-def delivery_for_completed_video_job(run: DramaApiRunSession, job_id: str) -> dict[str, Any]:
+def delivery_for_completed_video_job(
+    run: DramaApiRunSession, job_id: str
+) -> dict[str, Any]:
     """Fetch the optional delivery for a video job that already reached ``completed`` (``{}`` when absent)."""
 
     return fetch_delivery_optional(run, job_id) or {}
@@ -692,7 +757,12 @@ def video_request_body(
         ``DramaVideoGenerationCreateRequest`` JSON.
     """
 
-    extra = film_scope(run, episode=episode, reroll_take_index=reroll_take_index, seed_attempt=seed_attempt)
+    extra = film_scope(
+        run,
+        episode=episode,
+        reroll_take_index=reroll_take_index,
+        seed_attempt=seed_attempt,
+    )
     return reuse_generation_body(
         prompt=scene_prompt(spine, prompt),
         spine=spine,
@@ -752,7 +822,9 @@ def enrol_video(
     from creation.harness.raw_video import wait_for_raw_scene_clips
 
     if not 4 <= clip_duration_seconds <= 15:
-        raise SystemExit("clip_duration_seconds must be 4-15; the API rejects anything else")
+        raise SystemExit(
+            "clip_duration_seconds must be 4-15; the API rejects anything else"
+        )
     spine = run.spine(spine_id)
     body = video_request_body(
         run,
@@ -770,13 +842,19 @@ def enrol_video(
     )
     run.save("16_video_request.json", body)
     idem_suffix = (video_idempotency_suffix or "").strip()
-    base = f"{run.prefix}-video" if episode == 1 else f"{run.prefix}-ep{episode:02d}-video"
+    base = (
+        f"{run.prefix}-video" if episode == 1 else f"{run.prefix}-ep{episode:02d}-video"
+    )
     idem = f"{base}{idem_suffix}" if idem_suffix else base
     job = post_video_generation(run, body, idempotency_key=idem, episode=episode)
     run.save("16_video_enrol.json", job)
     job_id = str(job["job_id"])
     raw = wait_for_raw_scene_clips(run, job_id, deadline_seconds=poll_deadline_seconds)
-    delivery = finish_video_job(run, job_id, poll_deadline_seconds=poll_deadline_seconds) if api_captions else None
+    delivery = (
+        finish_video_job(run, job_id, poll_deadline_seconds=poll_deadline_seconds)
+        if api_captions
+        else None
+    )
     first = raw["clips"][0]["url"] if raw.get("clips") else None
     return {"raw_scenes": raw, "primary_clip_url": first, "delivery": delivery or None}
 

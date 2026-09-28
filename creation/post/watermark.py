@@ -22,11 +22,17 @@ MARK_ALPHA = 0.6
 def mark_position(width: int, height: int, *, y: int | None = None) -> tuple[int, int]:
     """Overlay ``(x, y)`` for the mark; an override ``y`` is clamped below the covered top strip."""
 
-    top = round(height * MARK_Y_FRACTION) if y is None else max(y, math.ceil(height * SAFE_TOP_FRACTION))
+    top = (
+        round(height * MARK_Y_FRACTION)
+        if y is None
+        else max(y, math.ceil(height * SAFE_TOP_FRACTION))
+    )
     return round(width * MARK_X_FRACTION), top
 
 
-def watermark(video: Path, out: Path, *, y: int | None = None, mark: Path = MARK) -> Path:
+def watermark(
+    video: Path, out: Path, *, y: int | None = None, mark: Path = MARK
+) -> Path:
     """Put the mark on ``video`` into ``out`` (audio copied); the un-marked file stays.
 
     Raises
@@ -47,5 +53,7 @@ def watermark(video: Path, out: Path, *, y: int | None = None, mark: Path = MARK
     args = ["-i", str(video), "-i", str(mark), "-filter_complex", graph, "-map", "[v]"]
     if info.has_audio:
         args += ["-map", "0:a", "-c:a", "copy"]
-    run_ffmpeg([*args, "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", str(out)])
+    run_ffmpeg(
+        [*args, "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", str(out)]
+    )
     return out

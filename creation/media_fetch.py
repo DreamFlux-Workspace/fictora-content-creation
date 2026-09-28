@@ -55,7 +55,9 @@ def download_to_versioned(
 
     suffix = _suffix_from_url(url, default_suffix)
     dest = next_versioned_path(directory, stem, suffix)
-    response = client.get(url, follow_redirects=True, headers={"User-Agent": BROWSER_USER_AGENT})
+    response = client.get(
+        url, follow_redirects=True, headers={"User-Agent": BROWSER_USER_AGENT}
+    )
     response.raise_for_status()
     dest.write_bytes(response.content)
     return dest

@@ -32,7 +32,9 @@ def ffmpeg_bin() -> str:
 
     found = shutil.which("ffmpeg") or "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg"
     if not Path(found).exists():
-        raise MediaToolError("ffmpeg is required for local post (macOS: brew install ffmpeg)")
+        raise MediaToolError(
+            "ffmpeg is required for local post (macOS: brew install ffmpeg)"
+        )
     return found
 
 
@@ -48,7 +50,9 @@ def ffprobe_bin() -> str:
     beside = Path(ffmpeg_bin()).with_name("ffprobe")
     found = str(beside) if beside.exists() else shutil.which("ffprobe")
     if not found:
-        raise MediaToolError("ffprobe is required for local post (it ships with ffmpeg)")
+        raise MediaToolError(
+            "ffprobe is required for local post (it ships with ffmpeg)"
+        )
     return found
 
 
@@ -66,7 +70,12 @@ def run_ffmpeg(args: list[str]) -> None:
         When ffmpeg exits non-zero.
     """
 
-    result = subprocess.run([ffmpeg_bin(), "-v", "error", "-y", *args], capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        [ffmpeg_bin(), "-v", "error", "-y", *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     if result.returncode != 0:
         raise MediaToolError(f"ffmpeg failed: {result.stderr.strip()[-600:]}")
 
@@ -107,7 +116,9 @@ def probe_video(path: Path) -> VideoInfo:
         capture_output=True, text=True, check=False,
     )  # fmt: skip
     if result.returncode != 0:
-        raise MediaToolError(f"ffprobe failed on {path.name}: {result.stderr.strip()[-300:]}")
+        raise MediaToolError(
+            f"ffprobe failed on {path.name}: {result.stderr.strip()[-300:]}"
+        )
     data = json.loads(result.stdout)
     streams = data.get("streams") or []
     video = next((s for s in streams if s.get("codec_type") == "video"), None)
@@ -138,7 +149,9 @@ def media_duration(path: Path) -> float:
         capture_output=True, text=True, check=False,
     )  # fmt: skip
     if result.returncode != 0:
-        raise MediaToolError(f"ffprobe failed on {path.name}: {result.stderr.strip()[-300:]}")
+        raise MediaToolError(
+            f"ffprobe failed on {path.name}: {result.stderr.strip()[-300:]}"
+        )
     return float(json.loads(result.stdout)["format"]["duration"])
 
 
@@ -156,7 +169,9 @@ def measure_loudness(path: Path) -> float:
         capture_output=True, text=True, check=False,
     )  # fmt: skip
     if result.returncode != 0:
-        raise MediaToolError(f"loudness scan failed on {path.name}: {result.stderr.strip()[-300:]}")
+        raise MediaToolError(
+            f"loudness scan failed on {path.name}: {result.stderr.strip()[-300:]}"
+        )
     found = re.findall(r"I:\s+(-?[0-9.]+|-inf)\s+LUFS", result.stderr)
     if not found:
         return -math.inf
@@ -164,7 +179,9 @@ def measure_loudness(path: Path) -> float:
     return -math.inf if value == "-inf" else float(value)
 
 
-def measure_rms_windows(path: Path, *, window_seconds: float = 0.5) -> tuple[float, ...]:
+def measure_rms_windows(
+    path: Path, *, window_seconds: float = 0.5
+) -> tuple[float, ...]:
     """RMS level (dB) per window of a file's first audio channel; silence reads -120.
 
     Parameters
@@ -239,12 +256,19 @@ def count_frames(path: Path) -> int:
         capture_output=True, text=True, check=False,
     )  # fmt: skip
     if result.returncode != 0 or not result.stdout.strip():
-        raise MediaToolError(f"ffprobe could not count the frames of {path.name}: {result.stderr.strip()[-300:]}")
+        raise MediaToolError(
+            f"ffprobe could not count the frames of {path.name}: {result.stderr.strip()[-300:]}"
+        )
     return int(result.stdout.strip().split(",")[0])
 
 
 def decode_frames(
-    path: Path, *, width: int, height: int, fps: float | None = None, max_frames: int | None = None
+    path: Path,
+    *,
+    width: int,
+    height: int,
+    fps: float | None = None,
+    max_frames: int | None = None,
 ) -> npt.NDArray[np.float64]:
     """Decode a video's frames as RGB scaled to ``width`` x ``height``.
 
@@ -270,14 +294,20 @@ def decode_frames(
         When ffmpeg fails.
     """
 
-    vf = f"scale={width}:{height}" if fps is None else f"fps={fps},scale={width}:{height}"
+    vf = (
+        f"scale={width}:{height}"
+        if fps is None
+        else f"fps={fps},scale={width}:{height}"
+    )
     args = [ffmpeg_bin(), "-nostdin", "-v", "error", "-i", str(path)]
     if max_frames is not None:
         args += ["-frames:v", str(max_frames)]
     args += ["-vf", vf, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
     result = subprocess.run(args, capture_output=True, check=False)
     if result.returncode != 0:
-        raise MediaToolError(f"frame decode failed on {path.name}: {result.stderr.decode(errors='replace')[-300:]}")
+        raise MediaToolError(
+            f"frame decode failed on {path.name}: {result.stderr.decode(errors='replace')[-300:]}"
+        )
     raw = np.frombuffer(result.stdout, dtype=np.uint8)
     size = width * height * 3
     count = raw.size // size

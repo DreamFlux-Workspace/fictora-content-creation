@@ -28,7 +28,9 @@ def load_env_file(path: Path) -> None:
         if not separator or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
             continue
         value = value.strip()
-        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+        if (value.startswith('"') and value.endswith('"')) or (
+            value.startswith("'") and value.endswith("'")
+        ):
             value = value[1:-1]
         else:
             value = re.sub(r"\s+#.*$", "", value).strip()

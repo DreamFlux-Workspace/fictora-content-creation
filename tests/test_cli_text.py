@@ -15,7 +15,10 @@ LINES = [{"speaker": "Hana", "original": "Not tonight.", "translation": "Not ton
 
 
 def test_inline_text_is_the_text(tmp_path: Path) -> None:
-    assert text_or_file("  a quiet tram at night  ", flag="--prompt") == "a quiet tram at night"
+    assert (
+        text_or_file("  a quiet tram at night  ", flag="--prompt")
+        == "a quiet tram at night"
+    )
 
 
 def test_an_at_file_and_an_existing_path_are_read(tmp_path: Path) -> None:
@@ -40,18 +43,36 @@ def test_json_takes_text_at_file_or_path(tmp_path: Path) -> None:
     assert json_or_file(str(path), flag="--lines-json") == LINES
 
 
-def test_a_path_that_does_not_exist_says_so_instead_of_a_bare_json_error(tmp_path: Path) -> None:
+def test_a_path_that_does_not_exist_says_so_instead_of_a_bare_json_error(
+    tmp_path: Path,
+) -> None:
     with pytest.raises(TextArgError, match="no file named .*lines.json.* exists"):
         json_or_file(str(tmp_path / "lines.json"), flag="--lines-json")
 
 
 @pytest.mark.parametrize("form", ["inline", "at-file", "path"])
-def test_set_lines_accepts_the_json_or_a_file(desk: Path, tmp_path: Path, form: str) -> None:
+def test_set_lines_accepts_the_json_or_a_file(
+    desk: Path, tmp_path: Path, form: str
+) -> None:
     path = tmp_path / "lines.json"
     path.write_text(json.dumps(LINES), encoding="utf-8")
-    value = {"inline": json.dumps(LINES), "at-file": f"@{path}", "path": str(path)}[form]
+    value = {"inline": json.dumps(LINES), "at-file": f"@{path}", "path": str(path)}[
+        form
+    ]
 
-    code = ops_main(["set-lines", "--desk", str(desk), "--episode", "1", "--take", "t1", "--lines-json", value])
+    code = ops_main(
+        [
+            "set-lines",
+            "--desk",
+            str(desk),
+            "--episode",
+            "1",
+            "--take",
+            "t1",
+            "--lines-json",
+            value,
+        ]
+    )
 
     assert code == 0
     take = episode_by_ordinal(load_series(desk), 1).takes[0]
@@ -62,13 +83,25 @@ def test_set_lines_with_a_missing_file_exits_2_with_a_plain_message(
     desk: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     code = ops_main(
-        ["set-lines", "--desk", str(desk), "--episode", "1", "--take", "t1", "--lines-json", str(tmp_path / "x.json")]
+        [
+            "set-lines",
+            "--desk",
+            str(desk),
+            "--episode",
+            "1",
+            "--take",
+            "t1",
+            "--lines-json",
+            str(tmp_path / "x.json"),
+        ]
     )
 
     assert code == 2 and "no file named" in capsys.readouterr().err
 
 
-def test_bind_reads_the_premise_from_a_file(desk: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bind_reads_the_premise_from_a_file(
+    desk: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from creation import cli_produce
 
     seen: list[str] = []

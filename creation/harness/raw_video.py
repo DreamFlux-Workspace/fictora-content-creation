@@ -102,7 +102,9 @@ def wait_for_raw_scene_clips(
         parent = _job_record(run.get(f"/v1/jobs/{coordinator_job_id}"))
         if str(parent.get("status") or "") in _FAILED:
             run.save("17_video_terminal.json", parent)
-            raise SystemExit(f"video job {coordinator_job_id} {describe_job_error(parent)}")
+            raise SystemExit(
+                f"video job {coordinator_job_id} {describe_job_error(parent)}"
+            )
         depends = parent.get("depends_on")
         if isinstance(depends, list) and depends:
             child_ids = [str(item) for item in depends if item]
@@ -121,7 +123,11 @@ def wait_for_raw_scene_clips(
                 if url is None:
                     pending = True
                     continue
-                relation = child.get("relation") if isinstance(child.get("relation"), dict) else {}
+                relation = (
+                    child.get("relation")
+                    if isinstance(child.get("relation"), dict)
+                    else {}
+                )
                 episodes = child.get("episode_ids") or []
                 clips.append(
                     {
@@ -137,7 +143,9 @@ def wait_for_raw_scene_clips(
                 run.save(save_as, payload)
                 return payload
         elif str(parent.get("status") or "") == "completed":
-            raise SystemExit(f"video job {coordinator_job_id} completed with no take jobs in depends_on")
+            raise SystemExit(
+                f"video job {coordinator_job_id} completed with no take jobs in depends_on"
+            )
         run.emit(
             "poll_raw_scenes",
             status="running",
@@ -168,12 +176,21 @@ def episode_clips(raw: dict[str, Any], *, episode_id: str) -> list[dict[str, Any
         Clips for that episode.
     """
 
-    mine = [clip for clip in raw.get("clips") or [] if clip.get("episode_id") in ("", episode_id)]
-    ordered = sorted(enumerate(mine), key=lambda pair: (pair[1].get("set_index") or pair[0] + 1, pair[0]))
+    mine = [
+        clip
+        for clip in raw.get("clips") or []
+        if clip.get("episode_id") in ("", episode_id)
+    ]
+    ordered = sorted(
+        enumerate(mine),
+        key=lambda pair: (pair[1].get("set_index") or pair[0] + 1, pair[0]),
+    )
     return [clip for _, clip in ordered]
 
 
-def fetch_take_facts(run: DramaApiRunSession, take_job_id: str, *, spine_id: str | None) -> dict[str, Any] | None:
+def fetch_take_facts(
+    run: DramaApiRunSession, take_job_id: str, *, spine_id: str | None
+) -> dict[str, Any] | None:
     """Read a take's facts (never its prompt). A missing answer is logged, not fatal: the take is paid for.
 
     Parameters
@@ -193,7 +210,11 @@ def fetch_take_facts(run: DramaApiRunSession, take_job_id: str, *, spine_id: str
 
     query = f"?spine_id={quote(spine_id, safe='')}" if spine_id else ""
     status, body = run.get_optional(f"/v1/jobs/{take_job_id}/take-facts{query}")
-    if 200 <= status < 300 and isinstance(body, dict) and isinstance(body.get("take_facts"), dict):
+    if (
+        200 <= status < 300
+        and isinstance(body, dict)
+        and isinstance(body.get("take_facts"), dict)
+    ):
         return dict(body["take_facts"])
     run.emit("take_facts_unavailable", take_job_id=take_job_id, status=status)
     return None

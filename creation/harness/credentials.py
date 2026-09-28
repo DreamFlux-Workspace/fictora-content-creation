@@ -43,7 +43,10 @@ def load_drama_api_credentials(
     load_env_file(repo_root / ".env")
     for path in extra_env_files:
         load_env_file(path)
-    base_url = os.environ.get("FICTORA_DRAMA_GENERATION_API_BASE_URL", "").strip() or default_base_url
+    base_url = (
+        os.environ.get("FICTORA_DRAMA_GENERATION_API_BASE_URL", "").strip()
+        or default_base_url
+    )
     token = os.environ.get("FICTORA_DRAMA_GENERATION_SERVICE_TOKEN", "").strip()
     if token:
         return base_url, token
@@ -58,7 +61,9 @@ def load_drama_api_credentials(
     raw = json.loads(completed.stdout)
     token = (raw.get("FICTORA_DRAMA_GENERATION_SERVICE_TOKEN") or "").strip()
     if not token:
-        tokens = json.loads(raw.get("FICTORA_DRAMA_GENERATION_SERVICE_TOKENS_JSON") or "{}")
+        tokens = json.loads(
+            raw.get("FICTORA_DRAMA_GENERATION_SERVICE_TOKENS_JSON") or "{}"
+        )
         if not tokens:
             raise SystemExit("FICTORA_DRAMA_GENERATION_SERVICE_TOKEN must be set")
         token = next(iter(tokens))

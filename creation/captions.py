@@ -243,7 +243,9 @@ def whole_line_cue(text: str, span: Span, *, hold_until: float | None = None) ->
     return Cue(round(span.start, 3), round(max(end, span.start + 0.05), 3), text)
 
 
-def build_cues(lines: Sequence[str], anchors: Sequence[Span], *, whole_lines: bool = False) -> list[Cue]:
+def build_cues(
+    lines: Sequence[str], anchors: Sequence[Span], *, whole_lines: bool = False
+) -> list[Cue]:
     """Cues for every line on its anchor span.
 
     English shows flicker word by word (:func:`flicker_cues`). With
@@ -271,7 +273,13 @@ def captions_whole_lines(spine: dict[str, Any]) -> bool:
     """
 
     body = spine.get("spine", spine)
-    code = str(body.get("spoken_language") or "en").strip().replace("_", "-").split("-", 1)[0].lower()
+    code = (
+        str(body.get("spoken_language") or "en")
+        .strip()
+        .replace("_", "-")
+        .split("-", 1)[0]
+        .lower()
+    )
     return code not in ("", "en")
 
 
@@ -284,7 +292,12 @@ def _ass_time(seconds: float) -> str:
 
 
 def _ass_escape(text: str) -> str:
-    return text.replace("\\", "\\\\").replace("{", "(").replace("}", ")").replace("\n", " ")
+    return (
+        text.replace("\\", "\\\\")
+        .replace("{", "(")
+        .replace("}", ")")
+        .replace("\n", " ")
+    )
 
 
 def caption_margin_v(height: int) -> int:
@@ -350,7 +363,8 @@ def build_ass(cues: Sequence[Cue], *, width: int, height: int) -> str:
         return prefix + _ass_escape(cue.text)
 
     events = "".join(
-        f"Dialogue: 0,{_ass_time(c.start)},{_ass_time(c.end)},House,,0,0,0,,{text(c)}\n" for c in cues
+        f"Dialogue: 0,{_ass_time(c.start)},{_ass_time(c.end)},House,,0,0,0,,{text(c)}\n"
+        for c in cues
     )
     return header + events
 
@@ -373,7 +387,9 @@ def find_ffmpeg() -> tuple[str, str]:
             probe = shutil.which("ffprobe") or ""
         if not probe:
             continue
-        filters = subprocess.run([ffmpeg, "-hide_banner", "-filters"], capture_output=True, text=True).stdout
+        filters = subprocess.run(
+            [ffmpeg, "-hide_banner", "-filters"], capture_output=True, text=True
+        ).stdout
         if re.search(r"^\s*\S+\s+(ass|subtitles)\s", filters, re.MULTILINE):
             return ffmpeg, probe
     raise RuntimeError(
@@ -386,40 +402,94 @@ def probe_video(ffprobe: str, path: Path) -> tuple[int, int, float]:
     """Return ``(width, height, duration_seconds)``."""
 
     out = subprocess.run(
-        [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries",
-         "stream=width,height:format=duration", "-of", "json", str(path)],
-        capture_output=True, text=True, check=True,
+        [
+            ffprobe,
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height:format=duration",
+            "-of",
+            "json",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
     data = json.loads(out)
     stream = data["streams"][0]
-    return int(stream["width"]), int(stream["height"]), float(data["format"]["duration"])
+    return (
+        int(stream["width"]),
+        int(stream["height"]),
+        float(data["format"]["duration"]),
+    )
 
 
 def detect_silences(ffmpeg: str, path: Path, duration: float) -> list[Span]:
     """Run ``silencedetect`` on the take's audio."""
 
     result = subprocess.run(
-        [ffmpeg, "-hide_banner", "-nostats", "-i", str(path), "-vn", "-af",
-         f"silencedetect=noise={SILENCE_NOISE_DB}dB:d={SILENCE_MIN_SECONDS}", "-f", "null", "-"],
-        capture_output=True, text=True,
+        [
+            ffmpeg,
+            "-hide_banner",
+            "-nostats",
+            "-i",
+            str(path),
+            "-vn",
+            "-af",
+            f"silencedetect=noise={SILENCE_NOISE_DB}dB:d={SILENCE_MIN_SECONDS}",
+            "-f",
+            "null",
+            "-",
+        ],
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"silencedetect failed on {path.name}: {result.stderr.strip()[-400:]}")
+        raise RuntimeError(
+            f"silencedetect failed on {path.name}: {result.stderr.strip()[-400:]}"
+        )
     return parse_silencedetect(result.stderr, duration)
 
 
-def burn_ass(ffmpeg: str, take: Path, ass: Path, out: Path, *, fonts_dir: Path = FONTS_DIR) -> None:
+def burn_ass(
+    ffmpeg: str, take: Path, ass: Path, out: Path, *, fonts_dir: Path = FONTS_DIR
+) -> None:
     """Burn ``ass`` onto ``take`` (video re-encoded, audio copied)."""
 
     def esc(p: Path) -> str:
         return str(p).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
 
     result = subprocess.run(
-        [ffmpeg, "-v", "error", "-y", "-i", str(take),
-         "-vf", f"ass='{esc(ass)}':fontsdir='{esc(fonts_dir)}'",
-         "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-crf", "18", "-preset", "medium",
-         "-pix_fmt", "yuv420p", "-c:a", "copy", str(out)],
-        capture_output=True, text=True,
+        [
+            ffmpeg,
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(take),
+            "-vf",
+            f"ass='{esc(ass)}':fontsdir='{esc(fonts_dir)}'",
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0?",
+            "-c:v",
+            "libx264",
+            "-crf",
+            "18",
+            "-preset",
+            "medium",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "copy",
+            str(out),
+        ],
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         raise RuntimeError(f"caption burn failed: {result.stderr.strip()[-400:]}")
@@ -487,12 +557,16 @@ def caption_take(
     takes = ep_dir / "takes"
     take = take or latest_file(takes, f"take-ep{episode_ordinal:02d}-t1-raw-v*.mp4")
     if take is None or not take.is_file():
-        raise FileNotFoundError(f"no raw take in {takes}; run `fictora-produce step --confirm-spend` first")
+        raise FileNotFoundError(
+            f"no raw take in {takes}; run `fictora-produce step --confirm-spend` first"
+        )
     api = ep_dir / "api"
     # Newest snapshot that carries beats (approve responses are receipts without them).
     lines: list[str] = []
     whole_lines = False
-    for spine_path in sorted(api.glob("*spine*.json"), key=lambda p: p.name, reverse=True):
+    for spine_path in sorted(
+        api.glob("*spine*.json"), key=lambda p: p.name, reverse=True
+    ):
         spine = json.loads(spine_path.read_text(encoding="utf-8"))
         if isinstance(spine, dict):
             lines = episode_lines(spine, episode_ordinal)
@@ -500,13 +574,17 @@ def caption_take(
             whole_lines = captions_whole_lines(spine)
             break
     if not lines:
-        raise ValueError(f"episode {episode_ordinal} has no dialogue lines in any spine snapshot in {api}")
+        raise ValueError(
+            f"episode {episode_ordinal} has no dialogue lines in any spine snapshot in {api}"
+        )
 
     ffmpeg, ffprobe = find_ffmpeg()
     width, height, duration = probe_video(ffprobe, take)
     if line_starts:
         if len(line_starts) != len(lines):
-            raise ValueError(f"--line-start given {len(line_starts)} time(s) for {len(lines)} line(s)")
+            raise ValueError(
+                f"--line-start given {len(line_starts)} time(s) for {len(lines)} line(s)"
+            )
         ends = list(line_starts[1:]) + [duration]
         anchors = [
             Span(s, min(e, s + max(0.6, len(t.split()) * SECONDS_PER_WORD)))
@@ -523,4 +601,6 @@ def caption_take(
     ass.write_text(build_ass(cues, width=width, height=height), encoding="utf-8")
     video = next_versioned_path(takes, stem or f"{base}-captioned", ".mp4")
     burn_ass(ffmpeg, take, ass, video)
-    return CaptionResult(ass, video, tuple(cues), tuple(anchors), tuple(lines), whole_lines)
+    return CaptionResult(
+        ass, video, tuple(cues), tuple(anchors), tuple(lines), whole_lines
+    )

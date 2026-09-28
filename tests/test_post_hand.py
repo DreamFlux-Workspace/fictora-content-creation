@@ -12,7 +12,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import SPINE, board_array, make_take, make_tone, needs_ffmpeg, shot_frames, write_frames
+from conftest import (
+    SPINE,
+    board_array,
+    make_take,
+    make_tone,
+    needs_ffmpeg,
+    shot_frames,
+    write_frames,
+)
 from PIL import Image
 
 from creation.cli_produce import main
@@ -43,16 +51,29 @@ FACTS = {
         "job_id": "job_video_scene_1",
         "shots": [
             {"shot_index": 1, "start_seconds": 0.0, "end_seconds": 2.5, "speaks": True},
-            {"shot_index": 2, "start_seconds": 2.5, "end_seconds": 5.0, "speaks": False},
+            {
+                "shot_index": 2,
+                "start_seconds": 2.5,
+                "end_seconds": 5.0,
+                "speaks": False,
+            },
         ],
         "sfx_cues": [
-            {"shot_index": 2, "sound": "a door slams", "kind": "event", "start_seconds": 3.0, "duration_seconds": 1.0}
+            {
+                "shot_index": 2,
+                "sound": "a door slams",
+                "kind": "event",
+                "start_seconds": 3.0,
+                "duration_seconds": 1.0,
+            }
         ],
     }
 }
 
 
-def rms(path: Path, start: float, end: float) -> float:  # an ffmpeg test sine plays at about -27 dB
+def rms(
+    path: Path, start: float, end: float
+) -> float:  # an ffmpeg test sine plays at about -27 dB
     """Loudest 0.1 s window between ``start`` and ``end`` (dB)."""
 
     levels = measure_rms_windows(path, window_seconds=WINDOW)
@@ -72,7 +93,9 @@ def quiet_take(path: Path) -> Path:
 
 def test_specs_parse_and_bad_ones_say_the_form() -> None:
     assert parse_range("6.9-8.3") == (6.9, 8.3)
-    assert parse_placed("sfx/cue-sting-v1.mp3@4.2@-12", flag="--cue") == Placed(Path("sfx/cue-sting-v1.mp3"), 4.2, -12.0)
+    assert parse_placed("sfx/cue-sting-v1.mp3@4.2@-12", flag="--cue") == Placed(
+        Path("sfx/cue-sting-v1.mp3"), 4.2, -12.0
+    )
     assert parse_placed("line.mp3@5.2", flag="--voice").gain_db is None
     for bad in ("8.3-6.9", "6.9", "a-b"):
         with pytest.raises(ValueError, match="A-B"):
@@ -104,7 +127,9 @@ def test_placements_outside_the_take_are_refused(tmp_path: Path) -> None:
         check_hand_plan(5.0, voices=(Placed(tone, 4.5),))
     with pytest.raises(ValueError, match="past the end"):
         check_hand_plan(5.0, mutes=((5.5, 6.0),))
-    assert check_hand_plan(5.0, mutes=((4.0, 9.0),)).mutes == ((4.0, 5.0),), "a mute is clamped to the take"
+    assert check_hand_plan(5.0, mutes=((4.0, 9.0),)).mutes == ((4.0, 5.0),), (
+        "a mute is clamped to the take"
+    )
 
 
 # ================================================================================================
@@ -113,14 +138,18 @@ def test_placements_outside_the_take_are_refused(tmp_path: Path) -> None:
 
 
 @needs_ffmpeg
-def test_the_mute_window_is_silent_and_the_take_outside_it_is_not(tmp_path: Path) -> None:
+def test_the_mute_window_is_silent_and_the_take_outside_it_is_not(
+    tmp_path: Path,
+) -> None:
     take = make_take(tmp_path / "take.mp4", tones=((0.0, 5.0, 440),))
     plan = check_hand_plan(5.0, mutes=((2.0, 3.0),))
 
     out = lay_voice(take, tmp_path / "voice.mp4", plan)
 
     assert rms(out, 2.0, 3.0) < -80, "inside the mute window the take is silent"
-    assert rms(out, 1.0, 1.9) > -35 and rms(out, 3.1, 4.0) > -35, "outside it the take plays on"
+    assert rms(out, 1.0, 1.9) > -35 and rms(out, 3.1, 4.0) > -35, (
+        "outside it the take plays on"
+    )
     assert abs(media_duration(out) - media_duration(take)) < 0.05
 
 
@@ -148,7 +177,9 @@ def test_a_cue_lands_at_its_time_at_the_house_level(tmp_path: Path) -> None:
     out = lay_cues(take, tmp_path / "cues.mp4", plan)
 
     at = rms(out, 1.6, 1.9)
-    assert rms(out, 0.8, 1.4) < -60 and rms(out, 2.3, 4.8) < -60, "the cue is only where it was placed"
+    assert rms(out, 0.8, 1.4) < -60 and rms(out, 2.3, 4.8) < -60, (
+        "the cue is only where it was placed"
+    )
     raw = max(measure_rms_windows(cue, window_seconds=WINDOW))
     assert -10 < at - raw < -6, f"house level is -8 dB under the file: {at - raw:.1f}"
 
@@ -169,19 +200,25 @@ def test_a_cue_is_clamped_to_end_before_the_take_does(tmp_path: Path) -> None:
     take = quiet_take(tmp_path / "take.mp4")
     cue = make_tone(tmp_path / "long.wav", seconds=3.0, freq=300, volume=0.5)
     plan = check_hand_plan(5.0, cues=(Placed(cue, 4.0),))
-    assert plan.cues[0][1] == pytest.approx(0.85), "a 3 s cue at 4.0 s on a 5 s take is laid for 0.85 s"
+    assert plan.cues[0][1] == pytest.approx(0.85), (
+        "a 3 s cue at 4.0 s on a 5 s take is laid for 0.85 s"
+    )
 
     out = lay_cues(take, tmp_path / "cues.mp4", plan)
 
     assert rms(out, 4.1, 4.5) > -40
-    assert abs(media_duration(out) - media_duration(take)) < 0.05, "the cue never makes the take longer"
+    assert abs(media_duration(out) - media_duration(take)) < 0.05, (
+        "the cue never makes the take longer"
+    )
 
 
 @needs_ffmpeg
 def test_a_cue_that_comes_out_silent_in_the_layer_fails_loud(tmp_path: Path) -> None:
     layer = make_tone(tmp_path / "layer.wav", seconds=5.0, volume=0.0)
     cue = Placed(tmp_path / "cue.wav", 1.0)
-    assert silent_cues(layer, HandPlan(cues=((cue, 0.5),))) == ["cue.wav @1.00s auto came out SILENT in the cue layer"]
+    assert silent_cues(layer, HandPlan(cues=((cue, 0.5),))) == [
+        "cue.wav @1.00s auto came out SILENT in the cue layer"
+    ]
     loud = make_tone(tmp_path / "loud.wav", seconds=5.0, volume=0.5)
     assert silent_cues(loud, HandPlan(cues=((cue, 0.5),))) == []
 
@@ -204,17 +241,33 @@ BOARD_FRAMES = 10
 
 
 @needs_ffmpeg
-def test_finish_lays_mute_voice_and_cue_at_filmed_times_with_no_shift_after_deboard(post_desk: Path) -> None:
+def test_finish_lays_mute_voice_and_cue_at_filmed_times_with_no_shift_after_deboard(
+    post_desk: Path,
+) -> None:
     takes = post_desk / "ep01" / "takes"
-    frames = [board_array()] * BOARD_FRAMES + shot_frames(120 - BOARD_FRAMES, (40, 60, 200))
+    frames = [board_array()] * BOARD_FRAMES + shot_frames(
+        120 - BOARD_FRAMES, (40, 60, 200)
+    )
     write_frames(takes / "take-ep01-t1-raw-v1.mp4", frames, tones=TWO_LINES)
     board = post_desk / "ep01" / "boards" / "board-ep01-t1-1-v1.png"
     board.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(board_array()).save(board)
     approve_board(post_desk, episode=1, take_id="t1", image=board)
-    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(json.dumps(FACTS))
-    line = make_tone(post_desk / "ep01" / "voices" / "voice-ep01-aya-v1.mp3", seconds=0.4, freq=660, volume=0.3)
-    sting = make_tone(post_desk / "ep01" / "sfx" / "cue-sting-v1.mp3", seconds=0.3, freq=1200, volume=0.6)
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+        json.dumps(FACTS)
+    )
+    line = make_tone(
+        post_desk / "ep01" / "voices" / "voice-ep01-aya-v1.mp3",
+        seconds=0.4,
+        freq=660,
+        volume=0.3,
+    )
+    sting = make_tone(
+        post_desk / "ep01" / "sfx" / "cue-sting-v1.mp3",
+        seconds=0.3,
+        freq=1200,
+        volume=0.6,
+    )
     out = io.StringIO()
 
     result = run_finish(
@@ -226,7 +279,9 @@ def test_finish_lays_mute_voice_and_cue_at_filmed_times_with_no_shift_after_debo
     steps = [s.step for s in result.steps]
     assert steps[:4] == ["deboard", "voice", "sfx", "cues"], steps
     deboarded = result.steps[0].output
-    assert deboarded is not None, "the take opened on board frames, so deboard wrote a file"
+    assert deboarded is not None, (
+        "the take opened on board frames, so deboard wrote a file"
+    )
     voiced = takes / "take-ep01-t1-voice-v1.mp4"
     # Times are on the take as filmed: deboard kept the timeline, so a shift by the 0.42 s of board frames
     # would put Aya's mute at 2.78-3.58 s (her line audible again at 3.6-3.9 s) and the dry line at 2.08 s.
@@ -236,40 +291,64 @@ def test_finish_lays_mute_voice_and_cue_at_filmed_times_with_no_shift_after_debo
     assert rms(voiced, 2.2, 2.45) < -60, "and not before it"
     cued = takes / "take-ep01-t1-cues-v1.mp4"
     # -8 dB house level and a further -10 dB inside the speaking shot (0-2.5 s): quiet, but there, at 0.6 s.
-    assert rms(cued, 0.65, 0.85) > -55 and rms(cued, 0.2, 0.55) < -70, "the cue lands at 0.6 s"
-    assert result.sound_line() == "Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓ · hand voice ✓ · hand cues ✓"
+    assert rms(cued, 0.65, 0.85) > -55 and rms(cued, 0.2, 0.55) < -70, (
+        "the cue lands at 0.6 s"
+    )
+    assert (
+        result.sound_line()
+        == "Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓ · hand voice ✓ · hand cues ✓"
+    )
     notes = (post_desk / "ep01" / "run-notes.md").read_text()
-    assert "Hand voice" in notes and "muted 3.20-4.00s" in notes and "Hand cues" in notes
+    assert (
+        "Hand voice" in notes and "muted 3.20-4.00s" in notes and "Hand cues" in notes
+    )
 
 
 @needs_ffmpeg
 def test_the_bed_ducks_under_a_hand_voice_line_like_speech(post_desk: Path) -> None:
     quiet_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4")
-    line = make_tone(post_desk / "ep01" / "voices" / "voice-ep01-aya-v1.mp3", seconds=0.5, freq=660, volume=0.3)
+    line = make_tone(
+        post_desk / "ep01" / "voices" / "voice-ep01-aya-v1.mp3",
+        seconds=0.5,
+        freq=660,
+        volume=0.3,
+    )
 
     result = run_finish(post_desk, bed_maker=_fake_bed, facts_fetcher=lambda *a: None, colour=False, duck_db=12.0,
                         voices=(Placed(line, 3.0),), stream=io.StringIO())  # fmt: skip
 
     mix = next(s for s in result.steps if s.step == "mix")
     assert mix.status == "ran", mix.detail
-    assert "12 dB in 2 voice window(s)" in mix.detail, "the take's own sound at 0.2 s and the dry line at 3.0 s"
+    assert "12 dB in 2 voice window(s)" in mix.detail, (
+        "the take's own sound at 0.2 s and the dry line at 3.0 s"
+    )
 
 
 @needs_ffmpeg
 def test_finish_refuses_a_silent_hand_cue_before_any_step(post_desk: Path) -> None:
     make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
-    silent = make_tone(post_desk / "ep01" / "sfx" / "cue-hush-v1.mp3", seconds=1.0, volume=0.0)
+    silent = make_tone(
+        post_desk / "ep01" / "sfx" / "cue-hush-v1.mp3", seconds=1.0, volume=0.0
+    )
 
     with pytest.raises(ValueError, match="silent"):
         run_finish(post_desk, cues=(Placed(silent, 1.0),), stream=io.StringIO())
-    assert [p.name for p in (post_desk / "ep01" / "takes").glob("*.mp4")] == ["take-ep01-t1-raw-v1.mp4"]
+    assert [p.name for p in (post_desk / "ep01" / "takes").glob("*.mp4")] == [
+        "take-ep01-t1-raw-v1.mp4"
+    ]
 
 
 @needs_ffmpeg
-def test_a_hand_step_that_fails_makes_the_take_not_done(post_desk: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_hand_step_that_fails_makes_the_take_not_done(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
-    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(json.dumps(FACTS))
-    sting = make_tone(post_desk / "ep01" / "sfx" / "cue-sting-v1.mp3", seconds=0.5, volume=0.5)
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+        json.dumps(FACTS)
+    )
+    sting = make_tone(
+        post_desk / "ep01" / "sfx" / "cue-sting-v1.mp3", seconds=0.5, volume=0.5
+    )
 
     def broken(*_: Any, **__: Any) -> Path:
         raise RuntimeError("cue came out SILENT in the cue layer")
@@ -292,7 +371,9 @@ def test_finish_cli_takes_the_hand_flags_and_refuses_a_bad_one(
     from creation import cli_post
 
     seen: dict[str, Any] = {}
-    monkeypatch.setattr(cli_post, "run_finish", lambda desk, **kwargs: seen.update(kwargs) or _Done())
+    monkeypatch.setattr(
+        cli_post, "run_finish", lambda desk, **kwargs: seen.update(kwargs) or _Done()
+    )
     code = main(["finish", "--desk", str(post_desk), "--mute", "6.9-8.3", "--mute", "1-2",
                  "--voice", "a.mp3@5.2", "--cue", "b.mp3@4.2@-12"])  # fmt: skip
     assert code == 0
@@ -360,14 +441,24 @@ def test_cue_saves_a_versioned_file_prints_its_shape_and_books_its_cost(
     assert fetched == ["https://media.test/cue.mp3"] * 2
     (_, one), (_, two) = audio.calls
     assert one["sound"] == "A descending comic brass sting" and one["seconds"] == 1.0
-    assert one["spine_id"] == "spine_test" and one["key"] == two["key"], "a re-run replays the same key"
+    assert one["spine_id"] == "spine_test" and one["key"] == two["key"], (
+        "a re-run replays the same key"
+    )
     printed = out.getvalue()
     assert "RMS per 0.5 s: 0.0s" in printed and "shape (event): ok" in printed
     assert "$" not in printed, "cost never reaches printed output"
-    assert load_series(post_desk).spend_usd == pytest.approx(0.006), "each render is booked on the ledger"
-    assert {entry.unit for entry in load_series(post_desk).spend_log} == {"cue:a-descending-comic-brass"}  # same words as the file name
+    assert load_series(post_desk).spend_usd == pytest.approx(0.006), (
+        "each render is booked on the ledger"
+    )
+    assert {entry.unit for entry in load_series(post_desk).spend_log} == {
+        "cue:a-descending-comic-brass"
+    }  # same words as the file name
     sidecar = json.loads(first.with_suffix(".json").read_text())
-    assert sidecar["shape_problem"] is None and sidecar["kind"] == "event" and len(sidecar["rms_db"]) == 2
+    assert (
+        sidecar["shape_problem"] is None
+        and sidecar["kind"] == "event"
+        and len(sidecar["rms_db"]) == 2
+    )
 
 
 @needs_ffmpeg
@@ -377,11 +468,15 @@ def test_cue_flags_a_silent_render_and_refuses_a_bad_length_before_calling(
     _downloads(monkeypatch, volume=0.0)
     audio = FakeAudio()
     out = io.StringIO()
-    handmade.run_cue(post_desk, episode=1, description="a door", seconds=1.0, audio=audio, out=out)
+    handmade.run_cue(
+        post_desk, episode=1, description="a door", seconds=1.0, audio=audio, out=out
+    )
     assert "!! shape (event): silent" in out.getvalue()
 
     with pytest.raises(ValueError, match="--seconds"):
-        handmade.run_cue(post_desk, episode=1, description="a door", seconds=30.0, audio=audio)
+        handmade.run_cue(
+            post_desk, episode=1, description="a door", seconds=30.0, audio=audio
+        )
     with pytest.raises(ValueError, match="--description"):
         handmade.run_cue(post_desk, episode=1, description="  ", audio=audio)
     assert len(audio.calls) == 1
@@ -406,28 +501,41 @@ class FakeSpineApi:
 def test_voice_line_renders_in_the_locked_voice_saves_it_and_books_it(
     post_desk: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(handmade, "open_api", lambda desk, episode: FakeSpineApi(copy.deepcopy(SPINE)))
+    monkeypatch.setattr(
+        handmade, "open_api", lambda desk, episode: FakeSpineApi(copy.deepcopy(SPINE))
+    )
     fetched = _downloads(monkeypatch)
     audio = FakeAudio()
     out = io.StringIO()
 
-    path = handmade.run_voice_line(post_desk, cast="Kenji", text="Wait for me here.", audio=audio, out=out)
+    path = handmade.run_voice_line(
+        post_desk, cast="Kenji", text="Wait for me here.", audio=audio, out=out
+    )
 
     assert path == post_desk / "ep01" / "voices" / "voice-ep01-kenji-v1.mp3"
     assert fetched == ["https://media.test/line.mp3"]
     ((route, call),) = audio.calls
-    assert route == "line" and call["cast_id"] == "cast_kenji" and call["text"] == "Wait for me here."
+    assert (
+        route == "line"
+        and call["cast_id"] == "cast_kenji"
+        and call["text"] == "Wait for me here."
+    )
     assert call["language"] == "en" and call["spoken_text"] is None
     assert call["key"] == revoice_key(
-        "voice-ep01-kenji", {"text": "Wait for me here.", "voice": "Roger", "language": "en"}
+        "voice-ep01-kenji",
+        {"text": "Wait for me here.", "voice": "Roger", "language": "en"},
     ), "the same key revoice sends for this line: never paid twice"
     assert load_series(post_desk).spend_usd == pytest.approx(0.002)
-    assert [entry.unit for entry in load_series(post_desk).spend_log] == ["voice-line:kenji"]
+    assert [entry.unit for entry in load_series(post_desk).spend_log] == [
+        "voice-line:kenji"
+    ]
     assert json.loads(path.with_suffix(".json").read_text())["voice"] == "Roger"
     assert "--voice" in out.getvalue() and "$" not in out.getvalue()
 
 
-def test_voice_line_refuses_a_character_with_no_locked_voice(post_desk: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_voice_line_refuses_a_character_with_no_locked_voice(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     spine = copy.deepcopy(SPINE)
     spine["cast"][0]["voice_brief"] = {}
     monkeypatch.setattr(handmade, "open_api", lambda desk, episode: FakeSpineApi(spine))
@@ -438,14 +546,44 @@ def test_voice_line_refuses_a_character_with_no_locked_voice(post_desk: Path, mo
 
 
 @needs_ffmpeg
-def test_cue_and_voice_line_commands_run_from_the_cli(post_desk: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cue_and_voice_line_commands_run_from_the_cli(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     audio = FakeAudio()
     monkeypatch.setattr(handmade, "DramaApiAudio", lambda desk, episode: audio)
-    monkeypatch.setattr(handmade, "open_api", lambda desk, episode: FakeSpineApi(copy.deepcopy(SPINE)))
+    monkeypatch.setattr(
+        handmade, "open_api", lambda desk, episode: FakeSpineApi(copy.deepcopy(SPINE))
+    )
     _downloads(monkeypatch)
 
-    assert main(["cue", "--desk", str(post_desk), "--episode", "1", "--description", "a cup set down"]) == 0
-    assert main(["voice-line", "--desk", str(post_desk), "--cast", "cast_aya", "--text", "Not tonight."]) == 0
+    assert (
+        main(
+            [
+                "cue",
+                "--desk",
+                str(post_desk),
+                "--episode",
+                "1",
+                "--description",
+                "a cup set down",
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "voice-line",
+                "--desk",
+                str(post_desk),
+                "--cast",
+                "cast_aya",
+                "--text",
+                "Not tonight.",
+            ]
+        )
+        == 0
+    )
     assert [route for route, _ in audio.calls] == ["cue", "line"]
     assert audio.calls[0][1]["seconds"] == 1.5
     assert (post_desk / "ep01" / "sfx" / "cue-a-cup-set-down-v1.mp3").is_file()

@@ -71,7 +71,9 @@ REEL_LOUDNESS_LUFS = -18.0
 
 
 def _unit(prefix: str, arguments: dict[str, Any]) -> str:
-    digest = hashlib.sha256(json.dumps(arguments, sort_keys=True).encode()).hexdigest()[:10]
+    digest = hashlib.sha256(json.dumps(arguments, sort_keys=True).encode()).hexdigest()[
+        :10
+    ]
     return f"{prefix}-{digest}"
 
 
@@ -79,12 +81,19 @@ def cast_lines(spine: dict[str, Any], cast_id: str, episode: int | None) -> list
     """The character's authored lines (``text``), in order, from one episode or the whole spine."""
 
     if episode is not None:
-        lines = [line["text"] for line in episode_dialogue(spine, episode) if line["cast_id"] == cast_id]
+        lines = [
+            line["text"]
+            for line in episode_dialogue(spine, episode)
+            if line["cast_id"] == cast_id
+        ]
     else:
         lines = []
         for beat in spine.get("beats") or []:
             for line in beat.get("dialogue_lines") or []:
-                if line.get("cast_id") == cast_id and str(line.get("text") or "").strip():
+                if (
+                    line.get("cast_id") == cast_id
+                    and str(line.get("text") or "").strip()
+                ):
                     lines.append(str(line["text"]).strip())
     unique: list[str] = []
     for line in lines:
@@ -132,20 +141,37 @@ def parse_voices(raw: str | Sequence[str] | None) -> list[str]:
     return [name for name in (item.strip() for item in items) if name]
 
 
-def _holds(listing: Mapping[str, Any], *, lines: Sequence[str], text: str | None, voices: Sequence[str]) -> bool:
+def _holds(
+    listing: Mapping[str, Any],
+    *,
+    lines: Sequence[str],
+    text: str | None,
+    voices: Sequence[str],
+) -> bool:
     """Whether a finished set already has this wording in every named voice (so a reel from it is free)."""
 
     if text is not None:
-        held = [str(listing.get("text") or "")] if listing.get("text") else list(listing.get("lines") or [])
+        held = (
+            [str(listing.get("text") or "")]
+            if listing.get("text")
+            else list(listing.get("lines") or [])
+        )
         if len(held) != 1 or _key(held[0]) != _key(text):
             return False
     elif listing.get("text") or list(listing.get("lines") or []) != list(lines):
         return False
-    offered = {str(c["provider_voice"]).casefold() for c in listing.get("candidates") or []}
+    offered = {
+        str(c["provider_voice"]).casefold() for c in listing.get("candidates") or []
+    }
     return all(v.casefold() in offered for v in voices)
 
 
-def build_reel(clips: Sequence[tuple[int, str, Path]], out: Path, *, gap_seconds: float = REEL_GAP_SECONDS) -> list[dict[str, Any]]:
+def build_reel(
+    clips: Sequence[tuple[int, str, Path]],
+    out: Path,
+    *,
+    gap_seconds: float = REEL_GAP_SECONDS,
+) -> list[dict[str, Any]]:
     """Put audition clips back to back in one listening file: level-matched, a short gap after each.
 
     Parameters
@@ -185,26 +211,69 @@ def build_reel(clips: Sequence[tuple[int, str, Path]], out: Path, *, gap_seconds
             f"aresample=48000,apad=pad_dur={gap_seconds}[c{n}]"
         )
         seconds = media_duration(path)
-        index.append({"number": number, "voice": voice, "start": round(at, 2), "end": round(at + seconds, 2)})
+        index.append(
+            {
+                "number": number,
+                "voice": voice,
+                "start": round(at, 2),
+                "end": round(at + seconds, 2),
+            }
+        )
         at += seconds + gap_seconds
-    graph.append(f"{''.join(f'[c{n}]' for n in range(len(clips)))}concat=n={len(clips)}:v=0:a=1[a]")
-    run_ffmpeg([*inputs, "-filter_complex", ";".join(graph), "-map", "[a]", "-c:a", "aac", "-b:a", "160k", str(out)])
+    graph.append(
+        f"{''.join(f'[c{n}]' for n in range(len(clips)))}concat=n={len(clips)}:v=0:a=1[a]"
+    )
+    run_ffmpeg(
+        [
+            *inputs,
+            "-filter_complex",
+            ";".join(graph),
+            "-map",
+            "[a]",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "160k",
+            str(out),
+        ]
+    )
     return index
 
 
-def _write_reel(folder: Path, listing: dict[str, Any], voices: Sequence[str], out: TextIO) -> Path:
+def _write_reel(
+    folder: Path, listing: dict[str, Any], voices: Sequence[str], out: TextIO
+) -> Path:
     """Build the set's reel (only ``voices`` when named, else every candidate), record it and print the index."""
 
     wanted = {v.casefold() for v in voices}
-    chosen = [c for c in listing["candidates"] if not wanted or str(c["provider_voice"]).casefold() in wanted]
+    chosen = [
+        c
+        for c in listing["candidates"]
+        if not wanted or str(c["provider_voice"]).casefold() in wanted
+    ]
     if not chosen:
-        raise ValueError("none of the named voices is in the audition set; nothing to put in a reel")
+        raise ValueError(
+            "none of the named voices is in the audition set; nothing to put in a reel"
+        )
     reel = next_versioned_path(folder, "reel", ".m4a")
-    index = build_reel([(int(c["number"]), str(c["provider_voice"]), folder / c["file"]) for c in chosen], reel)
-    lines = [f"{i['number']:>2}. {i['voice']:<12} {i['start']:6.2f}-{i['end']:6.2f}s" for i in index]
+    index = build_reel(
+        [
+            (int(c["number"]), str(c["provider_voice"]), folder / c["file"])
+            for c in chosen
+        ],
+        reel,
+    )
+    lines = [
+        f"{i['number']:>2}. {i['voice']:<12} {i['start']:6.2f}-{i['end']:6.2f}s"
+        for i in index
+    ]
     reel.with_suffix(".txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    listing.setdefault("reels", []).append({"file": reel.name, "voices": [i["voice"] for i in index], "index": index})
-    (folder / "auditions.json").write_text(json.dumps(listing, indent=2) + "\n", encoding="utf-8")
+    listing.setdefault("reels", []).append(
+        {"file": reel.name, "voices": [i["voice"] for i in index], "index": index}
+    )
+    (folder / "auditions.json").write_text(
+        json.dumps(listing, indent=2) + "\n", encoding="utf-8"
+    )
     print(f"Listening reel: {reel}", file=out)
     for line in lines:
         print(f"  {line}", file=out)
@@ -276,18 +345,26 @@ def run_voice_audition(
         card = find_cast(spine, cast)
         cast_id, name = str(card["cast_id"]), str(card.get("name") or card["cast_id"])
         slug = cast_slug(cast_id)
-        lines = [] if wording else cast_lines(spine, cast_id, episode)[:AUDITION_MAX_LINES]
+        lines = (
+            [] if wording else cast_lines(spine, cast_id, episode)[:AUDITION_MAX_LINES]
+        )
         if not wording and not lines:
             where = f" in episode {episode}" if episode else ""
             raise ValueError(
                 f'{name} speaks no line{where} on the spine; audition new wording with --text "..." instead'
             )
         existing = audition_dirs(desk, slug)
-        unfinished = existing[-1] if existing and not (existing[-1] / "auditions.json").is_file() else None
+        unfinished = (
+            existing[-1]
+            if existing and not (existing[-1] / "auditions.json").is_file()
+            else None
+        )
         finished = [path for path in existing if path != unfinished]
         if wanted:
             for held in reversed(finished):
-                listing = json.loads((held / "auditions.json").read_text(encoding="utf-8"))
+                listing = json.loads(
+                    (held / "auditions.json").read_text(encoding="utf-8")
+                )
                 if _holds(listing, lines=lines, text=wording, voices=wanted):
                     print(f"{name}: {held.name} already holds this wording in these voices; a new reel, nothing paid",
                           file=out)  # fmt: skip
@@ -301,7 +378,10 @@ def run_voice_audition(
     finally:
         run.client.close()
     service = audio or DramaApiAudio(desk, episode=ledger_episode)
-    folder = unfinished or desk / "shared" / "voices" / slug / f"audition-v{len(existing) + 1}"
+    folder = (
+        unfinished
+        or desk / "shared" / "voices" / slug / f"audition-v{len(existing) + 1}"
+    )
     folder.mkdir(parents=True, exist_ok=True)
     who = f"{len(wanted)} named voice(s)" if wanted else f"{count} voices"
     what = "new wording" if wording else f"{len(lines)} real line(s)"
@@ -337,15 +417,28 @@ def run_voice_audition(
             for c in made
         ],
     }  # fmt: skip
-    (folder / "auditions.json").write_text(json.dumps(listing, indent=2) + "\n", encoding="utf-8")
-    book(desk, episode=ledger_episode, usd=cost, stream=out, unit=f"voice-audition:{slug}")
+    (folder / "auditions.json").write_text(
+        json.dumps(listing, indent=2) + "\n", encoding="utf-8"
+    )
+    book(
+        desk,
+        episode=ledger_episode,
+        usd=cost,
+        stream=out,
+        unit=f"voice-audition:{slug}",
+    )
     if made:
         # The server read exactly the voices asked for (a retired name comes back as its stand-in): all go in.
         _write_reel(folder, listing, [], out)
     locked = str((card.get("voice_brief") or {}).get("provider_voice") or "none")
-    print(f"{name}: {len(made)} candidates in {folder} (locked now: {locked})", file=out)
+    print(
+        f"{name}: {len(made)} candidates in {folder} (locked now: {locked})", file=out
+    )
     for item in made:
-        print(f"  {item.number:>2}. {item.provider_voice:<14} {item.seconds:5.2f}s  {item.path.name}", file=out)
+        print(
+            f"  {item.number:>2}. {item.provider_voice:<14} {item.seconds:5.2f}s  {item.path.name}",
+            file=out,
+        )
     _note(desk, ledger_episode, f"voice audition: {name} ({cast_id}), {len(made)} candidates in `{folder.name}`"
           + (f' on new wording "{wording}"' if wording else "")
           + (f"; cause: {cause}" if cause else "") + f"; cost ${cost:.3f}")  # fmt: skip
@@ -354,7 +447,9 @@ def run_voice_audition(
     return folder
 
 
-def run_voice_pick(desk: Path, *, cast: str, pick: int | str, out: TextIO | None = None) -> str:
+def run_voice_pick(
+    desk: Path, *, cast: str, pick: int | str, out: TextIO | None = None
+) -> str:
     """Lock audition candidate ``pick`` (its number, or its voice's name) on the character's cast card (spends nothing).
 
     Returns
@@ -377,10 +472,14 @@ def run_voice_pick(desk: Path, *, cast: str, pick: int | str, out: TextIO | None
         card = find_cast(spine, cast)
         cast_id, name = str(card["cast_id"]), str(card.get("name") or card["cast_id"])
         listed = [
-            p / "auditions.json" for p in audition_dirs(desk, cast_slug(cast_id)) if (p / "auditions.json").is_file()
+            p / "auditions.json"
+            for p in audition_dirs(desk, cast_slug(cast_id))
+            if (p / "auditions.json").is_file()
         ]
         if not listed:
-            raise FileNotFoundError(f"{name} has no audition set on the desk; run voice --cast {cast_id} --audition")
+            raise FileNotFoundError(
+                f"{name} has no audition set on the desk; run voice --cast {cast_id} --audition"
+            )
         listing = json.loads(listed[-1].read_text(encoding="utf-8"))
         wanted = str(pick).strip()
         chosen = next(
@@ -390,8 +489,12 @@ def run_voice_pick(desk: Path, *, cast: str, pick: int | str, out: TextIO | None
             None,
         )  # fmt: skip
         if chosen is None:
-            numbers = ", ".join(f"{c['number']} {c['provider_voice']}" for c in listing["candidates"])
-            raise ValueError(f"no candidate {pick} in {listed[-1].parent.name}; the set is {numbers}")
+            numbers = ", ".join(
+                f"{c['number']} {c['provider_voice']}" for c in listing["candidates"]
+            )
+            raise ValueError(
+                f"no candidate {pick} in {listed[-1].parent.name}; the set is {numbers}"
+            )
         pick = int(chosen["number"])
         body = {
             "spine_version": spine["spine_version"],
@@ -399,12 +502,19 @@ def run_voice_pick(desk: Path, *, cast: str, pick: int | str, out: TextIO | None
             "provider_voice": chosen["provider_voice"],
             "seconds": chosen["seconds"],
         }
-        run.post(f"/v1/spines/{spine_id(desk)}/cast/{cast_id}/voice-auditions/pick", body)
+        run.post(
+            f"/v1/spines/{spine_id(desk)}/cast/{cast_id}/voice-auditions/pick", body
+        )
         refresh_spine(run, desk, 1)
     finally:
         run.client.close()
-    print(f"{name} now speaks as {chosen['provider_voice']} (candidate {pick}, {listed[-1].parent.name})", file=out)
-    _note(desk, 1, f"voice pick: {name} -> {chosen['provider_voice']} (candidate {pick}).")
+    print(
+        f"{name} now speaks as {chosen['provider_voice']} (candidate {pick}, {listed[-1].parent.name})",
+        file=out,
+    )
+    _note(
+        desk, 1, f"voice pick: {name} -> {chosen['provider_voice']} (candidate {pick})."
+    )
     print(
         "Next: takes filmed from now on use the new voice. For a take already filmed: "
         f"fictora-produce revoice --desk {desk} --cast {cast_id} --episode N --take tK, then finish --take-file.",
@@ -425,10 +535,19 @@ class Replacement:
     def mute(self, take_seconds: float) -> tuple[float, float]:
         """The window silenced on the take."""
 
-        return (max(0.0, self.start - MUTE_LEAD_SECONDS), min(take_seconds, self.end + MUTE_TAIL_SECONDS))
+        return (
+            max(0.0, self.start - MUTE_LEAD_SECONDS),
+            min(take_seconds, self.end + MUTE_TAIL_SECONDS),
+        )
 
 
-def replace_lines(take: Path, out: Path, replacements: tuple[Replacement, ...], *, voice_db: float = 0.0) -> Path:
+def replace_lines(
+    take: Path,
+    out: Path,
+    replacements: tuple[Replacement, ...],
+    *,
+    voice_db: float = 0.0,
+) -> Path:
     """Mute each original line and lay its dry replacement in at the same start (picture copied).
 
     Raises
@@ -441,7 +560,8 @@ def replace_lines(take: Path, out: Path, replacements: tuple[Replacement, ...], 
         raise FileExistsError(f"{out} exists; local post never overwrites")
     seconds = probe_video(take).duration_seconds
     mutes = "".join(
-        f"volume=0:enable='between(t,{a:.3f},{b:.3f})'," for a, b in (r.mute(seconds) for r in replacements)
+        f"volume=0:enable='between(t,{a:.3f},{b:.3f})',"
+        for a, b in (r.mute(seconds) for r in replacements)
     )
     graph = [f"[0:a]aresample=48000,{mutes}anull[orig]"]
     labels = ["[orig]"]
@@ -449,9 +569,13 @@ def replace_lines(take: Path, out: Path, replacements: tuple[Replacement, ...], 
     for number, item in enumerate(replacements, start=1):
         inputs += ["-i", str(item.voice)]
         delay = round(item.start * 1000)
-        graph.append(f"[{number}:a]aresample=48000,volume={voice_db:+.1f}dB,adelay={delay}|{delay}[v{number}]")
+        graph.append(
+            f"[{number}:a]aresample=48000,volume={voice_db:+.1f}dB,adelay={delay}|{delay}[v{number}]"
+        )
         labels.append(f"[v{number}]")
-    graph.append(f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0:duration=first[a]")
+    graph.append(
+        f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0:duration=first[a]"
+    )
     run_ffmpeg(
         ["-i", str(take), *inputs, "-filter_complex", ";".join(graph), "-map", "0:v", "-map", "[a]",
          "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", str(out)]
@@ -507,7 +631,11 @@ def run_revoice(
 
     out = out or sys.stdout
     desk = desk.expanduser().resolve()
-    source = take_file.expanduser().resolve() if take_file else latest_raw_take(desk, episode, take_id)
+    source = (
+        take_file.expanduser().resolve()
+        if take_file
+        else latest_raw_take(desk, episode, take_id)
+    )
     run = open_api(desk, episode)
     try:
         spine = refresh_spine(run, desk, episode)
@@ -517,12 +645,16 @@ def run_revoice(
     cast_id, name = str(card["cast_id"]), str(card.get("name") or card["cast_id"])
     voice = str((card.get("voice_brief") or {}).get("provider_voice") or "").strip()
     if not voice:
-        raise ValueError(f"{name} has no locked voice on the cast card; run voice --audition then --pick N first")
+        raise ValueError(
+            f"{name} has no locked voice on the cast card; run voice --audition then --pick N first"
+        )
     dialogue = episode_dialogue(spine, episode)
     language = show_language(spine)
     theirs = [i for i, line in enumerate(dialogue) if line["cast_id"] == cast_id]
     if not theirs:
-        raise ValueError(f"{name} speaks no line in episode {episode} on the spine; nothing to revoice")
+        raise ValueError(
+            f"{name} speaks no line in episode {episode} on the spine; nothing to revoice"
+        )
     takes = source.parent
     service = audio or DramaApiAudio(desk, episode=episode)
     if words_json is None:
@@ -532,8 +664,12 @@ def run_revoice(
                 f"no stored URL for ep{episode:02d} {take_id} in api/17_raw_scene_clips.json to transcribe "
                 "(this kit never uploads local files); pass --words-json"
             )
-        target = next_versioned_path(takes, f"take-ep{episode:02d}-{take_id}-revoice-words", ".json")
-        words_json = transcribe(stored, target, audio=service, spine_id=spine_id(desk), language=language)
+        target = next_versioned_path(
+            takes, f"take-ep{episode:02d}-{take_id}-revoice-words", ".json"
+        )
+        words_json = transcribe(
+            stored, target, audio=service, spine_id=spine_id(desk), language=language
+        )
     # Windows are found on what is heard: the performed line, in the show's language.
     # A line's other spellings (the script ``text``, a kana-pinned ``spoken_text``) count as heard too.
     windows = line_windows(
@@ -555,14 +691,23 @@ def run_revoice(
         if window.start is None or window.end is None:
             missing.append(text)
             continue
-        key = _unit(f"voice-ep{episode:02d}-{slug}", {"text": text, "voice": voice, "language": language})
+        key = _unit(
+            f"voice-ep{episode:02d}-{slug}",
+            {"text": text, "voice": voice, "language": language},
+        )
         answer = service.voice_line(
             spine_id=spine_id(desk), cast_id=cast_id, text=text, language=language, key=key,
             spoken_text=line["spoken_text"] or None,
         )  # fmt: skip
         url = str(answer["audio_url"])
-        path = download(url, next_versioned_path(voices_dir, f"voice-ep{episode:02d}-{slug}", ".mp3"))
-        paid += float(answer.get("cost_usd") or round(len(text) * ELEVEN_V3_USD_PER_1000_CHARS / 1000, 4))
+        path = download(
+            url,
+            next_versioned_path(voices_dir, f"voice-ep{episode:02d}-{slug}", ".mp3"),
+        )
+        paid += float(
+            answer.get("cost_usd")
+            or round(len(text) * ELEVEN_V3_USD_PER_1000_CHARS / 1000, 4)
+        )
         reading = answer.get("reading") or {}
         if reading.get("checked") and not reading.get("read_right"):
             unsure.append(text)
@@ -593,15 +738,30 @@ def run_revoice(
         "not_heard": missing,
         "cost_usd": round(paid, 4),
     }  # fmt: skip
-    dest.with_suffix(".json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    dest.with_suffix(".json").write_text(
+        json.dumps(record, indent=2) + "\n", encoding="utf-8"
+    )
     if paid:
-        book(desk, episode=episode, usd=round(paid, 4), take_id=take_id, stream=out, unit=f"revoice:{slug}")
+        book(
+            desk,
+            episode=episode,
+            usd=round(paid, 4),
+            take_id=take_id,
+            stream=out,
+            unit=f"revoice:{slug}",
+        )
     for item in replacements:
-        print(f"{item.start:6.2f}-{item.end:6.2f}s  {item.line!r} -> {item.voice.name}", file=out)
+        print(
+            f"{item.start:6.2f}-{item.end:6.2f}s  {item.line!r} -> {item.voice.name}",
+            file=out,
+        )
     for line in missing:
         print(f"!! not heard in the take, left as filmed: {line!r}", file=out)
     for line in unsure:
-        print(f"!! the new line may be misread, listen before using it: {line!r}", file=out)
+        print(
+            f"!! the new line may be misread, listen before using it: {line!r}",
+            file=out,
+        )
     print(dest, file=out)
     _note(desk, episode, f"revoice: {name} on `{source.name}` -> `{dest.name}`, {len(replacements)} line(s) "
           f"replaced in {voice}" + (f", {len(missing)} not heard" if missing else "") + f"; cost ${paid:.3f}")  # fmt: skip
