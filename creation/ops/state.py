@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -127,6 +127,11 @@ class TakeState:
         Previous take's last frame, when this take has a predecessor.
     spend_usd
         Spend charged to this take.
+    overrides
+        Preflight overrides the operator confirmed.
+    extra
+        Fields another tool wrote on this take that this kit does not model;
+        written back unchanged on save.
     """
 
     take_id: str
@@ -139,6 +144,7 @@ class TakeState:
     handoff_path: str | None = None
     spend_usd: float = 0.0
     overrides: list[PreflightOverride] = field(default_factory=list)
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -159,6 +165,9 @@ class EpisodeState:
         Take slots for the series band.
     spend_usd
         Episode spend including this episode's units.
+    extra
+        Fields another tool wrote on this episode that this kit does not
+        model; written back unchanged on save.
     """
 
     ordinal: int
@@ -167,6 +176,7 @@ class EpisodeState:
     post: GateRecord = field(default_factory=GateRecord)
     takes: list[TakeState] = field(default_factory=list)
     spend_usd: float = 0.0
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -197,6 +207,11 @@ class SeriesState:
         Episode slots.
     bed_path
         Chosen series music bed, if any.
+    extra
+        Top-level fields another tool wrote (the retired internal kit's
+        ``spend_log``, ``bed_db``, ``api``, ``series_arc`` ...) that this kit
+        does not model; written back unchanged on save, so a desk never loses
+        them on the first write.
     """
 
     schema_version: str
@@ -210,6 +225,7 @@ class SeriesState:
     spend_usd: float
     episodes: list[EpisodeState]
     bed_path: str | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 def parse_spoken_lines(payload: list[Any]) -> list[SpokenLine]:
@@ -459,7 +475,7 @@ def save_series(desk: Path, series: SeriesState) -> Path:
     """
 
     path = series_path(desk)
-    payload = asdict(series)
+    payload = series_to_dict(series)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return path
 
@@ -518,6 +534,40 @@ def take_by_id(episode: EpisodeState, take_id: str) -> TakeState:
     raise ValueError(f"take {take_id} is not on {episode.slug}")
 
 
+def series_to_dict(series: SeriesState) -> dict[str, Any]:
+    """Return the series.json payload, with every unmodelled field put back.
+
+    Modelled fields win over an ``extra`` key of the same name, so a stale
+    copy can never shadow what this kit just recorded.
+
+    Parameters
+    ----------
+    series
+        Current desk.
+
+    Returns
+    -------
+    dict[str, Any]
+        JSON-ready object: modelled fields first, then the carried ones.
+    """
+
+    payload = _fold_extra(asdict(series))
+    payload["episodes"] = [_fold_extra(episode) for episode in payload["episodes"]]
+    for episode in payload["episodes"]:
+        episode["takes"] = [_fold_extra(take) for take in episode["takes"]]
+    return payload
+
+
+def _fold_extra(record: dict[str, Any]) -> dict[str, Any]:
+    extra = record.pop("extra", None) or {}
+    return {**record, **{key: value for key, value in extra.items() if key not in record}}
+
+
+def _unmodelled(raw: dict[str, Any], cls: type) -> dict[str, Any]:
+    known = {item.name for item in fields(cls)} - {"extra"}
+    return {key: value for key, value in raw.items() if key not in known}
+
+
 def _series_from_dict(raw: dict[str, Any]) -> SeriesState:
     """Build a SeriesState from JSON.
 
@@ -544,6 +594,7 @@ def _series_from_dict(raw: dict[str, Any]) -> SeriesState:
         spend_usd=float(raw["spend_usd"]),
         episodes=[_episode_from_dict(item) for item in raw["episodes"]],
         bed_path=raw.get("bed_path"),
+        extra=_unmodelled(raw, SeriesState),
     )
 
 
@@ -555,6 +606,7 @@ def _episode_from_dict(raw: dict[str, Any]) -> EpisodeState:
         post=_gate_from_dict(raw["post"]),
         takes=[_take_from_dict(item) for item in raw["takes"]],
         spend_usd=float(raw["spend_usd"]),
+        extra=_unmodelled(raw, EpisodeState),
     )
 
 
@@ -577,6 +629,7 @@ def _take_from_dict(raw: dict[str, Any]) -> TakeState:
         handoff_path=raw.get("handoff_path"),
         spend_usd=float(raw.get("spend_usd") or 0.0),
         overrides=[PreflightOverride(**item) for item in raw.get("overrides") or [] if isinstance(item, dict)],
+        extra=_unmodelled(raw, TakeState),
     )
 
 

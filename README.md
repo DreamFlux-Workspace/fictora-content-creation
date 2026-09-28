@@ -139,6 +139,7 @@ uv run fictora-ops init-series --series "My Show" --band 15s --episodes 4
 uv run fictora-ops next-path --dir ./plates --stem plate-hero --suffix .png
 uv run fictora-ops preflight --desk <path> --episode 1 --take t1
 uv run fictora-ops status --desk <path>
+uv run fictora-ops adopt-desk --desk <path> --dry-run   # a desk from the retired internal kit; see the skill
 ```
 
 Use **`fictora-produce`** for the aligned API pipeline; use **`fictora-ops`** for filenames, notes, and review queue.

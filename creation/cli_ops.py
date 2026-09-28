@@ -9,6 +9,7 @@ from datetime import date
 from pathlib import Path
 from typing import Sequence
 
+from creation.ops.adopt import AdoptRefused, adopt_desk
 from creation.ops.floor import (
     add_episode,
     confirm_preflight,
@@ -49,7 +50,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
     try:
         return _dispatch(args)
-    except (FileExistsError, FileNotFoundError, ValueError) as exc:
+    except (AdoptRefused, FileExistsError, FileNotFoundError, ValueError) as exc:
         print(exc, file=sys.stderr)
         return 2
 
@@ -153,6 +154,18 @@ def _add_floor_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser])
     verd.add_argument("--change", action="store_true")
     verd.add_argument("--cause", default=None)
 
+    adopt = sub.add_parser(
+        "adopt-desk",
+        help="Make a desk from the retired internal kit openable here. Only creates files; never overwrites.",
+    )
+    adopt.add_argument("--desk", type=Path, required=True)
+    adopt.add_argument("--dry-run", action="store_true", help="Print the full plan and write nothing.")
+    adopt.add_argument(
+        "--force",
+        action="store_true",
+        help="Replace a differing production.json / production.config.json (backed up first).",
+    )
+
 
 def _dispatch(args: argparse.Namespace) -> int:
     if args.command == "init":
@@ -224,6 +237,10 @@ def _dispatch(args: argparse.Namespace) -> int:
         return 0
     if args.command == "approve":
         return _dispatch_approve(args)
+    if args.command == "adopt-desk":
+        plan, _made = adopt_desk(args.desk, dry_run=args.dry_run, force=args.force)
+        print("\n".join(plan.lines(dry_run=args.dry_run)))
+        return 0
     if args.command == "estimate":
         take = record_estimate(args.desk, episode=args.episode, take_id=args.take, usd=args.usd)
         print(f"{args.take} estimate ${take.estimate_usd:.2f}")

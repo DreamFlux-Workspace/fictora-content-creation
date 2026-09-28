@@ -153,3 +153,14 @@ Play the candidates (`shared/voices/<cast>/audition-vN/`) to the human; a second
 ## Episode 2 on
 
 Episode 1 approved first. Ask the human how many episodes the run should be. For a long run prefer an arc with an engine (a situation that repeats with a new problem) plus a slow question; refuse an arc that closes within a few episodes. Steer each later episode by its direction in the human's words, not by series-wide notes. Never pre-stage scripts for later episodes. Commands: `arc --list [--episodes N]`, `arc --pick K`, `author --episode N --direction K | --line "…"`, then `approve --gate script` and the same loop (reference.md).
+
+## Adopting a desk from the old internal kit
+
+A desk made by the retired internal kit (raw takes named `take-epNN-tK-vN.mp4`, a desk-root `api/18_takes.json`, no `production.json`) does not open here until it is adopted. Run the plan first and read it with the human:
+
+```bash
+uv run fictora-ops adopt-desk --desk D --dry-run   # prints every file it would create and every inferred value
+uv run fictora-ops adopt-desk --desk D             # only after the human agrees with the plan
+```
+
+It only creates files: `series.pre-adopt.json` (a backup), a hard link `take-epNN-tK-raw-vN.mp4` beside each old raw take, `epNN/api/17_raw_scene_clips.json` and `epNN/api/spine.json`, `production.config.json`, and `production.json` with the episode and phase it inferred. Nothing is renamed, moved, deleted or overwritten, and the take list's `provider_spec` is dropped unread. Running it twice changes nothing. An existing, different `production.json` stops it; `--force` replaces it only after a backup. Every `CONFIRM` line in the plan (a gate the old desk never recorded, an unfinished job, a take without a verdict) goes to the human before the next paid step.
