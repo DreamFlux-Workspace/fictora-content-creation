@@ -52,8 +52,6 @@ from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
 from creation.ops.state import episode_by_ordinal, load_series
 from creation.orchestrate import (
-    _estimate_usd,
-    _money,
     _open_run,
     board_report,
     collect_takes,
@@ -64,9 +62,9 @@ from creation.orchestrate import (
     script_gate_text,
     seed_attempt_for,
     sync_spine_lines,
-    table_estimate_usd,
+    price_estimate,
 )
-from creation.prices import STILL_USD, lane_label, server_lane
+from creation.prices import STILL_USD, server_lane
 from creation.production_config import load_production_config
 from creation.production_state import ProductionState, load_production, save_production, start_episode
 from creation.spine_view import dialogue_line_ids, episode_id_for, episode_summary, frames_by_set, frames_digest
@@ -1687,16 +1685,9 @@ def _price_film(
     state.remember_server_lane(server_lane(estimate))
     spine = run.spine(state.spine_id or "")
     cast_count = len([card for card in spine.get("cast") or [] if isinstance(card, dict)])
-    table = table_estimate_usd(state, cfg, cast_count=cast_count, takes=len(take_ids))
-    cost = estimate.get("cost_estimate") if isinstance(estimate.get("cost_estimate"), dict) else None
-    if cost is not None and _money(cost.get("total_usd")) is not None:
-        usd = _estimate_usd(estimate, fallback_usd=table)
-        source = f"server estimate priced {cost.get('priced_on')} ({cost.get('takes')} take(s))"
-    else:
-        usd = table
-        source = f"price table ({lane_label(state.video_lane, server=state.server_lane())}, {cfg.clip_duration_seconds} s a take)"
-        if take_index is not None and "reroll_take_index" in str(estimate.get("detail") or ""):
-            source += "; the deployed API cannot price one take yet"
+    usd, source, warnings = price_estimate(state, cfg, estimate, cast_count=cast_count, takes=len(take_ids))
+    if warnings and take_index is not None and "reroll_take_index" in str(estimate.get("detail") or ""):
+        source += "; the deployed API cannot price one take yet"
     fresh = load_production(desk)
     fresh.film_estimates[key] = usd
     fresh.remember_server_lane(state.server_lane())
@@ -1707,6 +1698,7 @@ def _price_film(
     earlier = f"; episodes 1-{episode - 1} are not filmed or booked again" if episode > 1 else ""
     others = "; the episode's other takes are kept as filmed" if take_index is not None else ""
     lines = [
+        *warnings,
         f"Film {scope}: about ${usd:.2f} ({source}){earlier}{others}.",
         envelope_line(desk, episode=episode, next_usd=usd),
     ]
@@ -1719,7 +1711,7 @@ def _price_film(
     )
     text = "\n".join(lines)
     print(text, file=out)
-    _note(desk, episode, f"film {what} priced ${usd:.2f} ({source}).")
+    _note(desk, episode, " ".join([*warnings, f"film {what} priced ${usd:.2f} ({source})."]))
     return text
 
 

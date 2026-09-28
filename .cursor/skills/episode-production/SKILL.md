@@ -53,7 +53,7 @@ Read when you need the detail, not all on the first turn:
 | Plates | `fictora-produce step --desk D` | `approve --desk D --gate plates` after a yes |
 | Script | (lines from the draft) | `approve --desk D --gate script` after a yes |
 | Board | `fictora-produce step --desk D` (prints the shot list and safe-zone warnings) | `approve --desk D --gate board`; or `redraw-board --desk D --episode N --take tK --cause "…"` |
-| Estimate | `fictora-produce step --desk D` | The human says yes to the number |
+| Estimate | `fictora-produce step --desk D` | The human says yes to the number. The line names the lane and its $/s; a `!! SERVER ESTIMATE FAILED` line means the number is the kit's local table: say that to the human before the yes |
 | Take | `fictora-produce step --desk D --confirm-spend` | — |
 | Read | watch `takes/`, write every fault | Use it, or Change this + cause |
 | Re-film one take | `film --desk D --episode N --take tK --cause "…"` (prices it), then the same with `--confirm-spend` | The human says yes to the number; nothing else is filmed or booked |

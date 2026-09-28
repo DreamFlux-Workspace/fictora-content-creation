@@ -36,7 +36,7 @@ One machine per desk, pointed at one episode (`episode_ordinal` in `production.j
 | `wait_script` | Human yes on the lines (printed by the draft or `author`; `epNN/api/spine.json`) → `approve --gate script` (episode 1: the whole spine; episode 2 on: `pilot-episodes/{n}/approve`) |
 | `ready_boards_enrol` | `step` → boards to `epNN/boards/board-epNN-tK-vN.png`, brightness (information only), the shot list row by row, safe-zone warnings; books $0.30 a board |
 | `wait_board` | Human yes → `approve --gate board` (the boards `step` drew; `--path` only for a board it did not draw). Or `redraw-board` |
-| `ready_estimate` | `step` → this episode's estimate, and only this episode (earlier episodes are not filmed again): the server's dated dollars, else the price table; says "$X of a $Y envelope" (warn only) |
+| `ready_estimate` | `step` → this episode's estimate, and only this episode (earlier episodes are not filmed again): the server's dated dollars, else the price table (then a loud `!! SERVER ESTIMATE FAILED` line first); always names the lane and $/s; says "$X of a $Y envelope" (warn only) |
 | `wait_spend` | Human yes → `step --confirm-spend` |
 | `ready_video` | (internal) take enrol |
 | `complete` | Every take of the episode raw on disk (`epNN/takes/take-epNN-tK-raw-vN.mp4`) with its take facts (`epNN/api/take-facts-epNN-tK-vN.json`); spend booked from the facts; video and take job ids in `run-notes.md` → `finish` per take, then the next episode |

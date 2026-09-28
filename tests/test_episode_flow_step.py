@@ -123,7 +123,8 @@ def test_episode_two_boards_reach_episode_two_and_print_the_shot_list(desk: Path
     slot = episode_by_ordinal(load_series(desk), 2)
     assert slot.spend_usd == pytest.approx(0.30)
     assert slot.takes[0].estimate_usd == pytest.approx(turbo_take_usd(15))  # no server lane yet: the Turbo default
-    assert "on H3 Max Turbo (15 s, it opens on this board; cast plates are not sent)" in result.message
+    rate = "0.02" if turbo_take_usd(15) == pytest.approx(0.30) else "0.04"
+    assert f"on H3 Max Turbo 768P at ${rate}/s (15 s, it opens on this board; cast plates are not sent)" in result.message
     state = load_production(desk)
     assert state.phase == "wait_board" and state.board_paths["t1"].startswith("ep02/boards/board-ep02-t1-v")
 
@@ -142,7 +143,7 @@ def test_boards_quote_r2v_with_its_references_once_the_server_has_named_r2v(desk
 
     result = orchestrate.run_step(desk)
 
-    assert "A take will cost about $1.20 on H3 Max R2V (15 s, up to 3 reference images)." in result.message
+    assert "A take will cost about $1.20 on H3 Max R2V 768P at $0.08/s (15 s, up to 3 reference images)." in result.message
     assert episode_by_ordinal(load_series(desk), 2).takes[0].estimate_usd == pytest.approx(1.20)
 
 
@@ -179,6 +180,8 @@ def test_the_estimate_prices_episode_two_alone_with_the_servers_dollars(desk: Pa
     assert api.posted("/v1/spines/sp1/batches/estimate") == [{"spine_version": "v5", "episode_ids": ["ep_02"]}]
     assert load_production(desk).estimate_usd == pytest.approx(1.50)
     assert "server estimate priced 2026-09-28" in result.message
+    assert "H3 Max Turbo 768P at $0.0" in result.message and "/s, 15 s a take" in result.message  # lane + $/s always
+    assert "!!" not in result.message.split("\n")[0]  # the server's own dollars: no fallback warning
     assert "episode 2 alone, 1 take(s); episodes 1-1 are not filmed or booked again" in result.message
     assert "$1.50 of a $2.50 envelope for ep02" in result.message
 
@@ -191,6 +194,9 @@ def test_an_estimate_the_server_refuses_falls_back_to_the_price_table(desk: Path
 
     assert load_production(desk).estimate_usd == pytest.approx(turbo_take_usd(15))
     assert "price table (H3 Max Turbo, 15 s a take)" in result.message
+    first = result.message.split("\n")[0]
+    assert first.startswith("!! SERVER ESTIMATE FAILED (the server refused it: HTTP 400 invalid_episode_selection")
+    assert "LOCAL price table" in first
 
 
 def test_an_estimate_that_names_r2v_without_dollars_is_priced_on_r2v_and_remembered(desk: Path, api: FakeApi) -> None:
@@ -209,7 +215,8 @@ def test_an_estimate_that_names_r2v_without_dollars_is_priced_on_r2v_and_remembe
     state = load_production(desk)
     assert state.server_lane() == ("minimax/h3-max/reference-to-video", "768P")
     assert state.estimate_usd == pytest.approx(1.20)  # $0.08/s x 15 s, three images (no surcharge), never Turbo
-    assert "price table (H3 Max R2V, 15 s a take)" in result.message
+    assert "price table (H3 Max R2V, 15 s a take); H3 Max R2V 768P at $0.08/s" in result.message
+    assert "!! SERVER ESTIMATE FAILED (the server named the lane but gave no dollars)" in result.message
 
 
 def test_an_estimate_that_names_turbo_keeps_the_turbo_price(desk: Path, api: FakeApi) -> None:
@@ -234,10 +241,13 @@ def test_an_unpriced_lane_uses_the_desk_fallback_or_the_turbo_rate(
         "cost_estimate": {"video_endpoint_id": "vendor/new-lane", "video_resolution": "768P", "total_usd": None}
     }
 
-    orchestrate.run_step(desk)
+    result = orchestrate.run_step(desk)
 
     want = expected if expected is not None else turbo_take_usd(15)
     assert load_production(desk).estimate_usd == pytest.approx(want)
+    instead = "the desk's fallback $0.90 a take" if fallback is not None else "the H3 Max Turbo rate ($0.0"
+    assert f"!! vendor/new-lane has no verified price; priced at {instead}" in result.message
+    assert "vendor/new-lane 768P (no verified $/s)" in result.message
 
 
 def test_over_the_envelope_is_a_warning_not_a_stop(desk: Path, api: FakeApi) -> None:
