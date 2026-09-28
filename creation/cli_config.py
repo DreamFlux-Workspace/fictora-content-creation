@@ -41,8 +41,11 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--fallback-estimate-usd",
         type=float,
-        default=1.20,
-        help="Desk spend line when batch estimate API skips or returns no USD.",
+        default=None,
+        help=(
+            "Per-take USD used only when the server's lane has no verified price in the table. "
+            "Default: the H3 Max Turbo dated rate."
+        ),
     )
 
 
@@ -56,5 +59,7 @@ def config_from_args(args: argparse.Namespace) -> ProductionConfig:
         spoken_language=str(args.language) if getattr(args, "language", None) else None,
         caption_style=str(args.caption_style),
         api_captions=bool(args.api_captions),
-        fallback_estimate_usd=float(args.fallback_estimate_usd),
+        fallback_estimate_usd=(
+            float(args.fallback_estimate_usd) if args.fallback_estimate_usd is not None else None
+        ),
     )

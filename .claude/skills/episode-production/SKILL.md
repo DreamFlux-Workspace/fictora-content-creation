@@ -104,7 +104,9 @@ Open the newest `boards/` file and check (full list: [checklists.md](../../../do
 
 ## Spend (warn, never block)
 
-Takes film on H3 Max R2V: **$1.20 per 15 s take** ($0.08/s). A plate or board is $0.30. Budgets: first episode **$5.50**, continuing 15 s **$2.50**, continuing 30 s **$5.00**. Say "$X of $Y" when an episode crosses its budget; past 2× the human decides. Detail: reference.md.
+Takes film on **H3 Max Turbo image-to-video** (768p) by default: **$0.30 per 15 s take through 30 Sep 2026** ($0.02/s, fal promo), **$0.60 from 1 Oct 2026** ($0.04/s); no charge for images; a take under 5 s films and bills 5 s. H3 Max reference-to-video ($1.20 a 15 s take) is an engineering-side switch: quote it only when the estimate or the take facts name `minimax/h3-max/reference-to-video`. The desk prices whatever lane the server names. A plate or board is $0.30.
+
+On Turbo the take is image-to-video from its storyboard board: the whole board is the video's first frame and is the only picture the model gets. Cast plates and voice references are not sent, so the board carries the look and the faces, and the voice in the raw take is the model's own. A raw take can open on a frame or two of the board grid; the server's episode join trims them. Budgets: first episode **$5.50**, continuing 15 s **$2.50**, continuing 30 s **$5.00**. Say "$X of $Y" when an episode crosses its budget; past 2× the human decides. Detail: reference.md.
 
 ## Prompt policy
 
@@ -134,7 +136,7 @@ uv run fictora-produce revoice --desk D --cast NAME --episode N --take tK   # ea
 uv run fictora-produce finish --desk D --episode N --take tK --take-file <take-epNN-tK-revoice-vN.mp4>
 ```
 
-Play the candidates (`shared/voices/<cast>/audition-vN/`) to the human; a second audition set needs `--cause`. Takes not filmed yet use the new voice as they are. Re-film only a take where the dub does not sit (lips visibly wrong, a shouted line), with a cause and a stated cost; never the other takes, never the story.
+Play the candidates (`shared/voices/<cast>/audition-vN/`) to the human; a second audition set needs `--cause`. On Turbo (the default) no take carries the locked voice, because voice references are not sent: revoice each filmed take the character speaks in, including takes filmed after the pick. Only on R2V do takes not filmed yet use the new voice as they are. Re-film only a take where the dub does not sit (lips visibly wrong, a shouted line), with a cause and a stated cost; never the other takes, never the story.
 
 ## Recovery
 

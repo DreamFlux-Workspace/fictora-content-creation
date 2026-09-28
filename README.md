@@ -128,7 +128,7 @@ Important defaults:
 
 - **Episode 1 is drafted alone** (`outline_mode=arc_at_episode_two`); `draft_episode_count` is ignored. Later episodes: `arc`, then `author --episode N`.
 - **`caption_style: house`** — burn-in captions are applied in post-production, not by the video model.
-- **`fallback_estimate_usd: 1.20`** — used when batch estimate is skipped.
+- **`fallback_estimate_usd`** (unset) — per-take dollars used only when the lane the server names has no verified price in `creation/prices.py`; unset prices it at the H3 Max Turbo rate. Takes are priced from the server's estimate first, then from the dated table on the endpoint the server says it films on (H3 Max Turbo I2V by default).
 
 ## Desk utilities (`fictora-ops`)
 

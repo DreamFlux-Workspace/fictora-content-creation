@@ -61,6 +61,24 @@ class ProductionState:
     series_arc: dict[str, Any] | None = None
     #: Prices ``film`` showed the human (``ep02`` or ``ep02-t3`` -> USD); ``--confirm-spend`` needs one.
     film_estimates: dict[str, float] = field(default_factory=dict)
+    #: Endpoint and resolution the server last said this story films on (a batch estimate's
+    #: ``cost_estimate`` or a take's facts). ``None`` until one answer names it; the desk then
+    #: prices the lane pin's default (H3 Max Turbo for ``minimax-h3``).
+    video_endpoint_id: str | None = None
+    video_resolution: str | None = None
+
+    def server_lane(self) -> tuple[str, str] | None:
+        """Return ``(endpoint, resolution)`` the server last named, or ``None``."""
+
+        if not self.video_endpoint_id:
+            return None
+        return self.video_endpoint_id, self.video_resolution or "768P"
+
+    def remember_server_lane(self, lane: tuple[str, str] | None) -> None:
+        """Record the endpoint a server answer named (no-op when it named none)."""
+
+        if lane is not None:
+            self.video_endpoint_id, self.video_resolution = lane
 
     @staticmethod
     def new_session_id(desk_slug: str) -> str:

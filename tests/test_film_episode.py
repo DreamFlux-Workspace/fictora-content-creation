@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from conftest import set_phase
+from conftest import set_phase, turbo_take_usd
 from creation import episode_commands, orchestrate
 from creation.episode_commands import CommandStopped, run_film
 from creation.harness import stages_gated as stages
@@ -108,8 +108,22 @@ def test_a_server_that_cannot_price_one_take_is_priced_from_the_table_for_one_ta
 
     text = run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
 
-    assert load_production(desk30).film_estimates["ep02-t2"] == pytest.approx(1.20)  # one take, not two
+    assert load_production(desk30).film_estimates["ep02-t2"] == pytest.approx(turbo_take_usd(15))  # one take, not two
     assert "cannot price one take yet" in text
+
+
+def test_a_film_estimate_that_names_r2v_without_dollars_is_priced_on_r2v(desk30: Path, api30: FakeApi) -> None:
+    _filmed_once(desk30)
+    api30.routes[("POST", ESTIMATE)] = {
+        "cost_estimate": {"video_endpoint_id": "minimax/h3-max/reference-to-video", "video_resolution": "768P"}
+    }
+
+    text = run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
+
+    state = load_production(desk30)
+    assert state.film_estimates["ep02-t2"] == pytest.approx(1.20)
+    assert state.server_lane() == ("minimax/h3-max/reference-to-video", "768P")
+    assert "price table (H3 Max R2V, 15 s a take)" in text
 
 
 def test_confirming_without_a_shown_price_sends_nothing(desk30: Path, api30: FakeApi) -> None:
@@ -179,6 +193,7 @@ def test_film_take_k_sends_the_episode_the_take_and_a_fresh_seed_and_books_only_
     assert slot.spend_usd == pytest.approx(spend_before + 1.20)
     state = load_production(desk30)
     assert state.film_estimates == {} and state.pending == {}
+    assert state.server_lane() == ("minimax/h3-max/reference-to-video", "768P")  # the lane the facts named
     assert "Filmed ep02 t2: 1 take(s), $1.20 booked" in text
     api_dir = desk30 / "ep02" / "api"
     assert (api_dir / "film-ep02-t2-s2-raw-scene-clips.json").is_file()

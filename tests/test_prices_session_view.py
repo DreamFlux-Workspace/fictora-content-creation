@@ -26,28 +26,52 @@ from fake_api import spine_fixture
 DAY = date(2026, 9, 28)
 
 
-def test_an_r2v_take_costs_eight_cents_a_second_plus_images_past_four() -> None:
-    assert prices.lane_take_usd("minimax-h3", 15, on=DAY) == pytest.approx(1.20)
-    assert prices.lane_take_usd("minimax-h3", 15, on=DAY, reference_images=6) == pytest.approx(1.24)
+R2V = (prices.H3_MAX_R2V_ENDPOINT, "768P")
+
+
+def test_the_minimax_pin_prices_turbo_until_the_server_names_another_lane() -> None:
+    assert prices.LANE_DEFAULT_ENDPOINTS["minimax-h3"][0] == prices.H3_MAX_TURBO_I2V_ENDPOINT
+    assert prices.lane_take_usd("minimax-h3", 15, on=date(2026, 9, 30)) == pytest.approx(0.30)
+    assert prices.lane_take_usd("minimax-h3", 15, on=date(2026, 10, 1)) == pytest.approx(0.60)
+    # Turbo charges nothing for images, and a take under five seconds films (and bills) five.
+    assert prices.lane_take_usd("minimax-h3", 15, on=DAY, reference_images=9) == pytest.approx(0.30)
+    assert prices.lane_take_usd("minimax-h3", 4, on=date(2026, 10, 1)) == pytest.approx(0.20)
+    assert prices.lane_label("minimax-h3") == "H3 Max Turbo"
     assert prices.lane_take_usd("some-other-lane", 15, on=DAY) is None
-    assert prices.reference_images_ceiling(12) == 9
 
 
-def test_turbo_is_priced_only_from_facts_that_name_it_at_its_dated_rate() -> None:
+def test_an_r2v_take_is_priced_only_when_the_server_names_r2v() -> None:
+    assert prices.lane_take_usd("minimax-h3", 15, on=DAY, server=R2V) == pytest.approx(1.20)
+    assert prices.lane_take_usd("minimax-h3", 15, on=DAY, reference_images=6, server=R2V) == pytest.approx(1.24)
+    assert prices.lane_label("minimax-h3", server=R2V) == "H3 Max R2V"
+    assert prices.reference_images_ceiling(12, prices.H3_MAX_R2V_ENDPOINT) == 9
+    assert prices.reference_images_ceiling(12, prices.H3_MAX_TURBO_I2V_ENDPOINT) == 1
+
+
+def test_the_servers_lane_is_read_from_an_estimate_or_take_facts() -> None:
+    estimate = {"cost_estimate": {"video_endpoint_id": prices.H3_MAX_R2V_ENDPOINT, "video_resolution": "768P"}}
+    assert prices.server_lane(estimate) == R2V
+    facts = {"endpoint_id": prices.H3_MAX_TURBO_I2V_ENDPOINT, "resolution": "768P"}
+    assert prices.server_lane(facts) == (prices.H3_MAX_TURBO_I2V_ENDPOINT, "768P")
+    assert prices.server_lane({"estimate_skipped": True}) is None
+    assert prices.server_lane(None) is None
+
+
+def test_turbo_facts_are_priced_at_their_dated_rate() -> None:
     turbo = {"endpoint_id": prices.H3_MAX_TURBO_I2V_ENDPOINT, "resolution": "768P", "duration_seconds": 15}
     assert prices.take_facts_usd(turbo, on=date(2026, 9, 30))[0] == pytest.approx(0.30)
     assert prices.take_facts_usd(turbo, on=date(2026, 10, 1))[0] == pytest.approx(0.60)
     assert prices.take_facts_usd({"endpoint_id": "x/y", "resolution": "768P", "duration_seconds": 5}, on=DAY) is None
 
 
-def test_envelopes_are_repriced_for_r2v() -> None:
+def test_envelopes_stay_warn_only_figures() -> None:
     assert prices.envelope_usd(first_episode=True, band="15s") == 5.50
     assert prices.envelope_usd(first_episode=False, band="15s") == 2.50
     assert prices.envelope_usd(first_episode=False, band="30s") == 5.00
 
 
 def test_the_estimate_reads_the_servers_decimal_string_dollars() -> None:
-    assert _estimate_usd({"cost_estimate": {"total_usd": "3.84"}}) == pytest.approx(3.84)
+    assert _estimate_usd({"cost_estimate": {"total_usd": "3.84"}}, fallback_usd=0.3) == pytest.approx(3.84)
     assert _estimate_usd({"cost_estimate": {"total_usd": None}}, fallback_usd=1.2) == pytest.approx(1.2)
 
 

@@ -14,8 +14,7 @@ uv run fictora-produce start \
   --draft-episodes 4 \
   --clip-seconds 15 \
   --cut-tempo one_shot \
-  --caption-style house \
-  --fallback-estimate-usd 1.20
+  --caption-style house
 ```
 
 Do **not** pass `--api-captions`; burn house captions locally after the raw take lands.

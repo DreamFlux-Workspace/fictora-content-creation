@@ -49,6 +49,13 @@ def api(desk: Path, monkeypatch: pytest.MonkeyPatch) -> FakeApi:
     return fake
 
 
+def turbo_take_usd(seconds: float = 15.0) -> float:
+    """What an H3 Max Turbo 768P take costs today: $0.02/s through 2026-09-30, $0.04/s after (fal page)."""
+
+    rate = 0.02 if date.today() <= date(2026, 9, 30) else 0.04
+    return round(rate * max(seconds, 5.0), 2)
+
+
 def set_phase(desk: Path, phase: str, **fields: Any) -> None:
     """Move the desk's phase machine (test setup only)."""
 

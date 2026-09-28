@@ -22,7 +22,7 @@ TAKES_FOR_BAND: dict[str, int] = {"15s": 1, "30s": 2, "60s": 4}
 MAX_LINES_PER_TAKE = 3
 #: Preflight warns (never blocks) past this multiple of the envelope.
 ENVELOPE_STOP_MULTIPLIER = 2.0
-#: Warn-only spend envelopes, repriced for H3 Max R2V ($1.20 a 15 s take). One source: ``creation.prices``.
+#: Warn-only spend envelopes. One source: ``creation.prices`` (sized for R2V; Turbo takes sit inside them).
 ENVELOPE_FIRST_USD = _prices.ENVELOPE_FIRST_USD
 ENVELOPE_CONTINUING_USD: dict[str, float] = dict(_prices.ENVELOPE_CONTINUING_USD)
 

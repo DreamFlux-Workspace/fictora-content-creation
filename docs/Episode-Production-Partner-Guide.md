@@ -70,7 +70,7 @@ flowchart LR
 2. **Cast** — API draws character plates. You open `ep01/plates/` and say **yes** or what to fix.
 3. **Script** — Lines are locked on the spine. You approve the wording (original + translation if needed).
 4. **Board** — Storyboard mosaic lands in `ep01/boards/`. The agent reports **brightness**; dim boards may need `--accept-dim` if you still want to proceed.
-5. **Estimate** — You see a dollar amount (often about **$1.20** for a single 15s take; exact number comes from the API or desk config fallback).
+5. **Estimate** — You see a dollar amount (about **$0.30** for a single 15s take through 30 Sep 2026, **$0.60** from 1 Oct, on the default H3 Max Turbo lane; the exact number comes from the API, else from the price table on the lane the API names).
 6. **Take** — After you say **yes to spend**, the agent enrols video. This step can run **20–30+ minutes** (long stretch at “50%” while post-production runs on the server).
 7. **Delivery** — Finished file should appear under `ep01/takes/` with API snapshots in `ep01/api/`.
 

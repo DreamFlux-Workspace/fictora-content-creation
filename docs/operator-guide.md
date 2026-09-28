@@ -9,6 +9,6 @@ You do not clone `fictora-drama`. You clone **fictora-content-creation** and ope
 
 Full rules: [docs/content-ops/runbook.md](content-ops/runbook.md).
 
-Spend (H3 lane): take ~$1.20, plate/board ~$0.30. See runbook budgets (warn only).
+Spend (H3 lane, H3 Max Turbo I2V by default): 15 s take $0.30 through 30 Sep 2026, $0.60 from 1 Oct; plate/board ~$0.30. H3 Max R2V ($1.20 a take) is an engineering-side switch. See runbook budgets (warn only).
 
 Contacts: tejassingh.inbox@gmail.com, vikram@dreamflux.ai.
