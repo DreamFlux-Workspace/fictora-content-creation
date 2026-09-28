@@ -27,6 +27,11 @@ mix are on it: when any is missing, ``finish`` prints ``NOT DONE``, writes a
 run note and the CLI exits ``5``. The last line is always
 ``Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`` (✗ where not).
 
+Every run ends by writing ``take-epNN-tK-finish-vN.json``
+(:mod:`creation.post.finish_record`): the file the mix read (the take before
+the bed) and the un-marked file the mark went on. ``join`` reads it to lay one
+bed across several takes and mark the joined file once.
+
 Hand-placed sound (:mod:`creation.post.hand`), each flag repeatable, times on
 the take as filmed (deboard keeps the timeline, so nothing is shifted):
 
@@ -58,6 +63,7 @@ from creation.post.audio_service import DramaApiAudio
 from creation.post.bed import DEFAULT_BED_DB, Maker, resolve_bed, service_music_maker
 from creation.post.colour import colour_match
 from creation.post.deboard import deboard as deboard_take
+from creation.post.finish_record import write_finish_record
 from creation.post.hand import HandPlan, Placed, check_hand_plan, lay_cues, lay_voice
 from creation.post.desk import (
     approved_board,
@@ -330,6 +336,8 @@ def run_finish(
     current = source
     bed_state: dict[str, Any] = {"path": None, "cues": ()}
     voice_state: dict[str, Path | None] = {"path": None}
+    # For the finish record `join` reads: what the mix read, and what the mark went on.
+    record_state: dict[str, Path | None] = {"pre_bed": None, "master": None}
     print(
         f"Finishing {source.name}: board frames, sound effects, music, look, mix, captions, mark (2-4 minutes)",
         file=out,
@@ -432,6 +440,7 @@ def run_finish(
         return StepReport("colour", "ran", matched.one_line(), matched.output)
 
     def do_mix(take: Path) -> StepReport:
+        record_state["pre_bed"] = take
         mixed = mix_take(
             take,
             next_versioned_path(takes, f"{base}-mix", ".mp4"),
@@ -471,6 +480,7 @@ def run_finish(
 
     def do_watermark(take: Path) -> StepReport:
         marked = watermark(take, next_versioned_path(takes, f"{base}-sokii", ".mp4"), y=watermark_y)
+        record_state["master"] = take
         append_run_note(run_dir, f"Watermarked -> `{marked.name}` (un-marked master `{take.name}`)")
         return StepReport("watermark", "ran", "Sokii mark top left, under the covered top strip", marked)
 
@@ -492,6 +502,19 @@ def run_finish(
     except MediaToolError as exc:
         result.loudness = f"not measured ({exc})"
     summary = result.summary_lines()
+    record = write_finish_record(
+        desk,
+        episode=episode,
+        take_id=take_id,
+        complete=result.complete,
+        pre_bed=record_state["pre_bed"] if result._ran("mix") else None,
+        master=record_state["master"] or current,
+        final=current,
+        bed=bed_state["path"],
+        bed_db=bed_db,
+        duck_db=duck_db,
+    )
+    summary.insert(1, f"Record: {record.name} (what `join` reads)")
     append_run_note(
         run_dir,
         "Finish summary\n" + "\n".join(summary) + f"\nCost (operator only): ${result.cost_usd:.3f} of generated audio",

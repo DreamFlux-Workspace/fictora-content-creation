@@ -248,6 +248,24 @@ All local, free, ffmpeg + numpy; each takes `--desk D [--episode N] [--take tK] 
 | `trim --take-file FINAL --cut A-B [--cues-json J ...]` | Cuts A-B out, each edge snapped to the strongest frame change within ±0.1 s, frame-accurate (picture `select`, sound `aselect`). Prints both snaps and the shift: everything at or after B moves B−A earlier, anything inside is gone. `--cues-json` writes a shifted `<stem>-trim-vN.json` of a `[{start, end?}]` list. Finish the raw take first. | shot change = mean pixel change ≥ 12 (0–255, at 96×168) and ≥ 3× the take's median; else the nearest frame |
 | `tempo [--factor 0.9]` | Picture (`setpts`, re-timed to 24 fps) and sound (`atempo`, pitch kept) together; every time becomes time / factor. Run on the finished file. | 0.5–2.0 |
 
+## Join
+
+`fictora-produce join --desk D (--episode N | --episodes N M … | --take-file F …) [--dissolve S] [--bed F] [--bed-db N] [--duck-db N] [--no-gain-match] [--watermark-y N] [--json]`. Free (ffmpeg + numpy); never makes a bed.
+
+| Step | What it does | Thresholds |
+| --- | --- | --- |
+| Parts | `--episode`: the newest complete `take-epNN-tK-finish-vN.json` of every take (the desk's take list plus any recorded take), in take order. `--episodes`: that per episode, in the order given. `--take-file`: the record that names the file (the `-sokii` final, its un-marked `-cap` master, or the pre-bed take). | a desk take with no complete record, or a file no record names → refused |
+| Checks | Before anything is written: every picture 24 fps, one size; the pre-bed take as long as its picture. | 24 ± 0.2 fps; one frame + 0.05 s |
+| Sound | Each take's pre-bed sound (what the mix read: voice, SFX, hand cues) is cut or padded to its picture, gained to the takes' median integrated loudness, and joined on the samples. | silent takes gain 0 |
+| Picture | The un-marked captioned masters; a cut between takes of one episode, a `xfade` dissolve (and a linear sound crossfade) between episodes. `--dissolve` sets every seam. | cut; 0.25 s between episodes |
+| Bed | ONE bed: `--bed`, else the desk's pinned bed, else the one every take was finished with. Silent head and tail cut (−50 dB), looped with 1 s equal-power crossfades to cover the join, then the `finish` mix (duck under the voice, measured gain to about −18 LUFS, bed fades, one limiter). `--bed-db` / `--duck-db` default to what the takes were finished with. `--duck-db` finds voice windows on the joined pre-bed sound (voice and effects). | crossfade ≤ a quarter of the bed |
+| Measure | Counted frames / video seconds of the joined file. Room-level step across each seam: median of 0.1 s RMS windows over 2 s either side, the bed's fade in and out left out. | 24 ± 0.2; step > 5 dB → `NOT DONE`, exit 5, nothing marked |
+| Mark | The Sokii mark once, on the joined master. | as `finish` |
+
+Captions are the ones `finish` burned on each take (timed on that take's voice before the bed); they move with their picture, so they sit right on the joined timeline, and a caption inside a dissolve fades with it. A take cut with `trim` or `tempo` after finish has no record: `join` refuses it (joining the marked finals by hand would stitch each take's bed and mark twice).
+
+Outputs, never overwritten: `epNN/takes/episode-epNN-join-vN.mp4` (un-marked master) and `episode-epNN-join-sokii-vN.mp4`; a cut across episodes goes to `shared/cuts/series-epNN-epMM-join[-sokii]-vN.mp4`. The report and a run note in every episode joined list the parts and their gains, the bed, each seam (cut or dissolve, step in dB), frames / seconds and loudness.
+
 ## Change a character's voice
 
 The voice is a lock on the cast card, not part of the story or the picture. Never re-draft the story or re-film every take to change it.
@@ -359,6 +377,8 @@ uv run fictora-produce check-lines --desk D --episode N [--take tK]             
 | `ep01/api/*.json`, `ep01/api/run.log` | Numbered API snapshots, JSONL poll log (support only) |
 | `ep01/plates/`, `epNN/boards/`, `epNN/takes/` | Review surface |
 | `api/spine.json`, `epNN/api/spine.json` | The story as last read; `api/brief-epNN-vK.json` briefs and arcs |
+| `epNN/takes/take-epNN-tK-finish-vN.json` | Finish record: the take before the bed, the un-marked master, the final, the bed and its level (what `join` reads) |
+| `epNN/takes/episode-epNN-join-vN.mp4`, `shared/cuts/` | Joined episode / series cut: un-marked master and `-sokii` marked file |
 | `epNN/api/take-facts-epNN-tK-vN.json` | Take facts: lane, seconds, reference images, shots, which approved line ids were asked for. Never the prompt |
 | `ep01/run-notes.md` | Ledger, job ids, faults, causes |
 
