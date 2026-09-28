@@ -176,7 +176,6 @@ Free, on this laptop (ffmpeg + numpy). Each writes a new `take-epNN-tK-<step>-vN
 - `trim` only on the finished file (`--take-file` is required). Check the first frame after the cut at full size. A result under 15 s is a DEVIATION; say so.
 - `tempo --factor 0.9` only for a show cut slow, and only on the finished file: `finish` lays effects at the filmed times.
 - Keep the un-marked master (`…-cap-vN.mp4`); the marked `…-sokii-vN.mp4` goes out.
-- Joining takes: one bed across the join, 24 fps, seam steps under 5 dB (runbook, "Finishing order").
 
 ```bash
 uv run fictora-produce deboard --desk D [--episode N] [--take tK] [--take-file F] [--board B]
@@ -202,6 +201,7 @@ uv run fictora-produce join --desk D --take-file F1 --take-file F2   # these fin
 - Refused before anything is written: a take that is not finished (every take on the desk needs a complete finish), a take not at 24 fps, mixed sizes. The joined file is counted at 24 frames a second.
 - Each seam's room-level step is printed. Over 5 dB: `NOT DONE`, exit **5**, the master is kept to listen to and nothing is marked; do not hand it over.
 - A take cut with `trim` or `tempo` after finish has no record and is refused. Tell the human; do not join the -sokii files by hand (that stitches two beds and two marks).
+- A take finished before `join` existed has no record either: run `finish` on it again before the join.
 
 ## Change a character's voice (never regenerate)
 

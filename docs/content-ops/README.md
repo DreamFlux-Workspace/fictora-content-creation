@@ -106,7 +106,7 @@ Every `CONFIRM` line in the plan (a gate the old desk never recorded, an unfinis
 | `cue --name N --text "…" --seconds S` | `P cue --desk D --episode N --description "…" [--seconds S]` |
 | `set-bed --spine-json … / --library` | `P set-bed --desk D --path FILE`, or let `finish` make and pin the show's bed |
 | `deboard`, `soften`, `freeze`, `trim`, `tempo` | `P` with the same name, on `--desk D [--take-file F]` |
-| `join` | not on `main` yet (see the runbook, Finishing order) |
+| `join --part t1 --part t2 …` | `P join --desk D --episode N` (or `--episodes 1 2 3`, or `--take-file F …`); needs a finish record per take, so re-run `finish` on a take finished before the join landed |
 | `preflight`, `status`, `spend`, `estimate`, `handoff`, `filmed`, `verdict`, `next-path` | `O` with the same name |
 | `sync-repo`, `setup-check` | `P setup-check` (token, ffmpeg + libass, filters, Python, uv) |
 

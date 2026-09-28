@@ -304,7 +304,8 @@ Faults accepted without a re-film (calibration): a door frame in the opening sec
 
 - `finish` the raw take first: its effects, hand cues and hand lines are placed at the times as filmed. Then `trim` or `tempo` the finished file, never the raw take. After a trim, check the first frame after the cut at full size (a 0.04 s miss once flashed the removed shot) and say the new length; shorter than the band is fine.
 - Keep the un-marked master. `finish` writes every step to its own file; the captioned file before the mark (`…-cap-vN.mp4`) is the master, the marked file (`…-sokii-vN.mp4`) is what goes out. Never delete the master to save space.
-- The join: one bed across every take of the episode, 24 fps, and the level step at each seam under 5 dB (a 5 dB step is audible). Place cues on each take before the join, never on the joined file. The kit has no join command on `main` yet: until it lands, a hand join is a scratch tool (a run note, a backlog line, the tool left in the run folder) and must meet the same three checks.
+- The join (`fictora-produce join --desk D --episode N`, or `--episodes 1 2 3` for a series cut): one bed across every take, 24 fps, and the level step at each seam under 5 dB (a 5 dB step is audible; over it the join says `NOT DONE` and exits 5). Place cues on each take before the join, never on the joined file. Never join the marked `-sokii` files by hand: that stitches two beds and two marks.
+- `join` reads the record `finish` leaves beside each take. A take finished before the kit had `join` has no record: run `finish` on it again first. A take cut with `trim` or `tempo` after `finish` is refused by `join` for now (a follow-up); tell the human rather than work around it.
 
 ## Scratch tools
 
