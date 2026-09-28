@@ -290,6 +290,25 @@ def test_an_unreadable_schema_and_an_older_servers_422_say_the_same_thing(desk30
     assert len(api30.posted(VIDEO)) == 1  # sent once, refused at admission, nothing filmed
 
 
+def test_boards_not_approved_is_not_mistaken_for_an_old_deploy(desk30: Path, api30: FakeApi) -> None:
+    _filmed_once(desk30)
+    api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "1.20"}}
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
+    _take_two_of_episode_two(api30)
+    api30.routes[("POST", VIDEO)] = SystemExit(
+        "HTTP 422 POST https://drama.example/v1/video-generations: "
+        "boards_not_approved_for_generation: pilot episode storyboards not approved for generation: 1 "
+        '(details {"episode_ordinals": [1]}) [request req_e40fabe0cb454196bee8606841d81ac9]'
+    )
+
+    with pytest.raises(SystemExit) as caught:
+        run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+
+    text = str(caught.value.code)
+    assert "boards_not_approved_for_generation" in text
+    assert "does not film one episode alone yet" not in text
+
+
 def test_episode_one_on_an_older_deploy_films_alone_without_the_field(desk30: Path, api30: FakeApi) -> None:
     api30.routes[("GET", "/openapi.json")] = openapi_doc(episode_ordinal=False)
     spine = api30.spine_doc
