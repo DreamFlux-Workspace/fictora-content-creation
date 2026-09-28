@@ -25,7 +25,7 @@ Two rules sit above everything else:
 
 ## What an episode is
 
-An episode is a chain of 15-second takes. Each take is one unbroken camera move. Every take opens on the frame the previous take ended on.
+An episode is a chain of 15-second takes. A take is one continuous camera move or three to four covered shots, chosen by what the scene is (Shot plan per take, below). Every take opens on the frame the previous take ended on.
 
 The band is season-locked on the spine. Choose 15s or 30s and hold it.
 
@@ -39,18 +39,44 @@ The band is season-locked on the spine. Choose 15s or 30s and hold it.
 
 Fixed properties of a take:
 
-- One unbroken shot, boarded as the beginning and end of each phase of one camera move. The camera is a little closer in each cell.
+- A declared shot plan (below). A continuous shot is boarded as the beginning and end of each phase of one camera move; the camera is a little closer in each cell.
 - Three spoken lines maximum. A four-line 15s take drops a line, usually the one that carries the story.
 - A hand-off frame. Spoken successors paste the prior last frame into cell 1a. A making (wordless) take pastes the next take's opening into its last cell. Prefer ending a spoken take on a wide.
 - 9:16. Portrait. 768P on the H3 lane.
 
+### Shot plan per take
+
+Choose the plan from what the scene is. One default for every show is how a romance comes out as three near-identical shots and a horror take as one slow push-in (reviewer notes, 2026-09-25). Set it on the draft (`fictora-produce start --cut-tempo T`), never only on the take, so the board and the take agree.
+
+| Plan | `--cut-tempo` | Use for |
+| --- | --- | --- |
+| One continuous shot | `one_shot` | Inner monologue, a making or process take, a walk |
+| Coverage: 3–4 shots, one per board row | `punchy` | Romance, horror, comedy, any two-hander where a reaction lands |
+
+The H3 row board holds four rows at most, so four shots is the most one take can carry. Never a shot per beat in either plan.
+
+Coverage rules. Check them on the board before the board gate; a board that breaks them is fixed at the frame (`edit --frame … --set …`) and redrawn, never re-filmed:
+
+- No two neighbouring shots at the same size and angle. Across the take: one wide, one face close-up, one insert (hands, an object) or a point of view.
+- Every shot names its camera move with direction and size: "tracking backward ahead of her from the door to the counter", "arc a quarter circle from her side of the counter to his", "dolly in onto her face". "Camera holds" only on an insert. A row with a spoken line keeps only `locked`, `dolly_in`, `dolly_out`, `pan_*`, `tilt_*` or `handheld` (lips must stay readable); arcs, orbits, trucks and cranes go on silent rows.
+- Write the acting big and physical: what the face and body do ("leans right into the lens, grin enormous, drums her fingers on her cheeks"). Mellow acting renders as a slideshow even with the camera moving.
+- The reply gets the listener's angle: a reverse, or across the counter. Never the same two-shot again.
+- Horror: never a whole take on one held shot, and never a fixed wide. The scare gets an insert or a point of view; the threat comes toward the camera; the monster's defining behaviour is on screen (SCP-173 moves only when unseen: cut away and back, and it is closer).
+- One spoken line per beat, nothing else happening during it (a beat that also carried a drawing and a reaction lost its line).
+- End on a wide for the hand-off.
+- When the human names a beat's shots, set them on the beat: `edit --desk D --episode N --beat B --shot "size|subject|camera|angle"` (repeat, 1–4; shot 1 is the beat's first row), then `redraw-board` if the board is already drawn. Write the camera move with direction and size there too.
+- `one_shot` means no cuts. Each board row still keeps its own camera: one phase of the move per row, not a new shot per row.
+
 Sound and captions are built after the take comes back, never asked of the model:
 
-- One music bed per series, not per episode. Generated beds run about 30 seconds. Loop them and assert the mix covers the probed cut, or the tail loses its music with no error.
-- Cues are made only when the take returns quiet. Exteriors come back near-silent (−38 LUFS). Interiors with dialogue come back usable.
+- One music bed per series, not per episode. Generated beds run about 30 seconds. `finish` loops the bed under the picture; check the music runs to the last second, or the tail loses its music with no error.
+- One bed across a join. Takes of one episode are joined under ONE bed, so the music never restarts at a seam.
+- Everything that is not the voice is ducked under it, about 8–9 dB, not simply turned down. The mix LUFS says nothing about ducking. This kit's `finish` ducks with a sidechain compressor and does not write the bus files the depth is measured from, so `review` reports it as not measured; when a line must sit clearly over the bed, pass `finish --duck-db 9` for an exact depth.
+- Per-take gain plus one limiter. Never loudnorm on a take.
+- `finish` lays the take's own effects from its take facts. Exteriors come back near-silent (−38 LUFS) and get the most from them. A sound the Sound lines missed is a hand cue: [sound-cues.md](sound-cues.md) (one per visible action, shape measured, clamped to its own take).
 - Voice-over lines are generated dry and placed on measured beats in post. They are never written into the take as fixture lines.
-- Captions are English only for now. Japanese and Korean captions are deferred.
-- Captions: when the caption is the same language as the audio, word-by-word flicker in the safe band. When the caption is a translation, the whole line goes up and holds for exactly as long as that line is spoken. Both are yellow `#FFE500`, Poppins Bold, black edge, soft shadow, no box. Text bottom sits at 70% of frame height, inside the social caption band (55–70%); size is 50 px on a 1344 px frame (3.7% of height). Flicker builds up to three words, then resets. On screen only while the line is spoken. Times come from silence-end onsets, not Whisper word starts across a pause.
+- Captions are English only for now. Japanese and Korean captions are deferred. The caption is the line's `subtitle_text`, else its `text`: on a Japanese or Korean show give every line an English subtitle before the script gate (`line --line N --spoken "…" --subtitle "…"`). The caption font (Poppins) has no Japanese or Korean glyphs, and `finish` does not warn about a line with no English.
+- Captions: when the caption is the same language as the audio, word-by-word flicker in the safe band. When the caption is a translation, the whole line goes up and holds for exactly as long as that line is spoken. Both are yellow `#FFE500`, Poppins Bold, black edge, soft shadow, no box. Text bottom sits at 62% of frame height, inside the social caption band (55–70%); size is 50 px on a 1344 px frame (3.7% of height), set smaller when a line is too wide, never wrapped. Flicker builds up to three words, then resets. On screen only while the line is spoken. Times come from silence-end onsets, not Whisper word starts across a pause.
 - H3 cell seams are a compiler product. Post detects them with a frame-difference trace and dissolves each seam in place. Do not keep a private `soften.py`.
 
 ## The nine stages
@@ -63,7 +89,7 @@ This is the order `fictora-produce` runs them in.
                                                                       5 Board
 ```
 
-1. **Brief.** One line of premise, the cast, the set, the hook, the lines. If the story needs a fact the picture cannot show, that fact must be spoken in a line. Decide now. Episode 1 is made on its own: no series arc yet (see Series arc).
+1. **Brief.** One line of premise, the cast, the set, the hook, the lines. If the story needs a fact the picture cannot show, that fact must be spoken in a line. Decide now. Episode 1 is made on its own: no series arc yet (see Series arc). Source material: name its licence and credit (SCP is CC BY-SA 3.0: credit the article's author); never copy the look of an image that is not under that licence.
 2. **Draft.** The first `step` writes the story on the API. Compare its lines with the brief before the script gate. The draft writes episode 1 alone (`outline_mode=arc_at_episode_two`, `episode_count: 1`); later episodes are written with `author --episode N`.
 3. **Cast plates.** One full-length figure plus a bust per character, plus object plates for any prop that must stay consistent, plus a location sheet for a set that recurs. Gate: show the plates, get a yes.
 4. **Script.** Beats and lines per take, three lines maximum. Gate: the lines, in the original language, with the translation, and every line the writers changed from the brief.
@@ -104,7 +130,7 @@ On Turbo the take is image-to-video from the take's whole storyboard board: the 
 | Music bed | ~$0.10 | Once per series. |
 | SFX cue | $0.002 per rendered second | Only for takes that come back quiet. |
 
-Budgets are **warnings, never a hard stop**: first 15 s episode of a new series **$5.50**; continuing 15 s **$2.50**; continuing 30 s **$5.00**. A first 15 s episode filmed once is about $1.90 on Turbo (plates, a board, a take, cues; $2.20 from 1 Oct, $2.80 on R2V), so the budget covers redraws and re-films. Say "$X of $Y" when an episode crosses its budget, not at the end. Past twice the budget, say so and the human decides whether to go on.
+Budgets are **warnings, never a hard stop**: first 15 s episode of a new series **$5.50**; continuing 15 s **$2.50**; continuing 30 s **$5.00**; continuing 60 s **$8.00** (`creation/prices.py`). A first 15 s episode filmed once is about $1.90 on Turbo (plates, a board, a take, cues; $2.20 from 1 Oct, $2.80 on R2V), so the budget covers redraws and re-films. Say "$X of $Y" when an episode crosses its budget, not at the end. Past twice the budget, say so and the human decides whether to go on.
 
 "Change this" is billed. A retry must reuse the same idempotency key. Two jobs for one take means that key was missing. Report it.
 
@@ -118,6 +144,8 @@ Budgets are **warnings, never a hard stop**: first 15 s episode of a new series 
 - Each later episode is steered by its **direction**: the human picks one of the offered directions or says their own, and it reaches the writer in their words. Confirm the idea is in the printed script. Series-wide memory is for standing rules ("keep every episode punchy"), never for one episode's idea.
 - Each episode's script is approved on its own. Never pre-stage scripts for later episodes.
 - Commands: `fictora-produce arc --desk D --list [--episodes N]`, `arc --pick K`, `brief --desk D --episode N` (3 on), `author --desk D --episode N --direction K | --line "…"`, then `approve --gate script` and the usual loop. The run length is a soft default; the season continues past it.
+- The kept arc can be changed (`arc --pick` again) until episode 2 is written. After that the route answers `409 series_arc_not_open`: the arc is fixed, steer later episodes by their direction instead.
+- Episodes are found by ordinal, never by a typed id. The server names every new episode `episode_NN`; a story made before 2026-09-28 keeps `ep_02` and on for its later episodes. Every kit command resolves both, and the server's spine routes accept either form.
 
 ### The hook: the first three seconds
 
@@ -163,9 +191,12 @@ Check before the board gate:
 - **Speaking mouths.** No clench, grit, pressed or closed mouth on a speaking row. Big physical acting goes before the line and after it; during the words the mouth moves.
 - The hook, the hand-off, the safe zones, no readable text or digits, brightness reported.
 
+To change a board, change what it is drawn from (`edit --frame N --set …`, `edit --beat N …`, `look-note`), then `redraw-board --desk D --episode N --take tK --cause "…"`. The cause is a label; the route takes no notes. A frame's `cast_refs` cannot be edited: removing a character from a shot is refused (`400 invalid_patch: subject blocking must match cast_refs`). Rewrite their blocking entry instead ("not in frame; the camera is his point of view").
+
 ### Characters and age
 
-- Characters may be any age. Write the real age ("10, primary-school kid", "sixteen") and the plate draws that age.
+- Characters may be any age. Write the real age ("10, primary-school kid", "sixteen") and the plate draws that age. Some presets still describe adult proportions, so a child may be drawn older; Meadow Hour (`slice-of-life`) is the natural fit for kids.
+- A plate or board with a child may be refused by image moderation more often. Report the refusal to the human with the job id; do not retry blind.
 - The one hard line: never romantic, sexual, suggestive or fan-service framing of any character under 18, and never a romance arc for them (no love interest, crush, dating, or someone else's romance aimed at them). The server rejects a breach as `minor_in_romance_arc`. PG staging (no kissing, embracing or face contact) applies to everyone. Asked for a minor in a romance, say no and offer the character at 18+ or the relationship as non-romantic.
 
 ### Off-screen voices
@@ -182,7 +213,9 @@ Check before the board gate:
 ### Look and medium
 
 - Only an image sets the medium. A reference frame as the first image decides ink or photography.
+- `--preset-id` is required at `start` even when the look will be our own frame. Pick the nearest (`modern-dark-fantasy` Cold Gate is the closest to horror). Its world (meadows, baskets, a white cat) still leaks into plates: steer it with look notes (`look-note --desk D --add "indoors, an arcade; no meadows"`, at most five) before the plates are drawn.
 - Say what you want. Never name what you don't. "No mirrors" puts mirrors in the frame.
+- Redraw notes (`redraw-plate --note`, `look-note`, a frame edit) describe shapes, never judgements: "short, round and fat, two clumsy pleats", not "crooked".
 - Faces come from crops of references, never from the reference wholesale, and never from a real person's likeness.
 - Describe the artwork once. The look is settled for the series. A near-copy of the reference is a fault. Look drift between episodes is a fault.
 - Consistency is inherited from plates and accepted frames, not from repeating the style paragraph.
@@ -195,6 +228,7 @@ Check before the board gate:
 - A wordless, locked-camera take for a two-hander always reads as a slideshow. Every take carries lines; every shot carries a camera move.
 - A take that opens mid-action with nothing to draw will render the storyboard. Give it something to open on.
 - A making or montage take is boarded backwards: it must end on the next take's first frame.
+- After an exit, name the destination and put their back to the portal. "Two steps toward the desk, back to the mirror" is an exit. "Back to the camera" faces the glass they just left.
 
 ### Continuity
 
@@ -250,19 +284,28 @@ You pick the sound. You do not re-roll it. Voices are auditioned then locked. Mu
 
 ## Reading a take
 
-Measure first, then watch.
+Measure first, then watch. `fictora-produce review --desk D --episode N --take tK` measures it on the laptop for free (loudness, cuts against the take facts, frozen and stacked frames, board frames, every approved line, and safe zones on a finished file) and appends one block to `run-notes.md`. Paste that block into the verdict. Its thresholds and how to read each ⚠ are in the skill's [reference.md](../../.claude/skills/episode-production/reference.md) ("Review: the numbers"); do not restate them from memory. A ⚠ is something to look at, never by itself a reason to re-film.
 
 | Check | What good looks like | If it's wrong |
 | --- | --- | --- |
 | Transcript | Every line heard, exactly as written, with timing | A missing line is the one real re-film. A stray mumble is muted in the mix. |
-| Cut count | Zero, for a one-shot take | Forced cuts at line boundaries are expected. Soften in post. |
+| Cut count | Matches the declared shot plan (0 for `one_shot`, one per planned shot change for coverage) | Forced cuts at line boundaries are expected. Soften in post. |
 | Loudness | About −15 to −20 for a dialogue take | Below −30 is effectively silent. Build cues. |
 | Brightness | Roughly in the band the board was in | Dim sections get lifted afterwards. |
 | Beat-by-beat vs board | Every beat present, in order | Missing beats are a direction fault. Write the cause before spending again. |
 
 The automatic scene detector does not see this model's cuts. Compare consecutive frames. The automatic transcript sometimes stretches a syllable across several seconds. That is a mis-assignment. Anchor the caption on a later word.
 
+A take that will be re-filmed (Change this, with a cause) is not finished: do not run `finish`, cues or a voice line on it. Spend and time go to the new take.
+
 Faults accepted without a re-film (calibration): a door frame in the opening second; a torso slightly more toned than the plate; a bag drawn twice for one second; an emergency lamp staying lit; small stickers on a car window; an elbow tap that did not read; a character walking with his back to camera for three seconds. Write them in the notes. Leave them.
+
+## Finishing order
+
+- `finish` the raw take first: its effects, hand cues and hand lines are placed at the times as filmed. Then `trim` or `tempo` the finished file, never the raw take. After a trim, check the first frame after the cut at full size (a 0.04 s miss once flashed the removed shot) and say the new length; shorter than the band is fine.
+- Keep the un-marked master. `finish` writes every step to its own file; the captioned file before the mark (`…-cap-vN.mp4`) is the master, the marked file (`…-sokii-vN.mp4`) is what goes out. Never delete the master to save space.
+- The join (`fictora-produce join --desk D --episode N`, or `--episodes 1 2 3` for a series cut): one bed across every take, 24 fps, and the level step at each seam under 5 dB (a 5 dB step is audible; over it the join says `NOT DONE` and exits 5). Place cues on each take before the join, never on the joined file. Never join the marked `-sokii` files by hand: that stitches two beds and two marks.
+- `join` reads the record `finish` leaves beside each take. A take finished before the kit had `join` has no record: run `finish` on it again first. A take cut with `trim` or `tempo` after `finish` is refused by `join` for now (a follow-up); tell the human rather than work around it.
 
 ## Scratch tools
 
@@ -297,6 +340,8 @@ Money warnings:
 ## Folder layout
 
 Ask where the folder should go before anything is made. Default: `~/Downloads/documents/YYYY-MM-DD-<series>/`.
+
+If a desk already exists for that date and slug, `start` and `init-series` refuse it. Never delete, rename or overwrite it, and never pick another parent folder to get round it: ask the human whether to continue that desk (`fictora-produce status --desk D`) or name the series differently.
 
 ```
 run-notes.md

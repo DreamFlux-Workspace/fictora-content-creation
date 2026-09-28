@@ -1,9 +1,12 @@
-"""``plates --cast NAME --cause``: one character's plate redrawn on the regenerate route, at the plates gate."""
+"""One character's plate again: ``redraw-plate --cast NAME --note`` is the only way; ``plates --cast --cause`` is retired.
+
+``plates`` is kept as a name so muscle memory lands on a pointer: it prints the
+``redraw-plate --note`` command, exits 2 and never calls the API.
+"""
 
 from __future__ import annotations
 
 import io
-import json
 from pathlib import Path
 from typing import Any
 
@@ -14,107 +17,69 @@ from creation import episode_commands as ec
 from creation.cli_produce import main as produce_main
 from creation.ops.state import load_series
 from creation.production_state import load_production
-from fake_api import FakeApi
+from fake_api import FakeApi, png_bytes
 
 REGENERATE = "/v1/spines/sp1/cast/cast_ren/regenerate"
-WHOLE_CAST = "/v1/spines/sp1/cast/enrol"
-NEW_URL = "https://r2.example/ren-v2.png"
+NOTES = "/v1/spines/sp1/cast/cast_ren/notes"
 CAUSE = "Ren reads forty, the brief says nineteen and lanky"
 
 
 def _serve_redraw(api: FakeApi) -> None:
+    def add_note(
+        _method: str, _path: str, body: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        card = next(c for c in api.spine_doc["cast"] if c["cast_id"] == "cast_ren")
+        card.setdefault("creator_notes", []).append(
+            {"note_id": "n1", "text": (body or {})["text"]}
+        )
+        return {"spine": api.spine_doc}
+
     def redraw(
         _method: str, _path: str, _body: dict[str, Any] | None
     ) -> dict[str, Any]:
         for asset in api.spine_doc["media_assets"]:
             if asset.get("relation_id") == "cast_ren":
-                asset["url"] = NEW_URL
+                asset["url"] = "https://r2.example/ren-v2.png"
         return {"job_id": "job_cast_ren_2"}
 
+    api.routes[("POST", NOTES)] = add_note
     api.routes[("POST", REGENERATE)] = redraw
     api.jobs["job_cast_ren_2"] = {"job_id": "job_cast_ren_2", "status": "completed"}
 
 
-def test_one_plate_is_redrawn_downloaded_booked_and_the_gate_stays_open(
-    desk: Path, api: FakeApi
-) -> None:
-    set_phase(desk, "wait_plates")
-    _serve_redraw(api)
-    out = io.StringIO()
-
-    path = ec.run_redraw_plate(desk, cast="ren", cause=CAUSE, out=out)
-
-    assert (
-        path == desk / "ep01" / "plates" / "plate-ep01-2-v1.png" and path.is_file()
-    )  # Ren is cast #2
-    ((body, key),) = [
-        (b, k) for m, p, b, k in api.calls if m == "POST" and p == REGENERATE
-    ]
-    assert key == f"{load_production(desk).idempotency_prefix}-plate-cast_ren-redraw-a1"
-    assert (
-        body and "notes" not in json.dumps(body) and CAUSE not in json.dumps(body)
-    )  # the cause is a label only
-    assert api.posted(WHOLE_CAST) == []
-    assert ("download", {"url": NEW_URL, "path": str(path)}) in api.events
-    assert load_production(desk).phase == "wait_plates"
-    series = load_series(desk)
-    assert series.spend_usd == pytest.approx(0.3)
-    assert [(e.unit, e.usd, e.episode) for e in series.spend_log] == [
-        ("plate-redraw:cast_ren", 0.3, 1)
-    ]
-    assert "Show it; the plates gate is still open" in out.getvalue()
-
-
-def test_the_cli_takes_a_name_and_a_cause(desk: Path, api: FakeApi) -> None:
-    set_phase(desk, "wait_plates")
-    _serve_redraw(api)
-    with pytest.raises(SystemExit):  # --cause is required
-        produce_main(["plates", "--desk", str(desk), "--cast", "Ren"])
-    assert api.posted(REGENERATE) == []
-    assert (
-        produce_main(["plates", "--desk", str(desk), "--cast", "Ren", "--cause", CAUSE])
-        == 0
-    )
-    assert len(api.posted(REGENERATE)) == 1
-
-
-@pytest.mark.parametrize("cause", ["", "try again", "redo"])
-def test_a_redraw_without_a_real_cause_sends_nothing(
-    desk: Path, api: FakeApi, cause: str
-) -> None:
-    set_phase(desk, "wait_plates")
-    _serve_redraw(api)
-    with pytest.raises(ec.CommandStopped):
-        ec.run_redraw_plate(desk, cast="Ren", cause=cause, out=io.StringIO())
-    assert api.posted(REGENERATE) == []
-    assert load_series(desk).spend_log == []
-
-
 @pytest.mark.parametrize(
-    "phase", ["wait_script", "ready_boards_enrol", "wait_board", "complete"]
+    "argv",
+    [
+        ["--cast", "Ren", "--cause", CAUSE],  # the old command, as typed from memory
+        ["--cast", "Ren"],
+        [],
+    ],
 )
-def test_past_the_plates_gate_a_redraw_is_refused_before_anything_is_sent(
-    desk: Path, api: FakeApi, phase: str
-) -> None:
-    set_phase(desk, phase)
-    _serve_redraw(api)
-    with pytest.raises(ec.CommandStopped, match="only at the plates gate"):
-        ec.run_redraw_plate(desk, cast="Ren", cause=CAUSE, out=io.StringIO())
-    assert api.posted(REGENERATE) == []
-    assert load_series(desk).spend_usd == 0
-
-
-def test_an_unknown_character_is_named_and_nothing_is_sent(
-    desk: Path, api: FakeApi
+def test_plates_cast_points_at_redraw_plate_and_calls_nothing(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str], argv: list[str]
 ) -> None:
     set_phase(desk, "wait_plates")
     _serve_redraw(api)
-    with pytest.raises(ec.CommandStopped, match="it has: Hana, Ren"):
-        ec.run_redraw_plate(desk, cast="Mira", cause=CAUSE, out=io.StringIO())
-    assert api.posted(REGENERATE) == []
+
+    code = produce_main(["plates", "--desk", str(desk), *argv])
+
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "retired" in err and "nothing was sent" in err
+    assert f"fictora-produce redraw-plate --desk {desk}" in err and "--note" in err
+    if argv:
+        assert '--cast "Ren"' in err
+    assert api.calls == [], "no request at all: not even the spine read"
+    assert load_series(desk).spend_log == []
+    assert load_production(desk).phase == "wait_plates"
 
 
-def test_a_voice_only_character_before_ren_does_not_shift_rens_plate_number(
+def test_the_old_function_is_gone() -> None:
+    assert not hasattr(ec, "run_redraw_plate")
+    assert "run_redraw_plate" not in ec.__all__
+
+
+def test_redraw_plate_is_the_one_redraw_and_keeps_rens_number_past_a_voice_only_character(
     desk: Path, api: FakeApi
 ) -> None:
     set_phase(desk, "wait_plates")
@@ -122,12 +87,22 @@ def test_a_voice_only_character_before_ren_does_not_shift_rens_plate_number(
     api.spine_doc["cast"].insert(
         0, {"cast_id": "cast_intercom", "name": "Intercom", "voice_only": True}
     )
+    plates = desk / "ep01" / "plates"
+    plates.mkdir(parents=True, exist_ok=True)
+    (plates / "plate-ep01-1-v1.png").write_bytes(png_bytes(200))
+    (plates / "plate-ep01-2-v1.png").write_bytes(png_bytes(60))
 
-    path = ec.run_redraw_plate(desk, cast="Ren", cause=CAUSE, out=io.StringIO())
+    path = ec.run_redraw_plate_with_note(
+        desk, cast="Ren", note="nineteen, tall and lanky", out=io.StringIO()
+    )
 
     assert (
-        path.name == "plate-ep01-2-v1.png"
+        path.name == "plate-ep01-2-v2.png"
     )  # plates/ numbers drawn cast only; Ren is still #2
+    assert len(api.posted(REGENERATE)) == 1
+    assert [e.unit for e in load_series(desk).spend_log] == [
+        "plate-note-redraw:cast_ren"
+    ]
 
 
 def test_a_voice_only_character_has_no_plate_to_redraw(
@@ -138,16 +113,10 @@ def test_a_voice_only_character_has_no_plate_to_redraw(
     api.spine_doc["cast"].append(
         {"cast_id": "cast_intercom", "name": "Intercom", "voice_only": True}
     )
-    for run in (
-        lambda: ec.run_redraw_plate(
-            desk, cast="Intercom", cause=CAUSE, out=io.StringIO()
-        ),
-        lambda: ec.run_redraw_plate_with_note(
+    with pytest.raises(ec.CommandStopped, match="voice-only"):
+        ec.run_redraw_plate_with_note(
             desk, cast="Intercom", note="older", out=io.StringIO()
-        ),
-    ):
-        with pytest.raises(ec.CommandStopped, match="voice-only"):
-            run()
-    assert api.posted(REGENERATE) == []
+        )
+    assert api.posted("/v1/spines/sp1/cast/cast_intercom/regenerate") == []
     assert api.posted("/v1/spines/sp1/cast/cast_intercom/notes") == []
     assert load_series(desk).spend_log == []

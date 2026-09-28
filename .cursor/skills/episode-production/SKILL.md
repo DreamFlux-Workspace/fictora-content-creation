@@ -19,6 +19,9 @@ Read when you need the detail, not all on the first turn:
 - Craft, spend, recovery, API contract: [reference.md](reference.md)
 - Full rules and why: [runbook.md](../../../docs/content-ops/runbook.md)
 - Gate stop cards: [checklists.md](../../../docs/content-ops/checklists.md)
+- Placing a hand sound cue: [sound-cues.md](../../../docs/content-ops/sound-cues.md)
+- Which command runs which route: [api-map.md](../../../docs/content-ops/api-map.md)
+- Coming from the internal kit (adopt-desk, old → new command names): [README.md](../../../docs/content-ops/README.md)
 - Human guide: [Content-Operator-Guide.md](../../../docs/content-ops/Content-Operator-Guide.md)
 
 ## Two rules
@@ -30,7 +33,7 @@ Read when you need the detail, not all on the first turn:
 
 - Chain two stages in one turn, or run two `step` calls in one turn unless the human asked to catch up.
 - Approve plates, script or a board in the turn you enrolled them.
-- Overwrite a desk file. New version, new `-vN` name (`fictora-ops next-path`).
+- Overwrite a desk file. New version, new `-vN` name (`fictora-ops next-path`). A desk that already exists for that date and slug is refused by `start`: never delete it or pick another folder to get round it; ask the human.
 - Write your own HTTP around the API. Where no command exists it is a DEVIATION (reference.md) and a backlog line.
 - Fetch, save, print or quote a compiled prompt (`GET /v1/jobs/{id}/provider-spec`). Record job ids instead (Prompt policy).
 - Clone or read `fictora-drama`. Edit product code or settings to get a different look.
@@ -65,6 +68,8 @@ Optional after the draft, before the plates, our own style frame: write the look
 
 ## Brief
 
+Pick the nearest `--preset-id` at `start`, even for our own look (Cold Gate `modern-dark-fantasy` is the closest to horror): its world leaks into plates, so steer it with `look-note` before the plates are drawn.
+
 Write it with the human (`docs/content-ops/templates/brief.md`) and check before the draft:
 
 - **Premise:** a visible physical event with a small turn. Beats are what hands, bodies and objects do, in order.
@@ -73,7 +78,9 @@ Write it with the human (`docs/content-ops/templates/brief.md`) and check before
 - **Lines:** three at most per 15 s take, one per beat. A 15 s take is three beats, so a silent comic beat (a pause, a stare, a freeze) costs a line: say so and let the human choose. Ask who each line is said TO. Mark lines that must survive word for word.
 - **Off-screen voices:** declare as voice only; never drawn, not even a sleeve or a shadow. Over another character's face it reads as that face speaking: give it a source (a wall grille, a phone in hand) or a post treatment.
 - **Age:** any age; write the real age. Nobody under 18 in romance, ever (reference.md).
-- **Language:** JA/KO lines must sound native in that situation; pin performed lines; a dialect needs a native speaker's yes. Captions are English only for now.
+- **Language:** JA/KO lines must sound native in that situation; pin performed lines; a dialect needs a native speaker's yes. Captions are English only for now: every JA/KO line needs an English subtitle (`line --spoken … --subtitle …`); the caption font has no Japanese or Korean glyphs and `finish` does not warn.
+- **Source material:** name its licence and credit (SCP is CC BY-SA 3.0: credit the author). Never copy the look of an image that is not under that licence.
+- **Shot plan and acting** (runbook, "Shot plan per take"): every shot names its camera move with direction and size ("camera holds" only on an insert); acting written big and physical; horror never one held shot or a fixed wide (the scare gets an insert or POV, the threat comes toward the camera). At most four board rows, so at most four shots a take.
 
 ## Hook: the first three seconds
 
@@ -101,13 +108,14 @@ Open the newest `boards/` file and check (full list: [checklists.md](../../../do
 - **Speaking mouths.** No clench, grit, pressed or closed mouth on a speaking row. The big acting goes before the line and after it; during the words the mouth moves. Lips move on every row that carries a line; check the speaker's face is readable there.
 - **Unseen movers.** Something that must never be seen moving (a statue, a doll) is banned by name in `forbidden_elements` ("no statue motion") on every frame that shows it. Then each row that shows it opens with it already in place and keeps it in the same place in both cells. The take compile enforces this, but still watch the take for a slide-in.
 - **Expressions** fit the moment and the right face (library in reference.md).
+- **Redraws.** Notes describe shapes, never judgements ("short, round, two clumsy pleats", not "crooked"). A frame's `cast_refs` cannot be edited: rewrite the character's blocking entry ("not in frame; the camera is his point of view"). After an exit, name the destination with their back to the portal. A plate or board refused by image moderation (more often with a child) is reported with its job id, never retried blind.
 - The hook, the hand-off, the safe zones, no readable text or digits. Report brightness: information only, a dark board is the human's call. To change a board, fix the frame first (`edit --frame … --set …`), then `redraw-board` (it takes no notes). When the human names a beat's shots, set them on the beat instead: `edit --beat N --shot "size|subject|camera|angle"` (repeat, 1–4; shot 1 is the beat's first row), then `redraw-board` if the board is already drawn. Never write "SHOT n —" into `--intent`.
 
 ## Spend (warn, never block)
 
 Takes film on **H3 Max Turbo image-to-video** (768p) by default: **$0.30 per 15 s take through 30 Sep 2026** ($0.02/s, fal promo), **$0.60 from 1 Oct 2026** ($0.04/s); no charge for images; a take under 5 s films and bills 5 s. H3 Max reference-to-video ($1.20 a 15 s take) is an engineering-side switch: quote it only when the estimate or the take facts name `minimax/h3-max/reference-to-video`. The desk prices whatever lane the server names. A plate or board is $0.30.
 
-On Turbo the take is image-to-video from its storyboard board: the whole board is the video's first frame and is the only picture the model gets. Cast plates and voice references are not sent, so the board carries the look and the faces, and the voice in the raw take is the model's own. A raw take can open on a frame or two of the board grid; `finish` removes them first (deboard; `--no-deboard` to skip). Budgets: first episode **$5.50**, continuing 15 s **$2.50**, continuing 30 s **$5.00**. Say "$X of $Y" when an episode crosses its budget; past 2× the human decides. Detail: reference.md.
+On Turbo the take is image-to-video from its storyboard board: the whole board is the video's first frame and is the only picture the model gets. Cast plates and voice references are not sent, so the board carries the look and the faces, and the voice in the raw take is the model's own. A raw take can open on a frame or two of the board grid; `finish` removes them first (deboard; `--no-deboard` to skip). Budgets: first episode **$5.50**, continuing 15 s **$2.50**, continuing 30 s **$5.00**, continuing 60 s **$8.00**. Say "$X of $Y" when an episode crosses its budget; past 2× the human decides. Detail: reference.md.
 
 ## Prompt policy
 
@@ -137,6 +145,9 @@ All three are mix notes, never a re-film. Times are seconds on the take **as fil
 - **A sound the take's Sound lines missed:** `cue --desk D --episode N --description "a descending comic brass sting" [--seconds 1.5]` makes one cue on the server (~$0.002 a second) into `epNN/sfx/` and prints its RMS per half second and shape check. Then `finish --cue FILE@S[@DB]`: −8 dB under the take unless `@DB`, 10 dB lower while someone speaks, clamped to end 0.15 s before the take does.
 - One cue per visible action, on the frame where the action lands. A cue with a bad shape is rendered once more with a changed description, then dropped with a line in the run notes; a missing cue never blocks a take. A quiet cue: raise it in 2–3 dB steps with `@DB` until it reads.
 - `finish` checks every hand file before any step: missing, silent, or outside the take is an error and nothing is written. A hand step that then fails prints `NOT DONE` like missing music.
+- A sound note only drops or levels a sound (`finish --sfx-adjust "door=-6"`, `"hum=drop"`); it never adds one: to add, make a cue. Full cue guide: [sound-cues.md](../../../docs/content-ops/sound-cues.md).
+- Ducking target: about 8–9 dB under the voice. `finish` does not write the mix bus files, so `review` cannot measure it: when a line must sit clearly over the bed, pass `--duck-db 9`. Never loudnorm a take.
+- A take that will be re-filmed gets no `finish`, no cues and no voice lines.
 
 ## Review a take: the numbers before the verdict
 
@@ -164,6 +175,7 @@ Free, on this laptop (ffmpeg + numpy). Each writes a new `take-epNN-tK-<step>-vN
 - `freeze --at S --hold S` keeps the length: the held frame covers the picture, the sound plays on.
 - `trim` only on the finished file (`--take-file` is required). Check the first frame after the cut at full size. A result under 15 s is a DEVIATION; say so.
 - `tempo --factor 0.9` only for a show cut slow, and only on the finished file: `finish` lays effects at the filmed times.
+- Keep the un-marked master (`…-cap-vN.mp4`); the marked `…-sokii-vN.mp4` goes out.
 
 ```bash
 uv run fictora-produce deboard --desk D [--episode N] [--take tK] [--take-file F] [--board B]
@@ -189,6 +201,7 @@ uv run fictora-produce join --desk D --take-file F1 --take-file F2   # these fin
 - Refused before anything is written: a take that is not finished (every take on the desk needs a complete finish), a take not at 24 fps, mixed sizes. The joined file is counted at 24 frames a second.
 - Each seam's room-level step is printed. Over 5 dB: `NOT DONE`, exit **5**, the master is kept to listen to and nothing is marked; do not hand it over.
 - A take cut with `trim` or `tempo` after finish has no record and is refused. Tell the human; do not join the -sokii files by hand (that stitches two beds and two marks).
+- A take finished before `join` existed has no record either: run `finish` on it again before the join.
 
 ## Change a character's voice (never regenerate)
 
@@ -219,7 +232,7 @@ An off-screen voice (speaker, phone, radio) played over another character's face
 
 ## Episode 2 on
 
-Episode 1 approved first. Ask the human how many episodes the run should be. For a long run prefer an arc with an engine (a situation that repeats with a new problem) plus a slow question; refuse an arc that closes within a few episodes. Steer each later episode by its direction in the human's words, not by series-wide notes. Never pre-stage scripts for later episodes. Commands: `arc --list [--episodes N]`, `arc --pick K`, `author --episode N --direction K | --line "…"`, then `approve --gate script` and the same loop (reference.md).
+Episode 1 approved first. Ask the human how many episodes the run should be. For a long run prefer an arc with an engine (a situation that repeats with a new problem) plus a slow question; refuse an arc that closes within a few episodes. Steer each later episode by its direction in the human's words, not by series-wide notes. Never pre-stage scripts for later episodes. Commands: `arc --list [--episodes N]`, `arc --pick K`, `author --episode N --direction K | --line "…"`, then `approve --gate script` and the same loop (reference.md). The arc can be re-picked until episode 2 is written; after that the server answers `409 series_arc_not_open`. Episodes are found by ordinal: new ones are `episode_NN`, older stories keep `ep_02` on, and every command resolves both.
 
 ## Adopting a desk from the old internal kit
 
@@ -235,5 +248,5 @@ It only creates files: `series.pre-adopt.json` (a backup), a hard link `take-epN
 ## Setup check, one plate again, the ledger
 
 - **First thing on a new laptop:** `uv run fictora-produce setup-check`. One ✓/✗ line each: the API token set and accepted (one free authenticated read), ffmpeg and ffprobe, libass (captions), the filters the finish and edits use, Python 3.12+, uv. Any ✗ exits 1: fix it before the first paid step. It never prints the token.
-- **One character's plate again**, at the plates gate only (after `step` drew them, before `approve --gate plates`): `fictora-produce plates --desk D --cast NAME --cause "…"` redraws that one plate ($0.30) and keeps the rest of the cast. The cause is a label (the route takes no notes) and "try again" is refused. Past the plates gate it is refused before anything is sent.
+- **One character's plate again:** `fictora-produce redraw-plate --desk D --cast NAME --note "…"` (the note on that character, then their plate alone, $0.30; stage table above). `plates --cast NAME --cause` is retired: it prints that pointer, exits 2 and sends nothing.
 - **Book by hand with a unit:** `fictora-ops spend --desk D --episode N --usd X [--take tK] --unit look-frame` (or `voice-line`, `cue:gaan-sting` …). Every booking also lands in `spend_log` in `series.json` (episode, take, dollars, unit, time); the kit's own bookings name their unit.

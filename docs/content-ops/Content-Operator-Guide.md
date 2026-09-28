@@ -76,7 +76,7 @@ Start with `start`, print desk path and phase, wait for my "aligned" before the 
 | Order | You open | You say | Agent runs after your yes |
 | --- | --- | --- | --- |
 | 1 | — | **aligned** | First `step` (draft plan) |
-| 2 | `ep01/plates/` | **plates ok** / **next** | `approve --gate plates` then `step` |
+| 2 | `ep01/plates/` | **plates ok** / **next** | `approve --gate plates` then `step`; one character wrong: `redraw-plate --cast NAME --note "…"` |
 | 3 | Script in chat or `ep01/api/03_spine.json` beats | **script ok** / **next** | `approve --gate script` then `step` (boards) |
 | 4 | `ep01/boards/` + exposure note in chat | **board ok** / **next** | `approve --gate board` (brightness is information only; to change it: `edit --frame`, then `redraw-board`) |
 | 5 | Estimate in chat (~**$0.30** take; $0.60 from 1 Oct) | **yes** | `step --confirm-spend` |

@@ -187,7 +187,7 @@ def init_named_run_folder(
         (
             "Copy tools from the previous production into this folder.\n"
             "Do not rebuild aligned API stages. Measure boards with\n"
-            "`uv run python scripts/content_ops_run.py measure-board <png>`.\n"
+            "`uv run fictora-ops measure-board <png>`.\n"
         ),
         encoding="utf-8",
     )
