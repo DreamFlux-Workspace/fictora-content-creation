@@ -12,6 +12,7 @@ from typing import Sequence
 
 from creation.captions import caption_take, find_ffmpeg
 from creation.cli_config import add_production_config_args, config_from_args
+from creation.cli_post import POST_COMMANDS, add_post_parsers, dispatch_post
 from creation.episode_commands import EPISODE_COMMANDS, add_episode_parsers, dispatch_episode
 from creation.orchestrate import approve_gate, bind_desk, run_step, status_message
 from creation.production_config import load_production_config, save_production_config
@@ -109,6 +110,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     cap.add_argument("--no-open", action="store_true", help="Do not open the captioned file.")
 
+    add_post_parsers(sub)
     add_episode_parsers(sub)
 
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -120,6 +122,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
 
     try:
+        if args.command in POST_COMMANDS:
+            return dispatch_post(args)
         if args.command == "start":
             desk = init_series_desk(args.parent, args.series, band=args.band, episode_count=args.episodes)
             state = bind_desk(
@@ -205,6 +209,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 2
             suffix = prepare_video_retry(args.desk, job_id=args.job_id)
             print(f"phase=ready_video suffix={suffix}")
+            print("Hosted post-production is off: after the take lands, run `fictora-produce finish --desk …`.")
             print("Next: uv run fictora-produce step --desk … --confirm-spend")
             return 0
     except (

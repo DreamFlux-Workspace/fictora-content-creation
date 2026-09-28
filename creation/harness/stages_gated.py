@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any, Mapping
 
-from creation.harness.http_util import describe_job_error
+from creation.harness.http_util import HOSTED_POST_OFF_HINT, describe_job_error
 from creation.harness.session import DramaApiRunSession
 from creation.spine_view import episode_id_for
 from creation.harness.visual_first_ep1 import (
@@ -487,6 +487,8 @@ def finish_video_job(
     )
     run.save("17_video_terminal.json", terminal)
     if terminal.get("status") != "completed":
+        if _terminal_error_code(terminal) == "hosted_post_off":
+            raise SystemExit(f"video stopped in hosted post: {HOSTED_POST_OFF_HINT}")
         raise SystemExit(f"video {describe_job_error(terminal)}")
     return fetch_delivery_optional(run, job_id) or {}
 

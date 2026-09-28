@@ -68,7 +68,7 @@ Then watch the file in `takes/`.
 
 ## Before the take is handed over
 
-- [ ] Local finish ran (`fictora-produce caption`); the raw take is never the deliverable
+- [ ] Local finish ran (`fictora-produce finish`) and ended `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`; the raw take is never the deliverable
 - [ ] Captions are English, in the 55–70% band, on screen only while the line is spoken
 - [ ] Job ids are in `run-notes.md`; no compiled prompt was fetched or saved
 

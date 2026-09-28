@@ -735,7 +735,10 @@ def _film(desk: Path, run: DramaApiRunSession, state: ProductionState, *, cfg: A
     save_production(desk, state)
     _note(ep_dir, f"Takes filmed: video job `{video_job_id}`; " + "; ".join(jobs) + f". Booked ${booked:.2f}.")
     follow = "arc --list (pick the series arc)" if ep == 1 else f"author --episode {ep + 1}"
-    hint = " Finish locally (captions/mix)." if not cfg.api_captions else ""
+    hint = (
+        " Not done yet: after the human says Use it, run `fictora-produce finish --desk <desk> --episode "
+        f"{ep} --take tK` per take (sound effects, music, mix, captions, mark; hosted post is off)."
+    )
     return StepResult(
         state.phase,
         f"Episode {ep} filmed: {len(jobs)} take(s), ${booked:.2f} booked. Video job {video_job_id}.{hint}\n"

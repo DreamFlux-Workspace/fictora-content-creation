@@ -71,7 +71,7 @@ This is the order `fictora-produce` runs them in.
 6. **Estimate.** Price the batch before enrolling it.
 7. **Take.** The only expensive call. Everything above exists to make this call succeed once.
 8. **Read the take.** Measure first: transcript, cut count, loudness, exposure. Then compare against the board. Write down every fault, including the ones you will not fix.
-9. **Finish.** Local, on the laptop: captions today (`fictora-produce caption`), then voice, cues and mix where the take needs them, the mark, the join. A take is not done until the finish ran. A raw take is never a deliverable.
+9. **Finish.** Local, on the laptop: `fictora-produce finish` (sound effects from the take facts, the show's music bed, colour match to the board, mix near −18 LUFS, captions, the mark), then the join. A take is not done until the finish ran. A raw take is never a deliverable.
 
 The gates at 3, 4, and 5 are not optional and are not batchable. A wrong face at the plate stage costs $0.30. The same face after the take costs a re-board and a re-take ($1.50 at today's prices: $0.30 board + $1.20 take).
 
@@ -228,11 +228,11 @@ Check before the board gate:
 
 ### Hosted post is off
 
-Hosted post-production is switched off on the service. Never call `POST /v1/video-generations/{id}/post-production-runs` and never pass `--api-captions`. An answer of `409 hosted_post_off`, or the older `503 restate_unavailable` from a post-production call, means finish the take locally. It does not mean the service is down; do not retry it and do not report an outage.
+Hosted post-production is switched off on the service. Never call `POST /v1/video-generations/{id}/post-production-runs` and never pass `--api-captions`. An answer of `409 hosted_post_off`, or the older `503 restate_unavailable` from a post-production call, means finish the take locally with `fictora-produce finish --desk D`. It does not mean the service is down; do not retry it and do not report an outage. `finish` ends with `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`; `NOT DONE` (exit 5) is not a deliverable.
 
 ### Change a character's voice (never regenerate the story)
 
-A voice that "feels off" is a voice change, not a new story and not a new video. The voice is a lock on the cast card. Audition candidates on the character's real lines, the human picks, re-voice the filmed takes where that character speaks, then finish again. Takes not filmed yet use the new voice as they are. Only when the dub does not sit (lips visibly wrong, a shouted line), re-film the takes where that character speaks, with a cause and a stated cost. Never the other takes, never the story.
+A voice that "feels off" is a voice change, not a new story and not a new video. The voice is a lock on the cast card. Audition candidates on the character's real lines (`fictora-produce voice --desk D --cast NAME --audition`), the human picks (`voice --pick N`), re-voice the filmed takes where that character speaks (`revoice --desk D --cast NAME --episode N --take tK`), then finish again (`finish --take-file <revoice file>`). Takes not filmed yet use the new voice as they are. Only when the dub does not sit (lips visibly wrong, a shouted line), re-film the takes where that character speaks, with a cause and a stated cost. Never the other takes, never the story.
 
 ### Prompt policy
 

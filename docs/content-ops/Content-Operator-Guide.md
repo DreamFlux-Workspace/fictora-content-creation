@@ -32,10 +32,10 @@ You never need the private `fictora-drama` repo. Never paste the API token into 
 ## One-time setup (each person, ~10 min)
 
 1. Clone `DreamFlux-Workspace/fictora-content-creation` and run `uv sync`.
-2. Copy `.env.example` → `.env` and set **`FICTORA_DRAMA_GENERATION_SERVICE_TOKEN`** (from engineering).
+2. Copy `.env.example` → `.env` and set **`FICTORA_DRAMA_GENERATION_SERVICE_TOKEN`** (from engineering) (nothing else: no provider key goes on this laptop; generated audio is made on the server).
 3. Open the **repo root** in Cursor (so the **episode-production** skill loads).
 4. Optional check (no spend): `uv run python scripts/smoke_live.py --phase read`
-5. For local yellow captions after filming, install **ffmpeg with libass** on macOS:
+5. For the local finish (sound effects, music, mix, captions, mark), install **ffmpeg with libass** on macOS:
    `brew install ffmpeg` (use `ffmpeg-full` only if `ffmpeg -filters` lists no `ass`). `fictora-produce start` warns when it is missing.
 
 ---
@@ -62,7 +62,7 @@ Desk:
 Workflow:
 - One `fictora-produce step` per turn until I approve gates.
 - After boards, estimate → I say yes → `step --confirm-spend`.
-- When raw MP4 lands, run `uv run fictora-produce caption --desk <desk>` (opens the captioned take).
+- When I say Use it, run `uv run fictora-produce finish --desk <desk>`. The last line must read `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`; NOT DONE (exit 5) is not a deliverable.
 
 Start with `start`, print desk path and phase, wait for my "aligned" before the first paid step.
 ```
@@ -80,7 +80,7 @@ Start with `start`, print desk path and phase, wait for my "aligned" before the 
 | 3 | Script in chat or `ep01/api/03_spine.json` beats | **script ok** / **next** | `approve --gate script` then `step` (boards) |
 | 4 | `ep01/boards/` + exposure note in chat | **board ok** / **next** | `approve --gate board` (brightness is information only; to change it: `edit --frame`, then `redraw-board`) |
 | 5 | Estimate in chat (~**$1.20** take) | **yes** | `step --confirm-spend` |
-| 6 | The raw take, then `ep01/takes/*captioned*.mp4` | **Use it**, or **Change this** + cause | `caption` on Use it; re-board or re-film only with a named cause |
+| 6 | The raw take, then `ep01/takes/take-ep01-t1-sokii-vN.mp4` | **Use it**, or **Change this** + cause | `finish` on Use it; re-board or re-film only with a named cause |
 
 **Silence is not approval.** Each gate needs a fresh yes.
 
@@ -107,7 +107,7 @@ Start with `start`, print desk path and phase, wait for my "aligned" before the 
 | `wait_script` | Review ep1 lines on spine |
 | `wait_board` | Review storyboard; check dim warning (~25% luma floor) |
 | `wait_spend` | Confirm **yes** before ~$1.20 take |
-| `complete` | Raw MP4 on disk → local captions + QC |
+| `complete` | Raw MP4 on disk → `finish` + QC |
 
 Check anytime:
 
@@ -151,25 +151,28 @@ uv run fictora-produce step --desk <desk> --confirm-spend
 
 ---
 
-## After the raw take (local house captions)
+## After the raw take (local finish)
 
-Default config: **`api_captions: false`**. Filming finishes when the **raw** scene MP4 is downloaded (often within a minute after MiniMax returns). You do **not** wait for server caption burn.
+Default config: **`api_captions: false`**. Filming finishes when the **raw** scene MP4 is downloaded (often within a minute after MiniMax returns). Hosted post is off, so the raw take has the model's sound only: no music, no effects, no captions.
+
+One command, after you say Use it:
+
+```bash
+uv run fictora-produce finish --desk <desk>
+```
 
 | File | Role |
 | --- | --- |
-| `ep01/takes/take-ep01-t1-raw-v1.mp4` | Silent of burned captions; use for timing |
-| `ep01/api/17_raw_scene_clips.json` | Same clip URL |
-| `ep01/takes/take-ep01-t1-captioned-v1.mp4` | **Ship candidate** after local burn |
+| `ep01/takes/take-ep01-t1-raw-v1.mp4` | As filmed; never the deliverable |
+| `ep01/takes/take-ep01-t1-sfx-v1.mp4` | Sound effects laid from the take facts |
+| `ep01/takes/take-ep01-t1-colour-v1.mp4` | Look matched to your approved board |
+| `ep01/takes/take-ep01-t1-mix-v1.mp4` | Music bed under the voice, near −18 LUFS |
+| `ep01/takes/take-ep01-t1-cap-v1.mp4` | House captions |
+| `ep01/takes/take-ep01-t1-sokii-v1.mp4` | **Ship candidate**: Sokii mark top left |
 
-One command ([local-captions.md](local-captions.md)):
+The last line reads `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`. **NOT DONE** (exit 5) names what is missing; that file is not a deliverable. Wrong caption timing? Re-run with `--line-start <seconds>` once per line. Bed too loud under a line? `--duck-db 12`.
 
-```bash
-uv run fictora-produce caption --desk <desk>
-```
-
-It takes the line from the spine, anchors it on the speech span (`silencedetect`), writes `take-ep01-t1-house-v1.ass` and `take-ep01-t1-captioned-v1.mp4`, logs them in `run-notes.md` and opens the captioned take. Wrong sound picked? Re-run with `--line-start <seconds>` once per line.
-
-Scrub to the spoken line; captions build up to three words at a time, yellow, just below centre.
+A character's voice feels off? Never regenerate: `voice --audition`, you pick, `voice --pick N`, `revoice` the takes they speak in, then `finish --take-file <revoice file>` (skill: "Change a character's voice").
 
 ---
 

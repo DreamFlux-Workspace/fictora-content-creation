@@ -54,6 +54,27 @@ def test_episode_lines_reads_only_that_episode_in_order() -> None:
     assert episode_lines(spine, 1) == ["I'm coming for you.", "Second."]
 
 
+def test_episode_lines_find_a_later_episode_by_ordinal_not_by_name() -> None:
+    spine = {
+        "episode_summaries": [{"episode_id": "episode_01", "ordinal": 1}, {"episode_id": "ep_02", "ordinal": 2}],
+        "beats": [
+            {"episode_id": "episode_01", "dialogue_lines": [{"text": "First."}]},
+            {"episode_id": "ep_02", "dialogue_lines": [{"text": "Second episode line."}]},
+        ],
+    }
+    assert episode_lines(spine, 2) == ["Second episode line."]
+    assert episode_lines(spine, 1) == ["First."]
+
+
+def test_captions_on_a_japanese_show_are_the_english_subtitles() -> None:
+    spine = {
+        "spoken_language": "ja-JP",
+        "beats": [{"episode_id": "episode_01", "dialogue_lines": [
+            {"text": "Wait for me here.", "spoken_text": "ここで待ってて", "subtitle_text": "Wait here for me."}]}],
+    }  # fmt: skip
+    assert episode_lines(spine, 1) == ["Wait here for me."]
+
+
 def test_real_take_anchors_line_on_first_speech_span_not_the_tail() -> None:
     duration = 15.104
     spans = speech_spans(parse_silencedetect(REAL_TAKE_STDERR, duration), duration)
@@ -95,7 +116,7 @@ def test_flicker_events_touch_and_last_word_holds_until_next_line() -> None:
 def test_ass_uses_house_style_scaled_to_frame() -> None:
     ass = build_ass([Cue(1.0, 1.5, "Hi")], width=768, height=1344)
     assert "Style: House,Poppins,50,&H0000E5FF,&H0000E5FF,&H00000000,&H80000000,-1," in ass
-    assert ass.split("Style: House,")[1].split("\n")[0].endswith(",2,10,10,403,1")
+    assert ass.split("Style: House,")[1].split("\n")[0].endswith(",2,10,10,511,1")  # bottom edge at 62% (social safe zones)
     assert "Dialogue: 0,0:00:01.00,0:00:01.50,House,,0,0,0,,Hi" in ass
     half = build_ass([], width=384, height=672)
     assert "Style: House,Poppins,25," in half

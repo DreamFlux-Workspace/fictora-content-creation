@@ -10,7 +10,14 @@ from typing import Any
 from urllib.parse import urljoin
 
 import httpx
-from creation.harness.http_util import api_error_text, api_headers, poll_until_terminal, save_json
+from creation.harness.http_util import (
+    HOSTED_POST_OFF_HINT,
+    api_error_text,
+    api_headers,
+    hosted_post_off,
+    poll_until_terminal,
+    save_json,
+)
 
 #: The compiled provider prompt is core-team only on the server (403 for operator
 #: tokens). This kit never asks for it; the take's facts come from ``take-facts``.
@@ -105,6 +112,10 @@ class DramaApiRunSession:
             detail: Any = response.json()
         except ValueError:
             detail = response.text
+        if hosted_post_off(response.status_code, detail, str(response.request.url)):
+            raise SystemExit(
+                f"HTTP {response.status_code} {response.request.method} {response.request.url}: {HOSTED_POST_OFF_HINT}"
+            )
         raise SystemExit(
             f"HTTP {response.status_code} {response.request.method} {response.request.url}: {api_error_text(detail)}"
         )

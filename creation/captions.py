@@ -10,8 +10,11 @@ module finishes it on the operator's laptop:
 4. Write a house flicker ASS (up to three words build up, then reset) and burn it.
 
 The look matches the content team's reference captions (yellow ``#FFE500``,
-Poppins Bold, black edge, soft shadow, no box, text bottom at 70% of frame
-height), scaled from the 768x1344 H3 frame to the take's real size.
+Poppins Bold, black edge, soft shadow, no box), scaled from the 768x1344 H3
+frame to the take's real size. Placement follows the TikTok / Reels / Shorts
+safe zones: the text's bottom edge sits at 62% of the frame height and the
+caption block stays inside 55-70%. Captions never wrap; a caption too wide for
+one line is set smaller so it still fits on one line inside that band.
 """
 
 from __future__ import annotations
@@ -20,17 +23,23 @@ import json
 import re
 import shutil
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from creation.ops.folder import next_versioned_path
 
 #: Frame the house style was tuned on (H3 vertical take).
 REFERENCE_HEIGHT = 1344
-#: Font size and bottom margin on the reference frame.
+#: Font size on the reference frame.
 REFERENCE_FONT_SIZE = 50
-REFERENCE_MARGIN_V = 403
+#: Bottom edge of the caption text, as a fraction of frame height (social safe zones).
+CAPTION_BOTTOM_FRACTION = 0.62
+#: The caption block must stay inside this band of the frame height.
+CAPTION_BAND = (0.55, 0.70)
+#: Left + right ASS margins, pixels.
+SIDE_MARGIN = 10
 FONT_NAME = "Poppins"
 #: ASS colours are &HAABBGGRR: yellow #FFE500, black edge, 50% black shadow.
 PRIMARY_COLOUR = "&H0000E5FF"
@@ -74,7 +83,7 @@ class Cue:
 
 
 def episode_lines(spine: dict[str, Any], episode_ordinal: int) -> list[str]:
-    """Return spoken lines for one episode, in beat order.
+    """Return the caption for each spoken line of one episode, in beat order.
 
     Parameters
     ----------
@@ -89,14 +98,20 @@ def episode_lines(spine: dict[str, Any], episode_ordinal: int) -> list[str]:
         Non-empty dialogue texts.
     """
 
+    from creation.spine_view import episode_id_for
+
     body = spine.get("spine", spine)
-    episode_id = f"episode_{episode_ordinal:02d}"
+    # Found by ordinal through episode_summaries: episode 2 can be ``ep_02``, not ``episode_02``.
+    episode_id = episode_id_for(body, episode_ordinal)
     lines: list[str] = []
     for beat in body.get("beats") or []:
         if beat.get("episode_id") != episode_id:
             continue
         for line in beat.get("dialogue_lines") or []:
-            text = str(line.get("text") or "").strip()
+            # Captions are English subtitles: ``subtitle_text`` when the line has one, else ``text``.
+            # Their timing never reads words: it comes from where speech is heard on the take
+            # (``silencedetect``), so a Japanese or Korean performance is timed the same way.
+            text = str(line.get("subtitle_text") or line.get("text") or "").strip()
             if text:
                 lines.append(text)
     return lines
@@ -233,12 +248,42 @@ def _ass_escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("{", "(").replace("}", ")").replace("\n", " ")
 
 
+def caption_margin_v(height: int) -> int:
+    """Bottom margin that puts the caption's bottom edge at 62% of the frame height."""
+
+    return round(height * (1.0 - CAPTION_BOTTOM_FRACTION))
+
+
+def text_width(text: str, size: int, *, spacing: float = 1.5) -> float:
+    """Rendered width of ``text`` in Poppins Bold at ``size`` px (bundled font), with letter spacing."""
+
+    from PIL import ImageFont
+
+    font = ImageFont.truetype(str(FONTS_DIR / "Poppins-Bold.ttf"), size)
+    return float(font.getlength(text)) + spacing * max(0, len(text) - 1)
+
+
+def fitted_size(text: str, size: int, width: int) -> int:
+    """The font size at which ``text`` fits on one line inside the side margins (never larger than ``size``)."""
+
+    room = width - 2 * SIDE_MARGIN
+    wide = text_width(text, size)
+    if wide <= room:
+        return size
+    return max(8, int(size * room / wide))
+
+
 def build_ass(cues: Sequence[Cue], *, width: int, height: int) -> str:
-    """Render house-style ASS for a frame of ``width`` x ``height``."""
+    """Render house-style ASS for a frame of ``width`` x ``height``.
+
+    Captions never wrap (``WrapStyle: 2``): a cue too wide for one line gets a
+    smaller ``\\fs`` so the block stays one line, bottom edge at 62%, inside
+    the 55-70% band.
+    """
 
     scale = height / REFERENCE_HEIGHT
     size = round(REFERENCE_FONT_SIZE * scale)
-    margin_v = round(REFERENCE_MARGIN_V * scale)
+    margin_v = caption_margin_v(height)
     outline = max(1, round(3 * scale))
     shadow = max(1, round(1 * scale))
     header = (
@@ -246,7 +291,7 @@ def build_ass(cues: Sequence[Cue], *, width: int, height: int) -> str:
         "ScriptType: v4.00+\n"
         f"PlayResX: {width}\n"
         f"PlayResY: {height}\n"
-        "WrapStyle: 0\n"
+        "WrapStyle: 2\n"
         "ScaledBorderAndShadow: yes\n"
         "\n"
         "[V4+ Styles]\n"
@@ -254,14 +299,19 @@ def build_ass(cues: Sequence[Cue], *, width: int, height: int) -> str:
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: House,{FONT_NAME},{size},{PRIMARY_COLOUR},{PRIMARY_COLOUR},{OUTLINE_COLOUR},"
-        f"{SHADOW_COLOUR},-1,0,0,0,100,100,1.5,0,1,{outline},{shadow},2,10,10,{margin_v},1\n"
+        f"{SHADOW_COLOUR},-1,0,0,0,100,100,1.5,0,1,{outline},{shadow},2,{SIDE_MARGIN},{SIDE_MARGIN},{margin_v},1\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
+
+    def text(cue: Cue) -> str:
+        fit = fitted_size(cue.text, size, width)
+        prefix = "" if fit == size else f"{{\\fs{fit}}}"
+        return prefix + _ass_escape(cue.text)
+
     events = "".join(
-        f"Dialogue: 0,{_ass_time(c.start)},{_ass_time(c.end)},House,,0,0,0,,{_ass_escape(c.text)}\n"
-        for c in cues
+        f"Dialogue: 0,{_ass_time(c.start)},{_ass_time(c.end)},House,,0,0,0,,{text(c)}\n" for c in cues
     )
     return header + events
 
@@ -364,6 +414,8 @@ def caption_take(
     episode_ordinal: int = 1,
     take: Path | None = None,
     line_starts: Sequence[float] | None = None,
+    timing_source: Path | None = None,
+    stem: str | None = None,
 ) -> CaptionResult:
     """Caption the newest raw take on a desk episode.
 
@@ -377,6 +429,12 @@ def caption_take(
         Raw MP4 to caption; defaults to the newest ``takes/take-epNN-t1-raw-v*.mp4``.
     line_starts
         Manual start time per line, overriding speech detection.
+    timing_source
+        File whose speech is detected (default ``take``). ``finish`` passes the
+        take before the music bed, since silence cannot be found under music.
+    stem
+        Output name stem (``take-ep01-t1-cap`` writes ``take-ep01-t1-cap-vN.mp4``
+        and ``.ass``); default ``<take>-house`` / ``<take>-captioned``.
 
     Returns
     -------
@@ -412,13 +470,14 @@ def caption_take(
             for s, e, t in zip(line_starts, ends, lines)
         ]
     else:
-        spans = speech_spans(detect_silences(ffmpeg, take, duration), duration)
+        source = timing_source or take
+        spans = speech_spans(detect_silences(ffmpeg, source, duration), duration)
         anchors = anchor_lines(lines, spans)
 
     cues = build_cues(lines, anchors)
-    stem = take.stem.replace("-raw", "").rsplit("-v", 1)[0]
-    ass = next_versioned_path(takes, f"{stem}-house", ".ass")
+    base = take.stem.replace("-raw", "").rsplit("-v", 1)[0]
+    ass = next_versioned_path(takes, stem or f"{base}-house", ".ass")
     ass.write_text(build_ass(cues, width=width, height=height), encoding="utf-8")
-    video = next_versioned_path(takes, f"{stem}-captioned", ".mp4")
+    video = next_versioned_path(takes, stem or f"{base}-captioned", ".mp4")
     burn_ass(ffmpeg, take, ass, video)
     return CaptionResult(ass, video, tuple(cues), tuple(anchors), tuple(lines))

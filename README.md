@@ -10,13 +10,15 @@ Partner repo for **episode production** with Cursor or Claude Code against the h
 | Desk layout + gate ledger | `fictora-ops` | — |
 | Phase orchestration | `fictora-produce` | — |
 | Agent runbook | `.cursor/skills/episode-production/` | — |
-| Prompts, Fal, Restate workers | — | yes |
+| Local finish (mix, colour, captions, mark, revoice lay-in; generated audio requested from the API) | `creation/post` (`fictora-produce finish`, `voice`, `revoice`) | — |
+| Prompts, server Fal keys, Restate workers | — | yes |
 
 ## Requirements
 
 - Python **3.12+**
 - [uv](https://docs.astral.sh/uv/)
 - Service token for the deployed Drama API (from engineering)
+- ffmpeg with libass, for the local finish (no provider key: generated audio is made on the server)
 
 ## Quick start
 
@@ -80,6 +82,25 @@ uv run fictora-produce config --desk …
 **Visual-first episode 1 order:** draft → cast enrol → **plate gate** → script gate → boards enrol → **board gate** → estimate → spend confirm → take (video) → delivery in `ep01/takes/`.
 
 Trust **`GET /v1/video-generations/{id}`** for job status during long post-prod (often ~50% for many minutes). Poll transport blips are retried automatically; if the CLI exits, re-run `step` on the same desk—it resumes the job in `16_video_enrol.json` without re-enrolling.
+
+### Finish a take (hosted post is off)
+
+The raw take has the model's sound only. After the human says Use it:
+
+```bash
+uv run fictora-produce finish --desk ~/Downloads/documents/my-show-…
+```
+
+Sound effects (from the take facts), the show's music bed, colour match to the approved board, a mix near −18 LUFS, captions, the Sokii mark. Each step writes a new `take-epNN-tK-<step>-vN.mp4`. The last line must read `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`; `NOT DONE` exits 5.
+
+### Change a character's voice (never regenerate)
+
+```bash
+uv run fictora-produce voice --desk … --cast NAME --audition
+uv run fictora-produce voice --desk … --cast NAME --pick N
+uv run fictora-produce revoice --desk … --cast NAME --episode 1 --take t1
+uv run fictora-produce finish --desk … --take-file <take-ep01-t1-revoice-vN.mp4>
+```
 
 ### Recovery
 
@@ -158,6 +179,8 @@ creation/
   production_*.py   Desk config + state
   ops/              Desk floor, luma, gates
   recover.py        Cancel job + video retry suffix
+  cli_post.py       finish, voice, revoice, set-bed
+  post/             Local finish: sfx, bed, colour, mix, watermark, voice, Whisper; audio_service = the one generated-audio interface
 tests/              Unit tests (no live API)
 scripts/            smoke_live, e2e helpers
 docs/content-ops/   Operator runbook (human + agent)
