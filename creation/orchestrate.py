@@ -731,6 +731,50 @@ def board_report(
     return lines
 
 
+def step_retry_unit(episode: int, phase: str) -> str:
+    """Return the ``attempts`` unit that counts ``retry-step`` runs of one stage of one episode.
+
+    Parameters
+    ----------
+    episode
+        Episode ordinal.
+    phase
+        The stage's ready phase (``ready_boards_enrol`` ...).
+
+    Returns
+    -------
+    str
+        ``step-retry-epNN-<phase>``.
+    """
+
+    return f"step-retry-ep{episode:02d}-{phase}"
+
+
+def step_retry_prefix(state: ProductionState) -> str | None:
+    """Return the idempotency prefix for the current stage after a ``retry-step``, else ``None``.
+
+    Built from the desk's stable prefix and the retry count, so a retried stage
+    never reuses the failed job's key, and an interrupted retry run again picks
+    up its own job instead of paying twice.
+
+    Parameters
+    ----------
+    state
+        Production state.
+
+    Returns
+    -------
+    str | None
+        ``<desk prefix>-step-retry-epNN-<phase>-rN`` or ``None`` when the stage was never retried.
+    """
+
+    unit = step_retry_unit(state.episode_ordinal, state.phase)
+    count = state.attempts.get(unit, 0)
+    if not count:
+        return None
+    return f"{state.idempotency_prefix}-{unit}-r{count}"
+
+
 def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
     """Run the next automated API step for the current phase.
 
@@ -746,6 +790,9 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             raise RuntimeError(refusal)
     cfg = load_production_config(desk)
     run = _open_run(desk, state)
+    retry_prefix = step_retry_prefix(state)
+    if retry_prefix:
+        run.prefix = retry_prefix
     ep = state.episode_ordinal
     ep_dir = _episode_dir(desk, ep)
     paths: list[str] = []
@@ -947,8 +994,16 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
                 (),
             )
 
+        if state.phase == "failed":
+            raise RuntimeError(
+                f"Episode {ep} stopped at `{state.failed_phase or 'an unrecorded stage'}`: {state.last_error}\n"
+                'Nothing more was sent. After fixing the cause: `fictora-produce retry-step --desk D --cause "..."`, '
+                "then `fictora-produce step`."
+            )
         raise RuntimeError(f"unknown phase: {state.phase}")
     except SystemExit as exc:
+        if state.phase != "failed":
+            state.failed_phase = state.phase
         state.phase = "failed"
         state.last_error = str(exc)
         save_production(desk, state)

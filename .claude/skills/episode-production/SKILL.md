@@ -233,6 +233,7 @@ An off-screen voice (speaker, phone, radio) played over another character's face
 - A whole episode again (rare; human yes + cause): `film --desk D --episode N --cause "…"`, then `--confirm-spend`. `retry-video --new-paid-take` does the same for the desk's current episode, once per desk.
 - `film` or `step` says the deployed API does not film one episode alone yet: nothing was sent or charged. Stop and tell engineering; never work around it.
 - Interrupted poll: run the same `step` again; the job may still be running.
+- A `step` failed (`status` says `failed`; e.g. boards "row board prompt exceeds GPT Image 2 provider limit"): fix the cause first, then `fictora-produce retry-step --desk D --cause "…"`. It backs up `production.json`, puts the failed stage back with a fresh key, says what it will re-run and what that costs (boards $0.30 each), and sends nothing; then `step`. Never hand-edit `production.json`. A failed take goes to `retry-video`/`film`, not here.
 - More: reference.md.
 
 ## Episode 2 on

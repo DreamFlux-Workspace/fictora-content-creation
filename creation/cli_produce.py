@@ -25,7 +25,12 @@ from creation.ops.folder import DEFAULT_RUN_PARENT
 from creation.ops.notes import append_run_note
 from creation.orchestrate import approve_gate, bind_desk, run_step, status_message
 from creation.production_config import load_production_config, save_production_config
-from creation.recover import cancel_video_job, prepare_video_retry
+from creation.recover import (
+    RETRYABLE_STEPS,
+    cancel_video_job,
+    prepare_video_retry,
+    retry_failed_step,
+)
 from creation.setup_check import run_setup_check
 
 
@@ -132,6 +137,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--new-paid-take",
         action="store_true",
         help="Required. Confirms this enrol is a new paid take, not a stuck-job retry.",
+    )
+
+    retry_step = sub.add_parser(
+        "retry-step",
+        help="After a failed step (phase=failed): put the failed stage back with a fresh key. Sends nothing.",
+    )
+    retry_step.add_argument("--desk", type=Path, required=True)
+    retry_step.add_argument(
+        "--cause", default=None, help="Why it should work now (run notes)."
+    )
+    retry_step.add_argument(
+        "--phase",
+        default=None,
+        choices=tuple(RETRYABLE_STEPS),
+        help="The stage that failed, only when the desk cannot tell.",
     )
 
     cap = sub.add_parser(
@@ -271,6 +291,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(payload)
             print("Cancelled. Do not enrol another take.")
             print("A new take starts another ffmpeg job on Railway.")
+            return 0
+        if args.command == "retry-step":
+            retried = retry_failed_step(args.desk, cause=args.cause, phase=args.phase)
+            how = " (read from the saved error)" if retried.inferred else ""
+            print(f"phase={retried.phase}{how} key_prefix={retried.key_prefix}")
+            print(f"Will re-run {retried.cost}.")
+            print(f"Backup: {retried.backup}")
+            print("Next: fictora-produce step --desk …")
             return 0
         if args.command == "retry-video":
             if not args.new_paid_take:
