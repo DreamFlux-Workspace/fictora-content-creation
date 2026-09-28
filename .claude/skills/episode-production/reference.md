@@ -14,32 +14,35 @@ Three layers, later wins:
 
 | `production.config.json` field | Default | Use |
 | --- | --- | --- |
-| `draft_episode_count` | 4 | Server cadence for the batch estimate, not a season outline. Never 5 (prod errors on ordinal 5) |
+| `draft_episode_count` | 1 | Ignored. The draft writes episode 1 alone (`outline_mode=arc_at_episode_two`); later episodes are written with `author --episode N` |
 | `clip_duration_seconds` | 15 | 4–15. 16 is rejected |
-| `cut_tempo` | `one_shot` | Pick per scene (Shot plan, below). Set it at `start`, so board and take agree |
+| `cut_tempo` | unset (server default `punchy`) | Pick per scene (Shot plan, below). Set it at `start` (`--cut-tempo`): it goes on the draft, so board and take agree |
 | `caption_style` | `house` | Local burn-in recipe ([local-captions.md](../../../docs/content-ops/local-captions.md)) |
 | `api_captions` | `false` | Keep false. The take step stops at the raw clip; captions run on the laptop |
 | `locale` | `en-US` | Draft locale |
-| `fallback_estimate_usd` | 1.20 | Used when the batch estimate returns no USD |
+| `spoken_language` | unset (English) | `--language ja` / `ko` at `start`: the cast speaks it; captions stay English |
+| `fallback_estimate_usd` | 1.20 | Used only when the batch estimate sends no dollars and the price table has no rate for the lane |
 | `poll_*_deadline_seconds` | 1800–7200 | Poll caps (below) |
 
 ## Phase machine (`fictora-produce`)
 
+One machine per desk, pointed at one episode (`episode_ordinal` in `production.json`; `status` prints it). `author --episode N` points it at episode N with its lines at the script gate. `epNN` below is that episode.
+
 | Phase | Next move |
 | --- | --- |
 | `new` | `step` → draft |
-| `ready_cast_enrol` | `step` → cast plates + downloads to `ep01/plates/` |
+| `ready_cast_enrol` | `step` → cast plates + downloads to `ep01/plates/` (episode 1 only; books $0.30 a plate) |
 | `wait_plates` | Human yes → `approve --gate plates` |
-| `wait_script` | Human yes on the lines (from `ep01/api/*spine*.json`) → `approve --gate script` |
-| `ready_boards_enrol` | `step` → board + brightness to `ep01/boards/` |
-| `wait_board` | Human yes → `approve --gate board --path … [--accept-dim]` |
-| `ready_estimate` | `step` → batch estimate (or `fallback_estimate_usd`) |
+| `wait_script` | Human yes on the lines (printed by the draft or `author`; `epNN/api/spine.json`) → `approve --gate script` (episode 1: the whole spine; episode 2 on: `pilot-episodes/{n}/approve`) |
+| `ready_boards_enrol` | `step` → boards to `epNN/boards/board-epNN-tK-vN.png`, brightness (information only), the shot list row by row, safe-zone warnings; books $0.30 a board |
+| `wait_board` | Human yes → `approve --gate board` (the boards `step` drew; `--path` only for a board it did not draw). Or `redraw-board` |
+| `ready_estimate` | `step` → this episode's estimate: the server's dated dollars, else the price table; says "$X of a $Y envelope" (warn only) |
 | `wait_spend` | Human yes → `step --confirm-spend` |
 | `ready_video` | (internal) take enrol |
-| `complete` | Raw clip on disk (`ep01/takes/take-ep01-t1-raw-vN.mp4`, `ep01/api/17_raw_scene_clips.json`) → `finish` |
+| `complete` | Every take of the episode raw on disk (`epNN/takes/take-epNN-tK-raw-vN.mp4`) with its take facts (`epNN/api/take-facts-epNN-tK-vN.json`); spend booked from the facts; video and take job ids in `run-notes.md` → `finish` per take, then the next episode |
 | `failed` | Read `last_error` in `production.json`; see Recovery |
 
-The harness auto-retries `plan_media_spine_version_stale` (cast, boards) and retryable `authoring_stalled` (draft).
+The harness auto-retries `plan_media_spine_version_stale` (cast, boards) and retryable `authoring_stalled` (draft). Any other failed job, and any refused request, stops with the server's own code, message and rule details (for example `authoring_validation_failed at frames[3]: …`, or a take refused because it would drop an approved line): read it to the human; do not re-run blind.
 
 ## Aligned or deviation
 
@@ -53,7 +56,7 @@ Product gap:           <one line for docs/content-ops/backlog.md>
 Extra cost:            <$ and minutes>
 ```
 
-Always a deviation: a length other than 15 / 30 / 60 s; any route with no command here (a line-word patch, a single-plate redraw, a board redraw with notes, episode 2 authoring while those commands are missing); hand-rolled HTTP. Editing product code or settings is never acceptable.
+Always a deviation: a length other than 15 / 30 / 60 s; any route with no command here (a single-plate redraw); hand-rolled HTTP. Editing product code or settings is never acceptable. Aligned, with commands (below): episode 2 on (`arc`, `brief`, `author`), line and frame edits (`edit`), board redraws (`redraw-board`; the regenerate route takes no notes, so the change goes in first with `edit --frame` or `look-note`).
 
 ## Script gate
 
@@ -103,7 +106,7 @@ The writers pick an anime expression (`reaction_kind`) for every emotional momen
 | `flinch` | a small recoil |
 
 - **Pick by the moment, not the genre.** Any kind may play in any genre. The symbolic kinds (`happy` through `deflated`) fit a light, awkward, petty or comic moment, even in a serious show (a sweat drop at an awkward pause in horror). Real dread, grief, danger or tenderness gets the plainer kinds.
-- **Whose face.** On a cell with two or more people, the writers name the face that wears the kind. A listener's expression on a speaking cell plays whole and silent on the listener. Wrong or missing face, or a wrong mark: a board redraw with a shape note (a DEVIATION until a frame-edit command exists here).
+- **Whose face.** On a cell with two or more people, the writers name the face that wears the kind. A listener's expression on a speaking cell plays whole and silent on the listener. Wrong or missing face, or a wrong mark: fix the frame (`edit --frame … --set …`), then `redraw-board`.
 - On a speaking cell the expression plays before the first word and after the last; during the words the mouth moves.
 
 ## Social safe zones
@@ -115,7 +118,7 @@ The writers pick an anime expression (`reaction_kind`) for every emotional momen
 | Right rail | right 12% of the width, lower two thirds | like, comment, share |
 
 - Faces, eyes, mouths and key props never sit in a zone. Bodies, hands, floor and set may run through. Off-centre and two-shots are fine; do not centre faces by default.
-- There is no face detector: look at every cell of the board. A face or key prop in a zone is a board redraw with the placement as the shape note.
+- There is no face detector: look at every cell of the board. The boards `step` warns (`!!`) when a frame's written placement puts a face or prop in a zone; it reads text only. A face or key prop in a zone: fix the frame's placement (`edit --frame … --set …`), then `redraw-board` — but see "Lost board records" in SKILL.md: until that server fix lands, tell engineering instead of redrawing after an edit.
 - Captions: the block stays in 55–70% of the height. `finish` and `caption` put the text bottom at 62% and never wrap (a too-wide caption is set smaller).
 - The Sokii mark: top left, just under the top strip, `23:121` on 768×1344 (x = 3% of width, y = 9% of height), 0.6 opacity. Never top right.
 
@@ -128,7 +131,7 @@ The writers pick an anime expression (`reaction_kind`) for every emotional momen
 - **Speakers.** A spoken line sits on a row where its speaker is in frame, at medium or closer. No off-screen speaker is drawn.
 - **Speaking mouths.** No clench, grit, pressed or closed mouth on a speaking row. Big acting before and after the line.
 - The hook (frame 0 mid-motion on a face), the hand-off frame (a frame with picture, never a fade or black), no readable text or digits, safe zones.
-- Brightness: interiors below about 25% mean luma render dim. Report it; a dark board is the human's call (`approve --gate board --accept-dim`).
+- Brightness is information only, never a block: report it; a dark board is the human's call. (`--accept-dim` is accepted and ignored.)
 
 ## Spend
 
@@ -141,7 +144,7 @@ The writers pick an anime expression (`reaction_kind`) for every emotional momen
 
 H3 Max Turbo I2V applies only when engineering pins it for a take. Never quote it by default.
 
-Budgets are warnings, never a hard stop: first episode of a new series **$5.50**, continuing 15 s **$2.50**, continuing 30 s **$5.00**. A first 15 s episode filmed once is about $2.80, so the budget covers one redraw and one re-film. Say "$X of $Y" when the episode crosses its budget, not at the end. Past 2×, say so and let the human decide. Book anything by hand with `fictora-ops spend`.
+Budgets are warnings, never a hard stop: first episode of a new series **$5.50**, continuing 15 s **$2.50**, continuing 30 s **$5.00**. A first 15 s episode filmed once is about $2.80, so the budget covers one redraw and one re-film. Say "$X of $Y" when the episode crosses its budget, not at the end. Past 2×, say so and let the human decide. `step` books plates, boards and takes itself (a take from its take facts: lane, seconds, reference images); `redraw-board` books its board. Book anything else by hand with `fictora-ops spend`. `fictora-ops preflight` never blocks on budget: a gate open exits 3; warnings exit 4 until the human says film anyway and you run `--proceed-anyway ep01-t1` (logged, next film only).
 
 "Change this" is billed. A retry reuses the same idempotency key; two jobs for one take is a bug: report it.
 
@@ -156,7 +159,7 @@ Budgets are warnings, never a hard stop: first episode of a new series **$5.50**
 Measure, then watch: every approved line heard, exactly; cut count (compare consecutive frames); loudness (dialogue about −15 to −20 LUFS); brightness vs the board; every beat present in order. Write every fault, including the ones you will not fix. Then ask **Use it** or **Change this**.
 
 - A missing spoken line is the one real re-film. Name the cause first.
-- A line the take was never asked to say is a server fault: report it with the job id; do not re-film blind.
+- A line the take was never asked to say is a server fault: `fictora-produce check-lines --desk D --episode N [--take tK]` names it from the take facts (never the prompt). Report it with the take job id; do not re-film blind.
 - Stray mumble between lines is a mute in the mix, not a re-film.
 
 ## Finish
@@ -171,8 +174,8 @@ uv run fictora-produce finish --desk D [--episode N] [--take tK] [--take-file F]
 
 | Step | What it does | Writes |
 | --- | --- | --- |
-| sfx | Cue plan from `GET /v1/jobs/{take_job}/take-facts?spine_id=` (saved as `api/take-facts-epNN-tK-vN.json`; the take job is read from `api/17_raw_scene_clips.json`). Each cue renders on Fal ElevenLabs SFX v2 (~$0.002/s), is shape-checked, cached in `epNN/sfx/`, laid at −8 dB and ducked 10 dB under speaking shots | `take-epNN-tK-sfx-vN.mp4` |
-| bed | The desk's pinned bed; else the spine's `series_audio_bed_url`; else one made once on Fal Stable Audio 2.5 (~$0.06) from the genre (or `--music "…"`), levelled to −20 LUFS, pinned in `shared/beds/` | — |
+| sfx | Cue plan from `GET /v1/jobs/{take_job}/take-facts?spine_id=` (saved as `api/take-facts-epNN-tK-vN.json`; the take job is read from `api/17_raw_scene_clips.json`). Each cue renders on the server from its Sound label (~$0.002/s), is shape-checked, cached in `epNN/sfx/`, laid at −8 dB and ducked 10 dB under speaking shots | `take-epNN-tK-sfx-vN.mp4` |
+| bed | The desk's pinned bed; else the spine's `series_audio_bed_url`; else one made once on the server (~$0.06) from the genre (or `--music "…"`), levelled here to −20 LUFS, pinned in `shared/beds/` | — |
 | colour | One Lab curve for the whole take, fitted to the approved board (gutters left out) | `…-colour-vN.mp4` + `.cube` |
 | mix | Bed looped under the take at `--bed-db`, sidechain-ducked under the voice (`--duck-db N` = exactly N dB, 1–30), take gain measured to land near −18 LUFS (band −20 to −15), one limiter | `…-mix-vN.mp4` |
 | captions | House captions timed on the take before the bed | `…-cap-vN.mp4` + `.ass` |
@@ -180,7 +183,7 @@ uv run fictora-produce finish --desk D [--episode N] [--take tK] [--take-file F]
 
 A step that fails is reported and skipped; the chain carries on from the last good file. The summary ends with `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`. When music, SFX or the mix did not go on it prints `NOT DONE`, writes a run note and exits **5**: the file is not a deliverable. A second `finish` writes the next versions and reuses the cached cues and the pinned bed ($0).
 
-`caption --desk D [--line-start S ...]` still burns captions alone on a raw take (timing detail: [local-captions.md](../../../docs/content-ops/local-captions.md)). Needs ffmpeg + ffprobe with libass, and `FAL_KEY` in `.env` for sound effects and a new bed.
+`caption --desk D [--line-start S ...]` still burns captions alone on a raw take (timing detail: [local-captions.md](../../../docs/content-ops/local-captions.md)). Needs ffmpeg + ffprobe with libass. Generated audio (effects, the bed, voices, Whisper timings) is made on the server by Drama API operator endpoints; no provider key ever goes on this laptop. Until those endpoints are live, `finish` still does the look, mix, captions and mark but reports `NOT DONE` (no music, no SFX) and `voice --audition` / `revoice` stop with a clear message: tell engineering, never add a key.
 
 **Hosted post is off.** Never call `POST /v1/video-generations/{id}/post-production-runs` and never pass `--api-captions`. `409 hosted_post_off`, or the older `503 restate_unavailable` from post-production, means finish locally. It is not an outage; do not retry it.
 
@@ -190,9 +193,9 @@ The voice is a lock on the cast card, not part of the story or the picture. Neve
 
 | Command | What it does | Spends |
 | --- | --- | --- |
-| `voice --desk D --cast NAME --audition [--episode N] [--count 8] [--cause "…"]` | `POST /v1/spines/{id}/cast/{cast_id}/voice-auditions` on up to 3 of the character's real lines; the API returns voice ids and text only, so each candidate renders here on Fal Eleven v3 into `shared/voices/<cast>/audition-vN/NN-<voice>.mp3` with `auditions.json`. A second set needs `--cause`. A re-run picks up Fal requests already paid (`post-fal-pending.json`) | $0.30 a set |
+| `voice --desk D --cast NAME --audition [--episode N] [--count 8] [--cause "…"]` | `POST /v1/spines/{id}/cast/{cast_id}/voice-auditions` on up to 3 of the character's real lines; the API returns voice ids and text; each candidate is rendered on the server and saved to `shared/voices/<cast>/audition-vN/NN-<voice>.mp3` with `auditions.json`. A second set needs `--cause`. Every render carries an idempotency key, so a re-run never pays twice | $0.30 a set |
 | `voice --desk D --cast NAME --pick N` | `POST …/voice-auditions/pick` locks candidate N on the cast card and saves the spine again | nothing |
-| `revoice --desk D --cast NAME --episode N --take tK [--take-file F] [--words-json W] [--voice-db 0]` | Renders each of that character's lines dry in the locked voice, finds each line's window from Whisper words on the take, mutes the original there (0.08 s before to 0.15 s after), lays the new line in at the same start. Picture copied, other characters as filmed. Writes `take-epNN-tK-revoice-vN.mp4` + `.json` | $0.10 per 1,000 characters + Whisper pennies |
+| `revoice --desk D --cast NAME --episode N --take tK [--take-file F] [--words-json W] [--voice-db 0]` | Has the server render each of that character's lines dry in the locked voice and time the take's words (Whisper), then on this laptop mutes the original there (0.08 s before to 0.15 s after), lays the new line in at the same start. Picture copied, other characters as filmed. Writes `take-epNN-tK-revoice-vN.mp4` + `.json` | $0.10 per 1,000 characters + Whisper pennies |
 
 Then `finish --desk D --episode N --take tK --take-file <revoice file>`. Takes not filmed yet use the new voice as they are. Re-film only a take where the dub does not sit (lips visibly wrong, a shouted line), with a cause and a stated cost; never the other takes.
 
@@ -204,7 +207,16 @@ Episode 1 is made on its own; the arc is chosen at episode 2, after episode 1 is
 - Each later episode is steered by its **direction**: the human picks one or says their own, and it goes to the writer in their words. Confirm the idea is in the printed script. Series-wide notes are for standing rules ("keep every episode punchy"), never for this episode's idea.
 - Approve each episode's script on its own. Never pre-stage scripts for later episodes.
 
-`fictora-produce` films episode 1. `fictora-ops add-episode` opens a desk slot; authoring episode 2 on the API has no command here yet: declare a DEVIATION.
+```bash
+uv run fictora-produce arc --desk D --list [--episodes N]          # the three arcs, sized to the run (episode 2 only)
+uv run fictora-produce arc --desk D --pick K [--title T] [--line L] [--episodes N]   # keeps it; prints episode 2's directions
+uv run fictora-produce brief --desk D --episode N [--episodes N]   # directions for episode 3 on
+uv run fictora-produce author --desk D --episode N (--direction K | --line "the human's words" [--title T])
+uv run fictora-produce approve --desk D --gate script              # then step (boards), approve board, step (estimate), step --confirm-spend
+uv run fictora-produce memory --desk D (--note TEXT | --thread TEXT)   # standing rules only
+```
+
+`author` opens the desk slot, prints the script, and points the phase machine at the new episode. The season target is a soft default: an episode past it is written as "the season continues"; 240 is the only stop. The take films with `episode_count` = N: earlier unchanged takes come from the server's reuse table, and the first take opens on the previous episode's real last frame when the location matches (nothing to paste by hand).
 
 ## Recovery
 
@@ -213,12 +225,13 @@ Episode 1 is made on its own; the arc is chosen at episode 2, after episode 1 is
 | Video stuck `running` ~50%, post still going | `fictora-produce cancel-job --desk D --job-id job_video_…` only. Never `retry-video`, never `--confirm-spend` again (a second enrol starts another ffmpeg on Railway) |
 | Poll CLI dies mid-job (`ReadError`) | Job may still run: re-run `step` on the same desk |
 | Draft `authoring_stalled`, retryable | Harness retries; else re-run `step` from `new` |
-| Draft 500 `no episode summary for ordinal 5` | `draft_episode_count` back to 4 |
+| Draft or `author` failed `authoring_validation_failed` | The message names the rule and where. Fix the brief or the direction; do not re-run the same thing |
 | Draft 500 cast `too_short` | Premise asked for a solo cast; pull latest `main`, re-`step` |
-| Estimate 400 `invalid_episode_selection` | Harness skips it and uses `fallback_estimate_usd` |
+| Estimate 400 `invalid_episode_selection` | The step saves the skip and prices from the table |
 | Empty `plates/` or `boards/` after `step` | Downloads fall back to the enrol terminal JSON (`ep01/api/06_*cast_terminal*.json`, `09_*boards_terminal*.json`); pull `main`, re-run `step` |
 | `spine_not_found` / wrong session | New desk + new `start`; never reuse an old spine id |
-| A second paid take (human yes + cause, once per desk) | `retry-video --desk D --new-paid-take`, then `step --confirm-spend` |
+| A second paid take (human yes + cause, once per desk) | `retry-video --desk D --new-paid-take`, then `step --confirm-spend` (enrols a new job; never resumes the old one) |
+| `author` or `redraw-board` interrupted | Run the same command again: it reuses the recorded key or polls the recorded job, never pays twice |
 
 Trust `GET /v1/video-generations/{id}` or `GET /v1/jobs/{id}` over log lines.
 
@@ -231,7 +244,22 @@ Trust `GET /v1/video-generations/{id}` or `GET /v1/jobs/{id}` over log lines.
 | Mutations | `Idempotency-Key` required |
 | OpenAPI | `{base}/openapi.json`, `{base}/docs` |
 
-Sequence `fictora-produce` runs: `POST /v1/prompt-video-authoring-drafts` → cast enrol → cast approve → spine approve → boards enrol + exposure → boards approve → `batches/estimate` → `POST /v1/video-generations` → raw scene clips. Presets: `GET /v1/art-style-presets`.
+Sequence `fictora-produce` runs: `POST /v1/prompt-video-authoring-drafts` (`episode_count: 1`, `outline_mode: arc_at_episode_two`, `cut_tempo`) → cast enrol → cast approve → spine approve → boards enrol + exposure → boards approve → `batches/estimate` (this episode) → `POST /v1/video-generations` → raw takes from the take jobs + `GET /v1/jobs/{take}/take-facts?spine_id=`. Episode 2 on: `director/brief` → `series-arc` → `pilot-episodes/{n}/author` → `pilot-episodes/{n}/approve` → boards → estimate → take. `/delivery` is never needed (hosted post is off). Presets: `GET /v1/art-style-presets`.
+
+## Commands for edits and checks
+
+```bash
+uv run fictora-produce edit --desk D --episode N (--beat ID|N | --frame ID|N | --line-id ID) [--intent TEXT] [--set KEY=VALUE ...] [--text T] [--spoken S] [--subtitle S] [--select-regen] [--preview]
+uv run fictora-produce look --desk D --url https://…          # pin one style frame (after the draft, before plates); spends nothing
+uv run fictora-produce look-note --desk D (--add TEXT | --remove ID|N)   # at most five; the next drawing uses them
+uv run fictora-produce spine --desk D --refresh
+uv run fictora-produce redraw-board --desk D --episode N --take tK --cause "why"   # $0.30; back to the board gate
+uv run fictora-produce check-lines --desk D --episode N [--take tK]                # exit 5 when an approved line was not asked for
+```
+
+- `edit` before the script gate is a plain patch. After it, the server asks for a cascade: `edit` prints every item, runs the free ones, and leaves the paid ones (`tier media`) off unless `--select-regen`; it names each board that no longer matches (redraw it with `redraw-board`). `--preview` stops after the list.
+- `edit --line-id … --spoken "…" [--subtitle "…"]` pins the exact performed line on a Japanese or Korean show before the script gate; an English show refuses it. A new English `--text` on such a show is re-localized when the script is approved.
+- `redraw-board` warns when the frame briefs have not changed since the last drawing (a re-roll). A beat edit made after the board was drawn is carried into the redraw by the server. The cause is a label on the desk only.
 
 ## Desk artefacts
 
@@ -239,7 +267,9 @@ Sequence `fictora-produce` runs: `POST /v1/prompt-video-authoring-drafts` → ca
 | --- | --- |
 | `production.json`, `production.config.json` | Phase machine, tunables |
 | `ep01/api/*.json`, `ep01/api/run.log` | Numbered API snapshots, JSONL poll log (support only) |
-| `ep01/plates/`, `boards/`, `takes/` | Review surface |
+| `ep01/plates/`, `epNN/boards/`, `epNN/takes/` | Review surface |
+| `api/spine.json`, `epNN/api/spine.json` | The story as last read; `api/brief-epNN-vK.json` briefs and arcs |
+| `epNN/api/take-facts-epNN-tK-vN.json` | Take facts: lane, seconds, reference images, shots, which approved line ids were asked for. Never the prompt |
 | `ep01/run-notes.md` | Ledger, job ids, faults, causes |
 
 ## Poll deadlines

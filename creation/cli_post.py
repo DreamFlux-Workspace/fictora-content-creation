@@ -24,7 +24,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     voice = sub.add_parser(
         "voice",
         help="Change a character's voice (never regenerate): --audition renders 4-10 candidates on their real "
-        "lines ($0.30 a set, your Fal key); --pick N locks one on the cast card (free).",
+        "lines ($0.30 a set, rendered on the server); --pick N locks one on the cast card (free).",
     )
     voice.add_argument("--desk", type=Path, required=True)
     voice.add_argument("--cast", required=True, help="cast_id or name.")

@@ -9,6 +9,12 @@ import httpx
 
 from creation.ops.folder import next_versioned_path
 
+#: R2 public buckets answer 403 to Python client user agents; curl and browsers work.
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/126.0 Safari/537.36"
+)
+
 
 def _suffix_from_url(url: str, default: str) -> str:
     path = urlparse(url).path
@@ -49,7 +55,7 @@ def download_to_versioned(
 
     suffix = _suffix_from_url(url, default_suffix)
     dest = next_versioned_path(directory, stem, suffix)
-    response = client.get(url, follow_redirects=True)
+    response = client.get(url, follow_redirects=True, headers={"User-Agent": BROWSER_USER_AGENT})
     response.raise_for_status()
     dest.write_bytes(response.content)
     return dest

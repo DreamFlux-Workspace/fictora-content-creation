@@ -32,7 +32,7 @@ You never need the private `fictora-drama` repo. Never paste the API token into 
 ## One-time setup (each person, ~10 min)
 
 1. Clone `DreamFlux-Workspace/fictora-content-creation` and run `uv sync`.
-2. Copy `.env.example` → `.env` and set **`FICTORA_DRAMA_GENERATION_SERVICE_TOKEN`** (from engineering) and **`FAL_KEY`** (your Fal key: the local finish renders sound effects, the music bed and voice changes on it).
+2. Copy `.env.example` → `.env` and set **`FICTORA_DRAMA_GENERATION_SERVICE_TOKEN`** (from engineering) (nothing else: no provider key goes on this laptop; generated audio is made on the server).
 3. Open the **repo root** in Cursor (so the **episode-production** skill loads).
 4. Optional check (no spend): `uv run python scripts/smoke_live.py --phase read`
 5. For the local finish (sound effects, music, mix, captions, mark), install **ffmpeg with libass** on macOS:
@@ -56,7 +56,7 @@ Story (ep1 only — no series arc yet):
 
 Desk:
 - `uv run fictora-produce start` with series "…" and your premise.
-- Use `--draft-episodes 4`, `--clip-seconds 15`, `--cut-tempo one_shot`, `--caption-style house`.
+- Use `--clip-seconds 15`, `--cut-tempo punchy` (or `one_shot` for a monologue or a walk), `--caption-style house`. Episode 1 is drafted alone.
 - Do NOT pass `--api-captions` (default: raw clip on server, captions on laptop).
 
 Workflow:
@@ -78,7 +78,7 @@ Start with `start`, print desk path and phase, wait for my "aligned" before the 
 | 1 | — | **aligned** | First `step` (draft plan) |
 | 2 | `ep01/plates/` | **plates ok** / **next** | `approve --gate plates` then `step` |
 | 3 | Script in chat or `ep01/api/03_spine.json` beats | **script ok** / **next** | `approve --gate script` then `step` (boards) |
-| 4 | `ep01/boards/` + exposure note in chat | **board ok** / **next** | `approve --gate board --path …` (add **`--accept-dim`** if board is dark night interior) |
+| 4 | `ep01/boards/` + exposure note in chat | **board ok** / **next** | `approve --gate board` (brightness is information only; to change it: `edit --frame`, then `redraw-board`) |
 | 5 | Estimate in chat (~**$1.20** take) | **yes** | `step --confirm-spend` |
 | 6 | The raw take, then `ep01/takes/take-ep01-t1-sokii-vN.mp4` | **Use it**, or **Change this** + cause | `finish` on Use it; re-board or re-film only with a named cause |
 
@@ -129,9 +129,8 @@ uv run fictora-produce start \
   --band 15s \
   --preset-id modern-dark-fantasy \
   --video-lane minimax-h3 \
-  --draft-episodes 4 \
   --clip-seconds 15 \
-  --cut-tempo one_shot \
+  --cut-tempo punchy \
   --caption-style house
 
 # One automated API block per invocation
@@ -140,16 +139,13 @@ uv run fictora-produce step --desk <desk>
 # Human gates
 uv run fictora-produce approve --desk <desk> --gate plates
 uv run fictora-produce approve --desk <desk> --gate script
-uv run fictora-produce approve --desk <desk> --gate board \
-  --path <desk>/ep01/boards/board-ep01-t1-1-v1.png
-# If exposure was below dim floor and you accept the dark board:
-#   ... --accept-dim
+uv run fictora-produce approve --desk <desk> --gate board
 
 # Film take (after you said yes to estimate)
 uv run fictora-produce step --desk <desk> --confirm-spend
 ```
 
-**Do not use `--draft-episodes 5`** — prod plans four episodes; five causes plan errors.
+**Episode 2 on:** `arc --desk <desk> --list --episodes N`, `arc --pick K`, then `author --desk <desk> --episode 2 --direction K` (or `--line "…"`), and the same gates.
 
 **Do not use `--api-captions`** unless engineering asks — it slows post and waits on server burn-in.
 
@@ -225,8 +221,8 @@ A **second** take needs a **named cause** (brief/board issue), not “try again.
 | Empty `plates/` or `boards/` right after step | Pull latest `main`; re-run `step` on same desk if phase allows, or ask agent to download from `ep01/api/06_*cast_terminal*.json` / `09_*boards_terminal*.json`. |
 | Network error while polling | Same desk, run `step` again — job may still be running server-side. |
 | Stuck at 50% on **video** with **local captions** | Often post-prod you can ignore; with `api_captions: false` the harness should already stop at raw clip. Check for `17_raw_scene_clips.json`. |
-| Board “dim” warning (~14–24% luma) | Night interiors are common; approve with **`--accept-dim`** if the mosaic looks right on screen. |
-| Plan fails on episode 5 | Set **`draft_episode_count` to 4** only. |
+| Dark board (~14–24% luma) | Information only. Approve it if the mosaic looks right on screen. |
+| Draft or author failed | The message names the rule that failed; fix the brief or the direction, do not re-run blind. |
 | Token / 503 / billing | Engineering — do not rotate token in chat. |
 
 Video stuck in post: `fictora-produce cancel-job` and stop. Do not `retry-video`. A second enrol starts another ffmpeg job on Railway.

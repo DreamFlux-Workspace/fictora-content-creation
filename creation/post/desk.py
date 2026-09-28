@@ -5,14 +5,15 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from creation.harness.credentials import load_drama_api_credentials
+from creation.harness.raw_video import episode_clips
 from creation.harness.session import DramaApiRunSession
 from creation.ops.state import episode_by_ordinal, load_series, take_by_id
 from creation.production_state import load_production
+from creation.spine_view import episode_id_for
 
 
 def open_api(desk: Path, episode: int) -> DramaApiRunSession:
@@ -81,7 +82,7 @@ def saved_spine(desk: Path, episode: int) -> tuple[dict[str, Any], Path] | None:
 
 
 def refresh_spine(run: DramaApiRunSession, desk: Path, episode: int) -> dict[str, Any]:
-    """GET the spine and save it as ``epNN/api/20_spine_<utc>.json`` (newest by name).
+    """GET the spine and save it where the episode flow keeps it (``api/spine.json``, ``epNN/api/spine.json``).
 
     Returns
     -------
@@ -89,19 +90,11 @@ def refresh_spine(run: DramaApiRunSession, desk: Path, episode: int) -> dict[str
         The spine.
     """
 
+    from creation.orchestrate import save_spine_snapshot
+
     body = spine_body(run.spine(spine_id(desk)))
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
-    run.save(f"20_spine_{stamp}.json", body)
+    save_spine_snapshot(desk, episode, body)
     return body
-
-
-def episode_id_for(spine: Mapping[str, Any], ordinal: int) -> str:
-    """The API's episode id for an ordinal (``episode_01``, ``ep_02`` ...), via ``episode_summaries``."""
-
-    for summary in spine.get("episode_summaries") or []:
-        if isinstance(summary, Mapping) and int(summary.get("ordinal") or 0) == ordinal and summary.get("episode_id"):
-            return str(summary["episode_id"])
-    return f"episode_{ordinal:02d}"
 
 
 def episode_dialogue(spine: Mapping[str, Any], ordinal: int) -> list[dict[str, str]]:
@@ -191,13 +184,23 @@ def approved_board(desk: Path, episode: int, take_id: str) -> Path | None:
 
 
 def take_job_id(desk: Path, episode: int, take_id: str) -> str | None:
-    """The take's scene job id from ``api/17_raw_scene_clips.json`` (take ``tN`` is clip ``N``)."""
+    """The take's scene job id from ``epNN/api/17_raw_scene_clips.json``.
+
+    The episode's clips are found by its API id (by ordinal via ``episode_summaries``);
+    take ``tN`` is the clip with board index ``N``, else the ``N``-th clip.
+    """
 
     path = desk / f"ep{episode:02d}" / "api" / "17_raw_scene_clips.json"
     if not path.is_file():
         return None
-    clips = json.loads(path.read_text(encoding="utf-8")).get("clips") or []
-    index = int(take_id.lstrip("t") or 1) - 1
-    if 0 <= index < len(clips) and isinstance(clips[index], dict) and clips[index].get("job_id"):
-        return str(clips[index]["job_id"])
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    found = saved_spine(desk, episode)
+    wanted = episode_id_for(found[0], episode) if found else f"episode_{episode:02d}"
+    clips = episode_clips(raw, episode_id=wanted)
+    index = int(take_id.lstrip("t") or 1)
+    for clip in clips:
+        if clip.get("set_index") == index and clip.get("job_id"):
+            return str(clip["job_id"])
+    if 0 < index <= len(clips) and clips[index - 1].get("job_id"):
+        return str(clips[index - 1]["job_id"])
     return None

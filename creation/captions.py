@@ -97,8 +97,11 @@ def episode_lines(spine: dict[str, Any], episode_ordinal: int) -> list[str]:
         Non-empty dialogue texts.
     """
 
+    from creation.spine_view import episode_id_for
+
     body = spine.get("spine", spine)
-    episode_id = f"episode_{episode_ordinal:02d}"
+    # Found by ordinal through episode_summaries: episode 2 can be ``ep_02``, not ``episode_02``.
+    episode_id = episode_id_for(body, episode_ordinal)
     lines: list[str] = []
     for beat in body.get("beats") or []:
         if beat.get("episode_id") != episode_id:

@@ -52,13 +52,14 @@ Read when you need the detail, not all on the first turn:
 | Draft | `fictora-produce step --desk D` | Compare brief lines with the spine |
 | Plates | `fictora-produce step --desk D` | `approve --desk D --gate plates` after a yes |
 | Script | (lines from the draft) | `approve --desk D --gate script` after a yes |
-| Board | `fictora-produce step --desk D` | `approve --desk D --gate board --path <boards/…png> [--accept-dim]` |
+| Board | `fictora-produce step --desk D` (prints the shot list and safe-zone warnings) | `approve --desk D --gate board`; or `redraw-board --desk D --episode N --take tK --cause "…"` |
 | Estimate | `fictora-produce step --desk D` | The human says yes to the number |
 | Take | `fictora-produce step --desk D --confirm-spend` | — |
 | Read | watch `takes/`, write every fault | Use it, or Change this + cause |
 | Finish | `fictora-produce finish --desk D [--take-file F]` | Watch the final file; the last line must read `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓` |
+| Next episode | `arc --desk D --list` / `--pick K` (episode 2), `brief --desk D --episode N` (3 on), `author --desk D --episode N --direction K` or `--line "…"` | Script yes, then the same Board → Finish loop |
 
-`fictora-produce status --desk D` any time. After each stage: report the path, append `run-notes.md` (`fictora-ops note`), stop.
+Optional after the draft, before the plates: `look --desk D --url https://…` pins one style frame; `look-note --desk D --add "…"` steers the drawings. Edits: `edit` (beat, frame, or a pinned JA/KO line; reference.md). `fictora-produce status --desk D` any time. After each stage: report the path, append `run-notes.md` (`fictora-ops note`), stop.
 
 ## Brief
 
@@ -97,7 +98,9 @@ Open the newest `boards/` file and check (full list: [checklists.md](../../../do
 - **Speakers:** a spoken line sits on a row where its speaker is in frame, medium or closer. No off-screen speaker is drawn.
 - **Speaking mouths:** no clench, grit, pressed or closed mouth on a speaking row. Big acting goes before and after the line; during the words the mouth moves.
 - **Expressions** fit the moment and the right face (library in reference.md).
-- The hook, the hand-off, the safe zones, no readable text or digits. Report brightness; a dark board is the human's call (`--accept-dim`).
+- The hook, the hand-off, the safe zones, no readable text or digits. Report brightness: information only, a dark board is the human's call. To change a board, fix the frame first (`edit --frame … --set …`), then `redraw-board` (it takes no notes).
+
+**Lost board records:** until the server fix for lost board records lands, don't redraw a board after editing a shot on it; tell engineering instead (desk, episode, take, the `edit` you made).
 
 ## Spend (warn, never block)
 
@@ -115,7 +118,7 @@ The take step stops at the raw clip: the model's sound only, no music, no effect
 uv run fictora-produce finish --desk D [--episode N] [--take tK] [--take-file F] [--duck-db N] [--sfx-adjust "door=-6"] [--line-start S ...] [--no-colour-match]
 ```
 
-It lays the take's sound effects (from `GET /v1/jobs/{take_job}/take-facts`, never the prompt), the show's music bed (pinned once per show; `set-bed --desk D --path F` pins your own file), matches the look to the approved board, mixes at a measured level near −18 LUFS, burns house captions and puts the Sokii mark top left. Every step writes a new `take-epNN-tK-<step>-vN.mp4`. Needs `FAL_KEY` in `.env` and ffmpeg with libass.
+It lays the take's sound effects (from `GET /v1/jobs/{take_job}/take-facts`, never the prompt), the show's music bed (pinned once per show; `set-bed --desk D --path F` pins your own file), matches the look to the approved board, mixes at a measured level near −18 LUFS, burns house captions and puts the Sokii mark top left. Every step writes a new `take-epNN-tK-<step>-vN.mp4`. Needs ffmpeg with libass. Generated audio (effects, the bed, voices, Whisper timings) is made on the server by Drama API operator endpoints; no provider key ever goes on this laptop. Until those endpoints are live, `finish` still does the look, mix, captions and mark but reports `NOT DONE` (no music, no SFX) and `voice --audition` / `revoice` stop with a clear message: tell engineering, never add a key.
 
 - The last line reads `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`. `NOT DONE` and exit code **5** mean music, SFX or the mix is missing: do not hand the file over; fix what it names and run `finish` again.
 - A `409 hosted_post_off`, or a `503 restate_unavailable` from post-production, is not an outage: never retry it, run `finish`.
@@ -142,4 +145,4 @@ Play the candidates (`shared/voices/<cast>/audition-vN/`) to the human; a second
 
 ## Episode 2 on
 
-Episode 1 approved first. Ask the human how many episodes the run should be. For a long run prefer an arc with an engine (a situation that repeats with a new problem) plus a slow question; refuse an arc that closes within a few episodes. Steer each later episode by its direction in the human's words, not by series-wide notes. Never pre-stage scripts for later episodes. Commands: reference.md.
+Episode 1 approved first. Ask the human how many episodes the run should be. For a long run prefer an arc with an engine (a situation that repeats with a new problem) plus a slow question; refuse an arc that closes within a few episodes. Steer each later episode by its direction in the human's words, not by series-wide notes. Never pre-stage scripts for later episodes. Commands: `arc --list [--episodes N]`, `arc --pick K`, `author --episode N --direction K | --line "…"`, then `approve --gate script` and the same loop (reference.md).

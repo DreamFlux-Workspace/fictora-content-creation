@@ -64,7 +64,7 @@ This is the order `fictora-produce` runs them in.
 ```
 
 1. **Brief.** One line of premise, the cast, the set, the hook, the lines. If the story needs a fact the picture cannot show, that fact must be spoken in a line. Decide now. Episode 1 is made on its own: no series arc yet (see Series arc).
-2. **Draft.** The first `step` writes the story on the API. Compare its lines with the brief before the script gate. The desk's `draft_episode_count` (4) is the server's cadence for the estimate, not a season outline.
+2. **Draft.** The first `step` writes the story on the API. Compare its lines with the brief before the script gate. The draft writes episode 1 alone (`outline_mode=arc_at_episode_two`, `episode_count: 1`); later episodes are written with `author --episode N`.
 3. **Cast plates.** One full-length figure plus a bust per character, plus object plates for any prop that must stay consistent, plus a location sheet for a set that recurs. Gate: show the plates, get a yes.
 4. **Script.** Beats and lines per take, three lines maximum. Gate: the lines, in the original language, with the translation, and every line the writers changed from the brief.
 5. **Board.** The storyboard mosaic. Measure mean luma and report it with the board; a dark board is the human's call, not a fault. Gate: the board image itself, checked against the board checks below.
@@ -114,13 +114,14 @@ Budgets are **warnings, never a hard stop**: first 15 s episode of a new series 
 - Check each arc can carry the run. For a long run prefer an engine (a situation that repeats with a new problem) plus a slow question. Refuse an arc that closes within a few episodes (a 25–30 episode run was once offered a one-week mystery).
 - Each later episode is steered by its **direction**: the human picks one of the offered directions or says their own, and it reaches the writer in their words. Confirm the idea is in the printed script. Series-wide memory is for standing rules ("keep every episode punchy"), never for one episode's idea.
 - Each episode's script is approved on its own. Never pre-stage scripts for later episodes.
+- Commands: `fictora-produce arc --desk D --list [--episodes N]`, `arc --pick K`, `brief --desk D --episode N` (3 on), `author --desk D --episode N --direction K | --line "…"`, then `approve --gate script` and the usual loop. The run length is a soft default; the season continues past it.
 
 ### The hook: the first three seconds
 
 - Frame 0 is mid-motion on a face: a hand already moving, a head already turning. It is the cover frame. Never an establishing wide, never a still.
 - The first line lands by about 0.5 s.
 - The premise's reveal (the thing the episode is about) is on screen or said by about 3 s.
-- Check it in the brief, the script and the board, before the board gate. A board that opens on a wide or a pause is redrawn with that as the shape note; a weak open is never fixed by re-filming.
+- Check it in the brief, the script and the board, before the board gate. A board that opens on a wide or a pause is redrawn: fix the frame (`edit --frame … --set …`), then `redraw-board` (the route takes no notes). A weak open is never fixed by re-filming.
 
 ### Social safe zones
 
@@ -135,7 +136,7 @@ Every episode goes to TikTok, Instagram Reels and YouTube Shorts with one layout
 - Faces, eyes, mouths and key props never sit in a covered zone. Bodies, hands, floor and set may run through them. Composition is otherwise free: faces are not forced to the centre (it looked ugly).
 - Captions sit in the band 55–70% of the height.
 - The Sokii mark sits top left, just under the top strip: `23:121` on 768×1344 (x = 3% of the width, y = 9% of the height), 0.6 opacity. Never top right.
-- There is no face detector. Look at every cell of the board. A face or key prop in a zone is a redraw with the placement as the shape note.
+- There is no face detector. The boards `step` warns when a frame's written placement puts a face or prop in a zone (text only); look at every cell anyway. A face or key prop in a zone: fix the frame's placement with `edit --frame`, then `redraw-board`.
 
 ### Expression library
 
@@ -281,7 +282,7 @@ Extra cost:            <$ and minutes>
 
 Always warn for: assembling a length other than 15, 30, or 60s; editing product code or settings (never acceptable — propose it to engineering).
 
-Do not warn for: `clip_duration_seconds` in 4–15; `cut_tempo=one_shot`; `caption_style=house`; product hand-off paste; 2×N row boards when every frame sets `board_row`; `PUT .../inner-voice`; voice auditions and pick; `POST .../audio-bed`; product sidechain ducking. Those are aligned.
+Do not warn for: `clip_duration_seconds` in 4–15; `cut_tempo=one_shot`; `caption_style=house`; product hand-off paste; 2×N row boards when every frame sets `board_row`; `PUT .../inner-voice`; voice auditions and pick; `POST .../audio-bed`; product sidechain ducking; `arc`, `brief`, `author`, `memory`, `edit`, `look`, `look-note`, `redraw-board`, `check-lines`. Those are aligned.
 
 Money warnings:
 

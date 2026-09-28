@@ -5,10 +5,10 @@ Order ``finish`` uses (first that exists wins):
 1. the bed pinned on this desk (``series.json`` ``bed_path``; ``set-bed --path`` sets it);
 2. the show's bed pinned on the spine (``series_audio_bed_url``, set by
    ``POST /v1/spines/{id}/audio-bed``), downloaded once into ``shared/beds/``;
-3. a bed made locally, once per show: Fal Stable Audio 2.5 (a few cents),
-   instrumental, seeded from the spine id so one show always gets the same
-   piece, levelled to -20 LUFS. The description is the operator's
-   ``--music`` text, else a plain one built from the show's genre.
+3. a bed made once per show on the server (:class:`~creation.post.audio_service.AudioService`,
+   a few cents; the server writes the music brief from the show's genre, or
+   uses the operator's ``--music`` words), downloaded and levelled here to
+   -20 LUFS.
 """
 
 from __future__ import annotations
@@ -24,16 +24,17 @@ from urllib.parse import urlparse
 
 from creation.ops.folder import next_versioned_path
 from creation.ops.state import load_series, save_series
-from creation.post.fal import MUSIC_ENDPOINT, FalCalls, FalClientCalls, download, output_url
+from creation.post.audio_service import AudioService, download
 from creation.post.media import run_ffmpeg
 
 DEFAULT_BED_DB = -16.5
 BED_LUFS = -20.0
 BED_SECONDS = 30
 BED_USD = 0.06
-"""Stable Audio 2.5 bed, roughly; booked to the ledger by the caller."""
+"""One generated bed, roughly; booked to the ledger by the caller."""
 
-Maker = Callable[[str, int, Path], Path]
+Maker = Callable[[Mapping[str, Any], str | None, Path], Path]
+"""``(spine, music words or None, target) -> raw bed file``."""
 Downloader = Callable[[str, Path], Path]
 
 
@@ -51,33 +52,20 @@ class Bed:
         return f"{self.source} bed `{self.path.name}`"
 
 
-def bed_description(spine: Mapping[str, Any], music: str | None = None) -> str:
-    """What the music endpoint is asked for: the operator's words, else a plain genre line."""
+def service_music_maker(audio: AudioService) -> Maker:
+    """Make a raw bed through the audio service (server-side), keyed per show and description."""
 
-    if music and music.strip():
-        return music.strip()
-    genre = str(spine.get("microdrama_genre") or "drama").replace("_", " ")
-    return (
-        f"Instrumental underscore for a {genre} short drama. Soft, unobtrusive, sits under dialogue, "
-        "steady and loopable. No vocals, no lyrics."
-    )
-
-
-def bed_seed(spine: Mapping[str, Any]) -> int:
-    """Stable seed per show (from the spine id)."""
-
-    digest = hashlib.sha256(str(spine.get("spine_id") or "show").encode()).hexdigest()
-    return int(digest[:8], 16)
-
-
-def fal_music_maker(fal: FalCalls | None = None) -> Maker:
-    """Render a raw bed on Fal Stable Audio 2.5."""
-
-    def make(description: str, seed: int, target: Path) -> Path:
-        client = fal or FalClientCalls()
-        arguments = {"prompt": description, "seconds_total": BED_SECONDS, "seed": seed}
-        output = client.result(MUSIC_ENDPOINT, client.submit(MUSIC_ENDPOINT, arguments))
-        return download(output_url(output, "audio"), target)
+    def make(spine: Mapping[str, Any], music: str | None, target: Path) -> Path:
+        spine_id = str(spine.get("spine_id") or "")
+        key = f"bed-{spine_id}" + (f"-{hashlib.sha256(music.encode()).hexdigest()[:10]}" if music else "")
+        url = audio.music_bed(
+            spine_id=spine_id,
+            genre=str(spine.get("microdrama_genre") or "") or None,
+            description=music,
+            seconds=BED_SECONDS,
+            key=key,
+        )
+        return download(url, target)
 
     return make
 
@@ -128,7 +116,7 @@ def resolve_bed(
     *,
     spine: Mapping[str, Any] | None,
     music: str | None = None,
-    maker: Maker | None = None,
+    maker: Maker,
     downloader: Downloader = download,
 ) -> Bed:
     """Find or make the show's bed and pin it on the desk.
@@ -142,7 +130,7 @@ def resolve_bed(
     music
         Operator's own description for a bed that has to be made.
     maker
-        Renders a raw bed (Fal Stable Audio 2.5 by default).
+        Makes a raw bed (:func:`service_music_maker` in production).
     downloader
         Fetches the spine's pinned bed.
 
@@ -169,14 +157,12 @@ def resolve_bed(
         return Bed(pin_bed(desk, path), "the show's (spine)")
     if spine is None:
         raise ValueError("no bed pinned and no saved spine to make one: pin a file with `set-bed --path`")
-    description = bed_description(spine, music)
     target = next_versioned_path(beds, "show-bed", ".mp3")
     with tempfile.TemporaryDirectory() as scratch:
-        raw = (maker or fal_music_maker())(description, bed_seed(spine), Path(scratch) / "raw-bed")
+        raw = maker(spine, music, Path(scratch) / "raw-bed")
         level_bed(raw, target)
     target.with_suffix(".json").write_text(
-        json.dumps({"spine_id": spine.get("spine_id"), "description": description, "endpoint": MUSIC_ENDPOINT},
-                   indent=2) + "\n",
+        json.dumps({"spine_id": spine.get("spine_id"), "music": music, "made_by": "drama-api"}, indent=2) + "\n",
         encoding="utf-8",
-    )  # fmt: skip
+    )
     return Bed(pin_bed(desk, target), "made", BED_USD)

@@ -1,7 +1,8 @@
-"""Whisper word timing on Fal, and matching approved lines to what was heard (English)."""
+"""Whisper word timing (made on the server), and matching approved lines to what was heard (English)."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import unicodedata
@@ -9,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from creation.post.fal import WHISPER_ENDPOINT, FalCalls, FalClientCalls
+from creation.post.audio_service import AudioService
 from creation.post.media import extract_wav
 
 #: Share of a line's words heard in order for the line to count as heard.
@@ -39,8 +40,8 @@ class LineWindow:
     ratio: float
 
 
-def transcribe_with_fal(media: Path, out_json: Path, *, fal: FalCalls | None = None) -> Path:
-    """Transcribe ``media`` with Fal Whisper at word level (English) and save the response.
+def transcribe(media: Path, out_json: Path, *, audio: AudioService) -> Path:
+    """Get Whisper word timings for ``media`` (English) from the audio service and save them.
 
     Parameters
     ----------
@@ -48,8 +49,8 @@ def transcribe_with_fal(media: Path, out_json: Path, *, fal: FalCalls | None = N
         Video or audio.
     out_json
         Where the response is saved.
-    fal
-        Fal calls (``FalClientCalls`` by default).
+    audio
+        The generated-audio service (server-side Whisper).
 
     Returns
     -------
@@ -57,15 +58,9 @@ def transcribe_with_fal(media: Path, out_json: Path, *, fal: FalCalls | None = N
         ``out_json``.
     """
 
-    client = fal or FalClientCalls()
     wav = extract_wav(media, out_json.with_suffix(".wav"))
-    arguments = {
-        "audio_url": client.upload(wav),
-        "task": "transcribe",
-        "language": "en",
-        "chunk_level": "word",
-    }
-    output = client.result(WHISPER_ENDPOINT, client.submit(WHISPER_ENDPOINT, arguments))
+    key = "whisper-" + hashlib.sha256(wav.read_bytes()).hexdigest()[:16]
+    output = audio.transcribe(media=wav, key=key)
     out_json.write_text(json.dumps(output, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return out_json
 

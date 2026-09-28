@@ -2,8 +2,9 @@
 
 The cue plan comes from ``GET /v1/jobs/{take_job}/take-facts`` (``sfx_cues``:
 the authored Sound label, shot, start, length, kind; ``shots[].speaks`` for the
-speaking windows). Each cue renders on Fal ElevenLabs sound effects v2
-(about $0.002 a second), is checked for shape (an event must hit early, a
+speaking windows). Each cue is rendered on the server from its authored Sound
+label (:class:`~creation.post.audio_service.AudioService`; about $0.002 a
+second; no provider key or effect prompt on this laptop), is checked for shape (an event must hit early, a
 sustained sound must hold), and is cached in ``epNN/sfx/`` by sound and length,
 so a re-mix at another level costs nothing. Effects sit under the take
 (-8 dB by default) and drop a further 10 dB while someone speaks.
@@ -19,9 +20,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from creation.harness.session import DramaApiRunSession
-from creation.ops.folder import next_versioned_path
-from creation.post.fal import SFX_ENDPOINT, FalCalls, FalClientCalls, download, output_url
+from creation.post.audio_service import AudioService, AudioServicePending, download
 from creation.post.media import LIMITER, measure_rms_windows, probe_video, run_ffmpeg
 
 SFX_USD_PER_SECOND = 0.002
@@ -47,15 +46,6 @@ class SfxCue:
     start: float
     seconds: float
     gain_db: float = SFX_GAIN_DB
-
-    @property
-    def text(self) -> str:
-        """What the effect endpoint is asked for: the authored sound, isolated."""
-
-        line = self.sound.strip().rstrip(".")
-        if self.kind == "sustained":
-            return f"{line}. Continuous sound holding for the whole clip. No music, no speech."
-        return f"{line}. A single isolated sound effect, clean and close. No music, no speech."
 
     @property
     def cache_key(self) -> str:
@@ -180,25 +170,6 @@ def saved_take_facts(desk: Path, episode: int, take_id: str) -> Path | None:
     return max(found, key=version) if found else None
 
 
-def fetch_take_facts(
-    run: DramaApiRunSession, desk: Path, *, episode: int, take_id: str, job_id: str, spine: str
-) -> Path:
-    """GET the take's facts (no prompt text) and save a versioned copy under ``api/``.
-
-    Returns
-    -------
-    Path
-        The saved JSON.
-    """
-
-    payload = run.get(f"/v1/jobs/{job_id}/take-facts?spine_id={spine}")
-    api = desk / f"ep{episode:02d}" / "api"
-    api.mkdir(parents=True, exist_ok=True)
-    path = next_versioned_path(api, f"take-facts-ep{episode:02d}-{take_id}", ".json")
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    return path
-
-
 def shape_problem(kind: str, levels: tuple[float, ...]) -> str | None:
     """What is wrong with a rendered cue's shape, or ``None``: an event must hit in its first second,
     a sustained sound must not collapse after the first half second."""
@@ -217,17 +188,13 @@ def shape_problem(kind: str, levels: tuple[float, ...]) -> str | None:
     return None if held / len(tail) >= 0.5 else "sustained sound collapses"
 
 
-def fal_renderer(fal: FalCalls | None = None) -> Renderer:
-    """Render a cue on Fal ElevenLabs sound effects v2 (lazily needs ``FAL_KEY``)."""
+def service_renderer(audio: AudioService) -> Renderer:
+    """Render a cue through the audio service (server-side), keyed so a re-run never pays twice."""
 
     def render(cue: SfxCue, target: Path) -> Path:
-        client = fal or FalClientCalls()
-        arguments = {
-            "text": cue.text,
-            "duration_seconds": round(max(SFX_MIN_SECONDS, min(SFX_MAX_SECONDS, cue.seconds)), 2),
-        }
-        output = client.result(SFX_ENDPOINT, client.submit(SFX_ENDPOINT, arguments))
-        return download(output_url(output, "audio"), target)
+        seconds = round(max(SFX_MIN_SECONDS, min(SFX_MAX_SECONDS, cue.seconds)), 2)
+        url = audio.sfx_cue(sound=cue.sound, kind=cue.kind, seconds=seconds, key=f"sfx-{cue.cache_key}")
+        return download(url, target)
 
     return render
 
@@ -271,7 +238,7 @@ def lay_sfx(
     cache_dir: Path,
     output: Path,
     adjustments: tuple[Adjustment, ...] = (),
-    render: Renderer | None = None,
+    render: Renderer,
     measure: Meter = measure_rms_windows,
 ) -> SfxResult:
     """Render (or reuse) each cue and mix the usable ones under the take into ``output``.
@@ -289,7 +256,7 @@ def lay_sfx(
     adjustments
         Per-take level changes.
     render
-        Cue renderer (Fal by default).
+        Cue renderer (:func:`service_renderer` in production).
     measure
         Shape meter.
 
@@ -306,7 +273,6 @@ def lay_sfx(
 
     if output.exists():
         raise FileExistsError(f"{output} exists; local post never overwrites")
-    render = render or fal_renderer()
     info = probe_video(take)
     cache_dir.mkdir(parents=True, exist_ok=True)
     kept: list[tuple[SfxCue, Path]] = []
@@ -327,6 +293,8 @@ def lay_sfx(
         for _attempt in (1, 2):
             try:
                 path = render(cue, cached)
+            except AudioServicePending:
+                raise
             except (RuntimeError, OSError, KeyError, ValueError) as exc:
                 skipped.append(f"{cue.sound} (render failed: {str(exc)[:120]})")
                 break

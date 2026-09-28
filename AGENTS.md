@@ -7,8 +7,7 @@ Partners clone **this repo only**. They orchestrate episode production with the 
 | Allowed | Forbidden |
 | --- | --- |
 | `creation.harness.*` HTTP to `/v1/*` | `prompts/`, drama `src/` |
-| `uv run fictora-ops …` desk tooling | Server Fal keys, provider compile strings |
-| Local post in `creation/post` on the producer's own `FAL_KEY` (public Fal endpoints, ffmpeg) | Server post modules, server prompt templates |
+| `uv run fictora-ops …` desk tooling | Fal keys, provider compile strings |
 | User premises in API bodies | Scraping or storing system prompts |
 
 ## Default workflow

@@ -16,7 +16,13 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-from creation.post.media import LIMITER, measure_loudness, measure_rms_windows, probe_video, run_ffmpeg
+from creation.post.media import (
+    LIMITER,
+    measure_loudness,
+    measure_rms_windows,
+    probe_video,
+    run_ffmpeg,
+)
 
 TARGET_LUFS = -18.0
 LUFS_BAND = (-20.0, -15.0)

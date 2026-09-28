@@ -54,6 +54,18 @@ def test_episode_lines_reads_only_that_episode_in_order() -> None:
     assert episode_lines(spine, 1) == ["I'm coming for you.", "Second."]
 
 
+def test_episode_lines_find_a_later_episode_by_ordinal_not_by_name() -> None:
+    spine = {
+        "episode_summaries": [{"episode_id": "episode_01", "ordinal": 1}, {"episode_id": "ep_02", "ordinal": 2}],
+        "beats": [
+            {"episode_id": "episode_01", "dialogue_lines": [{"text": "First."}]},
+            {"episode_id": "ep_02", "dialogue_lines": [{"text": "Second episode line."}]},
+        ],
+    }
+    assert episode_lines(spine, 2) == ["Second episode line."]
+    assert episode_lines(spine, 1) == ["First."]
+
+
 def test_real_take_anchors_line_on_first_speech_span_not_the_tail() -> None:
     duration = 15.104
     spans = speech_spans(parse_silencedetect(REAL_TAKE_STDERR, duration), duration)

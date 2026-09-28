@@ -1,4 +1,4 @@
-"""finish: the whole local chain on a real take (ffmpeg), Fal and the API stubbed."""
+"""finish: the whole local chain on a real take (ffmpeg); the API and the generated-audio service stubbed."""
 
 from __future__ import annotations
 
@@ -48,33 +48,33 @@ def fake_sfx(calls: list[str]):
     return render
 
 
-def fake_bed(description: str, seed: int, target: Path) -> Path:
+def fake_bed(spine: dict, music: str | None, target: Path) -> Path:
     # Loud enough that the mixed take has no silence left: captions must be timed on the take before the bed.
     return make_tone(target.with_suffix(".wav"), seconds=6.0, freq=220, volume=0.9)
 
 
-def _board(desk: Path) -> Path:
-    board = desk / "ep01" / "boards" / "board-ep01-t1-1-v1.png"
+def _board(post_desk: Path) -> Path:
+    board = post_desk / "ep01" / "boards" / "board-ep01-t1-1-v1.png"
     board.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", (192, 336), (200, 150, 110)).save(board)
-    approve_board(desk, episode=1, take_id="t1", image=board)
+    approve_board(post_desk, episode=1, take_id="t1", image=board)
     return board
 
 
 @needs_ffmpeg
-def test_finish_lays_sfx_music_mix_captions_and_mark_as_new_versions(desk: Path) -> None:
-    raw = make_take(desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
-    (desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(json.dumps(FACTS))
-    _board(desk)
+def test_finish_lays_sfx_music_mix_captions_and_mark_as_new_versions(post_desk: Path) -> None:
+    raw = make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(json.dumps(FACTS))
+    _board(post_desk)
     calls: list[str] = []
     out = io.StringIO()
-    result = run_finish(desk, sfx_render=fake_sfx(calls), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx(calls), bed_maker=fake_bed,
                         facts_fetcher=lambda *a: None, stream=out)  # fmt: skip
 
     assert result.complete, out.getvalue()
     assert [s.step for s in result.steps] == ["sfx", "bed", "colour", "mix", "captions", "watermark"]
     assert all(s.status == "ran" for s in result.steps), out.getvalue()
-    names = sorted(p.name for p in (desk / "ep01" / "takes").glob("*.mp4"))
+    names = sorted(p.name for p in (post_desk / "ep01" / "takes").glob("*.mp4"))
     assert names == sorted([
         "take-ep01-t1-raw-v1.mp4", "take-ep01-t1-sfx-v1.mp4", "take-ep01-t1-colour-v1.mp4",
         "take-ep01-t1-mix-v1.mp4", "take-ep01-t1-cap-v1.mp4", "take-ep01-t1-sokii-v1.mp4",
@@ -82,7 +82,7 @@ def test_finish_lays_sfx_music_mix_captions_and_mark_as_new_versions(desk: Path)
     assert result.final.name == "take-ep01-t1-sokii-v1.mp4"
     assert raw.stat().st_size > 0
     assert calls == ["a door slams"]
-    assert load_series(desk).bed_path.startswith("shared/beds/show-bed-v1")
+    assert load_series(post_desk).bed_path.startswith("shared/beds/show-bed-v1")
     captions = next(s for s in result.steps if s.step == "captions")
     assert "3.2" in captions.detail.split("'Wait for me here.'; ")[1][:5], (
         "Aya's caption starts on her line at 3.2 s, not on the door slam at 3.0 s: timed on the take before post"
@@ -90,42 +90,42 @@ def test_finish_lays_sfx_music_mix_captions_and_mark_as_new_versions(desk: Path)
     mix = next(s for s in result.steps if s.step == "mix")
     assert "NO MUSIC BED" not in mix.detail
     assert out.getvalue().rstrip().splitlines()[-2] == "Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓"
-    notes = (desk / "ep01" / "run-notes.md").read_text()
+    notes = (post_desk / "ep01" / "run-notes.md").read_text()
     assert "Finish summary" in notes and "NOT DONE" not in notes
 
-    again = run_finish(desk, sfx_render=fake_sfx(calls), bed_maker=fake_bed,
+    again = run_finish(post_desk, sfx_render=fake_sfx(calls), bed_maker=fake_bed,
                        facts_fetcher=lambda *a: None, stream=io.StringIO())  # fmt: skip
     assert again.final.name == "take-ep01-t1-sokii-v2.mp4"
     assert calls == ["a door slams"], "the cue is cached: a second finish renders nothing"
 
 
 @needs_ffmpeg
-def test_finish_without_sfx_says_not_done_and_the_cli_exits_5(desk: Path, monkeypatch: pytest.MonkeyPatch,
+def test_finish_without_sfx_says_not_done_and_the_cli_exits_5(post_desk: Path, monkeypatch: pytest.MonkeyPatch,
                                                                 capsys: pytest.CaptureFixture[str]) -> None:  # fmt: skip
-    make_take(desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
     stubbed = functools.partial(run_finish, bed_maker=fake_bed, facts_fetcher=lambda *a: None)
     monkeypatch.setattr(cli_post, "run_finish", stubbed)
 
-    code = main(["finish", "--desk", str(desk)])
+    code = main(["finish", "--desk", str(post_desk)])
 
     assert code == FINISH_INCOMPLETE
     err = capsys.readouterr().err
     assert "Sound: music ✓ · SFX ✗ · mix ✓ · captions ✓" in err
     assert "NOT DONE: this take has no SFX" in err
-    assert "Finish NOT DONE: no SFX" in (desk / "ep01" / "run-notes.md").read_text()
+    assert "Finish NOT DONE: no SFX" in (post_desk / "ep01" / "run-notes.md").read_text()
 
 
 @needs_ffmpeg
-def test_finish_refuses_a_bad_duck_depth_before_any_step(desk: Path) -> None:
-    make_take(desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+def test_finish_refuses_a_bad_duck_depth_before_any_step(post_desk: Path) -> None:
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
     with pytest.raises(ValueError, match="--duck-db"):
-        run_finish(desk, duck_db=45.0, stream=io.StringIO())
-    assert [p.name for p in (desk / "ep01" / "takes").glob("*.mp4")] == ["take-ep01-t1-raw-v1.mp4"]
+        run_finish(post_desk, duck_db=45.0, stream=io.StringIO())
+    assert [p.name for p in (post_desk / "ep01" / "takes").glob("*.mp4")] == ["take-ep01-t1-raw-v1.mp4"]
 
 
 @needs_ffmpeg
-def test_finish_fetches_take_facts_when_none_are_saved(desk: Path) -> None:
-    make_take(desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+def test_finish_fetches_take_facts_when_none_are_saved(post_desk: Path) -> None:
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
     fetched: list[tuple[int, str]] = []
 
     def fetch(d: Path, episode: int, take_id: str) -> Path:
@@ -134,7 +134,22 @@ def test_finish_fetches_take_facts_when_none_are_saved(desk: Path) -> None:
         path.write_text(json.dumps(FACTS))
         return path
 
-    result = run_finish(desk, sfx_render=fake_sfx([]), bed_maker=fake_bed, facts_fetcher=fetch,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed, facts_fetcher=fetch,
                         colour=False, stream=io.StringIO())  # fmt: skip
     assert fetched == [(1, "t1")]
     assert result.complete
+
+
+@needs_ffmpeg
+def test_until_the_server_audio_routes_land_finish_says_not_done_and_keeps_the_ffmpeg_steps(post_desk: Path) -> None:
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(json.dumps(FACTS))
+    out = io.StringIO()
+    result = run_finish(post_desk, facts_fetcher=lambda *a: None, stream=out)  # default: DramaApiAudio (pending)
+
+    assert not result.complete
+    assert result.sound_missing == ("music", "SFX")
+    status = {s.step: s.status for s in result.steps}
+    assert status == {"sfx": "failed", "bed": "failed", "colour": "skipped", "mix": "ran", "captions": "ran",
+                      "watermark": "ran"}  # fmt: skip
+    assert "operator endpoints that are not live yet" in out.getvalue()

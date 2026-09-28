@@ -16,7 +16,14 @@ from creation.harness.http_util import hosted_post_off
 from creation.harness.session import DramaApiRunSession
 from creation.post.media import measure_loudness, measure_rms_windows
 from creation.post.mix import duck_expression, mix_take, pick_gain
-from creation.post.sfx import SfxCue, SfxPlan, lay_sfx, parse_adjustment, plan_from_take_facts, shape_problem
+from creation.post.sfx import (
+    SfxCue,
+    SfxPlan,
+    lay_sfx,
+    parse_adjustment,
+    plan_from_take_facts,
+    shape_problem,
+)
 from creation.post.watermark import mark_position, watermark
 
 # --- SFX -------------------------------------------------------------------------------------
@@ -34,7 +41,6 @@ def test_plan_reads_cues_and_speaking_shots_from_take_facts_only() -> None:
     assert plan.speech == ((0.0, 4.0),)
     [cue] = plan.cues
     assert (cue.sound, cue.kind, cue.start, cue.seconds, cue.gain_db) == ("rain on glass", "sustained", 4.0, 4.0, -8.0)
-    assert "No music, no speech" in cue.text
 
 
 def test_adjustments_parse_and_refuse_a_no_op() -> None:
@@ -184,3 +190,36 @@ def test_the_session_tells_the_operator_to_run_finish(tmp_path: Path, status: in
     with pytest.raises(SystemExit) as outage:
         run.post("/v1/video-generations", {})
     assert ("fictora-produce finish" in str(outage.value)) is (status == 409)
+
+
+def test_the_drama_api_audio_service_refuses_until_its_routes_are_wired(tmp_path: Path) -> None:
+    from creation.post.audio_service import AudioServicePending, DramaApiAudio
+
+    audio = DramaApiAudio(tmp_path)
+    with pytest.raises(AudioServicePending, match="no provider key is used on this laptop"):
+        audio.sfx_cue(sound="a door slams", kind="event", seconds=1.0, key="k")
+    with pytest.raises(AudioServicePending):
+        audio.transcribe(media=tmp_path / "a.wav", key="k")
+
+
+def test_the_sfx_renderer_sends_the_authored_label_not_a_prompt(tmp_path: Path) -> None:
+    from creation.post import sfx as sfx_mod
+
+    asked: list[dict] = []
+
+    class Audio:
+        def sfx_cue(self, **kwargs: object) -> str:
+            asked.append(kwargs)
+            return "https://audio.test/cue.mp3"
+
+    sfx_mod_download = sfx_mod.download
+    sfx_mod.download = lambda url, target: target  # type: ignore[assignment]
+    try:
+        render = sfx_mod.service_renderer(Audio())  # type: ignore[arg-type]
+        cue = SfxCue(2, "a door slams", "event", 2.0, 0.2)
+        render(cue, tmp_path / "c.mp3")
+        render(cue, tmp_path / "c.mp3")
+    finally:
+        sfx_mod.download = sfx_mod_download  # type: ignore[assignment]
+    assert asked[0] == {"sound": "a door slams", "kind": "event", "seconds": 0.5, "key": f"sfx-{cue.cache_key}"}
+    assert asked[0]["key"] == asked[1]["key"], "a re-run sends the same idempotency key"

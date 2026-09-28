@@ -5,7 +5,6 @@ description = "Hosted Drama API harness, desk ops CLI, and Cursor skill — no p
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
 dependencies = [
-  "fal-client>=0.8.0",
   "httpx>=0.28",
   "numpy>=2.0",
   "pillow>=10.0",

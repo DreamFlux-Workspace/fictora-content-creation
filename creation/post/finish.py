@@ -5,9 +5,9 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
 
 1. ``sfx``       - the take's cue plan from ``GET /v1/jobs/{take_job}/take-facts``
    (fetched and saved as ``api/take-facts-epNN-tK-vN.json`` when missing),
-   rendered on Fal ElevenLabs SFX v2 and cached in ``epNN/sfx/``.
+   rendered on the server (the audio service) and cached in ``epNN/sfx/``.
 2. ``bed``       - the show's music bed (desk pin, else the spine's pinned bed,
-   else made once on Fal Stable Audio 2.5 and pinned on the desk).
+   else made once on the server and pinned on the desk).
 3. ``colour``    - match the take to the board the human approved.
 4. ``mix``       - bed under the take, ducked under the voice, gain measured
    so the mix lands near -18 LUFS; ``--duck-db N`` for an exact duck depth.
@@ -32,21 +32,30 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from creation.captions import caption_take
+from creation.harness.raw_video import fetch_take_facts
 from creation.ops.floor import record_spend
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
-from creation.post.bed import DEFAULT_BED_DB, Maker, resolve_bed
+from creation.post.audio_service import DramaApiAudio
+from creation.post.bed import DEFAULT_BED_DB, Maker, resolve_bed, service_music_maker
 from creation.post.colour import colour_match
-from creation.post.desk import approved_board, latest_raw_take, open_api, saved_spine, spine_id, take_job_id
+from creation.post.desk import (
+    approved_board,
+    latest_raw_take,
+    open_api,
+    saved_spine,
+    spine_id,
+    take_job_id,
+)
 from creation.post.media import MediaToolError, measure_loudness
 from creation.post.mix import check_duck_db, mix_take
 from creation.post.sfx import (
     Adjustment,
     Renderer,
-    fetch_take_facts,
     lay_sfx,
     plan_from_take_facts,
     saved_take_facts,
+    service_renderer,
 )
 from creation.post.watermark import watermark
 
@@ -129,7 +138,7 @@ class FinishResult:
 
         lines = [f"Final: {self.final}", f"Loudness: {self.loudness or 'not measured'}"]
         lines += [f"- {step.step}: {step.status} — {step.detail}" for step in self.steps]
-        lines.append(f"Cost: ${self.cost_usd:.3f} metered on your Fal key (Whisper not used by finish)")
+        lines.append(f"Cost: about ${self.cost_usd:.3f} of generated audio (billed on the server)")
         lines.append(self.sound_line())
         return lines
 
@@ -152,9 +161,10 @@ class FinishResult:
 
 
 INCOMPLETE_FIX = (
-    "Music: pin a bed (`fictora-produce set-bed --desk D --path <file>`, or let finish make one: needs FAL_KEY). "
+    "Music: pin a bed (`fictora-produce set-bed --desk D --path <file>`, or let finish make one on the server). "
     "SFX: finish needs the take's facts (GET /v1/jobs/{take_job}/take-facts; it fetches them when "
-    "api/17_raw_scene_clips.json names the take job) and FAL_KEY. Mix: read the mix step's error above."
+    "api/17_raw_scene_clips.json names the take job) and the server's audio endpoints. "
+    "Mix: read the mix step's error above."
 )
 
 
@@ -178,9 +188,14 @@ def api_facts_fetcher(desk: Path, episode: int, take_id: str) -> Path | None:
         return None
     run = open_api(desk, episode)
     try:
-        return fetch_take_facts(run, desk, episode=episode, take_id=take_id, job_id=job, spine=spine_id(desk))
+        facts = fetch_take_facts(run, job, spine_id=spine_id(desk))
     finally:
         run.client.close()
+    if facts is None:
+        return None
+    path = next_versioned_path(desk / f"ep{episode:02d}" / "api", f"take-facts-ep{episode:02d}-{take_id}", ".json")
+    path.write_text(json.dumps(facts, indent=2) + "\n", encoding="utf-8")
+    return path
 
 
 def run_finish(
@@ -260,6 +275,8 @@ def run_finish(
     found_spine = saved_spine(desk, episode)
     spine = found_spine[0] if found_spine else None
     board = approved_board(desk, episode, take_id)
+    sfx_render = sfx_render or service_renderer(DramaApiAudio(desk))
+    bed_maker = bed_maker or service_music_maker(DramaApiAudio(desk))
     result = FinishResult(source=source, final=source)
     current = source
     bed_state: dict[str, Any] = {"path": None}

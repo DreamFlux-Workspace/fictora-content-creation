@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 Phase = Literal[
     "new",
@@ -44,6 +44,21 @@ class ProductionState:
     exposure_accept_dim: bool = False
     video_idempotency_suffix: str = ""
     last_video_job_id: str | None = None
+    #: The retry suffix the in-flight video job was enrolled with (resume only that job).
+    video_enrolled_suffix: str | None = None
+    #: Stable per-desk prefix for idempotency keys of resumable units (author, board redraw).
+    idempotency_prefix: str = ""
+    #: Resumable paid/queued units: unit -> ``{"key", "job_id"}``. Re-running reuses the key or polls the job.
+    pending: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: Finished attempts per unit (a new attempt gets a new key).
+    attempts: dict[str, int] = field(default_factory=dict)
+    #: Newest board file per take on the current episode (``t1`` -> path relative to the desk).
+    board_paths: dict[str, str] = field(default_factory=dict)
+    #: Frame-brief digest per drawn board (``ep01-t1``), to warn when a redraw would draw the same briefs.
+    board_digests: dict[str, str] = field(default_factory=dict)
+    #: Series arcs offered by the episode-2 brief (``arc --list``) and the one kept (``arc --pick``).
+    arc_options: list[dict[str, str]] = field(default_factory=list)
+    series_arc: dict[str, Any] | None = None
 
     @staticmethod
     def new_session_id(desk_slug: str) -> str:
@@ -77,7 +92,37 @@ def load_production(desk: Path) -> ProductionState:
 
     path = production_path(desk)
     raw = json.loads(path.read_text(encoding="utf-8"))
-    return ProductionState(**raw)
+    known = {f.name for f in fields(ProductionState)}
+    state = ProductionState(**{key: value for key, value in raw.items() if key in known})
+    if not state.idempotency_prefix:
+        state.idempotency_prefix = f"{desk.expanduser().resolve().name[:24]}-{uuid.uuid4().hex[:6]}"
+    return state
+
+
+def start_episode(state: ProductionState, episode_ordinal: int) -> None:
+    """Point the desk's phase machine at a newly written episode (its lines wait for the script gate).
+
+    Series-level fields (session, spine, preset, arc, board digests) are kept;
+    the per-episode ones (estimate, take, retry suffix, error) are cleared.
+
+    Parameters
+    ----------
+    state
+        Production state, mutated in place.
+    episode_ordinal
+        The episode that was just written.
+    """
+
+    state.episode_ordinal = episode_ordinal
+    state.phase = "wait_script"
+    state.estimate_usd = None
+    state.last_delivery_url = None
+    state.last_error = None
+    state.exposure_accept_dim = False
+    state.video_idempotency_suffix = ""
+    state.video_enrolled_suffix = None
+    state.last_video_job_id = None
+    state.board_paths = {}
 
 
 def save_production(desk: Path, state: ProductionState) -> None:

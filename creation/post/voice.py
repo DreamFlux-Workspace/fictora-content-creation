@@ -4,14 +4,14 @@
 on the cast card, and a take that is already filmed takes a new voice in post:
 
 - ``voice --audition``: ``POST /v1/spines/{id}/cast/{cast_id}/voice-auditions``
-  compiles 4-10 Eleven v3 candidates on the character's real lines (the API
-  returns voice ids and text only). Each candidate is rendered here on Fal
-  ``fal-ai/elevenlabs/tts/eleven-v3`` into
+  compiles 4-10 Eleven v3 candidates on the character's real lines (voice ids
+  and text). Each candidate is rendered on the server (the audio service; no
+  provider key on this laptop) and saved to
   ``shared/voices/<cast>/audition-vN/NN-<voice>.mp3`` with ``auditions.json``.
 - ``voice --pick N``: ``POST .../voice-auditions/pick`` locks candidate N on the
   cast card and saves the spine again. Takes filmed from now on use it.
 - ``revoice``: for a filmed take, each line that character speaks is rendered
-  dry in the locked voice, its window found from Whisper words on the take,
+  dry in the locked voice on the server, its window found from Whisper words on the take,
   the original muted there (0.08 s before to 0.15 s after) and the new line
   laid in at the same start. Picture copied, other characters left as filmed.
   Writes ``take-epNN-tK-revoice-vN.mp4``; then run ``finish --take-file`` on it.
@@ -31,6 +31,7 @@ from typing import Any, TextIO
 
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
+from creation.post.audio_service import AudioService, DramaApiAudio, download
 from creation.post.desk import (
     cast_slug,
     episode_dialogue,
@@ -40,32 +41,17 @@ from creation.post.desk import (
     refresh_spine,
     spine_id,
 )
-from creation.post.fal import VOICE_ENDPOINT, FalCalls, FalClientCalls, download, output_url, run_fal_once
 from creation.post.finish import book
 from creation.post.media import media_duration, probe_video, run_ffmpeg
-from creation.post.whisper import Transcriber, line_windows, load_words, transcribe_with_fal
+from creation.post.whisper import line_windows, load_words, transcribe
 
 AUDITION_SET_USD = 0.30
 """One audition set, as the runbook prices it."""
 AUDITION_MAX_LINES = 3
 MIN_CANDIDATES, MAX_CANDIDATES = 4, 10
-VOICE_STABILITY = 0.45
 ELEVEN_V3_USD_PER_1000_CHARS = 0.10
 MUTE_LEAD_SECONDS = 0.08
 MUTE_TAIL_SECONDS = 0.15
-
-
-def voice_arguments(text: str, voice: str) -> dict[str, Any]:
-    """Eleven v3 arguments for one dry line (English)."""
-
-    return {
-        "text": text,
-        "voice": voice,
-        "stability": VOICE_STABILITY,
-        "apply_text_normalization": "auto",
-        "output_format": "mp3_44100_128",
-        "language_code": "en",
-    }
 
 
 def _unit(prefix: str, arguments: dict[str, Any]) -> str:
@@ -121,7 +107,7 @@ def run_voice_audition(
     episode: int | None = None,
     count: int = 8,
     cause: str | None = None,
-    fal: FalCalls | None = None,
+    audio: AudioService | None = None,
     out: TextIO | None = None,
 ) -> Path:
     """Audition voices for one character on their real lines; save candidates and a listing.
@@ -138,8 +124,8 @@ def run_voice_audition(
         Candidates, 4-10.
     cause
         Why a second audition set is paid for (required when one exists).
-    fal
-        Fal calls (``FalClientCalls`` by default).
+    audio
+        Generated-audio service (the Drama API by default).
     out
         Where the listing is printed.
 
@@ -176,12 +162,12 @@ def run_voice_audition(
                 f"{name} already has an audition set ({finished[-1].name}); pick from it with --pick N, "
                 f'or pass --cause "..." to pay for a second set (${AUDITION_SET_USD:.2f})'
             )
-        client = fal or FalClientCalls()
         body = {"spine_version": spine["spine_version"], "lines": lines, "candidate_count": count}
         compiled = run.post(f"/v1/spines/{spine_id(desk)}/cast/{cast_id}/voice-auditions", body)
         run.save(f"voice-auditions-{slug}.json", compiled)
     finally:
         run.client.close()
+    service = audio or DramaApiAudio(desk)
     folder = unfinished or desk / "shared" / "voices" / slug / f"audition-v{len(existing) + 1}"
     folder.mkdir(parents=True, exist_ok=True)
     print(
@@ -190,18 +176,12 @@ def run_voice_audition(
     made: list[Candidate] = []
     for number, candidate in enumerate(compiled.get("candidates") or [], start=1):
         voice = str(candidate["provider_voice"])
-        arguments = {k: v for k, v in voice_arguments(str(candidate["text"]), voice).items() if k != "language_code"}
-        target = folder / f"{number:02d}-{cast_slug(voice)}.mp3"
-        fal_run = run_fal_once(
-            desk,
-            unit=_unit(f"audition-{slug}", arguments),
-            endpoint=VOICE_ENDPOINT,
-            arguments=arguments,
-            fal=client,
-            collect=lambda output, dest=target: download(output_url(output, "audio"), dest),
+        text = str(candidate["text"])
+        url = service.audition_sample(
+            text=text, voice=voice, key=_unit(f"audition-{slug}", {"text": text, "voice": voice})
         )
-        made.append(Candidate(number, voice, fal_run.path, output_url(fal_run.output, "audio"),
-                              round(media_duration(fal_run.path), 3)))  # fmt: skip
+        path = download(url, folder / f"{number:02d}-{cast_slug(voice)}.mp3")
+        made.append(Candidate(number, voice, path, url, round(media_duration(path), 3)))
     listing = {
         "cast_id": cast_id,
         "name": name,
@@ -334,8 +314,7 @@ def run_revoice(
     take_file: Path | None = None,
     words_json: Path | None = None,
     voice_db: float = 0.0,
-    fal: FalCalls | None = None,
-    transcriber: Transcriber | None = None,
+    audio: AudioService | None = None,
     out: TextIO | None = None,
 ) -> Path:
     """Re-voice one character's lines on a filmed take in their locked voice.
@@ -356,10 +335,8 @@ def run_revoice(
         Saved Whisper words for the take; default transcribe it now (pennies).
     voice_db
         Gain on every new line.
-    fal
-        Fal calls for the dry lines.
-    transcriber
-        Whisper call (Fal by default).
+    audio
+        Generated-audio service for the dry lines and the transcript (the Drama API by default).
     out
         Where results print.
 
@@ -392,11 +369,11 @@ def run_revoice(
     if not theirs:
         raise ValueError(f"{name} speaks no line in episode {episode} on the spine; nothing to revoice")
     takes = source.parent
+    service = audio or DramaApiAudio(desk)
     if words_json is None:
         target = next_versioned_path(takes, f"take-ep{episode:02d}-{take_id}-revoice-words", ".json")
-        words_json = (transcriber or (lambda media, dest: transcribe_with_fal(media, dest, fal=fal)))(source, target)
+        words_json = transcribe(source, target, audio=service)
     windows = line_windows(load_words(words_json), tuple(line["text"] for line in dialogue))
-    client = fal or FalClientCalls()
     voices_dir = desk / f"ep{episode:02d}" / "voices"
     voices_dir.mkdir(parents=True, exist_ok=True)
     slug = cast_slug(cast_id)
@@ -409,23 +386,15 @@ def run_revoice(
         if window.start is None or window.end is None:
             missing.append(text)
             continue
-        arguments = voice_arguments(text, voice)
-        dest = next_versioned_path(voices_dir, f"voice-ep{episode:02d}-{slug}", ".mp3")
-        fal_run = run_fal_once(
-            desk,
-            unit=_unit(f"voice-ep{episode:02d}-{slug}", arguments),
-            endpoint=VOICE_ENDPOINT,
-            arguments=arguments,
-            fal=client,
-            collect=lambda output, target=dest: download(output_url(output, "audio"), target),
-        )
+        key = _unit(f"voice-ep{episode:02d}-{slug}", {"text": text, "voice": voice})
+        url = service.voice_line(text=text, voice=voice, key=key)
+        path = download(url, next_versioned_path(voices_dir, f"voice-ep{episode:02d}-{slug}", ".mp3"))
         paid += round(len(text) * ELEVEN_V3_USD_PER_1000_CHARS / 1000, 4)
-        fal_run.path.with_suffix(".json").write_text(
-            json.dumps({"line": text, "cast_id": cast_id, "voice": voice, "endpoint": VOICE_ENDPOINT,
-                        "request_id": fal_run.request_id}, indent=2) + "\n",
+        path.with_suffix(".json").write_text(
+            json.dumps({"line": text, "cast_id": cast_id, "voice": voice, "key": key, "url": url}, indent=2) + "\n",
             encoding="utf-8",
-        )  # fmt: skip
-        replacements.append(Replacement(text, fal_run.path, window.start, window.end))
+        )
+        replacements.append(Replacement(text, path, window.start, window.end))
     if not replacements:
         raise ValueError(
             f"none of {name}'s lines was heard in {source.name}; pass --words-json, or re-film only this take"

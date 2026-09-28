@@ -10,7 +10,7 @@ Partner repo for **episode production** with Cursor or Claude Code against the h
 | Desk layout + gate ledger | `fictora-ops` | — |
 | Phase orchestration | `fictora-produce` | — |
 | Agent runbook | `.cursor/skills/episode-production/` | — |
-| Local finish (SFX, music, mix, captions, mark, voice change) | `creation/post` (`fictora-produce finish`, `voice`, `revoice`) | — |
+| Local finish (mix, colour, captions, mark, revoice lay-in; generated audio requested from the API) | `creation/post` (`fictora-produce finish`, `voice`, `revoice`) | — |
 | Prompts, server Fal keys, Restate workers | — | yes |
 
 ## Requirements
@@ -18,7 +18,7 @@ Partner repo for **episode production** with Cursor or Claude Code against the h
 - Python **3.12+**
 - [uv](https://docs.astral.sh/uv/)
 - Service token for the deployed Drama API (from engineering)
-- `FAL_KEY` (your own Fal key) and ffmpeg with libass, for the local finish
+- ffmpeg with libass, for the local finish (no provider key: generated audio is made on the server)
 
 ## Quick start
 
@@ -27,7 +27,7 @@ git clone git@github.com:DreamFlux-Workspace/fictora-content-creation.git
 cd fictora-content-creation
 
 cp .env.example .env
-# Set FICTORA_DRAMA_GENERATION_SERVICE_TOKEN and FAL_KEY in .env (never commit them)
+# Set FICTORA_DRAMA_GENERATION_SERVICE_TOKEN in .env (never commit it)
 
 uv sync
 ```
@@ -43,9 +43,8 @@ uv run fictora-produce start \
   --band 15s \
   --preset-id modern-dark-fantasy \
   --video-lane minimax-h3 \
-  --draft-episodes 4 \
   --clip-seconds 15 \
-  --cut-tempo one_shot \
+  --cut-tempo punchy \
   --caption-style house
 ```
 
@@ -63,7 +62,15 @@ uv run fictora-produce step --desk ~/Downloads/documents/my-show-…
 uv run fictora-produce approve --desk … --gate plates
 uv run fictora-produce approve --desk … --gate script
 uv run fictora-produce approve --desk … --gate board
-uv run fictora-produce approve --desk … --gate board --accept-dim   # when exposure is below dim floor
+
+# Episode 2 on (after episode 1's script is approved)
+uv run fictora-produce arc --desk … --list --episodes 30     # then: arc --desk … --pick 2
+uv run fictora-produce author --desk … --episode 2 --direction 1   # or --line "the human's words"
+
+# Edits and redraws (see the skill's reference.md)
+uv run fictora-produce edit --desk … --episode 1 --frame 3 --set shot_scale="close up"
+uv run fictora-produce redraw-board --desk … --episode 1 --take t1 --cause "face under the caption band"
+uv run fictora-produce check-lines --desk … --episode 1
 
 # After estimate is shown in chat
 uv run fictora-produce step --desk … --confirm-spend
@@ -115,7 +122,7 @@ Example desk config: `.cursor/skills/episode-production/config.example.json`.
 
 Important defaults:
 
-- **`draft_episode_count: 4`** — five planned episodes breaks estimate/plan on prod.
+- **Episode 1 is drafted alone** (`outline_mode=arc_at_episode_two`); `draft_episode_count` is ignored. Later episodes: `arc`, then `author --episode N`.
 - **`caption_style: house`** — burn-in captions are applied in post-production, not by the video model.
 - **`fallback_estimate_usd: 1.20`** — used when batch estimate is skipped.
 
@@ -173,7 +180,7 @@ creation/
   ops/              Desk floor, luma, gates
   recover.py        Cancel job + video retry suffix
   cli_post.py       finish, voice, revoice, set-bed
-  post/             Local finish: sfx, bed, colour, mix, watermark, voice, Whisper, Fal queue
+  post/             Local finish: sfx, bed, colour, mix, watermark, voice, Whisper; audio_service = the one generated-audio interface
 tests/              Unit tests (no live API)
 scripts/            smoke_live, e2e helpers
 docs/content-ops/   Operator runbook (human + agent)
