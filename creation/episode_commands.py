@@ -77,6 +77,7 @@ from creation.ops.state import GateRecord, episode_by_ordinal, load_series
 from creation.post.take_facts import (
     save_take_facts,
     sfx_plan_changes,
+    sfx_plan_lines,
     stale_facts_reason,
     take_number,
 )
@@ -2684,8 +2685,10 @@ def run_sound_note(
             )
         else:
             print(
-                "Saved. It drops or levels a sound on every take in the server's mix. finish on this laptop does "
-                'not read it: for the same change there, pass finish --sfx-adjust ("hum=drop", "rain=+4").',
+                "Saved. It drops or levels a sound on every take. A take filmed from now on carries it. A take "
+                f"already on the desk keeps its saved facts: run `fictora-produce take-facts --desk {desk} "
+                "--episode N --take tK --refresh` for it (it prints the level changes and drops), then finish "
+                "it again.",
                 file=out,
             )
     if changed:
@@ -2708,7 +2711,9 @@ def run_take_facts(
     ``--refresh`` reads ``GET /v1/jobs/{take_job}/take-facts?spine_id=`` again
     against the current story, saves it as the next
     ``epNN/api/take-facts-epNN-tK-vN.json`` (the old file is kept) and prints
-    the SFX cues it adds and drops. ``finish`` then lays the new plan.
+    the SFX cues it adds (``+``), the cues whose level a sound note moved
+    (``~``, with the note ids) and the cues no longer planned (``-``, with the
+    note that dropped them). ``finish`` then lays the new plan.
 
     Parameters
     ----------
@@ -2756,8 +2761,8 @@ def run_take_facts(
             old, found[0] if found else None, episode=episode, take_id=take_id
         )
         print(f"{label}: {old_path.name}", file=out)
-        for line in sfx_plan_changes(None, old):
-            print(f"  {line[2:]}", file=out)
+        for line in sfx_plan_lines(old):
+            print(f"  {line}", file=out)
         if stale:
             print(
                 f"!! older than the story's sound notes: {stale}. Run take-facts --desk {desk} --episode {episode} "

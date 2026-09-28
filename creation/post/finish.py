@@ -9,9 +9,12 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    frame count and sound are unchanged, so every later step (take-facts cue
    times, caption timing, the voice the mix ducks under) stays on the raw
    take's timeline. ``--no-deboard`` skips it.
-1. ``sfx``       - the take's cue plan from ``GET /v1/jobs/{take_job}/take-facts``
+1. ``sfx``       - the take's cue plan from ``GET /v1/jobs/{take_job}/take-facts?spine_id=``
    (fetched and saved as ``api/take-facts-epNN-tK-vN.json`` when missing),
    rendered on the server (the audio service) and cached in ``epNN/sfx/``.
+   The plan already carries the story's drop and level sound notes: each cue
+   is laid at -8 dB plus its ``gain_offset_db``, and a cue in
+   ``sfx_dropped_cues`` is never laid. ``--sfx-adjust`` moves cues on top.
 2. ``bed``       - the show's music bed (desk pin, else the spine's pinned bed,
    else made once on the server and pinned on the desk).
 3. ``colour``    - match the take to the board the human approved.
@@ -78,7 +81,7 @@ from creation.post.desk import (
 )
 from creation.post.media import MediaToolError, measure_loudness, probe_video
 from creation.post.mix import CueLevel, check_duck_db, mix_take
-from creation.post.take_facts import level_notes, save_take_facts, stale_facts_reason
+from creation.post.take_facts import save_take_facts, stale_facts_reason
 from creation.post.sfx import (
     Adjustment,
     Renderer,
@@ -469,20 +472,18 @@ def run_finish(
             )
             print(f"[sfx] {warning}", file=out, flush=True)
             append_run_note(run_dir, f"Finish · sfx: {warning}")
-        levels = level_notes(spine)
-        if levels and not sfx_adjust:
-            print(
-                f"[sfx] note: the story's drop/level sound notes ({'; '.join(levels)}) are applied by the server's "
-                'mix, not by finish; for the same change here pass --sfx-adjust ("hum=drop", "rain=+4")',
-                file=out,
-                flush=True,
-            )
         plan = plan_from_take_facts(payload)
+        dropped = (
+            f"; dropped by sound notes: {', '.join(plan.dropped)}"
+            if plan.dropped
+            else ""
+        )
         if not plan.cues:
             return StepReport(
                 "sfx",
                 "ran",
-                f"the take facts plan no effect (every shot speaks); `{facts.name}`"
+                f"the take facts plan no effect (every shot speaks, or a sound note dropped every cue); "
+                f"`{facts.name}`{dropped}"
                 + (f"; facts older than the sound notes ({stale})" if stale else ""),
             )
         sfx = lay_sfx(
@@ -507,10 +508,13 @@ def run_finish(
             for c, peak in zip(sfx.mixed, sfx.peaks_db)
         )
         cues = ", ".join(
-            f"{c.sound} @{c.start:.2f}s {c.gain_db:+.0f} dB" for c in sfx.mixed
+            f"{c.sound} @{c.start:.2f}s {c.gain_db:+.0f} dB"
+            + (f" (note {', '.join(c.note_ids)})" if c.note_ids else "")
+            for c in sfx.mixed
         )
         note = f"SFX -> `{sfx.output.name}`: {cues}; rendered {sfx.rendered}, ${sfx.cost_usd:.3f}"
         note += "".join(f"\n- skipped: {s}" for s in sfx.skipped)
+        note += "".join(f"\n- dropped by a sound note: {d}" for d in plan.dropped)
         append_run_note(run_dir, note)
         older = (
             f"; laid from facts older than the sound notes ({stale})" if stale else ""
@@ -518,7 +522,7 @@ def run_finish(
         return StepReport(
             "sfx",
             "ran",
-            f"{len(sfx.mixed)} cue(s): {cues}{older}",
+            f"{len(sfx.mixed)} cue(s): {cues}{dropped}{older}",
             sfx.output,
             sfx.cost_usd,
         )

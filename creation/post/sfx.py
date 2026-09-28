@@ -8,6 +8,15 @@ second; no provider key or effect prompt on this laptop), is checked for shape (
 sustained sound must hold), and is cached in ``epNN/sfx/`` by sound and length,
 so a re-mix at another level costs nothing. Effects sit under the take
 (-8 dB by default) and drop a further 10 dB while someone speaks.
+
+The story's drop and level sound notes ("no purring", "the door slam is too
+loud") are applied by the server when the facts are fetched with ``spine_id``
+(fictora-drama #475): a dropped cue is left out of ``sfx_cues`` and listed in
+``sfx_dropped_cues``; a levelled cue carries ``gain_offset_db`` (from the
+default level) and ``note_ids``. This kit reads that plan as it is and never
+applies the notes a second time. Facts from an older server carry none of
+these fields and are laid exactly as before. ``finish --sfx-adjust`` is a
+manual per-take change on top.
 """
 
 from __future__ import annotations
@@ -46,6 +55,8 @@ class SfxCue:
     start: float
     seconds: float
     gain_db: float = SFX_GAIN_DB
+    #: The story's sound notes that moved this cue's level (from the take facts), oldest first.
+    note_ids: tuple[str, ...] = ()
 
     @property
     def cache_key(self) -> str:
@@ -63,6 +74,8 @@ class SfxPlan:
 
     cues: tuple[SfxCue, ...]
     speech: tuple[tuple[float, float], ...]
+    #: Planned cues a sound note dropped (never mixed): ``"<sound> (note <id>)"`` each.
+    dropped: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -111,7 +124,7 @@ def _applies(cue: SfxCue, adjustment: Adjustment) -> bool:
 def apply_adjustments(
     cues: tuple[SfxCue, ...], adjustments: tuple[Adjustment, ...]
 ) -> tuple[SfxCue, ...]:
-    """Drop or re-level the cues an adjustment names; gains stay inside -30..0 dB."""
+    """Drop or re-level the cues an adjustment names, on top of the level the take facts gave; gains stay inside -30..0 dB."""
 
     out: list[SfxCue] = []
     for cue in cues:
@@ -122,17 +135,53 @@ def apply_adjustments(
             if adjustment.drop:
                 keep = False
                 break
-            gain = cue.gain_db + adjustment.gain_change_db
             cue = replace(
-                cue, gain_db=max(SFX_GAIN_RANGE_DB[0], min(SFX_GAIN_RANGE_DB[1], gain))
+                cue, gain_db=_clamp_gain(cue.gain_db + adjustment.gain_change_db)
             )
         if keep:
             out.append(cue)
     return tuple(out)
 
 
+def _clamp_gain(gain: float) -> float:
+    return max(SFX_GAIN_RANGE_DB[0], min(SFX_GAIN_RANGE_DB[1], gain))
+
+
+def _cue_identity(cue: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        cue.get("shot_index"),
+        str(cue.get("sound") or "").strip().casefold(),
+        round(float(cue.get("start_seconds") or 0.0), 2),
+        round(float(cue.get("duration_seconds") or 0.0), 2),
+    )
+
+
+def noted_gain_db(cue: dict[str, Any]) -> float:
+    """The level a take-facts cue is mixed at: the default plus the server's ``gain_offset_db`` (clamped).
+
+    Parameters
+    ----------
+    cue
+        One ``take_facts.sfx_cues`` entry.
+
+    Returns
+    -------
+    float
+        :data:`SFX_GAIN_DB` when the cue carries no offset (an older server, or no level note).
+    """
+
+    offset = cue.get("gain_offset_db")
+    if isinstance(offset, bool) or not isinstance(offset, (int, float)):
+        return SFX_GAIN_DB
+    return _clamp_gain(SFX_GAIN_DB + float(offset))
+
+
 def plan_from_take_facts(payload: dict[str, Any]) -> SfxPlan:
     """Cues and speaking windows from a saved take-facts response.
+
+    Each cue is mixed at the default level plus its ``gain_offset_db`` when the
+    server sent one; a cue in ``sfx_dropped_cues`` is never mixed. The story's
+    sound notes are not applied here again: the server already did.
 
     Parameters
     ----------
@@ -146,6 +195,12 @@ def plan_from_take_facts(payload: dict[str, Any]) -> SfxPlan:
     """
 
     facts = payload.get("take_facts", payload)
+    dropped_cues = [
+        cue
+        for cue in facts.get("sfx_dropped_cues") or []
+        if isinstance(cue, dict) and str(cue.get("sound") or "").strip()
+    ]
+    dropped_ids = {_cue_identity(cue) for cue in dropped_cues}
     cues = tuple(
         SfxCue(
             shot_index=int(cue["shot_index"]),
@@ -153,9 +208,11 @@ def plan_from_take_facts(payload: dict[str, Any]) -> SfxPlan:
             kind="sustained" if cue.get("kind") == "sustained" else "event",
             start=float(cue["start_seconds"]),
             seconds=float(cue["duration_seconds"]),
+            gain_db=noted_gain_db(cue),
+            note_ids=tuple(str(note) for note in cue.get("note_ids") or []),
         )
         for cue in facts.get("sfx_cues") or []
-        if str(cue.get("sound") or "").strip()
+        if str(cue.get("sound") or "").strip() and _cue_identity(cue) not in dropped_ids
     )
     speech = tuple(
         (float(shot["start_seconds"]), float(shot["end_seconds"]))
@@ -163,7 +220,11 @@ def plan_from_take_facts(payload: dict[str, Any]) -> SfxPlan:
         if shot.get("speaks")
         and float(shot["end_seconds"]) > float(shot["start_seconds"])
     )
-    return SfxPlan(cues, speech)
+    dropped = tuple(
+        f"{cue['sound']} (note {cue.get('dropped_by_note_id') or '?'})"
+        for cue in dropped_cues
+    )
+    return SfxPlan(cues, speech, dropped)
 
 
 def saved_take_facts(desk: Path, episode: int, take_id: str) -> Path | None:
