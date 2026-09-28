@@ -375,8 +375,13 @@ def run_finish(
         timing = "; ".join(
             f"{a.start:.2f}-{a.end:.2f}s {line!r}" for line, a in zip(captioned.lines, captioned.anchors)
         )
-        append_run_note(run_dir, f"Captions -> `{captioned.video.name}` (cues `{captioned.ass.name}`): {timing}")
-        return StepReport("captions", "ran", f"{len(captioned.lines)} line(s): {timing}", captioned.video)
+        treatment = "whole English lines" if captioned.whole_lines else "word flicker"
+        append_run_note(
+            run_dir, f"Captions ({treatment}) -> `{captioned.video.name}` (cues `{captioned.ass.name}`): {timing}"
+        )
+        return StepReport(
+            "captions", "ran", f"{len(captioned.lines)} line(s), {treatment}: {timing}", captioned.video
+        )
 
     def do_watermark(take: Path) -> StepReport:
         marked = watermark(take, next_versioned_path(takes, f"{base}-sokii", ".mp4"), y=watermark_y)

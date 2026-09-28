@@ -347,3 +347,23 @@ def test_a_new_paid_take_is_enrolled_not_resumed_from_the_old_job(desk: Path, ap
 
     assert len(api.posted("/v1/video-generations")) == 1
     assert not any(path == "/v1/jobs/job_old" for _, path, _, _ in api.calls)
+
+
+# --- Reuse body language ---------------------------------------------------------------------------
+
+
+def test_the_reuse_body_copies_spoken_language_and_locale_from_the_spine() -> None:
+    from creation.harness.visual_first_ep1 import reuse_generation_body
+
+    spine = {"spine_id": "sp1", "spoken_language": "ko-KR", "locale": "en-GB"}
+    body = reuse_generation_body(prompt="p", spine=spine, preset_id="x", preset_version="1")
+    assert body["spoken_language"] == "ko-KR"
+    assert body["locale"] == "en-GB"
+
+
+def test_the_reuse_body_for_an_older_spine_without_language_fields_stays_english() -> None:
+    from creation.harness.visual_first_ep1 import reuse_generation_body
+
+    body = reuse_generation_body(prompt="p", spine={"spine_id": "sp1"}, preset_id="x", preset_version="1")
+    assert body["locale"] == "en-US"
+    assert "spoken_language" not in body, "the server default (en-US) applies"

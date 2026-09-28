@@ -9,6 +9,11 @@ module finishes it on the operator's laptop:
 3. Anchor each line on its speech span and spread words by length.
 4. Write a house flicker ASS (up to three words build up, then reset) and burn it.
 
+Captions are always the English line. On a show spoken in Japanese or Korean
+(spine ``spoken_language`` not English) the English words cannot be timed
+against the speech, so step 3-4 show each whole line over its speech span
+instead of flickering word by word.
+
 The look matches the content team's reference captions (yellow ``#FFE500``,
 Poppins Bold, black edge, soft shadow, no box), scaled from the 768x1344 H3
 frame to the take's real size. Placement follows the TikTok / Reels / Shorts
@@ -226,14 +231,48 @@ def flicker_cues(words: Sequence[Cue], *, hold_until: float | None = None) -> li
     return cues
 
 
-def build_cues(lines: Sequence[str], anchors: Sequence[Span]) -> list[Cue]:
-    """Flicker cues for every line on its anchor span."""
+def whole_line_cue(text: str, span: Span, *, hold_until: float | None = None) -> Cue:
+    """One cue showing the whole line over its speech span.
+
+    The last-word hold still applies, never past ``hold_until`` (the next line's start).
+    """
+
+    end = span.end + LAST_WORD_HOLD_SECONDS
+    if hold_until is not None:
+        end = min(end, hold_until)
+    return Cue(round(span.start, 3), round(max(end, span.start + 0.05), 3), text)
+
+
+def build_cues(lines: Sequence[str], anchors: Sequence[Span], *, whole_lines: bool = False) -> list[Cue]:
+    """Cues for every line on its anchor span.
+
+    English shows flicker word by word (:func:`flicker_cues`). With
+    ``whole_lines`` (a show spoken in Japanese or Korean, captioned with the
+    English line) each line is one cue over its speech span: English words
+    cannot be timed against Japanese or Korean speech, so spreading them would
+    flash words that are not being said. This is the whole-line rule the
+    server follows for a translated subtitle.
+    """
 
     cues: list[Cue] = []
     for i, (text, span) in enumerate(zip(lines, anchors)):
         next_start = anchors[i + 1].start if i + 1 < len(anchors) else None
-        cues.extend(flicker_cues(time_words(text, span), hold_until=next_start))
+        if whole_lines:
+            cues.append(whole_line_cue(text, span, hold_until=next_start))
+        else:
+            cues.extend(flicker_cues(time_words(text, span), hold_until=next_start))
     return cues
+
+
+def captions_whole_lines(spine: dict[str, Any]) -> bool:
+    """True when the show is spoken in another language than English (captions stay the English line).
+
+    ``spoken_language`` is read from the spine (bare or ``{"spine": …}``); unset means English.
+    """
+
+    body = spine.get("spine", spine)
+    code = str(body.get("spoken_language") or "en").strip().replace("_", "-").split("-", 1)[0].lower()
+    return code not in ("", "en")
 
 
 def _ass_time(seconds: float) -> str:
@@ -406,6 +445,8 @@ class CaptionResult:
     cues: tuple[Cue, ...]
     anchors: tuple[Span, ...]
     lines: tuple[str, ...]
+    #: True when each line was shown whole (show spoken in Japanese or Korean), False for word flicker.
+    whole_lines: bool = False
 
 
 def caption_take(
@@ -450,11 +491,13 @@ def caption_take(
     api = ep_dir / "api"
     # Newest snapshot that carries beats (approve responses are receipts without them).
     lines: list[str] = []
+    whole_lines = False
     for spine_path in sorted(api.glob("*spine*.json"), key=lambda p: p.name, reverse=True):
         spine = json.loads(spine_path.read_text(encoding="utf-8"))
         if isinstance(spine, dict):
             lines = episode_lines(spine, episode_ordinal)
         if lines:
+            whole_lines = captions_whole_lines(spine)
             break
     if not lines:
         raise ValueError(f"episode {episode_ordinal} has no dialogue lines in any spine snapshot in {api}")
@@ -474,10 +517,10 @@ def caption_take(
         spans = speech_spans(detect_silences(ffmpeg, source, duration), duration)
         anchors = anchor_lines(lines, spans)
 
-    cues = build_cues(lines, anchors)
+    cues = build_cues(lines, anchors, whole_lines=whole_lines)
     base = take.stem.replace("-raw", "").rsplit("-v", 1)[0]
     ass = next_versioned_path(takes, stem or f"{base}-house", ".ass")
     ass.write_text(build_ass(cues, width=width, height=height), encoding="utf-8")
     video = next_versioned_path(takes, stem or f"{base}-captioned", ".mp4")
     burn_ass(ffmpeg, take, ass, video)
-    return CaptionResult(ass, video, tuple(cues), tuple(anchors), tuple(lines))
+    return CaptionResult(ass, video, tuple(cues), tuple(anchors), tuple(lines), whole_lines)
