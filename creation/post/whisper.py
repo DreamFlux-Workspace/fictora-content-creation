@@ -49,13 +49,19 @@ class Word:
 
 @dataclass(frozen=True)
 class LineWindow:
-    """Where one approved line was heard (``start is None`` when it was not)."""
+    """Where one approved line was heard (``start is None`` when it was not).
+
+    ``by`` says how it was matched: ``"words"`` (word by word / syllable by
+    syllable), ``"sound"`` (a Japanese line on the server's per-word readings)
+    or ``"shape"`` (a Japanese line by reading shape, on an older server).
+    """
 
     index: int
     line: str
     start: float | None
     end: float | None
     ratio: float
+    by: str = "words"
 
 
 def transcribe(
@@ -313,25 +319,27 @@ def _line_windows_on(
     found: list[LineWindow] = []
     for index, line in enumerate(lines):
         spellings = [line, *(alternates[index] if alternates and index < len(alternates) else ())]
-        matches: list[tuple[int, int, float, int]] = []  # (first word, last word, ratio, stream)
+        matches: list[tuple[int, int, float, int, bool]] = []  # (first word, last word, ratio, stream, kana)
         for spelling in dict.fromkeys(spellings):
             target = _tokens(spelling) if spelling else []
-            which = 1 if read is not None and any(_KANA.fullmatch(token) for token in target) else 0
+            kana = any(_KANA.fullmatch(token) for token in target)
+            which = 1 if read is not None and kana else 0
             stream = streams[which]
             hit = _match(stream, target, cursors[which])
             if hit:
                 first, last, ratio = hit
-                matches.append((first, last, ratio, which))
+                matches.append((first, last, ratio, which, kana))
         if not matches:
             found.append(LineWindow(index, line, None, None, 0.0))
             continue
         # Earliest word first; on one stream that is the old earliest-token order exactly.
-        first, last, ratio, which = min(
+        first, last, ratio, which, kana = min(
             matches, key=lambda m: (streams[m[3]][m[0]][1], m[0] if read is None else 0, -m[2])
         )
         stream = streams[which]
         ids = sorted({stream[pos][1] for pos in range(first, last + 1)})
-        found.append(LineWindow(index, line, words[ids[0]].start, words[ids[-1]].end, round(ratio, 2)))
+        by = "sound" if which == 1 else "shape" if kana else "words"
+        found.append(LineWindow(index, line, words[ids[0]].start, words[ids[-1]].end, round(ratio, 2), by))
         for other, tokens in enumerate(streams):
             if other == which:
                 cursors[other] = last + 1

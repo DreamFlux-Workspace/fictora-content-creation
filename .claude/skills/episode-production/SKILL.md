@@ -137,6 +137,22 @@ All three are mix notes, never a re-film. Times are seconds on the take **as fil
 - One cue per visible action, on the frame where the action lands. A cue with a bad shape is rendered once more with a changed description, then dropped with a line in the run notes; a missing cue never blocks a take. A quiet cue: raise it in 2–3 dB steps with `@DB` until it reads.
 - `finish` checks every hand file before any step: missing, silent, or outside the take is an error and nothing is written. A hand step that then fails prints `NOT DONE` like missing music.
 
+## Review a take: the numbers before the verdict
+
+```bash
+uv run fictora-produce review --desk D [--episode N] [--take tK] [--take-file F | --file F] [--board B] [--words-json J | --transcribe] [--json]
+```
+
+Free and local (ffmpeg + numpy); only `--transcribe` asks the server for a Whisper transcript of the take's stored URL (a few cents). Without a file it reads the newest finished file for the take, else the newest raw take, and the block's first line says which. Run it on the raw take as soon as it lands (before `finish`, that is the default), before asking Use it or Change this, and again after `finish` before handing it over. It prints one block (and appends it to `run-notes.md`): paste it into the verdict. Each section is ✓ or ⚠ with the threshold it used (`–` when there was nothing to measure). It always exits 0: a ⚠ is something to watch for, never a stop, and never by itself a reason to re-film.
+
+- **Loudness:** a raw take below −30 LUFS needs cues; a finished one sits at −20 to −15 LUFS with true peak ≤ −1 dBTP. Duck depth only when mix bus files are on the desk (adopted desks).
+- **Cuts:** hard cuts vs the take facts' shot changes. An extra cut is a soften; a missing one is often a camera move: look.
+- **Frames:** frozen stretches (a stall, or your own `freeze`) and stacked double frames: look at each full size.
+- **Board:** head board frames on a raw take are what `finish` removes; any board frame mid-take, or at the head after deboard, is a fault.
+- **Lines:** the `check-lines` output as it prints it (the count, each line's shot and board row, `!!` for an on-screen speaker out of frame), then each approved line heard or `MISSING` (the one real re-film). A Japanese line matched on the server's readings reads `(by sound, NN%)`.
+- **Safe zones** (finished files only): the caption box on sampled frames vs the covered zones and the 55–70% band; it writes a zone sheet (covered zones shaded) for the face check by eye.
+- Not measured: what must not be on screen per board row. Check that by eye. Thresholds and how to read each number: reference.md.
+
 ## Local edits: deboard, soften, freeze, trim, tempo
 
 Free, on this laptop (ffmpeg + numpy). Each writes a new `take-epNN-tK-<step>-vN.mp4` and a run note; nothing is overwritten. Details and thresholds: reference.md.
