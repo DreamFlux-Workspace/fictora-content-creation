@@ -283,6 +283,22 @@ def test_each_audio_route_gets_its_path_body_session_and_idempotency_key(
     assert all(r.headers["Authorization"] == "Bearer t" for r in rec.requests)
 
 
+def test_audition_new_wording_and_named_voices_are_sent_as_the_routes_text_and_voices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ok = httpx.Response(200, json={"candidates": []})
+    audio, rec, _ = _service(tmp_path, monkeypatch, [ok, ok])
+    audio.render_auditions(spine_id="sp", cast_id="cast_k", spine_version="sha256:v", lines=[], count=8, key="k1",
+                           text="Do not break eye contact.", voices=["Sarah", "Laura"])  # fmt: skip
+    audio.render_auditions(spine_id="sp", cast_id="cast_k", spine_version="sha256:v", lines=["Hi."], count=8,
+                           key="k2", voices=["Callum"])  # fmt: skip
+
+    assert [json.loads(r.content) for r in rec.requests] == [
+        {"spine_version": "sha256:v", "text": "Do not break eye contact.", "voices": ["Sarah", "Laura"]},
+        {"spine_version": "sha256:v", "lines": ["Hi."], "voices": ["Callum"]},
+    ], "text replaces lines and voices replaces the slate size; nothing padded"
+
+
 def test_rate_limits_and_in_progress_are_waited_out_and_a_failed_render_is_replayed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

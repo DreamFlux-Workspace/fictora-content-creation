@@ -40,8 +40,17 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     voice.add_argument("--episode", type=int, default=None, help="Audition on this episode's lines only.")
     voice.add_argument("--count", type=int, default=8, help="Candidates, 4-10.")
     voice.add_argument("--cause", default=None, help="Why a second audition set is paid for (required for one).")
-    voice.add_argument("--text", default=None, help="Audition this one line (it must be on the spine; edit --line-id first).")
-    voice.add_argument("--voices", default=None, metavar="A,B,...", help="Only these voices in the listening reel.")
+    voice.add_argument(
+        "--text",
+        default=None,
+        help="Audition this wording (new or on the spine, up to 300 characters; sent to the server as is).",
+    )
+    voice.add_argument(
+        "--voices",
+        default=None,
+        metavar="A,B,...",
+        help="Exactly these Eleven v3 voices, in this order, instead of the default slate (--count ignored).",
+    )
 
     fx = sub.add_parser(
         "voice-fx",

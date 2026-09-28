@@ -48,6 +48,13 @@ HINTS = {
     "audio_url_not_owned": "the transcript needs a file in our storage (the take's stored URL), not a local file",
     "idempotency_conflict": "this request key was used with another body; tell engineering (the desk's keys are stable)",
     "budget_cap_exceeded": "the audio budget cap is reached; tell engineering",
+    "voice_audition_unknown_voice": "use a voice from the catalog the server listed; nothing was spent",
+    "voice_audition_voice_count": "name 1-10 voices in --voices; nothing was spent",
+    "voice_audition_text_too_long": "shorten --text to 300 characters or fewer; nothing was spent",
+    "voice_audition_text_language": "write --text in the show's language; nothing was spent",
+    "voice_audition_text_blank": "--text needs some words; nothing was spent",
+    "voice_audition_text_or_lines": "give --text or let the audition use the character's lines, not both; "
+    "nothing was spent",
 }
 
 
@@ -59,9 +66,22 @@ class AudioService(Protocol):
     """What local post asks the server to generate. Each method returns the route's JSON answer."""
 
     def render_auditions(
-        self, *, spine_id: str, cast_id: str, spine_version: str, lines: list[str], count: int, key: str
+        self,
+        *,
+        spine_id: str,
+        cast_id: str,
+        spine_version: str,
+        lines: list[str],
+        count: int,
+        key: str,
+        text: str | None = None,
+        voices: list[str] | None = None,
     ) -> dict[str, Any]:
-        """``{candidates: [{voice_id, text, audio_url, seconds}], cost_usd}``."""
+        """``{candidates: [{voice_id, text, audio_url, seconds}], cost_usd}``.
+
+        ``text`` (new wording) goes instead of ``lines``; ``voices`` (catalog names,
+        read in that order) goes instead of the default slate of ``count``.
+        """
         ...
 
     def voice_line(
@@ -115,11 +135,28 @@ class DramaApiAudio:
             run.client.close()
 
     def render_auditions(
-        self, *, spine_id: str, cast_id: str, spine_version: str, lines: list[str], count: int, key: str
+        self,
+        *,
+        spine_id: str,
+        cast_id: str,
+        spine_version: str,
+        lines: list[str],
+        count: int,
+        key: str,
+        text: str | None = None,
+        voices: list[str] | None = None,
     ) -> dict[str, Any]:
-        """POST ``…/voice-auditions/render``."""
+        """POST ``…/voice-auditions/render``.
 
-        body = {"spine_version": spine_version, "lines": lines, "candidate_count": count}
+        The body carries ``text`` instead of ``lines`` when given, and ``voices``
+        instead of ``candidate_count`` when given, exactly as passed: the server
+        owns every rule on them. A body with neither is byte-identical to before,
+        so an existing request key replays.
+        """
+
+        body: dict[str, Any] = {"spine_version": spine_version}
+        body.update({"text": text} if text is not None else {"lines": lines})
+        body.update({"voices": list(voices)} if voices else {"candidate_count": count})
         return self._post(f"/v1/spines/{spine_id}/cast/{cast_id}/voice-auditions/render", body, key)
 
     def voice_line(

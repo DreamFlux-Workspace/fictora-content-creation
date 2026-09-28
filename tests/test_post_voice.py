@@ -116,8 +116,11 @@ def test_audition_renders_each_candidate_on_the_real_lines_and_a_second_set_need
     assert kind == "auditions" and post_api.posts == [], "rendered by the server's render route, nothing local"
     assert {k: v for k, v in asked.items() if k != "key"} == {
         "spine_id": "spine_test", "cast_id": "cast_kenji", "spine_version": SPINE["spine_version"],
-        "lines": ["Wait for me here."], "count": 4,
+        "lines": ["Wait for me here."], "count": 4, "text": None, "voices": None,
     }  # fmt: skip
+    assert asked["key"] == voice_mod._unit(
+        "audition-kenji", {"lines": ["Wait for me here."], "count": 4, "set": "audition-v1"}
+    ), "a plain audition keeps the request key it had, so an interrupted run still replays"
     listing = json.loads((folder / "auditions.json").read_text())
     assert folder.name == "audition-v1" and [c["provider_voice"] for c in listing["candidates"]] == [
         "Rachel", "Aria", "Roger", "Sarah"]  # fmt: skip
@@ -264,80 +267,142 @@ def test_the_voice_line_route_gets_the_performed_line_language_and_spoken_text(
     assert bodies == [{"text": "ここで待ってて", "language": "ja", "spoken_text": "ここで待ってて"}]
 
 
-class SlateAudio(FakeAudio):
-    """Answers like the server: the first ``count`` voices of its default slate."""
+class ServerAudio(FakeAudio):
+    """Answers like the render route after Drama #468: ``voices`` replaces the default slate.
+
+    One candidate per named voice in that order; a retired premade comes back as
+    its catalog stand-in (``Bella`` -> ``Sarah``); an unknown name is the server's
+    named 422, raised the way ``DramaApiAudio`` raises it.
+    """
+
+    DEFAULT_SLATE = ("Rachel", "Aria", "Roger", "Sarah", "Laura", "Charlie", "George", "Callum")
+    STAND_INS = {"bella": "Sarah"}
 
     def render_auditions(self, **kwargs: Any) -> dict[str, Any]:
+        from creation.post.audio_service import AudioServiceError
+
         self.calls.append(("auditions", kwargs))
-        voices = list(voice_mod.SERVER_AUDITION_SLATE) + ["Alice", "Bill"]
+        catalog = {v.casefold(): v for v in (*self.DEFAULT_SLATE, "Alice", "Bill")}
+        named = kwargs.get("voices")
+        if named:
+            unknown = [v for v in named if v.casefold() not in catalog and v.casefold() not in self.STAND_INS]
+            if unknown:
+                raise AudioServiceError(
+                    f"HTTP 422 voice-auditions/render: voice_audition_unknown_voice: {unknown[0]!r} is not an "
+                    "Eleven v3 voice; the catalog is Rachel, Aria, ..."
+                )
+            voices = [self.STAND_INS.get(v.casefold()) or catalog[v.casefold()] for v in named]
+        else:
+            voices = list(self.DEFAULT_SLATE[: kwargs["count"]])
+        said = kwargs.get("text") or kwargs["lines"][0]
         return {
             "candidates": [
-                {"voice_id": v, "text": kwargs["lines"][0], "audio_url": f"https://media.test/aud-{i}.mp3", "seconds": 0.4}
-                for i, v in enumerate(voices[: kwargs["count"]], start=1)
+                {"voice_id": v, "text": said, "audio_url": f"https://media.test/aud-{i}.mp3", "seconds": 0.4}
+                for i, v in enumerate(voices, start=1)
             ],
             "cost_usd": 0.02,
         }
 
 
 @needs_ffmpeg
-def test_audition_on_one_line_keeps_only_the_named_voices_in_one_numbered_reel(
+def test_new_wording_and_named_voices_go_straight_to_the_server_and_all_land_in_one_reel(
     post_desk: Path, post_api: FakePostApi, downloads: list[str]
 ) -> None:
-    audio = SlateAudio()
+    audio = ServerAudio()
     out = io.StringIO()
     folder = voice_mod.run_voice_audition(
-        post_desk, cast="Kenji", text="  wait for me HERE. ", voices="Sarah, aria", audio=audio, out=out
-    )
+        post_desk, cast="Kenji", text="  No matter what happens...  do not break eye contact. ",
+        voices="Laura, bella", audio=audio, out=out,
+    )  # fmt: skip
 
     [(_, asked)] = audio.calls
-    assert asked["lines"] == ["Wait for me here."], "the spine's own line, matched on any spelling"
-    assert asked["count"] == 4, "the smallest server slate that holds Aria and Sarah"
+    assert asked["text"] == "No matter what happens... do not break eye contact.", "wording not on the spine is sent"
+    assert asked["voices"] == ["Laura", "bella"], "the names as typed, in order; the server resolves them"
+    assert asked["lines"] == []
     listing = json.loads((folder / "auditions.json").read_text())
+    assert listing["text"] == asked["text"] and listing["voices"] == ["Laura", "bella"]
     [reel] = listing["reels"]
-    assert [(i["number"], i["voice"]) for i in reel["index"]] == [(2, "Aria"), (4, "Sarah")]
+    assert [(i["number"], i["voice"]) for i in reel["index"]] == [(1, "Laura"), (2, "Sarah")], (
+        "every clip the server read goes in the reel, a retired name under its stand-in"
+    )
     assert reel["index"][1]["start"] == pytest.approx(0.4 + voice_mod.REEL_GAP_SECONDS, abs=0.05)
     reel_file = folder / reel["file"]
     assert reel_file.name == "reel-v1.m4a" and reel_file.with_suffix(".txt").is_file()
     from creation.post.media import media_duration
 
     assert media_duration(reel_file) == pytest.approx(2 * (0.4 + voice_mod.REEL_GAP_SECONDS), abs=0.15)
-    assert " 2. Aria" in out.getvalue() and " 4. Sarah" in out.getvalue()
+    assert " 1. Laura" in out.getvalue() and " 2. Sarah" in out.getvalue()
 
     again = voice_mod.run_voice_audition(
-        post_desk, cast="Kenji", text="Wait for me here.", voices=["Rachel"], audio=audio, out=io.StringIO()
-    )
-    assert again == folder and len(audio.calls) == 1, "a set that holds the line and voice: new reel, nothing paid"
+        post_desk, cast="Kenji", text="no matter what happens... do not break eye contact.", voices=["laura"],
+        audio=audio, out=io.StringIO(),
+    )  # fmt: skip
+    assert again == folder and len(audio.calls) == 1, "a set that holds the wording and voice: new reel, nothing paid"
+    assert json.loads((folder / "auditions.json").read_text())["reels"][1]["voices"] == ["Laura"]
     assert (folder / "reel-v2.m4a").is_file() and (folder / "reel-v1.m4a").is_file()
 
 
-def test_new_wording_off_the_spine_is_refused_before_anything_is_paid(
-    post_desk: Path, post_api: FakePostApi
+@needs_ffmpeg
+def test_named_voices_on_the_real_lines_replace_the_default_slate(
+    post_desk: Path, post_api: FakePostApi, downloads: list[str]
 ) -> None:
-    audio = SlateAudio()
-    with pytest.raises(ValueError, match="edit --desk .* --line-id ID") as caught:
-        voice_mod.run_voice_audition(
-            post_desk, cast="Kenji", text="Do not break eye contact.", audio=audio, out=io.StringIO()
-        )
-    assert 'l1 "Wait for me here."' in str(caught.value)
-    assert audio.calls == []
+    audio = ServerAudio()
+    folder = voice_mod.run_voice_audition(post_desk, cast="Kenji", voices="Callum", audio=audio, out=io.StringIO())
+
+    [(_, asked)] = audio.calls
+    assert asked["lines"] == ["Wait for me here."] and asked["text"] is None and asked["voices"] == ["Callum"]
+    listing = json.loads((folder / "auditions.json").read_text())
+    assert [c["provider_voice"] for c in listing["candidates"]] == ["Callum"], "one voice asked, one voice paid"
 
 
-def test_the_slate_asked_for_is_the_smallest_that_holds_the_named_voices() -> None:
-    assert voice_mod.slate_count(["Rachel"]) == 4
-    assert voice_mod.slate_count(["charlie", "Aria"]) == 6
-    assert voice_mod.slate_count(["Callum"]) == 8
-    assert voice_mod.slate_count(["Nobody"]) == voice_mod.MAX_CANDIDATES
-    with pytest.raises(ValueError, match="at most 10"):
-        voice_mod.parse_voices(",".join(f"v{i}" for i in range(11)))
-    assert voice_mod.parse_voices("Aria, aria ,Sarah") == ["Aria", "Sarah"]
+def test_the_servers_named_refusal_is_printed_as_it_is_and_nothing_is_booked(
+    post_desk: Path, post_api: FakePostApi, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import httpx
+
+    from creation.harness.session import DramaApiRunSession
+    from creation.post import desk as desk_mod
+
+    bodies: list[dict[str, Any]] = []
+    refusal = {"error": {"code": "voice_audition_unknown_voice",
+                         "message": "'Zorblax' is not an Eleven v3 voice; the catalog is Rachel, Aria, Sarah"}}  # fmt: skip
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(422, json=refusal)
+
+    def open_api(desk: Path, episode: int) -> DramaApiRunSession:
+        run = DramaApiRunSession(base_url="https://drama.test", token="t", out_dir=post_desk, session_id="s")
+        run.client = httpx.Client(transport=httpx.MockTransport(answer))
+        return run
+
+    monkeypatch.setattr(desk_mod, "open_api", open_api)
+    code = main(["voice", "--desk", str(post_desk), "--cast", "Kenji", "--audition", "--text", "Do not blink.",
+                 "--voices", "Zorblax,Sarah"])  # fmt: skip
+
+    err = capsys.readouterr().err
+    assert code == 2
+    assert "422" in err and "voice_audition_unknown_voice: 'Zorblax' is not an Eleven v3 voice" in err
+    assert "catalog is Rachel, Aria, Sarah" in err and "nothing was spent" in err
+    [body] = bodies
+    assert body == {"spine_version": SPINE["spine_version"], "text": "Do not blink.", "voices": ["Zorblax", "Sarah"]}
+    assert not list(post_desk.glob("shared/voices/*/audition-v*/auditions.json")), "no set recorded, nothing booked"
+
+
+def test_voices_are_split_as_typed_and_left_to_the_server() -> None:
+    assert voice_mod.parse_voices("Aria, aria ,,Sarah") == ["Aria", "aria", "Sarah"]
+    assert len(voice_mod.parse_voices(",".join(f"v{i}" for i in range(11)))) == 11, "the server owns the cap"
+    assert voice_mod.parse_voices(None) == []
 
 
 @needs_ffmpeg
 def test_pick_by_voice_name(post_desk: Path, post_api: FakePostApi, downloads: list[str]) -> None:
-    voice_mod.run_voice_audition(post_desk, cast="Kenji", voices="Laura", audio=SlateAudio(), out=io.StringIO())
+    voice_mod.run_voice_audition(
+        post_desk, cast="Kenji", text="Do not blink.", voices="Rachel,Laura", audio=ServerAudio(), out=io.StringIO()
+    )
     assert voice_mod.run_voice_pick(post_desk, cast="Kenji", pick="laura", out=io.StringIO()) == "Laura"
     path, body = post_api.posts[-1]
-    assert path.endswith("/voice-auditions/pick") and body["url"] == "https://media.test/aud-5.mp3"
+    assert path.endswith("/voice-auditions/pick") and body["url"] == "https://media.test/aud-2.mp3"
 
 
 # --- voice-fx ----------------------------------------------------------------------------------
