@@ -134,27 +134,25 @@ class FinishResult:
         return "Sound: " + " · ".join(marks)
 
     def summary_lines(self) -> list[str]:
-        """Final file, loudness, each step, cost, then the sound line."""
+        """Final file, loudness, each step, then the sound line (cost stays in run notes only)."""
 
         lines = [f"Final: {self.final}", f"Loudness: {self.loudness or 'not measured'}"]
         lines += [f"- {step.step}: {step.status} — {step.detail}" for step in self.steps]
-        lines.append(f"Cost: about ${self.cost_usd:.3f} of generated audio (billed on the server)")
         lines.append(self.sound_line())
         return lines
 
     def as_json(self) -> dict[str, Any]:
-        """JSON report."""
+        """JSON report (no cost: that stays in the run notes)."""
 
         return {
             "source": str(self.source),
             "final": str(self.final),
             "loudness": self.loudness,
-            "cost_usd": self.cost_usd,
             "complete": self.complete,
             "missing": list(self.sound_missing),
             "steps": [
                 {"step": s.step, "status": s.status, "detail": s.detail,
-                 "output": str(s.output) if s.output else None, "cost_usd": s.cost_usd}
+                 "output": str(s.output) if s.output else None}
                 for s in self.steps
             ],
         }  # fmt: skip
@@ -174,10 +172,11 @@ def book(desk: Path, *, episode: int, usd: float, take_id: str | None = None, st
     try:
         record_spend(desk, episode=episode, usd=usd, take_id=take_id)
     except (FileNotFoundError, ValueError, KeyError) as exc:
-        print(
-            f"note: ${usd:.3f} not booked on the desk ledger ({exc}); record it with fictora-ops spend",
-            file=stream or sys.stderr,
-        )
+        print(f"note: a spend was not booked on the desk ledger ({exc}); see run-notes.md", file=stream or sys.stderr)
+        if (desk / f"ep{episode:02d}" / "run-notes.md").is_file():
+            append_run_note(
+                desk / f"ep{episode:02d}", f"Not booked on the ledger: ${usd:.3f} ({exc}); fictora-ops spend"
+            )
 
 
 def api_facts_fetcher(desk: Path, episode: int, take_id: str) -> Path | None:
@@ -275,8 +274,9 @@ def run_finish(
     found_spine = saved_spine(desk, episode)
     spine = found_spine[0] if found_spine else None
     board = approved_board(desk, episode, take_id)
-    sfx_render = sfx_render or service_renderer(DramaApiAudio(desk))
-    bed_maker = bed_maker or service_music_maker(DramaApiAudio(desk))
+    audio = DramaApiAudio(desk, episode=episode)
+    sfx_render = sfx_render or service_renderer(audio, spine_id(desk))
+    bed_maker = bed_maker or service_music_maker(audio)
     result = FinishResult(source=source, final=source)
     current = source
     bed_state: dict[str, Any] = {"path": None}
@@ -396,7 +396,10 @@ def run_finish(
     except MediaToolError as exc:
         result.loudness = f"not measured ({exc})"
     summary = result.summary_lines()
-    append_run_note(run_dir, "Finish summary\n" + "\n".join(summary))
+    append_run_note(
+        run_dir,
+        "Finish summary\n" + "\n".join(summary) + f"\nCost (operator only): ${result.cost_usd:.3f} of generated audio",
+    )
     for line in summary:
         print(line, file=out)
     if not result.complete:

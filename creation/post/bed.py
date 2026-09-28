@@ -30,7 +30,7 @@ from creation.post.media import run_ffmpeg
 DEFAULT_BED_DB = -16.5
 BED_LUFS = -20.0
 BED_SECONDS = 30
-BED_USD = 0.06
+BED_USD = 0.20
 """One generated bed, roughly; booked to the ledger by the caller."""
 
 Maker = Callable[[Mapping[str, Any], str | None, Path], Path]
@@ -58,13 +58,8 @@ def service_music_maker(audio: AudioService) -> Maker:
     def make(spine: Mapping[str, Any], music: str | None, target: Path) -> Path:
         spine_id = str(spine.get("spine_id") or "")
         key = f"bed-{spine_id}" + (f"-{hashlib.sha256(music.encode()).hexdigest()[:10]}" if music else "")
-        url = audio.music_bed(
-            spine_id=spine_id,
-            genre=str(spine.get("microdrama_genre") or "") or None,
-            description=music,
-            seconds=BED_SECONDS,
-            key=key,
-        )
+        answer = audio.music_bed(spine_id=spine_id, brief=music, key=key)
+        url = str(answer["audio_url"])
         return download(url, target)
 
     return make

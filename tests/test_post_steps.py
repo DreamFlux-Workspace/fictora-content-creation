@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import subprocess
 from pathlib import Path
@@ -192,34 +193,121 @@ def test_the_session_tells_the_operator_to_run_finish(tmp_path: Path, status: in
     assert ("fictora-produce finish" in str(outage.value)) is (status == 409)
 
 
-def test_the_drama_api_audio_service_refuses_until_its_routes_are_wired(tmp_path: Path) -> None:
-    from creation.post.audio_service import AudioServicePending, DramaApiAudio
+class Recorder:
+    """A MockTransport that answers each request from a queue and records what came in."""
 
-    audio = DramaApiAudio(tmp_path)
-    with pytest.raises(AudioServicePending, match="no provider key is used on this laptop"):
-        audio.sfx_cue(sound="a door slams", kind="event", seconds=1.0, key="k")
-    with pytest.raises(AudioServicePending):
-        audio.transcribe(media=tmp_path / "a.wav", key="k")
+    def __init__(self, answers: list[httpx.Response]) -> None:
+        self.answers = answers
+        self.requests: list[httpx.Request] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        return self.answers.pop(0)
 
 
-def test_the_sfx_renderer_sends_the_authored_label_not_a_prompt(tmp_path: Path) -> None:
+def _service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answers: list[httpx.Response]):
+    from creation.post import audio_service
+    from creation.post import desk as desk_mod
+
+    recorder = Recorder(answers)
+
+    def open_api(desk: Path, episode: int) -> DramaApiRunSession:
+        run = DramaApiRunSession(base_url="https://drama.test", token="t", out_dir=tmp_path, session_id="sess-1")
+        run.client = httpx.Client(transport=httpx.MockTransport(recorder))
+        return run
+
+    monkeypatch.setattr(desk_mod, "open_api", open_api)
+    waits: list[float] = []
+    return audio_service.DramaApiAudio(tmp_path, sleep=waits.append), recorder, waits
+
+
+def test_each_audio_route_gets_its_path_body_session_and_idempotency_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ok = lambda body: httpx.Response(200, json=body)
+    audio, rec, _ = _service(tmp_path, monkeypatch, [ok({"candidates": []}), ok({"audio_url": "u"}),
+                                                      ok({"audio_url": "u"}), ok({"audio_url": "u"}), ok({"words": []})])  # fmt: skip
+    audio.render_auditions(spine_id="sp", cast_id="cast_k", spine_version="sha256:v", lines=["Hi."], count=4, key="k1")
+    audio.voice_line(spine_id="sp", cast_id="cast_k", text="Hi.", language="en", key="k2")
+    audio.sfx_cue(spine_id="sp", sound="a door slams", seconds=1.0, key="k3")
+    audio.music_bed(spine_id="sp", brief=None, key="k4")
+    audio.transcribe(audio_url="https://media.test/tenants/t/drama/take.mp4", language="en", spine_id="sp", key="k5")
+
+    seen = [(r.url.path, json.loads(r.content), r.headers["Idempotency-Key"], r.headers["X-Drama-Session-Id"])
+            for r in rec.requests]  # fmt: skip
+    assert seen == [
+        ("/v1/spines/sp/cast/cast_k/voice-auditions/render",
+         {"spine_version": "sha256:v", "lines": ["Hi."], "candidate_count": 4}, "k1", "sess-1"),
+        ("/v1/spines/sp/cast/cast_k/voice-lines", {"text": "Hi.", "language": "en"}, "k2", "sess-1"),
+        ("/v1/spines/sp/sfx-cues", {"sound": "a door slams", "seconds": 1.0}, "k3", "sess-1"),
+        ("/v1/spines/sp/audio-bed/render", {"pin": False}, "k4", "sess-1"),
+        ("/v1/transcripts", {"audio_url": "https://media.test/tenants/t/drama/take.mp4", "language": "en",
+                             "spine_id": "sp"}, "k5", "sess-1"),
+    ]  # fmt: skip
+    assert all(r.headers["Authorization"] == "Bearer t" for r in rec.requests)
+
+
+def test_rate_limits_and_in_progress_are_waited_out_and_a_failed_render_is_replayed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    err = lambda status, code, **h: httpx.Response(status, json={"error": {"code": code, "message": "m"}},
+                                                  headers=h)  # fmt: skip
+    audio, rec, waits = _service(tmp_path, monkeypatch, [
+        err(429, "rate_limited", **{"Retry-After": "6"}),
+        err(409, "operator_audio_in_progress", **{"Retry-After": "15"}),
+        err(502, "operator_audio_failed"),
+        httpx.Response(200, json={"audio_url": "u"}),
+    ])  # fmt: skip
+    assert audio.sfx_cue(spine_id="sp", sound="hum", seconds=2.0, key="same")["audio_url"] == "u"
+    assert waits == [6.0, 15.0]
+    assert {r.headers["Idempotency-Key"] for r in rec.requests} == {"same"}, "every retry replays the same key"
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "hint"),
+    [
+        (409, "operator_audio_unavailable", "tell engineering"),
+        (409, "operator_upload_unavailable", "stored take URLs"),
+        (422, "voice_not_locked", "voice --pick"),
+        (429, "budget_cap_exceeded", "budget cap"),
+        (409, "idempotency_conflict", "another body"),
+    ],
+)
+def test_refusals_stop_with_a_hint_and_are_not_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: int, code: str, hint: str
+) -> None:
+    from creation.post.audio_service import AudioServiceError
+
+    body = {"error": {"code": code, "message": "no"}, "request_id": "r"}
+    audio, rec, waits = _service(tmp_path, monkeypatch, [httpx.Response(status, json=body)])
+    with pytest.raises(AudioServiceError, match=hint):
+        audio.voice_line(spine_id="sp", cast_id="c", text="Hi.", language="en", key="k")
+    assert len(rec.requests) == 1 and waits == []
+
+
+def test_the_sfx_renderer_sends_the_authored_label_and_refuses_a_bad_shape(tmp_path: Path) -> None:
     from creation.post import sfx as sfx_mod
 
     asked: list[dict] = []
+    answers = [{"audio_url": "https://a/c.mp3", "shape_problem": None},
+               {"audio_url": "https://a/c.mp3", "shape_problem": None},
+               {"audio_url": "https://a/c.mp3", "shape_problem": "silent"}]  # fmt: skip
 
     class Audio:
-        def sfx_cue(self, **kwargs: object) -> str:
+        def sfx_cue(self, **kwargs: object) -> dict:
             asked.append(kwargs)
-            return "https://audio.test/cue.mp3"
+            return answers.pop(0)
 
-    sfx_mod_download = sfx_mod.download
+    original = sfx_mod.download
     sfx_mod.download = lambda url, target: target  # type: ignore[assignment]
     try:
-        render = sfx_mod.service_renderer(Audio())  # type: ignore[arg-type]
+        render = sfx_mod.service_renderer(Audio(), "sp")  # type: ignore[arg-type]
         cue = SfxCue(2, "a door slams", "event", 2.0, 0.2)
         render(cue, tmp_path / "c.mp3")
         render(cue, tmp_path / "c.mp3")
+        with pytest.raises(ValueError, match="wrong shape: silent"):
+            render(cue, tmp_path / "c.mp3")
     finally:
-        sfx_mod.download = sfx_mod_download  # type: ignore[assignment]
-    assert asked[0] == {"sound": "a door slams", "kind": "event", "seconds": 0.5, "key": f"sfx-{cue.cache_key}"}
+        sfx_mod.download = original  # type: ignore[assignment]
+    assert asked[0] == {"spine_id": "sp", "sound": "a door slams", "seconds": 0.5, "key": f"sfx-{cue.cache_key}"}
     assert asked[0]["key"] == asked[1]["key"], "a re-run sends the same idempotency key"

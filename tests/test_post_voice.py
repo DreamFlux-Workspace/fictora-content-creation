@@ -50,20 +50,35 @@ class FakePostApi:
 
 
 class FakeAudio:
-    """The generated-audio service: records every request, answers with a URL."""
+    """The server's operator audio routes: records every request, answers with stored URLs."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    def _answer(self, kind: str, kwargs: dict[str, Any]) -> str:
-        self.calls.append((kind, kwargs))
-        return f"https://audio.test/{kind}-{len(self.calls)}.mp3"
+    def render_auditions(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("auditions", kwargs))
+        voices = ["Rachel", "Aria", "Roger", "Sarah"][: kwargs["count"]]
+        return {
+            "candidates": [
+                {"voice_id": v, "text": " ".join(kwargs["lines"]), "audio_url": f"https://media.test/aud-{i}.mp3",
+                 "seconds": 1.5}
+                for i, v in enumerate(voices, start=1)
+            ],
+            "cost_usd": 0.02,
+        }  # fmt: skip
 
-    def audition_sample(self, **kwargs: Any) -> str:
-        return self._answer("audition", kwargs)
+    def voice_line(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("line", kwargs))
+        return {"audio_url": "https://media.test/line.mp3", "seconds": 0.4, "provider_voice": "Aria",
+                "reading": {"checked": True, "read_right": True, "match": 1.0}, "cost_usd": 0.002}  # fmt: skip
 
-    def voice_line(self, **kwargs: Any) -> str:
-        return self._answer("line", kwargs)
+    def transcribe(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("transcribe", kwargs))
+        return {"text": "", "words": [
+            {"word": "Wait", "start": 1.0, "end": 1.3}, {"word": "for", "start": 1.3, "end": 1.5},
+            {"word": "me", "start": 1.5, "end": 1.7}, {"word": "here.", "start": 1.7, "end": 2.0},
+            {"word": "Not", "start": 3.0, "end": 3.4}, {"word": "tonight.", "start": 3.4, "end": 4.0},
+        ]}  # fmt: skip
 
 
 @pytest.fixture
@@ -92,15 +107,17 @@ def test_audition_renders_each_candidate_on_the_real_lines_and_a_second_set_need
     audio = FakeAudio()
     folder = voice_mod.run_voice_audition(post_desk, cast="Kenji", count=4, audio=audio, out=io.StringIO())
 
-    path, body = post_api.posts[0]
-    assert path == "/v1/spines/spine_test/cast/cast_kenji/voice-auditions"
-    assert body == {"spine_version": SPINE["spine_version"], "lines": ["Wait for me here."], "candidate_count": 4}
-    assert [a["voice"] for _, a in audio.calls] == ["Rachel", "Aria", "Roger", "Sarah"]
-    assert all(kind == "audition" and a["text"] == "Wait for me here." for kind, a in audio.calls)
-    assert len({a["key"] for _, a in audio.calls}) == 4, "one idempotency key per candidate"
+    [(kind, asked)] = audio.calls
+    assert kind == "auditions" and post_api.posts == [], "rendered by the server's render route, nothing local"
+    assert {k: v for k, v in asked.items() if k != "key"} == {
+        "spine_id": "spine_test", "cast_id": "cast_kenji", "spine_version": SPINE["spine_version"],
+        "lines": ["Wait for me here."], "count": 4,
+    }  # fmt: skip
     listing = json.loads((folder / "auditions.json").read_text())
-    assert folder.name == "audition-v1" and len(listing["candidates"]) == 4
-    assert listing["candidates"][0]["url"] == "https://audio.test/audition-1.mp3"
+    assert folder.name == "audition-v1" and [c["provider_voice"] for c in listing["candidates"]] == [
+        "Rachel", "Aria", "Roger", "Sarah"]  # fmt: skip
+    assert listing["candidates"][0]["url"] == "https://media.test/aud-1.mp3"
+    assert downloads[0] == "https://media.test/aud-1.mp3"
 
     with pytest.raises(ValueError, match="--cause"):
         voice_mod.run_voice_audition(post_desk, cast="Kenji", count=4, audio=audio, out=io.StringIO())
@@ -108,6 +125,7 @@ def test_audition_renders_each_candidate_on_the_real_lines_and_a_second_set_need
         post_desk, cast="Kenji", count=4, cause="too old", audio=audio, out=io.StringIO()
     )
     assert second.name == "audition-v2"
+    assert audio.calls[-1][1]["key"] != asked["key"], "a paid second set is a new request, not a replay"
 
 
 @needs_ffmpeg
@@ -120,7 +138,7 @@ def test_pick_locks_the_listed_candidate_on_the_cast_card(
     path, body = post_api.posts[-1]
     assert path == "/v1/spines/spine_test/cast/cast_kenji/voice-auditions/pick"
     assert body["provider_voice"] == "Aria" and locked == "Aria"
-    assert body["url"] == "https://audio.test/audition-2.mp3" and body["seconds"] > 0
+    assert body["url"] == "https://media.test/aud-2.mp3" and body["seconds"] == 1.5
     with pytest.raises(ValueError, match="the numbers are 1, 2, 3, 4"):
         voice_mod.run_voice_pick(post_desk, cast="kenji", pick=9, out=io.StringIO())
 
@@ -132,20 +150,18 @@ def test_revoice_mutes_only_that_characters_line_and_lays_the_new_voice_in(
     post_api.spine_body["cast"][0]["voice_brief"] = {"provider_voice": "Aria"}
     take = make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", seconds=5.0,
                      tones=((1.0, 2.0, 440), (3.0, 4.0, 880)))  # fmt: skip
-    words = post_desk / "ep01" / "takes" / "words.json"
-    words.write_text(json.dumps({"chunks": [
-        {"text": "Wait", "timestamp": [1.0, 1.3]}, {"text": "for", "timestamp": [1.3, 1.5]},
-        {"text": "me", "timestamp": [1.5, 1.7]}, {"text": "here.", "timestamp": [1.7, 2.0]},
-        {"text": "Not", "timestamp": [3.0, 3.4]}, {"text": "tonight.", "timestamp": [3.4, 4.0]},
-    ]}))  # fmt: skip
+    stored = "https://media.test/tenants/t/drama/take-ep01-t1.mp4"
+    (post_desk / "ep01" / "api" / "17_raw_scene_clips.json").write_text(json.dumps(
+        {"clips": [{"job_id": "job_scene_1", "url": stored, "episode_id": "episode_01", "set_index": 1}]}))  # fmt: skip
     audio = FakeAudio()
 
-    out = voice_mod.run_revoice(post_desk, cast="Kenji", words_json=words, audio=audio, out=io.StringIO())
+    out = voice_mod.run_revoice(post_desk, cast="Kenji", audio=audio, out=io.StringIO())
 
     assert out.name == "take-ep01-t1-revoice-v1.mp4" and take.is_file()
-    [(endpoint, arguments)] = audio.calls
+    (kind, heard), (endpoint, arguments) = audio.calls
+    assert kind == "transcribe" and heard["audio_url"] == stored, "the take's stored URL, never an upload"
     assert endpoint == "line"
-    assert arguments["voice"] == "Aria" and arguments["text"] == "Wait for me here."
+    assert (arguments["cast_id"], arguments["text"]) == ("cast_kenji", "Wait for me here.")
     levels = np.array(measure_rms_windows(out, window_seconds=0.1))
     assert levels[10:13].max() > -30.0, "the new 0.4 s line starts where the old one did"
     assert levels[15:20].max() < -60.0, "the rest of the original line is muted"
@@ -167,3 +183,13 @@ def test_revoice_refuses_a_character_with_no_locked_voice(post_desk: Path, post_
 def test_cli_voice_needs_audition_or_pick(post_desk: Path) -> None:
     with pytest.raises(SystemExit):
         main(["voice", "--desk", str(post_desk), "--cast", "Kenji"])
+
+
+@needs_ffmpeg
+def test_revoice_without_a_stored_take_url_refuses_to_upload(post_desk: Path, post_api: FakePostApi) -> None:
+    post_api.spine_body["cast"][0]["voice_brief"] = {"provider_voice": "Aria"}
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4")
+    audio = FakeAudio()
+    with pytest.raises(ValueError, match="never uploads"):
+        voice_mod.run_revoice(post_desk, cast="Kenji", audio=audio, out=io.StringIO())
+    assert audio.calls == []
