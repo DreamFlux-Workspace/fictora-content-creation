@@ -308,3 +308,118 @@ def test_the_cli_says_why_a_command_stopped(desk: Path, capsys: pytest.CaptureFi
     code = produce_main(["redraw-board", "--desk", str(desk), "--episode", "1", "--take", "t1", "--cause", " "])
     assert code == 2
     assert "--cause is required" in capsys.readouterr().err
+
+
+def _row_facts(*line_shots: tuple[str, int | None], shots: int = 2) -> dict:
+    return {
+        "shots": [
+            {"shot_index": index, "start_seconds": (index - 1) * 7.5, "end_seconds": index * 7.5, "speaks": True}
+            for index in range(1, shots + 1)
+        ],
+        "lines": [
+            {
+                "line_id": line_id,
+                "count": 1,
+                "shot_index": shot,
+                "start_seconds": None if shot is None else (shot - 1) * 7.5,
+                "end_seconds": None if shot is None else shot * 7.5,
+            }
+            for line_id, shot in line_shots
+        ],
+    }
+
+
+def test_check_lines_reports_each_lines_row_and_flags_a_speaker_out_of_frame(desk: Path, api: FakeApi) -> None:
+    """Learnings #37: Ren's line plays on row 2, which only draws Hana."""
+
+    api_dir = desk / "ep01" / "api"
+    (api_dir / "spine.json").write_text(json.dumps(api.spine_doc), encoding="utf-8")
+    facts = _row_facts(("line_episode_01_01", 1), ("line_episode_01_02", 2))
+    (api_dir / "take-facts-ep01-t1-v1.json").write_text(json.dumps(facts), encoding="utf-8")
+    out = io.StringIO()
+
+    missing = ec.run_check_lines(desk, episode=1, out=out)
+
+    text = out.getvalue()
+    assert missing == 0
+    assert "ep01 t1: line 1 ('We're closed.', Hana): shot 1 (0.0–7.5 s), row 1, Hana in frame" in text
+    assert "!! ep01 t1: line 2 ('Not for me.', Ren): spoken in shot 2 (7.5–15.0 s), row 2, but Ren is not in" in text
+
+
+def _scp_spine() -> dict:
+    """SCP-173 take 1: the denial (line 3) plays on row 4, the statue's POV."""
+
+    def frame(ordinal: int, row: int, cast: list[str]) -> dict:
+        return {
+            "frame_id": f"f{ordinal}",
+            "episode_id": "episode_01",
+            "ordinal": ordinal,
+            "board_row": row,
+            "storyboard_group_id": "asset_plan_board_sp_episode_01_set01",
+            "cast_refs": cast,
+            "visual_brief": {"subject_blocking": [{"cast_id": cast_id} for cast_id in cast]},
+        }
+
+    statue, d9341, voice = "cast_the-statue", "cast_d-9341", "cast_speaker-voice"
+    return {
+        "cast": [
+            {"cast_id": statue, "name": "The Statue"},
+            {"cast_id": d9341, "name": "D-9341"},
+            {"cast_id": voice, "name": "Speaker Voice"},
+        ],
+        "episode_summaries": [{"episode_id": "episode_01", "ordinal": 1}],
+        "beats_per_storyboard_set": [3],
+        "beats": [
+            {
+                "episode_id": "episode_01",
+                "ordinal": 1,
+                "dialogue_lines": [
+                    {"line_id": "l1", "cast_id": voice, "text": "Do not break eye contact.", "off_screen": True}
+                ],
+            },
+            {"episode_id": "episode_01", "ordinal": 2, "dialogue_lines": [{"line_id": "l2", "cast_id": d9341, "text": "Please— open the door!"}]},
+            {"episode_id": "episode_01", "ordinal": 3, "dialogue_lines": [{"line_id": "l3", "cast_id": d9341, "text": "No no no— I'm not blinking"}]},
+        ],
+        "frames": [
+            frame(1, 1, [statue]),
+            frame(2, 1, [statue]),
+            frame(3, 2, [d9341, statue]),
+            frame(4, 2, [d9341, statue]),
+            frame(5, 3, [d9341]),
+            frame(6, 3, [d9341]),
+            frame(7, 4, [statue]),
+            frame(8, 4, [statue]),
+        ],
+    }
+
+
+def test_scp_denial_over_the_statue_is_flagged_and_the_off_screen_order_is_not() -> None:
+    facts = _row_facts(("l1", 1), ("l2", 3), ("l3", 4), shots=4)
+
+    lines, flagged = ec.line_row_lines(_scp_spine(), facts, episode=1, take_index=1, take_count=1, label="ep01 t1")
+
+    assert flagged == 1
+    assert "line 1 ('Do not break eye contact.', Speaker Voice, off screen): shot 1 (0.0–7.5 s), row 1 (heard, not seen)" in lines[0]
+    assert lines[1].endswith("row 3, D-9341 in frame")
+    assert lines[2].startswith("  !! ep01 t1: line 3")
+    assert "row 4, but D-9341 is not in that row's frames" in lines[2]
+
+
+def test_a_speaker_in_one_frame_of_the_row_is_reported_not_flagged() -> None:
+    spine = _scp_spine()
+    spine["frames"][6]["cast_refs"] = ["cast_d-9341", "cast_the-statue"]
+    facts = _row_facts(("l1", 1), ("l2", 3), ("l3", 4), shots=4)
+
+    lines, flagged = ec.line_row_lines(spine, facts, episode=1, take_index=1, take_count=1, label="ep01 t1")
+
+    assert flagged == 0
+    assert "D-9341 in 1 of 2 frames of the row" in lines[2]
+
+
+def test_rows_are_not_guessed_when_the_take_merged_them() -> None:
+    facts = _row_facts(("l1", 1), ("l2", 2), ("l3", 3), shots=3)
+
+    lines, flagged = ec.line_row_lines(_scp_spine(), facts, episode=1, take_index=1, take_count=1, label="ep01 t1")
+
+    assert flagged == 0
+    assert all("board rows not matched (3 shots, 4 rows)" in line for line in lines)
