@@ -283,9 +283,9 @@ Product gap:           <one line for the backlog>
 Extra cost:            <$ and minutes>
 ```
 
-Always warn for: assembling a length other than 15, 30, or 60s; editing product code or settings (never acceptable — propose it to engineering).
+Always warn for: a finished episode longer than its 15, 30, or 60s band; editing product code or settings (never acceptable — propose it to engineering).
 
-Do not warn for: `clip_duration_seconds` in 4–15; `cut_tempo=one_shot`; `caption_style=house`; product hand-off paste; 2×N row boards when every frame sets `board_row`; `PUT .../inner-voice`; voice auditions and pick; `POST .../audio-bed`; product sidechain ducking; `arc`, `brief`, `author`, `memory`, `edit`, `look-frame`, `look`, `look-note`, `redraw-board`, `check-lines`. Those are aligned.
+Do not warn for: a finished cut shorter than its 15 / 30 / 60 s band after trimming (e.g. 14.2 s; takes still film at the normal clip length); `clip_duration_seconds` in 4–15; `cut_tempo=one_shot`; `caption_style=house`; product hand-off paste; 2×N row boards when every frame sets `board_row`; `PUT .../inner-voice`; voice auditions and pick; `POST .../audio-bed`; product sidechain ducking; `arc`, `brief`, `author`, `memory`, `edit`, `look-frame`, `look`, `look-note`, `redraw-board`, `check-lines`. Those are aligned.
 
 Money warnings:
 
