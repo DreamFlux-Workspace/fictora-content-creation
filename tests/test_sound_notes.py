@@ -131,7 +131,7 @@ def test_an_added_sound_is_sent_with_its_take_and_row_and_the_spine_is_saved_aga
     assert "take-facts --desk" in text and "--take t1 --refresh" in text
 
 
-def test_a_drop_note_carries_no_scope_and_says_finish_needs_sfx_adjust(
+def test_a_drop_note_carries_no_scope_and_points_filmed_takes_to_refresh(
     desk: Path, api: FakeApi
 ) -> None:
     _answer_note(api, {"note_id": "sound_note_2", "text": "no purring"})
@@ -140,8 +140,10 @@ def test_a_drop_note_carries_no_scope_and_says_finish_needs_sfx_adjust(
     ec.run_sound_note(desk, text="no purring", out=out)
 
     assert api.posted(NOTES) == [{"spine_version": "v5", "text": "no purring"}]
-    assert "[every take: drop/level]" in out.getvalue()
-    assert "--sfx-adjust" in out.getvalue()
+    text = out.getvalue()
+    assert "[every take: drop/level]" in text
+    assert "take-facts --desk" in text and "--refresh" in text
+    assert "--sfx-adjust" not in text, "the note reaches finish through the take facts"
 
 
 def test_the_servers_named_refusal_is_printed_plainly_with_the_fix(
@@ -262,11 +264,16 @@ def test_facts_saved_before_an_add_note_are_stale_and_only_for_that_take(
     unstamped = {"take_facts": facts(DOOR)}
     assert stale_facts_reason(unstamped, spine, episode=1, take_id="t1") is None
 
-    spine["sound_notes"] = [ADD_NOTE, {"note_id": "sn_x", "text": "no purring"}]
+    spine["sound_notes"] = [ADD_NOTE]
     reason = stale_facts_reason(unstamped, spine, episode=1, take_id="t1")
     assert reason and "1 sound note(s) added" in reason and "dry stone crack" in reason
     assert stale_facts_reason(unstamped, spine, episode=1, take_id="t2") is None, (
         "a note on take 1 says nothing about take 2"
+    )
+    spine["sound_notes"] = [ADD_NOTE, {"note_id": "sn_x", "text": "no purring"}]
+    reason = stale_facts_reason(unstamped, spine, episode=1, take_id="t2")
+    assert reason and "'no purring'" in reason, (
+        "a drop/level note reaches every take's facts, so facts fetched before it are stale"
     )
 
     path = save_take_facts(
@@ -278,7 +285,10 @@ def test_facts_saved_before_an_add_note_are_stale_and_only_for_that_take(
     assert "1 removed since" in (
         stale_facts_reason(stamped, spine, episode=1, take_id="t1") or ""
     )
-    assert level_notes(spine) == ["no purring"]
+    assert level_notes(spine) == [
+        {"note_id": "sn_x", "text": "no purring", "shot": None}
+    ]
+    assert stamped[SOUND_NOTES_KEY][-1]["note_id"] == "sn_x"
 
 
 def test_plan_changes_list_added_and_dropped_cues() -> None:

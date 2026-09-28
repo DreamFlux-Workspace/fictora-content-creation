@@ -11,7 +11,7 @@ uv run fictora-produce finish --desk D --episode N --take tK --cue epNN/sfx/cue-
 
 `cue` costs about $0.002 a second (0.5 s at least), saves `epNN/sfx/cue-<words>-vN.mp3` with a sidecar, and prints the cue's RMS per half second and its shape check. The same description and length answer the same file for free: to try again, change the words. Book it with `fictora-ops spend --desk D --episode N --usd X --unit cue:<name>` when the command did not.
 
-The take's own effects are levelled or dropped with `finish --sfx-adjust` (`"door=-6"`, `"hum=drop"`, `"shot:3=+4"`), never re-rendered.
+The take's own effects are levelled or dropped with a drop or level sound note for every take (below), or with `finish --sfx-adjust` (`"door=-6"`, `"hum=drop"`, `"shot:3=+4"`) for one take only, on top. Never re-rendered.
 
 A sound the human asks for on one take goes on the story as a sound note, then into the take's facts:
 
@@ -21,7 +21,7 @@ uv run fictora-produce take-facts --desk D --episode N --take tK --refresh   # n
 uv run fictora-produce finish --desk D --episode N --take tK
 ```
 
-Both are free. A take filmed before the note keeps its saved facts until `--refresh`; `finish` prints `!!` when its facts are older than the notes. `sound-note` with no take is a drop or level note ("no purring", "louder rain"): the server's mix reads it, `finish` does not, so pass the same change with `--sfx-adjust`. `sound-note --desk D` lists the notes; `--remove N` drops one.
+Both are free. A take filmed before the note keeps its saved facts until `--refresh`; `finish` prints `!!` when its facts are older than the notes. `sound-note` with no take is a drop or level note ("no purring", "louder rain") for every take: with fictora-drama #475 the take facts leave a dropped cue out and give a levelled cue its dB offset, and `finish` lays that plan. A filmed take needs `take-facts --refresh` first; it prints each level change and drop with its note id. `sound-note --desk D` lists the notes; `--remove N` drops one.
 
 Every rule here was paid for in a production.
 

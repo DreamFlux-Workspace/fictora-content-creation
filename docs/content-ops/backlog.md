@@ -6,7 +6,7 @@ Closed in product (2026-09-21): `cut_tempo=one_shot`; `clip_duration_seconds` 4â
 
 Closed 2026-09-28: adding or removing a line and adding an off-screen voice after the draft (fictora-drama #466, `fictora-produce line --add/--remove/--new-voice`; SCP-173 Blink learnings #12/#15).
 
-Closed 2026-09-28: the automatic effects now plan the impacts a beat states (fictora-drama #462), and a sound note can add one sound to one take (#467). The kit sends it with `sound-note`, and `take-facts --refresh` brings both into a take filmed before them (SCP-173 #44, #45).
+Closed 2026-09-28: the automatic effects now plan the impacts a beat states (fictora-drama #462), and a sound note can add one sound to one take (#467). The kit sends it with `sound-note`, and `take-facts --refresh` brings both into a take filmed before them (SCP-173 #44, #45). Drop and level notes now reach `finish` too, through the take facts (fictora-drama #475): no `--sfx-adjust` copy of a story note.
 
 Closed 2026-09-28 by founder decision: a finished cut shorter than its 15 / 30 / 60 s band (e.g. 14.2 s after trimming a bad half-second) is allowed and is not a deviation. Takes still film at the normal clip length (`clip_duration_seconds` 4â€“15); a finished episode longer than its band is still a deviation.
 

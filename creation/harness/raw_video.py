@@ -200,7 +200,9 @@ def fetch_take_facts(
     take_job_id
         The child job that filmed the take.
     spine_id
-        When given, the facts list which approved line ids the take's instructions carry.
+        When given, the facts list which approved line ids the take's instructions carry, and
+        their SFX plan carries the story's drop and level sound notes (fictora-drama #475).
+        Every kit fetch passes it.
 
     Returns
     -------

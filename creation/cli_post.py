@@ -218,7 +218,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--sfx-adjust",
         action="append",
         default=[],
-        help='"door=-6", "hum=drop", "shot:3=+4".',
+        help='This take only, on top of the sound notes the take facts carry: "door=-6", "hum=drop", "shot:3=+4".',
     )
     fin.add_argument(
         "--line-start",
