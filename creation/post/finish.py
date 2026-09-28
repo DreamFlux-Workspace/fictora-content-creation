@@ -26,6 +26,18 @@ on from the last good file. But a take is not done until music, SFX and the
 mix are on it: when any is missing, ``finish`` prints ``NOT DONE``, writes a
 run note and the CLI exits ``5``. The last line is always
 ``Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`` (✗ where not).
+
+Hand-placed sound (:mod:`creation.post.hand`), each flag repeatable, times on
+the take as filmed (deboard keeps the timeline, so nothing is shifted):
+
+- ``--mute A-B`` and ``--voice PATH@S[@DB]`` run as the ``voice`` step right
+  after deboard: stray speech silenced, dry lines laid into the take's own
+  audio, so the mix ducks the bed under them and captions are timed on them.
+- ``--cue PATH@S[@DB]`` runs as the ``cues`` step right after ``sfx``.
+
+Every hand file is checked before any step runs (missing, silent, outside the
+take: an error, nothing written). A requested hand step that then fails makes
+the take ``NOT DONE`` like missing music.
 """
 
 from __future__ import annotations
@@ -46,6 +58,7 @@ from creation.post.audio_service import DramaApiAudio
 from creation.post.bed import DEFAULT_BED_DB, Maker, resolve_bed, service_music_maker
 from creation.post.colour import colour_match
 from creation.post.deboard import deboard as deboard_take
+from creation.post.hand import HandPlan, Placed, check_hand_plan, lay_cues, lay_voice
 from creation.post.desk import (
     approved_board,
     latest_raw_take,
@@ -54,7 +67,7 @@ from creation.post.desk import (
     spine_id,
     take_job_id,
 )
-from creation.post.media import MediaToolError, measure_loudness
+from creation.post.media import MediaToolError, measure_loudness, probe_video
 from creation.post.mix import check_duck_db, mix_take
 from creation.post.sfx import (
     Adjustment,
@@ -102,6 +115,7 @@ class FinishResult:
     final: Path
     steps: list[StepReport] = field(default_factory=list)
     loudness: str = ""
+    hand_steps: tuple[str, ...] = ()
 
     def _ran(self, name: str) -> bool:
         return any(step.step == name and step.status == "ran" for step in self.steps)
@@ -124,6 +138,7 @@ class FinishResult:
             missing.append("SFX")
         if not self._ran("mix"):
             missing.append("mix")
+        missing += [name for name in self.hand_steps if not self._ran(name)]
         return tuple(missing)
 
     @property
@@ -138,6 +153,7 @@ class FinishResult:
         missing = set(self.sound_missing)
         marks = [f"{part} {'✗' if part in missing else '✓'}" for part in ("music", "SFX", "mix")]
         marks.append(f"captions {'✓' if self._ran('captions') else '✗'}")
+        marks += [f"hand {name} {'✗' if name in missing else '✓'}" for name in self.hand_steps]
         return "Sound: " + " · ".join(marks)
 
     def summary_lines(self) -> list[str]:
@@ -169,7 +185,7 @@ INCOMPLETE_FIX = (
     "Music: pin a bed (`fictora-produce set-bed --desk D --path <file>`, or let finish make one on the server). "
     "SFX: finish needs the take's facts (GET /v1/jobs/{take_job}/take-facts; it fetches them when "
     "api/17_raw_scene_clips.json names the take job) and the server's audio endpoints. "
-    "Mix: read the mix step's error above."
+    "Mix, or a hand voice / cues step you asked for: read that step's error above."
 )
 
 
@@ -219,6 +235,9 @@ def run_finish(
     sfx_adjust: tuple[Adjustment, ...] = (),
     line_starts: tuple[float, ...] | None = None,
     watermark_y: int | None = None,
+    mutes: tuple[tuple[float, float], ...] = (),
+    voices: tuple[Placed, ...] = (),
+    cues: tuple[Placed, ...] = (),
     sfx_render: Renderer | None = None,
     bed_maker: Maker | None = None,
     facts_fetcher: FactsFetcher = api_facts_fetcher,
@@ -254,6 +273,12 @@ def run_finish(
         Manual caption line starts.
     watermark_y
         Mark top offset override (never into the top 8%).
+    mutes
+        ``--mute`` windows: stray speech silenced in the take's own audio (take seconds as filmed).
+    voices
+        ``--voice`` dry lines laid into the take's own audio (take seconds as filmed).
+    cues
+        ``--cue`` hand cues laid after the SFX step (take seconds as filmed).
     sfx_render, bed_maker, facts_fetcher
         Injected for tests.
     stream
@@ -269,7 +294,8 @@ def run_finish(
     FileNotFoundError
         When there is no take to finish.
     ValueError
-        When ``duck_db`` is out of range (checked before any step runs).
+        When ``duck_db`` is out of range, or a mute, voice or cue cannot go on the
+        take (outside it, silent); checked before any step runs.
     """
 
     out = stream or sys.stderr
@@ -279,6 +305,10 @@ def run_finish(
     source = take_file.expanduser().resolve() if take_file else latest_raw_take(desk, episode, take_id)
     if not source.is_file():
         raise FileNotFoundError(f"take not found: {source}")
+    hand = HandPlan()
+    if mutes or voices or cues:
+        # Take seconds as filmed: deboard replaces the board frames without cutting, so no shift is applied.
+        hand = check_hand_plan(probe_video(source).duration_seconds, mutes=mutes, voices=voices, cues=cues)
     takes = run_dir / "takes"
     base = f"take-ep{episode:02d}-{take_id}"
     found_spine = saved_spine(desk, episode)
@@ -287,9 +317,11 @@ def run_finish(
     audio = DramaApiAudio(desk, episode=episode)
     sfx_render = sfx_render or service_renderer(audio, spine_id(desk))
     bed_maker = bed_maker or service_music_maker(audio)
-    result = FinishResult(source=source, final=source)
+    hand_steps = (("voice",) if hand.mutes or hand.voices else ()) + (("cues",) if hand.cues else ())
+    result = FinishResult(source=source, final=source, hand_steps=hand_steps)
     current = source
     bed_state: dict[str, Any] = {"path": None}
+    voice_state: dict[str, Path | None] = {"path": None}
     print(
         f"Finishing {source.name}: board frames, sound effects, music, look, mix, captions, mark (2-4 minutes)",
         file=out,
@@ -322,6 +354,24 @@ def run_finish(
         if trimmed.output is None:
             return StepReport("deboard", "ran", f"no board frames ({trimmed.leak.one_line()}); nothing written")
         return StepReport("deboard", "ran", trimmed.one_line(), trimmed.output)
+
+    def do_voice(take: Path) -> StepReport:
+        voiced = lay_voice(take, next_versioned_path(takes, f"{base}-voice", ".mp4"), hand)
+        voice_state["path"] = voiced
+        parts = [f"muted {a:.2f}-{b:.2f}s" for a, b in hand.mutes]
+        parts += [f"voice {line.one_line()} ({seconds:.2f}s)" for line, seconds in hand.voices]
+        append_run_note(run_dir, f"Hand voice -> `{voiced.name}`: " + "; ".join(parts))
+        return StepReport("voice", "ran", "; ".join(parts), voiced)
+
+    def do_cues(take: Path) -> StepReport:
+        speech = list(hand.voice_windows)
+        facts = saved_take_facts(desk, episode, take_id)
+        if facts is not None:
+            speech += plan_from_take_facts(json.loads(facts.read_text(encoding="utf-8"))).speech
+        laid = lay_cues(take, next_versioned_path(takes, f"{base}-cues", ".mp4"), hand, speech=tuple(speech))
+        parts = [f"{cue.one_line()} for {seconds:.2f}s" for cue, seconds in hand.cues]
+        append_run_note(run_dir, f"Hand cues -> `{laid.name}`: " + "; ".join(parts))
+        return StepReport("cues", "ran", "; ".join(parts), laid)
 
     def do_sfx(take: Path) -> StepReport:
         facts = saved_take_facts(desk, episode, take_id) or facts_fetcher(desk, episode, take_id)
@@ -377,7 +427,7 @@ def run_finish(
             bed=bed_state["path"],
             bed_db=bed_db,
             duck_db=duck_db,
-            voice_source=source,
+            voice_source=voice_state["path"] or source,
         )
         append_run_note(run_dir, f"Mix -> `{mixed.output.name}`: {mixed.one_line()}")
         return StepReport("mix", "ran", mixed.one_line(), mixed.output)
@@ -389,7 +439,7 @@ def run_finish(
                 episode_ordinal=episode,
                 take=take,
                 line_starts=list(line_starts) if line_starts else None,
-                timing_source=source,
+                timing_source=voice_state["path"] or source,
                 stem=f"{base}-cap",
             )
         except ValueError as exc:
@@ -413,7 +463,11 @@ def run_finish(
         return StepReport("watermark", "ran", "Sokii mark top left, under the covered top strip", marked)
 
     step("deboard", "Replacing the board frames at the head of the take", do_deboard)
+    if "voice" in hand_steps:
+        step("voice", "Muting stray speech and laying the hand voice lines", do_voice)
     step("sfx", "Laying the take's sound effects", do_sfx)
+    if "cues" in hand_steps:
+        step("cues", "Laying the hand cues", do_cues)
     step("bed", "Finding the show's music bed", do_bed)
     step("colour", "Matching the look to the approved board", do_colour)
     step("mix", "Mixing the bed under the voice at a measured level", do_mix)

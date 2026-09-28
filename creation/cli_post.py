@@ -1,4 +1,4 @@
-"""``fictora-produce`` local post commands: voice, revoice, set-bed, finish, and the edits (deboard, trim, ...)."""
+"""``fictora-produce`` local post commands: voice, revoice, voice-line, cue, set-bed, finish, and the edits."""
 
 from __future__ import annotations
 
@@ -8,9 +8,11 @@ from pathlib import Path
 
 from creation.post.edit_commands import EDIT_COMMANDS, add_edit_parsers, dispatch_edit
 from creation.post.finish import FINISH_INCOMPLETE, run_finish
+from creation.post.hand import parse_placed, parse_range
+from creation.post.handmade import CUE_DEFAULT_SECONDS
 from creation.post.sfx import parse_adjustment
 
-POST_COMMANDS = frozenset({"voice", "revoice", "set-bed", "finish"}) | EDIT_COMMANDS
+POST_COMMANDS = frozenset({"voice", "revoice", "voice-line", "cue", "set-bed", "finish"}) | EDIT_COMMANDS
 
 
 def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -49,6 +51,27 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     revoice.add_argument("--words-json", type=Path, default=None, help="Saved Whisper words; default: transcribe.")
     revoice.add_argument("--voice-db", type=float, default=0.0, help="Gain on the new lines.")
 
+    line = sub.add_parser(
+        "voice-line",
+        help="One dry line in a character's locked voice, made on the server ($0.10 per 1,000 characters, "
+        "Whisper-checked). Saved to epNN/voices/; lay it with finish --voice PATH@SECONDS.",
+    )
+    line.add_argument("--desk", type=Path, required=True)
+    line.add_argument("--cast", required=True, help="cast_id or name.")
+    line.add_argument("--text", required=True, help="The line as performed, in the show's spoken language.")
+    line.add_argument("--episode", type=int, default=1)
+    line.add_argument("--spoken-text", default=None, help="Phonetic spelling sent to the voice instead of --text.")
+
+    cue = sub.add_parser(
+        "cue",
+        help="One hand sound cue made on the server from a description (~$0.002 a second). Saved to epNN/sfx/; "
+        "prints its RMS per half second and shape check. Place it with finish --cue PATH@SECONDS[@DB].",
+    )
+    cue.add_argument("--desk", type=Path, required=True)
+    cue.add_argument("--episode", type=int, required=True)
+    cue.add_argument("--description", required=True, help='What it sounds like: "a descending comic brass sting".')
+    cue.add_argument("--seconds", type=float, default=CUE_DEFAULT_SECONDS, help="Length, 0.5-22 s.")
+
     bed = sub.add_parser("set-bed", help="Pin the show's music bed on the desk (a file you chose).")
     bed.add_argument("--desk", type=Path, required=True)
     bed.add_argument("--path", type=Path, required=True, help="Audio file (licensed or made for the show).")
@@ -72,6 +95,18 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     fin.add_argument("--duck-db", type=float, default=None, help="Duck the bed exactly N dB (1-30) under the voice.")
     fin.add_argument("--sfx-adjust", action="append", default=[], help='"door=-6", "hum=drop", "shot:3=+4".')
     fin.add_argument("--line-start", type=float, action="append", default=None, help="Caption line start, per line.")
+    fin.add_argument(
+        "--mute", action="append", default=[],
+        help="Silence stray speech in the take's own audio: A-B seconds on the take as filmed (repeat).",
+    )  # fmt: skip
+    fin.add_argument(
+        "--voice", action="append", default=[],
+        help="Lay a dry line (voice-line): PATH@SECONDS[@DB] on the take as filmed; levelled unless @DB (repeat).",
+    )  # fmt: skip
+    fin.add_argument(
+        "--cue", action="append", default=[],
+        help="Lay a hand cue (cue): PATH@SECONDS[@DB] on the take as filmed; -8 dB unless @DB, clamped (repeat).",
+    )  # fmt: skip
     fin.add_argument("--watermark-y", type=int, default=None, help="Mark top offset (never into the top 8%%).")
     fin.add_argument("--json", action="store_true", help="Print the report as JSON on stdout.")
 
@@ -101,6 +136,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
         return dispatch_edit(args)
 
     from creation.post.bed import pin_bed
+    from creation.post.handmade import run_cue, run_voice_line
     from creation.post.voice import run_revoice, run_voice_audition, run_voice_pick
 
     if args.command == "voice":
@@ -120,6 +156,14 @@ def dispatch_post(args: argparse.Namespace) -> int:
             voice_db=args.voice_db,
         )
         return 0
+    if args.command == "voice-line":
+        run_voice_line(
+            args.desk, cast=args.cast, text=args.text, episode=args.episode, spoken_text=args.spoken_text
+        )
+        return 0
+    if args.command == "cue":
+        run_cue(args.desk, episode=args.episode, description=args.description, seconds=args.seconds)
+        return 0
     if args.command == "set-bed":
         print(f"pinned show bed: {pin_bed(args.desk.expanduser().resolve(), args.path)}")
         return 0
@@ -138,6 +182,9 @@ def dispatch_post(args: argparse.Namespace) -> int:
             sfx_adjust=tuple(parse_adjustment(raw) for raw in args.sfx_adjust),
             line_starts=tuple(args.line_start) if args.line_start else None,
             watermark_y=args.watermark_y,
+            mutes=tuple(parse_range(raw) for raw in args.mute),
+            voices=tuple(parse_placed(raw, flag="--voice") for raw in args.voice),
+            cues=tuple(parse_placed(raw, flag="--cue") for raw in args.cue),
         )
         if args.json:
             print(json.dumps(result.as_json(), indent=2))

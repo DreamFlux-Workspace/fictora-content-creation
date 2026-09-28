@@ -117,7 +117,8 @@ Compiled prompts are proprietary and stay on the server. Never fetch, save, prin
 The take step stops at the raw clip: the model's sound only, no music, no effects, no captions. Hosted post-production is switched off on the API, so the finish runs on this laptop. As soon as the human says Use it, run it without being asked:
 
 ```bash
-uv run fictora-produce finish --desk D [--episode N] [--take tK] [--take-file F] [--duck-db N] [--sfx-adjust "door=-6"] [--line-start S ...] [--no-colour-match]
+uv run fictora-produce finish --desk D [--episode N] [--take tK] [--take-file F] [--duck-db N] [--sfx-adjust "door=-6"] [--line-start S ...] [--no-colour-match] \
+  [--mute A-B ...] [--voice FILE@S[@DB] ...] [--cue FILE@S[@DB] ...]
 ```
 
 It lays the take's sound effects (from `GET /v1/jobs/{take_job}/take-facts`, never the prompt), the show's music bed (pinned once per show; `set-bed --desk D --path F` pins your own file), matches the look to the approved board, mixes at a measured level near −18 LUFS, burns house captions and puts the Sokii mark top left. Every step writes a new `take-epNN-tK-<step>-vN.mp4`. Needs ffmpeg with libass. Generated audio (effects, the bed, audition clips, dry lines, Whisper timings) is made on the server by the Drama API operator audio routes (`sfx-cues`, `audio-bed/render`, `voice-auditions/render`, `voice-lines`, `/v1/transcripts`); no provider key ever goes on this laptop and no local file is uploaded (transcripts read the take's stored URL). Rate limits and in-progress answers are waited out automatically. If a route refuses (`operator_audio_unavailable`, `budget_cap_exceeded`), `finish` still does the look, mix, captions and mark, reports `NOT DONE` and names the refusal: tell engineering, never add a key. Costs go to `run-notes.md` only; never quote them to anyone else.
@@ -125,6 +126,16 @@ It lays the take's sound effects (from `GET /v1/jobs/{take_job}/take-facts`, nev
 - The last line reads `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`. `NOT DONE` and exit code **5** mean music, SFX or the mix is missing: do not hand the file over; fix what it names and run `finish` again.
 - A `409 hosted_post_off`, or a `503 restate_unavailable` from post-production, is not an outage: never retry it, run `finish`.
 - Captions are always the English line. On a Japanese or Korean show, `finish` / `caption` show each whole English line over its speech (no word flicker); the run note says `whole English lines`.
+
+## Hand sound: stray speech, a new line, a missing cue
+
+All three are mix notes, never a re-film. Times are seconds on the take **as filmed** (the raw take): `deboard` keeps the timeline, so nothing is shifted. Each flag repeats.
+
+- **Stray speech** (a mumble or garbled fake speech between lines, from the read): `finish --mute A-B`. The take's own audio is silent inside A-B (short fades just outside, no click), before the effects go on.
+- **A new or changed line:** `voice-line --desk D --cast X --text "..." [--episode N] [--spoken-text "..."]` makes one dry line in X's locked voice on the server ($0.10 per 1,000 characters, Whisper-checked) into `epNN/voices/`. Play it to the human, then `finish --mute A-B --voice FILE@S` (mute the old line, lay the new one at its start). It is levelled to −18 LUFS unless `@DB`; the bed ducks under it like speech. A line that would run past the take is refused.
+- **A sound the take's Sound lines missed:** `cue --desk D --episode N --description "a descending comic brass sting" [--seconds 1.5]` makes one cue on the server (~$0.002 a second) into `epNN/sfx/` and prints its RMS per half second and shape check. Then `finish --cue FILE@S[@DB]`: −8 dB under the take unless `@DB`, 10 dB lower while someone speaks, clamped to end 0.15 s before the take does.
+- One cue per visible action, on the frame where the action lands. A cue with a bad shape is rendered once more with a changed description, then dropped with a line in the run notes; a missing cue never blocks a take. A quiet cue: raise it in 2–3 dB steps with `@DB` until it reads.
+- `finish` checks every hand file before any step: missing, silent, or outside the take is an error and nothing is written. A hand step that then fails prints `NOT DONE` like missing music.
 
 ## Local edits: deboard, soften, freeze, trim, tempo
 

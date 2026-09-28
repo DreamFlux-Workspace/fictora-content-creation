@@ -141,7 +141,8 @@ The writers pick an anime expression (`reaction_kind`) for every emotional momen
 | Take, 15 s, H3 Max R2V (`minimax/h3-max/reference-to-video`, 768p), engineering switch only | $1.20 ($0.08/s), plus $0.02048 per reference image past four (board + every cast plate, at most nine) |
 | Cast plate, object plate, board | $0.30 each (a character needs two plates: full + bust) |
 | Voice audition set | $0.30, once per character; a second set needs a cause |
-| Voice line | $0.10 per 1,000 characters |
+| Voice line (`voice-line`, `revoice`) | $0.10 per 1,000 characters |
+| Hand cue (`cue`) | about $0.002 a second (0.5 s at least); the same description and length is never paid twice |
 
 The server chooses the endpoint, not the `minimax-h3` pin: Turbo unless engineering switches the deploy to R2V (a server setting; the desk cannot pick it). The estimate names it (`cost_estimate.video_endpoint_id`) and so do the take facts (`endpoint_id`); the desk remembers the last one it saw and prices that, and prices Turbo until one is seen. Quote R2V only when one of them names it.
 
@@ -163,7 +164,7 @@ Measure, then watch: every approved line heard, exactly; cut count (compare cons
 
 - A missing spoken line is the one real re-film. Name the cause first.
 - A line the take was never asked to say is a server fault: `fictora-produce check-lines --desk D --episode N [--take tK]` names it from the take facts (never the prompt). Report it with the take job id; do not re-film blind.
-- Stray mumble between lines is a mute in the mix, not a re-film.
+- Stray mumble between lines is a mute in the mix, not a re-film: `finish --mute A-B` (Hand sound, below).
 
 ## Finish
 
@@ -172,13 +173,16 @@ A raw take is never a deliverable. With `api_captions: false`:
 ```bash
 uv run fictora-produce finish --desk D [--episode N] [--take tK] [--take-file F] [--duck-db N] \
   [--sfx-adjust "door=-6" | "hum=drop" | "shot:3=+4"] [--bed-db -16.5] [--music "..."] \
-  [--line-start S ...] [--no-deboard] [--no-colour-match] [--colour-strength 0..1] [--watermark-y Y] [--json]
+  [--line-start S ...] [--no-deboard] [--no-colour-match] [--colour-strength 0..1] [--watermark-y Y] [--json] \
+  [--mute A-B ...] [--voice FILE@S[@DB] ...] [--cue FILE@S[@DB] ...]
 ```
 
 | Step | What it does | Writes |
 | --- | --- | --- |
 | deboard | The board frames the take opens on, measured against the approved board and replaced with the first real frame; length and sound unchanged, so nothing later shifts. None found: nothing written (`--no-deboard` skips it) | `…-deboard-vN.mp4` |
+| voice (only with `--mute` / `--voice`) | Stray speech silenced in the take's own audio; dry lines laid in at their start. The mix ducks the bed under them and captions are timed on this file | `…-voice-vN.mp4` |
 | sfx | Cue plan from `GET /v1/jobs/{take_job}/take-facts?spine_id=` (saved as `api/take-facts-epNN-tK-vN.json`; the take job is read from `api/17_raw_scene_clips.json`). Each cue renders on the server from its Sound label (~$0.002/s), is shape-checked, cached in `epNN/sfx/`, laid at −8 dB and ducked 10 dB under speaking shots | `take-epNN-tK-sfx-vN.mp4` |
+| cues (only with `--cue`) | Hand cues laid under the take at −8 dB (or `@DB`), 10 dB lower in speaking shots and under hand lines, clamped to the take; the cue layer is measured and a silent cue fails the step | `…-cues-vN.mp4` |
 | bed | The desk's pinned bed; else the spine's `series_audio_bed_url`; else one made once on the server (~$0.06) from the genre (or `--music "…"`), levelled here to −20 LUFS, pinned in `shared/beds/` | — |
 | colour | One Lab curve for the whole take, fitted to the approved board (gutters left out) | `…-colour-vN.mp4` + `.cube` |
 | mix | Bed looped under the take at `--bed-db`, sidechain-ducked under the voice (`--duck-db N` = exactly N dB, 1–30), take gain measured to land near −18 LUFS (band −20 to −15), one limiter | `…-mix-vN.mp4` |
@@ -186,6 +190,29 @@ uv run fictora-produce finish --desk D [--episode N] [--take tK] [--take-file F]
 | watermark | Sokii mark top left (x 3%, y 9%), never in the top 8% | `…-sokii-vN.mp4` |
 
 A step that fails is reported and skipped; the chain carries on from the last good file. The summary ends with `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`. When music, SFX or the mix did not go on it prints `NOT DONE`, writes a run note and exits **5**: the file is not a deliverable. A second `finish` writes the next versions and reuses the cached cues and the pinned bed ($0).
+
+### Hand sound: mute, voice line, cue
+
+```bash
+uv run fictora-produce voice-line --desk D --cast X --text "the line as performed" [--episode N] [--spoken-text "..."]
+uv run fictora-produce cue --desk D --episode N --description "a descending comic brass sting" [--seconds 1.5]
+uv run fictora-produce finish --desk D --episode N --take tK --mute 6.9-8.3 --voice ep01/voices/voice-ep01-x-v1.mp3@6.9 --cue ep01/sfx/cue-a-descending-comic-brass-v1.mp3@4.2@-6
+```
+
+- **Times** are seconds on the take as filmed (the raw take), for all three flags. `deboard` replaces the board frames without cutting, so nothing moves; never subtract the board frames. Place cues on the take, never on a joined episode.
+- **`--mute A-B`**: the take's own audio is silent inside A-B, with 30 ms fades just outside it. It runs before the effects, so a take-facts cue in that window still plays. A mute past the take's end is clamped; one that starts past it is refused.
+- **`voice-line`**: `POST /v1/spines/{id}/cast/{cast_id}/voice-lines` in the cast's locked voice (none locked: refused, nothing sent), the server reads it back (a misread is flagged: listen first). Saved to `epNN/voices/voice-epNN-<cast>-vN.mp3` with a JSON sidecar; the same line in the same voice sends the same idempotency key as `revoice`, so it is never paid twice. `--voice FILE@S[@DB]` lays it at S, levelled to −18 LUFS unless `@DB`, 90 Hz–8.5 kHz. A line that runs past the take is refused (never cut mid-word). It is not captioned from its sidecar: captions still come from the script lines, timed on the take with the line in it.
+- **`cue`**: `POST /v1/spines/{id}/sfx-cues` from the description (0.5–22 s, default 1.5 s). Saved to `epNN/sfx/cue-<words>-vN.mp3` with a sidecar; prints RMS per half second and the shape check. The same description and length answer the same file (free): to try again, change the words.
+- **`--cue FILE@S[@DB]`**: −8 dB under the take by default; `@DB` sets the level (−40 to +30). 10 dB lower while someone speaks (speaking shots from the take facts, and hand lines): do not hand-duck cues around lines. Clamped to end 0.15 s before the take; a cue that starts outside the take, or has under 0.25 s of room, is refused.
+- **Fail loud:** every `--voice` and `--cue` file is checked before any step runs; a missing or silent file (no half second above −50 dB RMS) stops `finish` with nothing written. The laid cue layer is measured too: a cue silent there (under −70 dB) fails the step, and a requested hand step that fails makes the take `NOT DONE`. The sound line then ends `· hand voice ✗` or `· hand cues ✗`.
+- No loudness normalisation on the take; the mix gives it one gain and one limiter.
+
+Placing a cue:
+
+- A cue answers something the viewer can see (a pour, a door, a cup set down). No picture, no cue. One cue per action: two read as two actions, and a looped cue under one gesture reads as the gesture repeating. Room tone and weather are the bed, not a cue per shot.
+- Place it on the frame where the action lands, not where it starts: find it on the contact sheet, check it at full rate.
+- Read its shape before placing it: an event must hit in its first half second and stay under about 3 s; a sustained sound must not die after its first half second. Trust the numbers, not the name. A cue wrong once is rendered once more (new words), then dropped with a line in the run notes. A missing cue never blocks the take.
+- Level: start at the default −8 dB and move in 2–3 dB steps; a generated cue can come back quiet and need +10 to +20. A level note is a mix note, never a re-render. Write one line per hand cue in `run-notes.md` saying which action it answers.
 
 `caption --desk D [--line-start S ...]` still burns captions alone on a raw take (timing detail: [local-captions.md](../../../docs/content-ops/local-captions.md)). Needs ffmpeg + ffprobe with libass. Generated audio (effects, the bed, audition clips, dry lines, Whisper timings) is made on the server by the Drama API operator audio routes (`sfx-cues`, `audio-bed/render`, `voice-auditions/render`, `voice-lines`, `/v1/transcripts`); no provider key ever goes on this laptop and no local file is uploaded (transcripts read the take's stored URL). Rate limits and in-progress answers are waited out automatically. If a route refuses (`operator_audio_unavailable`, `budget_cap_exceeded`), `finish` still does the look, mix, captions and mark, reports `NOT DONE` and names the refusal: tell engineering, never add a key. Costs go to `run-notes.md` only; never quote them to anyone else.
 
