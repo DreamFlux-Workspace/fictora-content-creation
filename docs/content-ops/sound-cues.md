@@ -1,6 +1,6 @@
 # Placing sound cues
 
-`fictora-produce finish` lays the take's own sound effects from its take facts (`GET /v1/jobs/{take_job}/take-facts`, never the prompt). Those cues come from each shot's Sound lines; with fictora-drama #462 live they also carry each impact the beat's action states (a stone crack, a neck snap), but take facts saved before it do not, and the kit cannot fetch them again yet. Use this page when you place a cue by hand: a cue the Sound lines missed, a cue the human asked for, or a cue for a wordless making take.
+`fictora-produce finish` lays the take's own sound effects from its take facts (`GET /v1/jobs/{take_job}/take-facts`, never the prompt). Those cues come from each shot's Sound lines, the impacts the story states (a beat's end state, a row's chain or sound; fictora-drama #462) and the sounds a sound note adds to the take. Take facts saved before an impact was planned or a note was added lack it until `take-facts --refresh` (below). Use this page when you place a cue by hand: a cue neither planned, a cue for a wordless making take, or a sting no note can place.
 
 Make it on the server, then lay it in the finish:
 
@@ -11,7 +11,17 @@ uv run fictora-produce finish --desk D --episode N --take tK --cue epNN/sfx/cue-
 
 `cue` costs about $0.002 a second (0.5 s at least), saves `epNN/sfx/cue-<words>-vN.mp3` with a sidecar, and prints the cue's RMS per half second and its shape check. The same description and length answer the same file for free: to try again, change the words. Book it with `fictora-ops spend --desk D --episode N --usd X --unit cue:<name>` when the command did not.
 
-The take's own effects are levelled or dropped with `finish --sfx-adjust` (`"door=-6"`, `"hum=drop"`, `"shot:3=+4"`), never re-rendered. `--sfx-adjust` only drops or levels a sound; it never adds one. To add a sound, make a cue.
+The take's own effects are levelled or dropped with `finish --sfx-adjust` (`"door=-6"`, `"hum=drop"`, `"shot:3=+4"`), never re-rendered.
+
+A sound the human asks for on one take goes on the story as a sound note, then into the take's facts:
+
+```bash
+uv run fictora-produce sound-note --desk D --episode N --take tK [--shot S | --row R] "add a dry stone crack at the end"
+uv run fictora-produce take-facts --desk D --episode N --take tK --refresh   # new version; prints the cues it adds
+uv run fictora-produce finish --desk D --episode N --take tK
+```
+
+Both are free. A take filmed before the note keeps its saved facts until `--refresh`; `finish` prints `!!` when its facts are older than the notes. `sound-note` with no take is a drop or level note ("no purring", "louder rain"): the server's mix reads it, `finish` does not, so pass the same change with `--sfx-adjust`. `sound-note --desk D` lists the notes; `--remove N` drops one.
 
 Every rule here was paid for in a production.
 
