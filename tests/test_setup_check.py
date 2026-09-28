@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from creation import setup_check as sc
+from creation.captions import ItalicFont
 
 TOKEN = "tok-secret-value-123"
 ALL_FILTERS = "\n".join(
@@ -36,6 +37,7 @@ def tools(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
 
     listing = {"filters": ALL_FILTERS}
     monkeypatch.setattr(sc, "find_ffmpeg", lambda: ("/x/ffmpeg", "/x/ffprobe"))
+    monkeypatch.setattr(sc, "find_italic_font", lambda: GEORGIA_PRESENT)
 
     def run(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
         out = listing["filters"] if "-filters" in cmd else "uv 0.6.12"
@@ -43,6 +45,12 @@ def tools(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
 
     monkeypatch.setattr(sc.subprocess, "run", run)
     return listing
+
+
+GEORGIA_PRESENT = ItalicFont(
+    Path("/System/Library/Fonts/Supplemental/Georgia Italic.ttf"),
+    Path("/System/Library/Fonts/Supplemental/Georgia.ttf"),
+)
 
 
 def which(name: str) -> str | None:
@@ -72,10 +80,14 @@ def test_everything_present_and_accepted_prints_ticks_and_exits_0(
     ]  # one authenticated read
     assert (
         "✗" not in printed
-        and printed.count("✓") == 8
+        and printed.count("✓") == 9
         and printed.rstrip().endswith("Ready.")
     )
     assert "✓ API token accepted" in printed and "✓ libass (captions)" in printed
+    assert (
+        "✓ Georgia Italic (heard-not-seen captions): "
+        "/System/Library/Fonts/Supplemental/Georgia Italic.ttf" in printed
+    )
     assert TOKEN not in printed
 
 
@@ -163,3 +175,35 @@ def test_no_ffmpeg_on_path_is_a_cross(env: Path, tools: dict[str, str]) -> None:
 def test_an_old_python_is_a_cross() -> None:
     assert not sc.check_python((3, 11, 9)).ok
     assert sc.check_python((3, 12, 0)).ok
+
+
+def test_missing_georgia_is_a_warning_naming_the_fallback_not_a_failure(
+    env: Path, tools: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        sc,
+        "find_italic_font",
+        lambda: ItalicFont(
+            None, None, "DejaVu Sans (/usr/share/fonts/dejavu/DejaVuSans.ttf)"
+        ),
+    )
+    out = io.StringIO()
+
+    code = sc.run_setup_check(out=out, env_file=env, api_get=api_ok([]), which=which)
+
+    printed = out.getvalue()
+    assert code == 0, printed  # a warning never blocks setup
+    assert "✗" not in printed
+    line = next(row for row in printed.splitlines() if "Georgia Italic (" in row)
+    assert line.startswith(
+        "⚠ Georgia Italic (heard-not-seen captions): Georgia not found"
+    )
+    assert "/usr/share/fonts/dejavu/DejaVuSans.ttf" in line  # names the fallback file
+    assert "ttf-mscorefonts-installer" in line and "Restore Standard Fonts" in line
+    assert printed.rstrip().endswith("Ready (1 warning(s) above).")
+
+
+def test_georgia_regular_without_the_italic_is_a_warning() -> None:
+    check = sc.check_italic_font(lambda: ItalicFont(None, Path("/fonts/Georgia.ttf")))
+    assert check.ok and check.warn
+    assert check.line().startswith("⚠ ") and "only /fonts/Georgia.ttf" in check.line()

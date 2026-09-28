@@ -108,7 +108,7 @@ Every `CONFIRM` line in the plan (a gate the old desk never recorded, an unfinis
 | `deboard`, `soften`, `freeze`, `trim`, `tempo` | `P` with the same name, on `--desk D [--take-file F]` |
 | `join --part t1 --part t2 …` | `P join --desk D --episode N` (or `--episodes 1 2 3`, or `--take-file F …`); needs a finish record per take, so re-run `finish` on a take finished before the join landed |
 | `preflight`, `status`, `spend`, `estimate`, `handoff`, `filmed`, `verdict`, `next-path` | `O` with the same name |
-| `sync-repo`, `setup-check` | `P setup-check` (token, ffmpeg + libass, filters, Python, uv) |
+| `sync-repo`, `setup-check` | `P setup-check` (token, ffmpeg + libass, filters, Georgia Italic warning, Python, uv) |
 
 ## Spend
 

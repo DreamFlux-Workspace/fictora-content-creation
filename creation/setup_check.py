@@ -3,8 +3,10 @@
 Checks what the kit needs and nothing else: the Drama API token is present and
 accepted (one cheap authenticated read, ``GET /v1/art-style-presets``), ffmpeg
 and ffprobe are installed, ffmpeg has libass (captions) and the filters the
-local finish and edits use, and the Python and uv the repo runs on. Prints one
-✓ or ✗ line per item and never prints the token. Spends nothing.
+local finish and edits use, Georgia Italic (the heard-not-seen caption face) is
+where libass will look for it, and the Python and uv the repo runs on. Prints
+one ✓ or ✗ line per item (⚠ for a warning that does not block) and never prints
+the token. Spends nothing.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from typing import Any, Callable, TextIO
 
 import httpx
 
-from creation.captions import find_ffmpeg
+from creation.captions import ItalicFont, find_ffmpeg, find_italic_font
 from creation.harness.credentials import DEFAULT_DRAMA_API
 from creation.harness.env import load_env_file
 from creation.harness.session import DramaApiRunSession
@@ -59,16 +61,20 @@ class Check:
         Passed or not.
     detail
         What was found, or how to fix it.
+    warn
+        A warning: printed ``⚠``, does not fail setup (``ok`` stays True).
     """
 
     name: str
     ok: bool
     detail: str
+    warn: bool = False
 
     def line(self) -> str:
-        """The printed ``✓ name: detail`` / ``✗ name: detail`` line."""
+        """The printed ``✓ name: detail`` / ``⚠ name: detail`` / ``✗ name: detail`` line."""
 
-        return f"{'✓' if self.ok else '✗'} {self.name}: {self.detail}"
+        mark = "✗" if not self.ok else "⚠" if self.warn else "✓"
+        return f"{mark} {self.name}: {self.detail}"
 
 
 ApiGet = Callable[[str, str, str], tuple[int, Any]]
@@ -164,6 +170,27 @@ def check_tools(which: Callable[[str], str | None] = shutil.which) -> list[Check
     return checks
 
 
+def check_italic_font(find: Callable[[], ItalicFont] | None = None) -> Check:
+    """Georgia Italic resolves where libass looks for it (warns, never fails).
+
+    Poppins, the house caption face, is bundled; Georgia is a system font.
+    Without it, heard-not-seen captions quietly come out in another face, so
+    this is a ``⚠`` naming the fallback and how to install Georgia.
+
+    Parameters
+    ----------
+    find
+        Font lookup (default :func:`creation.captions.find_italic_font`); tests pass a fake.
+    """
+
+    name = "Georgia Italic (heard-not-seen captions)"
+    font = (find or find_italic_font)()
+    warning = font.warning()
+    if warning is None:
+        return Check(name, True, str(font.italic))
+    return Check(name, True, warning, warn=True)
+
+
 def check_token(
     env_file: Path | None = None, api_get: ApiGet = _api_get
 ) -> list[Check]:
@@ -243,20 +270,27 @@ def run_setup_check(
     Returns
     -------
     int
-        ``0`` when every line is ✓, ``1`` when any is ✗.
+        ``0`` when no line is ✗ (a ⚠ warning does not fail), ``1`` when any is ✗.
     """
 
     out = out or sys.stdout
     checks = [
         *check_token(env_file, api_get),
         *check_tools(which),
+        check_italic_font(),
         check_python(),
         check_uv(which),
     ]
     for check in checks:
         print(check.line(), file=out)
     failed = [check for check in checks if not check.ok]
-    print(f"{len(failed)} to fix before filming." if failed else "Ready.", file=out)
+    warned = [check for check in checks if check.warn]
+    if failed:
+        print(f"{len(failed)} to fix before filming.", file=out)
+    elif warned:
+        print(f"Ready ({len(warned)} warning(s) above).", file=out)
+    else:
+        print("Ready.", file=out)
     return 1 if failed else 0
 
 
@@ -264,6 +298,7 @@ __all__ = [
     "Check",
     "REQUIRED_FILTERS",
     "TOKEN_PROBE_PATH",
+    "check_italic_font",
     "check_python",
     "check_token",
     "check_tools",

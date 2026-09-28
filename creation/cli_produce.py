@@ -244,7 +244,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f'"{line}" {span.start:.2f}-{span.end:.2f}s'
                 for line, span in zip(result.lines, result.anchors)
             )
-            warnings = "".join(f" {w}." for w in result.not_english)
+            warnings = "".join(
+                f" {w}." for w in (*result.not_english, result.font_warning) if w
+            )
             append_run_note(
                 ep_dir,
                 f"Local house captions ({'whole English lines' if result.whole_lines else 'word flicker'}): "

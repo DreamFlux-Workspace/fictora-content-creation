@@ -39,8 +39,9 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -563,6 +564,189 @@ def find_ffmpeg() -> tuple[str, str]:
     )
 
 
+#: Where CoreText (libass's font provider on macOS) finds Georgia, after the bundled fonts dir.
+MAC_FONT_DIRS: tuple[Path, ...] = (
+    Path("/System/Library/Fonts/Supplemental"),
+    Path("/System/Library/Fonts"),
+    Path("/Library/Fonts"),
+    Path("~/Library/Fonts"),
+)
+#: Georgia Italic's file name: macOS, then the Microsoft core fonts package on Linux.
+ITALIC_FONT_FILES: tuple[str, ...] = ("Georgia Italic.ttf", "georgiai.ttf")
+#: Georgia regular's file name (libass slants it when there is no italic face).
+REGULAR_FONT_FILES: tuple[str, ...] = ("Georgia.ttf", "georgia.ttf")
+GEORGIA_INSTALL_HINT = (
+    "install Georgia: macOS ships it in /System/Library/Fonts/Supplemental "
+    "(Font Book > File > Restore Standard Fonts brings it back); Linux: "
+    "sudo apt install ttf-mscorefonts-installer, or copy Georgia.ttf and "
+    "'Georgia Italic.ttf' into ~/.local/share/fonts and run fc-cache -f"
+)
+
+#: ``(pattern) -> (family, style, file)`` from fontconfig, or None when fc-match is missing.
+FcMatch = Callable[[str], tuple[str, str, str] | None]
+
+
+def fc_match(pattern: str) -> tuple[str, str, str] | None:
+    """Ask fontconfig which face it would draw ``pattern`` with.
+
+    Parameters
+    ----------
+    pattern
+        A fontconfig pattern, e.g. ``Georgia:italic``.
+
+    Returns
+    -------
+    tuple of str or None
+        ``(family, style, file)``, or None when ``fc-match`` is not installed
+        or does not answer.
+    """
+
+    exe = shutil.which("fc-match")
+    if not exe:
+        return None
+    try:
+        result = subprocess.run(
+            [exe, "-f", "%{family}\t%{style}\t%{file}", pattern],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    parts = result.stdout.strip().split("\t")
+    if result.returncode != 0 or len(parts) != 3:
+        return None
+    family, style, file = parts
+    return family, style, file
+
+
+@dataclass(frozen=True)
+class ItalicFont:
+    """Where the italic caption face (Georgia Italic) resolves on this machine.
+
+    Parameters
+    ----------
+    italic
+        The Georgia Italic file libass will draw with, or None.
+    regular
+        The Georgia regular file, or None (libass slants it when ``italic`` is None).
+    fallback
+        The face libass would use instead when Georgia is missing, as fontconfig
+        names it (``file``), or None when that cannot be told.
+    """
+
+    italic: Path | None
+    regular: Path | None = None
+    fallback: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        """Georgia Italic itself is installed."""
+
+        return self.italic is not None
+
+    def warning(self) -> str | None:
+        """The operator warning when captions will not be set in Georgia Italic, else None."""
+
+        if self.italic is not None:
+            return None
+        if self.regular is not None:
+            return (
+                f"Georgia Italic not found (only {self.regular}); heard-not-seen captions "
+                f"will be Georgia slanted by libass, not the real italic. To fix, {GEORGIA_INSTALL_HINT}"
+            )
+        instead = self.fallback or "whatever face libass falls back to"
+        return (
+            f"Georgia not found; heard-not-seen captions will fall back to {instead}. "
+            f"To fix, {GEORGIA_INSTALL_HINT}"
+        )
+
+
+def _first_file(dirs: Sequence[Path], names: Sequence[str]) -> Path | None:
+    for directory in dirs:
+        for name in names:
+            path = directory.expanduser() / name
+            if path.is_file():
+                return path
+    return None
+
+
+def find_italic_font(
+    *,
+    platform: str | None = None,
+    font_dirs: Sequence[Path] | None = None,
+    match: FcMatch | None = None,
+) -> ItalicFont:
+    """Resolve Georgia Italic the way libass does when captions are burned.
+
+    ``burn_ass`` passes the bundled fonts dir to libass, so that is searched
+    first. After it, libass asks the system font provider: CoreText on macOS
+    (the standard font folders, :data:`MAC_FONT_DIRS`) and fontconfig on Linux
+    (``fc-match Georgia:italic``).
+
+    Parameters
+    ----------
+    platform
+        ``sys.platform`` by default; tests pass one.
+    font_dirs
+        Folders searched by file name (default: the bundled fonts dir, plus
+        :data:`MAC_FONT_DIRS` on macOS).
+    match
+        fontconfig lookup (default :func:`fc_match`); tests pass a fake.
+
+    Returns
+    -------
+    ItalicFont
+        What was found; ``warning()`` says what to do when it is not Georgia Italic.
+    """
+
+    platform = platform or sys.platform
+    match = match or fc_match
+    if font_dirs is None:
+        font_dirs = (FONTS_DIR, *(MAC_FONT_DIRS if platform == "darwin" else ()))
+    italic = _first_file(font_dirs, ITALIC_FONT_FILES)
+    regular = _first_file(font_dirs, REGULAR_FONT_FILES)
+    if italic is not None:
+        return ItalicFont(italic, regular)
+    found = match(f"{ITALIC_FONT_NAME}:italic")
+    fallback: str | None = None
+    if found is not None:
+        family, style, file = found
+        is_georgia = ITALIC_FONT_NAME.lower() in family.lower()
+        # On macOS CoreText, not fontconfig, draws the caption: fontconfig only names the fallback.
+        if is_georgia and platform != "darwin":
+            if "italic" in style.lower():
+                return ItalicFont(Path(file), regular)
+            regular = regular or Path(file)
+        elif not is_georgia:
+            fallback = f"{family} ({file})"
+    return ItalicFont(None, regular, fallback)
+
+
+def italic_font_warning(cues: Sequence[Cue]) -> str:
+    """Warn (on stderr, and returned) when an italic cue will not be set in Georgia Italic.
+
+    Parameters
+    ----------
+    cues
+        The cues about to be burned; nothing is checked when none is italic.
+
+    Returns
+    -------
+    str
+        ``FONT: …`` warning, or ``""`` when every italic cue gets Georgia Italic.
+    """
+
+    if not any(cue.italic for cue in cues):
+        return ""
+    problem = find_italic_font().warning()
+    if not problem:
+        return ""
+    warning = f"FONT: {problem}"
+    print(f"WARNING {warning}", file=sys.stderr)
+    return warning
+
+
 def probe_video(ffprobe: str, path: Path) -> tuple[int, int, float]:
     """Return ``(width, height, duration_seconds)``."""
 
@@ -686,6 +870,8 @@ class CaptionResult:
     italic: tuple[bool, ...] = ()
     #: One ``NOT ENGLISH: …`` warning per line left uncaptioned because it is not English.
     not_english: tuple[str, ...] = ()
+    #: ``FONT: …`` when an italic line falls back from Georgia Italic (also printed on stderr), else "".
+    font_warning: str = ""
 
 
 def caption_take(
@@ -782,6 +968,7 @@ def caption_take(
     ass = next_versioned_path(takes, stem or f"{base}-house", ".ass")
     ass.write_text(build_ass(cues, width=width, height=height), encoding="utf-8")
     video = next_versioned_path(takes, stem or f"{base}-captioned", ".mp4")
+    font_warning = italic_font_warning(cues)
     burn_ass(ffmpeg, take, ass, video)
     return CaptionResult(
         ass,
@@ -792,4 +979,5 @@ def caption_take(
         whole_lines,
         italic,
         not_english,
+        font_warning,
     )
