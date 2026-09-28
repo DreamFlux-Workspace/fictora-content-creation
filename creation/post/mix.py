@@ -11,6 +11,13 @@
 - A sound-effect cue whose loudest window sits more than 12 dB under the bed
   (the bed's own level at that moment, before ducking) is named in a ``!!``
   warning: it is mixed, but nobody will hear it.
+- With ``buses=True`` (``finish``) the same ffmpeg run also writes the bed
+  before and after ducking and the duck key beside the mix
+  (``<mix>-raw-bus.wav``, ``-ducked-bus.wav``, ``-key-bus.wav``), the files
+  ``review`` diffs to measure the duck depth. The mix itself is unchanged: the
+  buses are split off the same graph. Each is mono (the first channel), 48 kHz,
+  16-bit: exactly what ``review`` reads (its RMS windows take channel 0 at
+  48 kHz), about 96 KB a second each.
 """
 
 from __future__ import annotations
@@ -45,6 +52,17 @@ QUIET_CUE_DB = 12.0
 AUDIBLE_CUE_DB = 6.0
 BED_WINDOW_SECONDS = 0.5
 COMPRESSOR = "sidechaincompress=threshold=0.045:ratio=2.5:attack=60:release=600:makeup=1:level_sc=1"
+#: The mix buses ``review`` reads, in its order: the bed before ducking, after it, and the duck key.
+BUS_NAMES = ("raw", "ducked", "key")
+BUS_FORMAT = "aresample=48000,pan=mono|c0=c0"
+
+
+def bus_paths(mix: Path) -> tuple[Path, Path, Path]:
+    """``<mix stem>-raw-bus.wav``, ``-ducked-bus.wav``, ``-key-bus.wav`` beside ``mix``."""
+
+    stem = mix.with_suffix("")
+    raw, ducked, key = (Path(f"{stem}-{name}-bus.wav") for name in BUS_NAMES)
+    return raw, ducked, key
 
 
 def check_duck_db(duck_db: float | None) -> None:
@@ -198,6 +216,8 @@ class MixResult:
     ducking: str
     bed: Path | None
     warnings: tuple[str, ...] = ()
+    #: The raw, ducked and key bus WAVs beside the mix (``buses=True`` with a bed), else empty.
+    buses: tuple[Path, ...] = ()
 
     def one_line(self) -> str:
         """Operator line."""
@@ -224,31 +244,58 @@ def _mix_once(
     total: float,
     windows: list[tuple[float, float]] | None,
     duck_db: float | None,
+    buses: tuple[Path, Path, Path] | None = None,
+    key_source: Path | None = None,
 ) -> None:
     inputs = ["-i", str(take)]
     graph = [f"[0:a]aresample=48000,volume={gain_db:+.1f}dB[take]"]
+    bus_maps: list[str] = []
     if bed is None:
         graph.append(f"[take]{LIMITER}[a]")
     else:
         inputs += ["-stream_loop", "-1", "-i", str(bed)]
         fade_out = max(0.0, total - BED_FADE_OUT_SECONDS)
+        tap = "[bed]" if buses is None else "[bedin]"
         graph.append(
             f"[1:a]aresample=48000,atrim=0:{total:.3f},asetpts=PTS-STARTPTS,volume={bed_db:+.1f}dB,"
-            f"afade=t=in:st=0:d={BED_FADE_IN_SECONDS},afade=t=out:st={fade_out:.3f}:d={BED_FADE_OUT_SECONDS}[bed]"
+            f"afade=t=in:st=0:d={BED_FADE_IN_SECONDS},afade=t=out:st={fade_out:.3f}:d={BED_FADE_OUT_SECONDS}{tap}"
         )
+        if buses is not None:
+            graph.append("[bedin]asplit=2[bed][rawbus]")
+        ducked = "[bd]" if buses is None else "[bdin]"
         if duck_db is None:
-            graph.append("[take]asplit=2[tk][key]")
-            graph.append(f"[bed][key]{COMPRESSOR}[bd]")
+            if buses is None:
+                graph.append("[take]asplit=2[tk][key]")
+            else:
+                graph.append("[take]asplit=3[tk][key][keybus]")
+            graph.append(f"[bed][key]{COMPRESSOR}{ducked}")
             front = "[tk]"
         else:
-            graph.append(f"[bed]{duck_expression(windows or [], duck_db)}[bd]")
+            graph.append(f"[bed]{duck_expression(windows or [], duck_db)}{ducked}")
             front = "[take]"
+            if buses is not None:
+                # The exact duck is keyed on the voice windows found in the voice source: that is the key.
+                inputs += ["-i", str(key_source or take)]
+                graph.append(f"[2:a]atrim=0:{total:.3f},asetpts=PTS-STARTPTS[keybus]")
+        if buses is not None:
+            graph.append("[bdin]asplit=2[bd][duckbus]")
+            for label, path in zip(("rawbus", "duckbus", "keybus"), buses, strict=True):
+                graph.append(f"[{label}]{BUS_FORMAT}[{label}out]")
+                bus_maps += [
+                    "-map",
+                    f"[{label}out]",
+                    "-c:a",
+                    "pcm_s16le",
+                    "-t",
+                    f"{total:.3f}",
+                    str(path),
+                ]
         graph.append(
             f"{front}[bd]amix=inputs=2:duration=first:normalize=0,{LIMITER}[a]"
         )
     run_ffmpeg(
         [*inputs, "-filter_complex", ";".join(graph), "-map", "0:v", "-map", "[a]",
-         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-t", f"{total:.3f}", str(out)]
+         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-t", f"{total:.3f}", str(out), *bus_maps]
     )  # fmt: skip
 
 
@@ -261,6 +308,7 @@ def mix_take(
     duck_db: float | None = None,
     voice_source: Path | None = None,
     cues: Sequence[CueLevel] = (),
+    buses: bool = False,
 ) -> MixResult:
     """Mix ``take`` with ``bed`` into ``out`` at a measured take gain.
 
@@ -280,6 +328,9 @@ def mix_take(
         Audio to find the voice windows in (the take before SFX); default ``take``.
     cues
         The sound-effect cues on ``take``; each one far under the bed is warned about (never refused).
+    buses
+        Also write the bed before and after ducking and the duck key beside ``out``
+        (:func:`bus_paths`, what ``review`` measures the duck depth from); only when there is a bed.
 
     Returns
     -------
@@ -289,14 +340,16 @@ def mix_take(
     Raises
     ------
     FileExistsError
-        When ``out`` exists.
+        When ``out`` (or one of its bus files) exists.
     ValueError
         When ``duck_db`` is out of range.
     """
 
     check_duck_db(duck_db)
-    if out.exists():
-        raise FileExistsError(f"{out} exists; local post never overwrites")
+    written = bus_paths(out) if buses and bed is not None else None
+    for path in (out, *(written or ())):
+        if path.exists():
+            raise FileExistsError(f"{path} exists; local post never overwrites")
     info = probe_video(take)
     if not info.has_audio:
         raise ValueError(f"{take.name} has no audio to mix")
@@ -314,6 +367,8 @@ def mix_take(
         "total": total,
         "windows": windows,
         "duck_db": duck_db,
+        "buses": written,
+        "key_source": voice_source,
     }
     _mix_once(take, out, gain_db=gain, **kwargs)  # type: ignore[arg-type]
     mixed = measure_loudness(out)
@@ -322,7 +377,8 @@ def mix_take(
     if math.isfinite(miss) and abs(miss) > GAIN_TOLERANCE_LU:
         corrected = round(min(max(gain + miss, GAIN_RANGE_DB[0]), GAIN_RANGE_DB[1]), 1)
         if corrected != gain:
-            out.unlink()
+            for path in (out, *(written or ())):
+                path.unlink()
             gain = corrected
             _mix_once(take, out, gain_db=gain, **kwargs)  # type: ignore[arg-type]
             mixed = measure_loudness(out)
@@ -337,4 +393,14 @@ def mix_take(
         warnings = quiet_cue_warnings(
             cues, bed_levels=levels, bed_db=bed_db, take_gain_db=gain
         )
-    return MixResult(out, take_lufs, gain, mixed, passes, ducking, bed, tuple(warnings))
+    return MixResult(
+        out,
+        take_lufs,
+        gain,
+        mixed,
+        passes,
+        ducking,
+        bed,
+        tuple(warnings),
+        written or (),
+    )

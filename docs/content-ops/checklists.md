@@ -114,7 +114,7 @@ Then watch the file in `takes/`. A take that will be re-filmed gets no `finish`,
 
 - [ ] Local finish ran (`fictora-produce finish`) and ended `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`; the raw take is never the deliverable
 - [ ] `review` run again on the finished file: loudness in band, safe zones clear, zone sheet looked at for faces
-- [ ] Ducking under the voice about 8–9 dB (by ear: `finish` does not measure it; `--duck-db 9` when a line must sit clearly over the bed)
+- [ ] Ducking under the voice about 8–9 dB (`review` reads it from the mix buses `finish` saves, band 6–12 dB; `--duck-db 9` when a line must sit clearly over the bed)
 - [ ] No loudnorm anywhere; per-take gain and one limiter
 - [ ] Stray speech muted (`--mute`); every hand cue answers a visible action, inside its own take, and audible
 - [ ] Captions are English, in the 55–70% band, on screen only while the line is spoken

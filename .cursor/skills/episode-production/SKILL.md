@@ -148,7 +148,8 @@ All three are mix notes, never a re-film. Times are seconds on the take **as fil
 - One cue per visible action, on the frame where the action lands. A cue with a bad shape is rendered once more with a changed description, then dropped with a line in the run notes; a missing cue never blocks a take. A quiet cue: raise it in 2–3 dB steps with `@DB` until it reads.
 - `finish` checks every hand file before any step: missing, silent, or outside the take is an error and nothing is written. A hand step that then fails prints `NOT DONE` like missing music.
 - **A sound the human wants added to a take** ("add a dry stone crack at the end"): `sound-note --desk D --episode N --take tK [--shot S | --row R] "add a dry stone crack at the end"` saves it on the story (free). A take already filmed keeps its saved facts until `take-facts --desk D --episode N --take tK --refresh` reads them again (a new version; the old file stays) and prints the cues it adds; then `finish` again. `finish` prints `!!` when its facts are older than the sound notes. The server's refusal is printed by name with the fix (`sound_note_needs_take`: pass `--take`). A drop or level note (`sound-note --desk D "no purring"`) works on the server's mix only: on this laptop pass the same change as `finish --sfx-adjust "door=-6"` / `"hum=drop"`. A sound no note can place (a sting, a wordless making take) is a hand cue. Full cue guide: [sound-cues.md](../../../docs/content-ops/sound-cues.md).
-- Ducking target: about 8–9 dB under the voice. `finish` does not write the mix bus files, so `review` cannot measure it: when a line must sit clearly over the bed, pass `--duck-db 9`. Never loudnorm a take.
+- Ducking target: about 8–9 dB under the voice. When a line must sit clearly over the bed, pass `--duck-db 9`. Never loudnorm a take.
+- `finish` saves the mix buses beside the mix (`take-epNN-tK-mix-vN-{raw,ducked,key}-bus.wav`, mono 48 kHz, about 0.3 MB a second together): `review` measures the duck depth from them.
 - A take that will be re-filmed gets no `finish`, no cues and no voice lines.
 
 ## Review a take: the numbers before the verdict
@@ -159,7 +160,7 @@ uv run fictora-produce review --desk D [--episode N] [--take tK] [--take-file F 
 
 Free and local (ffmpeg + numpy); only `--transcribe` asks the server for a Whisper transcript of the take's stored URL (a few cents). Without a file it reads the newest finished file for the take, else the newest raw take, and the block's first line says which. Run it on the raw take as soon as it lands (before `finish`, that is the default), before asking Use it or Change this, and again after `finish` before handing it over. It prints one block (and appends it to `run-notes.md`): paste it into the verdict. Each section is ✓ or ⚠ with the threshold it used (`–` when there was nothing to measure). It always exits 0: a ⚠ is something to watch for, never a stop, and never by itself a reason to re-film.
 
-- **Loudness:** a raw take below −30 LUFS needs cues; a finished one sits at −20 to −15 LUFS with true peak ≤ −1 dBTP. Duck depth only when mix bus files are on the desk (adopted desks).
+- **Loudness:** a raw take below −30 LUFS needs cues; a finished one sits at −20 to −15 LUFS with true peak ≤ −1 dBTP. Duck depth (6–12 dB under the voice) from the mix buses `finish` saves; a take finished before this kit wrote them reads `not measured`: finish it again.
 - **Cuts:** hard cuts vs the take facts' shot changes. An extra cut is a soften; a missing one is often a camera move: look.
 - **Frames:** frozen stretches (a stall, or your own `freeze`) and stacked double frames: look at each full size.
 - **Board:** head board frames on a raw take are what `finish` removes; any board frame mid-take, or at the head after deboard, is a fault.
@@ -202,8 +203,8 @@ uv run fictora-produce join --desk D --take-file F1 --take-file F2   # these fin
 - Each take gets one gain to the takes' median level, then one measured mix gain and one limiter. No loudnorm.
 - Refused before anything is written: a take that is not finished (every take on the desk needs a complete finish), a take not at 24 fps, mixed sizes. The joined file is counted at 24 frames a second.
 - Each seam's room-level step is printed. Over 5 dB: `NOT DONE`, exit **5**, the master is kept to listen to and nothing is marked; do not hand it over.
-- A take cut with `trim` or `tempo` after finish has no record and is refused. Tell the human; do not join the -sokii files by hand (that stitches two beds and two marks).
-- A take finished before `join` existed has no record either: run `finish` on it again before the join.
+- `trim` / `tempo` (and `freeze` / `soften`) on a finished file apply the same edit to the take before the bed and the un-marked master and write a new finish record (the edit chain in `edits`), so the edited take joins at its new length; the newest record wins, so `--episode N` joins the edited take. A file no record names (edited from a raw take, or while a record file was gone: the edit says `No finish record`) is refused: finish again, then edit. Never join the -sokii files by hand (that stitches two beds and two marks).
+- A take finished before `join` existed has no record: run `finish` on it again before the join.
 
 ## Change a character's voice (never regenerate)
 
