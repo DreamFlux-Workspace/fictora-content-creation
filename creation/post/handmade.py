@@ -125,7 +125,7 @@ def run_cue(
     dest = download(str(answer["audio_url"]), next_versioned_path(sfx_dir, f"cue-{_words(sound)}", ".mp3"))
     cost = _answer_usd(answer, cue_usd(seconds))
     if cost:
-        book(desk, episode=episode, usd=cost, stream=out)
+        book(desk, episode=episode, usd=cost, stream=out, unit=f"cue:{_words(sound)}")
     levels = measure_rms_windows(dest, window_seconds=CUE_SHAPE_WINDOW_SECONDS)
     kind = "sustained" if answer.get("kind") == "sustained" else "event"
     problem = answer.get("shape_problem") or shape_problem(kind, levels)
@@ -230,7 +230,7 @@ def run_voice_line(
     dest = download(url, next_versioned_path(voices_dir, f"voice-ep{episode:02d}-{slug}", ".mp3"))
     cost = _answer_usd(answer, len(spoken or line) * ELEVEN_V3_USD_PER_1000_CHARS / 1000)
     if cost:
-        book(desk, episode=episode, usd=cost, stream=out)
+        book(desk, episode=episode, usd=cost, stream=out, unit=f"voice-line:{slug}")
     reading = answer.get("reading") or {}
     dest.with_suffix(".json").write_text(
         json.dumps({"line": line, "spoken_text": spoken, "cast_id": cast_id, "voice": answer.get("provider_voice")

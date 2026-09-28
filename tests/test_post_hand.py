@@ -365,6 +365,7 @@ def test_cue_saves_a_versioned_file_prints_its_shape_and_books_its_cost(
     assert "RMS per 0.5 s: 0.0s" in printed and "shape (event): ok" in printed
     assert "$" not in printed, "cost never reaches printed output"
     assert load_series(post_desk).spend_usd == pytest.approx(0.006), "each render is booked on the ledger"
+    assert {entry.unit for entry in load_series(post_desk).spend_log} == {"cue:a-descending-comic-brass"}  # same words as the file name
     sidecar = json.loads(first.with_suffix(".json").read_text())
     assert sidecar["shape_problem"] is None and sidecar["kind"] == "event" and len(sidecar["rms_db"]) == 2
 
@@ -421,6 +422,7 @@ def test_voice_line_renders_in_the_locked_voice_saves_it_and_books_it(
         "voice-ep01-kenji", {"text": "Wait for me here.", "voice": "Roger", "language": "en"}
     ), "the same key revoice sends for this line: never paid twice"
     assert load_series(post_desk).spend_usd == pytest.approx(0.002)
+    assert [entry.unit for entry in load_series(post_desk).spend_log] == ["voice-line:kenji"]
     assert json.loads(path.with_suffix(".json").read_text())["voice"] == "Roger"
     assert "--voice" in out.getvalue() and "$" not in out.getvalue()
 
