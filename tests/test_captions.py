@@ -66,6 +66,15 @@ def test_episode_lines_find_a_later_episode_by_ordinal_not_by_name() -> None:
     assert episode_lines(spine, 1) == ["First."]
 
 
+def test_captions_on_a_japanese_show_are_the_english_subtitles() -> None:
+    spine = {
+        "spoken_language": "ja-JP",
+        "beats": [{"episode_id": "episode_01", "dialogue_lines": [
+            {"text": "Wait for me here.", "spoken_text": "ここで待ってて", "subtitle_text": "Wait here for me."}]}],
+    }  # fmt: skip
+    assert episode_lines(spine, 1) == ["Wait here for me."]
+
+
 def test_real_take_anchors_line_on_first_speech_span_not_the_tail() -> None:
     duration = 15.104
     spans = speech_spans(parse_silencedetect(REAL_TAKE_STDERR, duration), duration)

@@ -39,6 +39,7 @@ from creation.post.desk import (
     latest_raw_take,
     open_api,
     refresh_spine,
+    show_language,
     spine_id,
     take_stored_url,
 )
@@ -366,6 +367,7 @@ def run_revoice(
     if not voice:
         raise ValueError(f"{name} has no locked voice on the cast card; run voice --audition then --pick N first")
     dialogue = episode_dialogue(spine, episode)
+    language = show_language(spine)
     theirs = [i for i, line in enumerate(dialogue) if line["cast_id"] == cast_id]
     if not theirs:
         raise ValueError(f"{name} speaks no line in episode {episode} on the spine; nothing to revoice")
@@ -379,8 +381,9 @@ def run_revoice(
                 "(this kit never uploads local files); pass --words-json"
             )
         target = next_versioned_path(takes, f"take-ep{episode:02d}-{take_id}-revoice-words", ".json")
-        words_json = transcribe(stored, target, audio=service, spine_id=spine_id(desk))
-    windows = line_windows(load_words(words_json), tuple(line["text"] for line in dialogue))
+        words_json = transcribe(stored, target, audio=service, spine_id=spine_id(desk), language=language)
+    # Windows are found on what is heard: the performed line, in the show's language.
+    windows = line_windows(load_words(words_json), tuple(line["performed"] for line in dialogue))
     voices_dir = desk / f"ep{episode:02d}" / "voices"
     voices_dir.mkdir(parents=True, exist_ok=True)
     slug = cast_slug(cast_id)
@@ -390,12 +393,16 @@ def run_revoice(
     paid = 0.0
     for index in theirs:
         window = windows[index]
-        text = dialogue[index]["text"]
+        line = dialogue[index]
+        text = line["performed"]
         if window.start is None or window.end is None:
             missing.append(text)
             continue
-        key = _unit(f"voice-ep{episode:02d}-{slug}", {"text": text, "voice": voice})
-        answer = service.voice_line(spine_id=spine_id(desk), cast_id=cast_id, text=text, language="en", key=key)
+        key = _unit(f"voice-ep{episode:02d}-{slug}", {"text": text, "voice": voice, "language": language})
+        answer = service.voice_line(
+            spine_id=spine_id(desk), cast_id=cast_id, text=text, language=language, key=key,
+            spoken_text=line["spoken_text"] or None,
+        )  # fmt: skip
         url = str(answer["audio_url"])
         path = download(url, next_versioned_path(voices_dir, f"voice-ep{episode:02d}-{slug}", ".mp3"))
         paid += float(answer.get("cost_usd") or round(len(text) * ELEVEN_V3_USD_PER_1000_CHARS / 1000, 4))

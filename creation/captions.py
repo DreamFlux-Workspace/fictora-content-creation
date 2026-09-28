@@ -23,9 +23,10 @@ import json
 import re
 import shutil
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from creation.ops.folder import next_versioned_path
 
@@ -82,7 +83,7 @@ class Cue:
 
 
 def episode_lines(spine: dict[str, Any], episode_ordinal: int) -> list[str]:
-    """Return spoken lines for one episode, in beat order.
+    """Return the caption for each spoken line of one episode, in beat order.
 
     Parameters
     ----------
@@ -107,7 +108,10 @@ def episode_lines(spine: dict[str, Any], episode_ordinal: int) -> list[str]:
         if beat.get("episode_id") != episode_id:
             continue
         for line in beat.get("dialogue_lines") or []:
-            text = str(line.get("text") or "").strip()
+            # Captions are English subtitles: ``subtitle_text`` when the line has one, else ``text``.
+            # Their timing never reads words: it comes from where speech is heard on the take
+            # (``silencedetect``), so a Japanese or Korean performance is timed the same way.
+            text = str(line.get("subtitle_text") or line.get("text") or "").strip()
             if text:
                 lines.append(text)
     return lines

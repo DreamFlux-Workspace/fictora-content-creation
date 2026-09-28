@@ -64,8 +64,14 @@ class AudioService(Protocol):
         """``{candidates: [{voice_id, text, audio_url, seconds}], cost_usd}``."""
         ...
 
-    def voice_line(self, *, spine_id: str, cast_id: str, text: str, language: str, key: str) -> dict[str, Any]:
-        """``{audio_url, seconds, provider_voice, reading: {checked, read_right, …}, cost_usd}``."""
+    def voice_line(
+        self, *, spine_id: str, cast_id: str, text: str, language: str, key: str, spoken_text: str | None = None
+    ) -> dict[str, Any]:
+        """``{audio_url, seconds, provider_voice, reading: {checked, read_right, …}, cost_usd}``.
+
+        ``text`` is the performed line in the show's ``language``; ``spoken_text`` (when the
+        script has one) is what the voice model is sent, so the server's reading re-check applies.
+        """
         ...
 
     def sfx_cue(self, *, spine_id: str, sound: str, seconds: float, key: str) -> dict[str, Any]:
@@ -116,10 +122,14 @@ class DramaApiAudio:
         body = {"spine_version": spine_version, "lines": lines, "candidate_count": count}
         return self._post(f"/v1/spines/{spine_id}/cast/{cast_id}/voice-auditions/render", body, key)
 
-    def voice_line(self, *, spine_id: str, cast_id: str, text: str, language: str, key: str) -> dict[str, Any]:
+    def voice_line(
+        self, *, spine_id: str, cast_id: str, text: str, language: str, key: str, spoken_text: str | None = None
+    ) -> dict[str, Any]:
         """POST ``…/voice-lines``."""
 
-        body = {"text": text, "language": language}
+        body: dict[str, Any] = {"text": text, "language": language}
+        if spoken_text:
+            body["spoken_text"] = spoken_text
         return self._post(f"/v1/spines/{spine_id}/cast/{cast_id}/voice-lines", body, key)
 
     def sfx_cue(self, *, spine_id: str, sound: str, seconds: float, key: str) -> dict[str, Any]:

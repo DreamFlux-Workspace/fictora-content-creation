@@ -72,8 +72,12 @@ class FakeAudio:
         return {"audio_url": "https://media.test/line.mp3", "seconds": 0.4, "provider_voice": "Aria",
                 "reading": {"checked": True, "read_right": True, "match": 1.0}, "cost_usd": 0.002}  # fmt: skip
 
+    words: list[dict[str, Any]] | None = None
+
     def transcribe(self, **kwargs: Any) -> dict[str, Any]:
         self.calls.append(("transcribe", kwargs))
+        if self.words is not None:
+            return {"text": "", "words": self.words}
         return {"text": "", "words": [
             {"word": "Wait", "start": 1.0, "end": 1.3}, {"word": "for", "start": 1.3, "end": 1.5},
             {"word": "me", "start": 1.5, "end": 1.7}, {"word": "here.", "start": 1.7, "end": 2.0},
@@ -193,3 +197,65 @@ def test_revoice_without_a_stored_take_url_refuses_to_upload(post_desk: Path, po
     with pytest.raises(ValueError, match="never uploads"):
         voice_mod.run_revoice(post_desk, cast="Kenji", audio=audio, out=io.StringIO())
     assert audio.calls == []
+
+
+JA_WORDS = [
+    {"word": "ここで", "start": 1.0, "end": 1.4}, {"word": "待ってて", "start": 1.4, "end": 2.0},
+    {"word": "今夜は", "start": 3.0, "end": 3.5}, {"word": "だめ", "start": 3.5, "end": 4.0},
+]  # fmt: skip
+
+
+@needs_ffmpeg
+def test_revoice_on_a_japanese_show_voices_and_finds_the_performed_line_not_the_subtitle(
+    post_desk: Path, post_api: FakePostApi, downloads: list[str]
+) -> None:
+    spine = post_api.spine_body
+    spine["spoken_language"] = "ja-JP"
+    spine["cast"][0]["voice_brief"] = {"provider_voice": "Aria"}
+    kenji, aya = spine["beats"][0]["dialogue_lines"]
+    kenji.update(spoken_text="ここで待ってて", subtitle_text="Wait for me here.")
+    aya.update(spoken_text="今夜はだめ", subtitle_text="Not tonight.")
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", seconds=5.0,
+              tones=((1.0, 2.0, 440), (3.0, 4.0, 880)))  # fmt: skip
+    (post_desk / "ep01" / "api" / "17_raw_scene_clips.json").write_text(json.dumps(
+        {"clips": [{"job_id": "j1", "url": "https://media.test/tenants/t/drama/t1.mp4", "episode_id": "episode_01", "set_index": 1}]}))  # fmt: skip
+    audio = FakeAudio()
+    audio.words = JA_WORDS
+
+    out = voice_mod.run_revoice(post_desk, cast="Kenji", audio=audio, out=io.StringIO())
+
+    (_, heard), (_, line) = audio.calls
+    assert heard["language"] == "ja", "the take is transcribed in the show's language"
+    assert line["language"] == "ja"
+    assert line["text"] == "ここで待ってて", "the performed line, not the English subtitle"
+    assert line["spoken_text"] == "ここで待ってて", "so the server's kana re-check applies"
+    record = json.loads(out.with_suffix(".json").read_text())
+    assert record["lines"][0]["original_window"] == [1.0, 2.0], "found by the Japanese words"
+    assert record["not_heard"] == []
+
+
+def test_the_voice_line_route_gets_the_performed_line_language_and_spoken_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+
+    from creation.harness.session import DramaApiRunSession
+    from creation.post import desk as desk_mod
+    from creation.post.audio_service import DramaApiAudio
+
+    bodies: list[dict[str, Any]] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"audio_url": "u"})
+
+    def open_api(desk: Path, episode: int) -> DramaApiRunSession:
+        run = DramaApiRunSession(base_url="https://drama.test", token="t", out_dir=tmp_path, session_id="s")
+        run.client = httpx.Client(transport=httpx.MockTransport(answer))
+        return run
+
+    monkeypatch.setattr(desk_mod, "open_api", open_api)
+    DramaApiAudio(tmp_path).voice_line(
+        spine_id="sp", cast_id="c", text="ここで待ってて", language="ja", key="k", spoken_text="ここで待ってて"
+    )
+    assert bodies == [{"text": "ここで待ってて", "language": "ja", "spoken_text": "ここで待ってて"}]
