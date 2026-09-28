@@ -9,7 +9,7 @@ Do not call `scripts/drama_create_flow_smoke.py` on a content production. That w
 | Route family | Command |
 | --- | --- |
 | Draft, cast, boards, estimate, take, poll | `fictora-produce step` (one block per call; `--confirm-spend` for the take) |
-| Approvals | `fictora-produce approve --desk D --gate plates\|script\|board` |
+| Approvals | `fictora-produce approve --desk D --gate look\|plates\|script\|board` |
 | Arc, brief, episode 2 on, memory | `arc`, `brief`, `author`, `memory` |
 | Line and spine edits | `line`, `edit`, `spine --refresh` |
 | Look | `look-frame`, `look`, `look-note` |

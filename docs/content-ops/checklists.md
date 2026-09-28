@@ -23,7 +23,7 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 
 - [ ] Our own frame, drawn with `look-frame --description` from a written description (never a third-party image), shown to the human
 - [ ] The human was told, in these words: takes film on Turbo, which redraws a look far from anime (pastel, watercolour, painterly, cartoon) in H3's own anime finish; `finish` colour-matches colour and light, not the drawing style
-- [ ] Only after the yes: `look --url <image_url>` pinned it
+- [ ] Only after the yes: `fictora-produce approve --desk D --gate look` recorded it and pinned the frame (the newest look frame unless `--path`/`--url` named another). `step` refuses plates and boards until then
 
 ## Before plates are approved
 

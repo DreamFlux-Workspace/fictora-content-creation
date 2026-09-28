@@ -57,15 +57,23 @@ from creation.harness.raw_video import wait_for_raw_scene_clips
 from creation.harness.session import DramaApiRunSession
 from creation.harness.stages_gated import scene_prompt
 from creation.harness.visual_first_ep1 import reuse_generation_body
+from creation.look_gate import (
+    look_approved,
+    look_frame_url,
+    newest_look_frame,
+    pinned_look_url,
+    record_look_frame_url,
+)
 from creation.ops.floor import (
     add_episode,
+    approve_series_gate,
     record_estimate,
     record_spend,
     record_verdict,
 )
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
-from creation.ops.state import episode_by_ordinal, load_series
+from creation.ops.state import GateRecord, episode_by_ordinal, load_series
 from creation.post.take_facts import (
     save_take_facts,
     sfx_plan_changes,
@@ -121,7 +129,7 @@ LOOK_FRAME_MAX_CHARS = 4000
 OLD_SERVER_LOOK_FRAME = (
     "this Drama API has no look-frame route yet (404 on POST /v1/spines/{id}/look-frame): it is an older deploy. "
     "Nothing was drawn or booked. Tell engineering the server needs the look-frame route; never draw it with "
-    "your own provider key. Meanwhile `look --url` still pins a frame engineering hands you"
+    "your own provider key. Meanwhile `approve --gate look --url` still pins a frame engineering hands you"
 )
 LOOK_FRAME_HINTS = {
     "look_frame_text_only": "a look frame is drawn from words only: take the link out of the description",
@@ -2142,27 +2150,7 @@ def _run_cascade(
 # --- Look -------------------------------------------------------------------------------------------
 
 
-def run_look(desk: Path, *, url: str, out: Any = None) -> Path:
-    """Pin one style frame (a public https URL, one frame, not a collage) as the story's look. Spends nothing.
-
-    The look pins onto a drafted story, so it comes after the draft and before the plates.
-
-    Parameters
-    ----------
-    desk
-        Series desk with a story.
-    url
-        Public https URL of the frame.
-    out
-        Text stream.
-
-    Returns
-    -------
-    Path
-        The refreshed ``api/spine.json``.
-    """
-
-    out = out or sys.stdout
+def _pin_look(desk: Path, url: str, out: Any) -> Path:
     if not url.startswith("https://"):
         raise CommandStopped(
             "--url must be a public https URL of one frame (this kit uploads nothing)"
@@ -2181,6 +2169,136 @@ def run_look(desk: Path, *, url: str, out: Any = None) -> Path:
     path = save_spine_snapshot(desk, state.episode_ordinal, fresh)
     print(f"look_register_url: {fresh.get('look_register_url') or url}", file=out)
     return path
+
+
+def run_look(desk: Path, *, url: str, out: Any = None) -> Path:
+    """Pin one style frame (a public https URL, one frame, not a collage) as the story's look. Spends nothing.
+
+    The look pins onto a drafted story, so it comes after the draft and before the plates.
+    Pinning is not the human's yes: unless ``series.look`` is already approved, this
+    prints that the look gate is still open and how to record it
+    (``approve --gate look``, which pins and records together).
+
+    Parameters
+    ----------
+    desk
+        Series desk with a story.
+    url
+        Public https URL of the frame.
+    out
+        Text stream.
+
+    Returns
+    -------
+    Path
+        The refreshed ``api/spine.json``.
+    """
+
+    out = out or sys.stdout
+    desk = desk.expanduser().resolve()
+    path = _pin_look(desk, url, out)
+    if not look_approved(desk):
+        print(
+            "Pinned, but the look gate is still open (pinning is not the human's yes). After the yes: "
+            f"fictora-produce approve --desk {desk} --gate look --url {url}",
+            file=out,
+        )
+    return path
+
+
+def _resolve_look_choice(
+    desk: Path, url: str | None, frame: Path | None, out: Any
+) -> tuple[str, Path | None]:
+    if frame is not None:
+        frame = frame.expanduser().resolve()
+        if not frame.is_file():
+            raise CommandStopped(f"no such look frame: {frame}")
+        if url is None:
+            url = look_frame_url(desk, frame)
+            if url is None:
+                raise CommandStopped(
+                    f"the desk does not know the stored URL of {frame.name}; pass --url <its image_url>"
+                )
+        return url, frame
+    if url is not None:
+        return url, None
+    newest = newest_look_frame(desk)
+    if newest is None:
+        raise CommandStopped(
+            "no look frame on this desk (shared/look/look-frame-vN.*); pass --url <the frame's https URL>"
+        )
+    known = look_frame_url(desk, newest)
+    if known is None:
+        raise CommandStopped(
+            f"the desk does not know the stored URL of {newest.relative_to(desk)}; pass --url <its image_url>"
+        )
+    print(
+        f"Using the newest look frame: {newest.relative_to(desk)} ({known})", file=out
+    )
+    return known, newest
+
+
+def run_approve_look(
+    desk: Path,
+    *,
+    url: str | None = None,
+    path: Path | None = None,
+    out: Any = None,
+) -> GateRecord:
+    """Record the human's yes on the look and pin that frame on the server. Spends nothing.
+
+    Writes ``series.look`` (the record ``fictora-ops approve --gate look`` writes and
+    preflight reads) and pins the frame with the same ``look-register`` call as
+    ``look --url``. Without ``url`` or ``path`` it takes the newest
+    ``shared/look/look-frame-vN`` and prints which. Idempotent: a frame the server
+    already holds (``api/spine.json`` ``look_register_url``) is not pinned again, and
+    a look already approved for it is left as it is.
+
+    Parameters
+    ----------
+    desk
+        Series desk with a story.
+    url
+        The frame's public https URL (a ``look-frame`` ``image_url``, or a frame the human picked).
+    path
+        A ``look-frame-vN`` file on the desk; its URL is read from the desk.
+    out
+        Text stream.
+
+    Returns
+    -------
+    GateRecord
+        The approved look record.
+    """
+
+    out = out or sys.stdout
+    desk = desk.expanduser().resolve()
+    url, frame = _resolve_look_choice(desk, url, path, out)
+    if not url.startswith("https://"):
+        raise CommandStopped(
+            "--url must be a public https URL of one frame (this kit uploads nothing)"
+        )
+    shown = (
+        str(frame.relative_to(desk))
+        if frame and frame.is_relative_to(desk)
+        else (str(frame) if frame else url)
+    )
+    note = f"pinned {url}"
+    current = load_series(desk).look
+    if pinned_look_url(desk) == url:
+        if current.status == "approved" and current.note == note:
+            print(f"look already approved and pinned: {shown}", file=out)
+            return current
+        print(f"look_register_url: {url} (already pinned; not sent again)", file=out)
+    else:
+        _pin_look(desk, url, out)
+    record = approve_series_gate(desk, "look", path=shown, note=note)
+    _note(desk, 1, f"look approved: {shown} ({url}).")
+    print(
+        f"look {record.status}: {shown}. Next: fictora-produce step --desk {desk}",
+        file=out,
+    )
+    return record
 
 
 def look_frame_route_missing(message: str) -> bool:
@@ -2216,7 +2334,7 @@ def run_look_frame(
     from the words alone (no image goes in, and the server refuses a link in
     the description) and answers our stored PNG URL. This saves it as
     ``shared/look/look-frame-vN.png`` and prints the URL; after the human's yes,
-    ``look --url <that URL>`` pins it. The same description and size are cached
+    ``approve --gate look`` pins it and records the yes. The same description and size are cached
     on the server, so re-running never pays twice.
 
     Parameters
@@ -2290,6 +2408,7 @@ def run_look_frame(
             )
         finally:
             fetch.close()
+        record_look_frame_url(desk, path, image_url)
     finally:
         run.client.close()
     # ``cost_usd`` is what this call booked on the server: 0 for a cached frame.
@@ -2309,7 +2428,8 @@ def run_look_frame(
     print(str(path), file=out)
     print(f"image_url: {image_url}", file=out)
     print(
-        f"Show {path.name} to the human. If it is the look: fictora-produce look --desk {desk} --url {image_url} . "
+        f"Show {path.name} to the human. If it is the look: fictora-produce approve --desk {desk} --gate look "
+        f"(pins {path.name} and records the yes; step will not draw plates or boards before it). "
         "To change it, change the description and draw again.",
         file=out,
     )
@@ -4089,7 +4209,7 @@ def add_episode_parsers(
         "look-frame",
         help=(
             "Draw our own style frame on the server from a written description (text only, 1088x1936, $0.30). "
-            "Saves shared/look/look-frame-vN.png; never pins (look --url does, after the human's yes)."
+            "Saves shared/look/look-frame-vN.png; never pins (approve --gate look does, with the human's yes)."
         ),
     )
     frame.add_argument("--desk", type=Path, required=True)
@@ -4105,7 +4225,7 @@ def add_episode_parsers(
 
     look = sub.add_parser(
         "look",
-        help="Pin the story's look: one style frame by public https URL. Spends nothing.",
+        help="Pin one style frame by public https URL. Not the look yes: approve --gate look records it. Spends nothing.",
     )
     look.add_argument("--desk", type=Path, required=True)
     look.add_argument("--url", required=True)
@@ -4407,6 +4527,7 @@ __all__ = [
     "run_edit",
     "run_film",
     "run_line",
+    "run_approve_look",
     "run_look",
     "run_look_frame",
     "run_look_note",

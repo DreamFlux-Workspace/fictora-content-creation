@@ -89,7 +89,7 @@ Every `CONFIRM` line in the plan (a gate the old desk never recorded, an unfinis
 | `init-series --series S --band B --episodes N` | `O init-series` (same flags), or `P start --series S --prompt @brief.md --band B --preset-id ID --cut-tempo T` (opens the desk and binds the premise) |
 | `draft --brief FILE --preset ID --tempo T [--language ja]` | `P start … --prompt @FILE --preset-id ID --cut-tempo T [--language ja]`, then `P step --desk D` |
 | `look-frame --prompt DESC.txt` | `P look-frame --desk D --description @DESC.txt` |
-| `look --image FRAME.png` | `P look --desk D --url <the image_url look-frame printed>` |
+| `look --image FRAME.png` | `P approve --desk D --gate look` (pins the newest look frame and records the yes; `--url` for a frame the human picked) |
 | `look-note --add/--remove` | `P look-note --desk D --add/--remove` (same) |
 | `plates` | `P step --desk D` (draws the cast at that phase) |
 | `plates --cause "…"` (the whole cast again) | `P redraw-plate --desk D --cast NAME --note "…"` (one character, corrected) |
@@ -97,7 +97,7 @@ Every `CONFIRM` line in the plan (a gate the old desk never recorded, an unfinis
 | `board --episode N --take tK --cause "…"` | `P redraw-board --desk D --episode N --take tK --cause "…"` |
 | `film --episode N --take tK` (first film) | `P step --desk D` (estimate), then `P step --desk D --confirm-spend` |
 | `verdict --change --cause "…"`, then `film` | `P film --desk D --episode N --take tK --cause "…"` (prices), then the same with `--confirm-spend` |
-| `approve --gate plates\|script\|board` | `P approve --desk D --gate plates\|script\|board` (sends the API approval); `O approve` records a desk-only yes (look, post) |
+| `approve --gate look\|plates\|script\|board` | `P approve --desk D --gate look\|plates\|script\|board` (look: pins the frame and records the yes; the others send the API approval); `O approve` records a desk-only yes (post; look without a pin) |
 | `set-lines`; a line PATCH (was a deviation) | `O set-lines` (desk only); `P line` (server and desk together, also `--add`, `--remove`, `--new-voice`) |
 | `edit`, `spine --refresh`, `arc`, `author`, `memory`, `voice`, `revoice`, `voice-line` | `P` with the same name |
 | `review --take … --whisper` | `P review --desk D --episode N --take tK [--transcribe]`; `P check-lines` for the line check alone |

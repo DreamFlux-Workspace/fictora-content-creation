@@ -18,6 +18,7 @@ from creation.episode_commands import (
     EPISODE_COMMANDS,
     add_episode_parsers,
     dispatch_episode,
+    run_approve_look,
 )
 from creation.ops.floor import init_series_desk
 from creation.ops.folder import DEFAULT_RUN_PARENT
@@ -91,15 +92,23 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     ap = sub.add_parser(
         "approve",
-        help="Human yes on plates, script, or board (the desk's current episode).",
+        help="Human yes on the look, plates, script, or board (the desk's current episode).",
     )
     ap.add_argument("--desk", type=Path, required=True)
-    ap.add_argument("--gate", required=True, choices=("plates", "script", "board"))
+    ap.add_argument(
+        "--gate", required=True, choices=("look", "plates", "script", "board")
+    )
     ap.add_argument(
         "--path",
         type=Path,
         default=None,
-        help="Board file reviewed (default: the boards step made).",
+        help="Board file reviewed (default: the boards step made). "
+        "Look: the look-frame-vN file chosen (default: the newest).",
+    )
+    ap.add_argument(
+        "--url",
+        default=None,
+        help="Look only: the chosen frame's public https URL (default: the chosen look-frame's image_url).",
     )
     ap.add_argument(
         "--accept-dim",
@@ -209,7 +218,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             for path in result.paths:
                 print(f"  file: {path}")
             return 0
+        if args.command == "approve" and args.gate == "look":
+            run_approve_look(args.desk, url=args.url, path=args.path)
+            return 0
         if args.command == "approve":
+            if args.url is not None:
+                raise ValueError("--url is for --gate look only")
             result = approve_gate(
                 args.desk,
                 gate=args.gate,

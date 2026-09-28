@@ -37,6 +37,7 @@ from creation.harness.visual_first_ep1 import (
     approve_episode_boards,
     measure_board_exposure,
 )
+from creation.look_gate import look_gate_refusal
 from creation.media_fetch import download_to_versioned
 from creation.ops.floor import (
     approve_board,
@@ -85,6 +86,10 @@ from creation.spine_view import (
     shot_list_lines,
     spoken_lines,
 )
+
+
+#: Phases whose ``step`` pays for drawings (cast plates, boards): held while a drawn look frame awaits its yes.
+PAID_DRAWING_PHASES = frozenset({"ready_cast_enrol", "ready_boards_enrol"})
 
 
 @dataclass(frozen=True)
@@ -727,10 +732,18 @@ def board_report(
 
 
 def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
-    """Run the next automated API step for the current phase."""
+    """Run the next automated API step for the current phase.
+
+    Before a paid plate or board drawing it refuses, with nothing sent, when the
+    desk drew a look frame that is not approved (:func:`look_gate_refusal`).
+    """
 
     desk = desk.expanduser().resolve()
     state = load_production(desk)
+    if state.phase in PAID_DRAWING_PHASES:
+        refusal = look_gate_refusal(desk)
+        if refusal:
+            raise RuntimeError(refusal)
     cfg = load_production_config(desk)
     run = _open_run(desk, state)
     ep = state.episode_ordinal
