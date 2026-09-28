@@ -123,7 +123,7 @@ You review **images and video**, not JSON, unless something breaks.
 | --- | --- |
 | Start desk | `uv run fictora-produce start --series "…" --prompt "…" --band 15s` |
 | Next API step | `uv run fictora-produce step --desk <path>` |
-| Approve a gate | `uv run fictora-produce approve --desk <path> --gate plates\|script\|board` |
+| Approve a gate | `uv run fictora-produce approve --desk <path> --gate look\|plates\|script\|board` |
 | Confirm spend + film | `uv run fictora-produce step --desk <path> --confirm-spend` |
 | Where am I? | `uv run fictora-produce status --desk <path>` |
 

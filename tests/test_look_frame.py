@@ -57,7 +57,8 @@ def test_look_frame_draws_on_the_server_saves_the_png_books_one_still_and_never_
     ) and series.spend_usd == pytest.approx(0.3)
     printed = out.getvalue()
     assert (
-        f"image_url: {URL}" in printed and f"look --desk {desk} --url {URL}" in printed
+        f"image_url: {URL}" in printed
+        and f"approve --desk {desk} --gate look" in printed
     )
     assert "0.3" not in printed and "$" not in printed
     saved = sorted((desk / "api").glob("look-frame-v*.json"))

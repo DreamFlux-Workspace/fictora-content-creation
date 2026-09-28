@@ -159,7 +159,7 @@ my-series-2026-09-22/
 | --- | --- |
 | Start desk | `uv run fictora-produce start --series "…" --prompt "…" --band 15s` |
 | Next API step | `uv run fictora-produce step --desk <desk-path>` |
-| Approve gate | `uv run fictora-produce approve --desk <path> --gate plates` (or `script`, `board`) |
+| Approve gate | `uv run fictora-produce approve --desk <path> --gate plates` (or `look`, `script`, `board`) |
 | Approve dim board | add `--accept-dim` to board approve |
 | Confirm spend + film | `uv run fictora-produce step --desk <path> --confirm-spend` |
 | Status | `uv run fictora-produce status --desk <path>` |
