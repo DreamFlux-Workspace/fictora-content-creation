@@ -383,7 +383,12 @@ def run_revoice(
         target = next_versioned_path(takes, f"take-ep{episode:02d}-{take_id}-revoice-words", ".json")
         words_json = transcribe(stored, target, audio=service, spine_id=spine_id(desk), language=language)
     # Windows are found on what is heard: the performed line, in the show's language.
-    windows = line_windows(load_words(words_json), tuple(line["performed"] for line in dialogue))
+    # A line's other spellings (the script ``text``, a kana-pinned ``spoken_text``) count as heard too.
+    windows = line_windows(
+        load_words(words_json),
+        tuple(line["performed"] for line in dialogue),
+        alternates=tuple((line["text"], line["spoken_text"]) for line in dialogue),
+    )
     voices_dir = desk / f"ep{episode:02d}" / "voices"
     voices_dir.mkdir(parents=True, exist_ok=True)
     slug = cast_slug(cast_id)

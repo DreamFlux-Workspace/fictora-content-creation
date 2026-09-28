@@ -183,7 +183,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             append_run_note(
                 ep_dir,
-                f"Local house captions: {result.video.name} (cues {result.ass.name}). Lines: {timing}.",
+                f"Local house captions ({'whole English lines' if result.whole_lines else 'word flicker'}): "
+                f"{result.video.name} (cues {result.ass.name}). Lines: {timing}.",
             )
             for line, span in zip(result.lines, result.anchors):
                 print(f"  {span.start:6.2f}-{span.end:6.2f}s  {line}")

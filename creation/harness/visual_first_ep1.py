@@ -35,7 +35,7 @@ def reuse_generation_body(
     prompt
         Scene prompt for compile.
     spine
-        Current spine JSON (needs ``spine_id``).
+        Current spine JSON (needs ``spine_id``). Its ``locale`` and ``spoken_language`` are sent as-is.
     preset_id
         Art style preset id.
     preset_version
@@ -70,8 +70,13 @@ def reuse_generation_body(
         "clip_duration_seconds": clip_duration_seconds,
         "aspect_ratio": "9:16",
         "episode_video_mode": "extended",
-        "locale": "en-US",
+        # Copied from the spine: the server carries ``spoken_language`` onto the take's coordinator so
+        # post-production picks the right caption treatment (whole English lines on a Japanese or
+        # Korean show). ``locale`` is the subtitle language (English unless the spine says otherwise).
+        "locale": str(spine.get("locale") or "en-US"),
     }
+    if spine.get("spoken_language"):
+        body["spoken_language"] = str(spine["spoken_language"])
     if preset_version:
         body["art_style_preset_version"] = preset_version
     if cut_tempo:

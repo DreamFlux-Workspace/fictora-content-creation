@@ -340,3 +340,20 @@ def test_a_whole_episode_retry_films_with_a_fresh_seed(desk: Path, api: FakeApi)
     body = api.posted(VIDEO)[0]
     assert (body["episode_count"], body["episode_ordinal"], body["seed_attempt"]) == (1, 1, 2)
     assert "reroll_take_index" not in body
+
+
+def test_a_japanese_show_films_with_its_spoken_language_and_locale_from_the_spine(
+    desk30: Path, api30: FakeApi
+) -> None:
+    api30.spine_doc["spoken_language"] = "ja-JP"
+    api30.spine_doc["locale"] = "en-US"
+    _filmed_once(desk30)
+    api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "1.20", "takes": 1}}
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
+    _take_two_of_episode_two(api30)
+
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+
+    body = api30.posted(VIDEO)[0]
+    assert body["spoken_language"] == "ja-JP", "the take's coordinator must know the show is Japanese"
+    assert body["locale"] == "en-US", "subtitles stay English"
