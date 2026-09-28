@@ -355,11 +355,13 @@ def enrol_boards(
     max_attempts: int = 3,
     deadline_seconds: float = 7200.0,
 ) -> dict[str, Any]:
-    """Enrol boards for episodes 1..``episode`` and poll. Does not approve.
+    """Draw boards for episode ``episode`` and poll. Does not approve.
 
-    ``episode_count`` must reach the episode being drawn: with 1 the server only
-    looks at episode 1, finds its boards drawn and refuses episode 2's enrol
-    with 409 ``boards_already_generated``.
+    Sends ``episode_count: N``. The server draws boards only for the episodes
+    1..N that still lack them (fictora-drama #436), so episode N is drawn and
+    booked alone once earlier episodes have boards; episodes written past N are
+    never drawn. With 1 the server would only look at episode 1, find its boards
+    drawn and refuse episode 2's enrol with 409 ``boards_already_generated``.
     """
 
     last_terminal: dict[str, Any] = {}
@@ -393,12 +395,16 @@ def enrol_boards(
     raise SystemExit(f"boards {describe_job_error(last_terminal)}")
 
 
-def estimate_batch(run: DramaApiRunSession, *, spine_id: str, episode: int = 1) -> dict[str, Any]:
-    """Price one episode before the take: ``POST /v1/spines/{id}/batches/estimate`` for that episode alone.
+def estimate_batch(
+    run: DramaApiRunSession, *, spine_id: str, episode: int = 1, reroll_take_index: int | None = None
+) -> dict[str, Any]:
+    """Price what will be filmed: ``POST /v1/spines/{id}/batches/estimate`` for one episode, or one take of it.
 
     An arc story (episode 1 drafted alone) is estimated one episode at a time.
+    With ``reroll_take_index`` the server prices that one take (fictora-drama #436).
     The answer's ``cost_estimate`` carries dated dollars (internal provider cost).
-    A 400 on the selection is saved as a skip and the desk prices from its table.
+    A 400 on the selection, or a server too old to price one take (422 naming
+    ``reroll_take_index``), is saved as a skip and the desk prices from its table.
 
     Parameters
     ----------
@@ -408,6 +414,8 @@ def estimate_batch(run: DramaApiRunSession, *, spine_id: str, episode: int = 1) 
         Story spine.
     episode
         Episode ordinal (resolved to its API id through ``episode_summaries``).
+    reroll_take_index
+        One-based take to price alone; ``None`` prices the whole episode.
 
     Returns
     -------
@@ -418,18 +426,156 @@ def estimate_batch(run: DramaApiRunSession, *, spine_id: str, episode: int = 1) 
     spine = run.spine(spine_id)
     if not spine.get("episode_summaries"):
         raise SystemExit("spine has no episode_summaries")
-    body = {"spine_version": spine["spine_version"], "episode_ids": [episode_id_for(spine, episode)]}
+    body: dict[str, Any] = {"spine_version": spine["spine_version"], "episode_ids": [episode_id_for(spine, episode)]}
+    name = f"12_ep{episode:02d}_estimate.json"
+    if reroll_take_index is not None:
+        body["reroll_take_index"] = reroll_take_index
+        name = f"12_ep{episode:02d}_t{reroll_take_index}_estimate.json"
     try:
         estimate = run.post(f"/v1/spines/{spine_id}/batches/estimate", body)
     except SystemExit as exc:
         msg = str(exc)
-        if "invalid_episode_selection" in msg or "invalid_pilot_batch" in msg or "HTTP 400" in msg:
+        one_take_unknown = reroll_take_index is not None and "reroll_take_index" in msg
+        if one_take_unknown or "invalid_episode_selection" in msg or "invalid_pilot_batch" in msg or "HTTP 400" in msg:
             estimate = {**body, "estimate_skipped": True, "detail": msg[:800]}
-            run.save(f"12_ep{episode:02d}_estimate.json", estimate)
+            run.save(name, estimate)
             return estimate
         raise
-    run.save(f"12_ep{episode:02d}_estimate.json", estimate)
+    run.save(name, estimate)
     return estimate
+
+
+#: Said, and nothing is sent, when the deployed API cannot film one episode alone.
+OLD_SERVER_FILM = (
+    "The deployed Drama API does not film one episode alone yet (no `episode_ordinal` on "
+    "POST /v1/video-generations; fictora-drama #436). Filming episode {episode} on it would film "
+    "episodes 1..{episode} again and book them. Nothing was sent and nothing was charged. "
+    "Tell engineering, and film this episode once the deploy has #436."
+)
+
+
+def _schema_has(openapi: Any, schema_suffix: str, field: str) -> bool | None:
+    """Whether an OpenAPI schema named ``*schema_suffix`` lists ``field`` (``None`` when there is no such schema)."""
+
+    if not isinstance(openapi, dict):
+        return None
+    schemas = (openapi.get("components") or {}).get("schemas") or {}
+    found: bool | None = None
+    for name, schema in schemas.items():
+        if not str(name).endswith(schema_suffix) or not isinstance(schema, dict):
+            continue
+        props = schema.get("properties") or {}
+        if field in props:
+            return True
+        found = False
+    return found
+
+
+def server_films_one_episode(run: DramaApiRunSession) -> bool | None:
+    """Ask the deployed API's OpenAPI whether ``POST /v1/video-generations`` takes ``episode_ordinal``.
+
+    Spends nothing. ``None`` when the schema cannot be read (the request then goes
+    out and an older server's 422 is turned into :data:`OLD_SERVER_FILM`).
+
+    Parameters
+    ----------
+    run
+        Session.
+
+    Returns
+    -------
+    bool | None
+        ``True`` supported, ``False`` an older deploy, ``None`` unknown.
+    """
+
+    status, body = run.get_optional("/openapi.json")
+    if not 200 <= status < 300:
+        run.emit("openapi_unavailable", status=status)
+        return None
+    return _schema_has(body, "VideoGenerationCreateRequest", "episode_ordinal")
+
+
+def film_scope(
+    run: DramaApiRunSession,
+    *,
+    episode: int,
+    reroll_take_index: int | None = None,
+    seed_attempt: int | None = None,
+) -> dict[str, Any]:
+    """Return the fields that film episode ``episode`` alone (or take K of it) on ``POST /v1/video-generations``.
+
+    ``{"episode_count": N, "episode_ordinal": N}`` films episode N only: episodes
+    1..N must be approved, and none of them before N is filmed or booked again.
+    ``reroll_take_index`` + ``seed_attempt`` film one take with a fresh seed.
+
+    An older deploy without ``episode_ordinal`` is refused here with
+    :data:`OLD_SERVER_FILM` before anything is sent, except episode 1, where
+    ``episode_count: 1`` already films episode 1 alone and the field is left out.
+
+    Parameters
+    ----------
+    run
+        Session (reads ``/openapi.json``; spends nothing).
+    episode
+        Episode being filmed.
+    reroll_take_index
+        One-based take to film alone.
+    seed_attempt
+        One-based compile attempt (the previous film's plus one).
+
+    Returns
+    -------
+    dict[str, Any]
+        Extra request fields.
+
+    Raises
+    ------
+    SystemExit
+        On an older deploy, for episode 2 on.
+    """
+
+    extra: dict[str, Any] = {"episode_count": episode, "episode_ordinal": episode}
+    if server_films_one_episode(run) is False:
+        if episode != 1:
+            raise SystemExit(OLD_SERVER_FILM.format(episode=episode))
+        del extra["episode_ordinal"]
+        run.emit("episode_ordinal_unsupported", note="episode 1 films alone with episode_count 1")
+    if reroll_take_index is not None:
+        extra["reroll_take_index"] = reroll_take_index
+    if seed_attempt is not None:
+        extra["seed_attempt"] = seed_attempt
+    return extra
+
+
+def post_video_generation(
+    run: DramaApiRunSession, body: dict[str, Any], *, idempotency_key: str, episode: int
+) -> dict[str, Any]:
+    """POST the take request; an older server's refusal of ``episode_ordinal`` becomes :data:`OLD_SERVER_FILM`.
+
+    Parameters
+    ----------
+    run
+        Session.
+    body
+        ``POST /v1/video-generations`` body.
+    idempotency_key
+        Key for the enrol.
+    episode
+        Episode being filmed (for the message).
+
+    Returns
+    -------
+    dict[str, Any]
+        The admitted job.
+    """
+
+    try:
+        return run.post("/v1/video-generations", body, idempotency_key=idempotency_key)
+    except SystemExit as exc:
+        text = str(exc.code)
+        if "episode_ordinal" in text and ("HTTP 422" in text or "xtra" in text):
+            raise SystemExit(f"{OLD_SERVER_FILM.format(episode=episode)} (server said: {text[:400]})") from None
+        raise
 
 
 def fetch_delivery_optional(run: DramaApiRunSession, job_id: str) -> dict[str, Any] | None:
@@ -515,17 +661,17 @@ def video_request_body(
     reroll_take_index: int | None = None,
     seed_attempt: int | None = None,
 ) -> dict[str, Any]:
-    """Build the ``POST /v1/video-generations`` reuse body for episode ``episode``.
+    """Build the ``POST /v1/video-generations`` reuse body that films episode ``episode`` alone.
 
-    ``episode_count`` reaches the episode being filmed: the server compiles
-    episodes 1..N, answers earlier unchanged takes from its reuse table, and
-    pastes episode N-1's real last frame into episode N's first take when the
-    location matches (the hand-off between episodes).
+    ``episode_count`` and ``episode_ordinal`` are both N (:func:`film_scope`): the
+    server checks episodes 1..N are approved, films episode N only (nothing
+    earlier is filmed or booked again), and pastes episode N-1's stored last
+    frame into episode N's first take when the location matches.
 
     Parameters
     ----------
     run
-        Session (unused; kept for a uniform stage signature).
+        Session (reads ``/openapi.json`` once to refuse an older deploy; spends nothing).
     spine
         Spine JSON.
     prompt, preset_id, preset_version, caption_style, api_captions, video_lane, clip_duration_seconds, cut_tempo
@@ -541,12 +687,7 @@ def video_request_body(
         ``DramaVideoGenerationCreateRequest`` JSON.
     """
 
-    del run
-    extra: dict[str, Any] = {"episode_count": episode}
-    if reroll_take_index is not None:
-        extra["reroll_take_index"] = reroll_take_index
-    if seed_attempt is not None:
-        extra["seed_attempt"] = seed_attempt
+    extra = film_scope(run, episode=episode, reroll_take_index=reroll_take_index, seed_attempt=seed_attempt)
     return reuse_generation_body(
         prompt=scene_prompt(spine, prompt),
         spine=spine,
@@ -576,6 +717,7 @@ def enrol_video(
     video_idempotency_suffix: str = "",
     poll_deadline_seconds: float = 7200.0,
     episode: int = 1,
+    seed_attempt: int | None = None,
 ) -> dict[str, Any]:
     """Film episode ``episode``'s takes and collect them raw (hosted delivery only when asked and available).
 
@@ -593,6 +735,8 @@ def enrol_video(
         Poll cap.
     episode
         Episode ordinal.
+    seed_attempt
+        A whole-episode re-film's compile attempt (the previous plus one); ``None`` on the first film.
 
     Returns
     -------
@@ -617,12 +761,13 @@ def enrol_video(
         clip_duration_seconds=clip_duration_seconds,
         cut_tempo=cut_tempo,
         episode=episode,
+        seed_attempt=seed_attempt,
     )
     run.save("16_video_request.json", body)
     idem_suffix = (video_idempotency_suffix or "").strip()
     base = f"{run.prefix}-video" if episode == 1 else f"{run.prefix}-ep{episode:02d}-video"
     idem = f"{base}{idem_suffix}" if idem_suffix else base
-    job = run.post("/v1/video-generations", body, idempotency_key=idem)
+    job = post_video_generation(run, body, idempotency_key=idem, episode=episode)
     run.save("16_video_enrol.json", job)
     job_id = str(job["job_id"])
     raw = wait_for_raw_scene_clips(run, job_id, deadline_seconds=poll_deadline_seconds)
@@ -642,9 +787,13 @@ __all__ = [
     "enrol_cast",
     "enrol_video",
     "estimate_batch",
+    "OLD_SERVER_FILM",
     "fetch_delivery_optional",
+    "film_scope",
     "finish_video_job",
     "measure_ep1_board_exposure",
+    "post_video_generation",
+    "server_films_one_episode",
     "spoken_language_tag",
     "start_draft",
     "video_request_body",

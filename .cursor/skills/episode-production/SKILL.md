@@ -56,6 +56,7 @@ Read when you need the detail, not all on the first turn:
 | Estimate | `fictora-produce step --desk D` | The human says yes to the number |
 | Take | `fictora-produce step --desk D --confirm-spend` | — |
 | Read | watch `takes/`, write every fault | Use it, or Change this + cause |
+| Re-film one take | `film --desk D --episode N --take tK --cause "…"` (prices it), then the same with `--confirm-spend` | The human says yes to the number; nothing else is filmed or booked |
 | Finish | `fictora-produce finish --desk D [--take-file F]` | Watch the final file; the last line must read `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓` |
 | Next episode | `arc --desk D --list` / `--pick K` (episode 2), `brief --desk D --episode N` (3 on), `author --desk D --episode N --direction K` or `--line "…"` | Script yes, then the same Board → Finish loop |
 
@@ -96,11 +97,10 @@ Open the newest `boards/` file and check (full list: [checklists.md](../../../do
 - **Visible cause:** every action row follows a visible face reacting to its cause, or shares the frame with it.
 - **Each row opens on the emotion the row before it ended on.**
 - **Speakers:** a spoken line sits on a row where its speaker is in frame, medium or closer. No off-screen speaker is drawn.
-- **Speaking mouths:** no clench, grit, pressed or closed mouth on a speaking row. Big acting goes before and after the line; during the words the mouth moves.
+- **Speaking mouths.** No clench, grit, pressed or closed mouth on a speaking row. The big acting goes before the line and after it; during the words the mouth moves. Lips move on every row that carries a line; check the speaker's face is readable there.
+- **Unseen movers.** Something that must never be seen moving (a statue, a doll) is banned by name in `forbidden_elements` ("no statue motion") on every frame that shows it. Then each row that shows it opens with it already in place and keeps it in the same place in both cells. The take compile enforces this, but still watch the take for a slide-in.
 - **Expressions** fit the moment and the right face (library in reference.md).
 - The hook, the hand-off, the safe zones, no readable text or digits. Report brightness: information only, a dark board is the human's call. To change a board, fix the frame first (`edit --frame … --set …`), then `redraw-board` (it takes no notes).
-
-**Lost board records:** until the server fix for lost board records lands, don't redraw a board after editing a shot on it; tell engineering instead (desk, episode, take, the `edit` you made).
 
 ## Spend (warn, never block)
 
@@ -139,7 +139,9 @@ Play the candidates (`shared/voices/<cast>/audition-vN/`) to the human; a second
 ## Recovery
 
 - Video stuck ~50% in post: `fictora-produce cancel-job --desk D --job-id job_video_…` and stop. Never `retry-video`, never `--confirm-spend` again.
-- A second paid take, after a human yes and a written cause, once per desk: `retry-video --desk D --new-paid-take`, then `step --confirm-spend`.
+- Change this on one take (human yes + a written cause): `film --desk D --episode N --take tK --cause "…"` prices that take alone; after the yes, the same with `--confirm-spend` films only it (fresh seed) and books only it. Episodes 1..N−1 and the episode's other takes are never filmed again.
+- A whole episode again (rare; human yes + cause): `film --desk D --episode N --cause "…"`, then `--confirm-spend`. `retry-video --new-paid-take` does the same for the desk's current episode, once per desk.
+- `film` or `step` says the deployed API does not film one episode alone yet: nothing was sent or charged. Stop and tell engineering; never work around it.
 - Interrupted poll: run the same `step` again; the job may still be running.
 - More: reference.md.
 

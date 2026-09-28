@@ -15,6 +15,8 @@ desk with a versioned name, and never approves (the human's yes goes through
 - ``spine --refresh``: save the story again.
 - ``redraw-board``: redraw one board on ``/boards/{set}/regenerate``.
 - ``check-lines``: were the approved lines in the take's instructions (take facts, never the prompt)?
+- ``film --episode N [--take tK]``: price, then (``--confirm-spend``) film episode N alone or only take K
+  of it. Nothing earlier is filmed or booked again. A re-film needs a written cause.
 
 A resumable job (author, redraw) records its ``Idempotency-Key`` in
 ``production.json`` before the POST and its job id right after, so re-running an
@@ -27,27 +29,37 @@ import argparse
 import copy
 import json
 import sys
+from dataclasses import replace
+from datetime import date
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from urllib.parse import quote
 
+from creation.harness import stages_gated as stages
 from creation.harness.http_util import api_error_text, describe_job_error
+from creation.harness.raw_video import wait_for_raw_scene_clips
 from creation.harness.session import DramaApiRunSession
 from creation.harness.stages_gated import scene_prompt
 from creation.harness.visual_first_ep1 import reuse_generation_body
-from creation.ops.floor import add_episode, record_spend
+from creation.ops.floor import add_episode, record_estimate, record_spend, record_verdict
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
 from creation.ops.state import episode_by_ordinal, load_series
 from creation.orchestrate import (
+    _estimate_usd,
+    _money,
     _open_run,
     board_report,
+    collect_takes,
     download_boards,
+    envelope_line,
+    foreign_warning,
     save_spine_snapshot,
     script_gate_text,
+    seed_attempt_for,
     sync_spine_lines,
 )
-from creation.prices import STILL_USD
+from creation.prices import STILL_USD, lane_label, lane_take_usd, reference_images_ceiling
 from creation.production_config import load_production_config
 from creation.production_state import ProductionState, load_production, save_production, start_episode
 from creation.spine_view import dialogue_line_ids, episode_id_for, episode_summary, frames_by_set, frames_digest
@@ -1222,10 +1234,265 @@ def run_check_lines(desk: Path, *, episode: int, take_id: str | None = None, out
     return missing_total
 
 
+# --- Film one episode, or one take of it ---------------------------------------------------------
+
+#: Words that say "again" without naming what in the direction made the fault.
+NOT_A_CAUSE = frozenset({"again", "try again", "retry", "redo", "reroll", "re-roll", "one more", "another one", "new take"})
+
+
+def _check_cause(cause: str | None, *, refilm: bool, what: str) -> str | None:
+    text = " ".join((cause or "").split())
+    if not refilm:
+        return text or None
+    if not text:
+        raise CommandStopped(
+            f"{what} was filmed already. A second render needs a written cause naming what in the direction produced "
+            "the fault (--cause \"...\"). \"Try again\" is not a cause"
+        )
+    if text.casefold().strip(" .!") in NOT_A_CAUSE or len(text) < 12:
+        raise CommandStopped(f"--cause {text!r} does not name what in the direction produced the fault")
+    return text
+
+
+def _film_scope(desk: Path, *, episode: int, take_id: str | None) -> tuple[list[str], int | None, str]:
+    slot = episode_by_ordinal(load_series(desk), episode)
+    desk_takes = [take.take_id for take in slot.takes]
+    if take_id is None:
+        return desk_takes, None, f"ep{episode:02d}"
+    if not (take_id.startswith("t") and take_id[1:].isdigit()):
+        raise CommandStopped("--take is t1, t2 ...")
+    if take_id not in desk_takes:
+        raise CommandStopped(f"{take_id} is not a take on ep{episode:02d} (it has {', '.join(desk_takes)})")
+    return [take_id], int(take_id[1:]), f"ep{episode:02d}-{take_id}"
+
+
+def run_film(
+    desk: Path,
+    *,
+    episode: int,
+    take_id: str | None = None,
+    cause: str | None = None,
+    confirm_spend: bool = False,
+    out: Any = None,
+) -> str:
+    """Price, then film episode N alone, or only take K of it. Nothing earlier is filmed or booked again.
+
+    Without ``confirm_spend`` it prices exactly what will be filmed
+    (``batches/estimate`` for episode N, with ``reroll_take_index`` for one take),
+    says it against the envelope, records the number and stops for the human's
+    yes. With ``confirm_spend`` (only after that number was shown) it sends
+    ``POST /v1/video-generations`` with ``episode_count: N, episode_ordinal: N``
+    (plus ``reroll_take_index: K, seed_attempt: previous + 1`` for one take),
+    collects the new take(s) raw with their take facts and books them.
+
+    A take (or episode) filmed before needs a written cause, recorded on the
+    desk as Change this. An older deploy that cannot film one episode alone is
+    refused before anything is sent. An interrupted film picks up its job.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    episode
+        Episode ordinal (episodes 1..N approved on the server).
+    take_id
+        ``tK`` to film that take alone; default the whole episode.
+    cause
+        Why it is filmed again (required for a re-film).
+    confirm_spend
+        The human said yes to the printed number.
+    out
+        Text stream.
+
+    Returns
+    -------
+    str
+        The printed summary.
+    """
+
+    out = out or sys.stdout
+    desk, state, run = _desk_session(desk)
+    if episode != state.episode_ordinal:
+        run.client.close()
+        run = _open_run(desk, replace(state, episode_ordinal=episode))  # artefacts go to that episode's api/
+    try:
+        return _run_film(desk, state, run, episode=episode, take_id=take_id, cause=cause, confirm_spend=confirm_spend, out=out)
+    finally:
+        run.client.close()
+
+
+def _run_film(
+    desk: Path,
+    state: ProductionState,
+    run: DramaApiRunSession,
+    *,
+    episode: int,
+    take_id: str | None,
+    cause: str | None,
+    confirm_spend: bool,
+    out: Any,
+) -> str:
+    if episode < 1:
+        raise CommandStopped("--episode is 1 or more")
+    if state.phase == "ready_video":
+        raise CommandStopped("a take job is in flight on this desk; finish it with `step` first")
+    cfg = load_production_config(desk)
+    take_ids, take_index, key = _film_scope(desk, episode=episode, take_id=take_id)
+    slot = episode_by_ordinal(load_series(desk), episode)
+    no_yes = [take.take_id for take in slot.takes if take.take_id in take_ids and take.board.status != "approved"]
+    if no_yes:
+        raise CommandStopped(
+            f"ep{episode:02d} {', '.join(no_yes)}: no human yes on the board yet (`approve --gate board`); "
+            "a take is filmed only from an approved board"
+        )
+    filmed_before = any(take.filmed_count for take in slot.takes if take.take_id in take_ids)
+    what = f"ep{episode:02d} {take_id}" if take_id else f"episode {episode}"
+    reason = _check_cause(cause, refilm=filmed_before, what=what)
+    if take_index is None and len(take_ids) > 1 and filmed_before:
+        print(f"!! this re-films every take of episode {episode}; to re-film one take pass --take tK", file=out)
+    if not confirm_spend:
+        return _price_film(desk, state, run, cfg, episode=episode, take_ids=take_ids, take_index=take_index, key=key,
+                           what=what, reason=reason, out=out)  # fmt: skip
+    priced = load_production(desk).film_estimates.get(key)
+    if priced is None:
+        raise CommandStopped(
+            f"no price shown for {what} yet: run `film --episode {episode}"
+            + (f" --take {take_id}" if take_id else "")
+            + "` without --confirm-spend, show the human the number, then confirm"
+        )
+    seed = seed_attempt_for(desk, episode=episode, take_ids=take_ids)
+    unit = f"film-{key}" + (f"-s{seed}" if seed else "")
+    spine = run.spine(state.spine_id or "")
+    body = stages.video_request_body(
+        run,
+        spine=spine,
+        prompt=state.prompt,
+        preset_id=state.preset_id,
+        preset_version=state.preset_version,
+        caption_style=cfg.caption_style,
+        api_captions=False,
+        video_lane=state.video_lane,
+        clip_duration_seconds=cfg.clip_duration_seconds,
+        cut_tempo=cfg.cut_tempo,
+        episode=episode,
+        reroll_take_index=take_index,
+        seed_attempt=seed,
+    )
+    _save_desk_json(desk, f"{unit}-request", body)
+    if filmed_before and reason:
+        for current in take_ids:
+            if any(t.take_id == current and t.filmed_count for t in slot.takes):
+                record_verdict(desk, episode=episode, take_id=current, verdict="change", cause=reason)
+    fresh = load_production(desk)
+    pending = fresh.pending.get(unit)
+    if pending is None:
+        pending = {"key": f"{fresh.idempotency_prefix}-{unit}-a{fresh.attempts.get(unit, 0) + 1}", "job_id": None}
+        fresh.pending[unit] = pending
+        save_production(desk, fresh)
+    job_id = pending.get("job_id")
+    if job_id:
+        print(f"[film] Picking up job {job_id} from the last run (same key, no second charge).", file=sys.stderr)
+    else:
+        job = stages.post_video_generation(run, body, idempotency_key=str(pending["key"]), episode=episode)
+        job_id = admitted_job_id(job)
+        if not job_id:
+            raise CommandStopped(f"/v1/video-generations answered without a job id ({', '.join(sorted(job))})")
+        fresh = load_production(desk)
+        fresh.pending[unit]["job_id"] = job_id
+        save_production(desk, fresh)
+        _save_desk_json(desk, f"{unit}-enrol", job)
+    print(f"[film] Filming {what} (video job {job_id}). Usually 5-15 minutes.", file=sys.stderr)
+    raw = wait_for_raw_scene_clips(
+        run, str(job_id), deadline_seconds=cfg.poll_video_deadline_seconds, save_as=f"{unit}-raw-scene-clips.json"
+    )
+    spine = run.spine(state.spine_id or "")
+    save_spine_snapshot(desk, episode, spine)
+    fresh = load_production(desk)
+    got = collect_takes(desk, run, fresh, raw, episode=episode, clip_seconds=cfg.clip_duration_seconds, spine=spine)
+    fresh = load_production(desk)
+    fresh.pending.pop(unit, None)
+    fresh.attempts[unit] = fresh.attempts.get(unit, 0) + 1
+    fresh.film_estimates.pop(key, None)
+    if got.first_url is None:
+        save_production(desk, fresh)
+        raise CommandStopped(f"video job {job_id} completed but no take for {what} came back")
+    if fresh.episode_ordinal == episode and take_index is None and fresh.phase in {"ready_estimate", "wait_spend"}:
+        fresh.phase = "complete"
+    fresh.last_video_job_id = str(job_id)
+    save_production(desk, fresh)
+    cause_note = f" Cause: {reason}." if reason else ""
+    _note(desk, episode, f"film {what}: video job `{job_id}`; " + "; ".join(got.jobs) + f". Booked ${got.booked_usd:.2f}.{cause_note}")
+    lines = [f"Filmed {what}: {len(got.jobs)} take(s), ${got.booked_usd:.2f} booked. Video job {job_id}."]
+    lines += [f"  {line}" for line in got.jobs]
+    lines.append(
+        f"Watch the new take in ep{episode:02d}/takes/. After the human says Use it: "
+        f"`fictora-produce finish --desk <desk> --episode {episode} --take {take_id or 'tK'}`."
+    )
+    text = "\n".join(lines) + foreign_warning(got.foreign)
+    print(text, file=out)
+    return text
+
+
+def _price_film(
+    desk: Path,
+    state: ProductionState,
+    run: DramaApiRunSession,
+    cfg: Any,
+    *,
+    episode: int,
+    take_ids: list[str],
+    take_index: int | None,
+    key: str,
+    what: str,
+    reason: str | None,
+    out: Any,
+) -> str:
+    estimate = stages.estimate_batch(run, spine_id=state.spine_id or "", episode=episode, reroll_take_index=take_index)
+    _save_desk_json(desk, f"film-{key}-estimate", estimate)
+    spine = run.spine(state.spine_id or "")
+    cast_count = len([card for card in spine.get("cast") or [] if isinstance(card, dict)])
+    per_take = lane_take_usd(
+        state.video_lane, cfg.clip_duration_seconds, on=date.today(), reference_images=reference_images_ceiling(cast_count)
+    )
+    table = round(per_take * len(take_ids), 2) if per_take is not None else cfg.fallback_estimate_usd * len(take_ids)
+    cost = estimate.get("cost_estimate") if isinstance(estimate.get("cost_estimate"), dict) else None
+    if cost is not None and _money(cost.get("total_usd")) is not None:
+        usd = _estimate_usd(estimate, fallback_usd=table)
+        source = f"server estimate priced {cost.get('priced_on')} ({cost.get('takes')} take(s))"
+    else:
+        usd = table
+        source = f"price table ({lane_label(state.video_lane)}, {cfg.clip_duration_seconds} s a take)"
+        if take_index is not None and "reroll_take_index" in str(estimate.get("detail") or ""):
+            source += "; the deployed API cannot price one take yet"
+    fresh = load_production(desk)
+    fresh.film_estimates[key] = usd
+    save_production(desk, fresh)
+    if take_index is not None:
+        record_estimate(desk, episode=episode, take_id=take_ids[0], usd=usd)
+    scope = f"only {take_ids[0]} of episode {episode}" if take_index is not None else f"episode {episode} alone ({len(take_ids)} take(s))"
+    earlier = f"; episodes 1-{episode - 1} are not filmed or booked again" if episode > 1 else ""
+    others = "; the episode's other takes are kept as filmed" if take_index is not None else ""
+    lines = [
+        f"Film {scope}: about ${usd:.2f} ({source}){earlier}{others}.",
+        envelope_line(desk, episode=episode, next_usd=usd),
+    ]
+    if reason:
+        lines.append(f"Cause: {reason}")
+    flag = f" --take {take_ids[0]}" if take_index is not None else ""
+    cause_flag = f' --cause "{reason}"' if reason else ""
+    lines.append(
+        f"Human yes to the number, then `fictora-produce film --desk <desk> --episode {episode}{flag}{cause_flag} --confirm-spend`."
+    )
+    text = "\n".join(lines)
+    print(text, file=out)
+    _note(desk, episode, f"film {what} priced ${usd:.2f} ({source}).")
+    return text
+
+
 # --- CLI -------------------------------------------------------------------------------------------
 
 EPISODE_COMMANDS = frozenset(
-    {"arc", "brief", "author", "memory", "edit", "look", "look-note", "spine", "redraw-board", "check-lines"}
+    {"arc", "brief", "author", "memory", "edit", "look", "look-note", "spine", "redraw-board", "check-lines", "film"}
 )
 
 
@@ -1310,6 +1577,19 @@ def add_episode_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     redraw.add_argument("--take", required=True, help="t1, t2 ...")
     redraw.add_argument("--cause", required=True, help="Why: a LABEL for the desk; the server takes no redraw notes.")
 
+    film = sub.add_parser(
+        "film",
+        help=(
+            "Film episode N alone, or only take K of it (nothing earlier is filmed or booked). Prices first; "
+            "films with --confirm-spend. A re-film needs --cause."
+        ),
+    )
+    film.add_argument("--desk", type=Path, required=True)
+    film.add_argument("--episode", type=int, required=True)
+    film.add_argument("--take", default=None, help="tK: film only this take of the episode.")
+    film.add_argument("--cause", default=None, help="Required to film again: what in the direction produced the fault.")
+    film.add_argument("--confirm-spend", action="store_true", help="The human said yes to the printed number.")
+
     check = sub.add_parser("check-lines", help="Were the approved lines in the take's instructions? (take facts)")
     check.add_argument("--desk", type=Path, required=True)
     check.add_argument("--episode", type=int, required=True)
@@ -1375,6 +1655,9 @@ def dispatch_episode(args: argparse.Namespace) -> int:
         if args.command == "redraw-board":
             run_redraw_board(args.desk, episode=args.episode, take_id=args.take, cause=args.cause)
             return 0
+        if args.command == "film":
+            run_film(args.desk, episode=args.episode, take_id=args.take, cause=args.cause, confirm_spend=args.confirm_spend)
+            return 0
         if args.command == "check-lines":
             return 5 if run_check_lines(args.desk, episode=args.episode, take_id=args.take) else 0
     except CommandStopped as exc:
@@ -1403,6 +1686,7 @@ __all__ = [
     "run_brief",
     "run_check_lines",
     "run_edit",
+    "run_film",
     "run_look",
     "run_look_note",
     "run_memory",

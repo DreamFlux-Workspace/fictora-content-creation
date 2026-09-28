@@ -99,6 +99,25 @@ def spine_fixture(*, episodes: int = 2, approved: bool = True, spoken_language: 
 Handler = Callable[[str, str, dict[str, Any] | None], Any]
 
 
+def openapi_doc(*, episode_ordinal: bool = True, one_take_estimate: bool = True) -> dict[str, Any]:
+    """The slice of ``/openapi.json`` the kit reads: which request fields the deploy accepts."""
+
+    film = {"episode_count": {}, "reroll_take_index": {}, "seed_attempt": {}}
+    if episode_ordinal:
+        film["episode_ordinal"] = {}
+    estimate = {"spine_version": {}, "episode_ids": {}}
+    if one_take_estimate:
+        estimate["reroll_take_index"] = {}
+    return {
+        "components": {
+            "schemas": {
+                "DramaVideoGenerationCreateRequest": {"properties": film},
+                "DramaBatchEstimateRequest": {"properties": estimate},
+            }
+        }
+    }
+
+
 class FakeApi:
     """Records every call; answers from ``routes`` (``(METHOD, path)`` -> payload or callable)."""
 
@@ -109,7 +128,7 @@ class FakeApi:
         self.prefix = "pfx"
         self.spine_doc = spine if spine is not None else spine_fixture()
         self.calls: list[tuple[str, str, dict[str, Any] | None, str | None]] = []
-        self.routes: dict[tuple[str, str], Any] = {}
+        self.routes: dict[tuple[str, str], Any] = {("GET", "/openapi.json"): openapi_doc()}
         self.jobs: dict[str, dict[str, Any]] = {}
         self.polled: list[tuple[str, bool]] = []
         self.client = self

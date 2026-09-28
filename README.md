@@ -72,8 +72,12 @@ uv run fictora-produce edit --desk … --episode 1 --frame 3 --set shot_scale="c
 uv run fictora-produce redraw-board --desk … --episode 1 --take t1 --cause "face under the caption band"
 uv run fictora-produce check-lines --desk … --episode 1
 
-# After estimate is shown in chat
+# After estimate is shown in chat (films the desk's current episode alone)
 uv run fictora-produce step --desk … --confirm-spend
+
+# Re-film one take of episode N (Change this + a written cause); prices first, films with --confirm-spend
+uv run fictora-produce film --desk … --episode 2 --take t2 --cause "what in the direction made the fault"
+uv run fictora-produce film --desk … --episode 2 --take t2 --cause "…" --confirm-spend
 
 uv run fictora-produce status --desk …
 uv run fictora-produce config --desk …
