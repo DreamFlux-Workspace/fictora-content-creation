@@ -140,6 +140,7 @@ Every episode goes to TikTok, Instagram Reels and YouTube Shorts with one layout
 - Captions sit in the band 55–70% of the height.
 - The Sokii mark sits top left, just under the top strip: `23:121` on 768×1344 (x = 3% of the width, y = 9% of the height), 0.6 opacity. Never top right.
 - There is no face detector. The boards `step` warns when a frame's written placement puts a face or prop in a zone (text only); look at every cell anyway. A face or key prop in a zone: fix the frame's placement with `edit --frame`, then `redraw-board`.
+- On the finished take, `fictora-produce review --desk D --episode N --take tK` measures the caption box on sampled frames against these zones and the 55–70% band, and writes a zone sheet (`<take>-zones-vN.png`, zones shaded red) for the face check. It warns and never blocks; faces are still the human's look.
 
 ### Expression library
 

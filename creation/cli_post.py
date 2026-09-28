@@ -1,4 +1,4 @@
-"""``fictora-produce`` local post commands: voice, voice-fx, revoice, voice-line, cue, set-bed, finish, and the edits."""
+"""``fictora-produce`` local post commands: voice, voice-fx, revoice, voice-line, cue, set-bed, finish, review, and the edits."""
 
 from __future__ import annotations
 
@@ -13,7 +13,9 @@ from creation.post.hand import parse_placed, parse_range
 from creation.post.handmade import CUE_DEFAULT_SECONDS
 from creation.post.sfx import parse_adjustment
 
-POST_COMMANDS = frozenset({"voice", "voice-fx", "revoice", "voice-line", "cue", "set-bed", "finish"}) | EDIT_COMMANDS
+POST_COMMANDS = (
+    frozenset({"voice", "voice-fx", "revoice", "voice-line", "cue", "set-bed", "finish", "review"}) | EDIT_COMMANDS
+)
 
 
 def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -125,6 +127,17 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     fin.add_argument("--watermark-y", type=int, default=None, help="Mark top offset (never into the top 8%%).")
     fin.add_argument("--json", action="store_true", help="Print the report as JSON on stdout.")
 
+    rev = sub.add_parser(
+        "review",
+        help="Measure the safe zones on a finished take: caption boxes vs the covered zones, and a zone sheet "
+        "for the face check. Warns, never blocks.",
+    )
+    rev.add_argument("--desk", type=Path, default=None)
+    rev.add_argument("--episode", type=int, default=1)
+    rev.add_argument("--take", dest="take_id", default="t1")
+    rev.add_argument("--file", type=Path, default=None, help="Default: the newest file written for the take.")
+    rev.add_argument("--json", action="store_true", help="Print the report as JSON on stdout.")
+
     add_edit_parsers(sub)
 
 
@@ -225,4 +238,15 @@ def dispatch_post(args: argparse.Namespace) -> int:
         else:
             print(result.final)
         return 0 if result.complete else FINISH_INCOMPLETE
+    if args.command == "review":
+        import io
+        import sys
+
+        from creation.post.safe_zones import run_review
+
+        text = io.StringIO() if args.json else sys.stdout
+        report = run_review(args.desk, episode=args.episode, take_id=args.take_id, take_file=args.file, out=text)
+        if args.json:
+            print(json.dumps(report.as_json(), indent=2))
+        return 0
     raise ValueError(f"unknown command {args.command}")
