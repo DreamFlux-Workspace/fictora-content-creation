@@ -213,6 +213,8 @@ class SfxResult:
     skipped: tuple[str, ...]
     rendered: int
     cost_usd: float
+    #: Each mixed cue's loudest 0.5 s window as placed (rendered level + its gain), same order as ``mixed``.
+    peaks_db: tuple[float, ...] = ()
 
 
 def _cue_chain(position: int, cue: SfxCue, speech: tuple[tuple[float, float], ...]) -> str:
@@ -263,7 +265,7 @@ def lay_sfx(
     render
         Cue renderer (:func:`service_renderer` in production).
     measure
-        Shape meter.
+        Shape meter (also gives each mixed cue's placed peak, for the mix's quiet-cue check).
 
     Returns
     -------
@@ -327,4 +329,5 @@ def lay_sfx(
         [*inputs, "-filter_complex", ";".join(parts), "-map", "0:v", "-map", "[a]",
          "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", str(output)]
     )  # fmt: skip
-    return SfxResult(output, tuple(cue for cue, _ in kept), tuple(skipped), rendered, round(cost, 4))
+    peaks = tuple(round(max(measure(path), default=-120.0) + cue.gain_db, 1) for cue, path in kept)
+    return SfxResult(output, tuple(cue for cue, _ in kept), tuple(skipped), rendered, round(cost, 4), peaks)

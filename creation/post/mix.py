@@ -8,11 +8,15 @@
   ``duck_db`` the bed drops by exactly that many dB inside the voice windows
   (ramped over 80 ms).
 - One limiter at -1 dBFS. The picture is copied.
+- A sound-effect cue whose loudest window sits more than 12 dB under the bed
+  (the bed's own level at that moment, before ducking) is named in a ``!!``
+  warning: it is mixed, but nobody will hear it.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +39,11 @@ VOICE_WINDOW_SECONDS = 0.1
 VOICE_MERGE_SECONDS = 0.6
 BED_FADE_IN_SECONDS = 1.0
 BED_FADE_OUT_SECONDS = 1.5
+#: A cue this far under the bed is inaudible (a -31 dB RMS neck crack at +8 dB sat 21 dB under, SCP-173).
+QUIET_CUE_DB = 12.0
+#: Where the warning asks a raised cue to land: this far under the bed at most.
+AUDIBLE_CUE_DB = 6.0
+BED_WINDOW_SECONDS = 0.5
 COMPRESSOR = "sidechaincompress=threshold=0.045:ratio=2.5:attack=60:release=600:makeup=1:level_sc=1"
 
 
@@ -95,6 +104,73 @@ def pick_gain(take_lufs: float) -> float:
 
 
 @dataclass(frozen=True)
+class CueLevel:
+    """One laid sound-effect cue as the mix sees it."""
+
+    sound: str
+    start: float
+    seconds: float
+    #: Loudest 0.5 s window as placed (rendered level + the cue's gain), before the take gain.
+    peak_db: float
+    #: The cue's own gain (cues go no higher than 0 dB).
+    gain_db: float = 0.0
+
+
+def quiet_cue_warnings(
+    cues: Sequence[CueLevel],
+    *,
+    bed_levels: tuple[float, ...],
+    bed_db: float,
+    take_gain_db: float,
+    window_seconds: float = BED_WINDOW_SECONDS,
+) -> list[str]:
+    """Name each cue that peaks more than :data:`QUIET_CUE_DB` under the bed where it plays.
+
+    Parameters
+    ----------
+    cues
+        The laid cues with their placed peaks.
+    bed_levels
+        The bed file's RMS per window (it loops under the picture).
+    bed_db
+        Bed gain in the mix.
+    take_gain_db
+        The take gain, which the cues ride on.
+    window_seconds
+        Length of one ``bed_levels`` window.
+
+    Returns
+    -------
+    list[str]
+        One ``!!`` line per inaudible cue, with the fix; empty when every cue is heard.
+    """
+
+    if not bed_levels:
+        return []
+    count = len(bed_levels)
+    warnings: list[str] = []
+    for cue in cues:
+        first = int(cue.start / window_seconds)
+        last = max(first, math.ceil((cue.start + max(cue.seconds, window_seconds)) / window_seconds) - 1)
+        bed = max(bed_levels[index % count] for index in range(first, last + 1)) + bed_db
+        heard = cue.peak_db + take_gain_db
+        gap = bed - heard
+        if gap <= QUIET_CUE_DB:
+            continue
+        need = math.ceil(gap - AUDIBLE_CUE_DB)
+        room = max(0, math.floor(-cue.gain_db))
+        raise_by = min(need, room)
+        fix = f'raise it (`--sfx-adjust "{cue.sound}=+{raise_by}"`)' if raise_by > 0 else "it is already at 0 dB"
+        if need > raise_by:
+            fix += f"{' and' if raise_by > 0 else ';'} lower the bed about {need - raise_by} dB (`--bed-db`)"
+        warnings.append(
+            f"!! cue {cue.sound!r} @{cue.start:.2f}s peaks {gap:.0f} dB under the music bed "
+            f"({heard:.0f} dB vs {bed:.0f} dB): nobody will hear it. {fix[0].upper()}{fix[1:]}."
+        )
+    return warnings
+
+
+@dataclass(frozen=True)
 class MixResult:
     """The mix and how it was levelled."""
 
@@ -105,6 +181,7 @@ class MixResult:
     passes: int
     ducking: str
     bed: Path | None
+    warnings: tuple[str, ...] = ()
 
     def one_line(self) -> str:
         """Operator line."""
@@ -114,7 +191,7 @@ class MixResult:
         return (
             f"auto take gain {self.gain_db:+.1f} dB (take {self.take_lufs:.1f} LUFS) -> mix {self.mix_lufs:.1f} LUFS "
             f"({band}, target {TARGET_LUFS:.0f}), {self.passes} pass(es); ducking {self.ducking}{bed}"
-        )
+        ) + "".join(f"\n{line}" for line in self.warnings)
 
 
 def _mix_once(
@@ -161,6 +238,7 @@ def mix_take(
     bed_db: float = -16.5,
     duck_db: float | None = None,
     voice_source: Path | None = None,
+    cues: Sequence[CueLevel] = (),
 ) -> MixResult:
     """Mix ``take`` with ``bed`` into ``out`` at a measured take gain.
 
@@ -178,6 +256,8 @@ def mix_take(
         Exact duck depth inside the voice windows; ``None`` uses the sidechain compressor.
     voice_source
         Audio to find the voice windows in (the take before SFX); default ``take``.
+    cues
+        The sound-effect cues on ``take``; each one far under the bed is warned about (never refused).
 
     Returns
     -------
@@ -219,4 +299,8 @@ def mix_take(
         ducking = "sidechain compressor" if bed else "none"
     else:
         ducking = f"{duck_db:.0f} dB in {len(windows or [])} voice window(s)"
-    return MixResult(out, take_lufs, gain, mixed, passes, ducking, bed)
+    warnings: list[str] = []
+    if bed is not None and cues:
+        levels = measure_rms_windows(bed, window_seconds=BED_WINDOW_SECONDS)
+        warnings = quiet_cue_warnings(cues, bed_levels=levels, bed_db=bed_db, take_gain_db=gain)
+    return MixResult(out, take_lufs, gain, mixed, passes, ducking, bed, tuple(warnings))

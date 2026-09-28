@@ -185,7 +185,7 @@ uv run fictora-produce finish --desk D [--episode N] [--take tK] [--take-file F]
 | cues (only with `--cue`) | Hand cues laid under the take at −8 dB (or `@DB`), 10 dB lower in speaking shots and under hand lines, clamped to the take; the cue layer is measured and a silent cue fails the step | `…-cues-vN.mp4` |
 | bed | The desk's pinned bed; else the spine's `series_audio_bed_url`; else one made once on the server (~$0.06) from the genre (or `--music "…"`), levelled here to −20 LUFS, pinned in `shared/beds/` | — |
 | colour | One Lab curve for the whole take, fitted to the approved board (gutters left out) | `…-colour-vN.mp4` + `.cube` |
-| mix | Bed looped under the take at `--bed-db`, sidechain-ducked under the voice (`--duck-db N` = exactly N dB, 1–30), take gain measured to land near −18 LUFS (band −20 to −15), one limiter | `…-mix-vN.mp4` |
+| mix | Bed looped under the take at `--bed-db`, sidechain-ducked under the voice (`--duck-db N` = exactly N dB, 1–30), take gain measured to land near −18 LUFS (band −20 to −15), one limiter. A sound effect whose loudest moment sits more than 12 dB under the bed is named in a `!! cue … peaks N dB under the music bed` line with the `--sfx-adjust` / `--bed-db` fix: it is mixed but nobody hears it, so rerun `finish` with that fix | `…-mix-vN.mp4` |
 | captions | House captions timed on the take before the bed | `…-cap-vN.mp4` + `.ass` |
 | watermark | Sokii mark top left (x 3%, y 9%), never in the top 8% | `…-sokii-vN.mp4` |
 

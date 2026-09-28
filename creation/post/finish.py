@@ -68,7 +68,7 @@ from creation.post.desk import (
     take_job_id,
 )
 from creation.post.media import MediaToolError, measure_loudness, probe_video
-from creation.post.mix import check_duck_db, mix_take
+from creation.post.mix import CueLevel, check_duck_db, mix_take
 from creation.post.sfx import (
     Adjustment,
     Renderer,
@@ -328,7 +328,7 @@ def run_finish(
     hand_steps = (("voice",) if hand.mutes or hand.voices else ()) + (("cues",) if hand.cues else ())
     result = FinishResult(source=source, final=source, hand_steps=hand_steps)
     current = source
-    bed_state: dict[str, Any] = {"path": None}
+    bed_state: dict[str, Any] = {"path": None, "cues": ()}
     voice_state: dict[str, Path | None] = {"path": None}
     print(
         f"Finishing {source.name}: board frames, sound effects, music, look, mix, captions, mark (2-4 minutes)",
@@ -403,6 +403,9 @@ def run_finish(
         )
         if sfx.cost_usd:
             book(desk, episode=episode, usd=sfx.cost_usd, take_id=take_id, stream=out, unit="sfx")
+        bed_state["cues"] = tuple(
+            CueLevel(c.sound, c.start, c.seconds, peak, c.gain_db) for c, peak in zip(sfx.mixed, sfx.peaks_db)
+        )
         cues = ", ".join(f"{c.sound} @{c.start:.2f}s {c.gain_db:+.0f} dB" for c in sfx.mixed)
         note = f"SFX -> `{sfx.output.name}`: {cues}; rendered {sfx.rendered}, ${sfx.cost_usd:.3f}"
         note += "".join(f"\n- skipped: {s}" for s in sfx.skipped)
@@ -436,6 +439,7 @@ def run_finish(
             bed_db=bed_db,
             duck_db=duck_db,
             voice_source=voice_state["path"] or source,
+            cues=bed_state["cues"],
         )
         append_run_note(run_dir, f"Mix -> `{mixed.output.name}`: {mixed.one_line()}")
         return StepReport("mix", "ran", mixed.one_line(), mixed.output)
