@@ -104,6 +104,35 @@ class PreflightOverride:
 
 
 @dataclass
+class SpendEntry:
+    """One line in the desk's spend ledger: what the money bought.
+
+    The same keys the retired internal kit wrote to ``spend_log``, so an adopted
+    desk's ledger reads as it is.
+
+    Parameters
+    ----------
+    at_utc
+        When it was booked.
+    episode
+        Episode ordinal it was charged to.
+    usd
+        Amount.
+    unit
+        What was bought (``board``, ``look-frame``, ``voice-line``, ``cue:gaan-sting``);
+        ``unlabelled`` when the booking did not say.
+    take_id
+        The take it was charged to, if any.
+    """
+
+    at_utc: str
+    episode: int
+    usd: float
+    unit: str
+    take_id: str | None = None
+
+
+@dataclass
 class TakeState:
     """One 15-second take slot on an episode.
 
@@ -207,9 +236,12 @@ class SeriesState:
         Episode slots.
     bed_path
         Chosen series music bed, if any.
+    spend_log
+        Every booked amount with its unit label, oldest first. ``spend_usd``
+        stays the running total; desks from before the ledger have none.
     extra
         Top-level fields another tool wrote (the retired internal kit's
-        ``spend_log``, ``bed_db``, ``api``, ``series_arc`` ...) that this kit
+        ``bed_db``, ``api``, ``series_arc`` ...) that this kit
         does not model; written back unchanged on save, so a desk never loses
         them on the first write.
     """
@@ -225,6 +257,7 @@ class SeriesState:
     spend_usd: float
     episodes: list[EpisodeState]
     bed_path: str | None = None
+    spend_log: list[SpendEntry] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -594,7 +627,18 @@ def _series_from_dict(raw: dict[str, Any]) -> SeriesState:
         spend_usd=float(raw["spend_usd"]),
         episodes=[_episode_from_dict(item) for item in raw["episodes"]],
         bed_path=raw.get("bed_path"),
+        spend_log=[_spend_from_dict(item) for item in raw.get("spend_log") or [] if isinstance(item, dict)],
         extra=_unmodelled(raw, SeriesState),
+    )
+
+
+def _spend_from_dict(raw: dict[str, Any]) -> SpendEntry:
+    return SpendEntry(
+        at_utc=str(raw.get("at_utc") or ""),
+        episode=int(raw.get("episode") or 0),
+        usd=float(raw.get("usd") or 0.0),
+        unit=str(raw.get("unit") or "unlabelled"),
+        take_id=raw.get("take_id"),
     )
 
 

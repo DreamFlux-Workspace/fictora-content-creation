@@ -197,7 +197,7 @@ def run_voice_audition(
         ],
     }  # fmt: skip
     (folder / "auditions.json").write_text(json.dumps(listing, indent=2) + "\n", encoding="utf-8")
-    book(desk, episode=ledger_episode, usd=cost, stream=out)
+    book(desk, episode=ledger_episode, usd=cost, stream=out, unit=f"voice-audition:{slug}")
     locked = str((card.get("voice_brief") or {}).get("provider_voice") or "none")
     print(f"{name}: {len(made)} candidates in {folder} (locked now: {locked})", file=out)
     for item in made:
@@ -443,7 +443,7 @@ def run_revoice(
     }  # fmt: skip
     dest.with_suffix(".json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     if paid:
-        book(desk, episode=episode, usd=round(paid, 4), take_id=take_id, stream=out)
+        book(desk, episode=episode, usd=round(paid, 4), take_id=take_id, stream=out, unit=f"revoice:{slug}")
     for item in replacements:
         print(f"{item.start:6.2f}-{item.end:6.2f}s  {item.line!r} -> {item.voice.name}", file=out)
     for line in missing:

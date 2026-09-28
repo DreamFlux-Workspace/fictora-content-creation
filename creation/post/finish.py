@@ -189,11 +189,19 @@ INCOMPLETE_FIX = (
 )
 
 
-def book(desk: Path, *, episode: int, usd: float, take_id: str | None = None, stream: TextIO | None = None) -> None:
-    """Add local post spend to the desk ledger; a desk without that slot gets a printed note, not a crash."""
+def book(
+    desk: Path,
+    *,
+    episode: int,
+    usd: float,
+    take_id: str | None = None,
+    stream: TextIO | None = None,
+    unit: str | None = None,
+) -> None:
+    """Add local post spend to the desk ledger (``unit``: what it bought); a desk without that slot gets a printed note, not a crash."""
 
     try:
-        record_spend(desk, episode=episode, usd=usd, take_id=take_id)
+        record_spend(desk, episode=episode, usd=usd, take_id=take_id, unit=unit)
     except (FileNotFoundError, ValueError, KeyError) as exc:
         print(f"note: a spend was not booked on the desk ledger ({exc}); see run-notes.md", file=stream or sys.stderr)
         if (desk / f"ep{episode:02d}" / "run-notes.md").is_file():
@@ -394,7 +402,7 @@ def run_finish(
             render=sfx_render,
         )
         if sfx.cost_usd:
-            book(desk, episode=episode, usd=sfx.cost_usd, take_id=take_id, stream=out)
+            book(desk, episode=episode, usd=sfx.cost_usd, take_id=take_id, stream=out, unit="sfx")
         cues = ", ".join(f"{c.sound} @{c.start:.2f}s {c.gain_db:+.0f} dB" for c in sfx.mixed)
         note = f"SFX -> `{sfx.output.name}`: {cues}; rendered {sfx.rendered}, ${sfx.cost_usd:.3f}"
         note += "".join(f"\n- skipped: {s}" for s in sfx.skipped)
@@ -405,7 +413,7 @@ def run_finish(
         bed = resolve_bed(desk, spine=spine, music=music, maker=bed_maker)
         bed_state["path"] = bed.path
         if bed.cost_usd:
-            book(desk, episode=episode, usd=bed.cost_usd, stream=out)
+            book(desk, episode=episode, usd=bed.cost_usd, stream=out, unit="bed")
         append_run_note(run_dir, f"Bed: {bed.one_line()} at {bed_db:+.1f} dB")
         return StepReport("bed", "ran", f"{bed.one_line()} at {bed_db:+.1f} dB", None, bed.cost_usd)
 

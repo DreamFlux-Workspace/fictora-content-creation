@@ -506,7 +506,7 @@ def board_report(
     for index, path in made:
         take_id = f"t{index}"
         on_desk = take_id in desk_takes
-        record_spend(desk, episode=episode, usd=float(STILL_USD), take_id=take_id if on_desk else None)
+        record_spend(desk, episode=episode, usd=float(STILL_USD), take_id=take_id if on_desk else None, unit="board")
         if on_desk and take_price is not None:
             record_estimate(desk, episode=episode, take_id=take_id, usd=take_price)
         luma, source = (brightness[index], "server") if index in brightness else (
@@ -606,7 +606,7 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             finally:
                 fetch.close()
             if paths:
-                record_spend(desk, episode=ep, usd=round(float(STILL_USD) * len(paths), 2))
+                record_spend(desk, episode=ep, usd=round(float(STILL_USD) * len(paths), 2), unit=f"plates x{len(paths)}")
             state.phase = "wait_plates"
             save_production(desk, state)
             _note(ep_dir, f"Cast enrol complete: {len(paths)} plate(s), ${float(STILL_USD) * len(paths):.2f}. Open plates/ and approve.")
@@ -820,7 +820,7 @@ def collect_takes(
                 estimate = lane_take_usd(state.video_lane, clip_seconds, on=today, server=state.server_lane())
                 priced = (estimate, "estimate from the price table") if estimate is not None else None
             if priced is not None:
-                record_spend(desk, episode=episode, usd=priced[0], take_id=take_id)
+                record_spend(desk, episode=episode, usd=priced[0], take_id=take_id, unit=f"take {clip_seconds}s")
                 booked += priced[0]
             record_filmed(desk, episode=episode, take_id=take_id)
             jobs.append(

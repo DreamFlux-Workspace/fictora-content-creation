@@ -13,6 +13,7 @@ import pytest
 from conftest import SPINE, make_take, make_tone, needs_ffmpeg
 
 from creation.cli_produce import main
+from creation.ops.state import load_series
 from creation.post import voice as voice_mod
 from creation.post.media import measure_rms_windows
 
@@ -129,6 +130,7 @@ def test_audition_renders_each_candidate_on_the_real_lines_and_a_second_set_need
         post_desk, cast="Kenji", count=4, cause="too old", audio=audio, out=io.StringIO()
     )
     assert second.name == "audition-v2"
+    assert [entry.unit for entry in load_series(post_desk).spend_log] == ["voice-audition:kenji"] * 2
     assert audio.calls[-1][1]["key"] != asked["key"], "a paid second set is a new request, not a replay"
 
 
@@ -172,6 +174,7 @@ def test_revoice_mutes_only_that_characters_line_and_lays_the_new_voice_in(
     assert levels[31:39].min() > -30.0, "Aya's line is left as filmed"
     record = json.loads(out.with_suffix(".json").read_text())
     assert record["lines"][0]["muted"] == [pytest.approx(0.92), pytest.approx(2.15)]
+    assert [(entry.unit, entry.take_id) for entry in load_series(post_desk).spend_log] == [("revoice:kenji", "t1")]
 
 
 @needs_ffmpeg

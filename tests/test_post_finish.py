@@ -84,6 +84,8 @@ def test_finish_lays_sfx_music_mix_captions_and_mark_as_new_versions(post_desk: 
     assert raw.stat().st_size > 0
     assert calls == ["a door slams"]
     assert load_series(post_desk).bed_path.startswith("shared/beds/show-bed-v1")
+    booked = [(entry.unit, entry.take_id) for entry in load_series(post_desk).spend_log]
+    assert booked == [("sfx", "t1"), ("bed", None)], "finish books what the money bought"
     captions = next(s for s in result.steps if s.step == "captions")
     assert "3.2" in captions.detail.split("'Wait for me here.'; ")[1][:5], (
         "Aya's caption starts on her line at 3.2 s, not on the door slam at 3.0 s: timed on the take before post"

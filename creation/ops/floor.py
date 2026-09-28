@@ -22,6 +22,7 @@ from creation.ops.state import (
     GateRecord,
     PreflightOverride,
     SeriesState,
+    SpendEntry,
     SpokenLine,
     TakeState,
     envelope_usd,
@@ -356,7 +357,14 @@ def record_estimate(desk: Path, *, episode: int, take_id: str, usd: float) -> Ta
     return take
 
 
-def record_spend(desk: Path, *, episode: int, usd: float, take_id: str | None = None) -> SeriesState:
+def record_spend(
+    desk: Path,
+    *,
+    episode: int,
+    usd: float,
+    take_id: str | None = None,
+    unit: str | None = None,
+) -> SeriesState:
     """Add a paid unit to the ledger.
 
     Parameters
@@ -369,6 +377,10 @@ def record_spend(desk: Path, *, episode: int, usd: float, take_id: str | None = 
         Amount spent.
     take_id
         Optional take to attribute.
+    unit
+        What the money bought (``board``, ``look-frame``, ``cue:gaan-sting``).
+        Appended to ``spend_log`` so the ledger says what each amount was for;
+        ``unlabelled`` when not given.
 
     Returns
     -------
@@ -389,6 +401,10 @@ def record_spend(desk: Path, *, episode: int, usd: float, take_id: str | None = 
     series.spend_usd += usd
     if take_id:
         take_by_id(slot, take_id).spend_usd += usd
+    label = (unit or "").strip() or "unlabelled"
+    series.spend_log.append(
+        SpendEntry(at_utc=utc_now(), episode=episode, usd=round(usd, 4), unit=label, take_id=take_id)
+    )
     save_series(desk, series)
     write_queue(desk, series)
     return series
