@@ -58,7 +58,7 @@ This creates:
 | `init-series` | Open the desk |
 | `add-episode` | One more slot |
 | `status` | Review queue |
-| `set-lines` | Draft lines (`--lines-json` takes the JSON, `@FILE` or a file path). Does not approve |
+| `set-lines` | Draft lines on the desk only (the server keeps its own; `fictora-produce line` changes both). `--lines-json` takes the JSON, `@FILE` or a file path. Reopens the script gate |
 | `approve` | Human yes |
 | `estimate` | Price on the table |
 | `preflight` | Hard stop before the take |

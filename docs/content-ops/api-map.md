@@ -14,7 +14,7 @@ Credentials: `FICTORA_DRAMA_GENERATION_SERVICE_TOKEN` and optional `FICTORA_DRAM
 | --- | --- | --- |
 | Series + script | Aligned | `POST /v1/prompt-video-authoring-drafts` → poll `GET /v1/jobs/{id}` → `GET /v1/spines/{id}` |
 | Steer a draft episode | Aligned | `POST /v1/spines/{id}/episodes/{n}/steers` |
-| Edit lines directly | Aligned | `PATCH /v1/spines/{id}` |
+| Edit lines directly | Aligned | `PATCH /v1/spines/{id}` (`fictora-produce line`: words, performed line, speaker, off-screen) |
 | Approve script | Aligned | `POST /v1/spines/{id}/approve` — only after the human says yes to the lines |
 | Our own style frame | Aligned | `POST /v1/spines/{id}/look-frame` `{description, size?}` → `{image_url, width, height, cached, cost_usd}`: drawn on the server from the written description alone (text only; a link is `422 look_frame_text_only`), $0.30, cached per (story, description, size). Never pins. Kit: `fictora-produce look-frame --desk D --description TEXT|@FILE`. An older server answers 404 on the route. |
 | Look / style | Aligned | `POST /v1/spines/{id}/look-register` pins `look_register_url`. First-draw stills (cast, boards, look plates) put that crop as Image 1. Cast-edit / look-plate-edit keep identity as Image 1. |

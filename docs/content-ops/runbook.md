@@ -158,7 +158,7 @@ Check before the board gate:
 - **Visible cause.** Every action row is preceded by a visible face reacting to its cause, or shares the frame with it. "Jealousy → breaks the sign" did not read when the face was hidden and the insert showed only hands.
 - **Each row opens on the emotion the row before it ended on.** A calm smile right after the sign broke read wrong.
 - **The picture shows the rule.** A change the viewer must see as a jump goes in its own row. H3 blends the cells of one row into one move.
-- **Speakers.** The speaker is in the frame of the row their line plays on, at a medium shot or closer, or the line plays over someone else's face. No off-screen speaker is drawn: not as a sleeve, a hand, a cane or a shadow.
+- **Speakers.** The speaker is in the frame of the row their line plays on, at a medium shot or closer, or the line plays over someone else's face. No off-screen speaker is drawn: not as a sleeve, a hand, a cane or a shadow. The board shot list prints the line and speaker on each row and warns when the speaker is not drawn there.
 - **Speaking mouths.** No clench, grit, pressed or closed mouth on a speaking row. Big physical acting goes before the line and after it; during the words the mouth moves.
 - The hook, the hand-off, the safe zones, no readable text or digits, brightness reported.
 
