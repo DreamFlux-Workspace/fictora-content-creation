@@ -96,7 +96,13 @@ def _add_floor_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser])
     status_p.add_argument("--desk", type=Path, required=True)
     status_p.add_argument("--json", action="store_true")
 
-    lines_p = sub.add_parser("set-lines", help="Replace lines on one take. Does not approve.")
+    lines_p = sub.add_parser(
+        "set-lines",
+        help=(
+            "Replace lines on one take ON THE DESK ONLY (the server keeps its lines; `fictora-produce line` changes "
+            "both). Reopens the desk's script gate."
+        ),
+    )
     lines_p.add_argument("--desk", type=Path, required=True)
     lines_p.add_argument("--episode", type=int, required=True)
     lines_p.add_argument("--take", required=True)
@@ -243,7 +249,13 @@ def _dispatch(args: argparse.Namespace) -> int:
             take_id=args.take,
             lines=parse_spoken_lines(payload),
         )
-        print(f"{args.take} {len(take.lines)} lines (not approved)")
+        print(
+            f"{args.take} {len(take.lines)} lines on the desk only (not approved).\n"
+            f"  The desk's script gate for episode {args.episode} is pending: preflight will not film it until the "
+            f"human says yes (`fictora-ops approve --desk {args.desk} --gate script --episode {args.episode}`).\n"
+            "  The story on the server still has its own lines, and the take performs the server's. To change a "
+            "line there too, use `fictora-produce line --desk D --episode N --line ID --text ...` (it syncs the desk)."
+        )
         return 0
     if args.command == "approve":
         return _dispatch_approve(args)

@@ -12,6 +12,8 @@ desk with a versioned name, and never approves (the human's yes goes through
 - ``memory --note`` / ``--thread``: standing series notes.
 - ``edit``: a beat's shot, a frame's brief, or a line (pin the performed line) —
   ``PATCH`` before the script gate, the cascade after it (paid items off by default).
+- ``line``: change one line's words, performed line, speaker or seen/heard on the server and the desk in
+  one step, and say what that does to the script approval (``line`` with no change lists the lines).
 - ``look-frame``: draw our own style frame on the server from a written description (one still).
 - ``look`` / ``look-note``: pin the style frame by URL, add or remove look notes.
 - ``spine --refresh``: save the story again.
@@ -68,7 +70,14 @@ from creation.orchestrate import (
 from creation.prices import STILL_USD, server_lane
 from creation.production_config import load_production_config
 from creation.production_state import ProductionState, load_production, save_production, start_episode
-from creation.spine_view import dialogue_line_ids, episode_id_for, episode_summary, frames_by_set, frames_digest
+from creation.spine_view import (
+    dialogue_line_ids,
+    episode_id_for,
+    episode_summary,
+    frame_cast,
+    frames_by_set,
+    frames_digest,
+)
 
 ARC_TITLE_MAX = 80
 ARC_LINE_MAX = 400
@@ -104,6 +113,12 @@ REDRAW_CAUSE_IS_A_LABEL = (
     "change what is drawn. To change the drawing, edit the frames first (edit --frame ...) or add a look note. "
     "A beat edit made after the board was drawn is carried into the redraw by the server (it re-authors the "
     "take's frames first)"
+)
+
+NO_NEW_LINES_OR_CAST = (
+    "The Drama API edits the lines a story already has: their words, their speaker (someone already in the "
+    "cast) and whether that speaker is seen. It cannot add or remove a line, or add a cast member (such as a new "
+    "off-screen voice). For that, write it into the brief and draft again on a new desk"
 )
 
 
@@ -696,6 +711,120 @@ def _find_line(spine: Mapping[str, Any], line_id: str, *, episode: int) -> dict[
     raise CommandStopped(f"no line {line_id!r} on {episode_id}; there are: {', '.join(found) or 'none'}")
 
 
+def episode_lines(spine: Mapping[str, Any], *, episode: int) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """An episode's ``(beat, line)`` pairs in script order (beats by ordinal).
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+
+    Returns
+    -------
+    list[tuple[dict[str, Any], dict[str, Any]]]
+        Each line with the beat that holds it; line N of the episode is item N-1.
+    """
+
+    episode_id = episode_id_for(spine, episode)
+    beats = [b for b in spine.get("beats") or [] if isinstance(b, dict) and b.get("episode_id") == episode_id]
+    beats.sort(key=lambda beat: int(beat.get("ordinal") or 0))
+    return [(beat, line) for beat in beats for line in beat.get("dialogue_lines") or [] if isinstance(line, dict)]
+
+
+def _cast_names(spine: Mapping[str, Any]) -> dict[str, str]:
+    return {
+        str(card.get("cast_id")): str(card.get("name") or card.get("cast_id"))
+        for card in spine.get("cast") or []
+        if isinstance(card, Mapping) and card.get("cast_id")
+    }
+
+
+def line_listing(spine: Mapping[str, Any], *, episode: int) -> list[str]:
+    """Number an episode's lines for ``line --line N``: number, id, beat, speaker, text.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+
+    Returns
+    -------
+    list[str]
+        One printable row per line.
+    """
+
+    names = _cast_names(spine)
+    rows = []
+    for number, (beat, line) in enumerate(episode_lines(spine, episode=episode), start=1):
+        who = names.get(str(line.get("cast_id")), str(line.get("cast_id") or "?"))
+        heard = " (off-screen)" if line.get("off_screen") is True else ""
+        spoken = f"  performed: {line['spoken_text']}" if line.get("spoken_text") else ""
+        rows.append(
+            f"  {number}. {line.get('line_id')}  beat {beat.get('ordinal')}  {who}{heard}: "
+            f"{line.get('text') or ''}{spoken}"
+        )
+    return rows
+
+
+def resolve_line_id(spine: Mapping[str, Any], ref: str, *, episode: int) -> str:
+    """Turn ``--line`` (a line id, or its number in the episode) into the line id.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    ref
+        ``line_episode_01_02`` or ``2``.
+    episode
+        Episode ordinal.
+
+    Returns
+    -------
+    str
+        The line id.
+    """
+
+    pairs = episode_lines(spine, episode=episode)
+    for _, line in pairs:
+        if str(line.get("line_id")) == ref:
+            return ref
+    if ref.isdigit() and 1 <= int(ref) <= len(pairs):
+        return str(pairs[int(ref) - 1][1]["line_id"])
+    listing = "\n".join(line_listing(spine, episode=episode)) or "  (none)"
+    raise CommandStopped(f"no line {ref!r} in episode {episode}; its lines are:\n{listing}")
+
+
+def resolve_speaker(spine: Mapping[str, Any], who: str) -> str:
+    """Turn ``--speaker`` (a cast name or id) into a cast id already on the story.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    who
+        ``D-9341``, ``d-9341`` or ``cast_d-9341``.
+
+    Returns
+    -------
+    str
+        The cast id.
+    """
+
+    names = _cast_names(spine)
+    wanted = who.strip().lower()
+    for cast_id, name in names.items():
+        if wanted in {cast_id.lower(), name.lower()}:
+            return cast_id
+    cast = ", ".join(f"{name} ({cast_id})" for cast_id, name in names.items()) or "none"
+    raise CommandStopped(
+        f"no cast member {who!r} on this story; the cast is: {cast}. {NO_NEW_LINES_OR_CAST}"
+    )
+
+
 def build_patch(
     spine: Mapping[str, Any],
     *,
@@ -708,13 +837,17 @@ def build_patch(
     text: str | None = None,
     spoken: str | None = None,
     subtitle: str | None = None,
+    speaker: str | None = None,
+    off_screen: bool | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """Build the spine patch for one beat, frame or line, merged onto what the spine has now.
 
     The API takes a beat's whole ``motion_direction`` and a frame's whole
     ``visual_brief``, so an edit is applied to a copy of the current one. A line
-    patch sets ``text`` (the English script) and/or pins the performed line
-    (``spoken_text``, with an optional ``subtitle_text``) on a Japanese or Korean show.
+    patch sets ``text`` (the English script), pins the performed line
+    (``spoken_text``, with an optional ``subtitle_text``) on a Japanese or Korean
+    show, gives the line to another cast member already on the story
+    (``cast_id``) and/or marks the speaker heard, not seen (``off_screen``).
 
     Parameters
     ----------
@@ -730,6 +863,10 @@ def build_patch(
         ``--set`` pairs: ``motion_direction`` fields on a beat, ``visual_brief`` fields on a frame.
     text, spoken, subtitle
         A line's English script, pinned performed line, and its subtitle.
+    speaker
+        A line's new speaker: a cast name or id already on the story.
+    off_screen
+        A line's speaker heard, not seen (``True``) or back on screen (``False``).
 
     Returns
     -------
@@ -742,7 +879,7 @@ def build_patch(
         raise CommandStopped("pass exactly one of --beat, --frame or --line-id")
     if line_id is not None:
         if assignments or intent is not None:
-            raise CommandStopped("a line takes --text, --spoken and --subtitle, not --set/--intent")
+            raise CommandStopped("a line takes --text, --spoken, --subtitle, --speaker and --off-screen, not --set/--intent")
         if subtitle is not None and spoken is None:
             raise CommandStopped("--subtitle describes a pinned line: send it with --spoken")
         if spoken is not None and str(spine.get("spoken_language") or "en-US") == "en-US":
@@ -752,16 +889,26 @@ def build_patch(
         for key, value in (("text", text), ("spoken_text", spoken), ("subtitle_text", subtitle)):
             if value is not None:
                 entry[key] = value
+        if speaker is not None:
+            entry["cast_id"] = resolve_speaker(spine, speaker)
+        if off_screen is not None:
+            entry["off_screen"] = off_screen
+        names = _cast_names(spine)
+        current = {**found, "off_screen": found.get("off_screen") is True}
+
+        def shown(key: str, value: Any) -> str:
+            return _short(names.get(str(value), value) if key == "cast_id" else value)
+
         changed = [
-            f"  {key}: {_short(found.get(key))}  ->  {_short(value)}"
+            f"  {'speaker' if key == 'cast_id' else key}: {shown(key, current.get(key))}  ->  {shown(key, value)}"
             for key, value in entry.items()
-            if key != "line_id" and found.get(key) != value
+            if key != "line_id" and current.get(key) != value
         ]
         if not changed:
             raise CommandStopped(f"nothing to change on {line_id}")
         return {"dialogue_lines": [entry]}, changed
-    if text is not None or spoken is not None or subtitle is not None:
-        raise CommandStopped("--text/--spoken/--subtitle edit a line: pass --line-id")
+    if any(value is not None for value in (text, spoken, subtitle, speaker, off_screen)):
+        raise CommandStopped("--text/--spoken/--subtitle/--speaker/--off-screen edit a line: pass --line-id")
     if beat is not None:
         found = _find(spine, spine.get("beats") or [], "beat_id", beat, episode=episode, kind="beat")
         direction = copy.deepcopy(found.get("motion_direction") or {})
@@ -789,6 +936,167 @@ def build_patch(
     return {"frames": [{"frame_id": found["frame_id"], "visual_brief": brief}]}, changed
 
 
+def line_edit_consequences(
+    spine: Mapping[str, Any],
+    *,
+    episode: int,
+    line_id: str,
+    after_gate: bool,
+    desk_was_approved: bool,
+    relocalized: bool,
+    desk: Path,
+) -> list[str]:
+    """Say what a line edit did to the script approval, and whether its speaker is drawn where it is spoken.
+
+    Parameters
+    ----------
+    spine
+        The spine after the edit.
+    episode
+        Episode ordinal.
+    line_id
+        The edited line.
+    after_gate
+        The edit went through the cascade (the server's script was approved).
+    desk_was_approved
+        The desk's script gate was approved before the edit (syncing the lines reopens it).
+    relocalized
+        ``text`` changed on a JA/KO show without a pinned ``spoken_text``.
+    desk
+        Series desk (for the command to print).
+
+    Returns
+    -------
+    list[str]
+        Printable lines.
+    """
+
+    out: list[str] = []
+    if after_gate:
+        out.append(
+            "script approval: the server keeps this script approved (the cascade edited the approved story; "
+            "nothing is re-drafted)."
+        )
+    else:
+        out.append(
+            "script approval: not given yet; this line is part of what the human approves at the script gate "
+            "(`fictora-produce approve --gate script`)."
+        )
+    if desk_was_approved:
+        out.append(
+            "  The desk's script yes was for the old line, so it is pending again: preflight will not film episode "
+            f"{episode} until the human says yes to the new line (`fictora-ops approve --desk {desk} --gate script "
+            f"--episode {episode}`)."
+        )
+    if relocalized:
+        when = "before the take is filmed" if after_gate else "when the script is approved"
+        out.append(
+            f"  The performed {_spoken_language(spine)} line was dropped (it was written for the old English); the "
+            f"server writes a new one {when}. To keep your own words, pin them with --spoken."
+        )
+    names = _cast_names(spine)
+    for beat, line in episode_lines(spine, episode=episode):
+        if str(line.get("line_id")) != line_id or line.get("off_screen") is True or not beat.get("frame_id"):
+            continue
+        frame = next(
+            (f for f in spine.get("frames") or [] if isinstance(f, Mapping) and f.get("frame_id") == beat["frame_id"]),
+            None,
+        )
+        if frame is None:
+            continue
+        drawn, _ = frame_cast(frame)
+        cast_id = str(line.get("cast_id") or "")
+        if cast_id and cast_id not in drawn:
+            who = names.get(cast_id, cast_id)
+            out.append(
+                f"  !! {who} speaks this line on {frame.get('frame_id')} (board row {frame.get('board_row')}), which "
+                f"does not draw {who}. Mark the line --off-screen, or edit that frame and redraw the board "
+                "(warning only)."
+            )
+    return out
+
+
+def _spoken_language(spine: Mapping[str, Any]) -> str:
+    return str(spine.get("spoken_language") or "en-US")
+
+
+def run_line(
+    desk: Path,
+    *,
+    episode: int,
+    line: str | None,
+    text: str | None = None,
+    spoken: str | None = None,
+    subtitle: str | None = None,
+    speaker: str | None = None,
+    off_screen: bool | None = None,
+    select_regen: bool = False,
+    preview_only: bool = False,
+    out: Any = None,
+) -> Path | None:
+    """Change one line on the server and on the desk in one step; with no ``line``, list the episode's lines.
+
+    The server's line is edited (``PATCH /v1/spines/{id}`` ``dialogue_lines``
+    before the script gate, the cascade after it), the story is saved again as
+    ``api/spine.json``, and the desk's lines are replaced with the server's.
+    The API cannot add or remove a line or add a cast member
+    (:data:`NO_NEW_LINES_OR_CAST`).
+
+    Parameters
+    ----------
+    desk
+        Series desk with a story.
+    episode
+        Episode ordinal.
+    line
+        Line id or its number in the episode (``line`` with no change lists them).
+    text, spoken, subtitle, speaker, off_screen
+        As :func:`build_patch`.
+    select_regen, preview_only
+        As :func:`run_edit`.
+    out
+        Text stream.
+
+    Returns
+    -------
+    Path | None
+        The refreshed ``api/spine.json``; ``None`` when only listing.
+    """
+
+    out = out or sys.stdout
+    changes = (text, spoken, subtitle, speaker, off_screen)
+    if line is None or all(value is None for value in changes):
+        if line is not None:
+            raise CommandStopped("say what to change: --text, --spoken, --speaker, --off-screen or --on-screen")
+        _, state, run = _desk_session(desk)
+        try:
+            spine = run.spine(state.spine_id or "")
+        finally:
+            run.client.close()
+        print(f"ep{episode:02d} lines (use the number or the id with --line):", file=out)
+        for row in line_listing(spine, episode=episode) or ["  (none)"]:
+            print(row, file=out)
+        return None
+    _, state, run = _desk_session(desk)
+    try:
+        line_id = resolve_line_id(run.spine(state.spine_id or ""), line, episode=episode)
+    finally:
+        run.client.close()
+    return run_edit(
+        desk,
+        episode=episode,
+        line_id=line_id,
+        text=text,
+        spoken=spoken,
+        subtitle=subtitle,
+        speaker=speaker,
+        off_screen=off_screen,
+        select_regen=select_regen,
+        preview_only=preview_only,
+        out=out,
+    )
+
+
 def run_edit(
     desk: Path,
     *,
@@ -801,6 +1109,8 @@ def run_edit(
     text: str | None = None,
     spoken: str | None = None,
     subtitle: str | None = None,
+    speaker: str | None = None,
+    off_screen: bool | None = None,
     select_regen: bool = False,
     preview_only: bool = False,
     out: Any = None,
@@ -812,13 +1122,17 @@ def run_edit(
     ``select_regen``. Redraw a board afterwards with ``redraw-board`` so it is
     downloaded and booked.
 
+    A line edit also puts the server's lines on the desk (before and after the
+    script gate, so the desk and the story never disagree) and says what it did
+    to the script approval.
+
     Parameters
     ----------
     desk
         Series desk with a story.
     episode
         Episode ordinal.
-    beat, frame, line_id, intent, assignments, text, spoken, subtitle
+    beat, frame, line_id, intent, assignments, text, spoken, subtitle, speaker, off_screen
         As :func:`build_patch`.
     select_regen
         After the script gate: also run the cascade's paid items.
@@ -848,6 +1162,8 @@ def run_edit(
             text=text,
             spoken=spoken,
             subtitle=subtitle,
+            speaker=speaker,
+            off_screen=off_screen,
         )
         what = f"beat {beat}" if beat is not None else (f"frame {frame}" if frame is not None else f"line {line_id}")
         print(f"ep{episode:02d} {what}:", file=out)
@@ -870,8 +1186,21 @@ def run_edit(
     finally:
         run.client.close()
     path = save_spine_snapshot(desk, episode, fresh)
-    if line_id is not None and not preview_only and fresh.get("approval_state") != "approved":
-        sync_spine_lines(desk, fresh, episode=episode)
+    if line_id is not None and not preview_only:
+        desk_was_approved = episode_by_ordinal(load_series(desk), episode).script.status == "approved"
+        counts = sync_spine_lines(desk, fresh, episode=episode)
+        print(f"desk lines synced from the server: {', '.join(f'{t} {n}' for t, n in counts.items())}", file=out)
+        relocalized = text is not None and spoken is None and _spoken_language(fresh) != "en-US"
+        for line in line_edit_consequences(
+            fresh,
+            episode=episode,
+            line_id=line_id,
+            after_gate=cascade,
+            desk_was_approved=desk_was_approved,
+            relocalized=relocalized,
+            desk=desk,
+        ):
+            print(line, file=out)
     if not preview_only:
         _note(desk, episode, f"edit {what}: " + "; ".join(line.strip() for line in changed))
     return path
@@ -1734,6 +2063,7 @@ EPISODE_COMMANDS = frozenset(
         "author",
         "memory",
         "edit",
+        "line",
         "look-frame",
         "look",
         "look-note",
@@ -1788,7 +2118,7 @@ def add_episode_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     edit = sub.add_parser(
         "edit",
         help=(
-            "Edit a beat's shot, a frame's visual_brief, or a line (pin the performed JA/KO line). PATCH before "
+            "Edit a beat's shot, a frame's visual_brief, or a line (prefer `line` for lines). PATCH before "
             "the script gate; after it, the cascade with paid items off unless --select-regen."
         ),
     )
@@ -1806,6 +2136,30 @@ def add_episode_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     edit.add_argument("--subtitle", default=None, help="Line: the subtitle for the pinned line (with --spoken).")
     edit.add_argument("--select-regen", action="store_true", help="After the gate: also run paid regeneration items.")
     edit.add_argument("--preview", action="store_true", help="After the gate: print the cascade and stop.")
+
+    line = sub.add_parser(
+        "line",
+        help=(
+            "Change one line on the server AND the desk in one step: its words, the performed JA/KO line, its "
+            "speaker, or seen/heard. Says what happens to the script approval. With no change, lists the lines. "
+            "Cannot add or remove a line or add a cast member (the API has no route for it): that needs a new draft."
+        ),
+        description=NO_NEW_LINES_OR_CAST + ".",
+    )
+    line.add_argument("--desk", type=Path, required=True)
+    line.add_argument("--episode", type=int, required=True)
+    line.add_argument("--line", default=None, help="Line id (line_episode_01_02) or its number in the episode (2).")
+    line.add_argument("--text", default=None, help="The English line.")
+    line.add_argument("--spoken", default=None, help="Pin the exact performed line (JA/KO shows).")
+    line.add_argument("--subtitle", default=None, help="The subtitle for the pinned line (with --spoken).")
+    line.add_argument("--speaker", default=None, help="Give the line to someone already in the cast (name or cast id).")
+    seen = line.add_mutually_exclusive_group()
+    seen.add_argument("--off-screen", dest="off_screen", action="store_const", const=True, default=None,
+                      help="The speaker is heard, not seen (a voice on a speaker, behind a door).")
+    seen.add_argument("--on-screen", dest="off_screen", action="store_const", const=False,
+                      help="The speaker is seen again.")
+    line.add_argument("--select-regen", action="store_true", help="After the gate: also run paid regeneration items.")
+    line.add_argument("--preview", action="store_true", help="After the gate: print the cascade and stop.")
 
     frame = sub.add_parser(
         "look-frame",
@@ -1919,6 +2273,20 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 preview_only=args.preview,
             )
             return 0
+        if args.command == "line":
+            run_line(
+                args.desk,
+                episode=args.episode,
+                line=args.line,
+                text=args.text,
+                spoken=args.spoken,
+                subtitle=args.subtitle,
+                speaker=args.speaker,
+                off_screen=args.off_screen,
+                select_regen=args.select_regen,
+                preview_only=args.preview,
+            )
+            return 0
         if args.command == "look-frame":
             run_look_frame(args.desk, description=args.description, size=args.size)
             return 0
@@ -1958,11 +2326,16 @@ __all__ = [
     "admitted_job_id",
     "author_direction",
     "build_patch",
+    "episode_lines",
     "dispatch_episode",
+    "line_edit_consequences",
+    "line_listing",
     "lines_not_asked",
     "look_frame_route_missing",
     "memory_body",
     "parse_assignment",
+    "resolve_line_id",
+    "resolve_speaker",
     "run_arc_list",
     "run_arc_pick",
     "run_author",
@@ -1970,6 +2343,7 @@ __all__ = [
     "run_check_lines",
     "run_edit",
     "run_film",
+    "run_line",
     "run_look",
     "run_look_frame",
     "run_look_note",
