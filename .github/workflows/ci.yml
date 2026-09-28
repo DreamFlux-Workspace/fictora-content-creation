@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.12.19"
+  PYTHON_VERSION: "3.12"   # lowest version pyproject.toml allows (requires-python >=3.12,<3.15)
+  RUFF_VERSION: "0.15.12"
+
+jobs:
+  tests:
+    name: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install ffmpeg (post tests build real media)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends ffmpeg
+          ffmpeg -hide_banner -version | head -1
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --frozen --group test
+      - name: Run tests
+        # The suite talks to a fake Drama API and needs no secrets or network.
+        # -rs prints the reason for any skipped test so a missing ffmpeg can't hide.
+        run: uv run --frozen --group test pytest tests -q -rs
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: ruff check
+        run: uvx ruff@${{ env.RUFF_VERSION }} check creation tests
+
+  skill-copies:
+    name: skill-copies
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Skill copies are identical (.claude vs .cursor)
+        run: |
+          status=0
+          for f in SKILL.md reference.md; do
+            a=".claude/skills/episode-production/$f"
+            b=".cursor/skills/episode-production/$f"
+            if ! diff -u "$a" "$b"; then
+              echo "::error file=$b::$b differs from $a; the two skill copies must stay identical"
+              status=1
+            fi
+          done
+          exit $status
+
+  all-checks:
+    name: All checks passed
+    if: always()
+    needs: [tests, lint, skill-copies]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check job results
+        run: |
+          echo '${{ toJSON(needs) }}'
+          if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}" = "true" ]; then
+            echo "::error::One or more checks did not pass"
+            exit 1
+          fi

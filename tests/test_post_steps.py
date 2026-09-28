@@ -260,7 +260,9 @@ def _service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answers: list[http
 def test_each_audio_route_gets_its_path_body_session_and_idempotency_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ok = lambda body: httpx.Response(200, json=body)
+    def ok(body: object) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
     audio, rec, _ = _service(tmp_path, monkeypatch, [ok({"candidates": []}), ok({"audio_url": "u"}),
                                                       ok({"audio_url": "u"}), ok({"audio_url": "u"}), ok({"words": []})])  # fmt: skip
     audio.render_auditions(spine_id="sp", cast_id="cast_k", spine_version="sha256:v", lines=["Hi."], count=4, key="k1")
@@ -302,8 +304,9 @@ def test_audition_new_wording_and_named_voices_are_sent_as_the_routes_text_and_v
 def test_rate_limits_and_in_progress_are_waited_out_and_a_failed_render_is_replayed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    err = lambda status, code, **h: httpx.Response(status, json={"error": {"code": code, "message": "m"}},
-                                                  headers=h)  # fmt: skip
+    def err(status: int, code: str, **h: str) -> httpx.Response:
+        return httpx.Response(status, json={"error": {"code": code, "message": "m"}}, headers=h)
+
     audio, rec, waits = _service(tmp_path, monkeypatch, [
         err(429, "rate_limited", **{"Retry-After": "6"}),
         err(409, "operator_audio_in_progress", **{"Retry-After": "15"}),
