@@ -77,14 +77,71 @@ def resolve_session_id(*, env_session: str | None) -> str:
     return f"create-flow-{uuid.uuid4().hex[:12]}"
 
 
+def api_error_text(body: Any) -> str:
+    """Say what the server refused, from its error envelope, in one line.
+
+    The API answers ``{"error": {"code", "message", "details"}, "request_id"}``.
+    A 409 or 422 carries the real rule in ``code``, ``message`` and ``details``
+    (a take missing an approved line, an authoring rule, why an enrol
+    conflicts); this keeps all three instead of a bare status.
+
+    Parameters
+    ----------
+    body
+        Parsed response body (or raw text).
+
+    Returns
+    -------
+    str
+        ``code: message (details …) [request_id]`` or the raw body when it is not an envelope.
+    """
+    if not isinstance(body, dict):
+        return str(body)[:2000]
+    error = body.get("error") if isinstance(body.get("error"), dict) else body
+    code = error.get("code")
+    message = error.get("message")
+    if not code and not message:
+        return json.dumps(body, default=str)[:2000]
+    text = f"{code or 'error'}: {message or ''}".rstrip(": ")
+    details = error.get("details")
+    if details:
+        text += f" (details {json.dumps(details, default=str, ensure_ascii=False)[:1200]})"
+    if body.get("request_id"):
+        text += f" [request {body['request_id']}]"
+    return text
+
+
+def describe_job_error(job: dict[str, Any]) -> str:
+    """Say why a job ended, from its ``error`` (code, message, the first rule details).
+
+    Parameters
+    ----------
+    job
+        Terminal ``GET /v1/jobs/{id}`` or ``/v1/video-generations/{id}`` body.
+
+    Returns
+    -------
+    str
+        ``status code: message (details …)``; ``status (no error detail)`` when there is none.
+    """
+    status = str(job.get("status") or "unknown")
+    for key in ("error", "failure"):
+        error = job.get(key)
+        if isinstance(error, dict) and (error.get("code") or error.get("message")):
+            return f"{status} {api_error_text(error)}"
+        if error:
+            return f"{status} {str(error)[:1200]}"
+    return f"{status} (no error detail)"
+
+
 def _raise_for_status(response: httpx.Response) -> None:
     if response.is_success:
         return
     try:
-        detail = response.json()
-    except Exception:
+        detail: Any = response.json()
+    except ValueError:
         detail = response.text
-    raise SystemExit(f"HTTP {response.status_code}: {detail}")
+    raise SystemExit(f"HTTP {response.status_code}: {api_error_text(detail)}")
 
 
 def _payload_summary(payload: dict[str, Any]) -> str:

@@ -17,13 +17,20 @@ class ProductionConfig:
     The episode-production skill documents every field.
     """
 
-    draft_episode_count: int = 4
+    #: Ignored since episode 1 is drafted alone (``outline_mode=arc_at_episode_two``): the draft
+    #: always sends ``episode_count: 1`` and later episodes are written with ``author --episode N``.
+    draft_episode_count: int = 1
     clip_duration_seconds: int = 15
-    cut_tempo: str = "one_shot"
+    #: Shot plan set on the DRAFT so board and take agree: ``punchy`` (coverage, one shot per row;
+    #: romance, horror, comedy, two-handers), ``slow_burn``, or ``one_shot`` (monologue, making, a walk).
+    #: ``None`` sends nothing and the server's default (punchy) applies.
+    cut_tempo: str | None = None
     caption_style: str = "house"
     #: When false, video enrol omits ``captions_enabled`` (faster API tail; caption locally).
     api_captions: bool = False
     locale: str = "en-US"
+    #: Language the cast speaks when not English: ``ja`` / ``ko`` (or ``ja-JP`` / ``ko-KR``). Captions stay English.
+    spoken_language: str | None = None
     fallback_estimate_usd: float = 1.20
     poll_plan_deadline_seconds: float = 1800.0
     poll_cast_deadline_seconds: float = 3600.0

@@ -22,7 +22,7 @@ def _resolve_preset(run, wanted: str | None) -> tuple[str, str]:
 
 
 def _video_url(delivery: dict) -> str | None:
-    for key in ("video_url", "url"):
+    for key in ("primary_clip_url", "video_url", "url"):
         if delivery.get(key):
             return str(delivery[key])
     episodes = delivery.get("episodes") or []
@@ -94,7 +94,6 @@ def main() -> int:
                 preset_version=preset_version,
                 band="15s",
                 video_lane="minimax-h3",
-                episode_count=4,
             )
             print(f"phase=draft_done spine_id={spine_id} plan={plan.get('status')}", flush=True)
             save_run_meta(
@@ -154,7 +153,7 @@ def main() -> int:
             caption_style="house",
             video_lane="minimax-h3",
             clip_duration_seconds=15,
-            cut_tempo="one_shot",
+            cut_tempo=None,
         )
         url = _video_url(delivery)
         summary = {

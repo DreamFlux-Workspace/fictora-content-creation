@@ -41,9 +41,8 @@ uv run fictora-produce start \
   --band 15s \
   --preset-id modern-dark-fantasy \
   --video-lane minimax-h3 \
-  --draft-episodes 4 \
   --clip-seconds 15 \
-  --cut-tempo one_shot \
+  --cut-tempo punchy \
   --caption-style house
 ```
 
@@ -61,7 +60,15 @@ uv run fictora-produce step --desk ~/Downloads/documents/my-show-…
 uv run fictora-produce approve --desk … --gate plates
 uv run fictora-produce approve --desk … --gate script
 uv run fictora-produce approve --desk … --gate board
-uv run fictora-produce approve --desk … --gate board --accept-dim   # when exposure is below dim floor
+
+# Episode 2 on (after episode 1's script is approved)
+uv run fictora-produce arc --desk … --list --episodes 30     # then: arc --desk … --pick 2
+uv run fictora-produce author --desk … --episode 2 --direction 1   # or --line "the human's words"
+
+# Edits and redraws (see the skill's reference.md)
+uv run fictora-produce edit --desk … --episode 1 --frame 3 --set shot_scale="close up"
+uv run fictora-produce redraw-board --desk … --episode 1 --take t1 --cause "face under the caption band"
+uv run fictora-produce check-lines --desk … --episode 1
 
 # After estimate is shown in chat
 uv run fictora-produce step --desk … --confirm-spend
@@ -94,7 +101,7 @@ Example desk config: `.cursor/skills/episode-production/config.example.json`.
 
 Important defaults:
 
-- **`draft_episode_count: 4`** — five planned episodes breaks estimate/plan on prod.
+- **Episode 1 is drafted alone** (`outline_mode=arc_at_episode_two`); `draft_episode_count` is ignored. Later episodes: `arc`, then `author --episode N`.
 - **`caption_style: house`** — burn-in captions are applied in post-production, not by the video model.
 - **`fallback_estimate_usd: 1.20`** — used when batch estimate is skipped.
 
