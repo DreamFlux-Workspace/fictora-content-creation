@@ -83,7 +83,7 @@ def test_look_frame_books_with_its_unit(desk: Path, api: FakeApi) -> None:
     description.parent.mkdir(parents=True, exist_ok=True)
     description.write_text("Muted teal night, sodium streetlight, rain on glass.", encoding="utf-8")
 
-    ec.run_look_frame(desk, description_file=description, out=io.StringIO())
+    ec.run_look_frame(desk, description=description, out=io.StringIO())
 
     (entry,) = _series_json(desk)["spend_log"]
     assert (entry["unit"], entry["usd"]) == ("look-frame", 0.3)
