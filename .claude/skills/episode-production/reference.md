@@ -65,7 +65,7 @@ Always a deviation: a finished episode longer than its 15 / 30 / 60 s band; any 
 - Show each line in the language it will be spoken, with the translation beside it.
 - **Japanese / Korean:** the register follows who speaks to whom (staff to customer is 申し訳ございません / 정말 죄송합니다, not ごめんなさい). No English quip carried word for word. No notice-board noun stack in speech (「逆襲中止！」 "counterattack cancelled!") unless the character is really announcing. The server repairs that one form once; everything else is your check. Pin the exact performed line (`spoken_text`) so localization does not rewrite it. A dialect (Kansai-ben, Busan satoori) needs a native speaker's yes before the script gate; if nobody can check it, write the standard language.
 - **Captions** are English only for now (house style). Japanese / Korean captions are deferred. A line whose caption (`subtitle_text`, else `text`) is not English (kana, CJK, Hangul, any non-Latin letter, CJK/fullwidth punctuation) is timed but left uncaptioned; `finish` (on its `captions` summary line) and `caption` print ``NOT ENGLISH: <line id> "…" — add an English subtitle with `edit`/`line --subtitle` ``.
-- **Heard, not seen:** an `off_screen` line, or any line of a `voice_only` cast member, is captioned in Georgia italic (same drawn size, colour, edge and place as House; the Italic ASS style). Georgia is a system font (macOS ships it); it is not bundled.
+- **Heard, not seen:** an `off_screen` line, or any line of a `voice_only` cast member, is captioned in Georgia italic (same drawn size, colour, edge and place as House; the Italic ASS style). Georgia is a system font (macOS ships it); it is not bundled. Without it, `caption`/`finish` print `WARNING FONT: …` and add it to the run notes.
 
 ## Characters and age
 
@@ -411,7 +411,7 @@ Draft jobs can exceed 15 minutes under load; raise the deadline before calling i
 
 ## Setup check
 
-`uv run fictora-produce setup-check` (spends nothing, never prints the token): `FICTORA_DRAMA_GENERATION_SERVICE_TOKEN` set (`.env` or the environment) and accepted by `GET /v1/art-style-presets`; ffmpeg and ffprobe on PATH; libass (the `ass` filter, on the ffmpeg the finish will use); the filters `tblend`, `loudnorm`, `sidechaincompress`, `alimiter`, `amix`, `atempo`, `lut3d`, `silencedetect`, `astats`, `signalstats`; Python 3.12+; uv. One ✓/✗ line each; exit 1 on any ✗.
+`uv run fictora-produce setup-check` (spends nothing, never prints the token): `FICTORA_DRAMA_GENERATION_SERVICE_TOKEN` set (`.env` or the environment) and accepted by `GET /v1/art-style-presets`; ffmpeg and ffprobe on PATH; libass (the `ass` filter, on the ffmpeg the finish will use); the filters `tblend`, `loudnorm`, `sidechaincompress`, `alimiter`, `amix`, `atempo`, `lut3d`, `silencedetect`, `astats`, `signalstats`; Georgia Italic where libass will look for it (the bundled fonts dir, then the macOS font folders via CoreText, or `fc-match Georgia:italic` on Linux); Python 3.12+; uv. One ✓/✗ line each; exit 1 on any ✗. Georgia Italic is a ⚠ warning, never a ✗: it names the face captions would fall back to and how to install Georgia.
 
 ## Debugging (a declared deviation)
 

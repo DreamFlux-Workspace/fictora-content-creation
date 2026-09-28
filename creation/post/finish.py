@@ -601,8 +601,11 @@ def run_finish(
             for line, a in zip(captioned.lines, captioned.anchors)
         )
         treatment = "whole English lines" if captioned.whole_lines else "word flicker"
-        # A line that is not English is left uncaptioned; the summary line says which.
-        warnings = "".join(f" · {w}" for w in captioned.not_english)
+        # A line that is not English is left uncaptioned, and an italic line may miss
+        # Georgia Italic on this laptop; the summary line says which.
+        warnings = "".join(
+            f" · {w}" for w in (*captioned.not_english, captioned.font_warning) if w
+        )
         append_run_note(
             run_dir,
             f"Captions ({treatment}) -> `{captioned.video.name}` (cues `{captioned.ass.name}`): {timing}{warnings}",

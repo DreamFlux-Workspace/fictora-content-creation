@@ -252,6 +252,6 @@ It only creates files: `series.pre-adopt.json` (a backup), a hard link `take-epN
 
 ## Setup check, one plate again, the ledger
 
-- **First thing on a new laptop:** `uv run fictora-produce setup-check`. One ✓/✗ line each: the API token set and accepted (one free authenticated read), ffmpeg and ffprobe, libass (captions), the filters the finish and edits use, Python 3.12+, uv. Any ✗ exits 1: fix it before the first paid step. It never prints the token.
+- **First thing on a new laptop:** `uv run fictora-produce setup-check`. One ✓/✗ line each: the API token set and accepted (one free authenticated read), ffmpeg and ffprobe, libass (captions), the filters the finish and edits use, Georgia Italic (the heard-not-seen caption face), Python 3.12+, uv. Any ✗ exits 1: fix it before the first paid step. A ⚠ on Georgia Italic does not block, but off-screen and voice-only captions will come out in the fallback face it names until Georgia is installed. It never prints the token.
 - **One character's plate again:** `fictora-produce redraw-plate --desk D --cast NAME --note "…"` (the note on that character, then their plate alone, $0.30; stage table above). `plates --cast NAME --cause` is retired: it prints that pointer, exits 2 and sends nothing.
 - **Book by hand with a unit:** `fictora-ops spend --desk D --episode N --usd X [--take tK] --unit look-frame` (or `voice-line`, `cue:gaan-sting` …). Every booking also lands in `spend_log` in `series.json` (episode, take, dollars, unit, time); the kit's own bookings name their unit.

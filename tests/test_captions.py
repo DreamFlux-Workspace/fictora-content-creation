@@ -510,3 +510,24 @@ def test_finish_summary_shows_not_english(post_desk: Path) -> None:
     rows = _dialogue(ass.read_text(encoding="utf-8"))
     assert rows and all(style == "Italic" for style, _ in rows), "Kenji is off screen"
     assert not any("今夜" in text for _, text in rows)
+
+
+@needs_ffmpeg
+def test_caption_command_warns_when_georgia_italic_falls_back(
+    post_desk: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import creation.captions as cap
+
+    monkeypatch.setattr(
+        cap,
+        "find_italic_font",
+        lambda: cap.ItalicFont(None, None, "Arial (/a/Arial.ttf)"),
+    )
+    _mixed_desk(post_desk)
+    assert produce_main(["caption", "--desk", str(post_desk), "--no-open"]) == 0
+    err = capsys.readouterr().err
+    assert "WARNING FONT: Georgia not found" in err and "Arial (/a/Arial.ttf)" in err
+    notes = (post_desk / "ep01" / "run-notes.md").read_text(encoding="utf-8")
+    assert "FONT: Georgia not found" in notes
