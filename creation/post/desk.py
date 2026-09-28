@@ -97,8 +97,20 @@ def refresh_spine(run: DramaApiRunSession, desk: Path, episode: int) -> dict[str
     return body
 
 
+def show_language(spine: Mapping[str, Any]) -> str:
+    """The show's spoken language as a Whisper / voice code: ``ja-JP`` -> ``ja``; ``en`` when unset."""
+
+    code = str(spine.get("spoken_language") or "en").strip()
+    return (code.split("-", 1)[0] or "en").lower()
+
+
 def episode_dialogue(spine: Mapping[str, Any], ordinal: int) -> list[dict[str, str]]:
-    """Every dialogue line of one episode, in beat order: ``{line_id, cast_id, text}``."""
+    """Every dialogue line of one episode, in beat order.
+
+    Each is ``{line_id, cast_id, text, spoken_text, subtitle, performed}``: ``performed``
+    is what is heard (``spoken_text`` when the line has one, else ``text``);
+    ``subtitle`` is the caption (``subtitle_text`` when present, else ``text``).
+    """
 
     wanted = {episode_id_for(spine, ordinal), f"episode_{ordinal:02d}"}
     beats = [b for b in spine.get("beats") or [] if isinstance(b, Mapping) and b.get("episode_id") in wanted]
@@ -107,8 +119,16 @@ def episode_dialogue(spine: Mapping[str, Any], ordinal: int) -> list[dict[str, s
         for line in beat.get("dialogue_lines") or []:
             text = str(line.get("text") or "").strip() if isinstance(line, Mapping) else ""
             if text:
+                spoken = str(line.get("spoken_text") or "").strip()
                 lines.append(
-                    {"line_id": str(line.get("line_id") or ""), "cast_id": str(line.get("cast_id") or ""), "text": text}
+                    {
+                        "line_id": str(line.get("line_id") or ""),
+                        "cast_id": str(line.get("cast_id") or ""),
+                        "text": text,
+                        "spoken_text": spoken,
+                        "subtitle": str(line.get("subtitle_text") or "").strip() or text,
+                        "performed": spoken or text,
+                    }
                 )
     return lines
 

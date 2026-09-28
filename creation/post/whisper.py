@@ -100,8 +100,18 @@ def load_words(path: Path) -> tuple[Word, ...]:
     return tuple(words)
 
 
+#: Japanese / Chinese / Korean script: matched by character (Whisper and the script split words differently).
+_CJK = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
+
+
 def _tokens(text: str) -> list[str]:
-    return re.findall(r"\w+", unicodedata.normalize("NFKC", text).lower())
+    tokens: list[str] = []
+    for token in re.findall(r"\w+", unicodedata.normalize("NFKC", text).lower()):
+        if _CJK.search(token):
+            tokens.extend(token)
+        else:
+            tokens.append(token)
+    return tokens
 
 
 def _same(a: str, b: str) -> bool:
