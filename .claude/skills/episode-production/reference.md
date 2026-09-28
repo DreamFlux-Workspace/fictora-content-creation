@@ -36,7 +36,7 @@ Three layers, later wins:
 | `ready_estimate` | `step` → batch estimate (or `fallback_estimate_usd`) |
 | `wait_spend` | Human yes → `step --confirm-spend` |
 | `ready_video` | (internal) take enrol |
-| `complete` | Raw clip on disk (`ep01/takes/take-ep01-t1-raw-vN.mp4`, `ep01/api/17_raw_scene_clips.json`) → `caption` |
+| `complete` | Raw clip on disk (`ep01/takes/take-ep01-t1-raw-vN.mp4`, `ep01/api/17_raw_scene_clips.json`) → `finish` |
 | `failed` | Read `last_error` in `production.json`; see Recovery |
 
 The harness auto-retries `plan_media_spine_version_stale` (cast, boards) and retryable `authoring_stalled` (draft).
@@ -116,7 +116,7 @@ The writers pick an anime expression (`reaction_kind`) for every emotional momen
 
 - Faces, eyes, mouths and key props never sit in a zone. Bodies, hands, floor and set may run through. Off-centre and two-shots are fine; do not centre faces by default.
 - There is no face detector: look at every cell of the board. A face or key prop in a zone is a board redraw with the placement as the shape note.
-- Captions: the block stays in 55–70% of the height. `fictora-produce caption` puts the text bottom at 70%.
+- Captions: the block stays in 55–70% of the height. `finish` and `caption` put the text bottom at 62% and never wrap (a too-wide caption is set smaller).
 - The Sokii mark: top left, just under the top strip, `23:121` on 768×1344 (x = 3% of width, y = 9% of height), 0.6 opacity. Never top right.
 
 ## Board checks, in full
@@ -164,16 +164,37 @@ Measure, then watch: every approved line heard, exactly; cut count (compare cons
 A raw take is never a deliverable. With `api_captions: false`:
 
 ```bash
-uv run fictora-produce caption --desk D [--episode N] [--take RAW.mp4] [--line-start S ...] [--no-open]
+uv run fictora-produce finish --desk D [--episode N] [--take tK] [--take-file F] [--duck-db N] \
+  [--sfx-adjust "door=-6" | "hum=drop" | "shot:3=+4"] [--bed-db -16.5] [--music "..."] \
+  [--line-start S ...] [--no-colour-match] [--colour-strength 0..1] [--watermark-y Y] [--json]
 ```
 
-It reads the lines from the spine snapshot, anchors them on the speech span (ffmpeg `silencedetect`), writes a versioned `.ass` and `take-epNN-t1-captioned-vN.mp4`, logs both in `run-notes.md`, and opens the file. Needs ffmpeg + ffprobe with libass.
+| Step | What it does | Writes |
+| --- | --- | --- |
+| sfx | Cue plan from `GET /v1/jobs/{take_job}/take-facts?spine_id=` (saved as `api/take-facts-epNN-tK-vN.json`; the take job is read from `api/17_raw_scene_clips.json`). Each cue renders on Fal ElevenLabs SFX v2 (~$0.002/s), is shape-checked, cached in `epNN/sfx/`, laid at −8 dB and ducked 10 dB under speaking shots | `take-epNN-tK-sfx-vN.mp4` |
+| bed | The desk's pinned bed; else the spine's `series_audio_bed_url`; else one made once on Fal Stable Audio 2.5 (~$0.06) from the genre (or `--music "…"`), levelled to −20 LUFS, pinned in `shared/beds/` | — |
+| colour | One Lab curve for the whole take, fitted to the approved board (gutters left out) | `…-colour-vN.mp4` + `.cube` |
+| mix | Bed looped under the take at `--bed-db`, sidechain-ducked under the voice (`--duck-db N` = exactly N dB, 1–30), take gain measured to land near −18 LUFS (band −20 to −15), one limiter | `…-mix-vN.mp4` |
+| captions | House captions timed on the take before the bed | `…-cap-vN.mp4` + `.ass` |
+| watermark | Sokii mark top left (x 3%, y 9%), never in the top 8% | `…-sokii-vN.mp4` |
+
+A step that fails is reported and skipped; the chain carries on from the last good file. The summary ends with `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`. When music, SFX or the mix did not go on it prints `NOT DONE`, writes a run note and exits **5**: the file is not a deliverable. A second `finish` writes the next versions and reuses the cached cues and the pinned bed ($0).
+
+`caption --desk D [--line-start S ...]` still burns captions alone on a raw take (timing detail: [local-captions.md](../../../docs/content-ops/local-captions.md)). Needs ffmpeg + ffprobe with libass, and `FAL_KEY` in `.env` for sound effects and a new bed.
 
 **Hosted post is off.** Never call `POST /v1/video-generations/{id}/post-production-runs` and never pass `--api-captions`. `409 hosted_post_off`, or the older `503 restate_unavailable` from post-production, means finish locally. It is not an outage; do not retry it.
 
 ## Change a character's voice
 
-The voice is a lock on the cast card, not part of the story or the picture. Never re-draft the story or re-film every take to change it. Audition on the character's real lines, let the human pick, re-voice the filmed takes where that character speaks, then finish again. Re-film only a take where the dub does not sit (lips visibly wrong, a shouted line), with a cause and a stated cost; never the other takes. Until audition / re-voice commands land here, this is a DEVIATION: tell the human and put a backlog line.
+The voice is a lock on the cast card, not part of the story or the picture. Never re-draft the story or re-film every take to change it.
+
+| Command | What it does | Spends |
+| --- | --- | --- |
+| `voice --desk D --cast NAME --audition [--episode N] [--count 8] [--cause "…"]` | `POST /v1/spines/{id}/cast/{cast_id}/voice-auditions` on up to 3 of the character's real lines; the API returns voice ids and text only, so each candidate renders here on Fal Eleven v3 into `shared/voices/<cast>/audition-vN/NN-<voice>.mp3` with `auditions.json`. A second set needs `--cause`. A re-run picks up Fal requests already paid (`post-fal-pending.json`) | $0.30 a set |
+| `voice --desk D --cast NAME --pick N` | `POST …/voice-auditions/pick` locks candidate N on the cast card and saves the spine again | nothing |
+| `revoice --desk D --cast NAME --episode N --take tK [--take-file F] [--words-json W] [--voice-db 0]` | Renders each of that character's lines dry in the locked voice, finds each line's window from Whisper words on the take, mutes the original there (0.08 s before to 0.15 s after), lays the new line in at the same start. Picture copied, other characters as filmed. Writes `take-epNN-tK-revoice-vN.mp4` + `.json` | $0.10 per 1,000 characters + Whisper pennies |
+
+Then `finish --desk D --episode N --take tK --take-file <revoice file>`. Takes not filmed yet use the new voice as they are. Re-film only a take where the dub does not sit (lips visibly wrong, a shouted line), with a cause and a stated cost; never the other takes.
 
 ## Episode 2 on
 

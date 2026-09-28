@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any, Mapping
 
+from creation.harness.http_util import HOSTED_POST_OFF_HINT
 from creation.harness.session import DramaApiRunSession
 from creation.harness.visual_first_ep1 import (
     approve_ep1_boards,
@@ -302,7 +303,10 @@ def finish_video_job(
     )
     run.save("17_video_terminal.json", terminal)
     if terminal.get("status") != "completed":
-        raise SystemExit(f"video failed: {terminal.get('status')}")
+        code = _terminal_error_code(terminal)
+        if code == "hosted_post_off":
+            raise SystemExit(f"video stopped in hosted post: {HOSTED_POST_OFF_HINT}")
+        raise SystemExit(f"video failed: {terminal.get('status')} code={code}")
     delivery = run.get(f"/v1/video-generations/{job_id}/delivery")
     run.save("18_delivery.json", delivery)
     return delivery

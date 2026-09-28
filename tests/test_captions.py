@@ -95,7 +95,7 @@ def test_flicker_events_touch_and_last_word_holds_until_next_line() -> None:
 def test_ass_uses_house_style_scaled_to_frame() -> None:
     ass = build_ass([Cue(1.0, 1.5, "Hi")], width=768, height=1344)
     assert "Style: House,Poppins,50,&H0000E5FF,&H0000E5FF,&H00000000,&H80000000,-1," in ass
-    assert ass.split("Style: House,")[1].split("\n")[0].endswith(",2,10,10,403,1")
+    assert ass.split("Style: House,")[1].split("\n")[0].endswith(",2,10,10,511,1")  # bottom edge at 62% (social safe zones)
     assert "Dialogue: 0,0:00:01.00,0:00:01.50,House,,0,0,0,,Hi" in ass
     half = build_ass([], width=384, height=672)
     assert "Style: House,Poppins,25," in half

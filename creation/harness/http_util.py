@@ -77,6 +77,51 @@ def resolve_session_id(*, env_session: str | None) -> str:
     return f"create-flow-{uuid.uuid4().hex[:12]}"
 
 
+HOSTED_POST_OFF_HINT = (
+    "Hosted post-production is switched off on the Drama API (hosted_post_off). This is not an outage and "
+    "nothing to retry: finish the take on this laptop with `uv run fictora-produce finish --desk <desk>` "
+    "(sound effects, music, mix, captions, mark)."
+)
+
+
+def hosted_post_off(status_code: int, detail: Any, url: str = "") -> bool:
+    """True when a response is the API refusing hosted post-production.
+
+    The API answers ``409 hosted_post_off``; older deployments answered the
+    post-production route with a bare ``503 restate_unavailable``. A 503 on any
+    other route is a real outage and is not matched.
+
+    Parameters
+    ----------
+    status_code
+        HTTP status.
+    detail
+        Parsed JSON body (or text).
+    url
+        Request URL.
+
+    Returns
+    -------
+    bool
+        Whether the operator should run ``finish`` instead.
+    """
+
+    error = detail.get("error") if isinstance(detail, dict) else None
+    code = str(error.get("code") or "") if isinstance(error, dict) else ""
+    if code == "hosted_post_off" or (status_code == 409 and "hosted_post_off" in str(detail)):
+        return True
+    return status_code == 503 and "post-production" in url and code in {"restate_unavailable", ""}
+
+
+def http_error_message(response: httpx.Response, detail: Any) -> str:
+    """The ``SystemExit`` text for a failed response (hosted-post refusals point at ``finish``)."""
+
+    url = str(response.request.url) if response.request is not None else ""
+    if hosted_post_off(response.status_code, detail, url):
+        return f"HTTP {response.status_code}: {HOSTED_POST_OFF_HINT}"
+    return f"HTTP {response.status_code}: {detail}"
+
+
 def _raise_for_status(response: httpx.Response) -> None:
     if response.is_success:
         return
@@ -84,7 +129,7 @@ def _raise_for_status(response: httpx.Response) -> None:
         detail = response.json()
     except Exception:
         detail = response.text
-    raise SystemExit(f"HTTP {response.status_code}: {detail}")
+    raise SystemExit(http_error_message(response, detail))
 
 
 def _payload_summary(payload: dict[str, Any]) -> str:

@@ -56,7 +56,7 @@ Read when you need the detail, not all on the first turn:
 | Estimate | `fictora-produce step --desk D` | The human says yes to the number |
 | Take | `fictora-produce step --desk D --confirm-spend` | — |
 | Read | watch `takes/`, write every fault | Use it, or Change this + cause |
-| Finish | `fictora-produce caption --desk D [--line-start S …]` | QC the captioned file |
+| Finish | `fictora-produce finish --desk D [--take-file F]` | Watch the final file; the last line must read `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓` |
 
 `fictora-produce status --desk D` any time. After each stage: report the path, append `run-notes.md` (`fictora-ops note`), stop.
 
@@ -107,13 +107,31 @@ Takes film on H3 Max R2V: **$1.20 per 15 s take** ($0.08/s). A plate or board is
 
 Compiled prompts are proprietary and stay on the server. Never fetch, save, print or quote them. Record the draft, cast, board and video **job ids** in `run-notes.md`; when a take needs its prompt looked at, hand engineering the job id.
 
-## Finish
+## A take is not done until finish ran; hosted post is off
 
-A take is not done until the local finish ran. Default `api_captions: false`: the take step stops at the raw clip. As soon as the human says Use it, run `fictora-produce caption --desk D` without being asked. A wrong line time: re-run with one `--line-start` per line. Hosted post is off: a `409 hosted_post_off` or `503 restate_unavailable` from post-production means finish locally, not an outage.
+The take step stops at the raw clip: the model's sound only, no music, no effects, no captions. Hosted post-production is switched off on the API, so the finish runs on this laptop. As soon as the human says Use it, run it without being asked:
 
-## Voice
+```bash
+uv run fictora-produce finish --desk D [--episode N] [--take tK] [--take-file F] [--duck-db N] [--sfx-adjust "door=-6"] [--line-start S ...] [--no-colour-match]
+```
 
-"The voice feels off" is a voice change, not a new story and not a new video. Never re-draft or re-film everything for it. Takes where that character speaks are the only candidates for a re-film, with a cause and a stated cost.
+It lays the take's sound effects (from `GET /v1/jobs/{take_job}/take-facts`, never the prompt), the show's music bed (pinned once per show; `set-bed --desk D --path F` pins your own file), matches the look to the approved board, mixes at a measured level near −18 LUFS, burns house captions and puts the Sokii mark top left. Every step writes a new `take-epNN-tK-<step>-vN.mp4`. Needs `FAL_KEY` in `.env` and ffmpeg with libass.
+
+- The last line reads `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`. `NOT DONE` and exit code **5** mean music, SFX or the mix is missing: do not hand the file over; fix what it names and run `finish` again.
+- A `409 hosted_post_off`, or a `503 restate_unavailable` from post-production, is not an outage: never retry it, run `finish`.
+
+## Change a character's voice (never regenerate)
+
+"The voice feels off" is a voice change, not a new story and not a new video. Never re-draft or re-film everything for it.
+
+```bash
+uv run fictora-produce voice --desk D --cast NAME --audition [--episode N]   # 4-10 candidates on their real lines, $0.30
+uv run fictora-produce voice --desk D --cast NAME --pick N                   # after the human picks; free
+uv run fictora-produce revoice --desk D --cast NAME --episode N --take tK   # each filmed take they speak in
+uv run fictora-produce finish --desk D --episode N --take tK --take-file <take-epNN-tK-revoice-vN.mp4>
+```
+
+Play the candidates (`shared/voices/<cast>/audition-vN/`) to the human; a second audition set needs `--cause`. Takes not filmed yet use the new voice as they are. Re-film only a take where the dub does not sit (lips visibly wrong, a shouted line), with a cause and a stated cost; never the other takes, never the story.
 
 ## Recovery
 

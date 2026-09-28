@@ -362,7 +362,10 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             save_production(desk, state)
             note = f"Take raw clip: {url}" if not cfg.api_captions else f"Take delivery: {url}"
             append_run_note(ep_dir, note)
-            hint = " Caption locally (see episode-production skill)." if not cfg.api_captions else ""
+            hint = (
+                f" Not done yet: after the human says Use it, run `fictora-produce finish --desk {desk}`"
+                " (sound effects, music, mix, captions, mark; hosted post is off)."
+            )
             return StepResult(state.phase, f"Complete. video_url={url}.{hint}", tuple(paths))
 
         if state.phase == "complete":

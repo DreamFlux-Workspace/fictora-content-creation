@@ -33,7 +33,7 @@ Matches the content team's reference captions (Closing Shift, Sauce Left Over, T
 | Font | Poppins Bold, bundled in `assets/fonts/` (SIL OFL) so every laptop renders the same |
 | Size | 50 px on a 1344 px-tall frame (3.7% of height), scaled to the take |
 | Edge | Black outline 3, soft 50% black shadow 1, no box |
-| Placement | Centred; bottom of text at 70% of frame height (margin 403 px on 1344) |
+| Placement | Centred; bottom of text at 62% of frame height (margin 511 px on 1344), block inside 55–70% (social safe zones). Never wraps: a caption too wide for one line is set smaller |
 | Reveal | Flicker: words build up to three on screen, then reset; each line resets |
 | Timing | On screen only while the line is spoken; last word holds 0.15 s, never into the next line |
 

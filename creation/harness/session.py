@@ -10,7 +10,13 @@ from typing import Any
 from urllib.parse import urljoin
 
 import httpx
-from creation.harness.http_util import api_headers, poll_until_terminal, save_json
+from creation.harness.http_util import (
+    HOSTED_POST_OFF_HINT,
+    api_headers,
+    hosted_post_off,
+    poll_until_terminal,
+    save_json,
+)
 
 
 class DramaApiRunSession:
@@ -89,6 +95,10 @@ class DramaApiRunSession:
             detail = response.json()
         except Exception:
             detail = response.text
+        if hosted_post_off(response.status_code, detail, str(response.request.url)):
+            raise SystemExit(
+                f"HTTP {response.status_code} {response.request.method} {response.request.url}: {HOSTED_POST_OFF_HINT}"
+            )
         raise SystemExit(f"HTTP {response.status_code} {response.request.method} {response.request.url}: {detail}")
 
     def get(self, path: str) -> dict[str, Any]:
