@@ -64,6 +64,7 @@ Coverage rules. Check them on the board before the board gate; a board that brea
 - Horror: never a whole take on one held shot, and never a fixed wide. The scare gets an insert or a point of view; the threat comes toward the camera; the monster's defining behaviour is on screen (SCP-173 moves only when unseen: cut away and back, and it is closer).
 - One spoken line per beat, nothing else happening during it (a beat that also carried a drawing and a reaction lost its line).
 - End on a wide for the hand-off.
+- When the human names a beat's shots, set them on the beat: `edit --desk D --episode N --beat B --shot "size|subject|camera|angle"` (repeat, 1–4; shot 1 is the beat's first row), then `redraw-board` if the board is already drawn. Write the camera move with direction and size there too.
 - `one_shot` means no cuts. Each board row still keeps its own camera: one phase of the move per row, not a new shot per row.
 
 Sound and captions are built after the take comes back, never asked of the model:
