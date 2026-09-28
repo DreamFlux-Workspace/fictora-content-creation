@@ -16,6 +16,7 @@ Credentials: `FICTORA_DRAMA_GENERATION_SERVICE_TOKEN` and optional `FICTORA_DRAM
 | Steer a draft episode | Aligned | `POST /v1/spines/{id}/episodes/{n}/steers` |
 | Edit lines directly | Aligned | `PATCH /v1/spines/{id}` |
 | Approve script | Aligned | `POST /v1/spines/{id}/approve` — only after the human says yes to the lines |
+| Our own style frame | Aligned | `POST /v1/spines/{id}/look-frame` `{description, size?}` → `{image_url, width, height, cached, cost_usd}`: drawn on the server from the written description alone (text only; a link is `422 look_frame_text_only`), $0.30, cached per (story, description, size). Never pins. Kit: `fictora-produce look-frame --desk D --description FILE`. An older server answers 404 on the route. |
 | Look / style | Aligned | `POST /v1/spines/{id}/look-register` pins `look_register_url`. First-draw stills (cast, boards, look plates) put that crop as Image 1. Cast-edit / look-plate-edit keep identity as Image 1. |
 | Cast plates | Aligned | `POST /v1/spines/{id}/cast/enrol` → poll → download plates → **stop** → `POST /v1/spines/{id}/cast/approve` |
 | Location + prop plates | Aligned | `POST /v1/spines/{id}/look-plates/draw` with `plate=object` (`prop_id`) or `plate=location` (`location_id`). Location uses the set-sheet template (no people). Props use the object-plate template. |
