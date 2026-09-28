@@ -50,7 +50,7 @@ Read when you need the detail, not all on the first turn:
 | --- | --- | --- |
 | Desk | `fictora-produce start --series "…" --prompt "…" --band 15s --preset-id ID --video-lane minimax-h3 --clip-seconds 15 --cut-tempo T` | Say **aligned** before the first paid step |
 | Draft | `fictora-produce step --desk D` (prints the brief's lines against the script: kept, rewritten, cut, added) | Show the human every line that is not `kept`; fix it with `line` or accept it |
-| Plates | `fictora-produce step --desk D` | `approve --desk D --gate plates` after a yes |
+| Plates | `fictora-produce step --desk D` | `approve --desk D --gate plates` after a yes; one character wrong: `redraw-plate --desk D --cast NAME --note "…"` (that character alone, $0.30; show the contact sheet) |
 | Script | (lines from the draft) | `approve --desk D --gate script` after a yes |
 | Board | `fictora-produce step --desk D` (prints the shot list with who speaks on each row, speaker warnings and safe-zone warnings) | `approve --desk D --gate board`; or `redraw-board --desk D --episode N --take tK --cause "…"` |
 | Estimate | `fictora-produce step --desk D` | The human says yes to the number. The line names the lane and its $/s; a `!! SERVER ESTIMATE FAILED` line means the number is the kit's local table: say that to the human before the yes |
