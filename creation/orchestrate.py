@@ -735,7 +735,7 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
     """Run the next automated API step for the current phase.
 
     Before a paid plate or board drawing it refuses, with nothing sent, when the
-    desk drew a look frame that is not approved (:func:`look_gate_refusal`).
+    desk drew a look frame the look yes does not cover (:func:`look_gate_refusal`).
     """
 
     desk = desk.expanduser().resolve()

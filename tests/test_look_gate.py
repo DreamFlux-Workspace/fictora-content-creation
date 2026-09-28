@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import io
 import json
+import os
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 from creation import episode_commands as ec
 from creation import orchestrate
+from creation.cli_ops import main as ops_main
 from creation.cli_produce import main as produce_main
 from creation.ops.floor import approve_series_gate
 from creation.ops.state import load_series
@@ -21,6 +24,7 @@ FRAME_ROUTE = "/v1/spines/sp1/look-frame"
 PIN_ROUTE = "/v1/spines/sp1/look-register"
 URL_1 = "https://cdn.example/look-frame/v1.png"
 URL_2 = "https://cdn.example/look-frame/v2.png"
+URL_3 = "https://cdn.example/look-frame/v3.png"
 
 
 def _answer(url: str) -> dict[str, object]:
@@ -45,6 +49,19 @@ def _draw(desk: Path, api: FakeApi, *urls: str) -> list[Path]:
         ec.run_look_frame(desk, description=f"look number {n}", out=io.StringIO())
         for n in range(1, len(urls) + 1)
     ]
+
+
+def _draw_more(desk: Path, api: FakeApi, url: str) -> Path:
+    api.routes[("POST", FRAME_ROUTE)] = _answer(url)
+    return ec.run_look_frame(desk, description=url, out=io.StringIO())
+
+
+def _written_at(frame: Path, at_utc: str | None, seconds: int) -> None:
+    """Set the frame file's time to ``seconds`` after (or before) the look yes."""
+
+    assert at_utc
+    stamp = datetime.fromisoformat(at_utc).timestamp() + seconds
+    os.utime(frame, (stamp, stamp))
 
 
 def _paid_calls(api: FakeApi) -> list[str]:
@@ -245,3 +262,176 @@ def test_an_adopted_desk_approved_by_fictora_ops_is_not_held(
     set_phase(desk, "ready_boards_enrol")
 
     assert orchestrate.look_gate_refusal(desk) is None
+
+
+# --- a new look frame after the yes ----------------------------------------------------------
+
+
+def test_a_frame_drawn_after_the_yes_opens_the_gate_again(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _draw(desk, api, URL_1)
+    _pin_answers(api)
+    ec.run_approve_look(desk, out=io.StringIO())
+    _draw_more(desk, api, URL_2)
+    api.calls.clear()
+    set_phase(desk, "ready_boards_enrol")
+
+    assert produce_main(["step", "--desk", str(desk)]) == 2
+
+    err = capsys.readouterr().err
+    assert "look gate is open again" in err
+    assert "shared/look/look-frame-v2.png was drawn after the look was approved" in err
+    assert "shared/look/look-frame-v1.png" in err
+    assert api.calls == []
+
+
+def test_a_cached_redraw_of_the_approved_frame_keeps_the_gate_shut(
+    desk: Path, api: FakeApi
+) -> None:
+    _draw(desk, api, URL_1)
+    _pin_answers(api)
+    ec.run_approve_look(desk, out=io.StringIO())
+
+    _draw_more(desk, api, URL_1)
+
+    assert orchestrate.look_gate_refusal(desk) is None
+
+
+def test_picking_an_older_frame_covers_the_frames_already_drawn(
+    desk: Path, api: FakeApi
+) -> None:
+    first, _second = _draw(desk, api, URL_1, URL_2)
+    _pin_answers(api)
+    ec.run_approve_look(desk, path=first, out=io.StringIO())
+
+    assert orchestrate.look_gate_refusal(desk) is None
+    stamp = json.loads((desk / "shared" / "look" / "look-approval.json").read_text())
+    assert stamp["frame"] == "look-frame-v1.png"
+    assert stamp["url"] == URL_1
+    assert stamp["drawn"] == ["look-frame-v1.png", "look-frame-v2.png"]
+    assert stamp["at_utc"] == load_series(desk).look.at_utc
+
+
+def test_a_new_yes_closes_the_reopened_gate_even_for_the_same_frame(
+    desk: Path, api: FakeApi
+) -> None:
+    (first,) = _draw(desk, api, URL_1)
+    _pin_answers(api)
+    ec.run_approve_look(desk, out=io.StringIO())
+    _draw_more(desk, api, URL_2)
+    assert orchestrate.look_gate_refusal(desk) is not None
+
+    out = io.StringIO()
+    ec.run_approve_look(desk, path=first, out=out)
+
+    assert "already approved" not in out.getvalue()
+    assert orchestrate.look_gate_refusal(desk) is None
+    assert len(api.posted(PIN_ROUTE)) == 1
+
+
+def test_an_older_yes_with_no_record_covers_frames_written_by_then(
+    desk: Path, api: FakeApi
+) -> None:
+    (first,) = _draw(desk, api, URL_1)
+    look = approve_series_gate(desk, "look")
+    (desk / "shared" / "look" / "look-approval.json").unlink()
+    _written_at(first, look.at_utc, -3600)
+    assert orchestrate.look_gate_refusal(desk) is None
+
+    second = _draw_more(desk, api, URL_2)
+    _written_at(second, look.at_utc, -60)
+    assert orchestrate.look_gate_refusal(desk) is None
+
+    third = _draw_more(desk, api, URL_3)
+    _written_at(third, look.at_utc, 60)
+    refusal = orchestrate.look_gate_refusal(desk)
+    assert (
+        refusal and "look-frame-v3.png was drawn after the look was approved" in refusal
+    )
+
+
+def test_an_older_yes_naming_a_frame_covers_it_whenever_it_was_written(
+    desk: Path, api: FakeApi
+) -> None:
+    (first,) = _draw(desk, api, URL_1)
+    look = approve_series_gate(desk, "look", path="shared/look/look-frame-v1.png")
+    (desk / "shared" / "look" / "look-approval.json").unlink()
+
+    _written_at(first, look.at_utc, 3600)
+
+    assert orchestrate.look_gate_refusal(desk) is None
+
+
+def test_fictora_ops_look_yes_covers_the_frames_drawn_so_far_and_no_later_one(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _draw(desk, api, URL_1, URL_2)
+    argv = ["approve", "--desk", str(desk), "--gate", "look"]
+    assert ops_main(argv + ["--path", "look-frame-v1.png"]) == 0
+    assert orchestrate.look_gate_refusal(desk) is None
+
+    _draw_more(desk, api, URL_3)
+
+    refusal = orchestrate.look_gate_refusal(desk)
+    assert refusal and "shared/look/look-frame-v3.png" in refusal
+
+
+# --- redraw-plate and redraw-board hold like step --------------------------------------------
+
+REDRAWS = {
+    "redraw-plate": ["--cast", "Ren", "--note", "shorter hair"],
+    "redraw-board": ["--episode", "1", "--take", "t1", "--cause", "wrong room"],
+}
+
+
+@pytest.mark.parametrize("command", sorted(REDRAWS))
+def test_a_redraw_is_refused_while_a_drawn_look_is_unapproved(
+    desk: Path, api: FakeApi, command: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _draw(desk, api, URL_1)
+    api.calls.clear()
+
+    assert produce_main([command, "--desk", str(desk), *REDRAWS[command]]) == 2
+
+    err = capsys.readouterr().err
+    assert err.startswith("Refused: the look gate is open.")
+    assert "shared/look/look-frame-v1.png" in err and "--gate look" in err
+    assert f"Then run {command} again." in err
+    assert api.calls == []
+
+
+@pytest.mark.parametrize("command", sorted(REDRAWS))
+def test_a_redraw_is_refused_for_a_frame_drawn_after_the_yes(
+    desk: Path, api: FakeApi, command: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _draw(desk, api, URL_1)
+    _pin_answers(api)
+    ec.run_approve_look(desk, out=io.StringIO())
+    _draw_more(desk, api, URL_2)
+    api.calls.clear()
+    capsys.readouterr()
+
+    assert produce_main([command, "--desk", str(desk), *REDRAWS[command]]) == 2
+
+    assert "look gate is open again" in capsys.readouterr().err
+    assert api.calls == []
+
+
+@pytest.mark.parametrize("command", sorted(REDRAWS))
+def test_a_redraw_passes_the_gate_once_the_look_is_approved(
+    desk: Path, api: FakeApi, command: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _draw(desk, api, URL_1)
+    _pin_answers(api)
+    ec.run_approve_look(desk, out=io.StringIO())
+    capsys.readouterr()
+
+    api.calls.clear()
+
+    # Past the gate, the command reaches the paid route this fake does not serve.
+    with pytest.raises(AssertionError, match="unexpected POST"):
+        produce_main([command, "--desk", str(desk), *REDRAWS[command]])
+
+    assert "look gate" not in capsys.readouterr().err
+    assert _paid_calls(api)
