@@ -12,6 +12,7 @@ from creation.ops.folder import (
     run_folder_name,
     slugify_series,
 )
+from creation.look_gate import record_look_approval
 from creation.ops.luma import measure_board_luma
 from creation.ops.preflight import PreflightReport, evaluate_preflight
 from creation.ops.state import (
@@ -178,9 +179,18 @@ def set_take_lines(
 
 
 def approve_series_gate(
-    desk: Path, gate: str, *, path: str | None = None, note: str | None = None
+    desk: Path,
+    gate: str,
+    *,
+    path: str | None = None,
+    note: str | None = None,
+    url: str | None = None,
 ) -> GateRecord:
     """Record a human yes on a series-level gate.
+
+    A look yes also writes down which look frames it covers
+    (:func:`creation.look_gate.record_look_approval`): a frame drawn after it
+    opens the gate again.
 
     Parameters
     ----------
@@ -192,6 +202,8 @@ def approve_series_gate(
         File the human opened.
     note
         Optional note.
+    url
+        Look only: the approved frame's URL, when known.
 
     Returns
     -------
@@ -211,6 +223,8 @@ def approve_series_gate(
     setattr(series, gate, record)
     save_series(desk, series)
     write_queue(desk, series)
+    if gate == "look":
+        record_look_approval(desk, record, url=url)
     return record
 
 

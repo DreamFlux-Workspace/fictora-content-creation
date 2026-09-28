@@ -60,9 +60,11 @@ from creation.harness.visual_first_ep1 import reuse_generation_body
 from creation.look_gate import (
     look_approved,
     look_frame_url,
+    look_gate_refusal,
     newest_look_frame,
     pinned_look_url,
     record_look_frame_url,
+    unapproved_look_frame,
 )
 from creation.ops.floor import (
     add_episode,
@@ -208,6 +210,14 @@ def _save_desk_json(desk: Path, stem: str, payload: Any) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _hold_for_look(desk: Path, command: str) -> None:
+    """Refuse a paid drawing, before anything is sent, while a drawn look frame awaits its yes (as ``step`` does)."""
+
+    refusal = look_gate_refusal(desk.expanduser().resolve(), command=command)
+    if refusal:
+        raise RuntimeError(refusal)
 
 
 def _note(desk: Path, episode: int, body: str) -> None:
@@ -2253,7 +2263,8 @@ def run_approve_look(
     ``look --url``. Without ``url`` or ``path`` it takes the newest
     ``shared/look/look-frame-vN`` and prints which. Idempotent: a frame the server
     already holds (``api/spine.json`` ``look_register_url``) is not pinned again, and
-    a look already approved for it is left as it is.
+    a look already approved for it is left as it is (unless a frame drawn after
+    that yes opened the gate again: then the yes is recorded anew and covers it).
 
     Parameters
     ----------
@@ -2287,13 +2298,17 @@ def run_approve_look(
     note = f"pinned {url}"
     current = load_series(desk).look
     if pinned_look_url(desk) == url:
-        if current.status == "approved" and current.note == note:
+        if (
+            current.status == "approved"
+            and current.note == note
+            and unapproved_look_frame(desk) is None
+        ):
             print(f"look already approved and pinned: {shown}", file=out)
             return current
         print(f"look_register_url: {url} (already pinned; not sent again)", file=out)
     else:
         _pin_look(desk, url, out)
-    record = approve_series_gate(desk, "look", path=shown, note=note)
+    record = approve_series_gate(desk, "look", path=shown, note=note, url=url)
     _note(desk, 1, f"look approved: {shown} ({url}).")
     print(
         f"look {record.status}: {shown}. Next: fictora-produce step --desk {desk}",
@@ -2875,6 +2890,8 @@ def run_redraw_board(
     (a re-roll). The server carries a beat edit into the redraw itself (it
     re-authors the take's frames first). Prints the redrawn board's shot list and
     safe-zone check, and sends the desk back to the board gate.
+    Refused before anything is sent while a drawn look frame awaits its yes
+    (as ``step`` is).
 
     Parameters
     ----------
@@ -2903,6 +2920,7 @@ def run_redraw_board(
     if not (take_id.startswith("t") and take_id[1:].isdigit()):
         raise CommandStopped("--take is t1, t2 ...")
     set_index = int(take_id[1:])
+    _hold_for_look(desk, "redraw-board")
     desk, state, run = _desk_session(desk)
     cfg = load_production_config(desk)
     slot = episode_by_ordinal(load_series(desk), episode)
@@ -3109,7 +3127,8 @@ def run_redraw_plate_with_note(
     a re-run never stacks it twice), then ``POST .../cast/{cast_id}/regenerate``
     redraws that character alone with every note on their card. The job key is
     recorded before the POST, so an interrupted run picks up the same job and
-    never pays twice. Saves the plate next to the old ones as a new version,
+    never pays twice. Refused before anything is sent while a drawn look frame
+    awaits its yes (as ``step`` is). Saves the plate next to the old ones as a new version,
     draws a contact sheet of the whole cast with the new plate marked, books
     the still on the desk ledger, and writes a run note.
 
@@ -3133,6 +3152,8 @@ def run_redraw_plate_with_note(
     ------
     CommandStopped
         Empty note, unknown character, a failed job, or no new plate on the spine.
+    RuntimeError
+        A drawn look frame the look yes does not cover (nothing is sent).
     """
 
     out = out or sys.stdout
@@ -3141,6 +3162,7 @@ def run_redraw_plate_with_note(
         raise CommandStopped(
             "--note is required: what to change about this character, in your words"
         )
+    _hold_for_look(desk, "redraw-plate")
     desk, state, run = _desk_session(desk)
     folder, ep = _plates_home(desk)
     try:
