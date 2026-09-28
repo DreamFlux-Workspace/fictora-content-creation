@@ -70,6 +70,7 @@ uv run fictora-produce author --desk … --episode 2 --direction 1   # or --line
 
 # Edits and redraws (see the skill's reference.md)
 uv run fictora-produce edit --desk … --episode 1 --frame 3 --set shot_scale="close up"
+uv run fictora-produce edit --desk … --episode 1 --beat 2 --shot "extreme close-up|her hands|handheld" --shot "wide|the shop|locked|high angle"
 uv run fictora-produce redraw-board --desk … --episode 1 --take t1 --cause "face under the caption band"
 uv run fictora-produce check-lines --desk … --episode 1
 

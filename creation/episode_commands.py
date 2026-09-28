@@ -85,6 +85,7 @@ from creation.production_state import (
     save_production,
     start_episode,
 )
+from creation.shot_plan import OLDER_SERVER_HINT, ShotPlanError, plan_from_json, plan_from_shots, plan_lines
 from creation.spine_view import (
     beats_by_take,
     dialogue_line_ids,
@@ -704,6 +705,17 @@ def _changes(before: Mapping[str, Any], after: Mapping[str, Any], prefix: str = 
     return lines
 
 
+def _shot_plan_change(beat: Mapping[str, Any], plan: list[dict[str, str]] | None) -> list[str]:
+    """Printable lines for a beat's plan going from what it has to ``plan`` (``None`` = cleared); empty if equal."""
+
+    before = beat.get("shot_plan") or None
+    if before == plan:
+        return []
+    old = plan_lines(before, indent="    was ") or ["    was: no plan (the frames author chooses the shots)"]
+    new = plan_lines(plan, indent="    now ") or ["    now: no plan (the frames author chooses the shots)"]
+    return ["  shot_plan:", *old, *new]
+
+
 def _find(spine: Mapping[str, Any], items: Sequence[Any], id_key: str, wanted: str, *, episode: int, kind: str) -> dict[str, Any]:
     episode_id = episode_id_for(spine, episode)
     mine = [item for item in items if isinstance(item, dict) and item.get("episode_id") == episode_id]
@@ -856,6 +868,8 @@ def build_patch(
     subtitle: str | None = None,
     speaker: str | None = None,
     off_screen: bool | None = None,
+    shot_plan: list[dict[str, str]] | None = None,
+    clear_shot_plan: bool = False,
 ) -> tuple[dict[str, Any], list[str]]:
     """Build the spine patch for one beat, frame or line, merged onto what the spine has now.
 
@@ -884,11 +898,16 @@ def build_patch(
         A line's new speaker: a cast name or id already on the story.
     off_screen
         A line's speaker heard, not seen (``True``) or back on screen (``False``).
+    shot_plan
+        A beat's new ``shot_plan`` (checked by :mod:`creation.shot_plan`); it replaces the whole plan.
+    clear_shot_plan
+        Send ``shot_plan: null``: the beat's plan is removed and the frames author chooses its shots again.
 
     Returns
     -------
     tuple[dict[str, Any], list[str]]
-        ``{"beats"|"frames"|"dialogue_lines": [...]}`` and one line per changed field.
+        ``{"beats"|"frames"|"dialogue_lines": [...]}`` and one line per changed field. A beat edit that only
+        changes the plan sends ``{beat_id, shot_plan}`` and nothing else.
     """
 
     targets = [value for value in (beat, frame, line_id) if value is not None]
@@ -926,8 +945,19 @@ def build_patch(
         return {"dialogue_lines": [entry]}, changed
     if any(value is not None for value in (text, spoken, subtitle, speaker, off_screen)):
         raise CommandStopped("--text/--spoken/--subtitle/--speaker/--off-screen edit a line: pass --line-id")
+    planning = shot_plan is not None or clear_shot_plan
+    if planning and beat is None:
+        raise CommandStopped("--shot-plan/--shot/--clear-shot-plan belong to a beat: pass --beat N")
+    if shot_plan is not None and clear_shot_plan:
+        raise CommandStopped("pass a new plan or --clear-shot-plan, not both")
     if beat is not None:
         found = _find(spine, spine.get("beats") or [], "beat_id", beat, episode=episode, kind="beat")
+        if planning:
+            plan_changed = _shot_plan_change(found, None if clear_shot_plan else shot_plan)
+            if intent is None and not assignments:
+                if not plan_changed:
+                    raise CommandStopped(f"nothing to change on {found.get('beat_id')}")
+                return {"beats": [{"beat_id": found["beat_id"], "shot_plan": shot_plan}]}, plan_changed
         direction = copy.deepcopy(found.get("motion_direction") or {})
         new_intent = intent if intent is not None else str(found.get("motion_intent") or "")
         for key, value in assignments:
@@ -935,9 +965,13 @@ def build_patch(
         before = {"motion_intent": found.get("motion_intent"), "motion_direction": found.get("motion_direction") or {}}
         after = {"motion_intent": new_intent, "motion_direction": direction}
         changed = _changes(before, after)
+        entry: dict[str, Any] = {"beat_id": found["beat_id"], "motion_intent": new_intent, "motion_direction": direction}
+        if planning:
+            entry["shot_plan"] = shot_plan
+            changed += plan_changed
         if not changed:
             raise CommandStopped(f"nothing to change on {found.get('beat_id')}")
-        return {"beats": [{"beat_id": found["beat_id"], "motion_intent": new_intent, "motion_direction": direction}]}, changed
+        return {"beats": [entry]}, changed
     if intent is not None:
         raise CommandStopped("--intent is a beat field; a frame is edited with --set on its visual_brief")
     found = _find(spine, spine.get("frames") or [], "frame_id", str(frame), episode=episode, kind="frame")
@@ -1485,6 +1519,8 @@ def run_edit(
     subtitle: str | None = None,
     speaker: str | None = None,
     off_screen: bool | None = None,
+    shot_plan: list[dict[str, str]] | None = None,
+    clear_shot_plan: bool = False,
     select_regen: bool = False,
     preview_only: bool = False,
     out: Any = None,
@@ -1508,6 +1544,11 @@ def run_edit(
         Episode ordinal.
     beat, frame, line_id, intent, assignments, text, spoken, subtitle, speaker, off_screen
         As :func:`build_patch`.
+    shot_plan, clear_shot_plan
+        A beat's new shot plan, or remove it (:func:`build_patch`). After the script gate the cascade
+        marks the take's frames and its next ``redraw-board`` re-authors them to the plan. A 422 is
+        explained as an older server (:data:`creation.shot_plan.OLDER_SERVER_HINT`); a server that
+        answers but does not keep the plan is said plainly.
     select_regen
         After the script gate: also run the cascade's paid items.
     preview_only
@@ -1522,6 +1563,7 @@ def run_edit(
     """
 
     out = out or sys.stdout
+    planning = shot_plan is not None or clear_shot_plan
 
     def build(spine: Mapping[str, Any]) -> tuple[dict[str, Any], list[str], str]:
         patch, changed = build_patch(
@@ -1537,19 +1579,47 @@ def run_edit(
             subtitle=subtitle,
             speaker=speaker,
             off_screen=off_screen,
+            shot_plan=shot_plan,
+            clear_shot_plan=clear_shot_plan,
         )
         what = f"beat {beat}" if beat is not None else (f"frame {frame}" if frame is not None else f"line {line_id}")
         return patch, changed, what
 
-    desk, path, fresh, cascade, what, changed = _send_story_edit(
-        desk, episode=episode, build=build, select_regen=select_regen, preview_only=preview_only, out=out
-    )
+    try:
+        desk, path, fresh, cascade, what, changed = _send_story_edit(
+            desk, episode=episode, build=build, select_regen=select_regen, preview_only=preview_only, out=out
+        )
+    except CommandStopped as exc:
+        if planning and "HTTP 422" in str(exc):
+            raise CommandStopped(f"the server refused the shot plan: {exc}\n  {OLDER_SERVER_HINT}") from None
+        raise
+    if planning and not preview_only:
+        _report_shot_plan(fresh, episode=episode, beat=str(beat), wanted=None if clear_shot_plan else shot_plan, out=out)
     if line_id is not None and not preview_only:
         relocalized = text is not None and spoken is None and _spoken_language(fresh) != "en-US"
         _after_line_edit(desk, fresh, episode=episode, line_id=line_id, after_gate=cascade, relocalized=relocalized, out=out)
     if not preview_only:
         _note(desk, episode, f"edit {what}: " + "; ".join(line.strip() for line in changed))
     return path
+
+
+def _report_shot_plan(
+    spine: Mapping[str, Any], *, episode: int, beat: str, wanted: list[dict[str, str]] | None, out: Any
+) -> None:
+    """Print the beat's plan as the server now holds it, and say so when it did not keep what was sent."""
+
+    found = _find(spine, spine.get("beats") or [], "beat_id", beat, episode=episode, kind="beat")
+    held = found.get("shot_plan") or None
+    shown = plan_lines(held, indent="  ") or ["  (no plan: the frames author chooses the shots)"]
+    print(f"{found.get('beat_id')} shot plan on the server now:", file=out)
+    for line in shown:
+        print(line, file=out)
+    if held != wanted:
+        print(
+            "  !! the server answered but does not hold the plan that was sent: it is likely older than beat shot "
+            "plans (fictora-drama #464) and dropped the field. Nothing on the board will follow it.",
+            file=out,
+        )
 
 
 def _run_cascade(
@@ -2824,6 +2894,19 @@ def add_episode_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     edit.add_argument("--text", default=None, help="Line: the English script text.")
     edit.add_argument("--spoken", default=None, help="Line: pin the exact performed line (JA/KO shows).")
     edit.add_argument("--subtitle", default=None, help="Line: the subtitle for the pinned line (with --spoken).")
+    plan = edit.add_mutually_exclusive_group()
+    plan.add_argument(
+        "--shot-plan", default=None, metavar="JSON",
+        help=(
+            "Beat: its shot plan, 1-4 shots [{\"size\", \"subject\", \"camera\"?, \"angle\"?}]; shot 1 is the beat's "
+            "first board row. Replaces the whole plan. JSON, or @FILE / an existing file path to read it from."
+        ),
+    )  # fmt: skip
+    plan.add_argument(
+        "--shot", dest="shots", action="append", default=None, metavar="SIZE|SUBJECT|CAMERA|ANGLE",
+        help="Beat: one shot of its plan, in order; repeat 1-4 times. Camera and angle optional.",
+    )  # fmt: skip
+    plan.add_argument("--clear-shot-plan", action="store_true", help="Beat: remove its plan (the frames author chooses again).")
     edit.add_argument("--select-regen", action="store_true", help="After the gate: also run paid regeneration items.")
     edit.add_argument("--preview", action="store_true", help="After the gate: print the cascade and stop.")
 
@@ -2972,6 +3055,13 @@ def dispatch_episode(args: argparse.Namespace) -> int:
             run_memory(args.desk, note=args.note, thread=args.thread)
             return 0
         if args.command == "edit":
+            try:
+                shot_plan = (
+                    plan_from_json(args.shot_plan) if args.shot_plan is not None
+                    else plan_from_shots(args.shots) if args.shots else None
+                )  # fmt: skip
+            except ShotPlanError as exc:
+                raise CommandStopped(str(exc)) from None
             run_edit(
                 args.desk,
                 episode=args.episode,
@@ -2983,6 +3073,8 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 text=args.text,
                 spoken=args.spoken,
                 subtitle=args.subtitle,
+                shot_plan=shot_plan,
+                clear_shot_plan=args.clear_shot_plan,
                 select_regen=args.select_regen,
                 preview_only=args.preview,
             )

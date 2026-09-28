@@ -100,7 +100,7 @@ Open the newest `boards/` file and check (full list: [checklists.md](../../../do
 - **Speaking mouths.** No clench, grit, pressed or closed mouth on a speaking row. The big acting goes before the line and after it; during the words the mouth moves. Lips move on every row that carries a line; check the speaker's face is readable there.
 - **Unseen movers.** Something that must never be seen moving (a statue, a doll) is banned by name in `forbidden_elements` ("no statue motion") on every frame that shows it. Then each row that shows it opens with it already in place and keeps it in the same place in both cells. The take compile enforces this, but still watch the take for a slide-in.
 - **Expressions** fit the moment and the right face (library in reference.md).
-- The hook, the hand-off, the safe zones, no readable text or digits. Report brightness: information only, a dark board is the human's call. To change a board, fix the frame first (`edit --frame … --set …`), then `redraw-board` (it takes no notes).
+- The hook, the hand-off, the safe zones, no readable text or digits. Report brightness: information only, a dark board is the human's call. To change a board, fix the frame first (`edit --frame … --set …`), then `redraw-board` (it takes no notes). When the human names a beat's shots, set them on the beat instead: `edit --beat N --shot "size|subject|camera|angle"` (repeat, 1–4; shot 1 is the beat's first row), then `redraw-board` if the board is already drawn. Never write "SHOT n —" into `--intent`.
 
 ## Spend (warn, never block)
 
