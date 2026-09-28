@@ -69,8 +69,9 @@ def server_refused_episode_ordinal_field(
     text
         Error text from the HTTP client (often ``HTTP 422 …``).
     request_body
-        Body that was posted. When it already carries ``episode_ordinal``, this
-        is never a schema refusal.
+        Body that was posted. An older API can only refuse ``episode_ordinal``
+        when the body sent it, so a body without the field is never a schema
+        refusal. ``None`` (body unknown) is judged on the text alone.
 
     Returns
     -------
@@ -78,7 +79,7 @@ def server_refused_episode_ordinal_field(
         True when the message looks like an older API rejecting the field.
     """
 
-    if request_films_one_episode(request_body) is not None:
+    if request_body is not None and request_films_one_episode(request_body) is None:
         return False
     if "HTTP 422" not in text:
         return False

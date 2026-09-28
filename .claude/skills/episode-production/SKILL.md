@@ -194,3 +194,9 @@ uv run fictora-ops adopt-desk --desk D             # only after the human agrees
 ```
 
 It only creates files: `series.pre-adopt.json` (a backup), a hard link `take-epNN-tK-raw-vN.mp4` beside each old raw take, `epNN/api/17_raw_scene_clips.json` and `epNN/api/spine.json`, `production.config.json`, and `production.json` with the episode and phase it inferred. Nothing is renamed, moved, deleted or overwritten, and the take list's `provider_spec` is dropped unread. Running it twice changes nothing. An existing, different `production.json` stops it; `--force` replaces it only after a backup. Every `CONFIRM` line in the plan (a gate the old desk never recorded, an unfinished job, a take without a verdict) goes to the human before the next paid step.
+
+## Setup check, one plate again, the ledger
+
+- **First thing on a new laptop:** `uv run fictora-produce setup-check`. One ✓/✗ line each: the API token set and accepted (one free authenticated read), ffmpeg and ffprobe, libass (captions), the filters the finish and edits use, Python 3.12+, uv. Any ✗ exits 1: fix it before the first paid step. It never prints the token.
+- **One character's plate again**, at the plates gate only (after `step` drew them, before `approve --gate plates`): `fictora-produce plates --desk D --cast NAME --cause "…"` redraws that one plate ($0.30) and keeps the rest of the cast. The cause is a label (the route takes no notes) and "try again" is refused. Past the plates gate it is refused before anything is sent.
+- **Book by hand with a unit:** `fictora-ops spend --desk D --episode N --usd X [--take tK] --unit look-frame` (or `voice-line`, `cue:gaan-sting` …). Every booking also lands in `spend_log` in `series.json` (episode, take, dollars, unit, time); the kit's own bookings name their unit.

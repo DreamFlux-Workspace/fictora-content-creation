@@ -17,6 +17,7 @@ from creation.episode_commands import EPISODE_COMMANDS, add_episode_parsers, dis
 from creation.orchestrate import approve_gate, bind_desk, run_step, status_message
 from creation.production_config import load_production_config, save_production_config
 from creation.recover import cancel_video_job, prepare_video_retry
+from creation.setup_check import run_setup_check
 from creation.ops.floor import init_series_desk
 from creation.ops.folder import DEFAULT_RUN_PARENT
 from creation.ops.notes import append_run_note
@@ -110,10 +111,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     cap.add_argument("--no-open", action="store_true", help="Do not open the captioned file.")
 
+    sub.add_parser(
+        "setup-check",
+        help="Is this laptop ready? API token set and accepted, ffmpeg/ffprobe with libass and the kit's filters, "
+        "Python, uv. Exit 1 on any ✗. Spends nothing.",
+    )
+
     add_post_parsers(sub)
     add_episode_parsers(sub)
 
     args = parser.parse_args(list(argv) if argv is not None else None)
+    if args.command == "setup-check":
+        return run_setup_check()
     if args.command in EPISODE_COMMANDS:
         try:
             return dispatch_episode(args)

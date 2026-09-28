@@ -3,7 +3,8 @@
 Each command calls the deployed Drama API, saves what it read or made on the
 desk with a versioned name, and never approves (the human's yes goes through
 ``fictora-produce approve``). None of them spends except ``redraw-board``
-(one still per board), ``look-frame`` (one still) and an ``edit --select-regen`` cascade.
+(one still per board), ``plates`` (one still), ``look-frame`` (one still) and an
+``edit --select-regen`` cascade.
 
 - ``arc --list`` / ``arc --pick N``: episode 2's series arc (``director/brief``, ``series-arc``).
 - ``brief --episode N``: the next-episode directions (for ``author --direction K``).
@@ -15,6 +16,7 @@ desk with a versioned name, and never approves (the human's yes goes through
 - ``look`` / ``look-note``: pin the style frame by URL, add or remove look notes.
 - ``spine --refresh``: save the story again.
 - ``redraw-board``: redraw one board on ``/boards/{set}/regenerate``.
+- ``plates --cast NAME --cause``: redraw one character's plate on ``/cast/{cast_id}/regenerate``, at the plates gate.
 - ``check-lines``: were the approved lines in the take's instructions (take facts, never the prompt)?
 - ``film --episode N [--take tK]``: price, then (``--confirm-spend``) film episode N alone or only take K
   of it. Nothing earlier is filmed or booked again. A re-film needs a written cause.
@@ -933,7 +935,7 @@ def _run_cascade(
         if chosen[str(item["item_id"])] and item.get("estimated_tier") == PAID_TIER:
             recipe = str(item.get("recipe_id") or "")
             if "still" in recipe or "board" in recipe:
-                record_spend(desk, episode=episode, usd=float(STILL_USD))
+                record_spend(desk, episode=episode, usd=float(STILL_USD), unit=f"cascade:{item.get('item_id')}")
             else:
                 print(f"  !! {item.get('item_id')} ran on the server and is not priced here; book it by hand", file=out)
     for stale in answer.get("stale_storyboard_sets") or []:
@@ -1072,7 +1074,7 @@ def run_look_frame(desk: Path, *, description_file: Path, size: str = LOOK_FRAME
     # ``cost_usd`` is what this call booked on the server: 0 for a cached frame.
     cost = float(answer.get("cost_usd") or 0.0)
     if cost > 0:
-        record_spend(desk, episode=1, usd=cost)
+        record_spend(desk, episode=1, usd=cost, unit="look-frame")
     cached = " (already drawn for this description; nothing booked)" if answer.get("cached") else ""
     _note(desk, 1, f"look-frame: {path.name} from {description_file.name}, ${cost:.2f}{cached}. {image_url}")
     print(str(path), file=out)
@@ -1262,6 +1264,115 @@ def run_redraw_board(desk: Path, *, episode: int, take_id: str, cause: str, out:
         print(line, file=out)
     _note(desk, episode, f"board redraw {take_id}: {made[0][1].name}, ${float(STILL_USD):.2f}. Cause (label only): {cause}")
     return made[0][1]
+
+
+# --- Plate redraw ------------------------------------------------------------------------------------
+
+PLATE_CAUSE_IS_A_LABEL = (
+    "The cause is a label for the desk and the run notes; the regenerate route takes no notes, so it does not "
+    "change what is drawn. To change the drawing, change the character on the story first (or add a look note)"
+)
+
+
+def _cast_card(spine: Mapping[str, Any], wanted: str) -> tuple[int, dict[str, Any]]:
+    """The 1-based cast position (the ``plate-ep01-N`` number) and card named by ``wanted`` (name or cast id)."""
+
+    cast = [card for card in spine.get("cast") or [] if isinstance(card, dict) and card.get("cast_id")]
+    key = wanted.strip().casefold()
+    for index, card in enumerate(cast, start=1):
+        if key in {str(card["cast_id"]).casefold(), str(card.get("name") or "").strip().casefold()}:
+            return index, card
+    names = ", ".join(str(card.get("name") or card["cast_id"]) for card in cast) or "none"
+    raise CommandStopped(f"{wanted!r} is not on this story's cast (it has: {names})")
+
+
+def _plate_url(spine: Mapping[str, Any], cast_id: str) -> str:
+    for asset in spine.get("media_assets") or []:
+        if (
+            isinstance(asset, dict)
+            and asset.get("relation_type") == "cast_card"
+            and asset.get("relation_id") == cast_id
+            and not asset.get("stale")
+            and asset.get("url")
+        ):
+            return str(asset["url"])
+    return ""
+
+
+def run_redraw_plate(desk: Path, *, cast: str, cause: str, out: Any = None) -> Path:
+    """Redraw one character's plate on ``POST /v1/spines/{id}/cast/{cast_id}/regenerate``. Spends one still.
+
+    Only at the plates gate (phase ``wait_plates``), so the boards are never drawn
+    from a plate the human did not see. The rest of the cast is untouched and not
+    paid for again. A whole-cast ``cast/enrol`` is not used: with no stale cast
+    card the server answers the first drawing's job again and draws nothing.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    cast
+        The character's name or cast id.
+    cause
+        What in the direction was wrong: a label on the desk (the route takes no notes).
+    out
+        Text stream.
+
+    Returns
+    -------
+    Path
+        The new plate file (``ep01/plates/plate-ep01-N-vK.png``).
+    """
+
+    out = out or sys.stdout
+    text = _check_cause(cause, refilm=True, what="This plate")
+    desk, state, run = _desk_session(desk)
+    try:
+        if state.phase != "wait_plates":
+            raise CommandStopped(
+                f"a plate is redrawn only at the plates gate, before `approve --gate plates` (this desk is at "
+                f"{state.phase}); the boards and takes are drawn from the approved plates"
+            )
+        cfg = load_production_config(desk)
+        print(f"[plates] {PLATE_CAUSE_IS_A_LABEL}.", file=sys.stderr)
+        spine = run.spine(state.spine_id or "")
+        index, card = _cast_card(spine, cast)
+        cast_id = str(card["cast_id"])
+        name = str(card.get("name") or cast_id)
+        body = reuse_generation_body(
+            prompt=scene_prompt(spine, state.prompt),
+            spine=spine,
+            preset_id=state.preset_id,
+            preset_version=state.preset_version,
+            video_lane=state.video_lane,
+        )
+        terminal = run_unit(
+            desk,
+            run,
+            unit=f"plate-{cast_id}-redraw",
+            path=f"/v1/spines/{state.spine_id}/cast/{quote(cast_id, safe='')}/regenerate",
+            body=body,
+            video_route=True,
+            deadline_seconds=cfg.poll_cast_deadline_seconds,
+        )
+        _save_desk_json(desk, f"plate-redraw-{cast_id}-terminal", terminal)
+        spine = run.spine(state.spine_id or "")
+        save_spine_snapshot(desk, 1, spine)
+        url = _plate_url(spine, cast_id)
+        if not url:
+            raise CommandStopped(f"the redraw completed but the spine has no current plate for {name} ({cast_id})")
+        fetch = httpx.Client(timeout=120.0)
+        try:
+            path = _orchestrate.download_to_versioned(fetch, url, desk / "ep01" / "plates", f"plate-ep01-{index}")
+        finally:
+            fetch.close()
+    finally:
+        run.client.close()
+    record_spend(desk, episode=1, usd=float(STILL_USD), unit=f"plate-redraw:{cast_id}")
+    _note(desk, 1, f"plate redraw {name} ({cast_id}): {path.name}, ${float(STILL_USD):.2f}. Cause (label only): {text}")
+    print(str(path), file=out)
+    print(f"{name}'s plate redrawn (${float(STILL_USD):.2f}). Show it; the plates gate is still open.", file=out)
+    return path
 
 
 # --- Line check -------------------------------------------------------------------------------------
@@ -1626,6 +1737,7 @@ EPISODE_COMMANDS = frozenset(
         "look-note",
         "spine",
         "redraw-board",
+        "plates",
         "check-lines",
         "film",
     }
@@ -1724,6 +1836,16 @@ def add_episode_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     redraw.add_argument("--take", required=True, help="t1, t2 ...")
     redraw.add_argument("--cause", required=True, help="Why: a LABEL for the desk; the server takes no redraw notes.")
 
+    plates = sub.add_parser(
+        "plates",
+        help="Redraw one character's plate at the plates gate (regenerate route; the rest of the cast is kept). $0.30.",
+    )
+    plates.add_argument("--desk", type=Path, required=True)
+    plates.add_argument("--cast", required=True, help="The character's name or cast id.")
+    plates.add_argument(
+        "--cause", required=True, help="What in the direction was wrong: a LABEL; the server takes no redraw notes."
+    )
+
     film = sub.add_parser(
         "film",
         help=(
@@ -1805,6 +1927,9 @@ def dispatch_episode(args: argparse.Namespace) -> int:
         if args.command == "redraw-board":
             run_redraw_board(args.desk, episode=args.episode, take_id=args.take, cause=args.cause)
             return 0
+        if args.command == "plates":
+            run_redraw_plate(args.desk, cast=args.cast, cause=args.cause)
+            return 0
         if args.command == "film":
             run_film(args.desk, episode=args.episode, take_id=args.take, cause=args.cause, confirm_spend=args.confirm_spend)
             return 0
@@ -1843,6 +1968,7 @@ __all__ = [
     "run_look_note",
     "run_memory",
     "run_redraw_board",
+    "run_redraw_plate",
     "run_spine_refresh",
     "run_unit",
 ]

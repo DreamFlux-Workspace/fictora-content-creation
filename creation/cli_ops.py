@@ -119,6 +119,11 @@ def _add_floor_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser])
     spend.add_argument("--episode", type=int, required=True)
     spend.add_argument("--usd", type=float, required=True)
     spend.add_argument("--take", default=None)
+    spend.add_argument(
+        "--unit",
+        default=None,
+        help="What the money bought, kept in the ledger (e.g. look-frame, voice-line, cue:gaan-sting).",
+    )
 
     ho = sub.add_parser("handoff", help="Pin the previous last frame on this take.")
     ho.add_argument("--desk", type=Path, required=True)
@@ -246,8 +251,9 @@ def _dispatch(args: argparse.Namespace) -> int:
         print(f"{args.take} estimate ${take.estimate_usd:.2f}")
         return 0
     if args.command == "spend":
-        series = record_spend(args.desk, episode=args.episode, usd=args.usd, take_id=args.take)
-        print(f"series spend ${series.spend_usd:.2f}")
+        series = record_spend(args.desk, episode=args.episode, usd=args.usd, take_id=args.take, unit=args.unit)
+        label = args.unit or "unlabelled (pass --unit so the ledger says what it was for)"
+        print(f"booked ${args.usd:.2f} for {label}; series spend ${series.spend_usd:.2f}")
         return 0
     if args.command == "handoff":
         take = set_handoff(args.desk, episode=args.episode, take_id=args.take, image=args.path)

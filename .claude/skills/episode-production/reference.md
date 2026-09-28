@@ -56,7 +56,7 @@ Product gap:           <one line for docs/content-ops/backlog.md>
 Extra cost:            <$ and minutes>
 ```
 
-Always a deviation: a length other than 15 / 30 / 60 s; any route with no command here (a single-plate redraw); hand-rolled HTTP. Editing product code or settings is never acceptable. Aligned, with commands (below): episode 2 on (`arc`, `brief`, `author`), line and frame edits (`edit`), board redraws (`redraw-board`; the regenerate route takes no notes, so the change goes in first with `edit --frame` or `look-note`).
+Always a deviation: a length other than 15 / 30 / 60 s; any route with no command here; hand-rolled HTTP. Editing product code or settings is never acceptable. Aligned, with commands (below): episode 2 on (`arc`, `brief`, `author`), line and frame edits (`edit`), board redraws (`redraw-board`; the regenerate route takes no notes, so the change goes in first with `edit --frame` or `look-note`), one plate redrawn at the plates gate (`plates --cast NAME --cause`).
 
 ## Script gate
 
@@ -148,7 +148,7 @@ The server chooses the endpoint, not the `minimax-h3` pin: Turbo unless engineer
 
 What Turbo means for the board: the take is image-to-video from the take's whole storyboard board (the board is the video's first frame). Cast plates and voice references are not sent, so faces, wardrobe and look come from the board alone, and the raw take's voice is the model's own. The first frame or two of a raw take can still show the board grid; `finish` replaces them (its `deboard` step, below).
 
-Budgets are warnings, never a hard stop: first episode of a new series **$5.50**, continuing 15 s **$2.50**, continuing 30 s **$5.00**. A first 15 s episode filmed once is about $1.90 on Turbo ($2.20 from 1 Oct; $2.80 on R2V), so the budget covers redraws and re-films. Say "$X of $Y" when the episode crosses its budget, not at the end. Past 2×, say so and let the human decide. `step` books plates, boards and takes itself (a take from its take facts: lane, seconds, reference images); `redraw-board` books its board. Book anything else by hand with `fictora-ops spend`. `fictora-ops preflight` never blocks on budget: a gate open exits 3; warnings exit 4 until the human says film anyway and you run `--proceed-anyway ep01-t1` (logged, next film only).
+Budgets are warnings, never a hard stop: first episode of a new series **$5.50**, continuing 15 s **$2.50**, continuing 30 s **$5.00**. A first 15 s episode filmed once is about $1.90 on Turbo ($2.20 from 1 Oct; $2.80 on R2V), so the budget covers redraws and re-films. Say "$X of $Y" when the episode crosses its budget, not at the end. Past 2×, say so and let the human decide. `step` books plates, boards and takes itself (a take from its take facts: lane, seconds, reference images); `redraw-board` books its board. Book anything else by hand with `fictora-ops spend --unit WHAT` (e.g. `look-frame`, `voice-line`, `cue:gaan-sting`); every booking is also appended to `spend_log` in `series.json` (`at_utc`, `episode`, `usd`, `unit`, `take_id`; the same shape the retired internal kit wrote, so an adopted desk's ledger reads as it is). A booking without a unit is logged `unlabelled`. `fictora-ops preflight` never blocks on budget: a gate open exits 3; warnings exit 4 until the human says film anyway and you run `--proceed-anyway ep01-t1` (logged, next film only).
 
 "Change this" is billed. A retry reuses the same idempotency key; two jobs for one take is a bug: report it.
 
@@ -315,12 +315,14 @@ uv run fictora-produce look --desk D --url https://…          # pin one style 
 uv run fictora-produce look-note --desk D (--add TEXT | --remove ID|N)   # at most five; the next drawing uses them
 uv run fictora-produce spine --desk D --refresh
 uv run fictora-produce redraw-board --desk D --episode N --take tK --cause "why"   # $0.30; back to the board gate
+uv run fictora-produce plates --desk D --cast NAME --cause "why"                  # one plate, $0.30; plates gate only
 uv run fictora-produce check-lines --desk D --episode N [--take tK]                # exit 5 when an approved line was not asked for
 ```
 
 - `edit` before the script gate is a plain patch. After it, the server asks for a cascade: `edit` prints every item, runs the free ones, and leaves the paid ones (`tier media`) off unless `--select-regen`; it names each board that no longer matches (redraw it with `redraw-board`). `--preview` stops after the list.
 - `edit --line-id … --spoken "…" [--subtitle "…"]` pins the exact performed line on a Japanese or Korean show before the script gate; an English show refuses it. A new English `--text` on such a show is re-localized when the script is approved.
 - `look-frame` sends only the words in FILE (1–4000 characters) to `POST /v1/spines/{id}/look-frame`; the server draws on the product's still model (text only: it refuses a link in the description) and answers our stored PNG. The desk saves `shared/look/look-frame-vN.png`, books the still, and prints the `image_url` for `look --url`. It never pins. The same description and size are cached on the server (re-running is free). An older server answers 404 on the route: the command stops with that message and books nothing; tell engineering.
+- `plates` redraws one character on `POST /v1/spines/{id}/cast/{cast_id}/regenerate` (the rest of the cast is not drawn or paid again) into the next `ep01/plates/plate-ep01-N-vK.png`, books $0.30 as `plate-redraw:<cast_id>`, and leaves the plates gate open. Only in phase `wait_plates`; past it the boards are drawn from the approved plates, so it is refused before anything is sent. Not the whole-cast `cast/enrol`: with no stale cast card the server answers the first drawing's job again and draws nothing. The cause is a label; "try again" is refused.
 - `redraw-board` warns when the frame briefs have not changed since the last drawing (a re-roll). A beat edit made after the board was drawn is carried into the redraw by the server. The cause is a label on the desk only.
 
 ## Desk artefacts
@@ -344,6 +346,10 @@ uv run fictora-produce check-lines --desk D --episode N [--take tK]             
 | `poll_video_deadline_seconds` | 7200 |
 
 Draft jobs can exceed 15 minutes under load; raise the deadline before calling it failed.
+
+## Setup check
+
+`uv run fictora-produce setup-check` (spends nothing, never prints the token): `FICTORA_DRAMA_GENERATION_SERVICE_TOKEN` set (`.env` or the environment) and accepted by `GET /v1/art-style-presets`; ffmpeg and ffprobe on PATH; libass (the `ass` filter, on the ffmpeg the finish will use); the filters `tblend`, `loudnorm`, `sidechaincompress`, `alimiter`, `amix`, `atempo`, `lut3d`, `silencedetect`, `astats`, `signalstats`; Python 3.12+; uv. One ✓/✗ line each; exit 1 on any ✗.
 
 ## Debugging (a declared deviation)
 
