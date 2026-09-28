@@ -34,7 +34,9 @@ class BoardLumaReport:
 
         band = "yes" if self.in_interior_band else "no"
         dim = "yes" if self.below_dim_floor else "no"
-        return f"brightness {self.mean_percent:.1f}%  interior_band={band}  dim_risk={dim}"
+        return (
+            f"brightness {self.mean_percent:.1f}%  interior_band={band}  dim_risk={dim}"
+        )
 
 
 def _rgb_pixel(sample: object, *, label: Path | str) -> tuple[int, int, int]:
@@ -54,7 +56,9 @@ def measure_board_luma(path: Path | str) -> BoardLumaReport:
     return measure_board_luma_bytes(path.read_bytes(), path=path)
 
 
-def measure_board_luma_bytes(data: bytes, *, path: Path | None = None) -> BoardLumaReport:
+def measure_board_luma_bytes(
+    data: bytes, *, path: Path | None = None
+) -> BoardLumaReport:
     """Measure mean Rec. 709 luma of storyboard image bytes."""
 
     label = path if path is not None else "in-memory board"
@@ -74,7 +78,9 @@ def measure_board_luma_bytes(data: bytes, *, path: Path | None = None) -> BoardL
         path=path,
         mean_percent=percent,
         below_dim_floor=percent <= INTERIOR_DIM_BELOW_PERCENT,
-        in_interior_band=INTERIOR_TARGET_MIN_PERCENT <= percent <= INTERIOR_TARGET_MAX_PERCENT,
+        in_interior_band=INTERIOR_TARGET_MIN_PERCENT
+        <= percent
+        <= INTERIOR_TARGET_MAX_PERCENT,
     )
 
 

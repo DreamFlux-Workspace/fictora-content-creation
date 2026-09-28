@@ -108,9 +108,15 @@ def hosted_post_off(status_code: int, detail: Any, url: str = "") -> bool:
 
     error = detail.get("error") if isinstance(detail, dict) else None
     code = str(error.get("code") or "") if isinstance(error, dict) else ""
-    if code == "hosted_post_off" or (status_code == 409 and "hosted_post_off" in str(detail)):
+    if code == "hosted_post_off" or (
+        status_code == 409 and "hosted_post_off" in str(detail)
+    ):
         return True
-    return status_code == 503 and "post-production" in url and code in {"restate_unavailable", ""}
+    return (
+        status_code == 503
+        and "post-production" in url
+        and code in {"restate_unavailable", ""}
+    )
 
 
 def http_error_message(response: httpx.Response, detail: Any) -> str:
@@ -150,7 +156,9 @@ def api_error_text(body: Any) -> str:
     text = f"{code or 'error'}: {message or ''}".rstrip(": ")
     details = error.get("details")
     if details:
-        text += f" (details {json.dumps(details, default=str, ensure_ascii=False)[:1200]})"
+        text += (
+            f" (details {json.dumps(details, default=str, ensure_ascii=False)[:1200]})"
+        )
     if body.get("request_id"):
         text += f" [request {body['request_id']}]"
     return text
@@ -192,7 +200,16 @@ def _raise_for_status(response: httpx.Response) -> None:
 def _payload_summary(payload: dict[str, Any]) -> str:
     summary = {
         key: payload[key]
-        for key in ("status", "progress", "job_id", "spine_id", "error", "failure", "message", "code")
+        for key in (
+            "status",
+            "progress",
+            "job_id",
+            "spine_id",
+            "error",
+            "failure",
+            "message",
+            "code",
+        )
         if key in payload
     }
     return json.dumps(summary, default=str)
@@ -244,7 +261,9 @@ def _get_json_with_transport_retries(
             payload = response.json()
             if isinstance(payload, dict):
                 return payload
-            raise SystemExit(f"poll {label}: expected JSON object, got {type(payload).__name__}")
+            raise SystemExit(
+                f"poll {label}: expected JSON object, got {type(payload).__name__}"
+            )
         except SystemExit:
             raise
         except httpx.HTTPError as exc:
@@ -296,7 +315,9 @@ def poll_until_terminal(
         On HTTP failure or timeout.
     """
     deadline = time.monotonic() + deadline_seconds
-    poll_headers = {key: value for key, value in headers.items() if key != "Content-Type"}
+    poll_headers = {
+        key: value for key, value in headers.items() if key != "Content-Type"
+    }
     last_payload: dict[str, Any] = {}
 
     while time.monotonic() < deadline:

@@ -28,10 +28,22 @@ from typing import Any, TextIO
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
 from creation.post.audio_service import AudioService, DramaApiAudio, download
-from creation.post.desk import cast_slug, find_cast, open_api, refresh_spine, show_language, spine_id
+from creation.post.desk import (
+    cast_slug,
+    find_cast,
+    open_api,
+    refresh_spine,
+    show_language,
+    spine_id,
+)
 from creation.post.finish import book
 from creation.post.media import measure_rms_windows
-from creation.post.sfx import SFX_MAX_SECONDS, SFX_MIN_SECONDS, SFX_USD_PER_SECOND, shape_problem
+from creation.post.sfx import (
+    SFX_MAX_SECONDS,
+    SFX_MIN_SECONDS,
+    SFX_USD_PER_SECOND,
+    shape_problem,
+)
 
 #: Default cue length: an event should hit early and stay under about 3 s.
 CUE_DEFAULT_SECONDS = 1.5
@@ -41,13 +53,17 @@ ELEVEN_V3_USD_PER_1000_CHARS = 0.10
 
 
 def _key(prefix: str, arguments: dict[str, Any]) -> str:
-    digest = hashlib.sha256(json.dumps(arguments, sort_keys=True).encode()).hexdigest()[:10]
+    digest = hashlib.sha256(json.dumps(arguments, sort_keys=True).encode()).hexdigest()[
+        :10
+    ]
     return f"{prefix}-{digest}"
 
 
 def _answer_usd(answer: dict[str, Any], estimate: float) -> float:
     value = answer.get("cost_usd")
-    return round(float(value), 4) if isinstance(value, int | float) else round(estimate, 4)
+    return (
+        round(float(value), 4) if isinstance(value, int | float) else round(estimate, 4)
+    )
 
 
 def _note(desk: Path, episode: int, body: str) -> None:
@@ -62,10 +78,14 @@ def cue_usd(seconds: float) -> float:
     return round(max(SFX_MIN_SECONDS, seconds) * SFX_USD_PER_SECOND, 4)
 
 
-def rms_line(levels: tuple[float, ...], window: float = CUE_SHAPE_WINDOW_SECONDS) -> str:
+def rms_line(
+    levels: tuple[float, ...], window: float = CUE_SHAPE_WINDOW_SECONDS
+) -> str:
     """``0.0s -14.2  0.5s -18.0 ...``: RMS dB per window."""
 
-    return "  ".join(f"{index * window:.1f}s {level:.1f}" for index, level in enumerate(levels))
+    return "  ".join(
+        f"{index * window:.1f}s {level:.1f}" for index, level in enumerate(levels)
+    )
 
 
 def _words(text: str) -> str:
@@ -115,14 +135,21 @@ def run_cue(
     if not sound:
         raise ValueError("--description is empty: say what the cue should sound like")
     if not SFX_MIN_SECONDS <= seconds <= SFX_MAX_SECONDS:
-        raise ValueError(f"--seconds must be {SFX_MIN_SECONDS:g}-{SFX_MAX_SECONDS:g}; got {seconds:g}")
+        raise ValueError(
+            f"--seconds must be {SFX_MIN_SECONDS:g}-{SFX_MAX_SECONDS:g}; got {seconds:g}"
+        )
     sfx_dir = desk / f"ep{episode:02d}" / "sfx"
     sfx_dir.mkdir(parents=True, exist_ok=True)
     service = audio or DramaApiAudio(desk, episode=episode)
     key = _key(f"cue-ep{episode:02d}", {"sound": sound, "seconds": round(seconds, 2)})
     print(f"Rendering the cue {sound!r} ({seconds:g} s) on the server", file=out)
-    answer = service.sfx_cue(spine_id=spine_id(desk), sound=sound, seconds=round(seconds, 2), key=key)
-    dest = download(str(answer["audio_url"]), next_versioned_path(sfx_dir, f"cue-{_words(sound)}", ".mp3"))
+    answer = service.sfx_cue(
+        spine_id=spine_id(desk), sound=sound, seconds=round(seconds, 2), key=key
+    )
+    dest = download(
+        str(answer["audio_url"]),
+        next_versioned_path(sfx_dir, f"cue-{_words(sound)}", ".mp3"),
+    )
     cost = _answer_usd(answer, cue_usd(seconds))
     if cost:
         book(desk, episode=episode, usd=cost, stream=out, unit=f"cue:{_words(sound)}")
@@ -144,10 +171,19 @@ def run_cue(
             file=out,
         )
     else:
-        loudest = max(range(len(levels)), key=lambda index: levels[index]) if levels else 0
-        print(f"shape ({kind}): ok; loudest at {loudest * CUE_SHAPE_WINDOW_SECONDS:.1f} s", file=out)
+        loudest = (
+            max(range(len(levels)), key=lambda index: levels[index]) if levels else 0
+        )
+        print(
+            f"shape ({kind}): ok; loudest at {loudest * CUE_SHAPE_WINDOW_SECONDS:.1f} s",
+            file=out,
+        )
     cached = " (the server had it cached)" if answer.get("cached") else ""
-    _note(desk, episode, f"cue: `{dest.name}` ({sound!r}, {seconds:g} s), ${cost:.3f}{cached}; shape {problem or 'ok'}.")
+    _note(
+        desk,
+        episode,
+        f"cue: `{dest.name}` ({sound!r}, {seconds:g} s), ${cost:.3f}{cached}; shape {problem or 'ok'}.",
+    )
     print(
         f"Next: place it on the frame where its action lands: fictora-produce finish --desk {desk} "
         f"--episode {episode} --cue {dest}@START[@DB]",
@@ -211,7 +247,9 @@ def run_voice_line(
     cast_id, name = str(card["cast_id"]), str(card.get("name") or card["cast_id"])
     voice = str((card.get("voice_brief") or {}).get("provider_voice") or "").strip()
     if not voice:
-        raise ValueError(f"{name} has no locked voice on the cast card; run voice --audition then --pick N first")
+        raise ValueError(
+            f"{name} has no locked voice on the cast card; run voice --audition then --pick N first"
+        )
     language = show_language(spine)
     slug = cast_slug(cast_id)
     voices_dir = desk / f"ep{episode:02d}" / "voices"
@@ -222,13 +260,24 @@ def run_voice_line(
         arguments["spoken"] = spoken
     key = _key(f"voice-ep{episode:02d}-{slug}", arguments)
     service = audio or DramaApiAudio(desk, episode=episode)
-    print(f"Voicing {name}'s line in the locked voice {voice!r} on the server", file=out)
+    print(
+        f"Voicing {name}'s line in the locked voice {voice!r} on the server", file=out
+    )
     answer = service.voice_line(
-        spine_id=spine_id(desk), cast_id=cast_id, text=line, language=language, key=key, spoken_text=spoken
+        spine_id=spine_id(desk),
+        cast_id=cast_id,
+        text=line,
+        language=language,
+        key=key,
+        spoken_text=spoken,
     )
     url = str(answer["audio_url"])
-    dest = download(url, next_versioned_path(voices_dir, f"voice-ep{episode:02d}-{slug}", ".mp3"))
-    cost = _answer_usd(answer, len(spoken or line) * ELEVEN_V3_USD_PER_1000_CHARS / 1000)
+    dest = download(
+        url, next_versioned_path(voices_dir, f"voice-ep{episode:02d}-{slug}", ".mp3")
+    )
+    cost = _answer_usd(
+        answer, len(spoken or line) * ELEVEN_V3_USD_PER_1000_CHARS / 1000
+    )
     if cost:
         book(desk, episode=episode, usd=cost, stream=out, unit=f"voice-line:{slug}")
     reading = answer.get("reading") or {}
@@ -241,7 +290,11 @@ def run_voice_line(
     print(dest, file=out)
     if reading.get("checked") and not reading.get("read_right"):
         print(f"!! the line may be misread, listen before using it: {line!r}", file=out)
-    _note(desk, episode, f"voice-line: {name} {line!r} -> `{dest.name}` in {voice}, ${cost:.3f}.")
+    _note(
+        desk,
+        episode,
+        f"voice-line: {name} {line!r} -> `{dest.name}` in {voice}, ${cost:.3f}.",
+    )
     print(
         f"Next: listen to it. To use it: fictora-produce finish --desk {desk} --episode {episode} "
         f"[--mute A-B] --voice {dest}@START[@DB]",

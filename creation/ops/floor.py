@@ -104,7 +104,9 @@ def init_series_desk(
         continuing=continuing,
     )
     for episode in series.episodes:
-        _create_episode_folder(desk, title, episode, stamp=stamp, templates_dir=templates_dir)
+        _create_episode_folder(
+            desk, title, episode, stamp=stamp, templates_dir=templates_dir
+        )
     save_series(desk, series)
     write_queue(desk, series)
     return desk
@@ -130,7 +132,9 @@ def add_episode(desk: Path, *, templates_dir: Path | None = None) -> EpisodeStat
     episode = new_episode(len(series.episodes) + 1, series.band)
     series.episodes.append(episode)
     stamp = date.fromisoformat(series.day)
-    _create_episode_folder(desk, series.title, episode, stamp=stamp, templates_dir=templates_dir)
+    _create_episode_folder(
+        desk, series.title, episode, stamp=stamp, templates_dir=templates_dir
+    )
     save_series(desk, series)
     write_queue(desk, series)
     return episode
@@ -173,7 +177,9 @@ def set_take_lines(
     return take
 
 
-def approve_series_gate(desk: Path, gate: str, *, path: str | None = None, note: str | None = None) -> GateRecord:
+def approve_series_gate(
+    desk: Path, gate: str, *, path: str | None = None, note: str | None = None
+) -> GateRecord:
     """Record a human yes on a series-level gate.
 
     Parameters
@@ -231,7 +237,9 @@ def approve_script(desk: Path, *, episode: int) -> GateRecord:
     series = load_series(desk)
     slot = episode_by_ordinal(series, episode)
     long_takes = [
-        f"{take.take_id} has {len(take.lines)} lines" for take in slot.takes if len(take.lines) > MAX_LINES_PER_TAKE
+        f"{take.take_id} has {len(take.lines)} lines"
+        for take in slot.takes
+        if len(take.lines) > MAX_LINES_PER_TAKE
     ]
     note = "lines"
     if long_takes:
@@ -403,7 +411,13 @@ def record_spend(
         take_by_id(slot, take_id).spend_usd += usd
     label = (unit or "").strip() or "unlabelled"
     series.spend_log.append(
-        SpendEntry(at_utc=utc_now(), episode=episode, usd=round(usd, 4), unit=label, take_id=take_id)
+        SpendEntry(
+            at_utc=utc_now(),
+            episode=episode,
+            usd=round(usd, 4),
+            unit=label,
+            take_id=take_id,
+        )
     )
     save_series(desk, series)
     write_queue(desk, series)
@@ -547,7 +561,9 @@ def preflight_take(desk: Path, *, episode: int, take_id: str) -> PreflightReport
     return evaluate_preflight(series, slot, take_by_id(slot, take_id), desk=desk)
 
 
-def confirm_preflight(desk: Path, *, episode: int, take_id: str, confirm_unit: str) -> PreflightReport:
+def confirm_preflight(
+    desk: Path, *, episode: int, take_id: str, confirm_unit: str
+) -> PreflightReport:
     """Record the operator's explicit decision to film past preflight warnings.
 
     The operator must type the unit id (``ep01-t1``). A human gate that is still
@@ -582,11 +598,15 @@ def confirm_preflight(desk: Path, *, episode: int, take_id: str, confirm_unit: s
     take = take_by_id(slot, take_id)
     expected = unit_id(slot, take)
     if confirm_unit.strip() != expected:
-        raise ValueError(f"--proceed-anyway must name this unit exactly: {expected} (got {confirm_unit!r})")
+        raise ValueError(
+            f"--proceed-anyway must name this unit exactly: {expected} (got {confirm_unit!r})"
+        )
     report = evaluate_preflight(series, slot, take, desk=desk)
     if report.blocked:
         gate = next(check for check in report.failed() if check.blocking)
-        raise ValueError(f"{gate.code}: {gate.detail} A human gate cannot be overridden.")
+        raise ValueError(
+            f"{gate.code}: {gate.detail} A human gate cannot be overridden."
+        )
     warnings = report.warnings()
     if not warnings or report.confirmed:
         return report
@@ -668,8 +688,13 @@ def status_rows(desk: Path) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for episode in series.episodes:
         waiting = waiting_on(series, episode, desk=desk)
-        first_open = next((take.take_id for take in episode.takes if take.verdict != "use"), episode.takes[-1].take_id)
-        report = evaluate_preflight(series, episode, take_by_id(episode, first_open), desk=desk)
+        first_open = next(
+            (take.take_id for take in episode.takes if take.verdict != "use"),
+            episode.takes[-1].take_id,
+        )
+        report = evaluate_preflight(
+            series, episode, take_by_id(episode, first_open), desk=desk
+        )
         rows.append(
             {
                 "episode": episode.slug,

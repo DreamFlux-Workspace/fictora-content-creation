@@ -47,7 +47,11 @@ def clip(path: Path, *, seconds: float, grey: int, fps: int = 24, size: tuple[in
     vf = "null" if box is None else (
         f"drawbox=x={BOX[0]}:y={BOX[1]}:w={BOX[2]}:h={BOX[3]}:color=white:t=fill:enable='between(t,{box[0]},{box[1]})'"
     )  # fmt: skip
-    audio = f"sine=f=440:d={seconds}:sample_rate=48000" if tone else f"anullsrc=r=48000:cl=mono:d={seconds}"
+    audio = (
+        f"sine=f=440:d={seconds}:sample_rate=48000"
+        if tone
+        else f"anullsrc=r=48000:cl=mono:d={seconds}"
+    )
     af = f"volume={tone}" if tone else "anull"
     inputs = ["-f", "lavfi", "-i", video, "-f", "lavfi", "-i", audio]
     graph = [f"[0:v]{vf}[v]", f"[1:a]{af}[t]"]
@@ -68,7 +72,14 @@ def finished_take(desk: Path, episode: int, take_id: str, *, seconds: float = 2.
 
     takes = desk / f"ep{episode:02d}" / "takes"
     base = f"take-ep{episode:02d}-{take_id}"
-    pre_bed = clip(takes / f"{base}-colour-v1.mp4", seconds=seconds, grey=grey, tone=tone, fps=fps, size=size)
+    pre_bed = clip(
+        takes / f"{base}-colour-v1.mp4",
+        seconds=seconds,
+        grey=grey,
+        tone=tone,
+        fps=fps,
+        size=size,
+    )
     master = clip(takes / f"{base}-cap-v1.mp4", seconds=seconds, grey=grey, tone=tone, box=box, fps=fps,
                   size=size, own_bed=True)  # fmt: skip
     final = watermark(master, takes / f"{base}-sokii-v1.mp4")
@@ -108,7 +119,9 @@ def join_desk(tmp_path: Path) -> Path:
 
 
 @needs_ffmpeg
-def test_an_episode_joins_on_one_continuous_bed_with_captions_and_one_mark(join_desk: Path) -> None:
+def test_an_episode_joins_on_one_continuous_bed_with_captions_and_one_mark(
+    join_desk: Path,
+) -> None:
     one = finished_take(join_desk, 1, "t1", grey=70)
     finished_take(join_desk, 1, "t2", grey=90, box=(1.0, 1.5))
     noise_bed(join_desk)
@@ -121,8 +134,12 @@ def test_an_episode_joins_on_one_continuous_bed_with_captions_and_one_mark(join_
     assert result.master == takes / "episode-ep01-join-v1.mp4"
     assert result.marked == takes / "episode-ep01-join-sokii-v1.mp4"
     assert [p.take_id for p in result.parts] == ["t1", "t2"]
-    assert result.parts[0].picture.name == "take-ep01-t1-cap-v1.mp4", "the un-marked captioned picture, not -sokii"
-    assert result.dissolves == [0.0] and result.seams == [2.5], "takes of one episode meet on a straight cut"
+    assert result.parts[0].picture.name == "take-ep01-t1-cap-v1.mp4", (
+        "the un-marked captioned picture, not -sokii"
+    )
+    assert result.dissolves == [0.0] and result.seams == [2.5], (
+        "takes of one episode meet on a straight cut"
+    )
     assert abs(result.fps - 24) < 0.2
     assert len(result.seam_steps_db) == 1 and abs(result.seam_steps_db[0]) < 5
 
@@ -130,11 +147,19 @@ def test_an_episode_joins_on_one_continuous_bed_with_captions_and_one_mark(join_
     # bed would restart (its 1 s fade-in at the seam) and none at the bed's loop points (its silent tail).
     levels = np.array(measure_rms_windows(result.master, window_seconds=0.1))
     body = levels[12:-17]
-    assert body.min() > np.median(body) - 4, f"the bed dips inside the join: {np.round(body, 1).tolist()}"
+    assert body.min() > np.median(body) - 4, (
+        f"the bed dips inside the join: {np.round(body, 1).tolist()}"
+    )
 
     # Straight cut: no blended frame at the seam.
     for t in (2.4, 2.5, 2.55):
-        assert min(abs(region(frame_at(result.master, t), (0, 100, 192, 60)) - g) for g in (70, 90)) < 6
+        assert (
+            min(
+                abs(region(frame_at(result.master, t), (0, 100, 192, 60)) - g)
+                for g in (70, 90)
+            )
+            < 6
+        )
 
     # Captions move with their picture: t2's caption (1.0-1.5 s on the take) is at 3.5-4.0 s on the join.
     assert region(frame_at(result.master, 3.75), BOX) > 200
@@ -152,12 +177,17 @@ def test_an_episode_joins_on_one_continuous_bed_with_captions_and_one_mark(join_
     # Nothing is overwritten: a second join is v2 and v1 is untouched.
     before = {p.name: digest(p) for p in takes.glob("*.mp4")}
     again = run_join(join_desk, episodes=(1,), stream=io.StringIO())
-    assert again.master.name == "episode-ep01-join-v2.mp4" and again.marked.name == "episode-ep01-join-sokii-v2.mp4"
+    assert (
+        again.master.name == "episode-ep01-join-v2.mp4"
+        and again.marked.name == "episode-ep01-join-sokii-v2.mp4"
+    )
     assert all(digest(takes / name) == sha for name, sha in before.items())
 
 
 @needs_ffmpeg
-def test_a_series_cut_dissolves_between_episodes_and_captions_land_on_the_joined_timeline(join_desk: Path) -> None:
+def test_a_series_cut_dissolves_between_episodes_and_captions_land_on_the_joined_timeline(
+    join_desk: Path,
+) -> None:
     finished_take(join_desk, 1, "t1", seconds=2.0, grey=40)
     finished_take(join_desk, 1, "t2", seconds=2.0, grey=40)
     finished_take(join_desk, 2, "t1", seconds=2.0, grey=200, box=(1.0, 1.5))
@@ -167,11 +197,15 @@ def test_a_series_cut_dissolves_between_episodes_and_captions_land_on_the_joined
     result = run_join(join_desk, episodes=(1, 2), stream=io.StringIO())
 
     assert result.complete
-    assert result.master == join_desk / "shared" / "cuts" / "series-ep01-ep02-join-v1.mp4"
+    assert (
+        result.master == join_desk / "shared" / "cuts" / "series-ep01-ep02-join-v1.mp4"
+    )
     assert result.dissolves == [0.0, 0.25, 0.0]
     assert result.seams == [2.0, 3.875, 5.75]
     middle = region(frame_at(result.master, 3.875), (0, 100, 192, 60))
-    assert 70 < middle < 170, f"mid-dissolve frame is a blend of the two episodes, got {middle:.0f}"
+    assert 70 < middle < 170, (
+        f"mid-dissolve frame is a blend of the two episodes, got {middle:.0f}"
+    )
     # ep02 t1 starts at 4.0 - 0.25 = 3.75 s: its caption (1.0-1.5 s) is at 4.75-5.25 s.
     assert region(frame_at(result.master, 5.0), BOX) > 225
     assert region(frame_at(result.master, 4.5), BOX) < 215
@@ -185,22 +219,38 @@ def test_a_seam_step_over_5_db_stops_the_join_unmarked_and_gain_matching_fixes_i
     finished_take(join_desk, 1, "t1", tone=0.01)
     finished_take(join_desk, 1, "t2", tone=0.5)
     noise_bed(join_desk)
-    monkeypatch.setattr(cli_post, "run_join", functools.partial(run_join, stream=io.StringIO()))
+    monkeypatch.setattr(
+        cli_post, "run_join", functools.partial(run_join, stream=io.StringIO())
+    )
 
-    code = main(["join", "--desk", str(join_desk), "--episode", "1", "--no-gain-match", "--json"])
+    code = main(
+        [
+            "join",
+            "--desk",
+            str(join_desk),
+            "--episode",
+            "1",
+            "--no-gain-match",
+            "--json",
+        ]
+    )
 
     report = json.loads(capsys.readouterr().out)
     assert code == JOIN_NOT_DONE
     assert report["complete"] is False and report["marked"] is None
     assert abs(report["seams"][0]["step_db"]) > 5
     takes = join_desk / "ep01" / "takes"
-    assert (takes / "episode-ep01-join-v1.mp4").is_file(), "the un-marked master stays to listen to"
+    assert (takes / "episode-ep01-join-v1.mp4").is_file(), (
+        "the un-marked master stays to listen to"
+    )
     assert not list(takes.glob("episode-ep01-join-sokii-*.mp4")), "nothing is marked"
     assert "STOPPED: seam at 2.50s" in (join_desk / "ep01" / "run-notes.md").read_text()
 
     matched = run_join(join_desk, episodes=(1,), stream=io.StringIO())
     assert matched.complete and abs(matched.seam_steps_db[0]) < 5, matched.seam_steps_db
-    assert matched.gains_db[0] - matched.gains_db[1] > 30, "each take gained to the median: quiet up, loud down"
+    assert matched.gains_db[0] - matched.gains_db[1] > 30, (
+        "each take gained to the median: quiet up, loud down"
+    )
 
 
 @needs_ffmpeg
@@ -208,7 +258,9 @@ def test_a_seam_step_over_5_db_stops_the_join_unmarked_and_gain_matching_fixes_i
     ("second", "wanted"),
     [({"fps": 25}, "not 24 fps: ep01 t2"), ({"size": (208, 336)}, "mixed resolutions")],
 )
-def test_join_refuses_mixed_rates_and_sizes_before_writing(join_desk: Path, second: dict, wanted: str) -> None:
+def test_join_refuses_mixed_rates_and_sizes_before_writing(
+    join_desk: Path, second: dict, wanted: str
+) -> None:
     finished_take(join_desk, 1, "t1")
     finished_take(join_desk, 1, "t2", **second)
     noise_bed(join_desk)
@@ -255,16 +307,43 @@ def test_take_files_in_the_order_given_and_unfinished_files_are_refused(
     one = finished_take(join_desk, 1, "t1", grey=70)
     two = finished_take(join_desk, 1, "t2", grey=90)
     noise_bed(join_desk)
-    trimmed = clip(join_desk / "ep01" / "takes" / "take-ep01-t2-trim-v1.mp4", seconds=2.0, grey=90)
+    trimmed = clip(
+        join_desk / "ep01" / "takes" / "take-ep01-t2-trim-v1.mp4", seconds=2.0, grey=90
+    )
 
-    assert main(["join", "--desk", str(join_desk), "--take-file", str(trimmed), "--take-file", str(one["final"])]) == 2
+    assert (
+        main(
+            [
+                "join",
+                "--desk",
+                str(join_desk),
+                "--take-file",
+                str(trimmed),
+                "--take-file",
+                str(one["final"]),
+            ]
+        )
+        == 2
+    )
     assert "no finish record names this file" in capsys.readouterr().err
 
-    code = main(["join", "--desk", str(join_desk), "--take-file", str(two["final"]), "--take-file", str(one["final"])])
+    code = main(
+        [
+            "join",
+            "--desk",
+            str(join_desk),
+            "--take-file",
+            str(two["final"]),
+            "--take-file",
+            str(one["final"]),
+        ]
+    )
     assert code == 0
     marked = Path(capsys.readouterr().out.strip().splitlines()[-1])
     assert marked.name == "episode-ep01-join-sokii-v1.mp4"
-    assert abs(region(frame_at(marked, 1.0), (0, 100, 192, 60)) - 90) < 6, "t2 comes first, as named"
+    assert abs(region(frame_at(marked, 1.0), (0, 100, 192, 60)) - 90) < 6, (
+        "t2 comes first, as named"
+    )
 
 
 @needs_ffmpeg
@@ -308,15 +387,31 @@ def test_finish_writes_the_record_join_reads(post_desk: Path) -> None:
         finished = run_finish(post_desk, take_id=take_id, sfx_render=sfx, bed_maker=bed,
                               facts_fetcher=lambda *a: None, stream=io.StringIO())  # fmt: skip
         assert finished.complete
-    record = json.loads((post_desk / "ep01" / "takes" / "take-ep01-t2-finish-v1.json").read_text())
+    record = json.loads(
+        (post_desk / "ep01" / "takes" / "take-ep01-t2-finish-v1.json").read_text()
+    )
     assert record["final"] == "ep01/takes/take-ep01-t2-sokii-v1.mp4"
-    assert record["master"] in ("ep01/takes/take-ep01-t2-cap-v1.mp4", "ep01/takes/take-ep01-t2-mix-v1.mp4")
-    assert f"(un-marked master `{Path(record['master']).name}`)" in (post_desk / "ep01" / "run-notes.md").read_text()
-    assert record["pre_bed"] == "ep01/takes/take-ep01-t2-sfx-v1.mp4", "the mix read the take with its effects"
+    assert record["master"] in (
+        "ep01/takes/take-ep01-t2-cap-v1.mp4",
+        "ep01/takes/take-ep01-t2-mix-v1.mp4",
+    )
+    assert (
+        f"(un-marked master `{Path(record['master']).name}`)"
+        in (post_desk / "ep01" / "run-notes.md").read_text()
+    )
+    assert record["pre_bed"] == "ep01/takes/take-ep01-t2-sfx-v1.mp4", (
+        "the mix read the take with its effects"
+    )
 
     result = run_join(post_desk, episodes=(1,), stream=io.StringIO())
 
     assert result.complete
-    assert [p.pre_bed.name for p in result.parts] == ["take-ep01-t1-sfx-v1.mp4", "take-ep01-t2-sfx-v1.mp4"]
+    assert [p.pre_bed.name for p in result.parts] == [
+        "take-ep01-t1-sfx-v1.mp4",
+        "take-ep01-t2-sfx-v1.mp4",
+    ]
     assert result.bed.name.startswith("show-bed-v1")
-    assert result.marked is not None and result.marked.name == "episode-ep01-join-sokii-v1.mp4"
+    assert (
+        result.marked is not None
+        and result.marked.name == "episode-ep01-join-sokii-v1.mp4"
+    )

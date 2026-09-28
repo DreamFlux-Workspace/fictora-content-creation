@@ -40,14 +40,23 @@ def _warn_if_no_local_ffmpeg() -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     """Dispatch fictora-produce commands."""
 
-    parser = argparse.ArgumentParser(description="Orchestrate Drama API production on a content desk.")
+    parser = argparse.ArgumentParser(
+        description="Orchestrate Drama API production on a content desk."
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    start = sub.add_parser("start", help="Create desk + bind prompt (does not call API yet).")
+    start = sub.add_parser(
+        "start", help="Create desk + bind prompt (does not call API yet)."
+    )
     start.add_argument("--series", required=True)
     start.add_argument("--prompt", required=True, help=f"The premise. {HELP_SUFFIX}")
     start.add_argument("--band", default="15s", choices=("15s", "30s", "60s"))
-    start.add_argument("--episodes", type=int, default=1, help="Desk episode slots (API draft plans 4 for cadence).")
+    start.add_argument(
+        "--episodes",
+        type=int,
+        default=1,
+        help="Desk episode slots (API draft plans 4 for cadence).",
+    )
     start.add_argument("--parent", type=Path, default=DEFAULT_RUN_PARENT)
     start.add_argument("--preset-id", default="modern-dark-fantasy")
     start.add_argument("--video-lane", default="minimax-h3")
@@ -61,12 +70,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     bind.add_argument("--episode", type=int, default=1)
     add_production_config_args(bind)
 
-    cfg_show = sub.add_parser("config", help="Print merged production.config.json for a desk.")
+    cfg_show = sub.add_parser(
+        "config", help="Print merged production.config.json for a desk."
+    )
     cfg_show.add_argument("--desk", type=Path, required=True)
 
-    sub.add_parser("status", help="Show production phase.").add_argument("--desk", type=Path, required=True)
+    sub.add_parser("status", help="Show production phase.").add_argument(
+        "--desk", type=Path, required=True
+    )
 
-    step = sub.add_parser("step", help="Run the next automated API step (one enrol block per call).")
+    step = sub.add_parser(
+        "step", help="Run the next automated API step (one enrol block per call)."
+    )
     step.add_argument("--desk", type=Path, required=True)
     step.add_argument(
         "--confirm-spend",
@@ -74,17 +89,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="After estimate gate, confirm spend and film the take.",
     )
 
-    ap = sub.add_parser("approve", help="Human yes on plates, script, or board (the desk's current episode).")
+    ap = sub.add_parser(
+        "approve",
+        help="Human yes on plates, script, or board (the desk's current episode).",
+    )
     ap.add_argument("--desk", type=Path, required=True)
     ap.add_argument("--gate", required=True, choices=("plates", "script", "board"))
-    ap.add_argument("--path", type=Path, default=None, help="Board file reviewed (default: the boards step made).")
+    ap.add_argument(
+        "--path",
+        type=Path,
+        default=None,
+        help="Board file reviewed (default: the boards step made).",
+    )
     ap.add_argument(
         "--accept-dim",
         action="store_true",
         help="Ignored by the API: board brightness is information only, never a block.",
     )
 
-    cancel = sub.add_parser("cancel-job", help="Cancel a stuck video or coordinator job.")
+    cancel = sub.add_parser(
+        "cancel-job", help="Cancel a stuck video or coordinator job."
+    )
     cancel.add_argument("--desk", type=Path, required=True)
     cancel.add_argument("--job-id", required=True)
 
@@ -106,7 +131,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     cap.add_argument("--desk", type=Path, required=True)
     cap.add_argument("--episode", type=int, default=1)
-    cap.add_argument("--take", type=Path, default=None, help="Raw MP4; default newest take-epNN-t1-raw-v*.mp4.")
+    cap.add_argument(
+        "--take",
+        type=Path,
+        default=None,
+        help="Raw MP4; default newest take-epNN-t1-raw-v*.mp4.",
+    )
     cap.add_argument(
         "--line-start",
         type=float,
@@ -114,7 +144,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=None,
         help="Seconds where a line starts, once per line in order. Overrides speech detection.",
     )
-    cap.add_argument("--no-open", action="store_true", help="Do not open the captioned file.")
+    cap.add_argument(
+        "--no-open", action="store_true", help="Do not open the captioned file."
+    )
 
     sub.add_parser(
         "setup-check",
@@ -139,7 +171,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command in POST_COMMANDS:
             return dispatch_post(args)
         if args.command == "start":
-            desk = init_series_desk(args.parent, args.series, band=args.band, episode_count=args.episodes)
+            desk = init_series_desk(
+                args.parent, args.series, band=args.band, episode_count=args.episodes
+            )
             state = bind_desk(
                 desk,
                 prompt=text_or_file(args.prompt, flag="--prompt"),
@@ -193,7 +227,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             ep_dir = args.desk.expanduser().resolve() / f"ep{args.episode:02d}"
             timing = "; ".join(
-                f'"{line}" {span.start:.2f}-{span.end:.2f}s' for line, span in zip(result.lines, result.anchors)
+                f'"{line}" {span.start:.2f}-{span.end:.2f}s'
+                for line, span in zip(result.lines, result.anchors)
             )
             append_run_note(
                 ep_dir,
@@ -204,7 +239,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"  {span.start:6.2f}-{span.end:6.2f}s  {line}")
             print(f"  file: {result.ass}")
             print(f"  file: {result.video}")
-            print("Human QC: watch the captioned take. Wrong timing? Re-run with --line-start per line.")
+            print(
+                "Human QC: watch the captioned take. Wrong timing? Re-run with --line-start per line."
+            )
             if not args.no_open and sys.platform == "darwin":
                 subprocess.run(["open", str(result.video)], check=False)
             return 0
@@ -220,11 +257,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "Refused. retry-video starts a new paid take and another ffmpeg job on Railway.",
                     file=sys.stderr,
                 )
-                print("Pass --new-paid-take only after a human yes for a new take.", file=sys.stderr)
+                print(
+                    "Pass --new-paid-take only after a human yes for a new take.",
+                    file=sys.stderr,
+                )
                 return 2
             suffix = prepare_video_retry(args.desk, job_id=args.job_id)
             print(f"phase=ready_video suffix={suffix}")
-            print("Hosted post-production is off: after the take lands, run `fictora-produce finish --desk …`.")
+            print(
+                "Hosted post-production is off: after the take lands, run `fictora-produce finish --desk …`."
+            )
             print("Next: uv run fictora-produce step --desk … --confirm-spend")
             return 0
     except (

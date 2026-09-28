@@ -113,9 +113,13 @@ def load_production(desk: Path) -> ProductionState:
     path = production_path(desk)
     raw = json.loads(path.read_text(encoding="utf-8"))
     known = {f.name for f in fields(ProductionState)}
-    state = ProductionState(**{key: value for key, value in raw.items() if key in known})
+    state = ProductionState(
+        **{key: value for key, value in raw.items() if key in known}
+    )
     if not state.idempotency_prefix:
-        state.idempotency_prefix = f"{desk.expanduser().resolve().name[:24]}-{uuid.uuid4().hex[:6]}"
+        state.idempotency_prefix = (
+            f"{desk.expanduser().resolve().name[:24]}-{uuid.uuid4().hex[:6]}"
+        )
     return state
 
 

@@ -142,7 +142,9 @@ def run_cast_look(
         idempotency_key=f"{run.prefix}-{tag}-cast",
     )
     run.save(f"05_{tag}_cast_enrol.json", cast_job)
-    cast = run.poll_job(cast_job["job_id"], label="cast", video_route=True, deadline_seconds=3600.0)
+    cast = run.poll_job(
+        cast_job["job_id"], label="cast", video_route=True, deadline_seconds=3600.0
+    )
     run.save(f"06_{tag}_cast_terminal.json", cast)
     if cast.get("status") != "completed":
         raise SystemExit(f"cast failed: {cast.get('status')}")
@@ -156,7 +158,9 @@ def run_cast_look(
     return run.spine(spine_id)
 
 
-def approve_ep1_script(run: DramaApiRunSession, *, spine_id: str, spine: Mapping[str, Any]) -> dict[str, Any]:
+def approve_ep1_script(
+    run: DramaApiRunSession, *, spine_id: str, spine: Mapping[str, Any]
+) -> dict[str, Any]:
     """Approve episode-1 script after cast portraits are approved.
 
     Parameters
@@ -235,7 +239,9 @@ def run_boards(
         idempotency_key=f"{run.prefix}-{tag}-boards",
     )
     run.save(f"08_{tag}_boards_enrol.json", boards_job)
-    boards = run.poll_job(boards_job["job_id"], label="boards", video_route=True, deadline_seconds=7200.0)
+    boards = run.poll_job(
+        boards_job["job_id"], label="boards", video_route=True, deadline_seconds=7200.0
+    )
     run.save(f"09_{tag}_boards_terminal.json", boards)
     if boards.get("status") != "completed":
         raise SystemExit(f"boards failed: {boards.get('status')}")
@@ -308,7 +314,9 @@ def attach_series_audio_bed(
     return updated
 
 
-def measure_board_exposure(run: DramaApiRunSession, *, spine_id: str, episode: int = 1) -> dict[str, Any]:
+def measure_board_exposure(
+    run: DramaApiRunSession, *, spine_id: str, episode: int = 1
+) -> dict[str, Any]:
     """Read one episode's board brightness. Information only: a dark board is the human's call.
 
     Parameters
@@ -327,11 +335,18 @@ def measure_board_exposure(run: DramaApiRunSession, *, spine_id: str, episode: i
     """
 
     exposure = run.get(f"/v1/spines/{spine_id}/episodes/{episode}/boards/exposure")
-    run.save("10b_boards_exposure.json" if episode == 1 else f"10b_ep{episode:02d}_boards_exposure.json", exposure)
+    run.save(
+        "10b_boards_exposure.json"
+        if episode == 1
+        else f"10b_ep{episode:02d}_boards_exposure.json",
+        exposure,
+    )
     return exposure
 
 
-def measure_ep1_board_exposure(run: DramaApiRunSession, *, spine_id: str) -> dict[str, Any]:
+def measure_ep1_board_exposure(
+    run: DramaApiRunSession, *, spine_id: str
+) -> dict[str, Any]:
     """Episode 1's board brightness (see :func:`measure_board_exposure`)."""
 
     return measure_board_exposure(run, spine_id=spine_id, episode=1)
@@ -377,9 +392,16 @@ def approve_episode_boards(
             "episode_ordinal": episode,
             "accept_dim": accept_dim,
         },
-        idempotency_key=f"{run.prefix}-boards-approve" if episode == 1 else f"{run.prefix}-ep{episode:02d}-boards-approve",
+        idempotency_key=f"{run.prefix}-boards-approve"
+        if episode == 1
+        else f"{run.prefix}-ep{episode:02d}-boards-approve",
     )
-    run.save("11_boards_approved.json" if episode == 1 else f"11_ep{episode:02d}_boards_approved.json", boards_ok)
+    run.save(
+        "11_boards_approved.json"
+        if episode == 1
+        else f"11_ep{episode:02d}_boards_approved.json",
+        boards_ok,
+    )
     return boards_ok
 
 
@@ -392,7 +414,9 @@ def approve_ep1_boards(
 ) -> dict[str, Any]:
     """Approve episode 1's boards (see :func:`approve_episode_boards`)."""
 
-    return approve_episode_boards(run, spine_id=spine_id, spine=spine, episode=1, accept_dim=accept_dim)
+    return approve_episode_boards(
+        run, spine_id=spine_id, spine=spine, episode=1, accept_dim=accept_dim
+    )
 
 
 def run_video_and_write_story(
@@ -457,22 +481,32 @@ def run_video_and_write_story(
         extra=video_extra,
     )
     run.save("16_video_request.json", video_body)
-    video_job = run.post("/v1/video-generations", video_body, idempotency_key=f"{run.prefix}-video")
+    video_job = run.post(
+        "/v1/video-generations", video_body, idempotency_key=f"{run.prefix}-video"
+    )
     run.save("16_video_enrol.json", video_job)
-    video = run.poll_job(video_job["job_id"], label="video", video_route=True, deadline_seconds=7200.0)
+    video = run.poll_job(
+        video_job["job_id"], label="video", video_route=True, deadline_seconds=7200.0
+    )
     run.save("17_video_terminal.json", video)
     if video.get("status") != "completed":
         raise SystemExit(f"video {describe_job_error(video)}")
     # Hosted post is off on the deployed API: /delivery answers 409 post_production_not_ready.
-    status, body = run.get_optional(f"/v1/video-generations/{video_job['job_id']}/delivery")
-    delivery: dict[str, Any] = body if 200 <= status < 300 and isinstance(body, dict) else {}
+    status, body = run.get_optional(
+        f"/v1/video-generations/{video_job['job_id']}/delivery"
+    )
+    delivery: dict[str, Any] = (
+        body if 200 <= status < 300 and isinstance(body, dict) else {}
+    )
     if delivery:
         run.save("18_delivery.json", delivery)
     else:
         run.emit("delivery_unavailable", status=status)
     spine = run.spine(spine_id)
     run.save("19_spine_final.json", spine)
-    cast_names = [str(c.get("name") or "") for c in spine.get("cast") or [] if isinstance(c, dict)]
+    cast_names = [
+        str(c.get("name") or "") for c in spine.get("cast") or [] if isinstance(c, dict)
+    ]
     write_story_markdown(
         run.out / "STORY.md",
         title=str(spine.get("title") or spine_id),

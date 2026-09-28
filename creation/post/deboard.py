@@ -31,7 +31,13 @@ import numpy as np
 import numpy.typing as npt
 from PIL import Image
 
-from creation.post.media import MediaToolError, count_frames, decode_frames, probe_video, run_ffmpeg
+from creation.post.media import (
+    MediaToolError,
+    count_frames,
+    decode_frames,
+    probe_video,
+    run_ffmpeg,
+)
 
 #: Board-leak analysis size (the 768x1344 frame at a quarter).
 LEAK_ANALYSIS_SIZE = (192, 336)
@@ -65,8 +71,15 @@ class BoardLeak:
     def one_line(self) -> str:
         """``board leak 2 frame(s) [0:38.1, 1:37.9 dB], baseline 12.4 dB``."""
 
-        head = ", ".join(f"{index}:{value:.1f}" for index, value in enumerate(self.psnr_db[: self.frames]))
-        cap = f" (CAP of {BOARD_LEAK_MAX_FRAMES} hit: look at the head at full rate)" if self.capped else ""
+        head = ", ".join(
+            f"{index}:{value:.1f}"
+            for index, value in enumerate(self.psnr_db[: self.frames])
+        )
+        cap = (
+            f" (CAP of {BOARD_LEAK_MAX_FRAMES} hit: look at the head at full rate)"
+            if self.capped
+            else ""
+        )
         detail = f" [{head} dB]" if head else ""
         return f"board leak {self.frames} frame(s){detail}, baseline {self.baseline_db:.1f} dB{cap}"
 
@@ -103,7 +116,11 @@ class DeboardResult:
 
         if self.output is None:
             return f"no board frames at the head of {self.source.name} ({self.leak.one_line()}); nothing written"
-        after = f", new frame 0 at {self.after_psnr_db:.1f} dB" if self.after_psnr_db is not None else ""
+        after = (
+            f", new frame 0 at {self.after_psnr_db:.1f} dB"
+            if self.after_psnr_db is not None
+            else ""
+        )
         cap = " CAP HIT" if self.leak.capped else ""
         return (
             f"{self.output.name}: replaced {self.leak.frames} board frame(s){cap} with the first real frame"
@@ -158,7 +175,8 @@ def measure_board_leak(
         raise ValueError(f"{take.name} is too short to measure board frames")
     with Image.open(board) as opened:
         reference = np.asarray(
-            opened.convert("RGB").resize((width, height), Image.Resampling.BILINEAR), dtype=np.float64
+            opened.convert("RGB").resize((width, height), Image.Resampling.BILINEAR),
+            dtype=np.float64,
         )
     scores = [_psnr(frame, reference) for frame in head]
     baseline = statistics.median(_psnr(frame, reference) for frame in later)
@@ -175,7 +193,9 @@ def measure_board_leak(
     )
 
 
-def deboard(take: Path, board: Path, out: Path, *, max_frames: int = BOARD_LEAK_MAX_FRAMES) -> DeboardResult:
+def deboard(
+    take: Path, board: Path, out: Path, *, max_frames: int = BOARD_LEAK_MAX_FRAMES
+) -> DeboardResult:
     """Replace the measured board frames at the head with clones of the first real frame.
 
     Parameters
@@ -217,12 +237,25 @@ def deboard(take: Path, board: Path, out: Path, *, max_frames: int = BOARD_LEAK_
     args = ["-i", str(take), "-filter_complex", graph, "-map", "[v]"]
     if before.has_audio:
         args += ["-map", "0:a", "-c:a", "copy"]
-    args += ["-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-r", f"{fps:g}", str(out)]
+    args += [
+        "-c:v",
+        "libx264",
+        "-crf",
+        "14",
+        "-pix_fmt",
+        "yuv420p",
+        "-r",
+        f"{fps:g}",
+        str(out),
+    ]
     out.parent.mkdir(parents=True, exist_ok=True)
     run_ffmpeg(args)
     after = probe_video(out)
     frames_after = count_frames(out)
-    if frames_after != frames_before or abs(after.duration_seconds - before.duration_seconds) > 0.05:
+    if (
+        frames_after != frames_before
+        or abs(after.duration_seconds - before.duration_seconds) > 0.05
+    ):
         raise MediaToolError(
             f"deboard changed the length: {frames_before} frames / {before.duration_seconds:.3f}s -> "
             f"{frames_after} frames / {after.duration_seconds:.3f}s"

@@ -110,9 +110,17 @@ def spine_script_lines(spine: Mapping[str, Any], *, episode: int) -> list[Script
         ``text`` is the English script; ``alt_text`` the performed line on a JA/KO show.
     """
 
-    names = {str(c.get("cast_id")): str(c.get("name") or c.get("cast_id")) for c in spine.get("cast") or [] if isinstance(c, Mapping)}
+    names = {
+        str(c.get("cast_id")): str(c.get("name") or c.get("cast_id"))
+        for c in spine.get("cast") or []
+        if isinstance(c, Mapping)
+    }
     wanted = episode_id_for(spine, episode)
-    beats = [b for b in spine.get("beats") or [] if isinstance(b, Mapping) and b.get("episode_id") == wanted]
+    beats = [
+        b
+        for b in spine.get("beats") or []
+        if isinstance(b, Mapping) and b.get("episode_id") == wanted
+    ]
     beats.sort(key=lambda beat: int(beat.get("ordinal") or 0))
     out: list[ScriptLine] = []
     for beat in beats:
@@ -140,7 +148,11 @@ def _norm(text: str) -> str:
 
 def _similar(brief: ScriptLine, spine: ScriptLine) -> float:
     wanted = _norm(brief.text)
-    return max(SequenceMatcher(None, wanted, _norm(text)).ratio() for text in (spine.text, spine.alt_text) if text)
+    return max(
+        SequenceMatcher(None, wanted, _norm(text)).ratio()
+        for text in (spine.text, spine.alt_text)
+        if text
+    )
 
 
 def _same_speaker(a: str, b: str) -> bool:
@@ -148,7 +160,9 @@ def _same_speaker(a: str, b: str) -> bool:
     return bool(left and right) and (left == right or left in right or right in left)
 
 
-def compare_lines(brief: Sequence[ScriptLine], spine: Sequence[ScriptLine]) -> list[LineMatch]:
+def compare_lines(
+    brief: Sequence[ScriptLine], spine: Sequence[ScriptLine]
+) -> list[LineMatch]:
     """Pair brief lines with spine lines: best pairs first, each line used once.
 
     Parameters
@@ -171,7 +185,9 @@ def compare_lines(brief: Sequence[ScriptLine], spine: Sequence[ScriptLine]) -> l
             ratio = _similar(wanted, drafted)
             same = _same_speaker(wanted.speaker, drafted.speaker)
             if (same and ratio >= REWRITE_RATIO) or ratio >= RESPEAKER_RATIO:
-                candidates.append((ratio + (0.5 if same else 0.0) - 0.001 * abs(i - j), i, j, ratio))
+                candidates.append(
+                    (ratio + (0.5 if same else 0.0) - 0.001 * abs(i - j), i, j, ratio)
+                )
     candidates.sort(key=lambda item: (-item[0], item[1], item[2]))
     paired: dict[int, tuple[int, float]] = {}
     used: set[int] = set()
@@ -189,11 +205,17 @@ def compare_lines(brief: Sequence[ScriptLine], spine: Sequence[ScriptLine]) -> l
         drafted = spine[j]
         kept = ratio >= KEPT_RATIO and _same_speaker(wanted.speaker, drafted.speaker)
         out.append(LineMatch("kept" if kept else "rewritten", wanted, drafted))
-    out += [LineMatch("added", None, drafted) for j, drafted in enumerate(spine) if j not in used]
+    out += [
+        LineMatch("added", None, drafted)
+        for j, drafted in enumerate(spine)
+        if j not in used
+    ]
     return out
 
 
-def brief_vs_spine_lines(brief_text: str, spine: Mapping[str, Any], *, episode: int) -> list[str]:
+def brief_vs_spine_lines(
+    brief_text: str, spine: Mapping[str, Any], *, episode: int
+) -> list[str]:
     """Print the brief's lines against the drafted script, for the creator to see right after the draft.
 
     Parameters
@@ -216,26 +238,39 @@ def brief_vs_spine_lines(brief_text: str, spine: Mapping[str, Any], *, episode: 
         return []
     drafted = spine_script_lines(spine, episode=episode)
     matches = compare_lines(brief, drafted)
-    count = {verdict: sum(1 for m in matches if m.verdict == verdict) for verdict in ("kept", "rewritten", "cut", "added")}
+    count = {
+        verdict: sum(1 for m in matches if m.verdict == verdict)
+        for verdict in ("kept", "rewritten", "cut", "added")
+    }
     out = [
         f"brief lines vs the drafted script: brief {len(brief)} -> script {len(drafted)} "
         f"(kept {count['kept']}, rewritten {count['rewritten']}, cut {count['cut']}, added {count['added']})"
     ]
     for match in matches:
         if match.verdict == "kept" and match.spine:
-            out.append(f'  kept       {match.spine.speaker}: "{match.spine.text}"  [{match.spine.line_id}]')
+            out.append(
+                f'  kept       {match.spine.speaker}: "{match.spine.text}"  [{match.spine.line_id}]'
+            )
         elif match.verdict == "rewritten" and match.brief and match.spine:
-            out.append(f'  rewritten  brief  {match.brief.speaker}: "{match.brief.text}"')
-            out.append(f'             script {match.spine.speaker}: "{match.spine.text}"  [{match.spine.line_id}]')
+            out.append(
+                f'  rewritten  brief  {match.brief.speaker}: "{match.brief.text}"'
+            )
+            out.append(
+                f'             script {match.spine.speaker}: "{match.spine.text}"  [{match.spine.line_id}]'
+            )
         elif match.verdict == "cut" and match.brief:
-            out.append(f'  cut        {match.brief.speaker}: "{match.brief.text}" (no line in the script says this)')
+            out.append(
+                f'  cut        {match.brief.speaker}: "{match.brief.text}" (no line in the script says this)'
+            )
         elif match.spine:
-            out.append(f'  added      {match.spine.speaker}: "{match.spine.text}"  [{match.spine.line_id}] (not in the brief)')
+            out.append(
+                f'  added      {match.spine.speaker}: "{match.spine.text}"  [{match.spine.line_id}] (not in the brief)'
+            )
     if count["kept"] != len(brief) or count["added"]:
         out.append(
             "  !! The writers changed the brief's lines. Before the script gate: keep theirs, or put yours back with "
-            "`fictora-produce line --desk D --episode N --line ID --text \"...\"` (or `--speaker`). Put a cut line "
-            "back with `line --add --beat B --speaker NAME --text \"...\"` (a voice not in the cast: `--new-voice`); "
+            '`fictora-produce line --desk D --episode N --line ID --text "..."` (or `--speaker`). Put a cut line '
+            'back with `line --add --beat B --speaker NAME --text "..."` (a voice not in the cast: `--new-voice`); '
             "drop an added one with `line --remove ID`."
         )
     return out

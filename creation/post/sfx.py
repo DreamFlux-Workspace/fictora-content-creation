@@ -51,7 +51,9 @@ class SfxCue:
     def cache_key(self) -> str:
         """Same sound, kind and length -> same file."""
 
-        raw = json.dumps([self.sound.strip().casefold(), self.kind, round(self.seconds, 2)])
+        raw = json.dumps(
+            [self.sound.strip().casefold(), self.kind, round(self.seconds, 2)]
+        )
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
@@ -84,7 +86,9 @@ def parse_adjustment(raw: str) -> Adjustment:
 
     target, sep, change = raw.rpartition("=")
     if not sep or not change.strip() or not target.strip():
-        raise ValueError(f"--sfx-adjust wants <sound words or shot:N>=<dB or drop>, got {raw!r}")
+        raise ValueError(
+            f"--sfx-adjust wants <sound words or shot:N>=<dB or drop>, got {raw!r}"
+        )
     target = target.strip()
     shot: int | None = None
     if target.casefold().startswith("shot:"):
@@ -104,7 +108,9 @@ def _applies(cue: SfxCue, adjustment: Adjustment) -> bool:
     return bool(words) and all(word in cue.sound.casefold() for word in words)
 
 
-def apply_adjustments(cues: tuple[SfxCue, ...], adjustments: tuple[Adjustment, ...]) -> tuple[SfxCue, ...]:
+def apply_adjustments(
+    cues: tuple[SfxCue, ...], adjustments: tuple[Adjustment, ...]
+) -> tuple[SfxCue, ...]:
     """Drop or re-level the cues an adjustment names; gains stay inside -30..0 dB."""
 
     out: list[SfxCue] = []
@@ -117,7 +123,9 @@ def apply_adjustments(cues: tuple[SfxCue, ...], adjustments: tuple[Adjustment, .
                 keep = False
                 break
             gain = cue.gain_db + adjustment.gain_change_db
-            cue = replace(cue, gain_db=max(SFX_GAIN_RANGE_DB[0], min(SFX_GAIN_RANGE_DB[1], gain)))
+            cue = replace(
+                cue, gain_db=max(SFX_GAIN_RANGE_DB[0], min(SFX_GAIN_RANGE_DB[1], gain))
+            )
         if keep:
             out.append(cue)
     return tuple(out)
@@ -152,7 +160,8 @@ def plan_from_take_facts(payload: dict[str, Any]) -> SfxPlan:
     speech = tuple(
         (float(shot["start_seconds"]), float(shot["end_seconds"]))
         for shot in facts.get("shots") or []
-        if shot.get("speaks") and float(shot["end_seconds"]) > float(shot["start_seconds"])
+        if shot.get("speaks")
+        and float(shot["end_seconds"]) > float(shot["start_seconds"])
     )
     return SfxPlan(cues, speech)
 
@@ -196,7 +205,12 @@ def service_renderer(audio: AudioService, spine_id: str) -> Renderer:
 
     def render(cue: SfxCue, target: Path) -> Path:
         seconds = round(max(SFX_MIN_SECONDS, min(SFX_MAX_SECONDS, cue.seconds)), 2)
-        answer = audio.sfx_cue(spine_id=spine_id, sound=cue.sound, seconds=seconds, key=f"sfx-{cue.cache_key}")
+        answer = audio.sfx_cue(
+            spine_id=spine_id,
+            sound=cue.sound,
+            seconds=seconds,
+            key=f"sfx-{cue.cache_key}",
+        )
         if answer.get("shape_problem"):
             raise ValueError(f"wrong shape: {answer['shape_problem']}")
         return download(str(answer["audio_url"]), target)
@@ -217,7 +231,9 @@ class SfxResult:
     peaks_db: tuple[float, ...] = ()
 
 
-def _cue_chain(position: int, cue: SfxCue, speech: tuple[tuple[float, float], ...]) -> str:
+def _cue_chain(
+    position: int, cue: SfxCue, speech: tuple[tuple[float, float], ...]
+) -> str:
     length = cue.seconds
     delay = round(cue.start * 1000)
     shape = f"atrim=0:{length:.3f},asetpts=PTS-STARTPTS"
@@ -233,9 +249,7 @@ def _cue_chain(position: int, cue: SfxCue, speech: tuple[tuple[float, float], ..
         for a, b in speech
         if a < end and b > cue.start
     )
-    return (
-        f"[{position}:a]aresample=48000,{shape},adelay={delay}|{delay},volume={cue.gain_db:+.1f}dB{ducks}[s{position}]"
-    )
+    return f"[{position}:a]aresample=48000,{shape},adelay={delay}|{delay},volume={cue.gain_db:+.1f}dB{ducks}[s{position}]"
 
 
 def lay_sfx(
@@ -315,7 +329,8 @@ def lay_sfx(
             kept.append((cue, good))
     if not kept:
         raise RuntimeError(
-            "no sound effect could be laid: " + ("; ".join(skipped) if skipped else "the take facts plan no cue")
+            "no sound effect could be laid: "
+            + ("; ".join(skipped) if skipped else "the take facts plan no cue")
         )
     inputs: list[str] = ["-i", str(take)]
     parts: list[str] = []
@@ -324,10 +339,21 @@ def lay_sfx(
         inputs += ["-i", str(path)]
         parts.append(_cue_chain(position, cue, plan.speech))
         labels.append(f"[s{position}]")
-    parts.append(f"{''.join(labels)}amix=inputs={len(labels)}:duration=first:normalize=0,{LIMITER}[a]")
+    parts.append(
+        f"{''.join(labels)}amix=inputs={len(labels)}:duration=first:normalize=0,{LIMITER}[a]"
+    )
     run_ffmpeg(
         [*inputs, "-filter_complex", ";".join(parts), "-map", "0:v", "-map", "[a]",
          "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", str(output)]
     )  # fmt: skip
-    peaks = tuple(round(max(measure(path), default=-120.0) + cue.gain_db, 1) for cue, path in kept)
-    return SfxResult(output, tuple(cue for cue, _ in kept), tuple(skipped), rendered, round(cost, 4), peaks)
+    peaks = tuple(
+        round(max(measure(path), default=-120.0) + cue.gain_db, 1) for cue, path in kept
+    )
+    return SfxResult(
+        output,
+        tuple(cue for cue, _ in kept),
+        tuple(skipped),
+        rendered,
+        round(cost, 4),
+        peaks,
+    )

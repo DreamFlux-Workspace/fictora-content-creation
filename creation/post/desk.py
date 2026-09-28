@@ -36,7 +36,9 @@ def open_api(desk: Path, episode: int) -> DramaApiRunSession:
     base, token = load_drama_api_credentials(Path(__file__).resolve().parents[2])
     api_dir = desk / f"ep{episode:02d}" / "api"
     api_dir.mkdir(parents=True, exist_ok=True)
-    return DramaApiRunSession(base_url=base, token=token, out_dir=api_dir, session_id=state.session_id)
+    return DramaApiRunSession(
+        base_url=base, token=token, out_dir=api_dir, session_id=state.session_id
+    )
 
 
 def spine_id(desk: Path) -> str:
@@ -50,7 +52,9 @@ def spine_id(desk: Path) -> str:
 
     found = load_production(desk).spine_id
     if not found:
-        raise ValueError("this desk has no spine_id yet; run `fictora-produce step` first")
+        raise ValueError(
+            "this desk has no spine_id yet; run `fictora-produce step` first"
+        )
     return found
 
 
@@ -113,11 +117,17 @@ def episode_dialogue(spine: Mapping[str, Any], ordinal: int) -> list[dict[str, s
     """
 
     wanted = {episode_id_for(spine, ordinal), f"episode_{ordinal:02d}"}
-    beats = [b for b in spine.get("beats") or [] if isinstance(b, Mapping) and b.get("episode_id") in wanted]
+    beats = [
+        b
+        for b in spine.get("beats") or []
+        if isinstance(b, Mapping) and b.get("episode_id") in wanted
+    ]
     lines: list[dict[str, str]] = []
     for beat in beats:
         for line in beat.get("dialogue_lines") or []:
-            text = str(line.get("text") or "").strip() if isinstance(line, Mapping) else ""
+            text = (
+                str(line.get("text") or "").strip() if isinstance(line, Mapping) else ""
+            )
             if text:
                 spoken = str(line.get("spoken_text") or "").strip()
                 lines.append(
@@ -126,7 +136,8 @@ def episode_dialogue(spine: Mapping[str, Any], ordinal: int) -> list[dict[str, s
                         "cast_id": str(line.get("cast_id") or ""),
                         "text": text,
                         "spoken_text": spoken,
-                        "subtitle": str(line.get("subtitle_text") or "").strip() or text,
+                        "subtitle": str(line.get("subtitle_text") or "").strip()
+                        or text,
                         "performed": spoken or text,
                     }
                 )
@@ -158,7 +169,9 @@ def find_cast(spine: Mapping[str, Any], wanted: str) -> dict[str, Any]:
         cid, name = str(card.get("cast_id") or ""), str(card.get("name") or "")
         if wanted in {cid, name} or key in {cast_slug(cid), _slug(name)}:
             return dict(card)
-    names = ", ".join(f"{c.get('cast_id')} ({c.get('name')})" for c in cards) or "nobody"
+    names = (
+        ", ".join(f"{c.get('cast_id')} ({c.get('name')})" for c in cards) or "nobody"
+    )
     raise ValueError(f"no cast member {wanted!r} on the spine; the cast is: {names}")
 
 
@@ -177,7 +190,11 @@ def latest_raw_take(desk: Path, episode: int, take_id: str) -> Path:
     """
 
     takes = desk / f"ep{episode:02d}" / "takes"
-    found = [p for p in takes.glob(f"take-ep{episode:02d}-{take_id}-raw-v*.mp4") if p.is_file()]
+    found = [
+        p
+        for p in takes.glob(f"take-ep{episode:02d}-{take_id}-raw-v*.mp4")
+        if p.is_file()
+    ]
     if not found:
         raise FileNotFoundError(
             f"no raw take take-ep{episode:02d}-{take_id}-raw-vN.mp4 in {takes}; "
@@ -199,7 +216,9 @@ def approved_board(desk: Path, episode: int, take_id: str) -> Path | None:
     except (FileNotFoundError, ValueError, KeyError):
         pass
     boards = desk / f"ep{episode:02d}" / "boards"
-    found = [p for p in boards.glob(f"board-ep{episode:02d}-{take_id}*.png") if p.is_file()]
+    found = [
+        p for p in boards.glob(f"board-ep{episode:02d}-{take_id}*.png") if p.is_file()
+    ]
     return max(found, key=lambda p: p.stat().st_mtime) if found else None
 
 

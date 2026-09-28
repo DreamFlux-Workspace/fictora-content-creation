@@ -119,7 +119,11 @@ def next_versioned_path(directory: Path, stem: str, suffix: str) -> Path:
         raise ValueError("stem must not include a -vN suffix")
     ext = suffix if suffix.startswith(".") else f".{suffix}"
     pattern = re.compile(rf"^{re.escape(cleaned)}-v(\d+){re.escape(ext)}$")
-    used = {int(match.group(1)) for path in directory.glob(f"{cleaned}-v*{ext}") if (match := pattern.match(path.name))}
+    used = {
+        int(match.group(1))
+        for path in directory.glob(f"{cleaned}-v*{ext}")
+        if (match := pattern.match(path.name))
+    }
     version = 1
     while version in used:
         version += 1

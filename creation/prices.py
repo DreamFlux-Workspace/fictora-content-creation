@@ -54,18 +54,29 @@ STILL_USD: Final = Decimal("0.30")
 
 #: What each lane pin films on when no server answer has named the endpoint yet:
 #: ``model_overrides.video`` -> (endpoint, resolution). The server's default, never R2V.
-LANE_DEFAULT_ENDPOINTS: Final[dict[str, tuple[str, str]]] = {"minimax-h3": (H3_MAX_TURBO_I2V_ENDPOINT, H3_RESOLUTION)}
+LANE_DEFAULT_ENDPOINTS: Final[dict[str, tuple[str, str]]] = {
+    "minimax-h3": (H3_MAX_TURBO_I2V_ENDPOINT, H3_RESOLUTION)
+}
 
-LANE_LABELS: Final[dict[str, str]] = {H3_MAX_R2V_ENDPOINT: "H3 Max R2V", H3_MAX_TURBO_I2V_ENDPOINT: "H3 Max Turbo"}
+LANE_LABELS: Final[dict[str, str]] = {
+    H3_MAX_R2V_ENDPOINT: "H3 Max R2V",
+    H3_MAX_TURBO_I2V_ENDPOINT: "H3 Max Turbo",
+}
 
 #: Spend envelopes (warn only, never a block): first episode of a new series, then continuing by band.
 #: Sized when takes filmed on R2V ($1.20 a 15 s take); Turbo takes ($0.30, $0.60 from 2026-10-01) sit well
 #: inside them, so they warn only on real overspend (redraws, re-takes). Kept, not tightened.
 ENVELOPE_FIRST_USD: Final = 5.50
-ENVELOPE_CONTINUING_USD: Final[dict[str, float]] = {"15s": 2.50, "30s": 5.00, "60s": 8.00}
+ENVELOPE_CONTINUING_USD: Final[dict[str, float]] = {
+    "15s": 2.50,
+    "30s": 5.00,
+    "60s": 8.00,
+}
 
 
-def video_usd_per_second(endpoint_id: str, resolution: str, *, on: date) -> Decimal | None:
+def video_usd_per_second(
+    endpoint_id: str, resolution: str, *, on: date
+) -> Decimal | None:
     """Return a lane's verified per-second rate on a day.
 
     Parameters
@@ -86,7 +97,11 @@ def video_usd_per_second(endpoint_id: str, resolution: str, *, on: date) -> Deci
     if endpoint_id == H3_MAX_R2V_ENDPOINT:
         return H3_MAX_R2V_USD_PER_SECOND.get(resolution.upper())
     if endpoint_id == H3_MAX_TURBO_I2V_ENDPOINT and resolution.upper() == H3_RESOLUTION:
-        return H3_TURBO_PROMO_USD_PER_SECOND if on <= H3_TURBO_PROMO_LAST_DAY else H3_TURBO_USD_PER_SECOND
+        return (
+            H3_TURBO_PROMO_USD_PER_SECOND
+            if on <= H3_TURBO_PROMO_LAST_DAY
+            else H3_TURBO_USD_PER_SECOND
+        )
     return None
 
 
@@ -129,7 +144,9 @@ def reference_images_usd(endpoint_id: str, count: int) -> Decimal:
 
     if endpoint_id != H3_MAX_R2V_ENDPOINT:
         return Decimal(0)
-    return H3_MAX_R2V_EXTRA_REFERENCE_IMAGE_USD * max(0, count - H3_MAX_R2V_INCLUDED_REFERENCE_IMAGES)
+    return H3_MAX_R2V_EXTRA_REFERENCE_IMAGE_USD * max(
+        0, count - H3_MAX_R2V_INCLUDED_REFERENCE_IMAGES
+    )
 
 
 def reference_images_ceiling(cast_count: int, endpoint_id: str) -> int:
@@ -153,7 +170,14 @@ def reference_images_ceiling(cast_count: int, endpoint_id: str) -> int:
     return min(H3_MAX_REFERENCE_IMAGES, 1 + max(0, cast_count))
 
 
-def take_usd(endpoint_id: str, resolution: str, seconds: float, *, on: date, reference_images: int = 0) -> float | None:
+def take_usd(
+    endpoint_id: str,
+    resolution: str,
+    seconds: float,
+    *,
+    on: date,
+    reference_images: int = 0,
+) -> float | None:
     """Return one take's price: billed seconds times the rate, plus its reference images.
 
     Parameters
@@ -202,13 +226,19 @@ def server_lane(answer: dict | None) -> tuple[str, str] | None:
         return None
     cost = answer.get("cost_estimate")
     if isinstance(cost, dict) and cost.get("video_endpoint_id"):
-        return str(cost["video_endpoint_id"]), str(cost.get("video_resolution") or H3_RESOLUTION)
+        return str(cost["video_endpoint_id"]), str(
+            cost.get("video_resolution") or H3_RESOLUTION
+        )
     if answer.get("endpoint_id"):
-        return str(answer["endpoint_id"]), str(answer.get("resolution") or H3_RESOLUTION)
+        return str(answer["endpoint_id"]), str(
+            answer.get("resolution") or H3_RESOLUTION
+        )
     return None
 
 
-def lane_endpoint(video_lane: str | None, *, server: tuple[str, str] | None = None) -> tuple[str, str] | None:
+def lane_endpoint(
+    video_lane: str | None, *, server: tuple[str, str] | None = None
+) -> tuple[str, str] | None:
     """Return what a take on a lane pin films on: the server's word first, else the pin's default.
 
     Parameters
@@ -264,7 +294,9 @@ def lane_take_usd(
     endpoint = lane_endpoint(video_lane, server=server)
     if endpoint is None:
         return None
-    return take_usd(endpoint[0], endpoint[1], seconds, on=on, reference_images=reference_images)
+    return take_usd(
+        endpoint[0], endpoint[1], seconds, on=on, reference_images=reference_images
+    )
 
 
 def lane_label(video_lane: str | None, *, server: tuple[str, str] | None = None) -> str:
@@ -284,7 +316,11 @@ def lane_label(video_lane: str | None, *, server: tuple[str, str] | None = None)
     """
 
     endpoint = lane_endpoint(video_lane, server=server)
-    return LANE_LABELS.get(endpoint[0], endpoint[0]) if endpoint else str(video_lane or "unknown lane")
+    return (
+        LANE_LABELS.get(endpoint[0], endpoint[0])
+        if endpoint
+        else str(video_lane or "unknown lane")
+    )
 
 
 def take_facts_usd(facts: dict, *, on: date) -> tuple[float, str] | None:
@@ -309,11 +345,16 @@ def take_facts_usd(facts: dict, *, on: date) -> tuple[float, str] | None:
     if not endpoint or not resolution or not isinstance(seconds, (int, float)):
         return None
     count = int(facts.get("reference_image_count") or 0)
-    price = take_usd(endpoint, resolution, float(seconds), on=on, reference_images=count)
+    price = take_usd(
+        endpoint, resolution, float(seconds), on=on, reference_images=count
+    )
     if price is None:
         return None
     label = LANE_LABELS.get(endpoint, endpoint)
-    return price, f"{label} {resolution}, {float(seconds):g} s, {count} reference image(s)"
+    return (
+        price,
+        f"{label} {resolution}, {float(seconds):g} s, {count} reference image(s)",
+    )
 
 
 def envelope_usd(*, first_episode: bool, band: str) -> float:

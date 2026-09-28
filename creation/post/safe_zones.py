@@ -111,7 +111,12 @@ def caption_box(image: Image.Image) -> Box | None:
     left, right = cols.min() / width, (cols.max() + 1) / width
     if right - left < CAPTION_MIN_WIDTH:
         return None
-    return (round(float(left), 4), round(rows.min() / height, 4), round(float(right), 4), round((rows.max() + 1) / height, 4))
+    return (
+        round(float(left), 4),
+        round(rows.min() / height, 4),
+        round(float(right), 4),
+        round((rows.max() + 1) / height, 4),
+    )
 
 
 def zones_entered(box: Box) -> list[str]:
@@ -144,22 +149,35 @@ def grab_frame(video: Path, seconds: float) -> Image.Image:
     return Image.open(BytesIO(result.stdout)).convert("RGB")
 
 
-def zone_sheet(frames: Sequence[tuple[float, Image.Image, Box | None]], out: Path, *, tile_height: int = 480) -> Path:
+def zone_sheet(
+    frames: Sequence[tuple[float, Image.Image, Box | None]],
+    out: Path,
+    *,
+    tile_height: int = 480,
+) -> Path:
     """Sampled frames side by side, covered zones shaded red, caption boxes outlined."""
 
     tiles = []
     for seconds, image, box in frames:
-        tile = image.resize((max(1, round(image.width * tile_height / image.height)), tile_height)).convert("RGBA")
+        tile = image.resize(
+            (max(1, round(image.width * tile_height / image.height)), tile_height)
+        ).convert("RGBA")
         shade = Image.new("RGBA", tile.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(shade)
         w, h = tile.size
         for zl, zt, zr, zb in ZONES.values():
             draw.rectangle((zl * w, zt * h, zr * w, zb * h), fill=(230, 40, 40, 90))
         if box is not None:
-            draw.rectangle((box[0] * w, box[1] * h, box[2] * w, box[3] * h), outline=(40, 220, 255, 255), width=3)
+            draw.rectangle(
+                (box[0] * w, box[1] * h, box[2] * w, box[3] * h),
+                outline=(40, 220, 255, 255),
+                width=3,
+            )
         draw.text((6, h - 18), f"{seconds:.1f}s", fill=(255, 255, 255, 255))
         tiles.append(Image.alpha_composite(tile, shade).convert("RGB"))
-    sheet = Image.new("RGB", (sum(t.width + 6 for t in tiles), tile_height), (12, 12, 12))
+    sheet = Image.new(
+        "RGB", (sum(t.width + 6 for t in tiles), tile_height), (12, 12, 12)
+    )
     x = 0
     for tile in tiles:
         sheet.paste(tile, (x, 0))
@@ -168,7 +186,9 @@ def zone_sheet(frames: Sequence[tuple[float, Image.Image, Box | None]], out: Pat
     return out
 
 
-def check_safe_zones(video: Path, *, sheet_dir: Path | None = None, count: int = SAMPLE_FRAMES) -> SafeZoneReport:
+def check_safe_zones(
+    video: Path, *, sheet_dir: Path | None = None, count: int = SAMPLE_FRAMES
+) -> SafeZoneReport:
     """Measure captions against the covered zones on sampled frames; write the zone sheet.
 
     Parameters
@@ -203,7 +223,9 @@ def check_safe_zones(video: Path, *, sheet_dir: Path | None = None, count: int =
             )
         )
     folder = sheet_dir or video.parent
-    sheet = zone_sheet(grabbed, next_versioned_path(folder, f"{video.stem}-zones", ".png"))
+    sheet = zone_sheet(
+        grabbed, next_versioned_path(folder, f"{video.stem}-zones", ".png")
+    )
     warnings: list[str] = []
     for name in ZONES:
         hits = [c.seconds for c in checks if name in c.zones]
@@ -219,7 +241,9 @@ def check_safe_zones(video: Path, *, sheet_dir: Path | None = None, count: int =
             f"{', '.join(f'{s:.1f}s' for s in off_band)}"
         )
     if not any(c.caption for c in checks):
-        warnings.append("no house caption seen on the sampled frames (a take before captions, or a silent take)")
+        warnings.append(
+            "no house caption seen on the sampled frames (a take before captions, or a silent take)"
+        )
     warnings.append(FACE_CHECK.format(sheet=sheet.name))
     return SafeZoneReport(video, checks, sheet, warnings)
 
@@ -234,14 +258,21 @@ def newest_finished_take(desk: Path, episode: int, take_id: str) -> Path:
     """
 
     takes = desk / f"ep{episode:02d}" / "takes"
-    found = [p for p in takes.glob(f"take-ep{episode:02d}-{take_id}-*.mp4") if p.is_file()]
+    found = [
+        p for p in takes.glob(f"take-ep{episode:02d}-{take_id}-*.mp4") if p.is_file()
+    ]
     if not found:
         raise FileNotFoundError(f"no file for ep{episode:02d} {take_id} in {takes}")
     return max(found, key=lambda p: p.stat().st_mtime)
 
 
 def run_review(
-    desk: Path | None, *, episode: int = 1, take_id: str = "t1", take_file: Path | None = None, out: TextIO
+    desk: Path | None,
+    *,
+    episode: int = 1,
+    take_id: str = "t1",
+    take_file: Path | None = None,
+    out: TextIO,
 ) -> SafeZoneReport:
     """Print the safe-zone check for one take and save the report next to the sheet. Never raises on a finding.
 
@@ -270,10 +301,16 @@ def run_review(
     report = check_safe_zones(source)
     path = report.sheet.with_suffix(".json")
     path.write_text(json.dumps(report.as_json(), indent=2) + "\n", encoding="utf-8")
-    print(f"Safe zones on {source.name} ({len(report.frames)} frames sampled):", file=out)
+    print(
+        f"Safe zones on {source.name} ({len(report.frames)} frames sampled):", file=out
+    )
     for check in report.frames:
         where = ", ".join(check.zones) if check.zones else "clear"
-        box = "no caption" if check.caption is None else f"caption {check.caption[1]:.0%}-{check.caption[3]:.0%} high: {where}"
+        box = (
+            "no caption"
+            if check.caption is None
+            else f"caption {check.caption[1]:.0%}-{check.caption[3]:.0%} high: {where}"
+        )
         print(f"  {check.seconds:6.2f}s  {box}", file=out)
     for line in report.warnings:
         print(line, file=out)

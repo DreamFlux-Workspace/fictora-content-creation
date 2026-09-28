@@ -101,7 +101,11 @@ class Snap:
     def one_line(self) -> str:
         """``10.210 s -> 10.167 s (frame 244, shot change)``."""
 
-        how = "shot change" if self.snapped else "no shot change within ±0.1 s: nearest frame"
+        how = (
+            "shot change"
+            if self.snapped
+            else "no shot change within ±0.1 s: nearest frame"
+        )
         return f"{self.asked:.3f} s -> {self.seconds:.3f} s (frame {self.frame}, {how})"
 
 
@@ -157,7 +161,11 @@ def frame_differences(take: Path) -> tuple[float, npt.NDArray[np.float64]]:
 
 
 def snap_to_shot_change(
-    asked: float, *, fps: float, diffs: npt.NDArray[np.float64], window: float = SNAP_WINDOW_SECONDS
+    asked: float,
+    *,
+    fps: float,
+    diffs: npt.NDArray[np.float64],
+    window: float = SNAP_WINDOW_SECONDS,
 ) -> Snap:
     """Snap a time to the strongest shot change within ``window``, else to the nearest frame.
 
@@ -183,13 +191,19 @@ def snap_to_shot_change(
     if nearest in (0, last):
         return Snap(asked, nearest, round(nearest / fps, 3), False, 0.0)
     reach = int(np.floor(window * fps + 1e-6))
-    candidates = [index for index in range(nearest - reach, nearest + reach + 1) if 1 <= index < last]
+    candidates = [
+        index
+        for index in range(nearest - reach, nearest + reach + 1)
+        if 1 <= index < last
+    ]
     best = max(candidates, key=lambda index: (diffs[index], -abs(index - nearest)))
     typical = float(np.median(diffs[1:])) if last > 1 else 0.0
     strength = float(diffs[best])
     if strength >= max(CUT_MIN_DIFF, CUT_MIN_RATIO * typical):
         return Snap(asked, best, round(best / fps, 3), True, round(strength, 2))
-    return Snap(asked, nearest, round(nearest / fps, 3), False, round(float(diffs[nearest]), 2))
+    return Snap(
+        asked, nearest, round(nearest / fps, 3), False, round(float(diffs[nearest]), 2)
+    )
 
 
 def parse_cut(raw: str) -> tuple[float, float]:
@@ -248,12 +262,16 @@ def trim_take(take: Path, cut: tuple[float, float], out: Path) -> TrimResult:
     info = probe_video(take)
     start, end = cut
     if start < 0 or end > info.duration_seconds + 0.05:
-        raise ValueError(f"--cut {start}-{end} is outside the take (0-{info.duration_seconds:.2f} s)")
+        raise ValueError(
+            f"--cut {start}-{end} is outside the take (0-{info.duration_seconds:.2f} s)"
+        )
     fps, diffs = frame_differences(take)
     first = snap_to_shot_change(start, fps=fps, diffs=diffs)
     after = snap_to_shot_change(end, fps=fps, diffs=diffs)
     if after.frame <= first.frame:
-        raise ValueError(f"the cut snapped to nothing ({first.one_line()}; {after.one_line()})")
+        raise ValueError(
+            f"the cut snapped to nothing ({first.one_line()}; {after.one_line()})"
+        )
     if first.frame == 0 and after.frame >= len(diffs):
         raise ValueError("the cut removes the whole take")
     if out.exists():
@@ -270,7 +288,14 @@ def trim_take(take: Path, cut: tuple[float, float], out: Path) -> TrimResult:
     )  # fmt: skip
     out.parent.mkdir(parents=True, exist_ok=True)
     run_ffmpeg(["-i", str(take), *video, *audio, str(out)])
-    return TrimResult(source=take, output=out, start=first, end=after, fps=fps, duration_before=info.duration_seconds)
+    return TrimResult(
+        source=take,
+        output=out,
+        start=first,
+        end=after,
+        fps=fps,
+        duration_before=info.duration_seconds,
+    )
 
 
 def shift_time(value: float, start: float, end: float) -> float | None:
@@ -296,7 +321,9 @@ def shift_time(value: float, start: float, end: float) -> float | None:
     return None
 
 
-def shift_timed_items(items: list[dict[str, Any]], start: float, end: float) -> tuple[list[dict[str, Any]], list[str]]:
+def shift_timed_items(
+    items: list[dict[str, Any]], start: float, end: float
+) -> tuple[list[dict[str, Any]], list[str]]:
     """Shift ``[{start, end?, ...}]`` (captions, cues) for a cut; drop what was inside it.
 
     Parameters
@@ -322,13 +349,19 @@ def shift_timed_items(items: list[dict[str, Any]], start: float, end: float) -> 
         moved = dict(item)
         if new_begin is None:
             if finish is None or finish <= end:
-                notes.append(f"item {number} ({begin:.2f}s) was inside the cut: dropped")
+                notes.append(
+                    f"item {number} ({begin:.2f}s) was inside the cut: dropped"
+                )
                 continue
             new_begin = start
-            notes.append(f"item {number} started inside the cut: now starts at the cut ({start:.3f}s)")
+            notes.append(
+                f"item {number} started inside the cut: now starts at the cut ({start:.3f}s)"
+            )
         if finish is not None and new_finish is None:
             new_finish = start
-            notes.append(f"item {number} ran into the cut: now ends at the cut ({start:.3f}s)")
+            notes.append(
+                f"item {number} ran into the cut: now ends at the cut ({start:.3f}s)"
+            )
         moved["start"] = new_begin
         if finish is not None:
             moved["end"] = new_finish
@@ -358,12 +391,16 @@ def shift_json_file(path: Path, start: float, end: float) -> tuple[Path, list[st
     """
 
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, list) or not all(isinstance(item, dict) and "start" in item for item in payload):
+    if not isinstance(payload, list) or not all(
+        isinstance(item, dict) and "start" in item for item in payload
+    ):
         raise ValueError(f"{path} must be a JSON list of objects with a start")
     shifted, notes = shift_timed_items(payload, start, end)
     stem = re.sub(r"-v\d+$", "", path.stem)
     out = next_versioned_path(path.parent, f"{stem}-trim", ".json")
-    out.write_text(json.dumps(shifted, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    out.write_text(
+        json.dumps(shifted, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return out, notes
 
 
@@ -502,7 +539,9 @@ def freeze_frame(take: Path, out: Path, *, at: float, hold: float) -> FreezeResu
     parts: list[str] = []
     labels: list[str] = []
     if start > 0:
-        parts.append(f"[0:v]trim=start=0:end={start:.6f},setpts=PTS-STARTPTS,{normalize}[head]")
+        parts.append(
+            f"[0:v]trim=start=0:end={start:.6f},setpts=PTS-STARTPTS,{normalize}[head]"
+        )
         labels.append("[head]")
     parts.append(
         freeze_frame_chain(input_label="0:v", frame_seconds=start, hold_seconds=end - start, frame_rate=rate,
@@ -516,11 +555,24 @@ def freeze_frame(take: Path, out: Path, *, at: float, hold: float) -> FreezeResu
     args = ["-i", str(take), "-filter_complex", ";".join(parts), "-map", "[v]"]
     if info.has_audio:
         args += ["-map", "0:a", "-c:a", "copy"]
-    args += ["-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", "-t", f"{total:.3f}", str(out)]
+    args += [
+        "-c:v",
+        "libx264",
+        "-crf",
+        "16",
+        "-pix_fmt",
+        "yuv420p",
+        "-t",
+        f"{total:.3f}",
+        str(out),
+    ]
     out.parent.mkdir(parents=True, exist_ok=True)
     run_ffmpeg(args)
     return FreezeResult(
-        output=out, at_seconds=start, hold_seconds=end - start, duration_seconds=probe_video(out).duration_seconds
+        output=out,
+        at_seconds=start,
+        hold_seconds=end - start,
+        duration_seconds=probe_video(out).duration_seconds,
     )
 
 
@@ -672,7 +724,9 @@ def measure_cuts(take: Path, *, skip_head_frames: int = 0) -> tuple[float, ...]:
     return tuple(time for time in cuts if time > floor)
 
 
-def soften_seams(take: Path, out: Path, cuts: tuple[float, ...], *, seconds: float = SOFTEN_SECONDS) -> Path:
+def soften_seams(
+    take: Path, out: Path, cuts: tuple[float, ...], *, seconds: float = SOFTEN_SECONDS
+) -> Path:
     """Soften hard cuts in place: hold the last pre-cut frame and fade it out over ``seconds``.
 
     Duration and lip-sync are preserved; audio is copied.
@@ -717,7 +771,9 @@ def soften_seams(take: Path, out: Path, cuts: tuple[float, ...], *, seconds: flo
             run_ffmpeg(["-ss", f"{max(0.0, cut - 1 / fps):.4f}", "-i", str(take), "-frames:v", "1", "-update", "1",
                         str(still)])  # fmt: skip
             inputs += ["-loop", "1", "-framerate", f"{fps:g}", "-i", str(still)]
-            graph.append(f"[{index}:v]format=yuva420p,fade=t=out:st={cut:.4f}:d={seconds}:alpha=1[o{index}]")
+            graph.append(
+                f"[{index}:v]format=yuva420p,fade=t=out:st={cut:.4f}:d={seconds}:alpha=1[o{index}]"
+            )
             graph.append(
                 f"[{last}][o{index}]overlay=eof_action=pass:enable='between(t,{cut:.4f},{cut + seconds:.4f})'[v{index}]"
             )
@@ -725,6 +781,16 @@ def soften_seams(take: Path, out: Path, cuts: tuple[float, ...], *, seconds: flo
         args = [*inputs, "-filter_complex", ";".join(graph), "-map", f"[{last}]"]
         if info.has_audio:
             args += ["-map", "0:a", "-c:a", "copy"]
-        args += ["-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", "-t", f"{info.duration_seconds:.3f}", str(out)]
+        args += [
+            "-c:v",
+            "libx264",
+            "-crf",
+            "16",
+            "-pix_fmt",
+            "yuv420p",
+            "-t",
+            f"{info.duration_seconds:.3f}",
+            str(out),
+        ]
         run_ffmpeg(args)
     return out

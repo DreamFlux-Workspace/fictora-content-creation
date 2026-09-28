@@ -38,7 +38,12 @@ def add_review_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
         "--take-file", "--file", dest="take_file", type=Path, default=None,
         help="Default: the newest finished file for the take, else the newest raw take (the block says which).",
     )  # fmt: skip
-    review.add_argument("--board", type=Path, default=None, help="Default: the take's approved board on the desk.")
+    review.add_argument(
+        "--board",
+        type=Path,
+        default=None,
+        help="Default: the take's approved board on the desk.",
+    )
     review.add_argument(
         "--words-json", type=Path, default=None,
         help="A saved Whisper transcript of the take; default: the newest take-epNN-tK-*words-vN.json on the desk.",
@@ -47,7 +52,9 @@ def add_review_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
         "--transcribe", action="store_true",
         help="When no transcript is saved, ask the server for one from the take's stored URL (a few cents).",
     )  # fmt: skip
-    review.add_argument("--json", action="store_true", help="Print the review as JSON on stdout.")
+    review.add_argument(
+        "--json", action="store_true", help="Print the review as JSON on stdout."
+    )
 
 
 def dispatch_review(args: argparse.Namespace, *, stream: TextIO | None = None) -> int:

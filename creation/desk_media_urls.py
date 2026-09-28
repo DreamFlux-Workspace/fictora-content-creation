@@ -10,7 +10,9 @@ from typing import Any
 def _latest_terminal_path(api_dir: Path, glob_pattern: str) -> Path | None:
     """Return the newest matching terminal JSON under ``api_dir``."""
 
-    matches = sorted(api_dir.glob(glob_pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+    matches = sorted(
+        api_dir.glob(glob_pattern), key=lambda p: p.stat().st_mtime, reverse=True
+    )
     return matches[0] if matches else None
 
 
@@ -46,7 +48,9 @@ def drawn_cast_rows(spine: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         row
         for row in (spine.get("cast") or [])
-        if isinstance(row, dict) and row.get("cast_id") and row.get("voice_only") is not True
+        if isinstance(row, dict)
+        and row.get("cast_id")
+        and row.get("voice_only") is not True
     ]
 
 
@@ -84,7 +88,13 @@ def cast_plate_urls(spine: dict[str, Any], api_dir: Path) -> list[str]:
         if cast_id in by_cast:
             urls.append(by_cast[cast_id])
             continue
-        for key in ("portrait_url", "full_body_url", "reference_url", "image_url", "url"):
+        for key in (
+            "portrait_url",
+            "full_body_url",
+            "reference_url",
+            "image_url",
+            "url",
+        ):
             value = row.get(key)
             if value:
                 urls.append(str(value))
@@ -100,7 +110,9 @@ def cast_plate_urls(spine: dict[str, Any], api_dir: Path) -> list[str]:
     return urls
 
 
-def board_urls_for_episode(spine: dict[str, Any], api_dir: Path, *, ordinal: int) -> list[str]:
+def board_urls_for_episode(
+    spine: dict[str, Any], api_dir: Path, *, ordinal: int
+) -> list[str]:
     """Return storyboard still URLs for one episode ordinal.
 
     Parameters
@@ -123,13 +135,19 @@ def board_urls_for_episode(spine: dict[str, Any], api_dir: Path, *, ordinal: int
     for summary in spine.get("episode_summaries") or []:
         if not isinstance(summary, dict):
             continue
-        if int(summary.get("episode_ordinal") or summary.get("ordinal") or 1) == ordinal:
+        if (
+            int(summary.get("episode_ordinal") or summary.get("ordinal") or 1)
+            == ordinal
+        ):
             episode_id = str(summary.get("episode_id") or "")
             break
     for summary in spine.get("episode_summaries") or []:
         if not isinstance(summary, dict):
             continue
-        if int(summary.get("episode_ordinal") or summary.get("ordinal") or 1) != ordinal:
+        if (
+            int(summary.get("episode_ordinal") or summary.get("ordinal") or 1)
+            != ordinal
+        ):
             continue
         for frame in summary.get("frames") or []:
             if isinstance(frame, dict) and frame.get("image_url"):
@@ -137,7 +155,11 @@ def board_urls_for_episode(spine: dict[str, Any], api_dir: Path, *, ordinal: int
     for board in spine.get("boards") or []:
         if not isinstance(board, dict):
             continue
-        if episode_id and board.get("episode_id") == episode_id and board.get("image_url"):
+        if (
+            episode_id
+            and board.get("episode_id") == episode_id
+            and board.get("image_url")
+        ):
             urls.append(str(board["image_url"]))
     if urls:
         return urls
@@ -146,6 +168,10 @@ def board_urls_for_episode(spine: dict[str, Any], api_dir: Path, *, ordinal: int
         return []
     target = episode_id or f"episode_{ordinal:02d}"
     for board in output.get("boards") or []:
-        if isinstance(board, dict) and board.get("episode_id") == target and board.get("image_url"):
+        if (
+            isinstance(board, dict)
+            and board.get("episode_id") == target
+            and board.get("image_url")
+        ):
             urls.append(str(board["image_url"]))
     return urls

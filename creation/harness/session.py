@@ -85,9 +85,13 @@ class DramaApiRunSession:
             )
         return urljoin(self.base_url + "/", path.lstrip("/"))
 
-    def headers(self, idempotency_key: str | None = None, *, read: bool = False) -> dict[str, str]:
+    def headers(
+        self, idempotency_key: str | None = None, *, read: bool = False
+    ) -> dict[str, str]:
         """Build request headers for this session."""
-        headers = api_headers(self.token, self.session_id, idempotency_key=idempotency_key)
+        headers = api_headers(
+            self.token, self.session_id, idempotency_key=idempotency_key
+        )
         if read:
             headers.pop("Content-Type", None)
         return headers
@@ -122,7 +126,9 @@ class DramaApiRunSession:
 
     def get(self, path: str) -> dict[str, Any]:
         """GET a drama API path and return JSON."""
-        return self._ok(self.client.get(self.url(path), headers=self.headers(read=True)))
+        return self._ok(
+            self.client.get(self.url(path), headers=self.headers(read=True))
+        )
 
     def get_optional(self, path: str) -> tuple[int, Any]:
         """GET a drama API path without raising on an error status.
@@ -144,7 +150,9 @@ class DramaApiRunSession:
             body = response.text
         return response.status_code, body
 
-    def post(self, path: str, body: dict[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
+    def post(
+        self, path: str, body: dict[str, Any], *, idempotency_key: str | None = None
+    ) -> dict[str, Any]:
         """POST JSON to a drama API path.
 
         Parameters
@@ -163,7 +171,9 @@ class DramaApiRunSession:
         """
 
         return self._ok(
-            self.client.post(self.url(path), headers=self.headers(idempotency_key), json=body),
+            self.client.post(
+                self.url(path), headers=self.headers(idempotency_key), json=body
+            ),
         )
 
     def put(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -182,7 +192,9 @@ class DramaApiRunSession:
             Parsed JSON body.
         """
 
-        return self._ok(self.client.put(self.url(path), headers=self.headers(), json=body))
+        return self._ok(
+            self.client.put(self.url(path), headers=self.headers(), json=body)
+        )
 
     def patch(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         """PATCH JSON to a drama API path.
@@ -200,7 +212,9 @@ class DramaApiRunSession:
             Parsed JSON body.
         """
 
-        return self._ok(self.client.patch(self.url(path), headers=self.headers(), json=body))
+        return self._ok(
+            self.client.patch(self.url(path), headers=self.headers(), json=body)
+        )
 
     def delete(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         """DELETE a drama API path with a JSON body.
@@ -218,7 +232,11 @@ class DramaApiRunSession:
             Parsed JSON body.
         """
 
-        return self._ok(self.client.request("DELETE", self.url(path), headers=self.headers(), json=body))
+        return self._ok(
+            self.client.request(
+                "DELETE", self.url(path), headers=self.headers(), json=body
+            )
+        )
 
     def poll_job(
         self,
@@ -229,7 +247,9 @@ class DramaApiRunSession:
         deadline_seconds: float,
     ) -> dict[str, Any]:
         """Poll a plan, cast, boards, or video job until terminal."""
-        path = f"/v1/video-generations/{job_id}" if video_route else f"/v1/jobs/{job_id}"
+        path = (
+            f"/v1/video-generations/{job_id}" if video_route else f"/v1/jobs/{job_id}"
+        )
         return poll_until_terminal(
             self.client,
             url=self.url(path),

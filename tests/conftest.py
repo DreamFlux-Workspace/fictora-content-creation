@@ -14,7 +14,12 @@ import pytest
 from creation import episode_commands, orchestrate
 from creation.ops.floor import init_series_desk
 from creation.ops.folder import next_versioned_path
-from creation.production_state import ProductionState, ensure_production, load_production, save_production
+from creation.production_state import (
+    ProductionState,
+    ensure_production,
+    load_production,
+    save_production,
+)
 from fake_api import FakeApi, png_bytes, spine_fixture
 
 
@@ -23,7 +28,12 @@ def desk(tmp_path: Path) -> Path:
     """A 15s desk with episode 1 drafted (spine ``sp1``), ready for later stages."""
 
     path = init_series_desk(tmp_path, "Closing Time", band="15s", episode_count=1)
-    state = ensure_production(path, prompt="A shop at closing time.", preset_id="modern-romance", preset_version="2")
+    state = ensure_production(
+        path,
+        prompt="A shop at closing time.",
+        preset_id="modern-romance",
+        preset_version="2",
+    )
     state.spine_id = "sp1"
     save_production(path, state)
     return path
@@ -37,7 +47,14 @@ def api(desk: Path, monkeypatch: pytest.MonkeyPatch) -> FakeApi:
     monkeypatch.setattr(orchestrate, "_open_run", lambda _desk, _state: fake)
     monkeypatch.setattr(episode_commands, "_open_run", lambda _desk, _state: fake)
 
-    def download(client: Any, url: str, directory: Path, stem: str, *, default_suffix: str = ".png") -> Path:
+    def download(
+        client: Any,
+        url: str,
+        directory: Path,
+        stem: str,
+        *,
+        default_suffix: str = ".png",
+    ) -> Path:
         suffix = ".mp4" if url.endswith(".mp4") else default_suffix
         directory.mkdir(parents=True, exist_ok=True)
         target = next_versioned_path(directory, stem, suffix)
@@ -68,7 +85,9 @@ def set_phase(desk: Path, phase: str, **fields: Any) -> None:
 
 # --- local post (finish, voice, revoice) ------------------------------------------------
 
-needs_ffmpeg = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not installed")
+needs_ffmpeg = pytest.mark.skipif(
+    not shutil.which("ffmpeg"), reason="ffmpeg not installed"
+)
 
 SPINE = {
     "spine_id": "spine_test",
@@ -76,8 +95,16 @@ SPINE = {
     "microdrama_genre": "urban_romance",
     "episode_summaries": [{"episode_id": "episode_01", "ordinal": 1}],
     "cast": [
-        {"cast_id": "cast_kenji", "name": "Kenji", "voice_brief": {"provider_voice": "Roger"}},
-        {"cast_id": "cast_aya", "name": "Aya", "voice_brief": {"provider_voice": "Laura"}},
+        {
+            "cast_id": "cast_kenji",
+            "name": "Kenji",
+            "voice_brief": {"provider_voice": "Roger"},
+        },
+        {
+            "cast_id": "cast_aya",
+            "name": "Aya",
+            "voice_brief": {"provider_voice": "Laura"},
+        },
     ],
     "beats": [
         {
@@ -96,11 +123,18 @@ def make_take(path: Path, *, seconds: float = 5.0, tones: tuple[tuple[float, flo
     """A test take: flat colour picture, sine tones in the given windows, silence elsewhere."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    inputs: list[str] = ["-f", "lavfi", "-i", f"color=c={colour}:s={size}:d={seconds}:r=24"]
+    inputs: list[str] = [
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c={colour}:s={size}:d={seconds}:r=24",
+    ]
     graph = []
     for index, (start, end, freq) in enumerate(tones, start=1):
         inputs += ["-f", "lavfi", "-i", f"sine=f={freq}:d={seconds}:sample_rate=48000"]
-        graph.append(f"[{index}:a]volume='if(between(t,{start},{end}),0.5,0)':eval=frame[t{index}]")
+        graph.append(
+            f"[{index}:a]volume='if(between(t,{start},{end}),0.5,0)':eval=frame[t{index}]"
+        )
     labels = "".join(f"[t{i}]" for i in range(1, len(tones) + 1))
     graph.append(f"{labels}amix=inputs={len(tones)}:normalize=0[a]")
     subprocess.run(
@@ -111,7 +145,9 @@ def make_take(path: Path, *, seconds: float = 5.0, tones: tuple[tuple[float, flo
     return path
 
 
-def make_tone(path: Path, *, seconds: float = 1.0, freq: int = 660, volume: float = 0.5) -> Path:
+def make_tone(
+    path: Path, *, seconds: float = 1.0, freq: int = 660, volume: float = 0.5
+) -> Path:
     """A plain sine audio file."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -127,9 +163,15 @@ def make_tone(path: Path, *, seconds: float = 1.0, freq: int = 660, volume: floa
 def post_desk(tmp_path: Path) -> Path:
     """Local post tests: a series desk bound to ``spine_test`` with the spine saved under ``ep01/api``."""
 
-    made = init_series_desk(tmp_path, "Post Test", band="15s", episode_count=1, day=date(2026, 9, 28))
+    made = init_series_desk(
+        tmp_path, "Post Test", band="15s", episode_count=1, day=date(2026, 9, 28)
+    )
     state = ProductionState(
-        session_id="content-ops-test", prompt="p", preset_id="x", preset_version="1", spine_id="spine_test"
+        session_id="content-ops-test",
+        prompt="p",
+        preset_id="x",
+        preset_version="1",
+        spine_id="spine_test",
     )
     save_production(made, state)
     api = made / "ep01" / "api"
@@ -154,7 +196,10 @@ def board_array(width: int = EDIT_SIZE[0], height: int = EDIT_SIZE[1]) -> Any:
                (40, 230, 230), (230, 40, 230), (250, 250, 250), (10, 10, 10)]  # fmt: skip
     for index, colour in enumerate(colours):
         row, col = divmod(index, 2)
-        grid[row * height // 4 : (row + 1) * height // 4, col * width // 2 : (col + 1) * width // 2] = colour
+        grid[
+            row * height // 4 : (row + 1) * height // 4,
+            col * width // 2 : (col + 1) * width // 2,
+        ] = colour
     return grid
 
 
@@ -169,7 +214,9 @@ def shot_frames(count: int, tint: tuple[int, int, int], *, start: int = 0,
     frames = []
     for index in range(count):
         value = 0.5 + 0.25 * np.sin(2 * np.pi * (x + (start + index) * 0.02)) + 0.25 * y
-        frames.append(np.clip(value * np.array(tint)[None, None, :], 0, 255).astype(np.uint8))
+        frames.append(
+            np.clip(value * np.array(tint)[None, None, :], 0, 255).astype(np.uint8)
+        )
     return frames
 
 
@@ -180,12 +227,30 @@ def write_frames(path: Path, frames: list[Any], *, fps: int = 24,
     path.parent.mkdir(parents=True, exist_ok=True)
     height, width = frames[0].shape[:2]
     seconds = len(frames) / fps
-    inputs = ["-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}", "-r", str(fps), "-i", "-"]
+    inputs = [
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-s",
+        f"{width}x{height}",
+        "-r",
+        str(fps),
+        "-i",
+        "-",
+    ]
     if tones:
         graph = []
         for index, (start, end, freq) in enumerate(tones, start=1):
-            inputs += ["-f", "lavfi", "-i", f"sine=f={freq}:d={seconds}:sample_rate=48000"]
-            graph.append(f"[{index}:a]volume='if(between(t,{start},{end}),0.5,0)':eval=frame[t{index}]")
+            inputs += [
+                "-f",
+                "lavfi",
+                "-i",
+                f"sine=f={freq}:d={seconds}:sample_rate=48000",
+            ]
+            graph.append(
+                f"[{index}:a]volume='if(between(t,{start},{end}),0.5,0)':eval=frame[t{index}]"
+            )
         labels = "".join(f"[t{i}]" for i in range(1, len(tones) + 1))
         graph.append(f"{labels}amix=inputs={len(tones)}:normalize=0[a]")
         audio = ["-filter_complex", ";".join(graph), "-map", "0:v", "-map", "[a]"]

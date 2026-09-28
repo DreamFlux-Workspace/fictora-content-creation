@@ -56,7 +56,11 @@ from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
 from creation.ops.state import episode_by_ordinal, load_series
 from creation.post.bed import DEFAULT_BED_DB, pinned_bed
-from creation.post.finish_record import FinishRecord, latest_finish_record, record_for_file
+from creation.post.finish_record import (
+    FinishRecord,
+    latest_finish_record,
+    record_for_file,
+)
 from creation.post.media import (
     MediaToolError,
     count_frames,
@@ -68,7 +72,12 @@ from creation.post.media import (
     probe_video,
     run_ffmpeg,
 )
-from creation.post.mix import BED_FADE_IN_SECONDS, BED_FADE_OUT_SECONDS, check_duck_db, mix_take
+from creation.post.mix import (
+    BED_FADE_IN_SECONDS,
+    BED_FADE_OUT_SECONDS,
+    check_duck_db,
+    mix_take,
+)
 from creation.post.watermark import watermark
 
 HOUSE_FPS = 24.0
@@ -129,7 +138,11 @@ class JoinResult:
     def loud_seams(self) -> list[tuple[float, float]]:
         """``(seam seconds, step dB)`` for every seam that steps more than 5 dB."""
 
-        return [(s, d) for s, d in zip(self.seams, self.seam_steps_db, strict=True) if abs(d) > SEAM_STEP_DB]
+        return [
+            (s, d)
+            for s, d in zip(self.seams, self.seam_steps_db, strict=True)
+            if abs(d) > SEAM_STEP_DB
+        ]
 
     @property
     def complete(self) -> bool:
@@ -142,12 +155,18 @@ class JoinResult:
 
         seams = ", ".join(
             f"{s:.2f}s {'cut' if d == 0 else f'{d:.2f}s dissolve'} {step:+.1f} dB"
-            for s, d, step in zip(self.seams, self.dissolves, self.seam_steps_db, strict=True)
+            for s, d, step in zip(
+                self.seams, self.dissolves, self.seam_steps_db, strict=True
+            )
         )
         lines = [
             f"Joined: {self.marked or self.master}",
             f"Master (un-marked): {self.master}",
-            "Parts: " + ", ".join(f"{p.label} `{p.picture.name}` {g:+.1f} dB" for p, g in zip(self.parts, self.gains_db)),
+            "Parts: "
+            + ", ".join(
+                f"{p.label} `{p.picture.name}` {g:+.1f} dB"
+                for p, g in zip(self.parts, self.gains_db)
+            ),
             f"Bed: one bed across the join, `{self.bed.name}`; {self.mix_line}",
             f"Seams: {seams}",
             f"Frames / seconds: {self.fps:.2f}; loudness {self.loudness}",
@@ -190,9 +209,13 @@ def _part(desk: Path, record: FinishRecord, *, asked: Path | None = None) -> Joi
     picture = record.resolve(desk, "master")
     pre_bed = record.resolve(desk, "pre_bed")
     if picture is None or not picture.is_file():
-        raise FileNotFoundError(f"{name}: the captioned picture its finish record names is gone: {picture}")
+        raise FileNotFoundError(
+            f"{name}: the captioned picture its finish record names is gone: {picture}"
+        )
     if pre_bed is None or not pre_bed.is_file():
-        raise FileNotFoundError(f"{name}: the take before the bed its finish record names is gone: {pre_bed}")
+        raise FileNotFoundError(
+            f"{name}: the take before the bed its finish record names is gone: {pre_bed}"
+        )
     return JoinPart(record.episode, record.take_id, picture, pre_bed, record)
 
 
@@ -206,11 +229,17 @@ def episode_parts(desk: Path, episode: int) -> list[JoinPart]:
     """
 
     try:
-        desk_takes = [take.take_id for take in episode_by_ordinal(load_series(desk), episode).takes]
+        desk_takes = [
+            take.take_id
+            for take in episode_by_ordinal(load_series(desk), episode).takes
+        ]
     except (FileNotFoundError, ValueError, KeyError):
         desk_takes = []
     takes_dir = desk / f"ep{episode:02d}" / "takes"
-    recorded = {path.name.split("-")[2] for path in takes_dir.glob(f"take-ep{episode:02d}-t*-finish-v*.json")}
+    recorded = {
+        path.name.split("-")[2]
+        for path in takes_dir.glob(f"take-ep{episode:02d}-t*-finish-v*.json")
+    }
     parts: list[JoinPart] = []
     missing: list[str] = []
     for take_id in sorted(set(desk_takes) | recorded, key=_take_order):
@@ -285,7 +314,9 @@ def assert_house_fps(path: Path) -> float:
     frames = count_frames(path)
     fps = frames / seconds if seconds > 0 else 0.0
     if abs(fps - HOUSE_FPS) > FPS_TOLERANCE:
-        raise MediaToolError(f"{path.name}: {frames} frames / {seconds:.2f}s = {fps:.2f} fps, not 24")
+        raise MediaToolError(
+            f"{path.name}: {frames} frames / {seconds:.2f}s = {fps:.2f} fps, not 24"
+        )
     return fps
 
 
@@ -304,24 +335,34 @@ def check_parts(parts: list[JoinPart]) -> list[float]:
     """
 
     if len(parts) < 2:
-        raise ValueError(f"nothing to join: {len(parts)} finished take(s) found; a join needs two or more")
+        raise ValueError(
+            f"nothing to join: {len(parts)} finished take(s) found; a join needs two or more"
+        )
     infos = [probe_video(part.picture) for part in parts]
     problems: list[str] = []
-    listing = "; ".join(f"{p.label} {i.width}x{i.height} {i.fps:.2f} fps" for p, i in zip(parts, infos))
-    off_rate = [p.label for p, i in zip(parts, infos) if abs(i.fps - HOUSE_FPS) > FPS_TOLERANCE]
+    listing = "; ".join(
+        f"{p.label} {i.width}x{i.height} {i.fps:.2f} fps" for p, i in zip(parts, infos)
+    )
+    off_rate = [
+        p.label for p, i in zip(parts, infos) if abs(i.fps - HOUSE_FPS) > FPS_TOLERANCE
+    ]
     if off_rate:
         problems.append(f"not 24 fps: {', '.join(off_rate)}")
     if len({(i.width, i.height) for i in infos}) > 1:
         problems.append("mixed resolutions")
     if problems:
-        raise ValueError(f"join refused ({'; '.join(problems)}): {listing}. Every take must be 24 fps at one size.")
+        raise ValueError(
+            f"join refused ({'; '.join(problems)}): {listing}. Every take must be 24 fps at one size."
+        )
     lengths = []
     for part in parts:
         frames = count_frames(part.picture)
         seconds = frames / HOUSE_FPS
         sound = media_duration(part.pre_bed)
         if not probe_video(part.pre_bed).has_audio:
-            raise ValueError(f"{part.label}: the take before the bed `{part.pre_bed.name}` has no sound")
+            raise ValueError(
+                f"{part.label}: the take before the bed `{part.pre_bed.name}` has no sound"
+            )
         if abs(sound - seconds) > 1.0 / HOUSE_FPS + 0.05:
             raise ValueError(
                 f"{part.label}: the take before the bed `{part.pre_bed.name}` runs {sound:.2f}s but its picture "
@@ -354,7 +395,9 @@ def match_gains(parts: list[JoinPart]) -> list[float]:
     if not heard:
         return [0.0] * len(parts)
     target = statistics.median(heard)
-    return [round(target - level, 1) if math.isfinite(level) else 0.0 for level in levels]
+    return [
+        round(target - level, 1) if math.isfinite(level) else 0.0 for level in levels
+    ]
 
 
 def decode_stereo(path: Path) -> np.ndarray:
@@ -371,8 +414,14 @@ def decode_stereo(path: Path) -> np.ndarray:
         capture_output=True, check=False,
     )  # fmt: skip
     if decoded.returncode != 0:
-        raise MediaToolError(f"could not decode the sound of {path.name}: {decoded.stderr.decode(errors='replace')[-300:]}")
-    return np.frombuffer(decoded.stdout, dtype=np.float32).reshape(-1, 2).astype(np.float64)
+        raise MediaToolError(
+            f"could not decode the sound of {path.name}: {decoded.stderr.decode(errors='replace')[-300:]}"
+        )
+    return (
+        np.frombuffer(decoded.stdout, dtype=np.float32)
+        .reshape(-1, 2)
+        .astype(np.float64)
+    )
 
 
 def write_wav(samples: np.ndarray, out: Path) -> Path:
@@ -390,11 +439,19 @@ def write_wav(samples: np.ndarray, out: Path) -> Path:
         input=samples.astype(np.float32).tobytes(), capture_output=True, check=False,
     )  # fmt: skip
     if written.returncode != 0:
-        raise MediaToolError(f"could not write {out.name}: {written.stderr.decode(errors='replace')[-300:]}")
+        raise MediaToolError(
+            f"could not write {out.name}: {written.stderr.decode(errors='replace')[-300:]}"
+        )
     return out
 
 
-def loop_bed(bed: Path, seconds: float, out: Path, *, crossfade: float = BED_LOOP_CROSSFADE_SECONDS) -> Path:
+def loop_bed(
+    bed: Path,
+    seconds: float,
+    out: Path,
+    *,
+    crossfade: float = BED_LOOP_CROSSFADE_SECONDS,
+) -> Path:
     """Loop ``bed`` seamlessly to at least ``seconds``: silent head and tail cut, equal-power crossfades.
 
     A generated bed is about 30 s and usually ends on a decay; looping it as it
@@ -426,11 +483,15 @@ def loop_bed(bed: Path, seconds: float, out: Path, *, crossfade: float = BED_LOO
     write_wav(looped[:need], out)
     covered = media_duration(out)
     if covered < seconds - 0.05:
-        raise MediaToolError(f"the looped bed covers {covered:.2f}s of {seconds:.2f}s; the tail would lose its music")
+        raise MediaToolError(
+            f"the looped bed covers {covered:.2f}s of {seconds:.2f}s; the tail would lose its music"
+        )
     return out
 
 
-def seam_loudness_steps(video: Path, seams: list[float], *, window: float = SEAM_WINDOW_SECONDS) -> list[float]:
+def seam_loudness_steps(
+    video: Path, seams: list[float], *, window: float = SEAM_WINDOW_SECONDS
+) -> list[float]:
     """Room-level step (after minus before) across each seam.
 
     The level either side is the median of 0.1 s RMS windows over ``window``
@@ -456,7 +517,12 @@ def seam_loudness_steps(video: Path, seams: list[float], *, window: float = SEAM
     return steps
 
 
-def join_sound(parts: list[JoinPart], lengths: list[float], gains: list[float], dissolves: list[float]) -> np.ndarray:
+def join_sound(
+    parts: list[JoinPart],
+    lengths: list[float],
+    gains: list[float],
+    dissolves: list[float],
+) -> np.ndarray:
     """Each part's pre-bed sound, cut or padded to its picture, gained, then butted or crossfaded (linear).
 
     On the samples, so every part starts exactly where its picture does (ffmpeg's
@@ -464,7 +530,9 @@ def join_sound(parts: list[JoinPart], lengths: list[float], gains: list[float], 
     """
 
     joined = np.zeros((0, 2))
-    for index, (part, seconds, gain) in enumerate(zip(parts, lengths, gains, strict=True)):
+    for index, (part, seconds, gain) in enumerate(
+        zip(parts, lengths, gains, strict=True)
+    ):
         size = int(round(seconds * BED_RATE))
         sound = decode_stereo(part.pre_bed)[:size]
         sound = np.pad(sound, ((0, size - len(sound)), (0, 0))) * 10 ** (gain / 20)
@@ -472,14 +540,20 @@ def join_sound(parts: list[JoinPart], lengths: list[float], gains: list[float], 
         if overlap:
             ramp = ((np.arange(overlap) + 0.5) / overlap)[:, None]
             seam = joined[len(joined) - overlap :] * (1 - ramp) + sound[:overlap] * ramp
-            joined = np.concatenate([joined[: len(joined) - overlap], seam, sound[overlap:]])
+            joined = np.concatenate(
+                [joined[: len(joined) - overlap], seam, sound[overlap:]]
+            )
         else:
             joined = np.concatenate([joined, sound])
     return joined
 
 
 def _join_bedless(
-    parts: list[JoinPart], lengths: list[float], gains: list[float], dissolves: list[float], out: Path
+    parts: list[JoinPart],
+    lengths: list[float],
+    gains: list[float],
+    dissolves: list[float],
+    out: Path,
 ) -> list[float]:
     """Captioned pictures + pre-bed sound, gain-matched, cut or dissolved; no bed, no limiter (float sound)."""
 
@@ -499,15 +573,22 @@ def _join_bedless(
         if dissolve > 0:
             offset = elapsed - dissolve
             seams.append(round(offset + dissolve / 2, 3))
-            graph.append(f"{video}[v{index}]xfade=transition=fade:duration={dissolve}:offset={offset:.4f}[vx{index}]")
+            graph.append(
+                f"{video}[v{index}]xfade=transition=fade:duration={dissolve}:offset={offset:.4f}[vx{index}]"
+            )
             elapsed += lengths[index] - dissolve
         else:
             seams.append(round(elapsed, 3))
             # concat and setpts forget the frame rate; xfade needs it (and one time base) on both inputs.
-            graph.append(f"{video}[v{index}]concat=n=2:v=1:a=0,fps={HOUSE_FPS:g}[vx{index}]")
+            graph.append(
+                f"{video}[v{index}]concat=n=2:v=1:a=0,fps={HOUSE_FPS:g}[vx{index}]"
+            )
             elapsed += lengths[index]
         video = f"[vx{index}]"
-    sound = write_wav(join_sound(parts, lengths, gains, dissolves), out.with_name(f"{out.stem}-sound.wav"))
+    sound = write_wav(
+        join_sound(parts, lengths, gains, dissolves),
+        out.with_name(f"{out.stem}-sound.wav"),
+    )
     run_ffmpeg(
         [*inputs, "-i", str(sound), "-filter_complex", ";".join(graph), "-map", video, "-map", f"{len(parts)}:a",
          "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", "-r", f"{HOUSE_FPS:g}",
@@ -578,14 +659,26 @@ def run_join(
     out = stream or sys.stderr
     desk = desk.expanduser().resolve()
     if bool(episodes) == bool(take_files):
-        raise ValueError("join needs --episode / --episodes, or --take-file (one of them)")
-    parts = file_parts(desk, take_files) if take_files else [p for n in episodes for p in episode_parts(desk, n)]
+        raise ValueError(
+            "join needs --episode / --episodes, or --take-file (one of them)"
+        )
+    parts = (
+        file_parts(desk, take_files)
+        if take_files
+        else [p for n in episodes for p in episode_parts(desk, n)]
+    )
     lengths = check_parts(parts)
     dissolves = seam_dissolves(parts, dissolve)
     records = [part.record for part in parts]
-    duck_db = duck_db if duck_db is not None else _agreed([r.duck_db for r in records], None)
+    duck_db = (
+        duck_db if duck_db is not None else _agreed([r.duck_db for r in records], None)
+    )
     check_duck_db(duck_db)
-    bed_db = bed_db if bed_db is not None else _agreed([r.bed_db for r in records], DEFAULT_BED_DB)
+    bed_db = (
+        bed_db
+        if bed_db is not None
+        else _agreed([r.bed_db for r in records], DEFAULT_BED_DB)
+    )
     recorded_bed = _agreed([r.bed for r in records], None)
     bed = (bed.expanduser().resolve() if bed else None) or pinned_bed(desk)
     if bed is None and recorded_bed:
@@ -604,9 +697,17 @@ def run_join(
         folder = desk / "shared" / "cuts"
         folder.mkdir(parents=True, exist_ok=True)
         stem = f"series-ep{episode_set[0]:02d}-ep{episode_set[-1]:02d}-join"
-    run_dirs = [desk / f"ep{n:02d}" for n in episode_set if (desk / f"ep{n:02d}" / "run-notes.md").is_file()]
+    run_dirs = [
+        desk / f"ep{n:02d}"
+        for n in episode_set
+        if (desk / f"ep{n:02d}" / "run-notes.md").is_file()
+    ]
 
-    print(f"Joining {len(parts)} take(s): {', '.join(p.label for p in parts)} (one bed, free)", file=out, flush=True)
+    print(
+        f"Joining {len(parts)} take(s): {', '.join(p.label for p in parts)} (one bed, free)",
+        file=out,
+        flush=True,
+    )
     gains = match_gains(parts) if gain_match else [0.0] * len(parts)
     total = sum(lengths) - sum(dissolves)
     master = next_versioned_path(folder, stem, ".mp4")
@@ -624,10 +725,14 @@ def run_join(
     )  # fmt: skip
     if result.loud_seams:
         for seam, step in result.loud_seams:
-            result.notes.append(f"STOPPED: seam at {seam:.2f}s steps {step:+.1f} dB (over {SEAM_STEP_DB:.0f}, audible)")
+            result.notes.append(
+                f"STOPPED: seam at {seam:.2f}s steps {step:+.1f} dB (over {SEAM_STEP_DB:.0f}, audible)"
+            )
     else:
         marked_stem = f"{stem}-sokii"
-        result.marked = watermark(master, next_versioned_path(folder, marked_stem, ".mp4"), y=watermark_y)
+        result.marked = watermark(
+            master, next_versioned_path(folder, marked_stem, ".mp4"), y=watermark_y
+        )
     summary = result.summary_lines()
     for run_dir in run_dirs:
         append_run_note(run_dir, "Join\n" + "\n".join(summary))
@@ -640,5 +745,8 @@ def run_join(
             file=out,
         )
         return result
-    print("Next: watch the joined file through every seam and say Use it or Change this.", file=out)
+    print(
+        "Next: watch the joined file through every seam and say Use it or Change this.",
+        file=out,
+    )
     return result

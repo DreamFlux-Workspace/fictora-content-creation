@@ -14,7 +14,11 @@ from creation.harness import stages_gated as stages
 from creation.ops.floor import approve_board, init_series_desk, record_filmed
 from creation.ops.state import episode_by_ordinal, load_series
 from creation.ops.folder import next_versioned_path
-from creation.production_state import ensure_production, load_production, save_production
+from creation.production_state import (
+    ensure_production,
+    load_production,
+    save_production,
+)
 from fake_api import FakeApi, openapi_doc, png_bytes, spine_fixture
 
 VIDEO = "/v1/video-generations"
@@ -26,7 +30,12 @@ def desk30(tmp_path: Path) -> Path:
     """A 30s desk (two takes an episode), episodes 1 and 2 on the desk, pointed at episode 2."""
 
     path = init_series_desk(tmp_path, "Closing Time", band="30s", episode_count=2)
-    state = ensure_production(path, prompt="A shop at closing time.", preset_id="modern-romance", preset_version="2")
+    state = ensure_production(
+        path,
+        prompt="A shop at closing time.",
+        preset_id="modern-romance",
+        preset_version="2",
+    )
     state.spine_id = "sp1"
     state.episode_ordinal = 2
     state.phase = "complete"
@@ -48,7 +57,14 @@ def api30(desk30: Path, monkeypatch: pytest.MonkeyPatch) -> FakeApi:
     monkeypatch.setattr(orchestrate, "_open_run", lambda _desk, _state: fake)
     monkeypatch.setattr(episode_commands, "_open_run", lambda _desk, _state: fake)
 
-    def download(client: Any, url: str, directory: Path, stem: str, *, default_suffix: str = ".png") -> Path:
+    def download(
+        client: Any,
+        url: str,
+        directory: Path,
+        stem: str,
+        *,
+        default_suffix: str = ".png",
+    ) -> Path:
         directory.mkdir(parents=True, exist_ok=True)
         target = next_versioned_path(directory, stem, default_suffix)
         target.write_bytes(b"mp4")
@@ -63,7 +79,10 @@ def _take_two_of_episode_two(api: FakeApi) -> None:
     """The server films take 2 of episode 2 alone: one child."""
 
     api.routes[("POST", VIDEO)] = {"job_id": "job_video_9"}
-    api.routes[("GET", "/v1/jobs/job_video_9")] = {"status": "running", "depends_on": ["job_take_e2t2"]}
+    api.routes[("GET", "/v1/jobs/job_video_9")] = {
+        "status": "running",
+        "depends_on": ["job_take_e2t2"],
+    }
     api.routes[("GET", "/v1/jobs/job_take_e2t2")] = {
         "status": "completed",
         "episode_ids": ["ep_02"],
@@ -71,7 +90,11 @@ def _take_two_of_episode_two(api: FakeApi) -> None:
         "result": {"video": {"url": "https://r2.example/ep2-t2.mp4"}},
     }
     api.routes[("GET", "/v1/jobs/job_take_e2t2/take-facts")] = {
-        "take_facts": {"endpoint_id": "minimax/h3-max/reference-to-video", "resolution": "768P", "duration_seconds": 15.0}
+        "take_facts": {
+            "endpoint_id": "minimax/h3-max/reference-to-video",
+            "resolution": "768P",
+            "duration_seconds": 15.0,
+        }
     }
 
 
@@ -86,22 +109,33 @@ CAUSE = "the ring leaves her hand before the line: move the drop after 'Not for 
 # --- Price first ------------------------------------------------------------------------------------
 
 
-def test_film_take_prices_that_one_take_and_films_nothing(desk30: Path, api30: FakeApi) -> None:
+def test_film_take_prices_that_one_take_and_films_nothing(
+    desk30: Path, api30: FakeApi
+) -> None:
     _filmed_once(desk30)
-    api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "1.20", "priced_on": "2026-09-28", "takes": 1}}
+    api30.routes[("POST", ESTIMATE)] = {
+        "cost_estimate": {"total_usd": "1.20", "priced_on": "2026-09-28", "takes": 1}
+    }
 
     text = run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
 
-    assert api30.posted(ESTIMATE) == [{"spine_version": "v5", "episode_ids": ["ep_02"], "reroll_take_index": 2}]
+    assert api30.posted(ESTIMATE) == [
+        {"spine_version": "v5", "episode_ids": ["ep_02"], "reroll_take_index": 2}
+    ]
     assert api30.posted(VIDEO) == []
     assert "only t2 of episode 2: about $1.20" in text
-    assert "; H3 Max Turbo 768P at $0.0" in text and "!! SERVER ESTIMATE FAILED" not in text
+    assert (
+        "; H3 Max Turbo 768P at $0.0" in text
+        and "!! SERVER ESTIMATE FAILED" not in text
+    )
     assert "episodes 1-1 are not filmed or booked again" in text
     assert load_production(desk30).film_estimates == {"ep02-t2": 1.20}
     assert "--take t2" in text and "--confirm-spend" in text
 
 
-def test_a_server_that_cannot_price_one_take_is_priced_from_the_table_for_one_take(desk30: Path, api30: FakeApi) -> None:
+def test_a_server_that_cannot_price_one_take_is_priced_from_the_table_for_one_take(
+    desk30: Path, api30: FakeApi
+) -> None:
     _filmed_once(desk30)
     api30.routes[("POST", ESTIMATE)] = SystemExit(
         "HTTP 422: validation_error: reroll_take_index: Extra inputs are not permitted"
@@ -109,15 +143,22 @@ def test_a_server_that_cannot_price_one_take_is_priced_from_the_table_for_one_ta
 
     text = run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
 
-    assert load_production(desk30).film_estimates["ep02-t2"] == pytest.approx(turbo_take_usd(15))  # one take, not two
+    assert load_production(desk30).film_estimates["ep02-t2"] == pytest.approx(
+        turbo_take_usd(15)
+    )  # one take, not two
     assert "cannot price one take yet" in text
     assert "!! SERVER ESTIMATE FAILED (the server refused it: HTTP 422" in text
 
 
-def test_a_film_estimate_that_names_r2v_without_dollars_is_priced_on_r2v(desk30: Path, api30: FakeApi) -> None:
+def test_a_film_estimate_that_names_r2v_without_dollars_is_priced_on_r2v(
+    desk30: Path, api30: FakeApi
+) -> None:
     _filmed_once(desk30)
     api30.routes[("POST", ESTIMATE)] = {
-        "cost_estimate": {"video_endpoint_id": "minimax/h3-max/reference-to-video", "video_resolution": "768P"}
+        "cost_estimate": {
+            "video_endpoint_id": "minimax/h3-max/reference-to-video",
+            "video_resolution": "768P",
+        }
     }
 
     text = run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
@@ -129,7 +170,9 @@ def test_a_film_estimate_that_names_r2v_without_dollars_is_priced_on_r2v(desk30:
     assert text.startswith("!! SERVER ESTIMATE FAILED")
 
 
-def test_confirming_without_a_shown_price_sends_nothing(desk30: Path, api30: FakeApi) -> None:
+def test_confirming_without_a_shown_price_sends_nothing(
+    desk30: Path, api30: FakeApi
+) -> None:
     _filmed_once(desk30)
     _take_two_of_episode_two(api30)
 
@@ -142,7 +185,9 @@ def test_confirming_without_a_shown_price_sends_nothing(desk30: Path, api30: Fak
 # --- The written cause -----------------------------------------------------------------------------
 
 
-def test_a_second_render_needs_a_cause_and_try_again_is_not_one(desk30: Path, api30: FakeApi) -> None:
+def test_a_second_render_needs_a_cause_and_try_again_is_not_one(
+    desk30: Path, api30: FakeApi
+) -> None:
     _filmed_once(desk30)
 
     with pytest.raises(CommandStopped, match="needs a written cause"):
@@ -153,7 +198,9 @@ def test_a_second_render_needs_a_cause_and_try_again_is_not_one(desk30: Path, ap
     assert api30.posted(ESTIMATE) == [] and api30.posted(VIDEO) == []
 
 
-def test_a_take_is_filmed_only_from_an_approved_board(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_take_is_filmed_only_from_an_approved_board(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = init_series_desk(tmp_path, "Closing Time", band="30s", episode_count=2)
     state = ensure_production(path, prompt="p", preset_id="x", preset_version="1")
     state.spine_id = "sp1"
@@ -174,7 +221,9 @@ def test_film_take_k_sends_the_episode_the_take_and_a_fresh_seed_and_books_only_
     desk30: Path, api30: FakeApi
 ) -> None:
     _filmed_once(desk30)
-    api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "1.20", "takes": 1}}
+    api30.routes[("POST", ESTIMATE)] = {
+        "cost_estimate": {"total_usd": "1.20", "takes": 1}
+    }
     run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
     _take_two_of_episode_two(api30)
     spend_before = episode_by_ordinal(load_series(desk30), 2).spend_usd
@@ -187,7 +236,9 @@ def test_film_take_k_sends_the_episode_the_take_and_a_fresh_seed_and_books_only_
     assert body["reroll_take_index"] == 2
     assert body["seed_attempt"] == 2
     assert body["authoring_mode"] == "reuse" and body["reuse_spine_id"] == "sp1"
-    downloads = [payload["url"] for phase, payload in api30.events if phase == "download"]
+    downloads = [
+        payload["url"] for phase, payload in api30.events if phase == "download"
+    ]
     assert downloads == ["https://r2.example/ep2-t2.mp4"]
     slot = episode_by_ordinal(load_series(desk30), 2)
     t1, t2 = slot.takes
@@ -196,15 +247,22 @@ def test_film_take_k_sends_the_episode_the_take_and_a_fresh_seed_and_books_only_
     assert slot.spend_usd == pytest.approx(spend_before + 1.20)
     state = load_production(desk30)
     assert state.film_estimates == {} and state.pending == {}
-    assert state.server_lane() == ("minimax/h3-max/reference-to-video", "768P")  # the lane the facts named
+    assert state.server_lane() == (
+        "minimax/h3-max/reference-to-video",
+        "768P",
+    )  # the lane the facts named
     assert "Filmed ep02 t2: 1 take(s), $1.20 booked" in text
     api_dir = desk30 / "ep02" / "api"
     assert (api_dir / "film-ep02-t2-s2-raw-scene-clips.json").is_file()
-    assert not (api_dir / "17_raw_scene_clips.json").exists()  # the step's own record is never overwritten
+    assert not (
+        api_dir / "17_raw_scene_clips.json"
+    ).exists()  # the step's own record is never overwritten
     assert CAUSE in (desk30 / "ep02" / "run-notes.md").read_text(encoding="utf-8")
 
 
-def test_a_second_refilm_of_the_same_take_moves_the_seed_again(desk30: Path, api30: FakeApi) -> None:
+def test_a_second_refilm_of_the_same_take_moves_the_seed_again(
+    desk30: Path, api30: FakeApi
+) -> None:
     _filmed_once(desk30)
     record_filmed(desk30, episode=2, take_id="t2")  # t2 filmed twice already
     api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "1.20"}}
@@ -216,7 +274,9 @@ def test_a_second_refilm_of_the_same_take_moves_the_seed_again(desk30: Path, api
     assert api30.posted(VIDEO)[0]["seed_attempt"] == 3
 
 
-def test_an_interrupted_film_picks_up_its_job_without_posting_again(desk30: Path, api30: FakeApi) -> None:
+def test_an_interrupted_film_picks_up_its_job_without_posting_again(
+    desk30: Path, api30: FakeApi
+) -> None:
     _filmed_once(desk30)
     api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "1.20"}}
     run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
@@ -234,14 +294,21 @@ def test_an_interrupted_film_picks_up_its_job_without_posting_again(desk30: Path
 # --- Film episode N alone ---------------------------------------------------------------------------
 
 
-def test_film_episode_n_sends_episode_ordinal_and_no_take(desk30: Path, api30: FakeApi) -> None:
+def test_film_episode_n_sends_episode_ordinal_and_no_take(
+    desk30: Path, api30: FakeApi
+) -> None:
     set_phase(desk30, "wait_spend")
-    api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "2.40", "takes": 2}}
+    api30.routes[("POST", ESTIMATE)] = {
+        "cost_estimate": {"total_usd": "2.40", "takes": 2}
+    }
     text = run_film(desk30, episode=2)
     assert api30.posted(ESTIMATE) == [{"spine_version": "v5", "episode_ids": ["ep_02"]}]
     assert "episode 2 alone (2 take(s))" in text
     api30.routes[("POST", VIDEO)] = {"job_id": "job_video_7"}
-    api30.routes[("GET", "/v1/jobs/job_video_7")] = {"status": "running", "depends_on": ["job_a", "job_b"]}
+    api30.routes[("GET", "/v1/jobs/job_video_7")] = {
+        "status": "running",
+        "depends_on": ["job_a", "job_b"],
+    }
     for job, index in (("job_a", 1), ("job_b", 2)):
         api30.routes[("GET", f"/v1/jobs/{job}")] = {
             "status": "completed",
@@ -262,7 +329,9 @@ def test_film_episode_n_sends_episode_ordinal_and_no_take(desk30: Path, api30: F
 # --- An older deploy --------------------------------------------------------------------------------
 
 
-def test_an_older_deploy_is_refused_before_anything_is_sent(desk30: Path, api30: FakeApi) -> None:
+def test_an_older_deploy_is_refused_before_anything_is_sent(
+    desk30: Path, api30: FakeApi
+) -> None:
     _filmed_once(desk30)
     api30.routes[("GET", "/openapi.json")] = openapi_doc(episode_ordinal=False)
     api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "1.20"}}
@@ -277,7 +346,9 @@ def test_an_older_deploy_is_refused_before_anything_is_sent(desk30: Path, api30:
     assert api30.posted(VIDEO) == []
 
 
-def test_an_unreadable_schema_and_an_older_servers_422_say_the_same_thing(desk30: Path, api30: FakeApi) -> None:
+def test_an_unreadable_schema_and_an_older_servers_422_say_the_same_thing(
+    desk30: Path, api30: FakeApi
+) -> None:
     _filmed_once(desk30)
     api30.routes[("GET", "/openapi.json")] = SystemExit("HTTP 404")
     api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "1.20"}}
@@ -290,10 +361,14 @@ def test_an_unreadable_schema_and_an_older_servers_422_say_the_same_thing(desk30
         run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
 
     assert "does not film one episode alone yet" in str(caught.value.code)
-    assert len(api30.posted(VIDEO)) == 1  # sent once, refused at admission, nothing filmed
+    assert (
+        len(api30.posted(VIDEO)) == 1
+    )  # sent once, refused at admission, nothing filmed
 
 
-def test_boards_not_approved_is_not_mistaken_for_an_old_deploy(desk30: Path, api30: FakeApi) -> None:
+def test_boards_not_approved_is_not_mistaken_for_an_old_deploy(
+    desk30: Path, api30: FakeApi
+) -> None:
     _filmed_once(desk30)
     api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "1.20"}}
     run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
@@ -312,22 +387,31 @@ def test_boards_not_approved_is_not_mistaken_for_an_old_deploy(desk30: Path, api
     assert "does not film one episode alone yet" not in text
 
 
-def test_episode_one_on_an_older_deploy_films_alone_without_the_field(desk30: Path, api30: FakeApi) -> None:
+def test_episode_one_on_an_older_deploy_films_alone_without_the_field(
+    desk30: Path, api30: FakeApi
+) -> None:
     api30.routes[("GET", "/openapi.json")] = openapi_doc(episode_ordinal=False)
     spine = api30.spine_doc
 
     extra = stages.film_scope(api30, episode=1)
-    body = stages.video_request_body(api30, spine=spine, prompt="p", preset_id="x", preset_version="1", episode=1)
+    body = stages.video_request_body(
+        api30, spine=spine, prompt="p", preset_id="x", preset_version="1", episode=1
+    )
 
     assert extra == {"episode_count": 1}
     assert body["episode_count"] == 1 and "episode_ordinal" not in body
 
 
-def test_clips_of_another_episode_are_not_booked_and_are_said_out_loud(desk30: Path, api30: FakeApi) -> None:
+def test_clips_of_another_episode_are_not_booked_and_are_said_out_loud(
+    desk30: Path, api30: FakeApi
+) -> None:
     api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "1.20"}}
     run_film(desk30, episode=2, take_id="t2")
     _take_two_of_episode_two(api30)
-    api30.routes[("GET", "/v1/jobs/job_video_9")] = {"status": "running", "depends_on": ["job_ep1", "job_take_e2t2"]}
+    api30.routes[("GET", "/v1/jobs/job_video_9")] = {
+        "status": "running",
+        "depends_on": ["job_ep1", "job_take_e2t2"],
+    }
     api30.routes[("GET", "/v1/jobs/job_ep1")] = {
         "status": "completed",
         "episode_ids": ["episode_01"],
@@ -344,11 +428,21 @@ def test_clips_of_another_episode_are_not_booked_and_are_said_out_loud(desk30: P
 # --- The phase machine -----------------------------------------------------------------------------
 
 
-def test_a_whole_episode_retry_films_with_a_fresh_seed(desk: Path, api: FakeApi) -> None:
+def test_a_whole_episode_retry_films_with_a_fresh_seed(
+    desk: Path, api: FakeApi
+) -> None:
     record_filmed(desk, episode=1, take_id="t1")
-    set_phase(desk, "ready_video", video_idempotency_suffix="-retry-abc", video_enrolled_suffix="")
+    set_phase(
+        desk,
+        "ready_video",
+        video_idempotency_suffix="-retry-abc",
+        video_enrolled_suffix="",
+    )
     api.routes[("POST", VIDEO)] = {"job_id": "job_video_1"}
-    api.routes[("GET", "/v1/jobs/job_video_1")] = {"status": "running", "depends_on": ["job_take_a"]}
+    api.routes[("GET", "/v1/jobs/job_video_1")] = {
+        "status": "running",
+        "depends_on": ["job_take_a"],
+    }
     api.routes[("GET", "/v1/jobs/job_take_a")] = {
         "status": "completed",
         "episode_ids": ["episode_01"],
@@ -360,7 +454,11 @@ def test_a_whole_episode_retry_films_with_a_fresh_seed(desk: Path, api: FakeApi)
     orchestrate.run_step(desk)
 
     body = api.posted(VIDEO)[0]
-    assert (body["episode_count"], body["episode_ordinal"], body["seed_attempt"]) == (1, 1, 2)
+    assert (body["episode_count"], body["episode_ordinal"], body["seed_attempt"]) == (
+        1,
+        1,
+        2,
+    )
     assert "reroll_take_index" not in body
 
 
@@ -370,12 +468,16 @@ def test_a_japanese_show_films_with_its_spoken_language_and_locale_from_the_spin
     api30.spine_doc["spoken_language"] = "ja-JP"
     api30.spine_doc["locale"] = "en-US"
     _filmed_once(desk30)
-    api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "1.20", "takes": 1}}
+    api30.routes[("POST", ESTIMATE)] = {
+        "cost_estimate": {"total_usd": "1.20", "takes": 1}
+    }
     run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
     _take_two_of_episode_two(api30)
 
     run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
 
     body = api30.posted(VIDEO)[0]
-    assert body["spoken_language"] == "ja-JP", "the take's coordinator must know the show is Japanese"
+    assert body["spoken_language"] == "ja-JP", (
+        "the take's coordinator must know the show is Japanese"
+    )
     assert body["locale"] == "en-US", "subtitles stay English"

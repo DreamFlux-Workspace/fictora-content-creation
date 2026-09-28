@@ -35,13 +35,24 @@ URL_2 = "https://media.example/clip/ep2-first-film.mp4"
 
 
 def _gate(status: str = "pending", path: str | None = None) -> dict[str, Any]:
-    return {"status": status, "at_utc": None, "path": path, "note": None, "luma_percent": None}
+    return {
+        "status": status,
+        "at_utc": None,
+        "path": path,
+        "note": None,
+        "luma_percent": None,
+    }
 
 
-def _take(take_id: str, *, board: str = "pending", filmed: int = 0, lines: int = 1) -> dict[str, Any]:
+def _take(
+    take_id: str, *, board: str = "pending", filmed: int = 0, lines: int = 1
+) -> dict[str, Any]:
     return {
         "take_id": take_id,
-        "lines": [{"speaker": "Hana", "original": f"Line {n}.", "translation": ""} for n in range(lines)],
+        "lines": [
+            {"speaker": "Hana", "original": f"Line {n}.", "translation": ""}
+            for n in range(lines)
+        ],
         "board": _gate(board),
         "estimate_usd": 0.3 if filmed else None,
         "filmed_count": filmed,
@@ -77,7 +88,9 @@ def internal_desk(root: Path, *, ep2_filmed: bool = True) -> Path:
             {
                 "ordinal": 1,
                 "slug": "ep01",
-                "script": _gate("pending"),  # the old kit never recorded it, but the take was filmed
+                "script": _gate(
+                    "pending"
+                ),  # the old kit never recorded it, but the take was filmed
                 "post": _gate(),
                 "takes": [_take("t1", board="approved", filmed=2)],
                 "spend_usd": 2.4,
@@ -88,7 +101,13 @@ def internal_desk(root: Path, *, ep2_filmed: bool = True) -> Path:
                 "slug": "ep02",
                 "script": _gate("approved"),
                 "post": _gate(),
-                "takes": [_take("t1", board="approved" if ep2_filmed else "pending", filmed=1 if ep2_filmed else 0)],
+                "takes": [
+                    _take(
+                        "t1",
+                        board="approved" if ep2_filmed else "pending",
+                        filmed=1 if ep2_filmed else 0,
+                    )
+                ],
                 "spend_usd": 0.6,
             },
         ],
@@ -96,9 +115,19 @@ def internal_desk(root: Path, *, ep2_filmed: bool = True) -> Path:
         "bed_db": -16.5,
         "spine_id": "spine_test_1",
         "api_session_id": "create-flow-test",
-        "arc_options": [{"arc_id": "arc_1", "title": "The Queue", "line": "Every night a bigger scheme."}],
+        "arc_options": [
+            {
+                "arc_id": "arc_1",
+                "title": "The Queue",
+                "line": "Every night a bigger scheme.",
+            }
+        ],
         "series_arc": {
-            "arc": {"arc_id": "arc_1", "title": "The Queue", "line": "Every night a bigger scheme."},
+            "arc": {
+                "arc_id": "arc_1",
+                "title": "The Queue",
+                "line": "Every night a bigger scheme.",
+            },
             "option": 1,
             "rewritten": False,
             "spine_version": "sha256:abc",
@@ -113,12 +142,27 @@ def internal_desk(root: Path, *, ep2_filmed: bool = True) -> Path:
             "cut_tempo": "punchy",
             "video_lane": "minimax-h3",
             "spoken_language": "ja-JP",
-            "pending": {} if ep2_filmed else {"boards-ep02": {"key": "closing-time-abc123-boards-ep02-a1", "job_id": None}},
+            "pending": {}
+            if ep2_filmed
+            else {
+                "boards-ep02": {
+                    "key": "closing-time-abc123-boards-ep02-a1",
+                    "job_id": None,
+                }
+            },
             "attempts": {"draft": 1, "take-ep01-t1": 2},
             "renders": {"draft": 1},
             "board_frames": {"boards-ep01-t1": "0123456789abcdef"},
         },
-        "spend_log": [{"at_utc": "2026-09-26T18:19:05+00:00", "episode": 1, "usd": 0.3, "unit": "board", "take_id": "t1"}],
+        "spend_log": [
+            {
+                "at_utc": "2026-09-26T18:19:05+00:00",
+                "episode": 1,
+                "usd": 0.3,
+                "unit": "board",
+                "take_id": "t1",
+            }
+        ],
     }
     _write(desk / "series.json", series)
     spine = {
@@ -134,31 +178,80 @@ def internal_desk(root: Path, *, ep2_filmed: bool = True) -> Path:
             {"episode_id": "ep_02", "ordinal": 2, "authoring_state": "approved"},
         ],
         "beats": [
-            {"beat_id": "b1", "episode_id": "episode_01", "dialogue_lines": [{"line_id": "l1", "cast_id": "cast_hana", "text": "Closed."}]},
-            {"beat_id": "b2", "episode_id": "ep_02", "dialogue_lines": [{"line_id": "l2", "cast_id": "cast_hana", "text": "Again?"}]},
+            {
+                "beat_id": "b1",
+                "episode_id": "episode_01",
+                "dialogue_lines": [
+                    {"line_id": "l1", "cast_id": "cast_hana", "text": "Closed."}
+                ],
+            },
+            {
+                "beat_id": "b2",
+                "episode_id": "ep_02",
+                "dialogue_lines": [
+                    {"line_id": "l2", "cast_id": "cast_hana", "text": "Again?"}
+                ],
+            },
         ],
     }
     _write(desk / "api" / "spine.json", spine)
     _write(
         desk / "api" / "draft-request.json",
-        {"prompt": "A sweet shop at closing time.\nMore brief.", "art_style_preset_id": "slice-of-life", "cut_tempo": "punchy",
-         "spoken_language": "ja-JP", "locale": "en-US"},
+        {
+            "prompt": "A sweet shop at closing time.\nMore brief.",
+            "art_style_preset_id": "slice-of-life",
+            "cut_tempo": "punchy",
+            "spoken_language": "ja-JP",
+            "locale": "en-US",
+        },
     )
     rows = [
-        {"episode_id": "episode_01", "take_index": 1, "scene_id": "sb_ep1", "take_job_id": "job_video_scene_ep1",
-         "video_url": URL_1, "duration_ms": 15104, "path": "/x/.incoming/take-episode_01-t1.mp4", "provider_spec": SECRET},
+        {
+            "episode_id": "episode_01",
+            "take_index": 1,
+            "scene_id": "sb_ep1",
+            "take_job_id": "job_video_scene_ep1",
+            "video_url": URL_1,
+            "duration_ms": 15104,
+            "path": "/x/.incoming/take-episode_01-t1.mp4",
+            "provider_spec": SECRET,
+        },
     ]
     if ep2_filmed:
-        rows.append({"episode_id": "ep_02", "take_index": 1, "scene_id": "sb_ep2", "take_job_id": "job_video_scene_ep2",
-                     "video_url": URL_2, "duration_ms": 15104, "path": "/x/.incoming/take-ep_02-t1.mp4", "provider_spec": SECRET})
+        rows.append(
+            {
+                "episode_id": "ep_02",
+                "take_index": 1,
+                "scene_id": "sb_ep2",
+                "take_job_id": "job_video_scene_ep2",
+                "video_url": URL_2,
+                "duration_ms": 15104,
+                "path": "/x/.incoming/take-ep_02-t1.mp4",
+                "provider_spec": SECRET,
+            }
+        )
     _write(desk / "api" / "18_takes.json", rows)
-    for folder in ("api", "ep01/api", "ep02/api"):  # the old kit left these; nothing may open them
-        _write(desk / folder / f"provider-spec-{folder.split('/')[0]}-t1-v1.json", {"spec": SECRET})
-        _write(desk / folder / f"18_provider_spec-{folder.split('/')[0]}.json", {"spec": SECRET})
+    for folder in (
+        "api",
+        "ep01/api",
+        "ep02/api",
+    ):  # the old kit left these; nothing may open them
+        _write(
+            desk / folder / f"provider-spec-{folder.split('/')[0]}-t1-v1.json",
+            {"spec": SECRET},
+        )
+        _write(
+            desk / folder / f"18_provider_spec-{folder.split('/')[0]}.json",
+            {"spec": SECRET},
+        )
     _write(
         desk / "ep01" / "api" / "video-terminal-ep01-t1-v2.json",
-        {"job_id": "job_video_coord_ep1", "status": "completed", "takes": [],
-         "output": {"scenes": [{"episode_id": "episode_01", "video_url": URL_1}]}},
+        {
+            "job_id": "job_video_coord_ep1",
+            "status": "completed",
+            "takes": [],
+            "output": {"scenes": [{"episode_id": "episode_01", "video_url": URL_1}]},
+        },
     )
     takes = desk / "ep01" / "takes"
     takes.mkdir(parents=True)
@@ -179,7 +272,11 @@ def snapshot(desk: Path) -> dict[str, tuple[int, int, int]]:
     """Every file with its inode, size and mtime."""
 
     return {
-        str(p.relative_to(desk)): (p.stat().st_ino, p.stat().st_size, p.stat().st_mtime_ns)
+        str(p.relative_to(desk)): (
+            p.stat().st_ino,
+            p.stat().st_size,
+            p.stat().st_mtime_ns,
+        )
         for p in sorted(desk.rglob("*"))
         if p.is_file()
     }
@@ -198,7 +295,9 @@ def forbid_provider_spec_reads(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pathlib.Path, "open", guarded)
 
 
-def test_raw_takes_are_hardlinked_under_this_kits_name_and_nothing_else_matches(tmp_path: Path) -> None:
+def test_raw_takes_are_hardlinked_under_this_kits_name_and_nothing_else_matches(
+    tmp_path: Path,
+) -> None:
     desk = internal_desk(tmp_path)
     before = snapshot(desk)
     adopt_desk(desk)
@@ -207,12 +306,22 @@ def test_raw_takes_are_hardlinked_under_this_kits_name_and_nothing_else_matches(
         original = takes / f"take-ep01-t1-v{version}.mp4"
         raw = takes / f"take-ep01-t1-raw-v{version}.mp4"
         assert raw.samefile(original)
-    assert (desk / "ep02" / "takes" / "take-ep02-t1-raw-v1.mp4").samefile(desk / "ep02" / "takes" / "take-ep02-t1-v1.mp4")
+    assert (desk / "ep02" / "takes" / "take-ep02-t1-raw-v1.mp4").samefile(
+        desk / "ep02" / "takes" / "take-ep02-t1-v1.mp4"
+    )
     raws = sorted(p.name for p in takes.glob("*raw-v*.mp4"))
     assert raws == ["take-ep01-t1-raw-v1.mp4", "take-ep01-t1-raw-v2.mp4"]
     after = snapshot(desk)
-    for name, (inode, size, mtime) in before.items():  # nothing renamed, moved, rewritten
-        assert name in after and after[name][0] == inode and after[name][1:] == (size, mtime)
+    for name, (
+        inode,
+        size,
+        mtime,
+    ) in before.items():  # nothing renamed, moved, rewritten
+        assert (
+            name in after
+            and after[name][0] == inode
+            and after[name][1:] == (size, mtime)
+        )
 
 
 def test_an_existing_different_raw_file_is_left_alone(tmp_path: Path) -> None:
@@ -229,32 +338,56 @@ def test_the_take_list_reads_through_this_kits_readers(tmp_path: Path) -> None:
     adopt_desk(desk)
     assert latest_raw_take(desk, 1, "t1").name == "take-ep01-t1-raw-v2.mp4"
     assert take_clip(desk, 1, "t1") == {
-        "job_id": "job_video_scene_ep1", "url": URL_1, "relation_id": None, "set_index": 1, "episode_id": "episode_01",
+        "job_id": "job_video_scene_ep1",
+        "url": URL_1,
+        "relation_id": None,
+        "set_index": 1,
+        "episode_id": "episode_01",
     }
     raw_1 = json.loads((desk / "ep01" / "api" / "17_raw_scene_clips.json").read_text())
     assert raw_1["coordinator_job_id"] == "job_video_coord_ep1"
     raw_2 = json.loads((desk / "ep02" / "api" / "17_raw_scene_clips.json").read_text())
-    assert [c["job_id"] for c in episode_clips(raw_2, episode_id="ep_02")] == ["job_video_scene_ep2"]
-    assert take_clip(desk, 2, "t1")["url"] == URL_2  # ep_02 found via the spine copied into ep02/api
+    assert [c["job_id"] for c in episode_clips(raw_2, episode_id="ep_02")] == [
+        "job_video_scene_ep2"
+    ]
+    assert (
+        take_clip(desk, 2, "t1")["url"] == URL_2
+    )  # ep_02 found via the spine copied into ep02/api
 
 
 def test_production_json_loads_and_carries_the_old_desk(tmp_path: Path) -> None:
     desk = internal_desk(tmp_path)
     adopt_desk(desk)
     state = load_production(desk)
-    assert (state.session_id, state.spine_id, state.preset_id, state.preset_version) == (
-        "create-flow-test", "spine_test_1", "slice-of-life", "1.2.0",
+    assert (
+        state.session_id,
+        state.spine_id,
+        state.preset_id,
+        state.preset_version,
+    ) == (
+        "create-flow-test",
+        "spine_test_1",
+        "slice-of-life",
+        "1.2.0",
     )
     assert (state.episode_ordinal, state.phase, state.band) == (2, "complete", "15s")
     assert state.idempotency_prefix == "closing-time-abc123"
     assert state.attempts == {"draft": 1, "take-ep01-t1": 2}
     assert state.series_arc == {
-        "arc_id": "arc_1", "title": "The Queue", "line": "Every night a bigger scheme.",
-        "option": 1, "rewritten": False, "spine_version": "sha256:abc",
+        "arc_id": "arc_1",
+        "title": "The Queue",
+        "line": "Every night a bigger scheme.",
+        "option": 1,
+        "rewritten": False,
+        "spine_version": "sha256:abc",
     }
     assert state.prompt.startswith("A sweet shop at closing time.")
     config = load_production_config(desk)
-    assert (config.cut_tempo, config.spoken_language, config.locale) == ("punchy", "ja-JP", "en-US")
+    assert (config.cut_tempo, config.spoken_language, config.locale) == (
+        "punchy",
+        "ja-JP",
+        "en-US",
+    )
 
 
 def test_phase_waits_on_boards_for_a_scripted_unboarded_episode(tmp_path: Path) -> None:
@@ -265,14 +398,21 @@ def test_phase_waits_on_boards_for_a_scripted_unboarded_episode(tmp_path: Path) 
     assert any("boards-ep02" in line for line in plan.confirm)
 
 
-def test_a_filmed_episode_with_a_pending_script_record_is_complete_and_asks(tmp_path: Path) -> None:
+def test_a_filmed_episode_with_a_pending_script_record_is_complete_and_asks(
+    tmp_path: Path,
+) -> None:
     desk = internal_desk(tmp_path, ep2_filmed=False)
     series = json.loads((desk / "series.json").read_text())
     series["episodes"] = series["episodes"][:1]
     _write(desk / "series.json", series)
     plan, _ = adopt_desk(desk)
-    assert (load_production(desk).episode_ordinal, load_production(desk).phase) == (1, "complete")
-    assert any("script is still pending" in line and "filmed" in line for line in plan.confirm)
+    assert (load_production(desk).episode_ordinal, load_production(desk).phase) == (
+        1,
+        "complete",
+    )
+    assert any(
+        "script is still pending" in line and "filmed" in line for line in plan.confirm
+    )
 
 
 def test_unknown_series_fields_survive_load_and_save(tmp_path: Path) -> None:
@@ -283,7 +423,15 @@ def test_unknown_series_fields_survive_load_and_save(tmp_path: Path) -> None:
     record_verdict(desk, episode=1, take_id="t1", verdict="use")
     saved = json.loads((desk / "series.json").read_text())
     assert saved["episodes"][0]["takes"][0]["verdict"] == "use"
-    for key in ("spend_log", "bed_db", "api", "series_arc", "api_session_id", "spine_id", "arc_options"):
+    for key in (
+        "spend_log",
+        "bed_db",
+        "api",
+        "series_arc",
+        "api_session_id",
+        "spine_id",
+        "arc_options",
+    ):
         assert saved[key] == original[key]
     assert saved["episodes"][0]["legacy_episode_note"] == "kept"
     assert saved["episodes"][0]["takes"][0]["legacy_take_note"] == {"kept": True}
@@ -299,21 +447,35 @@ def test_running_twice_changes_nothing_the_second_time(tmp_path: Path) -> None:
     assert snapshot(desk) == between
 
 
-def test_dry_run_prints_every_file_and_writes_nothing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_dry_run_prints_every_file_and_writes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     desk = internal_desk(tmp_path)
     before = snapshot(desk)
     assert ops_main(["adopt-desk", "--desk", str(desk), "--dry-run"]) == 0
     out = capsys.readouterr().out
     assert snapshot(desk) == before
-    for name in ("series.pre-adopt.json", "take-ep01-t1-raw-v1.mp4", "take-ep01-t1-raw-v2.mp4", "ep01/api/17_raw_scene_clips.json",
-                 "ep02/api/17_raw_scene_clips.json", "ep02/api/spine.json", "production.json", "production.config.json"):
+    for name in (
+        "series.pre-adopt.json",
+        "take-ep01-t1-raw-v1.mp4",
+        "take-ep01-t1-raw-v2.mp4",
+        "ep01/api/17_raw_scene_clips.json",
+        "ep02/api/17_raw_scene_clips.json",
+        "ep02/api/spine.json",
+        "production.json",
+        "production.config.json",
+    ):
         assert name in out
     assert "phase" in out and "complete" in out and "CONFIRM" in out
 
 
-def test_refuses_to_overwrite_production_json_and_force_backs_it_up(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_refuses_to_overwrite_production_json_and_force_backs_it_up(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     desk = internal_desk(tmp_path)
-    (desk / "production.json").write_text('{"session_id": "mine", "prompt": "p", "preset_id": "x", "preset_version": "1"}\n')
+    (desk / "production.json").write_text(
+        '{"session_id": "mine", "prompt": "p", "preset_id": "x", "preset_version": "1"}\n'
+    )
     before = snapshot(desk)
     with pytest.raises(AdoptRefused):
         adopt_desk(desk)
@@ -321,7 +483,10 @@ def test_refuses_to_overwrite_production_json_and_force_backs_it_up(tmp_path: Pa
     assert snapshot(desk) == before
     capsys.readouterr()
     assert ops_main(["adopt-desk", "--desk", str(desk), "--force"]) == 0
-    assert json.loads((desk / "production.pre-adopt-v1.json").read_text())["session_id"] == "mine"
+    assert (
+        json.loads((desk / "production.pre-adopt-v1.json").read_text())["session_id"]
+        == "mine"
+    )
     assert load_production(desk).session_id == "create-flow-test"
 
 
@@ -333,7 +498,10 @@ def test_provider_spec_never_read_copied_or_printed(
     assert ops_main(["adopt-desk", "--desk", str(desk)]) == 0
     assert SECRET not in capsys.readouterr().out
     for path in desk.rglob("*.json"):
-        if path.name in {"18_takes.json", "series.pre-adopt.json"} or "provider" in path.name:
+        if (
+            path.name in {"18_takes.json", "series.pre-adopt.json"}
+            or "provider" in path.name
+        ):
             continue
         text = path.read_text()
         assert SECRET not in text and "provider_spec" not in text, path

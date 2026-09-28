@@ -104,9 +104,13 @@ def parse_range(spec: str) -> tuple[float, float]:
     try:
         lo, hi = float(start), float(end)
     except ValueError:
-        raise ValueError(f"--mute wants A-B seconds, e.g. 6.9-8.3; got {spec!r}") from None
+        raise ValueError(
+            f"--mute wants A-B seconds, e.g. 6.9-8.3; got {spec!r}"
+        ) from None
     if not sep or hi <= lo or lo < 0:
-        raise ValueError(f"--mute wants A-B seconds with B after A, e.g. 6.9-8.3; got {spec!r}")
+        raise ValueError(
+            f"--mute wants A-B seconds with B after A, e.g. 6.9-8.3; got {spec!r}"
+        )
     return lo, hi
 
 
@@ -133,14 +137,20 @@ def parse_placed(spec: str, *, flag: str) -> Placed:
 
     path, *numbers = spec.split("@")
     if not numbers or not path.strip() or len(numbers) > 2:
-        raise ValueError(f"{flag} wants PATH@SECONDS[@DB], e.g. file.mp3@4.2@-12; got {spec!r}")
+        raise ValueError(
+            f"{flag} wants PATH@SECONDS[@DB], e.g. file.mp3@4.2@-12; got {spec!r}"
+        )
     try:
         values = [float(value) for value in numbers]
     except ValueError:
-        raise ValueError(f"{flag} wants PATH@SECONDS[@DB] with numbers after the @; got {spec!r}") from None
+        raise ValueError(
+            f"{flag} wants PATH@SECONDS[@DB] with numbers after the @; got {spec!r}"
+        ) from None
     gain = values[1] if len(values) > 1 else None
     if gain is not None and not GAIN_RANGE_DB[0] <= gain <= GAIN_RANGE_DB[1]:
-        raise ValueError(f"{flag} gain must be {GAIN_RANGE_DB[0]:.0f} to {GAIN_RANGE_DB[1]:+.0f} dB; got {spec!r}")
+        raise ValueError(
+            f"{flag} gain must be {GAIN_RANGE_DB[0]:.0f} to {GAIN_RANGE_DB[1]:+.0f} dB; got {spec!r}"
+        )
     return Placed(path=Path(path).expanduser(), start=values[0], gain_db=gain)
 
 
@@ -166,7 +176,9 @@ class HandPlan:
     def voice_windows(self) -> tuple[tuple[float, float], ...]:
         """Where the hand voice lines speak."""
 
-        return tuple((line.start, line.start + seconds) for line, seconds in self.voices)
+        return tuple(
+            (line.start, line.start + seconds) for line, seconds in self.voices
+        )
 
 
 def check_hand_plan(
@@ -202,13 +214,17 @@ def check_hand_plan(
     checked_mutes: list[tuple[float, float]] = []
     for start, end in mutes:
         if start >= take_seconds:
-            raise ValueError(f"--mute {start:g}-{end:g} starts past the end of the {take_seconds:.2f}s take")
+            raise ValueError(
+                f"--mute {start:g}-{end:g} starts past the end of the {take_seconds:.2f}s take"
+            )
         checked_mutes.append((start, min(end, take_seconds)))
     checked_voices: list[tuple[Placed, float]] = []
     for line in voices:
         seconds = _audible_seconds(line, flag="--voice")
         if not 0 <= line.start < take_seconds:
-            raise ValueError(f"--voice {line.one_line()} starts outside the {take_seconds:.2f}s take")
+            raise ValueError(
+                f"--voice {line.one_line()} starts outside the {take_seconds:.2f}s take"
+            )
         if line.start + seconds > take_seconds + VOICE_END_SLACK_SECONDS:
             raise ValueError(
                 f"--voice {line.one_line()} ({seconds:.2f}s) runs past the end of the {take_seconds:.2f}s take; "
@@ -218,7 +234,9 @@ def check_hand_plan(
     checked_cues: list[tuple[Placed, float]] = []
     for cue in cues:
         seconds = _audible_seconds(cue, flag="--cue")
-        checked_cues.append((cue, clamp_cue(cue, cue_seconds=seconds, take_seconds=take_seconds)))
+        checked_cues.append(
+            (cue, clamp_cue(cue, cue_seconds=seconds, take_seconds=take_seconds))
+        )
     return HandPlan(tuple(checked_mutes), tuple(checked_voices), tuple(checked_cues))
 
 
@@ -227,7 +245,9 @@ def _audible_seconds(item: Placed, *, flag: str) -> float:
         raise FileNotFoundError(f"{flag} file not found: {item.path}")
     levels = measure_rms_windows(item.path, window_seconds=0.5)
     if not levels or max(levels) <= SILENCE_DB:
-        raise ValueError(f"{flag} {item.path.name} is silent (no half second above {SILENCE_DB:.0f} dB RMS)")
+        raise ValueError(
+            f"{flag} {item.path.name} is silent (no half second above {SILENCE_DB:.0f} dB RMS)"
+        )
     return media_duration(item.path)
 
 
@@ -255,14 +275,20 @@ def clamp_cue(cue: Placed, *, cue_seconds: float, take_seconds: float) -> float:
     """
 
     if not 0 <= cue.start < take_seconds:
-        raise ValueError(f"--cue {cue.one_line()} starts outside the {take_seconds:.2f}s take")
+        raise ValueError(
+            f"--cue {cue.one_line()} starts outside the {take_seconds:.2f}s take"
+        )
     room = take_seconds - CUE_TAKE_END_MARGIN_SECONDS - cue.start
     if room < CUE_MIN_SECONDS:
-        raise ValueError(f"--cue {cue.one_line()} has no room before the {take_seconds:.2f}s take ends")
+        raise ValueError(
+            f"--cue {cue.one_line()} has no room before the {take_seconds:.2f}s take ends"
+        )
     return round(min(cue_seconds, room), 3)
 
 
-def mute_expression(windows: tuple[tuple[float, float], ...], fade: float = MUTE_FADE_SECONDS) -> str:
+def mute_expression(
+    windows: tuple[tuple[float, float], ...], fade: float = MUTE_FADE_SECONDS
+) -> str:
     """An ffmpeg ``volume`` filter that is 0 inside each window, 1 outside, with ``fade`` ramps just outside."""
 
     if not windows:
@@ -301,7 +327,9 @@ def lay_voice(take: Path, out: Path, plan: HandPlan) -> Path:
     if out.exists():
         raise FileExistsError(f"{out} exists; local post never overwrites")
     # 1 ms audio frames so the mute gain moves sample-accurately enough that the window itself is silent.
-    graph = [f"[0:a]aresample=48000,asetnsamples=n=48:p=0,{mute_expression(plan.mutes)}[take]"]
+    graph = [
+        f"[0:a]aresample=48000,asetnsamples=n=48:p=0,{mute_expression(plan.mutes)}[take]"
+    ]
     labels = ["[take]"]
     inputs: list[str] = ["-i", str(take)]
     for number, (line, _seconds) in enumerate(plan.voices, start=1):
@@ -313,7 +341,9 @@ def lay_voice(take: Path, out: Path, plan: HandPlan) -> Path:
             f"adelay={delay}|{delay}[v{number}]"
         )
         labels.append(f"[v{number}]")
-    graph.append(f"{''.join(labels)}amix=inputs={len(labels)}:duration=first:normalize=0[a]")
+    graph.append(
+        f"{''.join(labels)}amix=inputs={len(labels)}:duration=first:normalize=0[a]"
+    )
     run_ffmpeg(
         [*inputs, "-filter_complex", ";".join(graph), "-map", "0:v", "-map", "[a]",
          "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", str(out)]
@@ -328,7 +358,9 @@ def voice_gain(path: Path) -> float:
     return round(VOICE_TARGET_LUFS - lufs, 1) if math.isfinite(lufs) else 0.0
 
 
-def _cue_chain(position: int, cue: Placed, seconds: float, speech: tuple[tuple[float, float], ...]) -> str:
+def _cue_chain(
+    position: int, cue: Placed, seconds: float, speech: tuple[tuple[float, float], ...]
+) -> str:
     gain = SFX_GAIN_DB if cue.gain_db is None else cue.gain_db
     fade_out = min(0.3, seconds / 3)
     delay = round(cue.start * 1000)
@@ -360,7 +392,13 @@ def silent_cues(layer: Path, plan: HandPlan) -> list[str]:
     return silent
 
 
-def lay_cues(take: Path, out: Path, plan: HandPlan, *, speech: tuple[tuple[float, float], ...] = ()) -> Path:
+def lay_cues(
+    take: Path,
+    out: Path,
+    plan: HandPlan,
+    *,
+    speech: tuple[tuple[float, float], ...] = (),
+) -> Path:
     """Lay ``plan.cues`` under the take's own audio into ``out``, after checking the cue layer is not silent.
 
     Parameters
@@ -396,7 +434,11 @@ def lay_cues(take: Path, out: Path, plan: HandPlan, *, speech: tuple[tuple[float
         inputs += ["-i", str(cue.path)]
         chains.append(_cue_chain(position, cue, seconds, speech))
     labels = "".join(f"[c{position}]" for position in range(len(plan.cues)))
-    mixed = f"{labels}amix=inputs={len(plan.cues)}:duration=longest:normalize=0," if len(plan.cues) > 1 else f"{labels}"
+    mixed = (
+        f"{labels}amix=inputs={len(plan.cues)}:duration=longest:normalize=0,"
+        if len(plan.cues) > 1
+        else f"{labels}"
+    )
     with tempfile.TemporaryDirectory() as scratch:
         layer = Path(scratch) / "cues.wav"
         run_ffmpeg(

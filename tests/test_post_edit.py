@@ -43,10 +43,21 @@ FACTS = {
         "spoken_line_count": 1,
         "shots": [
             {"shot_index": 1, "start_seconds": 0.0, "end_seconds": 2.5, "speaks": True},
-            {"shot_index": 2, "start_seconds": 2.5, "end_seconds": 5.0, "speaks": False},
+            {
+                "shot_index": 2,
+                "start_seconds": 2.5,
+                "end_seconds": 5.0,
+                "speaks": False,
+            },
         ],
         "sfx_cues": [
-            {"shot_index": 2, "sound": "a door slams", "kind": "event", "start_seconds": 3.0, "duration_seconds": 1.0}
+            {
+                "shot_index": 2,
+                "sound": "a door slams",
+                "kind": "event",
+                "start_seconds": 3.0,
+                "duration_seconds": 1.0,
+            }
         ],
     },
 }
@@ -62,7 +73,9 @@ def _board_png(path: Path) -> Path:
     return path
 
 
-def _leak_take(path: Path, board_frames: int, *, total: int = 72, **audio: object) -> Path:
+def _leak_take(
+    path: Path, board_frames: int, *, total: int = 72, **audio: object
+) -> Path:
     board = board_array()
     frames = [board] * board_frames + shot_frames(total - board_frames, BLUE)
     return write_frames(path, frames, **audio)  # type: ignore[arg-type]
@@ -98,11 +111,15 @@ def test_deboard_replaces_exactly_the_measured_board_frames_and_keeps_the_timeli
     out = takes / "take-ep01-t1-deboard-v1.mp4"
     assert out.is_file()
     assert f"replaced {leaked} board frame(s)" in capsys.readouterr().out
-    assert count_frames(out) == count_frames(raw), "same frame count: nothing after the head moves"
+    assert count_frames(out) == count_frames(raw), (
+        "same frame count: nothing after the head moves"
+    )
     assert abs(media_duration(out) - media_duration(raw)) < 0.05
     frames = _frames(out)
     for index in range(leaked):
-        assert np.abs(frames[index] - frames[leaked]).mean() < 3, f"frame {index} is the first real frame now"
+        assert np.abs(frames[index] - frames[leaked]).mean() < 3, (
+            f"frame {index} is the first real frame now"
+        )
     assert measure_board_leak(out, board).frames == 0
     assert "Deboard" in (post_desk / "ep01" / "run-notes.md").read_text()
 
@@ -150,10 +167,14 @@ def _fake_bed(spine: dict, music: str | None, target: Path) -> Path:
 
 
 @needs_ffmpeg
-def test_finish_deboards_first_and_later_steps_keep_the_raw_timeline(post_desk: Path) -> None:
+def test_finish_deboards_first_and_later_steps_keep_the_raw_timeline(
+    post_desk: Path,
+) -> None:
     takes = post_desk / "ep01" / "takes"
     raw = _leak_take(takes / "take-ep01-t1-raw-v1.mp4", 2, total=120, tones=TWO_LINES)
-    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(json.dumps(FACTS))
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+        json.dumps(FACTS)
+    )
     board = _board_png(post_desk / "ep01" / "boards" / "board-ep01-t1-1-v1.png")
     approve_board(post_desk, episode=1, take_id="t1", image=board)
     cues: list[SfxCue] = []
@@ -174,9 +195,15 @@ def test_finish_deboards_first_and_later_steps_keep_the_raw_timeline(post_desk: 
     assert [round(c.start, 2) for c in cues] == [3.0]
     assert "a door slams @3.00s" in result.steps[1].detail
     captions = next(s for s in result.steps if s.step == "captions")
-    assert captions.status == "ran" and "1.0" in captions.detail and "3.2" in captions.detail, captions.detail
+    assert (
+        captions.status == "ran"
+        and "1.0" in captions.detail
+        and "3.2" in captions.detail
+    ), captions.detail
     final = _frames(result.final)
-    assert np.abs(final[0] - final[2]).mean() < 3, "the finished take no longer opens on the board"
+    assert np.abs(final[0] - final[2]).mean() < 3, (
+        "the finished take no longer opens on the board"
+    )
 
 
 @needs_ffmpeg
@@ -205,7 +232,11 @@ def test_trim_snaps_the_cut_to_the_shot_change_and_prints_the_shift(
     takes = post_desk / "ep01" / "takes"
     finished = _cut_take(takes / "take-ep01-t1-sokii-v1.mp4")
     cues = post_desk / "ep01" / "cues-v1.json"
-    cues.write_text(json.dumps([{"start": 0.5, "end": 1.0}, {"start": 1.8}, {"start": 2.75, "end": 2.9}]))
+    cues.write_text(
+        json.dumps(
+            [{"start": 0.5, "end": 1.0}, {"start": 1.8}, {"start": 2.75, "end": 2.9}]
+        )
+    )
 
     code = main(["trim", "--desk", str(post_desk), "--take-file", str(finished), "--cut", "1.46-2.5",
                  "--cues-json", str(cues)])  # fmt: skip
@@ -217,7 +248,9 @@ def test_trim_snaps_the_cut_to_the_shot_change_and_prints_the_shift(
     assert count_frames(out) == 72 - 24
     before, after = _frames(finished), _frames(out)
     assert np.abs(after[35] - before[35]).mean() < 4, "the blue shot runs to the cut"
-    assert np.abs(after[36] - before[60]).mean() < 4, "the first frame after the cut is the kept frame 60"
+    assert np.abs(after[36] - before[60]).mean() < 4, (
+        "the first frame after the cut is the kept frame 60"
+    )
     shifted = json.loads((post_desk / "ep01" / "cues-trim-v1.json").read_text())
     assert shifted == [{"start": 0.5, "end": 1.0}, {"start": 1.75, "end": 1.9}]
 
@@ -230,7 +263,9 @@ def test_snap_keeps_the_nearest_frame_when_no_shot_change_is_near() -> None:
 
 
 def test_shift_timed_items_clips_what_runs_into_the_cut() -> None:
-    kept, notes = shift_timed_items([{"start": 1.0, "end": 2.0}, {"start": 2.2, "end": 3.5}], 1.5, 3.0)
+    kept, notes = shift_timed_items(
+        [{"start": 1.0, "end": 2.0}, {"start": 2.2, "end": 3.5}], 1.5, 3.0
+    )
     assert kept == [{"start": 1.0, "end": 1.5}, {"start": 1.5, "end": 2.0}]
     assert len(notes) == 2
 
@@ -256,7 +291,9 @@ def test_trim_refuses_the_raw_take_and_a_cut_outside_the_take(
 
 
 @needs_ffmpeg
-def test_freeze_holds_the_frame_over_the_picture_and_keeps_length_and_sound(tmp_path: Path) -> None:
+def test_freeze_holds_the_frame_over_the_picture_and_keeps_length_and_sound(
+    tmp_path: Path,
+) -> None:
     take = write_frames(tmp_path / "take.mp4", shot_frames(72, BLUE))
     out = freeze_frame(take, tmp_path / "freeze.mp4", at=1.0, hold=0.5)
 
@@ -265,9 +302,15 @@ def test_freeze_holds_the_frame_over_the_picture_and_keeps_length_and_sound(tmp_
     assert abs(media_duration(out.output) - media_duration(take)) < 0.06
     before, after = _frames(take), _frames(out.output)
     for index in range(24, 36):
-        assert np.abs(after[index] - before[24]).mean() < 3, f"frame {index} holds frame 24"
-    assert np.abs(after[36] - before[36]).mean() < 3, "the picture picks up where it was"
-    assert np.abs(before[35] - before[24]).mean() > 5, "(the source moves over the hold)"
+        assert np.abs(after[index] - before[24]).mean() < 3, (
+            f"frame {index} holds frame 24"
+        )
+    assert np.abs(after[36] - before[36]).mean() < 3, (
+        "the picture picks up where it was"
+    )
+    assert np.abs(before[35] - before[24]).mean() > 5, (
+        "(the source moves over the hold)"
+    )
 
 
 @needs_ffmpeg
@@ -304,9 +347,24 @@ def test_tempo_slows_picture_and_sound_together_with_the_pitch_kept(
     post_desk: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     takes = post_desk / "ep01" / "takes"
-    take = write_frames(takes / "take-ep01-t1-sokii-v1.mp4", shot_frames(72, BLUE), tone=440)
+    take = write_frames(
+        takes / "take-ep01-t1-sokii-v1.mp4", shot_frames(72, BLUE), tone=440
+    )
 
-    assert main(["tempo", "--desk", str(post_desk), "--take-file", str(take), "--factor", "0.9"]) == 0
+    assert (
+        main(
+            [
+                "tempo",
+                "--desk",
+                str(post_desk),
+                "--take-file",
+                str(take),
+                "--factor",
+                "0.9",
+            ]
+        )
+        == 0
+    )
 
     out = takes / "take-ep01-t1-tempo-v1.mp4"
     assert "Tempo 0.9x" in capsys.readouterr().out
@@ -343,14 +401,22 @@ def test_soften_finds_the_hard_cut_and_fades_the_last_frame_over_it(
     out = takes / "take-ep01-t1-soften-v1.mp4"
     assert count_frames(out) == count_frames(raw)
     before, after = _frames(raw), _frames(out)
-    assert np.abs(after[37] - before[37]).mean() > 20, "the held blue frame lies over the new shot"
-    assert np.abs(after[37] - before[35]).mean() > 5, "and it is fading, not a plain hold"
-    assert np.abs(after[48] - before[48]).mean() < 4, "past 0.33 s the new shot is clean"
+    assert np.abs(after[37] - before[37]).mean() > 20, (
+        "the held blue frame lies over the new shot"
+    )
+    assert np.abs(after[37] - before[35]).mean() > 5, (
+        "and it is fading, not a plain hold"
+    )
+    assert np.abs(after[48] - before[48]).mean() < 4, (
+        "past 0.33 s the new shot is clean"
+    )
     assert np.abs(after[20] - before[20]).mean() < 4, "before the cut nothing changes"
 
 
 @needs_ffmpeg
-def test_soften_with_no_hard_cut_writes_nothing(post_desk: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_soften_with_no_hard_cut_writes_nothing(
+    post_desk: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     takes = post_desk / "ep01" / "takes"
     write_frames(takes / "take-ep01-t1-raw-v1.mp4", shot_frames(72, BLUE))
     before = {p.name for p in takes.glob("*.mp4")}

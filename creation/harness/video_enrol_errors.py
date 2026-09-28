@@ -90,7 +90,11 @@ def server_refused_episode_ordinal_field(
     if error_text_mentions_episode_ordinal_field(text) is False:
         return False
     lower = text.lower()
-    return "extra input" in lower or "not permitted" in lower or "validation_error" in lower
+    return (
+        "extra input" in lower
+        or "not permitted" in lower
+        or "validation_error" in lower
+    )
 
 
 __all__ = [

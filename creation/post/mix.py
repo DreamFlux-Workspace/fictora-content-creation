@@ -57,7 +57,9 @@ def check_duck_db(duck_db: float | None) -> None:
     """
 
     if duck_db is not None and not DUCK_DB_RANGE[0] <= duck_db <= DUCK_DB_RANGE[1]:
-        raise ValueError(f"--duck-db must be {DUCK_DB_RANGE[0]:.0f}-{DUCK_DB_RANGE[1]:.0f} dB; got {duck_db}")
+        raise ValueError(
+            f"--duck-db must be {DUCK_DB_RANGE[0]:.0f}-{DUCK_DB_RANGE[1]:.0f} dB; got {duck_db}"
+        )
 
 
 def duck_expression(windows: list[tuple[float, float]], depth_db: float) -> str:
@@ -82,7 +84,9 @@ def voice_windows(source: Path, *, total: float) -> list[tuple[float, float]]:
     """Where the take speaks (RMS above -30 dB in 0.1 s windows), merged across pauses under 0.6 s."""
 
     spans = []
-    for index, level in enumerate(measure_rms_windows(source, window_seconds=VOICE_WINDOW_SECONDS)):
+    for index, level in enumerate(
+        measure_rms_windows(source, window_seconds=VOICE_WINDOW_SECONDS)
+    ):
         if level > VOICE_KEY_DB:
             start = index * VOICE_WINDOW_SECONDS
             spans.append((start, min(total, start + VOICE_WINDOW_SECONDS)))
@@ -100,7 +104,9 @@ def pick_gain(take_lufs: float) -> float:
 
     if not math.isfinite(take_lufs):
         return 0.0
-    return round(min(max(TARGET_LUFS - take_lufs, GAIN_RANGE_DB[0]), GAIN_RANGE_DB[1]), 1)
+    return round(
+        min(max(TARGET_LUFS - take_lufs, GAIN_RANGE_DB[0]), GAIN_RANGE_DB[1]), 1
+    )
 
 
 @dataclass(frozen=True)
@@ -151,8 +157,14 @@ def quiet_cue_warnings(
     warnings: list[str] = []
     for cue in cues:
         first = int(cue.start / window_seconds)
-        last = max(first, math.ceil((cue.start + max(cue.seconds, window_seconds)) / window_seconds) - 1)
-        bed = max(bed_levels[index % count] for index in range(first, last + 1)) + bed_db
+        last = max(
+            first,
+            math.ceil((cue.start + max(cue.seconds, window_seconds)) / window_seconds)
+            - 1,
+        )
+        bed = (
+            max(bed_levels[index % count] for index in range(first, last + 1)) + bed_db
+        )
         heard = cue.peak_db + take_gain_db
         gap = bed - heard
         if gap <= QUIET_CUE_DB:
@@ -160,7 +172,11 @@ def quiet_cue_warnings(
         need = math.ceil(gap - AUDIBLE_CUE_DB)
         room = max(0, math.floor(-cue.gain_db))
         raise_by = min(need, room)
-        fix = f'raise it (`--sfx-adjust "{cue.sound}=+{raise_by}"`)' if raise_by > 0 else "it is already at 0 dB"
+        fix = (
+            f'raise it (`--sfx-adjust "{cue.sound}=+{raise_by}"`)'
+            if raise_by > 0
+            else "it is already at 0 dB"
+        )
         if need > raise_by:
             fix += f"{' and' if raise_by > 0 else ';'} lower the bed about {need - raise_by} dB (`--bed-db`)"
         warnings.append(
@@ -186,7 +202,11 @@ class MixResult:
     def one_line(self) -> str:
         """Operator line."""
 
-        band = "in band" if LUFS_BAND[0] <= self.mix_lufs <= LUFS_BAND[1] else "OUT OF BAND"
+        band = (
+            "in band"
+            if LUFS_BAND[0] <= self.mix_lufs <= LUFS_BAND[1]
+            else "OUT OF BAND"
+        )
         bed = "" if self.bed else "; NO MUSIC BED"
         return (
             f"auto take gain {self.gain_db:+.1f} dB (take {self.take_lufs:.1f} LUFS) -> mix {self.mix_lufs:.1f} LUFS "
@@ -223,7 +243,9 @@ def _mix_once(
         else:
             graph.append(f"[bed]{duck_expression(windows or [], duck_db)}[bd]")
             front = "[take]"
-        graph.append(f"{front}[bd]amix=inputs=2:duration=first:normalize=0,{LIMITER}[a]")
+        graph.append(
+            f"{front}[bd]amix=inputs=2:duration=first:normalize=0,{LIMITER}[a]"
+        )
     run_ffmpeg(
         [*inputs, "-filter_complex", ";".join(graph), "-map", "0:v", "-map", "[a]",
          "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-t", f"{total:.3f}", str(out)]
@@ -279,10 +301,20 @@ def mix_take(
     if not info.has_audio:
         raise ValueError(f"{take.name} has no audio to mix")
     total = info.duration_seconds
-    windows = voice_windows(voice_source or take, total=total) if duck_db is not None else None
+    windows = (
+        voice_windows(voice_source or take, total=total)
+        if duck_db is not None
+        else None
+    )
     take_lufs = measure_loudness(take)
     gain = pick_gain(take_lufs)
-    kwargs = {"bed": bed, "bed_db": bed_db, "total": total, "windows": windows, "duck_db": duck_db}
+    kwargs = {
+        "bed": bed,
+        "bed_db": bed_db,
+        "total": total,
+        "windows": windows,
+        "duck_db": duck_db,
+    }
     _mix_once(take, out, gain_db=gain, **kwargs)  # type: ignore[arg-type]
     mixed = measure_loudness(out)
     passes = 1
@@ -302,5 +334,7 @@ def mix_take(
     warnings: list[str] = []
     if bed is not None and cues:
         levels = measure_rms_windows(bed, window_seconds=BED_WINDOW_SECONDS)
-        warnings = quiet_cue_warnings(cues, bed_levels=levels, bed_db=bed_db, take_gain_db=gain)
+        warnings = quiet_cue_warnings(
+            cues, bed_levels=levels, bed_db=bed_db, take_gain_db=gain
+        )
     return MixResult(out, take_lufs, gain, mixed, passes, ducking, bed, tuple(warnings))
