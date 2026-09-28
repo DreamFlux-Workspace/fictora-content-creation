@@ -324,8 +324,18 @@ def test_the_mix_is_the_same_with_the_buses_on(
     assert (on.gain_db, on.passes) == (off.gain_db, off.passes)
     assert abs(on.mix_lufs - off.mix_lufs) <= 0.2
     if duck_db is not None:
-        assert _decoded(on.output) == _decoded(off.output), (
-            "the buses change nothing in the mix"
+        # The encoded mix is not bit-stable across ffmpeg builds (CI's Linux ffmpeg differs from
+        # macOS in the last bits), so "the same" is: the difference sits >60 dB under the mix.
+        import numpy as np
+
+        a = np.frombuffer(_decoded(on.output), dtype=np.int16).astype(np.float64)
+        b = np.frombuffer(_decoded(off.output), dtype=np.int16).astype(np.float64)
+        n = min(a.size, b.size)
+        assert abs(a.size - b.size) <= 2048, (a.size, b.size)
+        signal = np.sqrt(np.mean(b[:n] ** 2))
+        diff = np.sqrt(np.mean((a[:n] - b[:n]) ** 2))
+        assert signal > 0 and diff <= signal * 1e-3, (
+            f"the buses change the mix: difference {20 * np.log10(max(diff, 1e-9) / signal):.1f} dB"
         )
     # The sidechain compressor is not sample-deterministic run to run (two runs without buses differ
     # in the last bit too), so with it the mix is held to the same gain and loudness instead.
