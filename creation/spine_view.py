@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from creation.ops.state import SpokenLine
+from creation.shot_plan import plan_lines
 
 _SET_SUFFIX = re.compile(r"_set(\d+)$")
 
@@ -238,6 +239,7 @@ def script_lines(spine: Mapping[str, Any], *, episode: int, take_ids: Sequence[s
         out.append(f"ep{episode:02d} {take_id}")
         for beat in beats:
             out.append(f"  shot {beat.get('ordinal')}: {beat.get('motion_intent') or '(no shot written)'}")
+            out += plan_lines(beat.get("shot_plan"), indent="    ")
             for line in spoken_lines(spine, beat):
                 gloss = f"  ({line.translation})" if line.translation else ""
                 out.append(f"    {line.speaker}: {line.original}{gloss}")
@@ -640,11 +642,17 @@ def shot_list_lines(spine: Mapping[str, Any], *, episode: int, sets: Sequence[in
         for card in spine.get("cast") or []
         if isinstance(card, Mapping) and card.get("cast_id")
     }
-    for set_index, frames in sorted(frames_by_set(spine, episode=episode).items()):
+    boards = frames_by_set(spine, episode=episode)
+    planned = beats_by_take(spine, episode=episode, take_count=max(boards, default=1))
+    for set_index, frames in sorted(boards.items()):
         if sets is not None and set_index not in sets:
             continue
         rows = shot_rows(frames)
         lines.append(f"ep{episode:02d} t{set_index} board, row by row:")
+        for beat in planned[set_index - 1] if set_index <= len(planned) else []:
+            if beat.get("shot_plan"):
+                lines.append(f"  beat {beat.get('ordinal')} asks for (its first row is shot 1):")
+                lines += plan_lines(beat.get("shot_plan"), indent="    ")
         for row in rows:
             lines.append(f"  {row.one_line()}")
             lines += row_speech_lines(spine, frames, row=row.row, cast_names=cast_names)
