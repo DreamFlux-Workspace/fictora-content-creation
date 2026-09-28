@@ -31,7 +31,9 @@ class ProductionConfig:
     locale: str = "en-US"
     #: Language the cast speaks when not English: ``ja`` / ``ko`` (or ``ja-JP`` / ``ko-KR``). Captions stay English.
     spoken_language: str | None = None
-    fallback_estimate_usd: float = 1.20
+    #: Per-take dollars used only when the endpoint the server films on has no verified price in
+    #: ``creation.prices``. ``None`` (default) prices such a take at the H3 Max Turbo dated rate.
+    fallback_estimate_usd: float | None = None
     poll_plan_deadline_seconds: float = 1800.0
     poll_cast_deadline_seconds: float = 3600.0
     poll_boards_deadline_seconds: float = 7200.0

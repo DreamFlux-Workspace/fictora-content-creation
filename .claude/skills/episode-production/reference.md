@@ -21,7 +21,7 @@ Three layers, later wins:
 | `api_captions` | `false` | Keep false. The take step stops at the raw clip; captions run on the laptop |
 | `locale` | `en-US` | Draft locale |
 | `spoken_language` | unset (English) | `--language ja` / `ko` at `start`: the cast speaks it; captions stay English |
-| `fallback_estimate_usd` | 1.20 | Used only when the batch estimate sends no dollars and the price table has no rate for the lane |
+| `fallback_estimate_usd` | unset | Per-take dollars used only when the server's lane has no verified price in `creation/prices.py`; unset prices it at the Turbo rate. Older desks may carry `1.20` here: it is only read for such an unpriced lane |
 | `poll_*_deadline_seconds` | 1800–7200 | Poll caps (below) |
 
 ## Phase machine (`fictora-produce`)
@@ -137,14 +137,17 @@ The writers pick an anime expression (`reaction_kind`) for every emotional momen
 
 | Unit | Cost |
 | --- | --- |
-| Take, 15 s, H3 Max R2V (`minimax/h3-max/reference-to-video`, 768p) | $1.20 ($0.08/s; a 12 s take is $0.96), plus $0.02048 per reference image past four (board + every cast plate, at most nine) |
+| Take, 15 s, H3 Max Turbo I2V (`minimax/h3-max-turbo/image-to-video`, 768p), the default | $0.30 through 30 Sep 2026 ($0.02/s, fal promo); $0.60 from 1 Oct 2026 ($0.04/s). A 12 s take is $0.24 / $0.48. No image charge. Under 5 s films and bills 5 s |
+| Take, 15 s, H3 Max R2V (`minimax/h3-max/reference-to-video`, 768p), engineering switch only | $1.20 ($0.08/s), plus $0.02048 per reference image past four (board + every cast plate, at most nine) |
 | Cast plate, object plate, board | $0.30 each (a character needs two plates: full + bust) |
 | Voice audition set | $0.30, once per character; a second set needs a cause |
 | Voice line | $0.10 per 1,000 characters |
 
-H3 Max Turbo I2V applies only when engineering pins it for a take. Never quote it by default.
+The server chooses the endpoint, not the `minimax-h3` pin: Turbo unless engineering switches the deploy to R2V (a server setting; the desk cannot pick it). The estimate names it (`cost_estimate.video_endpoint_id`) and so do the take facts (`endpoint_id`); the desk remembers the last one it saw and prices that, and prices Turbo until one is seen. Quote R2V only when one of them names it.
 
-Budgets are warnings, never a hard stop: first episode of a new series **$5.50**, continuing 15 s **$2.50**, continuing 30 s **$5.00**. A first 15 s episode filmed once is about $2.80, so the budget covers one redraw and one re-film. Say "$X of $Y" when the episode crosses its budget, not at the end. Past 2×, say so and let the human decide. `step` books plates, boards and takes itself (a take from its take facts: lane, seconds, reference images); `redraw-board` books its board. Book anything else by hand with `fictora-ops spend`. `fictora-ops preflight` never blocks on budget: a gate open exits 3; warnings exit 4 until the human says film anyway and you run `--proceed-anyway ep01-t1` (logged, next film only).
+What Turbo means for the board: the take is image-to-video from the take's whole storyboard board (the board is the video's first frame). Cast plates and voice references are not sent, so faces, wardrobe and look come from the board alone, and the raw take's voice is the model's own. The first frame or two of a raw take can still show the board grid; the server trims them when it joins the episode.
+
+Budgets are warnings, never a hard stop: first episode of a new series **$5.50**, continuing 15 s **$2.50**, continuing 30 s **$5.00**. A first 15 s episode filmed once is about $1.90 on Turbo ($2.20 from 1 Oct; $2.80 on R2V), so the budget covers redraws and re-films. Say "$X of $Y" when the episode crosses its budget, not at the end. Past 2×, say so and let the human decide. `step` books plates, boards and takes itself (a take from its take facts: lane, seconds, reference images); `redraw-board` books its board. Book anything else by hand with `fictora-ops spend`. `fictora-ops preflight` never blocks on budget: a gate open exits 3; warnings exit 4 until the human says film anyway and you run `--proceed-anyway ep01-t1` (logged, next film only).
 
 "Change this" is billed. A retry reuses the same idempotency key; two jobs for one take is a bug: report it.
 

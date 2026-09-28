@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import set_phase
+from conftest import set_phase, turbo_take_usd
 from creation import orchestrate
 from creation.episode_commands import run_author
 from creation.harness.stages_gated import draft_request_body, spoken_language_tag
@@ -122,9 +122,28 @@ def test_episode_two_boards_reach_episode_two_and_print_the_shot_list(desk: Path
     assert "Hana's face is placed \"bottom edge, left\"" in result.message
     slot = episode_by_ordinal(load_series(desk), 2)
     assert slot.spend_usd == pytest.approx(0.30)
-    assert slot.takes[0].estimate_usd == pytest.approx(1.20)
+    assert slot.takes[0].estimate_usd == pytest.approx(turbo_take_usd(15))  # no server lane yet: the Turbo default
+    assert "on H3 Max Turbo (15 s, it opens on this board; cast plates are not sent)" in result.message
     state = load_production(desk)
     assert state.phase == "wait_board" and state.board_paths["t1"].startswith("ep02/boards/board-ep02-t1-v")
+
+
+def test_boards_quote_r2v_with_its_references_once_the_server_has_named_r2v(desk: Path, api: FakeApi) -> None:
+    _add_episode_two(desk, api)
+    set_phase(
+        desk,
+        "ready_boards_enrol",
+        video_endpoint_id="minimax/h3-max/reference-to-video",
+        video_resolution="768P",
+    )
+    api.routes[("POST", "/v1/spines/sp1/boards/enrol")] = {"job_id": "job_boards"}
+    api.jobs["job_boards"] = {"status": "completed"}
+    api.routes[("GET", "/v1/spines/sp1/episodes/2/boards/exposure")] = {"boards": []}
+
+    result = orchestrate.run_step(desk)
+
+    assert "A take will cost about $1.20 on H3 Max R2V (15 s, up to 3 reference images)." in result.message
+    assert episode_by_ordinal(load_series(desk), 2).takes[0].estimate_usd == pytest.approx(1.20)
 
 
 def test_a_dim_board_approves_without_accept_dim(desk: Path, api: FakeApi) -> None:
@@ -170,8 +189,55 @@ def test_an_estimate_the_server_refuses_falls_back_to_the_price_table(desk: Path
 
     result = orchestrate.run_step(desk)
 
-    assert load_production(desk).estimate_usd == pytest.approx(1.20)
+    assert load_production(desk).estimate_usd == pytest.approx(turbo_take_usd(15))
+    assert "price table (H3 Max Turbo, 15 s a take)" in result.message
+
+
+def test_an_estimate_that_names_r2v_without_dollars_is_priced_on_r2v_and_remembered(desk: Path, api: FakeApi) -> None:
+    set_phase(desk, "ready_estimate")
+    api.routes[("POST", "/v1/spines/sp1/batches/estimate")] = {
+        "cost_estimate": {
+            "video_endpoint_id": "minimax/h3-max/reference-to-video",
+            "video_resolution": "768P",
+            "total_usd": None,
+            "note": "unpriced",
+        }
+    }
+
+    result = orchestrate.run_step(desk)
+
+    state = load_production(desk)
+    assert state.server_lane() == ("minimax/h3-max/reference-to-video", "768P")
+    assert state.estimate_usd == pytest.approx(1.20)  # $0.08/s x 15 s, three images (no surcharge), never Turbo
     assert "price table (H3 Max R2V, 15 s a take)" in result.message
+
+
+def test_an_estimate_that_names_turbo_keeps_the_turbo_price(desk: Path, api: FakeApi) -> None:
+    set_phase(desk, "ready_estimate")
+    api.routes[("POST", "/v1/spines/sp1/batches/estimate")] = {
+        "cost_estimate": {"video_endpoint_id": "minimax/h3-max-turbo/image-to-video", "video_resolution": "768P"}
+    }
+
+    result = orchestrate.run_step(desk)
+
+    assert load_production(desk).estimate_usd == pytest.approx(turbo_take_usd(15))
+    assert "price table (H3 Max Turbo, 15 s a take)" in result.message
+
+
+@pytest.mark.parametrize(("fallback", "expected"), [(0.9, 0.9), (None, None)])
+def test_an_unpriced_lane_uses_the_desk_fallback_or_the_turbo_rate(
+    desk: Path, api: FakeApi, fallback: float | None, expected: float | None
+) -> None:
+    save_production_config(desk, ProductionConfig(fallback_estimate_usd=fallback))
+    set_phase(desk, "ready_estimate")
+    api.routes[("POST", "/v1/spines/sp1/batches/estimate")] = {
+        "cost_estimate": {"video_endpoint_id": "vendor/new-lane", "video_resolution": "768P", "total_usd": None}
+    }
+
+    orchestrate.run_step(desk)
+
+    want = expected if expected is not None else turbo_take_usd(15)
+    assert load_production(desk).estimate_usd == pytest.approx(want)
 
 
 def test_over_the_envelope_is_a_warning_not_a_stop(desk: Path, api: FakeApi) -> None:
@@ -239,6 +305,7 @@ def test_episode_two_films_alone_and_books_the_take_from_its_facts(desk: Path, a
     slot = episode_by_ordinal(load_series(desk), 2)
     assert slot.takes[0].spend_usd == pytest.approx(1.24)  # $1.20 + two images past four
     assert slot.takes[0].filmed_count == 1
+    assert load_production(desk).server_lane() == ("minimax/h3-max/reference-to-video", "768P")
     notes = (desk / "ep02" / "run-notes.md").read_text(encoding="utf-8")
     assert "job_video_1" in notes and "job_take_b" in notes
     assert "author --episode 3" in result.message

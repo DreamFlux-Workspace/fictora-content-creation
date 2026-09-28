@@ -18,7 +18,7 @@ You produce short **9:16 vertical episodes** (~15 seconds) using:
 
 You do **not** need the private `fictora-drama` repository. Your review surface is a **desk folder** on your Mac (`~/Downloads/documents/…`) with `plates/`, `boards/`, and `takes/`.
 
-You **approve** faces, script lines, and storyboards **before** the ~$1.20 take is filmed.
+You **approve** faces, script lines, and storyboards **before** the take is filmed (~$0.30 for a 15s take through 30 Sep 2026, ~$0.60 from 1 Oct).
 
 ---
 

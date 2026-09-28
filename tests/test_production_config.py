@@ -14,6 +14,7 @@ def test_defaults_when_missing(tmp_path: Path) -> None:
     assert cfg.clip_duration_seconds == 15
     assert cfg.cut_tempo is None  # the server default (punchy) unless the desk sets one
     assert cfg.spoken_language is None
+    assert cfg.fallback_estimate_usd is None  # an unpriced lane is priced at the Turbo rate, never a stale $1.20
 
 
 def test_an_old_config_with_four_draft_episodes_still_loads(tmp_path: Path) -> None:

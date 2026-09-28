@@ -73,7 +73,7 @@ This is the order `fictora-produce` runs them in.
 8. **Read the take.** Measure first: transcript, cut count, loudness, exposure. Then compare against the board. Write down every fault, including the ones you will not fix.
 9. **Finish.** Local, on the laptop: `fictora-produce finish` (sound effects from the take facts, the show's music bed, colour match to the board, mix near −18 LUFS, captions, the mark), then the join. A take is not done until the finish ran. A raw take is never a deliverable.
 
-The gates at 3, 4, and 5 are not optional and are not batchable. A wrong face at the plate stage costs $0.30. The same face after the take costs a re-board and a re-take ($1.50 at today's prices: $0.30 board + $1.20 take).
+The gates at 3, 4, and 5 are not optional and are not batchable. A wrong face at the plate stage costs $0.30. The same face after the take costs a re-board and a re-take ($0.60 through 30 Sep 2026: $0.30 board + $0.30 Turbo take; $0.90 from 1 Oct). On Turbo the board is the only picture the take gets, so a wrong face on the board is a wrong face in the take.
 
 ## How the loop runs
 
@@ -89,19 +89,22 @@ Ask for the merged cut whenever an episode has a second take. Joining costs noth
 
 ## Spend
 
-Lane check: takes film on **H3 Max reference-to-video**, `minimax/h3-max/reference-to-video`, at 768p (the `minimax-h3` lane). The board and every cast plate go as reference images. H3 Max Turbo I2V applies only when engineering pins it for a take; never quote the Turbo price by default.
+Lane check: takes on the `minimax-h3` lane film on **H3 Max Turbo image-to-video**, `minimax/h3-max-turbo/image-to-video`, at 768p. That is the server's default; H3 Max reference-to-video (`minimax/h3-max/reference-to-video`) is an engineering-side switch on the deploy, not something the desk picks. The estimate's `cost_estimate.video_endpoint_id` and each take's facts say which one filmed; price and quote that one.
+
+On Turbo the take is image-to-video from the take's whole storyboard board: the board is the first frame and the only picture the model sees. Cast plates and voice references are not sent, so the board carries the faces and the look, and the raw take speaks in the model's own voice. A raw take can open on a frame or two of the board grid; the server trims them when it joins the episode.
 
 | Unit | Cost | Notes |
 | --- | --- | --- |
 | Cast or object plate | $0.30 | Per image. A character needs two (full + bust). |
 | Storyboard | $0.30 | Per board, first draw or redraw. |
-| Take (15 s, H3 Max R2V, 768p) | $1.20 | $0.08/s. A 12 s take is $0.96. Plus $0.02048 per reference image past four (the board plus every cast plate, at most nine). The largest unit. |
+| Take (15 s, H3 Max Turbo I2V, 768p), the default | $0.30 through 30 Sep 2026; $0.60 from 1 Oct 2026 | $0.02/s (fal promo), then $0.04/s. A 12 s take is $0.24 / $0.48. No image charge. A take under 5 s films and bills 5 s. |
+| Take (15 s, H3 Max R2V, 768p), engineering switch only | $1.20 | $0.08/s. Plus $0.02048 per reference image past four (the board plus every cast plate, at most nine). Quote only when the estimate or take facts name it. |
 | Voice audition set | $0.30 | Candidates on the real lines. Once per character; a second set needs a written cause. |
 | Voice line | $0.10 per 1,000 characters | |
 | Music bed | ~$0.10 | Once per series. |
 | SFX cue | $0.002 per rendered second | Only for takes that come back quiet. |
 
-Budgets are **warnings, never a hard stop**: first 15 s episode of a new series **$5.50**; continuing 15 s **$2.50**; continuing 30 s **$5.00**. A first 15 s episode filmed once is about $2.80 (plates, a board, a take, cues), so the budget covers a redraw and a re-film. Say "$X of $Y" when an episode crosses its budget, not at the end. Past twice the budget, say so and the human decides whether to go on.
+Budgets are **warnings, never a hard stop**: first 15 s episode of a new series **$5.50**; continuing 15 s **$2.50**; continuing 30 s **$5.00**. A first 15 s episode filmed once is about $1.90 on Turbo (plates, a board, a take, cues; $2.20 from 1 Oct, $2.80 on R2V), so the budget covers redraws and re-films. Say "$X of $Y" when an episode crosses its budget, not at the end. Past twice the budget, say so and the human decides whether to go on.
 
 "Change this" is billed. A retry must reuse the same idempotency key. Two jobs for one take means that key was missing. Report it.
 
@@ -232,7 +235,7 @@ Hosted post-production is switched off on the service. Never call `POST /v1/vide
 
 ### Change a character's voice (never regenerate the story)
 
-A voice that "feels off" is a voice change, not a new story and not a new video. The voice is a lock on the cast card. Audition candidates on the character's real lines (`fictora-produce voice --desk D --cast NAME --audition`), the human picks (`voice --pick N`), re-voice the filmed takes where that character speaks (`revoice --desk D --cast NAME --episode N --take tK`), then finish again (`finish --take-file <revoice file>`). Takes not filmed yet use the new voice as they are. Only when the dub does not sit (lips visibly wrong, a shouted line), re-film the takes where that character speaks, with a cause and a stated cost. Never the other takes, never the story.
+A voice that "feels off" is a voice change, not a new story and not a new video. The voice is a lock on the cast card. Audition candidates on the character's real lines (`fictora-produce voice --desk D --cast NAME --audition`), the human picks (`voice --pick N`), re-voice the filmed takes where that character speaks (`revoice --desk D --cast NAME --episode N --take tK`), then finish again (`finish --take-file <revoice file>`). On Turbo (the default) no take carries the locked voice, because voice references are not sent, so revoice takes filmed after the pick too; only on R2V do takes not filmed yet use the new voice as they are. Only when the dub does not sit (lips visibly wrong, a shouted line), re-film the takes where that character speaks, with a cause and a stated cost. Never the other takes, never the story.
 
 ### Prompt policy
 
@@ -286,7 +289,7 @@ Do not warn for: `clip_duration_seconds` in 4–15; `cut_tempo=one_shot`; `capti
 
 Money warnings:
 
-- "This re-render will cost $1.20 and here is the cause I've identified." No cause, no re-render.
+- "This re-render will cost $0.60 and here is the cause I've identified." No cause, no re-render.
 - "This episode is now at $X of a $Y budget." Said when it crosses, not at the end.
 - "I could not verify this; here is what I could not check."
 

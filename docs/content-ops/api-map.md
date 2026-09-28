@@ -56,7 +56,7 @@ Use `creation.harness.stages_gated` for gate-split calls. Do not use `run_cast_l
 
 `clip_duration_seconds` defaults to 15. Send 4–15 for a shorter or full take. 16 is a rejection, not a longer film. Use `cut_tempo=one_shot` for an unbroken move. Use `caption_style=house` for the runbook caption recipe.
 
-Lane pin: `model_overrides.video=minimax-h3`. That compiles `minimax/h3-max-turbo/image-to-video` at 768P. Confirm the live lane id against `/v1/art-style-presets` before trusting a string from memory.
+Lane pin: `model_overrides.video=minimax-h3`. The server picks the endpoint behind it: `minimax/h3-max-turbo/image-to-video` at 768P by default (the take's storyboard board is the only image sent; no cast plates, no voice references), or `minimax/h3-max/reference-to-video` when engineering switches the deploy to R2V. The pin never decides it. Read the live endpoint from the estimate (`cost_estimate.video_endpoint_id`, `usd_per_second`) or a take's facts (`endpoint_id`), or `GET /v1/video-lanes` (`endpoint_ids`), before trusting a string from memory.
 
 ## Download into the run folder
 

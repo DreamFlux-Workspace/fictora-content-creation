@@ -41,12 +41,18 @@ from creation.ops.notes import append_run_note
 from creation.ops.state import episode_by_ordinal, load_series
 from creation.plan_prompt import ensure_plan_prompt
 from creation.prices import (
+    H3_MAX_R2V_ENDPOINT,
+    H3_MAX_TURBO_I2V_ENDPOINT,
+    H3_RESOLUTION,
     STILL_USD,
     envelope_usd,
+    lane_endpoint,
     lane_label,
     lane_take_usd,
     reference_images_ceiling,
+    server_lane,
     take_facts_usd,
+    take_usd,
 )
 from creation.production_config import load_production_config
 from creation.production_state import (
@@ -239,7 +245,47 @@ def _money(value: Any) -> float | None:
     return None
 
 
-def _estimate_usd(payload: dict[str, Any], *, fallback_usd: float = 1.20) -> float:
+def table_estimate_usd(state: ProductionState, cfg: Any, *, cast_count: int, takes: int) -> float:
+    """Price ``takes`` takes from the dated table, on the endpoint the server films on.
+
+    The server's last-named endpoint wins; with none, the lane pin's default
+    (H3 Max Turbo for ``minimax-h3``). An endpoint with no verified price
+    falls back to ``fallback_estimate_usd`` a take when the desk sets one, else
+    to the Turbo rate for the take length.
+
+    Parameters
+    ----------
+    state
+        Desk production state (lane pin and the server's last-named endpoint).
+    cfg
+        Desk production config (take length, optional fallback).
+    cast_count
+        Cast cards on the story (R2V reference-image ceiling).
+    takes
+        Takes to price.
+
+    Returns
+    -------
+    float
+        Dollars for all ``takes``.
+    """
+
+    server = state.server_lane()
+    lane = lane_endpoint(state.video_lane, server=server)
+    references = reference_images_ceiling(cast_count, lane[0] if lane else "")
+    seconds = cfg.clip_duration_seconds
+    per_take = lane_take_usd(state.video_lane, seconds, on=date.today(), reference_images=references, server=server)
+    if per_take is None:
+        fallback = getattr(cfg, "fallback_estimate_usd", None)
+        per_take = (
+            float(fallback)
+            if fallback is not None
+            else take_usd(H3_MAX_TURBO_I2V_ENDPOINT, H3_RESOLUTION, seconds, on=date.today())
+        )
+    return round(float(per_take or 0.0) * takes, 2)
+
+
+def _estimate_usd(payload: dict[str, Any], *, fallback_usd: float) -> float:
     """Return the estimate's dollars: the server's dated ``cost_estimate.total_usd`` first.
 
     Older answers carried a top-level total; neither -> ``fallback_usd``.
@@ -451,8 +497,11 @@ def board_report(
     except SystemExit as exc:
         run.emit("board_exposure_unavailable", detail=str(exc)[:300])
     cast_count = len([card for card in spine.get("cast") or [] if isinstance(card, dict)])
-    references = reference_images_ceiling(cast_count)
-    take_price = lane_take_usd(state.video_lane, clip_seconds, on=date.today(), reference_images=references)
+    lane = lane_endpoint(state.video_lane, server=state.server_lane())
+    references = reference_images_ceiling(cast_count, lane[0] if lane else "")
+    take_price = lane_take_usd(
+        state.video_lane, clip_seconds, on=date.today(), reference_images=references, server=state.server_lane()
+    )
     lines: list[str] = []
     for index, path in made:
         take_id = f"t{index}"
@@ -470,12 +519,16 @@ def board_report(
     what = "Redrew" if redraw else "Drew"
     lines.append(f"{what} {len(made)} board(s): ${cost:.2f} booked.")
     if take_price is None:
-        lines.append(f"{lane_label(state.video_lane)} has no verified price in the table; the take is not estimated.")
+        label = lane_label(state.video_lane, server=state.server_lane())
+        lines.append(f"{label} has no verified price in the table; the take is not estimated.")
     else:
-        lines.append(
-            f"A take will cost about ${take_price:.2f} on {lane_label(state.video_lane)} "
-            f"({clip_seconds} s, up to {references} reference images)."
+        label = lane_label(state.video_lane, server=state.server_lane())
+        what_goes = (
+            f"up to {references} reference images"
+            if lane and lane[0] == H3_MAX_R2V_ENDPOINT
+            else "it opens on this board; cast plates are not sent"
         )
+        lines.append(f"A take will cost about ${take_price:.2f} on {label} ({clip_seconds} s, {what_goes}).")
     return lines
 
 
@@ -610,23 +663,18 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
 
         if state.phase == "ready_estimate":
             estimate = stages.estimate_batch(run, spine_id=state.spine_id or "", episode=ep)
+            state.remember_server_lane(server_lane(estimate))
             spine = run.spine(state.spine_id or "")
             slot = episode_by_ordinal(load_series(desk), ep)
             cast_count = len([card for card in spine.get("cast") or [] if isinstance(card, dict)])
-            per_take = lane_take_usd(
-                state.video_lane,
-                cfg.clip_duration_seconds,
-                on=date.today(),
-                reference_images=reference_images_ceiling(cast_count),
-            )
-            table = round(per_take * len(slot.takes), 2) if per_take is not None else cfg.fallback_estimate_usd
+            table = table_estimate_usd(state, cfg, cast_count=cast_count, takes=len(slot.takes))
             cost = estimate.get("cost_estimate") if isinstance(estimate.get("cost_estimate"), dict) else None
             if cost is not None and _money(cost.get("total_usd")) is not None:
                 state.estimate_usd = _estimate_usd(estimate, fallback_usd=table)
                 source = f"server estimate priced {cost.get('priced_on')} ({cost.get('takes')} take(s))"
             else:
                 state.estimate_usd = table
-                source = f"price table ({lane_label(state.video_lane)}, {cfg.clip_duration_seconds} s a take)"
+                source = f"price table ({lane_label(state.video_lane, server=state.server_lane())}, {cfg.clip_duration_seconds} s a take)"
             state.phase = "wait_spend"
             save_production(desk, state)
             budget = envelope_line(desk, episode=ep, next_usd=state.estimate_usd)
@@ -767,8 +815,9 @@ def collect_takes(
                 facts_path = next_versioned_path(api_dir, f"take-facts-ep{episode:02d}-{take_id}", ".json")
                 facts_path.write_text(json.dumps(facts, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
                 priced = take_facts_usd(facts, on=today)
+                state.remember_server_lane(server_lane(facts))  # the caller saves the state
             if priced is None:
-                estimate = lane_take_usd(state.video_lane, clip_seconds, on=today)
+                estimate = lane_take_usd(state.video_lane, clip_seconds, on=today, server=state.server_lane())
                 priced = (estimate, "estimate from the price table") if estimate is not None else None
             if priced is not None:
                 record_spend(desk, episode=episode, usd=priced[0], take_id=take_id)

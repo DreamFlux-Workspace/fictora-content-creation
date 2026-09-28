@@ -5,7 +5,7 @@
   "caption_style": "house",
   "api_captions": false,
   "locale": "en-US",
-  "fallback_estimate_usd": 1.2,
+  "fallback_estimate_usd": null,
   "poll_plan_deadline_seconds": 1800,
   "poll_cast_deadline_seconds": 3600,
   "poll_boards_deadline_seconds": 7200,

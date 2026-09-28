@@ -32,7 +32,6 @@ import hashlib
 import json
 import sys
 from dataclasses import replace
-from datetime import date
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from urllib.parse import quote
@@ -63,8 +62,9 @@ from creation.orchestrate import (
     script_gate_text,
     seed_attempt_for,
     sync_spine_lines,
+    table_estimate_usd,
 )
-from creation.prices import STILL_USD, lane_label, lane_take_usd, reference_images_ceiling
+from creation.prices import STILL_USD, lane_label, server_lane
 from creation.production_config import load_production_config
 from creation.production_state import ProductionState, load_production, save_production, start_episode
 from creation.spine_view import dialogue_line_ids, episode_id_for, episode_summary, frames_by_set, frames_digest
@@ -1530,9 +1530,10 @@ def _run_film(
     )
     spine = run.spine(state.spine_id or "")
     save_spine_snapshot(desk, episode, spine)
+    collecting = load_production(desk)
+    got = collect_takes(desk, run, collecting, raw, episode=episode, clip_seconds=cfg.clip_duration_seconds, spine=spine)
     fresh = load_production(desk)
-    got = collect_takes(desk, run, fresh, raw, episode=episode, clip_seconds=cfg.clip_duration_seconds, spine=spine)
-    fresh = load_production(desk)
+    fresh.remember_server_lane(collecting.server_lane())
     fresh.pending.pop(unit, None)
     fresh.attempts[unit] = fresh.attempts.get(unit, 0) + 1
     fresh.film_estimates.pop(key, None)
@@ -1572,23 +1573,22 @@ def _price_film(
 ) -> str:
     estimate = stages.estimate_batch(run, spine_id=state.spine_id or "", episode=episode, reroll_take_index=take_index)
     _save_desk_json(desk, f"film-{key}-estimate", estimate)
+    state.remember_server_lane(server_lane(estimate))
     spine = run.spine(state.spine_id or "")
     cast_count = len([card for card in spine.get("cast") or [] if isinstance(card, dict)])
-    per_take = lane_take_usd(
-        state.video_lane, cfg.clip_duration_seconds, on=date.today(), reference_images=reference_images_ceiling(cast_count)
-    )
-    table = round(per_take * len(take_ids), 2) if per_take is not None else cfg.fallback_estimate_usd * len(take_ids)
+    table = table_estimate_usd(state, cfg, cast_count=cast_count, takes=len(take_ids))
     cost = estimate.get("cost_estimate") if isinstance(estimate.get("cost_estimate"), dict) else None
     if cost is not None and _money(cost.get("total_usd")) is not None:
         usd = _estimate_usd(estimate, fallback_usd=table)
         source = f"server estimate priced {cost.get('priced_on')} ({cost.get('takes')} take(s))"
     else:
         usd = table
-        source = f"price table ({lane_label(state.video_lane)}, {cfg.clip_duration_seconds} s a take)"
+        source = f"price table ({lane_label(state.video_lane, server=state.server_lane())}, {cfg.clip_duration_seconds} s a take)"
         if take_index is not None and "reroll_take_index" in str(estimate.get("detail") or ""):
             source += "; the deployed API cannot price one take yet"
     fresh = load_production(desk)
     fresh.film_estimates[key] = usd
+    fresh.remember_server_lane(state.server_lane())
     save_production(desk, fresh)
     if take_index is not None:
         record_estimate(desk, episode=episode, take_id=take_ids[0], usd=usd)

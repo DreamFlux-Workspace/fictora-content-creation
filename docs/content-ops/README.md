@@ -71,7 +71,7 @@ Then give the brief: premise, cast (with real ages), set, the hook, the lines, a
 
 ## Spend
 
-Lane today is H3 Max reference-to-video. Price a 15s take at **$1.20** ($0.08/s). A plate or board is **$0.30**.
+Lane today is H3 Max Turbo image-to-video (the server's default; H3 Max reference-to-video is an engineering-side switch). A 15s take is **$0.30** through 30 Sep 2026 ($0.02/s, fal promo) and **$0.60** from 1 Oct ($0.04/s). The board is the only picture the take gets: no cast plates, no voice references. A plate or board is **$0.30**.
 
 | Episode | Budget |
 | --- | --- |

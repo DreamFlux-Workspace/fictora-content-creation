@@ -79,7 +79,7 @@ Start with `start`, print desk path and phase, wait for my "aligned" before the 
 | 2 | `ep01/plates/` | **plates ok** / **next** | `approve --gate plates` then `step` |
 | 3 | Script in chat or `ep01/api/03_spine.json` beats | **script ok** / **next** | `approve --gate script` then `step` (boards) |
 | 4 | `ep01/boards/` + exposure note in chat | **board ok** / **next** | `approve --gate board` (brightness is information only; to change it: `edit --frame`, then `redraw-board`) |
-| 5 | Estimate in chat (~**$1.20** take) | **yes** | `step --confirm-spend` |
+| 5 | Estimate in chat (~**$0.30** take; $0.60 from 1 Oct) | **yes** | `step --confirm-spend` |
 | 6 | The raw take, then `ep01/takes/take-ep01-t1-sokii-vN.mp4` | **Use it**, or **Change this** + cause | `finish` on Use it; re-board or re-film only with a named cause |
 
 **Silence is not approval.** Each gate needs a fresh yes.
@@ -106,7 +106,7 @@ Start with `start`, print desk path and phase, wait for my "aligned" before the 
 | `wait_plates` | Review cast stills |
 | `wait_script` | Review ep1 lines on spine |
 | `wait_board` | Review storyboard; check dim warning (~25% luma floor) |
-| `wait_spend` | Confirm **yes** before ~$1.20 take |
+| `wait_spend` | Confirm **yes** before the take (~$0.30; $0.60 from 1 Oct) |
 | `complete` | Raw MP4 on disk → `finish` + QC |
 
 Check anytime:
@@ -200,7 +200,8 @@ A character's voice feels off? Never regenerate: `voice --audition`, you pick, `
 | --- | --- |
 | Cast plate (each; full + bust per character) | $0.30 |
 | Storyboard | $0.30 |
-| 15s take (H3 Max R2V, $0.08/s) | $1.20 |
+| 15s take (H3 Max Turbo I2V, the default: $0.02/s through 30 Sep 2026, $0.04/s from 1 Oct) | $0.30 / $0.60 |
+| 15s take on H3 Max R2V (engineering switch only, $0.08/s) | $1.20 |
 
 | Budget | USD |
 | --- | --- |
