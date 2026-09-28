@@ -160,6 +160,7 @@ def test_the_estimate_prices_episode_two_alone_with_the_servers_dollars(desk: Pa
     assert api.posted("/v1/spines/sp1/batches/estimate") == [{"spine_version": "v5", "episode_ids": ["ep_02"]}]
     assert load_production(desk).estimate_usd == pytest.approx(1.50)
     assert "server estimate priced 2026-09-28" in result.message
+    assert "episode 2 alone, 1 take(s); episodes 1-1 are not filmed or booked again" in result.message
     assert "$1.50 of a $2.50 envelope for ep02" in result.message
 
 
@@ -189,9 +190,9 @@ def test_over_the_envelope_is_a_warning_not_a_stop(desk: Path, api: FakeApi) -> 
 # --- Take ------------------------------------------------------------------------------------------
 
 
-def _video_routes(api: FakeApi, *, facts_lines: list[dict] | None) -> None:
+def _video_routes(api: FakeApi, *, facts_lines: list[dict] | None, children: tuple[str, ...] = ("job_take_a", "job_take_b")) -> None:
     api.routes[("POST", "/v1/video-generations")] = {"job_id": "job_video_1"}
-    api.routes[("GET", "/v1/jobs/job_video_1")] = {"status": "running", "depends_on": ["job_take_a", "job_take_b"]}
+    api.routes[("GET", "/v1/jobs/job_video_1")] = {"status": "running", "depends_on": list(children)}
     api.routes[("GET", "/v1/jobs/job_take_a")] = {
         "status": "completed",
         "episode_ids": ["episode_01"],
@@ -217,17 +218,20 @@ def _video_routes(api: FakeApi, *, facts_lines: list[dict] | None) -> None:
     }
 
 
-def test_episode_two_films_with_episode_count_two_and_books_the_take_from_its_facts(desk: Path, api: FakeApi) -> None:
+def test_episode_two_films_alone_and_books_the_take_from_its_facts(desk: Path, api: FakeApi) -> None:
     _add_episode_two(desk, api)
     set_phase(desk, "wait_spend", estimate_usd=1.2)
-    _video_routes(api, facts_lines=[{"line_id": "line_ep_02_01", "count": 1}])
+    _video_routes(api, facts_lines=[{"line_id": "line_ep_02_01", "count": 1}], children=("job_take_b",))
 
     result = orchestrate.run_step(desk, confirm_spend=True)
 
     body = api.posted("/v1/video-generations")[0]
     assert body["episode_count"] == 2
+    assert body["episode_ordinal"] == 2  # episode 2 alone: episode 1 is not filmed or booked again
+    assert "reroll_take_index" not in body and "seed_attempt" not in body
     downloads = [payload["url"] for phase, payload in api.events if phase == "download"]
-    assert downloads == ["https://r2.example/ep2.mp4"]  # episode 1's reused take is not collected again
+    assert downloads == ["https://r2.example/ep2.mp4"]
+    assert "also filmed another episode" not in result.message
     facts_call = [path for method, path, _, _ in api.calls if path.startswith("/v1/jobs/job_take_b/take-facts")]
     assert facts_call == ["/v1/jobs/job_take_b/take-facts?spine_id=sp1"]
     facts_files = list((desk / "ep02" / "api").glob("take-facts-ep02-t1-v*.json"))
@@ -269,7 +273,7 @@ def test_a_new_paid_take_is_enrolled_not_resumed_from_the_old_job(desk: Path, ap
     api_dir = desk / "ep01" / "api"
     (api_dir / "16_video_enrol.json").write_text(json.dumps({"job_id": "job_old"}), encoding="utf-8")
     set_phase(desk, "ready_video", video_idempotency_suffix="-retry-abc", video_enrolled_suffix="")
-    _video_routes(api, facts_lines=None)
+    _video_routes(api, facts_lines=None, children=("job_take_a",))
     api.routes[("GET", "/v1/jobs/job_take_a/take-facts")] = {"take_facts": {"endpoint_id": ""}}
 
     orchestrate.run_step(desk)

@@ -36,7 +36,7 @@ One machine per desk, pointed at one episode (`episode_ordinal` in `production.j
 | `wait_script` | Human yes on the lines (printed by the draft or `author`; `epNN/api/spine.json`) → `approve --gate script` (episode 1: the whole spine; episode 2 on: `pilot-episodes/{n}/approve`) |
 | `ready_boards_enrol` | `step` → boards to `epNN/boards/board-epNN-tK-vN.png`, brightness (information only), the shot list row by row, safe-zone warnings; books $0.30 a board |
 | `wait_board` | Human yes → `approve --gate board` (the boards `step` drew; `--path` only for a board it did not draw). Or `redraw-board` |
-| `ready_estimate` | `step` → this episode's estimate: the server's dated dollars, else the price table; says "$X of a $Y envelope" (warn only) |
+| `ready_estimate` | `step` → this episode's estimate, and only this episode (earlier episodes are not filmed again): the server's dated dollars, else the price table; says "$X of a $Y envelope" (warn only) |
 | `wait_spend` | Human yes → `step --confirm-spend` |
 | `ready_video` | (internal) take enrol |
 | `complete` | Every take of the episode raw on disk (`epNN/takes/take-epNN-tK-raw-vN.mp4`) with its take facts (`epNN/api/take-facts-epNN-tK-vN.json`); spend booked from the facts; video and take job ids in `run-notes.md` → `finish` per take, then the next episode |
@@ -118,7 +118,7 @@ The writers pick an anime expression (`reaction_kind`) for every emotional momen
 | Right rail | right 12% of the width, lower two thirds | like, comment, share |
 
 - Faces, eyes, mouths and key props never sit in a zone. Bodies, hands, floor and set may run through. Off-centre and two-shots are fine; do not centre faces by default.
-- There is no face detector: look at every cell of the board. The boards `step` warns (`!!`) when a frame's written placement puts a face or prop in a zone; it reads text only. A face or key prop in a zone: fix the frame's placement (`edit --frame … --set …`), then `redraw-board` — but see "Lost board records" in SKILL.md: until that server fix lands, tell engineering instead of redrawing after an edit.
+- There is no face detector: look at every cell of the board. The boards `step` warns (`!!`) when a frame's written placement puts a face or prop in a zone; it reads text only. A face or key prop in a zone: fix the frame's placement (`edit --frame … --set …`), then `redraw-board`.
 - Captions: the block stays in 55–70% of the height. `finish` and `caption` put the text bottom at 62% and never wrap (a too-wide caption is set smaller).
 - The Sokii mark: top left, just under the top strip, `23:121` on 768×1344 (x = 3% of width, y = 9% of height), 0.6 opacity. Never top right.
 
@@ -216,7 +216,22 @@ uv run fictora-produce approve --desk D --gate script              # then step (
 uv run fictora-produce memory --desk D (--note TEXT | --thread TEXT)   # standing rules only
 ```
 
-`author` opens the desk slot, prints the script, and points the phase machine at the new episode. The season target is a soft default: an episode past it is written as "the season continues"; 240 is the only stop. The take films with `episode_count` = N: earlier unchanged takes come from the server's reuse table, and the first take opens on the previous episode's real last frame when the location matches (nothing to paste by hand).
+`author` opens the desk slot, prints the script, and points the phase machine at the new episode. The season target is a soft default: an episode past it is written as "the season continues"; 240 is the only stop. The boards `step` sends `episode_count: N` and the server draws only the episodes up to N that still lack boards, so episode N is drawn and booked alone. The take films with `episode_count: N, episode_ordinal: N`: episode N alone (episodes 1..N must be approved; none of them is filmed or booked again), and its first take opens on the previous episode's stored last frame when the location matches (nothing to paste by hand).
+
+## Film one episode, or one take of it
+
+```bash
+uv run fictora-produce film --desk D --episode N --take tK --cause "what in the direction made the fault"   # prices take K alone; spends nothing
+uv run fictora-produce film --desk D --episode N --take tK --cause "…" --confirm-spend                     # after the human's yes: films only take K
+uv run fictora-produce film --desk D --episode N [--cause "…"] [--confirm-spend]                          # the whole episode N, alone
+```
+
+- Without `--confirm-spend` it prices exactly what will be filmed (`batches/estimate` with `reroll_take_index` for one take) against the envelope and stops. `--confirm-spend` refuses until that number was shown.
+- It sends `POST /v1/video-generations` with `episode_count: N, episode_ordinal: N`, plus `reroll_take_index: K, seed_attempt: <films so far + 1>` for one take. The new take lands as the next `take-epNN-tK-raw-vN.mp4` with its take facts; only it is booked. The other takes stay as filmed.
+- A take (or episode) already filmed needs `--cause` naming what in the direction produced the fault; "try again" is refused. The cause is recorded on the take as Change this and in `run-notes.md`.
+- Only from a board with a human yes on the desk. An interrupted `film` run again picks up its job and never pays twice.
+- An older deploy without `episode_ordinal` is refused before anything is sent (episode 1 films alone either way). Say so to the human and tell engineering.
+
 
 ## Recovery
 
@@ -230,8 +245,10 @@ uv run fictora-produce memory --desk D (--note TEXT | --thread TEXT)   # standin
 | Estimate 400 `invalid_episode_selection` | The step saves the skip and prices from the table |
 | Empty `plates/` or `boards/` after `step` | Downloads fall back to the enrol terminal JSON (`ep01/api/06_*cast_terminal*.json`, `09_*boards_terminal*.json`); pull `main`, re-run `step` |
 | `spine_not_found` / wrong session | New desk + new `start`; never reuse an old spine id |
-| A second paid take (human yes + cause, once per desk) | `retry-video --desk D --new-paid-take`, then `step --confirm-spend` (enrols a new job; never resumes the old one) |
-| `author` or `redraw-board` interrupted | Run the same command again: it reuses the recorded key or polls the recorded job, never pays twice |
+| Change this on one take (human yes + cause) | `film --desk D --episode N --take tK --cause "…"`, then the same with `--confirm-spend`: films and books only take K |
+| A second paid take of the whole current episode (human yes + cause, once per desk) | `retry-video --desk D --new-paid-take`, then `step --confirm-spend` (enrols a new job with a fresh seed; never resumes the old one) |
+| "The deployed Drama API does not film one episode alone yet" | Nothing was sent or charged. Stop; tell engineering (the deploy needs fictora-drama #436) |
+| `author`, `redraw-board` or `film` interrupted | Run the same command again: it reuses the recorded key or polls the recorded job, never pays twice |
 
 Trust `GET /v1/video-generations/{id}` or `GET /v1/jobs/{id}` over log lines.
 
@@ -244,7 +261,7 @@ Trust `GET /v1/video-generations/{id}` or `GET /v1/jobs/{id}` over log lines.
 | Mutations | `Idempotency-Key` required |
 | OpenAPI | `{base}/openapi.json`, `{base}/docs` |
 
-Sequence `fictora-produce` runs: `POST /v1/prompt-video-authoring-drafts` (`episode_count: 1`, `outline_mode: arc_at_episode_two`, `cut_tempo`) → cast enrol → cast approve → spine approve → boards enrol + exposure → boards approve → `batches/estimate` (this episode) → `POST /v1/video-generations` → raw takes from the take jobs + `GET /v1/jobs/{take}/take-facts?spine_id=`. Episode 2 on: `director/brief` → `series-arc` → `pilot-episodes/{n}/author` → `pilot-episodes/{n}/approve` → boards → estimate → take. `/delivery` is never needed (hosted post is off). Presets: `GET /v1/art-style-presets`.
+Sequence `fictora-produce` runs: `POST /v1/prompt-video-authoring-drafts` (`episode_count: 1`, `outline_mode: arc_at_episode_two`, `cut_tempo`) → cast enrol → cast approve → spine approve → boards enrol + exposure → boards approve → `batches/estimate` (this episode) → `POST /v1/video-generations` → raw takes from the take jobs + `GET /v1/jobs/{take}/take-facts?spine_id=`. Episode 2 on: `director/brief` → `series-arc` → `pilot-episodes/{n}/author` → `pilot-episodes/{n}/approve` → boards (`episode_count: N`) → estimate → take (`episode_count: N, episode_ordinal: N`). One take: `batches/estimate` with `reroll_take_index: K`, then the take with `reroll_take_index: K, seed_attempt`. `/delivery` is never needed (hosted post is off). Presets: `GET /v1/art-style-presets`.
 
 ## Commands for edits and checks
 

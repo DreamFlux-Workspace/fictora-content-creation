@@ -62,6 +62,7 @@ def wait_for_raw_scene_clips(
     *,
     deadline_seconds: float = 7200.0,
     interval_seconds: float = 15.0,
+    save_as: str = "17_raw_scene_clips.json",
 ) -> dict[str, Any]:
     """Poll until every take job on the coordinator has a clip URL.
 
@@ -79,6 +80,8 @@ def wait_for_raw_scene_clips(
         Wall-clock cap for coordinator + child polling.
     interval_seconds
         Sleep between polls.
+    save_as
+        Artefact name for the clip list (a ``film`` re-film keeps its own, never the step's).
 
     Returns
     -------
@@ -131,7 +134,7 @@ def wait_for_raw_scene_clips(
                 )
             if clips and not pending and len(clips) == len(child_ids):
                 payload = {"coordinator_job_id": coordinator_job_id, "clips": clips}
-                run.save("17_raw_scene_clips.json", payload)
+                run.save(save_as, payload)
                 return payload
         elif str(parent.get("status") or "") == "completed":
             raise SystemExit(f"video job {coordinator_job_id} completed with no take jobs in depends_on")

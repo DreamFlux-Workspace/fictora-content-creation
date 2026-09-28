@@ -631,9 +631,12 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             save_production(desk, state)
             budget = envelope_line(desk, episode=ep, next_usd=state.estimate_usd)
             _note(ep_dir, f"Estimate ${state.estimate_usd:.2f} before take ({source}). {budget}")
+            scope = f"episode {ep} alone, {len(slot.takes)} take(s)" + (
+                f"; episodes 1-{ep - 1} are not filmed or booked again" if ep > 1 else ""
+            )
             return StepResult(
                 state.phase,
-                f"Estimate ${state.estimate_usd:.2f} for episode {ep} ({source}).\n{budget}\n"
+                f"Estimate ${state.estimate_usd:.2f} for {scope} ({source}).\n{budget}\n"
                 "Human yes, then `fictora-produce step --confirm-spend`.",
                 (),
             )
@@ -654,8 +657,145 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
         run.client.close()
 
 
+@dataclass
+class CollectedTakes:
+    """What :func:`collect_takes` put on the desk."""
+
+    jobs: list[str]
+    booked_usd: float
+    paths: list[str]
+    first_url: str | None
+    #: Clips the job returned for another episode (an older server filmed more than asked).
+    foreign: list[str]
+
+
+def seed_attempt_for(desk: Path, *, episode: int, take_ids: list[str] | None = None) -> int | None:
+    """Return the next compile attempt for a re-film (the most films of the takes in scope, plus one).
+
+    ``None`` when none of them was filmed yet: a first film sends no ``seed_attempt`` (the server's 1).
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    episode
+        Episode ordinal.
+    take_ids
+        Takes in scope; default every take of the episode.
+
+    Returns
+    -------
+    int | None
+        ``previous + 1`` or ``None``.
+    """
+
+    slot = episode_by_ordinal(load_series(desk), episode)
+    films = [take.filmed_count for take in slot.takes if take_ids is None or take.take_id in take_ids]
+    most = max(films, default=0)
+    return most + 1 if most else None
+
+
+def collect_takes(
+    desk: Path,
+    run: DramaApiRunSession,
+    state: ProductionState,
+    raw: dict[str, Any],
+    *,
+    episode: int,
+    clip_seconds: int,
+    spine: dict[str, Any],
+) -> CollectedTakes:
+    """Download one episode's filmed takes raw, save their take facts, book spend, mark them filmed.
+
+    Every take of the episode the job filmed is collected and booked (it was paid for),
+    so a one-take re-film collects the one take the server filmed.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    run
+        Session (reads take facts).
+    state
+        Production state (lane, spine).
+    raw
+        :func:`creation.harness.raw_video.wait_for_raw_scene_clips` result.
+    episode
+        Episode filmed.
+    clip_seconds
+        Take length, for pricing a take without facts.
+    spine
+        Spine JSON (the episode's id).
+
+    Returns
+    -------
+    CollectedTakes
+        Job lines, dollars booked, files, the first clip URL, and clips of other episodes.
+    """
+
+    ep_dir = _episode_dir(desk, episode)
+    api_dir = api_dir_for_episode(desk, episode)
+    episode_id = episode_id_for(spine, episode)
+    foreign = [
+        f"{clip.get('episode_id')} ({clip.get('job_id')})"
+        for clip in raw.get("clips") or []
+        if clip.get("episode_id") not in ("", episode_id)
+    ]
+    clips = episode_clips(raw, episode_id=episode_id)
+    slot = episode_by_ordinal(load_series(desk), episode)
+    take_ids = [take.take_id for take in slot.takes]
+    (ep_dir / "takes").mkdir(parents=True, exist_ok=True)
+    today = date.today()
+    fetch = httpx.Client(timeout=300.0)
+    booked = 0.0
+    jobs: list[str] = []
+    paths: list[str] = []
+    try:
+        for position, clip in enumerate(clips, start=1):
+            index = clip.get("set_index") or position
+            take_id = f"t{index}" if f"t{index}" in take_ids else (take_ids[position - 1] if position <= len(take_ids) else None)
+            if take_id is None:
+                run.emit("take_without_desk_slot", job_id=clip.get("job_id"), index=index)
+                continue
+            path = download_to_versioned(
+                fetch, str(clip["url"]), ep_dir / "takes", f"take-ep{episode:02d}-{take_id}-raw", default_suffix=".mp4"
+            )
+            paths.append(str(path))
+            facts = fetch_take_facts(run, str(clip["job_id"]), spine_id=state.spine_id)
+            priced: tuple[float, str] | None = None
+            if facts is not None:
+                facts_path = next_versioned_path(api_dir, f"take-facts-ep{episode:02d}-{take_id}", ".json")
+                facts_path.write_text(json.dumps(facts, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                priced = take_facts_usd(facts, on=today)
+            if priced is None:
+                estimate = lane_take_usd(state.video_lane, clip_seconds, on=today)
+                priced = (estimate, "estimate from the price table") if estimate is not None else None
+            if priced is not None:
+                record_spend(desk, episode=episode, usd=priced[0], take_id=take_id)
+                booked += priced[0]
+            record_filmed(desk, episode=episode, take_id=take_id)
+            jobs.append(
+                f"{take_id}: take job `{clip['job_id']}`"
+                + (f" ({priced[1]}, ${priced[0]:.2f})" if priced else " (not priced; book by hand)")
+            )
+    finally:
+        fetch.close()
+    return CollectedTakes(jobs, booked, paths, str(clips[0]["url"]) if clips else None, foreign)
+
+
+def foreign_warning(foreign: list[str]) -> str:
+    """Say loudly that the job filmed another episode too (never booked here)."""
+
+    if not foreign:
+        return ""
+    return (
+        "\n!! The server also filmed another episode: " + ", ".join(foreign) + ". They were not downloaded or booked "
+        "here. Tell engineering with the video job id (the deploy may not film one episode alone)."
+    )
+
+
 def _film(desk: Path, run: DramaApiRunSession, state: ProductionState, *, cfg: Any, paths: list[str]) -> StepResult:
-    """Film the current episode (or pick up its job), collect every take raw with its take facts, book spend."""
+    """Film the current episode alone (or pick up its job), collect every take raw with its take facts, book spend."""
 
     ep = state.episode_ordinal
     ep_dir = _episode_dir(desk, ep)
@@ -679,6 +819,7 @@ def _film(desk: Path, run: DramaApiRunSession, state: ProductionState, *, cfg: A
             video_idempotency_suffix=state.video_idempotency_suffix,
             poll_deadline_seconds=cfg.poll_video_deadline_seconds,
             episode=ep,
+            seed_attempt=seed_attempt_for(desk, episode=ep),
         )
         raw = result["raw_scenes"]
         delivery = result.get("delivery")
@@ -687,53 +828,23 @@ def _film(desk: Path, run: DramaApiRunSession, state: ProductionState, *, cfg: A
     video_job_id = str(raw.get("coordinator_job_id") or "")
     spine = run.spine(state.spine_id or "")
     save_spine_snapshot(desk, ep, spine)
-    clips = episode_clips(raw, episode_id=episode_id_for(spine, ep))
-    if not clips:
+    got = collect_takes(desk, run, state, raw, episode=ep, clip_seconds=cfg.clip_duration_seconds, spine=spine)
+    if got.first_url is None:
         raise RuntimeError(f"the take job {video_job_id} completed but no take for episode {ep} came back")
-    slot = episode_by_ordinal(load_series(desk), ep)
-    take_ids = [take.take_id for take in slot.takes]
-    (ep_dir / "takes").mkdir(parents=True, exist_ok=True)
-    today = date.today()
-    fetch = httpx.Client(timeout=300.0)
-    booked = 0.0
-    jobs: list[str] = []
-    url: str | None = None
-    try:
-        for position, clip in enumerate(clips, start=1):
-            index = clip.get("set_index") or position
-            take_id = f"t{index}" if f"t{index}" in take_ids else (take_ids[position - 1] if position <= len(take_ids) else None)
-            if take_id is None:
-                run.emit("take_without_desk_slot", job_id=clip.get("job_id"), index=index)
-                continue
-            path = download_to_versioned(
-                fetch, str(clip["url"]), ep_dir / "takes", f"take-ep{ep:02d}-{take_id}-raw", default_suffix=".mp4"
-            )
-            paths.append(str(path))
-            facts = fetch_take_facts(run, str(clip["job_id"]), spine_id=state.spine_id)
-            priced: tuple[float, str] | None = None
-            if facts is not None:
-                facts_path = next_versioned_path(api_dir, f"take-facts-ep{ep:02d}-{take_id}", ".json")
-                facts_path.write_text(json.dumps(facts, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-                priced = take_facts_usd(facts, on=today)
-            if priced is None:
-                estimate = lane_take_usd(state.video_lane, cfg.clip_duration_seconds, on=today)
-                priced = (estimate, "estimate from the price table") if estimate is not None else None
-            if priced is not None:
-                record_spend(desk, episode=ep, usd=priced[0], take_id=take_id)
-                booked += priced[0]
-            record_filmed(desk, episode=ep, take_id=take_id)
-            jobs.append(f"{take_id}: take job `{clip['job_id']}`" + (f" ({priced[1]}, ${priced[0]:.2f})" if priced else " (not priced; book by hand)"))
-        url = _delivery_video_url(delivery) if delivery else None
-        if url:
+    paths.extend(got.paths)
+    url = _delivery_video_url(delivery) if delivery else None
+    if url:
+        fetch = httpx.Client(timeout=300.0)
+        try:
             path = download_to_versioned(fetch, url, ep_dir / "takes", f"take-ep{ep:02d}-api-captioned", default_suffix=".mp4")
-            paths.append(str(path))
-    finally:
-        fetch.close()
-    state.last_delivery_url = url or str(clips[0]["url"])
+        finally:
+            fetch.close()
+        paths.append(str(path))
+    state.last_delivery_url = url or got.first_url
     state.last_video_job_id = video_job_id or None
     state.phase = "complete"
     save_production(desk, state)
-    _note(ep_dir, f"Takes filmed: video job `{video_job_id}`; " + "; ".join(jobs) + f". Booked ${booked:.2f}.")
+    _note(ep_dir, f"Takes filmed: video job `{video_job_id}`; " + "; ".join(got.jobs) + f". Booked ${got.booked_usd:.2f}.")
     follow = "arc --list (pick the series arc)" if ep == 1 else f"author --episode {ep + 1}"
     hint = (
         " Not done yet: after the human says Use it, run `fictora-produce finish --desk <desk> --episode "
@@ -741,9 +852,10 @@ def _film(desk: Path, run: DramaApiRunSession, state: ProductionState, *, cfg: A
     )
     return StepResult(
         state.phase,
-        f"Episode {ep} filmed: {len(jobs)} take(s), ${booked:.2f} booked. Video job {video_job_id}.{hint}\n"
-        + "\n".join(f"  {line}" for line in jobs)
-        + f"\nNext episode: fictora-produce {follow} --desk <desk>.",
+        f"Episode {ep} filmed: {len(got.jobs)} take(s), ${got.booked_usd:.2f} booked. Video job {video_job_id}.{hint}\n"
+        + "\n".join(f"  {line}" for line in got.jobs)
+        + f"\nNext episode: fictora-produce {follow} --desk <desk>."
+        + foreign_warning(got.foreign),
         tuple(paths),
     )
 
