@@ -20,7 +20,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from creation.post.audio_service import AudioService, AudioServicePending, download
+from creation.post.audio_service import AudioService, download
 from creation.post.media import LIMITER, measure_rms_windows, probe_video, run_ffmpeg
 
 SFX_USD_PER_SECOND = 0.002
@@ -188,13 +188,18 @@ def shape_problem(kind: str, levels: tuple[float, ...]) -> str | None:
     return None if held / len(tail) >= 0.5 else "sustained sound collapses"
 
 
-def service_renderer(audio: AudioService) -> Renderer:
-    """Render a cue through the audio service (server-side), keyed so a re-run never pays twice."""
+def service_renderer(audio: AudioService, spine_id: str) -> Renderer:
+    """Render a cue on the server (``POST /v1/spines/{id}/sfx-cues``) from its authored Sound label.
+
+    The server checks the shape too; a cue it flags is refused here (skipped, not mixed).
+    """
 
     def render(cue: SfxCue, target: Path) -> Path:
         seconds = round(max(SFX_MIN_SECONDS, min(SFX_MAX_SECONDS, cue.seconds)), 2)
-        url = audio.sfx_cue(sound=cue.sound, kind=cue.kind, seconds=seconds, key=f"sfx-{cue.cache_key}")
-        return download(url, target)
+        answer = audio.sfx_cue(spine_id=spine_id, sound=cue.sound, seconds=seconds, key=f"sfx-{cue.cache_key}")
+        if answer.get("shape_problem"):
+            raise ValueError(f"wrong shape: {answer['shape_problem']}")
+        return download(str(answer["audio_url"]), target)
 
     return render
 
@@ -293,8 +298,6 @@ def lay_sfx(
         for _attempt in (1, 2):
             try:
                 path = render(cue, cached)
-            except AudioServicePending:
-                raise
             except (RuntimeError, OSError, KeyError, ValueError) as exc:
                 skipped.append(f"{cue.sound} (render failed: {str(exc)[:120]})")
                 break

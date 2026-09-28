@@ -40,6 +40,7 @@ from creation.post.desk import (
     open_api,
     refresh_spine,
     spine_id,
+    take_stored_url,
 )
 from creation.post.finish import book
 from creation.post.media import media_duration, probe_video, run_ffmpeg
@@ -162,32 +163,32 @@ def run_voice_audition(
                 f"{name} already has an audition set ({finished[-1].name}); pick from it with --pick N, "
                 f'or pass --cause "..." to pay for a second set (${AUDITION_SET_USD:.2f})'
             )
-        body = {"spine_version": spine["spine_version"], "lines": lines, "candidate_count": count}
-        compiled = run.post(f"/v1/spines/{spine_id(desk)}/cast/{cast_id}/voice-auditions", body)
-        run.save(f"voice-auditions-{slug}.json", compiled)
     finally:
         run.client.close()
-    service = audio or DramaApiAudio(desk)
+    service = audio or DramaApiAudio(desk, episode=ledger_episode)
     folder = unfinished or desk / "shared" / "voices" / slug / f"audition-v{len(existing) + 1}"
     folder.mkdir(parents=True, exist_ok=True)
-    print(
-        f"Auditioning {len(compiled.get('candidates') or [])} voices for {name} on {len(lines)} real line(s)", file=out
-    )
+    print(f"Auditioning {count} voices for {name} on {len(lines)} real line(s), rendered on the server", file=out)
+    key = _unit(f"audition-{slug}", {"lines": lines, "count": count, "set": folder.name})
+    answer = service.render_auditions(
+        spine_id=spine_id(desk), cast_id=cast_id, spine_version=str(spine["spine_version"]), lines=lines,
+        count=count, key=key,
+    )  # fmt: skip
     made: list[Candidate] = []
-    for number, candidate in enumerate(compiled.get("candidates") or [], start=1):
-        voice = str(candidate["provider_voice"])
-        text = str(candidate["text"])
-        url = service.audition_sample(
-            text=text, voice=voice, key=_unit(f"audition-{slug}", {"text": text, "voice": voice})
-        )
+    for number, candidate in enumerate(answer.get("candidates") or [], start=1):
+        voice = str(candidate["voice_id"])
+        url = str(candidate["audio_url"])
         path = download(url, folder / f"{number:02d}-{cast_slug(voice)}.mp3")
-        made.append(Candidate(number, voice, path, url, round(media_duration(path), 3)))
+        seconds = float(candidate.get("seconds") or 0) or round(media_duration(path), 3)
+        made.append(Candidate(number, voice, path, url, seconds))
+    cost = float(answer.get("cost_usd") or AUDITION_SET_USD)
     listing = {
         "cast_id": cast_id,
         "name": name,
         "lines": lines,
         "cause": cause,
-        "cost_usd": AUDITION_SET_USD,
+        "cost_usd": cost,
+        "key": key,
         "candidates": [
             {"number": c.number, "provider_voice": c.provider_voice, "file": c.path.name, "url": c.url,
              "seconds": c.seconds}
@@ -195,13 +196,13 @@ def run_voice_audition(
         ],
     }  # fmt: skip
     (folder / "auditions.json").write_text(json.dumps(listing, indent=2) + "\n", encoding="utf-8")
-    book(desk, episode=ledger_episode, usd=AUDITION_SET_USD, stream=out)
+    book(desk, episode=ledger_episode, usd=cost, stream=out)
     locked = str((card.get("voice_brief") or {}).get("provider_voice") or "none")
     print(f"{name}: {len(made)} candidates in {folder} (locked now: {locked})", file=out)
     for item in made:
         print(f"  {item.number:>2}. {item.provider_voice:<14} {item.seconds:5.2f}s  {item.path.name}", file=out)
     _note(desk, ledger_episode, f"voice audition: {name} ({cast_id}), {len(made)} candidates in `{folder.name}`"
-          + (f"; cause: {cause}" if cause else ""))  # fmt: skip
+          + (f"; cause: {cause}" if cause else "") + f"; cost ${cost:.3f}")  # fmt: skip
     print(f"Next: play them to the human. Their pick: fictora-produce voice --desk {desk} --cast {cast_id} --pick N",
           file=out)  # fmt: skip
     return folder
@@ -369,16 +370,23 @@ def run_revoice(
     if not theirs:
         raise ValueError(f"{name} speaks no line in episode {episode} on the spine; nothing to revoice")
     takes = source.parent
-    service = audio or DramaApiAudio(desk)
+    service = audio or DramaApiAudio(desk, episode=episode)
     if words_json is None:
+        stored = take_stored_url(desk, episode, take_id)
+        if stored is None:
+            raise ValueError(
+                f"no stored URL for ep{episode:02d} {take_id} in api/17_raw_scene_clips.json to transcribe "
+                "(this kit never uploads local files); pass --words-json"
+            )
         target = next_versioned_path(takes, f"take-ep{episode:02d}-{take_id}-revoice-words", ".json")
-        words_json = transcribe(source, target, audio=service)
+        words_json = transcribe(stored, target, audio=service, spine_id=spine_id(desk))
     windows = line_windows(load_words(words_json), tuple(line["text"] for line in dialogue))
     voices_dir = desk / f"ep{episode:02d}" / "voices"
     voices_dir.mkdir(parents=True, exist_ok=True)
     slug = cast_slug(cast_id)
     replacements: list[Replacement] = []
     missing: list[str] = []
+    unsure: list[str] = []
     paid = 0.0
     for index in theirs:
         window = windows[index]
@@ -387,13 +395,18 @@ def run_revoice(
             missing.append(text)
             continue
         key = _unit(f"voice-ep{episode:02d}-{slug}", {"text": text, "voice": voice})
-        url = service.voice_line(text=text, voice=voice, key=key)
+        answer = service.voice_line(spine_id=spine_id(desk), cast_id=cast_id, text=text, language="en", key=key)
+        url = str(answer["audio_url"])
         path = download(url, next_versioned_path(voices_dir, f"voice-ep{episode:02d}-{slug}", ".mp3"))
-        paid += round(len(text) * ELEVEN_V3_USD_PER_1000_CHARS / 1000, 4)
+        paid += float(answer.get("cost_usd") or round(len(text) * ELEVEN_V3_USD_PER_1000_CHARS / 1000, 4))
+        reading = answer.get("reading") or {}
+        if reading.get("checked") and not reading.get("read_right"):
+            unsure.append(text)
         path.with_suffix(".json").write_text(
-            json.dumps({"line": text, "cast_id": cast_id, "voice": voice, "key": key, "url": url}, indent=2) + "\n",
+            json.dumps({"line": text, "cast_id": cast_id, "voice": answer.get("provider_voice") or voice, "key": key,
+                        "url": url, "reading": reading}, indent=2) + "\n",
             encoding="utf-8",
-        )
+        )  # fmt: skip
         replacements.append(Replacement(text, path, window.start, window.end))
     if not replacements:
         raise ValueError(
@@ -423,9 +436,11 @@ def run_revoice(
         print(f"{item.start:6.2f}-{item.end:6.2f}s  {item.line!r} -> {item.voice.name}", file=out)
     for line in missing:
         print(f"!! not heard in the take, left as filmed: {line!r}", file=out)
+    for line in unsure:
+        print(f"!! the new line may be misread, listen before using it: {line!r}", file=out)
     print(dest, file=out)
     _note(desk, episode, f"revoice: {name} on `{source.name}` -> `{dest.name}`, {len(replacements)} line(s) "
-          f"replaced in {voice}" + (f", {len(missing)} not heard" if missing else ""))  # fmt: skip
+          f"replaced in {voice}" + (f", {len(missing)} not heard" if missing else "") + f"; cost ${paid:.3f}")  # fmt: skip
     print(
         f"Next: listen to it, then fictora-produce finish --desk {desk} --episode {episode} --take {take_id} "
         f"--take-file {dest}. If the dub does not sit (lips visibly wrong), re-film only this take, never the story.",

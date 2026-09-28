@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from creation.post.audio_service import AudioService
-from creation.post.media import extract_wav
 
 #: Share of a line's words heard in order for the line to count as heard.
 LINE_HEARD_RATIO = 0.6
@@ -40,17 +39,26 @@ class LineWindow:
     ratio: float
 
 
-def transcribe(media: Path, out_json: Path, *, audio: AudioService) -> Path:
-    """Get Whisper word timings for ``media`` (English) from the audio service and save them.
+def transcribe(
+    audio_url: str, out_json: Path, *, audio: AudioService, spine_id: str | None = None, language: str = "en"
+) -> Path:
+    """Get Whisper word timings for a file already in our storage (the take's stored URL) and save them.
+
+    This kit never uploads local files: a local mix keeps the take's timing, so
+    the stored raw take is what gets transcribed.
 
     Parameters
     ----------
-    media
-        Video or audio.
+    audio_url
+        Durable URL of the take (``17_raw_scene_clips.json``) or of audio the server made.
     out_json
-        Where the response is saved.
+        Where the answer is saved.
     audio
-        The generated-audio service (server-side Whisper).
+        The generated-audio service.
+    spine_id
+        Books the call on the story.
+    language
+        Whisper language (English).
 
     Returns
     -------
@@ -58,15 +66,14 @@ def transcribe(media: Path, out_json: Path, *, audio: AudioService) -> Path:
         ``out_json``.
     """
 
-    wav = extract_wav(media, out_json.with_suffix(".wav"))
-    key = "whisper-" + hashlib.sha256(wav.read_bytes()).hexdigest()[:16]
-    output = audio.transcribe(media=wav, key=key)
+    key = "whisper-" + hashlib.sha256(f"{audio_url}|{language}".encode()).hexdigest()[:16]
+    output = audio.transcribe(audio_url=audio_url, language=language, spine_id=spine_id, key=key)
     out_json.write_text(json.dumps(output, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return out_json
 
 
 def load_words(path: Path) -> tuple[Word, ...]:
-    """Word times from a saved Whisper response (``chunks`` with ``timestamp`` pairs).
+    """Word times from a saved transcript: the API's ``words`` (``{word, start, end}``) or Whisper ``chunks``.
 
     Raises
     ------
@@ -75,9 +82,15 @@ def load_words(path: Path) -> tuple[Word, ...]:
     """
 
     payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, dict) and isinstance(payload.get("words"), list):
+        return tuple(
+            Word(start=float(w.get("start") or 0.0), end=float(w.get("end") or w.get("start") or 0.0),
+                 text=str(w.get("word") or "").strip())
+            for w in payload["words"]
+        )  # fmt: skip
     chunks = payload.get("chunks") if isinstance(payload, dict) else None
     if not isinstance(chunks, list):
-        raise ValueError(f"{path} has no Whisper chunks")
+        raise ValueError(f"{path} has no Whisper words or chunks")
     words: list[Word] = []
     for chunk in chunks:
         stamp = chunk.get("timestamp") or [None, None]

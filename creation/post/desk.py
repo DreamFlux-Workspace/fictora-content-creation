@@ -183,8 +183,8 @@ def approved_board(desk: Path, episode: int, take_id: str) -> Path | None:
     return max(found, key=lambda p: p.stat().st_mtime) if found else None
 
 
-def take_job_id(desk: Path, episode: int, take_id: str) -> str | None:
-    """The take's scene job id from ``epNN/api/17_raw_scene_clips.json``.
+def take_clip(desk: Path, episode: int, take_id: str) -> dict[str, Any] | None:
+    """The take's clip in ``epNN/api/17_raw_scene_clips.json`` (``job_id`` and the stored ``url``).
 
     The episode's clips are found by its API id (by ordinal via ``episode_summaries``);
     take ``tN`` is the clip with board index ``N``, else the ``N``-th clip.
@@ -199,8 +199,20 @@ def take_job_id(desk: Path, episode: int, take_id: str) -> str | None:
     clips = episode_clips(raw, episode_id=wanted)
     index = int(take_id.lstrip("t") or 1)
     for clip in clips:
-        if clip.get("set_index") == index and clip.get("job_id"):
-            return str(clip["job_id"])
-    if 0 < index <= len(clips) and clips[index - 1].get("job_id"):
-        return str(clips[index - 1]["job_id"])
-    return None
+        if clip.get("set_index") == index:
+            return dict(clip)
+    return dict(clips[index - 1]) if 0 < index <= len(clips) else None
+
+
+def take_job_id(desk: Path, episode: int, take_id: str) -> str | None:
+    """The take's scene job id (see :func:`take_clip`)."""
+
+    clip = take_clip(desk, episode, take_id)
+    return str(clip["job_id"]) if clip and clip.get("job_id") else None
+
+
+def take_stored_url(desk: Path, episode: int, take_id: str) -> str | None:
+    """The take's durable URL in our storage (what ``/v1/transcripts`` may read)."""
+
+    clip = take_clip(desk, episode, take_id)
+    return str(clip["url"]) if clip and clip.get("url") else None

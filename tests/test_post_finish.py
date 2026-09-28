@@ -141,15 +141,29 @@ def test_finish_fetches_take_facts_when_none_are_saved(post_desk: Path) -> None:
 
 
 @needs_ffmpeg
-def test_until_the_server_audio_routes_land_finish_says_not_done_and_keeps_the_ffmpeg_steps(post_desk: Path) -> None:
+def test_when_the_server_refuses_audio_finish_says_not_done_and_keeps_the_ffmpeg_steps(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
     (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(json.dumps(FACTS))
+    from creation.post import audio_service
+    from creation.post import finish as finish_mod
+
+    class Refusing:
+        def _refuse(self, **_: object) -> dict:
+            raise audio_service.AudioServiceError("HTTP 409 operator_audio_unavailable -> tell engineering")
+
+        sfx_cue = music_bed = _refuse
+
+    monkeypatch.setattr(finish_mod, "DramaApiAudio", lambda desk, episode: Refusing())
     out = io.StringIO()
-    result = run_finish(post_desk, facts_fetcher=lambda *a: None, stream=out)  # default: DramaApiAudio (pending)
+    result = run_finish(post_desk, facts_fetcher=lambda *a: None, stream=out)
 
     assert not result.complete
     assert result.sound_missing == ("music", "SFX")
     status = {s.step: s.status for s in result.steps}
     assert status == {"sfx": "failed", "bed": "failed", "colour": "skipped", "mix": "ran", "captions": "ran",
                       "watermark": "ran"}  # fmt: skip
-    assert "operator endpoints that are not live yet" in out.getvalue()
+    assert "operator_audio_unavailable" in out.getvalue()
+    assert "$" not in out.getvalue(), "cost never reaches printed output"
+    assert "Cost (operator only)" in (post_desk / "ep01" / "run-notes.md").read_text()
