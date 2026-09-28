@@ -56,7 +56,7 @@ Product gap:           <one line for docs/content-ops/backlog.md>
 Extra cost:            <$ and minutes>
 ```
 
-Always a deviation: a length other than 15 / 30 / 60 s; any route with no command here; hand-rolled HTTP. Editing product code or settings is never acceptable. Aligned, with commands (below): episode 2 on (`arc`, `brief`, `author`), line and frame edits (`edit`), board redraws (`redraw-board`; the regenerate route takes no notes, so the change goes in first with `edit --frame` or `look-note`), one plate redrawn at the plates gate (`plates --cast NAME --cause`).
+Always a deviation: a finished episode longer than its 15 / 30 / 60 s band; any route with no command here; hand-rolled HTTP. Editing product code or settings is never acceptable. Not a deviation: a finished cut shorter than its band after trimming (e.g. 14.2 s from a 15 s episode); takes still film at the normal clip length, so say the new length and carry on. Aligned, with commands (below): episode 2 on (`arc`, `brief`, `author`), line and frame edits (`edit`), board redraws (`redraw-board`; the regenerate route takes no notes, so the change goes in first with `edit --frame` or `look-note`), one plate redrawn at the plates gate (`plates --cast NAME --cause`).
 
 ## Script gate
 
