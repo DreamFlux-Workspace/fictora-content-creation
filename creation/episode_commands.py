@@ -3,7 +3,7 @@
 Each command calls the deployed Drama API, saves what it read or made on the
 desk with a versioned name, and never approves (the human's yes goes through
 ``fictora-produce approve``). None of them spends except ``redraw-board``
-(one still per board), ``plates`` (one still), ``look-frame`` (one still) and an
+(one still per board), ``plates`` and ``redraw-plate`` (one still each), ``look-frame`` (one still) and an
 ``edit --select-regen`` cascade.
 
 - ``arc --list`` / ``arc --pick N``: episode 2's series arc (``director/brief``, ``series-arc``).
@@ -20,6 +20,7 @@ desk with a versioned name, and never approves (the human's yes goes through
 - ``spine --refresh``: save the story again.
 - ``redraw-board``: redraw one board on ``/boards/{set}/regenerate``.
 - ``plates --cast NAME --cause``: redraw one character's plate on ``/cast/{cast_id}/regenerate``, at the plates gate.
+- ``redraw-plate --cast X --note "..."``: note one character, then redraw only their plate (one still).
 - ``check-lines``: were the approved lines in the take's instructions (take facts, never the prompt)?
 - ``film --episode N [--take tK]``: price, then (``--confirm-spend``) film episode N alone or only take K
   of it. Nothing earlier is filmed or booked again. A re-film needs a written cause.
@@ -109,6 +110,8 @@ MEMORY_FIELDS = {"note": "notes", "thread": "threads"}
 MEMORY_KEYS = ("canon", "threads", "knowledge", "notes", "craft", "decisions", "last_image", "on_screen", "through_episode_ordinal")
 MEMORY_LIST_MAX = {"canon": 60, "threads": 20, "knowledge": 30, "notes": 20, "craft": 20, "decisions": 20, "on_screen": 8}
 JOB_ID_KEYS = ("job_id", "extension_job_id")
+PLATE_DEADLINE_SECONDS = 3600.0
+"""Poll cap on one plate redraw (the cast enrol's cap)."""
 """Most routes answer ``job_id``; ``pilot-episodes/{n}/author`` answers ``extension_job_id``."""
 REDRAW_CAUSE_IS_A_LABEL = (
     "The cause is a label for the desk and the run notes; the regenerate route takes no notes, so it does not "
@@ -2042,6 +2045,197 @@ def run_redraw_plate(desk: Path, *, cast: str, cause: str, out: Any = None) -> P
     return path
 
 
+# --- One plate ---------------------------------------------------------------------------------------
+
+
+def _note_key(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
+def _plates_home(desk: Path) -> tuple[Path, int]:
+    """The folder the cast plates were drawn into (``epNN/plates``) and its episode, else ep01."""
+
+    for folder in sorted(desk.glob("ep[0-9][0-9]/plates")):
+        if any(folder.glob("plate-ep*-v*.png")):
+            return folder, int(folder.parent.name[2:])
+    return desk / "ep01" / "plates", 1
+
+
+def _newest(folder: Path, stem: str) -> Path | None:
+    found: list[tuple[int, Path]] = []
+    for path in folder.glob(f"{stem}-v*.*"):
+        number = path.stem.rsplit("-v", 1)[-1]
+        if number.isdigit():
+            found.append((int(number), path))
+    return max(found)[1] if found else None
+
+
+def plate_contact_sheet(plates: Sequence[tuple[str, Path | None]], redrawn: str, out: Path) -> Path:
+    """Draw every character's current plate side by side, the redrawn one framed and marked NEW.
+
+    Parameters
+    ----------
+    plates
+        ``(name, plate file or None)`` in cast order.
+    redrawn
+        Name of the character redrawn now.
+    out
+        PNG to write (a new versioned path; never overwritten).
+
+    Returns
+    -------
+    Path
+        ``out``.
+    """
+
+    from PIL import Image, ImageDraw
+
+    height, label, pad = 480, 36, 12
+    tiles: list[Image.Image] = []
+    for name, path in plates:
+        if path is None:
+            art = Image.new("RGB", (270, height), (40, 40, 40))
+        else:
+            with Image.open(path) as source:
+                art = source.convert("RGB")
+            art = art.resize((max(1, round(art.width * height / art.height)), height))
+        tile = Image.new("RGB", (art.width + 2 * pad, height + label + 2 * pad), (18, 18, 18))
+        tile.paste(art, (pad, pad))
+        draw = ImageDraw.Draw(tile)
+        new = name == redrawn
+        if new:
+            draw.rectangle((2, 2, tile.width - 3, pad + height + 2), outline=(242, 197, 92), width=6)
+        draw.text((pad, pad + height + 10), f"{name}{'  NEW' if new else ''}", fill=(242, 197, 92) if new else (230, 230, 230))
+        tiles.append(tile)
+    sheet = Image.new("RGB", (sum(t.width for t in tiles) or 1, max((t.height for t in tiles), default=1)), (18, 18, 18))
+    x = 0
+    for tile in tiles:
+        sheet.paste(tile, (x, 0))
+        x += tile.width
+    sheet.save(out)
+    return out
+
+
+def run_redraw_plate_with_note(desk: Path, *, cast: str, note: str, out: Any = None) -> Path:
+    """Correct ONE character and redraw only their plate. Spends one still; nobody else is drawn or paid.
+
+    ``POST /v1/spines/{id}/cast/{cast_id}/notes`` records the correction in the
+    creator's words (free; skipped when the same note is already on the card, so
+    a re-run never stacks it twice), then ``POST .../cast/{cast_id}/regenerate``
+    redraws that character alone with every note on their card. The job key is
+    recorded before the POST, so an interrupted run picks up the same job and
+    never pays twice. Saves the plate next to the old ones as a new version,
+    draws a contact sheet of the whole cast with the new plate marked, books
+    the still on the desk ledger, and writes a run note.
+
+    Parameters
+    ----------
+    desk
+        Series desk with a story and drawn cast.
+    cast
+        ``cast_id`` or the character's name.
+    note
+        The correction, in the creator's words.
+    out
+        Text stream.
+
+    Returns
+    -------
+    Path
+        The new plate file.
+
+    Raises
+    ------
+    CommandStopped
+        Empty note, unknown character, a failed job, or no new plate on the spine.
+    """
+
+    out = out or sys.stdout
+    note = " ".join(note.split())
+    if not note:
+        raise CommandStopped('--note is required: what to change about this character, in your words')
+    desk, state, run = _desk_session(desk)
+    folder, ep = _plates_home(desk)
+    try:
+        spine = run.spine(state.spine_id or "")
+        cards = [card for card in spine.get("cast") or [] if isinstance(card, Mapping) and card.get("cast_id")]
+        wanted = cast.strip().casefold()
+        index, card = next(
+            ((i, c) for i, c in enumerate(cards, start=1)
+             if wanted in {str(c["cast_id"]).casefold(), str(c.get("name") or "").casefold()}),
+            (0, None),
+        )  # fmt: skip
+        if card is None:
+            names = ", ".join(f"{c.get('name')} ({c['cast_id']})" for c in cards)
+            raise CommandStopped(f"no character {cast!r} on the story; the cast is: {names}")
+        cast_id, name = str(card["cast_id"]), str(card.get("name") or card["cast_id"])
+        noted = {_note_key(str(n.get("text") or "")) for n in card.get("creator_notes") or [] if isinstance(n, Mapping)}
+        if _note_key(note) in noted:
+            print(f"[plate] {name} already carries this note; not added again.", file=sys.stderr)
+        else:
+            run.post(
+                f"/v1/spines/{state.spine_id}/cast/{cast_id}/notes",
+                {"spine_version": spine["spine_version"], "text": note},
+            )
+            spine = run.spine(state.spine_id or "")
+        body = reuse_generation_body(
+            prompt=scene_prompt(spine, state.prompt),
+            spine=spine,
+            preset_id=state.preset_id,
+            preset_version=state.preset_version,
+            video_lane=state.video_lane,
+        )
+        digest = hashlib.sha256(_note_key(note).encode()).hexdigest()[:10]
+        terminal = run_unit(
+            desk,
+            run,
+            unit=f"plate-{cast_id}-{digest}",
+            path=f"/v1/spines/{state.spine_id}/cast/{quote(cast_id, safe='')}/regenerate",
+            body=body,
+            video_route=True,
+            deadline_seconds=PLATE_DEADLINE_SECONDS,
+        )
+        _save_desk_json(desk, f"plate-redraw-{cast_id}-terminal", terminal)
+        spine = run.spine(state.spine_id or "")
+        save_spine_snapshot(desk, ep, spine)
+        url = next(
+            (str(a["url"]) for a in spine.get("media_assets") or []
+             if isinstance(a, Mapping) and a.get("relation_type") == "cast_card" and a.get("relation_id") == cast_id
+             and not a.get("stale") and a.get("url")),
+            "",
+        )  # fmt: skip
+        if not url:
+            raise CommandStopped(f"the redraw completed but the spine has no current plate for {name}")
+        folder.mkdir(parents=True, exist_ok=True)
+        fetch = httpx.Client(timeout=120.0)
+        try:
+            path = _orchestrate.download_to_versioned(fetch, url, folder, f"plate-ep{ep:02d}-{index}")
+        finally:
+            fetch.close()
+    finally:
+        run.client.close()
+    record_spend(desk, episode=ep, usd=float(STILL_USD), unit=f"plate-note-redraw:{cast_id}")
+    current = [
+        (str(c.get("name") or c["cast_id"]), path if i == index else _newest(folder, f"plate-ep{ep:02d}-{i}"))
+        for i, c in enumerate(cards, start=1)
+    ]
+    sheet = plate_contact_sheet(current, name, next_versioned_path(folder, f"contact-ep{ep:02d}", ".png"))
+    _note(desk, ep, f"plate redraw: {name} ({cast_id}) alone -> `{path.name}`, ${float(STILL_USD):.2f}. Note: {note}")
+    print(str(path), file=out)
+    print(f"contact sheet: {sheet}", file=out)
+    print(f"{name} redrawn alone (${float(STILL_USD):.2f}); nobody else was drawn or paid.", file=out)
+    if load_production(desk).phase == "wait_plates":
+        print(f"Show {sheet.name} to the human; their yes: fictora-produce approve --desk {desk} --gate plates", file=out)
+    elif load_series(desk).plates.status == "approved":
+        print(
+            f"!! the plates had a yes before this redraw: show {sheet.name} to the human and record the yes again "
+            f"(fictora-ops approve --desk {desk} --gate plates --path {sheet}). Boards drawn before now still show "
+            "the old plate; redraw-board the takes this character is in.",
+            file=out,
+        )
+    return path
+
+
 # --- Line check -------------------------------------------------------------------------------------
 
 
@@ -2400,6 +2594,7 @@ EPISODE_COMMANDS = frozenset(
         "spine",
         "redraw-board",
         "plates",
+        "redraw-plate",
         "check-lines",
         "film",
     }
@@ -2553,6 +2748,13 @@ def add_episode_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     plates.add_argument(
         "--cause", required=True, help="What in the direction was wrong: a LABEL; the server takes no redraw notes."
     )
+    plate = sub.add_parser(
+        "redraw-plate",
+        help="Correct ONE character (--note, their words) and redraw only their plate. $0.30; nobody else is paid.",
+    )
+    plate.add_argument("--desk", type=Path, required=True)
+    plate.add_argument("--cast", required=True, help="cast_id or name.")
+    plate.add_argument("--note", required=True, help="What to change about this character, in your words.")
 
     film = sub.add_parser(
         "film",
@@ -2660,6 +2862,9 @@ def dispatch_episode(args: argparse.Namespace) -> int:
         if args.command == "plates":
             run_redraw_plate(args.desk, cast=args.cast, cause=args.cause)
             return 0
+        if args.command == "redraw-plate":
+            run_redraw_plate_with_note(args.desk, cast=args.cast, note=args.note)
+            return 0
         if args.command == "film":
             run_film(args.desk, episode=args.episode, take_id=args.take, cause=args.cause, confirm_spend=args.confirm_spend)
             return 0
@@ -2705,8 +2910,10 @@ __all__ = [
     "run_look_frame",
     "run_look_note",
     "run_memory",
+    "plate_contact_sheet",
     "run_redraw_board",
     "run_redraw_plate",
+    "run_redraw_plate_with_note",
     "run_spine_refresh",
     "run_unit",
     "voice_cast_id",

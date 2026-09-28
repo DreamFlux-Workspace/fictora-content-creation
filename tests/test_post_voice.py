@@ -145,7 +145,7 @@ def test_pick_locks_the_listed_candidate_on_the_cast_card(
     assert path == "/v1/spines/spine_test/cast/cast_kenji/voice-auditions/pick"
     assert body["provider_voice"] == "Aria" and locked == "Aria"
     assert body["url"] == "https://media.test/aud-2.mp3" and body["seconds"] == 1.5
-    with pytest.raises(ValueError, match="the numbers are 1, 2, 3, 4"):
+    with pytest.raises(ValueError, match="the set is 1 Rachel, 2 Aria, 3 Roger, 4 Sarah"):
         voice_mod.run_voice_pick(post_desk, cast="kenji", pick=9, out=io.StringIO())
 
 
@@ -262,3 +262,147 @@ def test_the_voice_line_route_gets_the_performed_line_language_and_spoken_text(
         spine_id="sp", cast_id="c", text="ここで待ってて", language="ja", key="k", spoken_text="ここで待ってて"
     )
     assert bodies == [{"text": "ここで待ってて", "language": "ja", "spoken_text": "ここで待ってて"}]
+
+
+class SlateAudio(FakeAudio):
+    """Answers like the server: the first ``count`` voices of its default slate."""
+
+    def render_auditions(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("auditions", kwargs))
+        voices = list(voice_mod.SERVER_AUDITION_SLATE) + ["Alice", "Bill"]
+        return {
+            "candidates": [
+                {"voice_id": v, "text": kwargs["lines"][0], "audio_url": f"https://media.test/aud-{i}.mp3", "seconds": 0.4}
+                for i, v in enumerate(voices[: kwargs["count"]], start=1)
+            ],
+            "cost_usd": 0.02,
+        }
+
+
+@needs_ffmpeg
+def test_audition_on_one_line_keeps_only_the_named_voices_in_one_numbered_reel(
+    post_desk: Path, post_api: FakePostApi, downloads: list[str]
+) -> None:
+    audio = SlateAudio()
+    out = io.StringIO()
+    folder = voice_mod.run_voice_audition(
+        post_desk, cast="Kenji", text="  wait for me HERE. ", voices="Sarah, aria", audio=audio, out=out
+    )
+
+    [(_, asked)] = audio.calls
+    assert asked["lines"] == ["Wait for me here."], "the spine's own line, matched on any spelling"
+    assert asked["count"] == 4, "the smallest server slate that holds Aria and Sarah"
+    listing = json.loads((folder / "auditions.json").read_text())
+    [reel] = listing["reels"]
+    assert [(i["number"], i["voice"]) for i in reel["index"]] == [(2, "Aria"), (4, "Sarah")]
+    assert reel["index"][1]["start"] == pytest.approx(0.4 + voice_mod.REEL_GAP_SECONDS, abs=0.05)
+    reel_file = folder / reel["file"]
+    assert reel_file.name == "reel-v1.m4a" and reel_file.with_suffix(".txt").is_file()
+    from creation.post.media import media_duration
+
+    assert media_duration(reel_file) == pytest.approx(2 * (0.4 + voice_mod.REEL_GAP_SECONDS), abs=0.15)
+    assert " 2. Aria" in out.getvalue() and " 4. Sarah" in out.getvalue()
+
+    again = voice_mod.run_voice_audition(
+        post_desk, cast="Kenji", text="Wait for me here.", voices=["Rachel"], audio=audio, out=io.StringIO()
+    )
+    assert again == folder and len(audio.calls) == 1, "a set that holds the line and voice: new reel, nothing paid"
+    assert (folder / "reel-v2.m4a").is_file() and (folder / "reel-v1.m4a").is_file()
+
+
+def test_new_wording_off_the_spine_is_refused_before_anything_is_paid(
+    post_desk: Path, post_api: FakePostApi
+) -> None:
+    audio = SlateAudio()
+    with pytest.raises(ValueError, match="edit --desk .* --line-id ID") as caught:
+        voice_mod.run_voice_audition(
+            post_desk, cast="Kenji", text="Do not break eye contact.", audio=audio, out=io.StringIO()
+        )
+    assert 'l1 "Wait for me here."' in str(caught.value)
+    assert audio.calls == []
+
+
+def test_the_slate_asked_for_is_the_smallest_that_holds_the_named_voices() -> None:
+    assert voice_mod.slate_count(["Rachel"]) == 4
+    assert voice_mod.slate_count(["charlie", "Aria"]) == 6
+    assert voice_mod.slate_count(["Callum"]) == 8
+    assert voice_mod.slate_count(["Nobody"]) == voice_mod.MAX_CANDIDATES
+    with pytest.raises(ValueError, match="at most 10"):
+        voice_mod.parse_voices(",".join(f"v{i}" for i in range(11)))
+    assert voice_mod.parse_voices("Aria, aria ,Sarah") == ["Aria", "Sarah"]
+
+
+@needs_ffmpeg
+def test_pick_by_voice_name(post_desk: Path, post_api: FakePostApi, downloads: list[str]) -> None:
+    voice_mod.run_voice_audition(post_desk, cast="Kenji", voices="Laura", audio=SlateAudio(), out=io.StringIO())
+    assert voice_mod.run_voice_pick(post_desk, cast="Kenji", pick="laura", out=io.StringIO()) == "Laura"
+    path, body = post_api.posts[-1]
+    assert path.endswith("/voice-auditions/pick") and body["url"] == "https://media.test/aud-5.mp3"
+
+
+# --- voice-fx ----------------------------------------------------------------------------------
+
+
+def _samples(path: Path, tmp: Path) -> np.ndarray:
+    import wave
+
+    from creation.post.media import extract_wav
+
+    wav = extract_wav(path, tmp / f"{path.stem}.wav", rate=16000)
+    with wave.open(str(wav)) as handle:
+        return np.frombuffer(handle.readframes(handle.getnframes()), dtype=np.int16).astype(float)
+
+
+@needs_ffmpeg
+def test_voice_fx_treats_only_the_range_keeps_its_level_and_writes_a_new_file(tmp_path: Path) -> None:
+    from creation.post.voice_fx import apply_voice_fx, parse_range
+
+    from creation.post.media import run_ffmpeg
+
+    loud = make_take(tmp_path / "loud.mp4", seconds=5.0, tones=((0.5, 4.5, 150), (0.5, 4.5, 1000)))
+    take = tmp_path / "take-ep01-t1-raw-v1.mp4"
+    # A hot voice (about -8.5 dB RMS): the band-pass and compressor alone would drop the range ~10 dB.
+    run_ffmpeg(["-i", str(loud), "-c:v", "copy", "-af", "volume=6", "-c:a", "aac", str(take)])
+    before = take.read_bytes()
+    start, end = parse_range("1-3")
+
+    made = apply_voice_fx(take, start=start, end=end, preset="intercom")
+
+    assert made.name == "take-ep01-t1-raw-v1-intercom-v1.mp4" and take.read_bytes() == before
+    dry, wet = _samples(take, tmp_path), _samples(made, tmp_path)
+    rate = 16000
+    inside = slice(int(1.5 * rate), int(2.5 * rate))
+    outside = slice(int(3.5 * rate), int(4.3 * rate))
+
+    def corr(a: np.ndarray, b: np.ndarray) -> float:
+        return float(np.corrcoef(a, b)[0, 1])
+
+    def low_to_band_db(a: np.ndarray) -> float:
+        spectrum = np.abs(np.fft.rfft(a))  # 1 s of audio: bin n is n Hz
+        return 20 * np.log10(spectrum[145:156].max() / spectrum[995:1006].max())
+
+    def db(a: np.ndarray) -> float:
+        return 20 * np.log10(np.sqrt(np.mean(a**2)) + 1e-9)
+
+    assert corr(dry[outside], wet[outside]) > 0.99, "outside the range the take is as filmed"
+    assert low_to_band_db(wet[inside]) < low_to_band_db(dry[inside]) - 20, "inside, the band-pass takes the lows out"
+    assert abs(db(wet[inside]) - db(dry[inside])) < 1.5, "the treated range keeps the level it had"
+    assert apply_voice_fx(take, start=1, end=3, preset="intercom").name.endswith("-intercom-v2.mp4")
+
+
+def test_voice_fx_refuses_a_bad_range_or_preset(tmp_path: Path) -> None:
+    from creation.post.voice_fx import apply_voice_fx, parse_range
+
+    for raw in ("3-1", "abc", "2-2"):
+        with pytest.raises(ValueError, match="START-END"):
+            parse_range(raw)
+    with pytest.raises(ValueError, match="intercom, phone, radio"):
+        apply_voice_fx(tmp_path / "x.mp4", start=0, end=1, preset="robot")
+
+
+@needs_ffmpeg
+def test_cli_voice_fx_writes_a_new_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    take = make_take(tmp_path / "take.mp4", seconds=3.0)
+    assert main(["voice-fx", "--file", str(take), "--range", "0.5-2", "--preset", "phone"]) == 0
+    assert (tmp_path / "take-phone-v1.mp4").is_file()
+    assert main(["voice-fx", "--file", str(take), "--range", "2-1", "--preset", "radio"]) == 2

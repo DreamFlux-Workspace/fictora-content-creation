@@ -231,6 +231,65 @@ def test_redraw_board_uses_the_regenerate_route_warns_a_reroll_and_reopens_the_g
     assert episode_by_ordinal(load_series(desk), 1).spend_usd == pytest.approx(0.30)
 
 
+def _plate_routes(api: FakeApi) -> None:
+    def add_note(method: str, path: str, body: dict | None) -> dict:
+        card = next(c for c in api.spine_doc["cast"] if c["cast_id"] == "cast_ren")
+        card.setdefault("creator_notes", []).append({"note_id": "n1", "text": (body or {})["text"]})
+        return {"spine": api.spine_doc}
+
+    def redraw(method: str, path: str, body: dict | None) -> dict:
+        for asset in api.spine_doc["media_assets"]:
+            if asset.get("relation_id") == "cast_ren":
+                asset["url"] = "https://r2.example/ren-v2.png"
+        return {"job_id": "job_plate"}
+
+    api.routes[("POST", "/v1/spines/sp1/cast/cast_ren/notes")] = add_note
+    api.routes[("POST", "/v1/spines/sp1/cast/cast_ren/regenerate")] = redraw
+    api.jobs["job_plate"] = {"status": "completed"}
+
+
+def test_redraw_plate_notes_one_character_and_redraws_only_them(desk: Path, api: FakeApi) -> None:
+    _plate_routes(api)
+    plates = desk / "ep01" / "plates"
+    plates.mkdir(parents=True, exist_ok=True)
+    from fake_api import png_bytes
+
+    (plates / "plate-ep01-1-v1.png").write_bytes(png_bytes(200))
+    (plates / "plate-ep01-2-v1.png").write_bytes(png_bytes(60))
+    out = io.StringIO()
+
+    made = ec.run_redraw_plate_with_note(desk, cast="Ren", note="  Older, a scar over the left brow ", out=out)
+
+    assert api.posted("/v1/spines/sp1/cast/cast_ren/notes") == [
+        {"spine_version": "v5", "text": "Older, a scar over the left brow"}
+    ]
+    [(method, path, body, key)] = [c for c in api.calls if c[1].endswith("/regenerate")]
+    assert key and body and "notes" not in body, "a recorded key; the notes ride on the card, not the body"
+    assert not [c for c in api.calls if "cast_hana" in c[1] or c[1].endswith("/cast/enrol")], "nobody else is drawn"
+    assert made.name == "plate-ep01-2-v2.png", "the new plate sits next to the old one as a new version"
+    assert (plates / "plate-ep01-2-v1.png").is_file() and (plates / "contact-ep01-v1.png").is_file()
+    assert ("download", {"url": "https://r2.example/ren-v2.png", "path": str(made)}) in api.events
+    assert episode_by_ordinal(load_series(desk), 1).spend_usd == pytest.approx(0.30)
+    assert "nobody else" in out.getvalue()
+
+    ec.run_redraw_plate_with_note(desk, cast="cast_ren", note="older, a scar over the left brow", out=io.StringIO())
+    assert len(api.posted("/v1/spines/sp1/cast/cast_ren/notes")) == 1, "the same note is never stacked twice"
+
+
+def test_an_interrupted_plate_redraw_picks_up_the_same_job_and_an_unknown_name_stops(desk: Path, api: FakeApi) -> None:
+    _plate_routes(api)
+    unit = "plate-cast_ren-" + __import__("hashlib").sha256(b"older").hexdigest()[:10]
+    state = load_production(desk)
+    state.pending[unit] = {"key": "pfx-k", "job_id": "job_plate"}
+    from creation.production_state import save_production
+
+    save_production(desk, state)
+    ec.run_redraw_plate_with_note(desk, cast="Ren", note="Older", out=io.StringIO())
+    assert api.posted("/v1/spines/sp1/cast/cast_ren/regenerate") == [], "picked up, not posted (no second charge)"
+    with pytest.raises(ec.CommandStopped, match="the cast is: Hana"):
+        ec.run_redraw_plate_with_note(desk, cast="Mika", note="taller", out=io.StringIO())
+
+
 def test_check_lines_names_the_approved_line_the_take_was_not_asked_to_say(desk: Path, api: FakeApi) -> None:
     api_dir = desk / "ep01" / "api"
     (api_dir / "spine.json").write_text(json.dumps(api.spine_doc), encoding="utf-8")

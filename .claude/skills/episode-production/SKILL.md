@@ -50,14 +50,14 @@ Read when you need the detail, not all on the first turn:
 | --- | --- | --- |
 | Desk | `fictora-produce start --series "…" --prompt "…" --band 15s --preset-id ID --video-lane minimax-h3 --clip-seconds 15 --cut-tempo T` | Say **aligned** before the first paid step |
 | Draft | `fictora-produce step --desk D` (prints the brief's lines against the script: kept, rewritten, cut, added) | Show the human every line that is not `kept`; fix it with `line` or accept it |
-| Plates | `fictora-produce step --desk D` | `approve --desk D --gate plates` after a yes |
+| Plates | `fictora-produce step --desk D` | `approve --desk D --gate plates` after a yes; one character wrong: `redraw-plate --desk D --cast NAME --note "…"` (that character alone, $0.30; show the contact sheet) |
 | Script | (lines from the draft) | `approve --desk D --gate script` after a yes |
 | Board | `fictora-produce step --desk D` (prints the shot list with who speaks on each row, speaker warnings and safe-zone warnings) | `approve --desk D --gate board`; or `redraw-board --desk D --episode N --take tK --cause "…"` |
 | Estimate | `fictora-produce step --desk D` | The human says yes to the number. The line names the lane and its $/s; a `!! SERVER ESTIMATE FAILED` line means the number is the kit's local table: say that to the human before the yes |
 | Take | `fictora-produce step --desk D --confirm-spend` | — |
 | Read | watch `takes/`, write every fault | Use it, or Change this + cause |
 | Re-film one take | `film --desk D --episode N --take tK --cause "…"` (prices it), then the same with `--confirm-spend` | The human says yes to the number; nothing else is filmed or booked |
-| Finish | `fictora-produce finish --desk D [--take-file F]` | Watch the final file; the last line must read `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓` |
+| Finish | `fictora-produce finish --desk D [--take-file F]`, then `review --desk D --episode N --take tK` (caption boxes vs the covered zones, zone sheet for the face check; warns only) | Watch the final file; the last line must read `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓` |
 | Next episode | `arc --desk D --list` / `--pick K` (episode 2), `brief --desk D --episode N` (3 on), `author --desk D --episode N --direction K` or `--line "…"` | Script yes, then the same Board → Finish loop |
 
 Optional after the draft, before the plates, our own style frame: write the look down with the human, then `look-frame --desk D --description @look.txt` (inline words work too) draws it on the server from the words alone ($0.30; no image goes in, and never a picture found online) into `shared/look/look-frame-vN.png` and prints its `image_url`. Show the frame. Only after the human's yes, `look --desk D --url <that image_url>` pins it; to change it, change the description and draw again (the same description never pays twice). If `look-frame` says the server has no look-frame route, stop and tell engineering; never draw it with a provider key. `look-note --desk D --add "…"` steers the drawings. Edits: `line` for a line (its words, the performed JA/KO line, its speaker, or heard-not-seen; `--add` a line to a beat, `--remove` one, `--new-voice` for someone only heard: the server and the desk change together, and it says what happens to the script approval); `edit` for a beat or frame (reference.md). `fictora-produce status --desk D` any time. After each stage: report the path, append `run-notes.md` (`fictora-ops note`), stop.
@@ -162,12 +162,15 @@ uv run fictora-produce tempo   --desk D --take-file FINAL [--factor 0.9]
 
 ```bash
 uv run fictora-produce voice --desk D --cast NAME --audition [--episode N]   # 4-10 candidates on their real lines, $0.30
-uv run fictora-produce voice --desk D --cast NAME --pick N                   # after the human picks; free
+uv run fictora-produce voice --desk D --cast NAME --audition --text "…" --voices Rachel,Aria,Sarah   # one line, only those voices in the reel
+uv run fictora-produce voice --desk D --cast NAME --pick N                   # after the human picks (N or the voice's name); free
 uv run fictora-produce revoice --desk D --cast NAME --episode N --take tK   # each filmed take they speak in
 uv run fictora-produce finish --desk D --episode N --take tK --take-file <take-epNN-tK-revoice-vN.mp4>
 ```
 
-Play the candidates (`shared/voices/<cast>/audition-vN/`) to the human; a second audition set needs `--cause`. On Turbo (the default) no take carries the locked voice, because voice references are not sent: revoice each filmed take the character speaks in, including takes filmed after the pick. Only on R2V do takes not filmed yet use the new voice as they are. Re-film only a take where the dub does not sit (lips visibly wrong, a shouted line), with a cause and a stated cost; never the other takes, never the story.
+Play the listening reel (`shared/voices/<cast>/audition-vN/reel-vN.m4a`; `reel-vN.txt` says where each numbered candidate starts) to the human; a second audition set needs `--cause`. New wording: the server auditions only lines on the spine, so put the words on the line first (`edit --episode N --line-id ID --text "…"`), then `--audition --text "…"`. A set that already holds the line and the named voices makes a new reel for free. On Turbo (the default) no take carries the locked voice, because voice references are not sent: revoice each filmed take the character speaks in, including takes filmed after the pick. Only on R2V do takes not filmed yet use the new voice as they are. Re-film only a take where the dub does not sit (lips visibly wrong, a shouted line), with a cause and a stated cost; never the other takes, never the story.
+
+An off-screen voice (speaker, phone, radio) played over another character's face is heard as that face speaking: give it a source in post with `voice-fx --file F --range A-B --preset intercom|phone|radio` (local ffmpeg, $0, a new file at the same level), then `finish --take-file` on it.
 
 `revoice` finds a kana-pinned Japanese line in Whisper's kanji: on the per-word readings the server's transcript carries, or by reading shape on an older server. If a line is still reported "not heard", pass `--words-json` or re-film only that take.
 
