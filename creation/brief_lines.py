@@ -234,8 +234,9 @@ def brief_vs_spine_lines(brief_text: str, spine: Mapping[str, Any], *, episode: 
     if count["kept"] != len(brief) or count["added"]:
         out.append(
             "  !! The writers changed the brief's lines. Before the script gate: keep theirs, or put yours back with "
-            "`fictora-produce line --desk D --episode N --line ID --text \"...\"` (or `--speaker`). The API cannot "
-            "add a line back: a cut line needs a new draft, or its words given to a kept line."
+            "`fictora-produce line --desk D --episode N --line ID --text \"...\"` (or `--speaker`). Put a cut line "
+            "back with `line --add --beat B --speaker NAME --text \"...\"` (a voice not in the cast: `--new-voice`); "
+            "drop an added one with `line --remove ID`."
         )
     return out
 

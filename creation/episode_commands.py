@@ -12,8 +12,9 @@ desk with a versioned name, and never approves (the human's yes goes through
 - ``memory --note`` / ``--thread``: standing series notes.
 - ``edit``: a beat's shot, a frame's brief, or a line (pin the performed line) —
   ``PATCH`` before the script gate, the cascade after it (paid items off by default).
-- ``line``: change one line's words, performed line, speaker or seen/heard on the server and the desk in
-  one step, and say what that does to the script approval (``line`` with no change lists the lines).
+- ``line``: change one line's words, performed line, speaker or seen/heard, add a line to a beat, remove one,
+  or add a voice that is only heard with its line, on the server and the desk in one step, and say what that
+  does to the script approval (``line`` with no change lists the lines).
 - ``look-frame``: draw our own style frame on the server from a written description (one still).
 - ``look`` / ``look-note``: pin the style frame by URL, add or remove look notes.
 - ``spine --refresh``: save the story again.
@@ -34,10 +35,11 @@ import argparse
 import copy
 import hashlib
 import json
+import re
 import sys
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import quote
 
 import httpx
@@ -115,10 +117,9 @@ REDRAW_CAUSE_IS_A_LABEL = (
     "take's frames first)"
 )
 
-NO_NEW_LINES_OR_CAST = (
-    "The Drama API edits the lines a story already has: their words, their speaker (someone already in the "
-    "cast) and whether that speaker is seen. It cannot add or remove a line, or add a cast member (such as a new "
-    "off-screen voice). For that, write it into the brief and draft again on a new desk"
+NEW_VOICE_HINT = (
+    "To add someone who is only heard (an intercom, a caller), add their line with a new voice: "
+    "`line --add --beat N --text \"...\" --new-voice NAME --role \"...\" --voice-description \"...\"`"
 )
 
 
@@ -821,7 +822,7 @@ def resolve_speaker(spine: Mapping[str, Any], who: str) -> str:
             return cast_id
     cast = ", ".join(f"{name} ({cast_id})" for cast_id, name in names.items()) or "none"
     raise CommandStopped(
-        f"no cast member {who!r} on this story; the cast is: {cast}. {NO_NEW_LINES_OR_CAST}"
+        f"no cast member {who!r} on this story; the cast is: {cast}. {NEW_VOICE_HINT}"
     )
 
 
@@ -945,6 +946,7 @@ def line_edit_consequences(
     desk_was_approved: bool,
     relocalized: bool,
     desk: Path,
+    new_line: bool = False,
 ) -> list[str]:
     """Say what a line edit did to the script approval, and whether its speaker is drawn where it is spoken.
 
@@ -964,6 +966,8 @@ def line_edit_consequences(
         ``text`` changed on a JA/KO show without a pinned ``spoken_text``.
     desk
         Series desk (for the command to print).
+    new_line
+        ``line_id`` was just added (its performed JA/KO line is written, not re-written).
 
     Returns
     -------
@@ -988,7 +992,13 @@ def line_edit_consequences(
             f"{episode} until the human says yes to the new line (`fictora-ops approve --desk {desk} --gate script "
             f"--episode {episode}`)."
         )
-    if relocalized:
+    if relocalized and new_line:
+        when = "before the take is filmed" if after_gate else "when the script is approved"
+        out.append(
+            f"  The server writes the new line's performed {_spoken_language(spine)} line {when}. To choose the "
+            "words yourself, pin them with --spoken."
+        )
+    elif relocalized:
         when = "before the take is filmed" if after_gate else "when the script is approved"
         out.append(
             f"  The performed {_spoken_language(spine)} line was dropped (it was written for the old English); the "
@@ -1020,27 +1030,334 @@ def _spoken_language(spine: Mapping[str, Any]) -> str:
     return str(spine.get("spoken_language") or "en-US")
 
 
-def run_line(
-    desk: Path,
+def voice_cast_id(name: str) -> str:
+    """The cast id a new voice-only character gets: ``cast_`` plus its name, lowercased, hyphens for the rest.
+
+    Parameters
+    ----------
+    name
+        ``Speaker voice``.
+
+    Returns
+    -------
+    str
+        ``cast_speaker-voice`` (the server's own style; at most 64 characters).
+    """
+
+    slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+    if not slug:
+        raise CommandStopped(f"--new-voice {name!r} needs letters or digits for its cast id")
+    return f"cast_{slug}"[:64]
+
+
+def build_line_add_remove_patch(
+    spine: Mapping[str, Any],
     *,
     episode: int,
-    line: str | None,
+    add: bool = False,
+    beat: str | None = None,
     text: str | None = None,
     spoken: str | None = None,
     subtitle: str | None = None,
     speaker: str | None = None,
     off_screen: bool | None = None,
+    speaker_moves: bool = False,
+    remove: str | None = None,
+    new_voice: str | None = None,
+    role: str | None = None,
+    voice_description: str | None = None,
+    provider_voice: str | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """Build the spine patch that adds a line, removes one, or both, and adds a voice-only character with its line.
+
+    The server (``PATCH /v1/spines/{id}``) keeps one line per beat, so a beat
+    that already speaks takes a new line only when the same patch removes the
+    old one. A new voice is heard and never drawn: its line is always off
+    screen, and it must come with that line. The server checks every rule and
+    answers a named 400 (:func:`explain_refusal`); the kit only checks what the
+    command line itself got wrong.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+    add
+        Add a line: needs ``beat``, ``text`` and ``speaker`` or ``new_voice``.
+    beat
+        The beat's number in the episode, or its id.
+    text, spoken, subtitle
+        The new line's English script, pinned performed line (JA/KO), and its subtitle.
+    speaker
+        Someone already in the cast (name or id); left out with ``new_voice``.
+    off_screen
+        The speaker is heard, not seen (``True``) or seen (``False``).
+    speaker_moves
+        Also make the speaker the beat's motion subject (the take moves the speaker on a speaking beat).
+    remove
+        A line to drop: its id or its number in the episode.
+    new_voice, role, voice_description, provider_voice
+        A new voice-only character who speaks the added line.
+
+    Returns
+    -------
+    tuple[dict[str, Any], list[str]]
+        The ``patch`` object and one printable line per change.
+    """
+
+    voice_fields = {"--role": role, "--voice-description": voice_description, "--provider-voice": provider_voice}
+    if new_voice is None and any(value is not None for value in voice_fields.values()):
+        raise CommandStopped(f"{', '.join(k for k, v in voice_fields.items() if v is not None)} describe a --new-voice")
+    if not add:
+        stray = {"--beat": beat, "--text": text, "--spoken": spoken, "--subtitle": subtitle, "--speaker": speaker,
+                 "--new-voice": new_voice, "--off-screen/--on-screen": off_screen}  # fmt: skip
+        named = [key for key, value in stray.items() if value is not None] + (["--speaker-moves"] if speaker_moves else [])
+        if named:
+            detail = " (a new voice comes with its line)" if new_voice is not None else ""
+            raise CommandStopped(f"{', '.join(named)} describe a new line: add --add{detail}")
+        if remove is None:
+            raise CommandStopped("pass --add, --remove or both")
+    names = _cast_names(spine)
+    patch: dict[str, Any] = {}
+    changed: list[str] = []
+    if remove is not None:
+        line_id = resolve_line_id(spine, remove, episode=episode)
+        found = _find_line(spine, line_id, episode=episode)
+        who = names.get(str(found.get("cast_id")), str(found.get("cast_id") or "?"))
+        patch["remove_dialogue_line_ids"] = [line_id]
+        changed.append(f"  - {line_id}  {who}: {_short(found.get('text') or '')}")
+    if not add:
+        return patch, changed
+    if beat is None or text is None:
+        raise CommandStopped("--add needs --beat N and --text \"...\"")
+    if subtitle is not None and spoken is None:
+        raise CommandStopped("--subtitle describes a pinned line: send it with --spoken")
+    if spoken is not None and _spoken_language(spine) == "en-US":
+        raise CommandStopped("--spoken pins the performed line of a JA/KO show; this show is en-US: use --text")
+    found_beat = _find(spine, spine.get("beats") or [], "beat_id", beat, episode=episode, kind="beat")
+    if new_voice is not None:
+        if role is None or voice_description is None:
+            raise CommandStopped("--new-voice needs --role \"...\" and --voice-description \"...\" (how the voice sounds)")
+        if off_screen is False:
+            raise CommandStopped("a --new-voice is heard, never seen: its line is off screen (drop --on-screen)")
+        if speaker is not None and speaker.strip().lower() != new_voice.strip().lower():
+            raise CommandStopped(f"--new-voice {new_voice!r} speaks the added line; drop --speaker {speaker!r}")
+        taken = next((cid for cid, name in names.items() if name.strip().lower() == new_voice.strip().lower()), None)
+        if taken is not None:
+            raise CommandStopped(f"{new_voice!r} is already in the cast ({taken}): give them the line with --speaker")
+        cast_id = voice_cast_id(new_voice)
+        card: dict[str, Any] = {"cast_id": cast_id, "name": new_voice, "role": role, "voice_description": voice_description}
+        if provider_voice is not None:
+            card["provider_voice"] = provider_voice
+        patch["add_voice_only_cast"] = [card]
+        off_screen = True
+        who = new_voice
+        voice = f", voice {provider_voice}" if provider_voice else ", voice: the first catalog voice nobody uses"
+        changed.append(f"  + voice {new_voice} ({cast_id}), heard, never drawn: {_short(role)}; sounds {_short(voice_description)}{voice}")
+    elif speaker is None:
+        raise CommandStopped(f"--add needs --speaker NAME (someone in the cast) or --new-voice NAME. {NEW_VOICE_HINT}")
+    else:
+        cast_id = resolve_speaker(spine, speaker)
+        who = names.get(cast_id, cast_id)
+    entry: dict[str, Any] = {"beat_id": found_beat["beat_id"], "cast_id": cast_id, "text": text}
+    for key, value in (("spoken_text", spoken), ("subtitle_text", subtitle), ("off_screen", off_screen)):
+        if value is not None:
+            entry[key] = value
+    patch["add_dialogue_lines"] = [entry]
+    heard = " (off-screen)" if off_screen else ""
+    performed = f"  performed: {spoken}" if spoken else ""
+    changed.append(f"  + beat {found_beat.get('ordinal')} ({found_beat['beat_id']})  {who}{heard}: {_short(text)}{performed}")
+    if speaker_moves:
+        direction = copy.deepcopy(found_beat.get("motion_direction") or {})
+        before = direction.get("subject_cast_id")
+        direction["subject_cast_id"] = cast_id
+        patch["beats"] = [{"beat_id": found_beat["beat_id"], "motion_direction": direction}]
+        changed.append(
+            f"  motion subject of {found_beat['beat_id']}: {names.get(str(before), before or 'none')}  ->  {who}"
+        )
+    return patch, changed
+
+
+#: What to do about each named refusal of a line edit (fictora-drama ``SpineLineEditRefused`` codes).
+REFUSAL_FIXES: dict[str, str] = {
+    "beat_already_has_line": (
+        "a beat holds one line. To replace it, remove the old line in the same command (`--add ... --remove {lines}`); "
+        "to change its words or speaker, `line --line {lines} --text/--speaker`"
+    ),
+    "line_speaker_not_motion_subject": (
+        "a speaking beat moves its speaker, and {beats}. Send the beat's motion subject in the same command: add "
+        "--speaker-moves (the shot then moves the speaker), or put the line on a beat where the speaker moves"
+    ),
+    "voice_only_cast_needs_a_line": "a new voice comes with its line: send --new-voice together with --add",
+    "voice_only_cast_on_screen": (
+        "a new voice is heard, never seen: keep its line off screen and keep it out of every frame "
+        "(lines {lines}, frames {frames})"
+    ),
+    "cast_id_taken": "someone in the cast already has the id {cast_ids}: give them the line with --speaker, or pick another --new-voice name",
+    "cast_limit_reached": "a story holds {limit} characters at most: give the line to someone already in the cast with --speaker",
+    "line_id_taken": "that line id is used; the kit lets the server name new lines, so re-save the story (`spine --refresh`) and try again",
+    "invalid_patch": "an id is not on the story; list the lines with `line --desk D --episode N` and use their numbers",
+    "cascade_edit_out_of_scope": "after the script gate one command edits one episode: add and remove lines of episode {episode} only",
+}
+
+
+def explain_refusal(message: str, spine: Mapping[str, Any], *, episode: int) -> str:
+    """Add the fix a named line-edit refusal implies to the server's message.
+
+    Parameters
+    ----------
+    message
+        The kit's ``HTTP 400 PATCH …: code: message (details {…})`` text.
+    spine
+        Spine JSON before the edit (for names).
+    episode
+        Episode ordinal.
+
+    Returns
+    -------
+    str
+        ``message`` plus a ``fix:`` line when the code is a known line-edit rule, else ``message``.
+    """
+
+    found = re.search(r": ([a-z][a-z0-9_]*): ", message)
+    code = found.group(1) if found else ""
+    template = REFUSAL_FIXES.get(code)
+    if template is None:
+        return message
+    details: dict[str, Any] = {}
+    raw = re.search(r"\(details (\{.*\})\)", message)
+    if raw:
+        try:
+            details = json.loads(raw.group(1))
+        except ValueError:
+            details = {}
+    names = _cast_names(spine)
+    beats = "; ".join(
+        f"{b.get('beat_id')} moves {names.get(str(b.get('motion_subject_cast_id')), b.get('motion_subject_cast_id'))}, "
+        f"not {names.get(str(b.get('speaker_cast_id')), b.get('speaker_cast_id'))}"
+        for b in details.get("beats") or []
+        if isinstance(b, Mapping)
+    )
+
+    def listed(key: str) -> str:
+        return ", ".join(str(v) for v in details.get(key) or []) or "?"
+
+    fix = template.format(
+        lines=listed("line_ids"),
+        frames=listed("frame_ids"),
+        cast_ids=listed("cast_ids"),
+        limit=details.get("limit", 4),
+        beats=beats or "the beat moves someone else",
+        episode=episode,
+    )
+    return f"the server refused the line edit ({code}): {message}\n  fix: {fix}"
+
+
+def _send_story_edit(
+    desk: Path,
+    *,
+    episode: int,
+    build: Callable[[Mapping[str, Any]], tuple[dict[str, Any], list[str], str]],
+    select_regen: bool,
+    preview_only: bool,
+    out: Any,
+) -> tuple[Path, Path, dict[str, Any], bool, str, list[str]]:
+    """Send one story edit (``PATCH`` before the script gate, the cascade after it) and save the story again.
+
+    Returns
+    -------
+    tuple[Path, Path, dict[str, Any], bool, str, list[str]]
+        Resolved desk, ``api/spine.json``, the fresh spine, whether the cascade ran, what was edited, the changes.
+    """
+
+    desk, state, run = _desk_session(desk)
+    try:
+        spine = run.spine(state.spine_id or "")
+        patch, changed, what = build(spine)
+        print(f"ep{episode:02d} {what}:", file=out)
+        for line in changed:
+            print(line, file=out)
+        cascade = spine.get("approval_state") == "approved"
+        if not cascade and preview_only:
+            raise CommandStopped("--preview is for an approved script; before the script gate the edit is a plain patch")
+        try:
+            if not cascade:
+                try:
+                    run.patch(f"/v1/spines/{state.spine_id}", {"spine_version": spine["spine_version"], "patch": patch})
+                except SystemExit as exc:
+                    if "cascade_required" not in str(exc.code):
+                        raise CommandStopped(str(exc.code)) from None
+                    cascade = True
+                    print("(the server asks for a cascade: the script is approved there)", file=out)
+            if cascade:
+                _run_cascade(desk, run, spine, patch, episode=episode, select_regen=select_regen, preview_only=preview_only, out=out)
+        except CommandStopped as exc:
+            raise CommandStopped(explain_refusal(str(exc), spine, episode=episode)) from None
+        fresh = run.spine(state.spine_id or "")
+    finally:
+        run.client.close()
+    return desk, save_spine_snapshot(desk, episode, fresh), fresh, cascade, what, changed
+
+
+def _after_line_edit(
+    desk: Path,
+    fresh: dict[str, Any],
+    *,
+    episode: int,
+    line_id: str,
+    after_gate: bool,
+    relocalized: bool,
+    new_line: bool = False,
+    out: Any,
+) -> None:
+    desk_was_approved = episode_by_ordinal(load_series(desk), episode).script.status == "approved"
+    counts = sync_spine_lines(desk, fresh, episode=episode)
+    print(f"desk lines synced from the server: {', '.join(f'{t} {n}' for t, n in counts.items())}", file=out)
+    for line in line_edit_consequences(
+        fresh,
+        episode=episode,
+        line_id=line_id,
+        after_gate=after_gate,
+        desk_was_approved=desk_was_approved,
+        relocalized=relocalized,
+        desk=desk,
+        new_line=new_line,
+    ):
+        print(line, file=out)
+
+
+def run_line(
+    desk: Path,
+    *,
+    episode: int,
+    line: str | None = None,
+    text: str | None = None,
+    spoken: str | None = None,
+    subtitle: str | None = None,
+    speaker: str | None = None,
+    off_screen: bool | None = None,
+    add: bool = False,
+    beat: str | None = None,
+    remove: str | None = None,
+    speaker_moves: bool = False,
+    new_voice: str | None = None,
+    role: str | None = None,
+    voice_description: str | None = None,
+    provider_voice: str | None = None,
     select_regen: bool = False,
     preview_only: bool = False,
     out: Any = None,
 ) -> Path | None:
-    """Change one line on the server and on the desk in one step; with no ``line``, list the episode's lines.
+    """Change, add or remove a line on the server and on the desk in one step; with no change, list the lines.
 
-    The server's line is edited (``PATCH /v1/spines/{id}`` ``dialogue_lines``
-    before the script gate, the cascade after it), the story is saved again as
-    ``api/spine.json``, and the desk's lines are replaced with the server's.
-    The API cannot add or remove a line or add a cast member
-    (:data:`NO_NEW_LINES_OR_CAST`).
+    The server's story is edited (``PATCH /v1/spines/{id}`` before the script
+    gate, the cascade after it): ``dialogue_lines`` for an existing line,
+    ``add_dialogue_lines`` / ``remove_dialogue_line_ids`` to add or drop one, and
+    ``add_voice_only_cast`` for a new voice heard with its added line. The story
+    is saved again as ``api/spine.json`` and the desk's lines are replaced with
+    the server's. A named refusal is printed with the fix it implies
+    (:func:`explain_refusal`).
 
     Parameters
     ----------
@@ -1049,9 +1366,11 @@ def run_line(
     episode
         Episode ordinal.
     line
-        Line id or its number in the episode (``line`` with no change lists them).
+        Line id or its number in the episode, to change (``line`` with no change lists them).
     text, spoken, subtitle, speaker, off_screen
-        As :func:`build_patch`.
+        The changed or added line (:func:`build_patch`, :func:`build_line_add_remove_patch`).
+    add, beat, remove, speaker_moves, new_voice, role, voice_description, provider_voice
+        As :func:`build_line_add_remove_patch`.
     select_regen, preview_only
         As :func:`run_edit`.
     out
@@ -1064,6 +1383,45 @@ def run_line(
     """
 
     out = out or sys.stdout
+    adding = add or remove is not None or new_voice is not None
+    if adding:
+        if line is not None:
+            raise CommandStopped("--line changes a line; --add/--remove add or drop one: run them as two commands")
+
+        sent: dict[str, Any] = {}
+
+        def build_add(spine: Mapping[str, Any]) -> tuple[dict[str, Any], list[str], str]:
+            patch, changed = build_line_add_remove_patch(
+                spine, episode=episode, add=add, beat=beat, text=text, spoken=spoken, subtitle=subtitle,
+                speaker=speaker, off_screen=off_screen, speaker_moves=speaker_moves, remove=remove,
+                new_voice=new_voice, role=role, voice_description=voice_description, provider_voice=provider_voice,
+            )  # fmt: skip
+            what = " and ".join(part for part, on in (("add a line", add), ("remove a line", remove is not None)) if on)
+            sent.update(patch)
+            return patch, changed, what
+
+        desk, path, fresh, cascade, what, changed = _send_story_edit(
+            desk, episode=episode, build=build_add, select_regen=select_regen, preview_only=preview_only, out=out
+        )
+        if not preview_only:
+            added = ""
+            if add:
+                beat_id = sent["add_dialogue_lines"][0]["beat_id"]
+                added = next(
+                    (str(ln.get("line_id")) for b, ln in episode_lines(fresh, episode=episode) if b.get("beat_id") == beat_id),
+                    "",
+                )
+                if added:
+                    print(f"new line: {added}", file=out)
+            relocalized = add and spoken is None and _spoken_language(fresh) != "en-US"
+            _after_line_edit(
+                desk, fresh, episode=episode, line_id=added, after_gate=cascade, relocalized=relocalized,
+                new_line=True, out=out,
+            )  # fmt: skip
+            _note(desk, episode, f"line: {what}: " + "; ".join(item.strip() for item in changed))
+        return path
+    if beat is not None or speaker_moves:
+        raise CommandStopped("--beat and --speaker-moves go with --add")
     changes = (text, spoken, subtitle, speaker, off_screen)
     if line is None or all(value is None for value in changes):
         if line is not None:
@@ -1073,7 +1431,7 @@ def run_line(
             spine = run.spine(state.spine_id or "")
         finally:
             run.client.close()
-        print(f"ep{episode:02d} lines (use the number or the id with --line):", file=out)
+        print(f"ep{episode:02d} lines (use the number or the id with --line or --remove):", file=out)
         for row in line_listing(spine, episode=episode) or ["  (none)"]:
             print(row, file=out)
         return None
@@ -1148,9 +1506,8 @@ def run_edit(
     """
 
     out = out or sys.stdout
-    desk, state, run = _desk_session(desk)
-    try:
-        spine = run.spine(state.spine_id or "")
+
+    def build(spine: Mapping[str, Any]) -> tuple[dict[str, Any], list[str], str]:
         patch, changed = build_patch(
             spine,
             episode=episode,
@@ -1166,41 +1523,14 @@ def run_edit(
             off_screen=off_screen,
         )
         what = f"beat {beat}" if beat is not None else (f"frame {frame}" if frame is not None else f"line {line_id}")
-        print(f"ep{episode:02d} {what}:", file=out)
-        for line in changed:
-            print(line, file=out)
-        cascade = spine.get("approval_state") == "approved"
-        if not cascade and preview_only:
-            raise CommandStopped("--preview is for an approved script; before the script gate the edit is a plain patch")
-        if not cascade:
-            try:
-                run.patch(f"/v1/spines/{state.spine_id}", {"spine_version": spine["spine_version"], "patch": patch})
-            except SystemExit as exc:
-                if "cascade_required" not in str(exc.code):
-                    raise CommandStopped(str(exc.code)) from None
-                cascade = True
-                print("(the server asks for a cascade: the script is approved there)", file=out)
-        if cascade:
-            _run_cascade(desk, run, spine, patch, episode=episode, select_regen=select_regen, preview_only=preview_only, out=out)
-        fresh = run.spine(state.spine_id or "")
-    finally:
-        run.client.close()
-    path = save_spine_snapshot(desk, episode, fresh)
+        return patch, changed, what
+
+    desk, path, fresh, cascade, what, changed = _send_story_edit(
+        desk, episode=episode, build=build, select_regen=select_regen, preview_only=preview_only, out=out
+    )
     if line_id is not None and not preview_only:
-        desk_was_approved = episode_by_ordinal(load_series(desk), episode).script.status == "approved"
-        counts = sync_spine_lines(desk, fresh, episode=episode)
-        print(f"desk lines synced from the server: {', '.join(f'{t} {n}' for t, n in counts.items())}", file=out)
         relocalized = text is not None and spoken is None and _spoken_language(fresh) != "en-US"
-        for line in line_edit_consequences(
-            fresh,
-            episode=episode,
-            line_id=line_id,
-            after_gate=cascade,
-            desk_was_approved=desk_was_approved,
-            relocalized=relocalized,
-            desk=desk,
-        ):
-            print(line, file=out)
+        _after_line_edit(desk, fresh, episode=episode, line_id=line_id, after_gate=cascade, relocalized=relocalized, out=out)
     if not preview_only:
         _note(desk, episode, f"edit {what}: " + "; ".join(line.strip() for line in changed))
     return path
@@ -2140,11 +2470,16 @@ def add_episode_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     line = sub.add_parser(
         "line",
         help=(
-            "Change one line on the server AND the desk in one step: its words, the performed JA/KO line, its "
-            "speaker, or seen/heard. Says what happens to the script approval. With no change, lists the lines. "
-            "Cannot add or remove a line or add a cast member (the API has no route for it): that needs a new draft."
+            "Change, add or remove a line on the server AND the desk in one step (words, performed JA/KO line, "
+            "speaker, seen/heard; --add on a beat, --remove, --new-voice for someone only heard). Says what happens "
+            "to the script approval. With no change, lists the lines."
         ),
-        description=NO_NEW_LINES_OR_CAST + ".",
+        description=(
+            "Change a line: --line N with --text/--spoken/--speaker/--off-screen. Add one: --add --beat N --speaker "
+            "NAME --text \"...\" [--off-screen]; a beat holds one line, so to replace it add --remove OLD in the same "
+            "command. Drop one: --remove N. A new voice that is heard and never drawn comes with its line: --add --beat "
+            "N --text \"...\" --new-voice NAME --role \"...\" --voice-description \"...\" [--provider-voice X]."
+        ),
     )
     line.add_argument("--desk", type=Path, required=True)
     line.add_argument("--episode", type=int, required=True)
@@ -2152,12 +2487,24 @@ def add_episode_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     line.add_argument("--text", default=None, help="The English line.")
     line.add_argument("--spoken", default=None, help="Pin the exact performed line (JA/KO shows).")
     line.add_argument("--subtitle", default=None, help="The subtitle for the pinned line (with --spoken).")
-    line.add_argument("--speaker", default=None, help="Give the line to someone already in the cast (name or cast id).")
+    line.add_argument("--speaker", default=None, help="Someone already in the cast (name or cast id).")
     seen = line.add_mutually_exclusive_group()
     seen.add_argument("--off-screen", dest="off_screen", action="store_const", const=True, default=None,
                       help="The speaker is heard, not seen (a voice on a speaker, behind a door).")
     seen.add_argument("--on-screen", dest="off_screen", action="store_const", const=False,
                       help="The speaker is seen again.")
+    line.add_argument("--add", action="store_true", help="Add a line on --beat (with --text and --speaker or --new-voice).")
+    line.add_argument("--beat", default=None, help="With --add: the beat's number in the episode, or its id.")
+    line.add_argument("--remove", default=None, help="Drop a line: its id or number (with --add, replaces it).")
+    line.add_argument("--speaker-moves", action="store_true",
+                      help="With --add: also make the speaker the beat's motion subject (the server asks for it when "
+                           "the beat moves someone else).")
+    line.add_argument("--new-voice", default=None, help="With --add: a new character who is only heard, speaking the line.")
+    line.add_argument("--role", default=None, help="With --new-voice: who they are (\"facility intercom\").")
+    line.add_argument("--voice-description", default=None,
+                      help="With --new-voice: how the voice sounds (\"tinny, clipped, calm\").")
+    line.add_argument("--provider-voice", default=None,
+                      help="With --new-voice: an Eleven v3 voice; left out, the server picks one nobody uses.")
     line.add_argument("--select-regen", action="store_true", help="After the gate: also run paid regeneration items.")
     line.add_argument("--preview", action="store_true", help="After the gate: print the cascade and stop.")
 
@@ -2283,6 +2630,14 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 subtitle=args.subtitle,
                 speaker=args.speaker,
                 off_screen=args.off_screen,
+                add=args.add,
+                beat=args.beat,
+                remove=args.remove,
+                speaker_moves=args.speaker_moves,
+                new_voice=args.new_voice,
+                role=args.role,
+                voice_description=args.voice_description,
+                provider_voice=args.provider_voice,
                 select_regen=args.select_regen,
                 preview_only=args.preview,
             )
@@ -2325,8 +2680,10 @@ __all__ = [
     "add_episode_parsers",
     "admitted_job_id",
     "author_direction",
+    "build_line_add_remove_patch",
     "build_patch",
     "episode_lines",
+    "explain_refusal",
     "dispatch_episode",
     "line_edit_consequences",
     "line_listing",
@@ -2352,4 +2709,5 @@ __all__ = [
     "run_redraw_plate",
     "run_spine_refresh",
     "run_unit",
+    "voice_cast_id",
 ]
