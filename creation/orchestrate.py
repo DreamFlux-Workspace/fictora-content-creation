@@ -18,6 +18,7 @@ from typing import Any
 
 import httpx
 
+from creation.brief_lines import brief_vs_spine_lines
 from creation.desk_media_urls import board_urls_for_episode, cast_plate_urls
 from creation.harness import stages_gated as stages
 from creation.harness.credentials import load_drama_api_credentials
@@ -668,6 +669,10 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             counts = sync_spine_lines(desk, spine, episode=ep)
             _note(ep_dir, f"Draft complete (episode 1 alone). spine_id={spine_id} plan={plan.get('status')}")
             gate = script_gate_text(desk, spine, episode=ep)
+            versus = "\n".join(brief_vs_spine_lines(state.prompt, spine, episode=ep))
+            if versus:
+                _note(ep_dir, versus)
+                gate += "\n" + versus
             return StepResult(
                 state.phase,
                 f"Draft done. spine_id={spine_id}. {sum(counts.values())} lines on the desk.\n{gate}\n"
