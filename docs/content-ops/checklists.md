@@ -8,7 +8,7 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] Each speaking character has full-length + bust
 - [ ] Two characters in one frame are separated by build and colour
 - [ ] Ages are written as real ages; nobody under 18 is in a romance
-- [ ] A voice-only (off-screen) cast member was flagged before the plate spend
+- [ ] A voice-only (off-screen) cast member got no plate (every line off screen, in no frame)
 - [ ] Human has opened the contact sheet and said yes
 
 ## Before the script is approved

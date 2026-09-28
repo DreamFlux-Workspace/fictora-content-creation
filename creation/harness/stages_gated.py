@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 from creation.harness.http_util import HOSTED_POST_OFF_HINT, describe_job_error
 from creation.harness.video_enrol_errors import server_refused_episode_ordinal_field
+from creation.desk_media_urls import drawn_cast_rows
 from creation.harness.session import DramaApiRunSession
 from creation.spine_view import episode_id_for
 from creation.harness.visual_first_ep1 import (
@@ -210,11 +211,15 @@ def _terminal_error_code(terminal: dict[str, Any]) -> str | None:
 
 
 def _cast_plates_present(spine: dict[str, Any]) -> bool:
-    """Return whether every cast row has a usable portrait asset on the spine."""
+    """Return whether every drawn cast row has a usable portrait asset on the spine.
 
-    cast_rows = [row for row in (spine.get("cast") or []) if isinstance(row, dict) and row.get("cast_id")]
-    if not cast_rows:
+    Voice-only cast (``voice_only: true`` from the server) gets no plate, so
+    it is not waited on; a story whose cast is all voices owes no plate.
+    """
+
+    if not any(isinstance(row, dict) and row.get("cast_id") for row in spine.get("cast") or []):
         return False
+    cast_rows = drawn_cast_rows(spine)
     assets = [row for row in (spine.get("media_assets") or []) if isinstance(row, dict)]
     ready_cast_ids: set[str] = set()
     for asset in assets:

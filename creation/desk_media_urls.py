@@ -23,6 +23,33 @@ def _terminal_output(api_dir: Path, glob_pattern: str) -> dict[str, Any] | None:
     return output if isinstance(output, dict) else None
 
 
+def drawn_cast_rows(spine: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the cast rows that get an identity plate, in spine order.
+
+    The drama server marks a character it only ever hears (an intercom, a
+    phone caller, a narrator: every line off screen, in no frame) with
+    ``voice_only: true`` on the cast card and draws no plate for them
+    (fictora-drama #453). The kit reads that flag and never re-derives the
+    rule. A row without the flag (an older server) counts as drawn.
+
+    Parameters
+    ----------
+    spine
+        ``GET /v1/spines/{id}`` body.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        Cast rows with a ``cast_id`` whose ``voice_only`` is not true.
+    """
+
+    return [
+        row
+        for row in (spine.get("cast") or [])
+        if isinstance(row, dict) and row.get("cast_id") and row.get("voice_only") is not True
+    ]
+
+
 def cast_plate_urls(spine: dict[str, Any], api_dir: Path) -> list[str]:
     """Return ordered cast still URLs for plate download.
 
@@ -36,11 +63,13 @@ def cast_plate_urls(spine: dict[str, Any], api_dir: Path) -> list[str]:
     Returns
     -------
     list[str]
-        One URL per cast member, spine-first then terminal fallback.
+        One URL per drawn cast member (voice-only cast is skipped, so a
+        leftover plate for them never reaches ``plates/``), spine-first then
+        terminal fallback.
     """
 
     urls: list[str] = []
-    cast_rows = [row for row in (spine.get("cast") or []) if isinstance(row, dict) and row.get("cast_id")]
+    cast_rows = drawn_cast_rows(spine)
     assets = [row for row in (spine.get("media_assets") or []) if isinstance(row, dict)]
     by_cast: dict[str, str] = {}
     for asset in assets:
