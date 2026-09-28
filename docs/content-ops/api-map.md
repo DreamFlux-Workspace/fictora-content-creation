@@ -2,9 +2,22 @@
 
 The agent uses this table before every paid step. Anything marked **Aligned** must go through the Drama Generation API. Gaps are the only legitimate territory for a scratch tool.
 
+**Run every route through a command, never by hand.** The routes below are reference: what `fictora-produce` and `fictora-ops` send, so you can read a refusal and name a gap. Never write your own HTTP around the API (no `DramaApiRunSession`, `httpx` or `curl` script, no importing `creation.harness` into a scratch file). The commands keep the session, record each `Idempotency-Key` before the call and reuse it on a retry, so an interrupted command run again never pays twice. A route with no command is a DEVIATION (the skill's reference.md) and a line in [backlog.md](backlog.md). The one exception is a declared, read-only debugging `GET` (reference.md, "Debugging").
+
 Do not call `scripts/drama_create_flow_smoke.py` on a content production. That walk enrols and approves without a human gate.
 
-Use `creation.harness.DramaApiRunSession` for HTTP. Reuse the same `Idempotency-Key` on a retry.
+| Route family | Command |
+| --- | --- |
+| Draft, cast, boards, estimate, take, poll | `fictora-produce step` (one block per call; `--confirm-spend` for the take) |
+| Approvals | `fictora-produce approve --desk D --gate plates\|script\|board` |
+| Arc, brief, episode 2 on, memory | `arc`, `brief`, `author`, `memory` |
+| Line and spine edits | `line`, `edit`, `spine --refresh` |
+| Look | `look-frame`, `look`, `look-note` |
+| One board or one plate again | `redraw-board`, `redraw-plate` |
+| One take or one episode again | `film` |
+| Voices and paid audio | `voice`, `revoice`, `voice-line`, `cue`, `finish` (effects, bed, transcripts) |
+| Cancel a stuck job | `cancel-job` |
+| Line check (take facts) | `check-lines`, `review` |
 
 Credentials: `FICTORA_DRAMA_GENERATION_SERVICE_TOKEN` and optional `FICTORA_DRAMA_GENERATION_API_BASE_URL`. Never print the token.
 
@@ -22,12 +35,12 @@ Credentials: `FICTORA_DRAMA_GENERATION_SERVICE_TOKEN` and optional `FICTORA_DRAM
 | Cast plates | Aligned | `POST /v1/spines/{id}/cast/enrol` → poll → download plates → **stop** → `POST /v1/spines/{id}/cast/approve` |
 | Location + prop plates | Aligned | `POST /v1/spines/{id}/look-plates/draw` with `plate=object` (`prop_id`) or `plate=location` (`location_id`). Location uses the set-sheet template (no people). Props use the object-plate template. |
 | Boards | Aligned | `POST /v1/spines/{id}/boards/enrol` → poll → download → **stop** → `POST /v1/spines/{id}/episodes/{n}/boards/approve`. Authoring accepts a 2×N row board when every frame sets `board_row` (2/4/6/8 cells). Default remains 3×3 when `board_row` is omitted. |
-| Board exposure check | Aligned | `GET /v1/spines/{id}/episodes/{n}/boards/exposure` measures Rec. 709 mean luma. `POST .../boards/approve` returns `422 boards_dim` when a board is ≤25% mean luma unless `accept_dim=true`. Interior target band 28–35%. `content_ops_run.py measure-board` is a local helper, not the product path. |
+| Board exposure check | Aligned | `GET /v1/spines/{id}/episodes/{n}/boards/exposure` measures Rec. 709 mean luma. `POST .../boards/approve` returns `422 boards_dim` when a board is ≤25% mean luma unless `accept_dim=true`. Interior target band 28–35%. `fictora-ops measure-board` is a local helper, not the product path. |
 | Cost check | Aligned — mandatory | `POST /v1/spines/{id}/batches/estimate` before enrol |
 | Take | Aligned | `POST /v1/video-generations` with `authoring_mode=reuse`, `clip_duration_seconds` 4–15 (default 15), `aspect_ratio=9:16` |
 | Poll / cancel | Aligned | `GET /v1/video-generations/{id}`; `POST /v1/jobs/{id}/cancel` |
 | Per-take verdict | Aligned | Operator says Use it or Change this |
-| Delivery | Aligned | `GET /v1/video-generations/{id}/delivery` |
+| Delivery | Not used | `GET /v1/video-generations/{id}/delivery`. Hosted post is off, so there is nothing to deliver: the take stops at the raw clip and `fictora-produce finish` makes the deliverable on the laptop. |
 | One unbroken shot | Aligned | `cut_tempo=one_shot`. One camera move. Every cell is one shot. The camera is a little closer in each cell. |
 | A beat's own shots | Aligned (needs fictora-drama #464) | `beats[].shot_plan`: 1–4 shots `{size, subject, camera?, angle?}` in words; `PATCH /v1/spines/{id}` before the script gate, the cascade after it (marks the take's frames; its next board redraw follows the plan); `null` clears it. Shot 1 is the beat's first board row; shots past the beat's rows are clamped and logged, never refused. Kit: `edit --beat N --shot "size\|subject\|camera\|angle"` (repeatable), `--shot-plan JSON\|@FILE`, `--clear-shot-plan`. An older server answers `422`. |
 | Take length other than 15s | Aligned | `clip_duration_seconds` accepts 4–15. Default remains 15. 16 is still a rejection. |
@@ -52,9 +65,9 @@ After draft completes, the product order is:
 2. Script approve (`POST /v1/spines/{id}/approve`) after the line gate
 3. Boards enrol → poll → `GET .../episodes/{n}/boards/exposure` → **human board gate** → boards approve (`accept_dim=true` only when the human accepts a dim board)
 4. Estimate
-5. Video enrol → poll → delivery
+5. Video enrol → poll → raw takes + take facts (then `finish` locally)
 
-Use `creation.harness.stages_gated` for gate-split calls. Do not use `run_cast_look` (auto-approves). Do not approve in the same turn you enrol.
+`fictora-produce step` runs these calls with the gates split and stops at each one. Do not approve in the same turn you enrol.
 
 `clip_duration_seconds` defaults to 15. Send 4–15 for a shorter or full take. 16 is a rejection, not a longer film. Use `cut_tempo=one_shot` for an unbroken move. Use `caption_style=house` for the runbook caption recipe.
 
