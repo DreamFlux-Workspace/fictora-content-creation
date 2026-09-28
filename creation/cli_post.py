@@ -1,4 +1,4 @@
-"""``fictora-produce`` local post commands: voice, voice-fx, revoice, voice-line, cue, set-bed, finish, review, and the edits."""
+"""``fictora-produce`` local post commands: voice, voice-fx, revoice, voice-line, cue, set-bed, finish, join, review, and the edits."""
 
 from __future__ import annotations
 
@@ -10,12 +10,15 @@ from creation.cli_text import HELP_SUFFIX, text_or_file
 from creation.post.edit_commands import EDIT_COMMANDS, add_edit_parsers, dispatch_edit
 from creation.post.finish import FINISH_INCOMPLETE, run_finish
 from creation.post.hand import parse_placed, parse_range
+from creation.post.join import JOIN_NOT_DONE, run_join
 from creation.post.handmade import CUE_DEFAULT_SECONDS
 from creation.post.review_command import REVIEW_COMMANDS, add_review_parser, dispatch_review
 from creation.post.sfx import parse_adjustment
 
 POST_COMMANDS = (
-    frozenset({"voice", "voice-fx", "revoice", "voice-line", "cue", "set-bed", "finish"}) | EDIT_COMMANDS | REVIEW_COMMANDS
+    frozenset({"voice", "voice-fx", "revoice", "voice-line", "cue", "set-bed", "finish", "join"})
+    | EDIT_COMMANDS
+    | REVIEW_COMMANDS
 )
 
 
@@ -137,6 +140,28 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     fin.add_argument("--watermark-y", type=int, default=None, help="Mark top offset (never into the top 8%%).")
     fin.add_argument("--json", action="store_true", help="Print the report as JSON on stdout.")
 
+    join = sub.add_parser(
+        "join",
+        help="Join finished takes into one file (free): one bed across the join, a cut between takes and a "
+        f"0.25 s dissolve between episodes, 24 fps asserted, seam steps under 5 dB, marked once. Exits "
+        f"{JOIN_NOT_DONE} (NOT DONE, nothing marked) when a seam steps more than 5 dB.",
+    )
+    join.add_argument("--desk", type=Path, required=True)
+    which = join.add_mutually_exclusive_group(required=True)
+    which.add_argument("--episode", type=int, default=None, help="Every take of this episode, newest finish, in order.")
+    which.add_argument("--episodes", type=int, nargs="+", default=None, help="A series cut: these episodes in order.")
+    which.add_argument(
+        "--take-file", type=Path, action="append", default=None,
+        help="A finished take (the -sokii final or its -cap file), in order (repeat).",
+    )  # fmt: skip
+    join.add_argument("--dissolve", type=float, default=None, help="Seconds at every seam (0 = straight cut).")
+    join.add_argument("--bed", type=Path, default=None, help="Default: the show's bed pinned on the desk.")
+    join.add_argument("--bed-db", type=float, default=None, help="Default: the level the takes were finished at.")
+    join.add_argument("--duck-db", type=float, default=None, help="Default: what the takes were finished with.")
+    join.add_argument("--no-gain-match", action="store_true", help="Keep each take's own level.")
+    join.add_argument("--watermark-y", type=int, default=None, help="Mark top offset (never into the top 8%%).")
+    join.add_argument("--json", action="store_true", help="Print the report as JSON on stdout.")
+
     add_edit_parsers(sub)
     add_review_parser(sub)
 
@@ -152,7 +177,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
     Returns
     -------
     int
-        ``0`` done; ``5`` finish NOT DONE.
+        ``0`` done; ``5`` finish or join NOT DONE.
 
     Raises
     ------
@@ -240,4 +265,21 @@ def dispatch_post(args: argparse.Namespace) -> int:
         else:
             print(result.final)
         return 0 if result.complete else FINISH_INCOMPLETE
+    if args.command == "join":
+        joined = run_join(
+            args.desk,
+            episodes=tuple(args.episodes or ([args.episode] if args.episode is not None else [])),
+            take_files=tuple(args.take_file or ()),
+            dissolve=args.dissolve,
+            bed=args.bed,
+            bed_db=args.bed_db,
+            duck_db=args.duck_db,
+            gain_match=not args.no_gain_match,
+            watermark_y=args.watermark_y,
+        )
+        if args.json:
+            print(json.dumps(joined.as_json(), indent=2))
+        else:
+            print(joined.marked or joined.master)
+        return 0 if joined.complete else JOIN_NOT_DONE
     raise ValueError(f"unknown command {args.command}")

@@ -58,6 +58,7 @@ Read when you need the detail, not all on the first turn:
 | Read | watch `takes/`, write every fault | Use it, or Change this + cause |
 | Re-film one take | `film --desk D --episode N --take tK --cause "…"` (prices it), then the same with `--confirm-spend` | The human says yes to the number; nothing else is filmed or booked |
 | Finish | `fictora-produce finish --desk D [--take-file F]`, then `review --desk D --episode N --take tK` (caption boxes vs the covered zones, zone sheet for the face check; warns only) | Watch the final file; the last line must read `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓` |
+| Join (30 s / 60 s, series cut) | `fictora-produce join --desk D --episode N` (or `--episodes 1 2 3`) once every take is finished | Watch every seam; the report must list each seam under 5 dB and the file ends `-sokii-vN.mp4` |
 | Next episode | `arc --desk D --list` / `--pick K` (episode 2), `brief --desk D --episode N` (3 on), `author --desk D --episode N --direction K` or `--line "…"` | Script yes, then the same Board → Finish loop |
 
 Optional after the draft, before the plates, our own style frame: write the look down with the human, then `look-frame --desk D --description @look.txt` (inline words work too) draws it on the server from the words alone ($0.30; no image goes in, and never a picture found online) into `shared/look/look-frame-vN.png` and prints its `image_url`. Show the frame. Only after the human's yes, `look --desk D --url <that image_url>` pins it; to change it, change the description and draw again (the same description never pays twice). If `look-frame` says the server has no look-frame route, stop and tell engineering; never draw it with a provider key. `look-note --desk D --add "…"` steers the drawings. Edits: `line` for a line (its words, the performed JA/KO line, its speaker, or heard-not-seen; `--add` a line to a beat, `--remove` one, `--new-voice` for someone only heard: the server and the desk change together, and it says what happens to the script approval); `edit` for a beat or frame (reference.md). `fictora-produce status --desk D` any time. After each stage: report the path, append `run-notes.md` (`fictora-ops note`), stop.
@@ -171,6 +172,23 @@ uv run fictora-produce freeze  --desk D [--take-file F] --at 6.2 --hold 0.6
 uv run fictora-produce trim    --desk D --take-file FINAL --cut 10.17-12.15 [--cues-json J]
 uv run fictora-produce tempo   --desk D --take-file FINAL [--factor 0.9]
 ```
+
+## Join: the 30 s / 60 s episode and the series cut
+
+Free, on this laptop. When an episode has a second take, offer the join as soon as every take is finished; a series cut is the same command across episodes.
+
+```bash
+uv run fictora-produce join --desk D --episode N                  # every take of N, newest finish each, in take order
+uv run fictora-produce join --desk D --episodes 1 2 3             # series cut -> shared/cuts/
+uv run fictora-produce join --desk D --take-file F1 --take-file F2   # these finished takes, in this order
+```
+
+- It reads the record `finish` leaves (`take-epNN-tK-finish-vN.json`): each take's sound before the bed and its un-marked captioned picture. So there is **one music bed across the whole join** (the pinned show bed, looped seamlessly), never each take's bed stitched; captions ride on their picture; the mark goes on **once**, on the joined file. The un-marked master stays beside it.
+- Takes of one episode meet on a straight cut (they hand off on the same frame); episodes meet on a 0.25 s dissolve. `--dissolve S` sets every seam; say so when you use it.
+- Each take gets one gain to the takes' median level, then one measured mix gain and one limiter. No loudnorm.
+- Refused before anything is written: a take that is not finished (every take on the desk needs a complete finish), a take not at 24 fps, mixed sizes. The joined file is counted at 24 frames a second.
+- Each seam's room-level step is printed. Over 5 dB: `NOT DONE`, exit **5**, the master is kept to listen to and nothing is marked; do not hand it over.
+- A take cut with `trim` or `tempo` after finish has no record and is refused. Tell the human; do not join the -sokii files by hand (that stitches two beds and two marks).
 
 ## Change a character's voice (never regenerate)
 
