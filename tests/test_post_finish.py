@@ -369,3 +369,77 @@ def test_the_exact_duck_key_bus_is_the_voice_the_windows_were_found_in(
     assert duck.windows <= 12, (
         "only the line's windows count as voice, not the effect's"
     )
+
+
+def _words(path: Path, spans: list[tuple[str, float, float]]) -> Path:
+    words = []
+    for text, start, end in spans:
+        parts = text.split()
+        step = (end - start) / len(parts)
+        words += [
+            {"word": w, "start": start + i * step, "end": start + (i + 1) * step}
+            for i, w in enumerate(parts)
+        ]
+    path.write_text(json.dumps({"words": words}))
+    return path
+
+
+@needs_ffmpeg
+def test_captions_on_a_revoiced_take_are_timed_on_its_revoice_words(
+    post_desk: Path,
+) -> None:
+    takes = post_desk / "ep01" / "takes"
+    make_take(takes / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    # The treated file's speech spans sit off the lines (an intercom crackle, a re-laid line).
+    revoiced = make_take(
+        takes / "take-ep01-t1-revoice-v1-intercom-v1.mp4",
+        tones=((0.2, 0.7, 440), (2.4, 2.9, 880)),
+    )
+    _words(
+        takes / "take-ep01-t1-revoice-words-v1.json",
+        [("Wait for me here.", 1.0, 2.0), ("Not tonight.", 3.2, 4.0)],
+    )
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+        json.dumps(FACTS)
+    )
+    out = io.StringIO()
+
+    result = run_finish(post_desk, take_file=revoiced, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+                        facts_fetcher=lambda *a: None, stream=out)  # fmt: skip
+
+    captions = next(s for s in result.steps if s.step == "captions")
+    assert captions.status == "ran", out.getvalue()
+    assert "transcript `take-ep01-t1-revoice-words-v1.json`" in captions.detail
+    assert "1.00-" in captions.detail and "3.20-" in captions.detail, captions.detail
+    assert "(speech)" not in captions.detail, captions.detail
+
+
+@needs_ffmpeg
+def test_a_hand_voice_line_on_a_revoiced_take_is_timed_where_it_was_laid(
+    post_desk: Path,
+) -> None:
+    takes = post_desk / "ep01" / "takes"
+    make_take(takes / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    revoiced = make_take(
+        takes / "take-ep01-t1-revoice-v1.mp4", tones=((0.2, 0.7, 440),)
+    )
+    _words(
+        takes / "take-ep01-t1-revoice-words-v1.json", [("Wait for me here.", 1.0, 2.0)]
+    )
+    voices = post_desk / "ep01" / "voices"
+    voices.mkdir(parents=True, exist_ok=True)
+    line = make_tone(voices / "voice-ep01-aya-v1.wav", seconds=0.8, freq=660)
+    line.with_suffix(".json").write_text(json.dumps({"line": "Not tonight."}))
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+        json.dumps(FACTS)
+    )
+    from creation.post.hand import Placed
+
+    result = run_finish(post_desk, take_file=revoiced, voices=(Placed(line, 3.5),),
+                        sfx_render=fake_sfx([]), bed_maker=fake_bed,
+                        facts_fetcher=lambda *a: None, stream=io.StringIO())  # fmt: skip
+
+    captions = next(s for s in result.steps if s.step == "captions")
+    assert "with the hand lines" in captions.detail, captions.detail
+    assert "1.00-" in captions.detail and "3.50-" in captions.detail, captions.detail
+    assert list(takes.glob("take-ep01-t1-cap-timing-v1.json"))

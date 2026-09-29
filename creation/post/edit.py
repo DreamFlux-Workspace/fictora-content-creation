@@ -34,7 +34,14 @@ import numpy as np
 import numpy.typing as npt
 
 from creation.ops.folder import next_versioned_path
-from creation.post.media import decode_frames, ffmpeg_bin, probe_video, run_ffmpeg
+from creation.post.media import (
+    decode_frames,
+    ffmpeg_bin,
+    keep_cover_args,
+    probe_video,
+    run_ffmpeg,
+    video_streams,
+)
 
 # --- trim ---------------------------------------------------------------------------------------
 
@@ -301,17 +308,20 @@ def cut_frames(take: Path, out: Path, *, begin: int, stop: int, fps: float) -> P
     if out.exists():
         raise FileExistsError(f"{out} exists; trim never overwrites")
     info = probe_video(take)
+    picture, cover = video_streams(take)
     t_begin, t_stop = begin / fps, stop / fps
-    video = ["-vf", f"select='not(between(n\\,{begin}\\,{stop - 1}))',setpts=N/FRAME_RATE/TB", "-r", f"{fps:g}",
-             "-c:v", "libx264", "-crf", "16", "-preset", "medium", "-pix_fmt", "yuv420p"]  # fmt: skip
+    video = ["-map", f"0:v:{picture}",
+             "-filter:v:0", f"select='not(between(n\\,{begin}\\,{stop - 1}))',setpts=N/FRAME_RATE/TB",
+             "-r:v:0", f"{fps:g}", "-c:v", "libx264", "-crf", "16", "-preset", "medium", "-pix_fmt", "yuv420p"]  # fmt: skip
     audio = (
-        ["-af", f"aselect='not(gte(t\\,{t_begin:.6f})*lt(t\\,{t_stop:.6f}))',asetpts=N/SR/TB",
+        ["-map", "0:a:0", "-af", f"aselect='not(gte(t\\,{t_begin:.6f})*lt(t\\,{t_stop:.6f}))',asetpts=N/SR/TB",
          "-c:a", "aac", "-b:a", "192k"]
         if info.has_audio
         else ["-an"]
     )  # fmt: skip
     out.parent.mkdir(parents=True, exist_ok=True)
-    run_ffmpeg(["-i", str(take), *video, *audio, str(out)])
+    # The attached cover (finish's thumbnail) is copied across as it was.
+    run_ffmpeg(["-i", str(take), *video, *audio, *keep_cover_args(cover), str(out)])
     return out
 
 
@@ -588,38 +598,33 @@ def freeze_frame(take: Path, out: Path, *, at: float, hold: float) -> FreezeResu
     if out.exists():
         raise FileExistsError(f"{out} exists; freeze never overwrites")
     end = min(start + hold, total)
+    picture, cover = video_streams(take)
+    source = f"0:v:{picture}"
     rate = _rate(fps)
     normalize = f"fps={rate},format=yuv420p,setsar=1"
     parts: list[str] = []
     labels: list[str] = []
     if start > 0:
         parts.append(
-            f"[0:v]trim=start=0:end={start:.6f},setpts=PTS-STARTPTS,{normalize}[head]"
+            f"[{source}]trim=start=0:end={start:.6f},setpts=PTS-STARTPTS,{normalize}[head]"
         )
         labels.append("[head]")
     parts.append(
-        freeze_frame_chain(input_label="0:v", frame_seconds=start, hold_seconds=end - start, frame_rate=rate,
+        freeze_frame_chain(input_label=source, frame_seconds=start, hold_seconds=end - start, frame_rate=rate,
                            frame_filter="format=yuv420p,setsar=1", output_label="hold")
     )  # fmt: skip
     labels.append("[hold]")
     if end < total - frame / 2:
-        parts.append(f"[0:v]trim=start={end:.6f},setpts=PTS-STARTPTS,{normalize}[tail]")
+        parts.append(
+            f"[{source}]trim=start={end:.6f},setpts=PTS-STARTPTS,{normalize}[tail]"
+        )
         labels.append("[tail]")
     parts.append(f"{''.join(labels)}concat=n={len(labels)}:v=1:a=0[v]")
     args = ["-i", str(take), "-filter_complex", ";".join(parts), "-map", "[v]"]
     if info.has_audio:
         args += ["-map", "0:a", "-c:a", "copy"]
-    args += [
-        "-c:v",
-        "libx264",
-        "-crf",
-        "16",
-        "-pix_fmt",
-        "yuv420p",
-        "-t",
-        f"{total:.3f}",
-        str(out),
-    ]
+    args += ["-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p"]
+    args += [*keep_cover_args(cover), "-t", f"{total:.3f}", str(out)]
     out.parent.mkdir(parents=True, exist_ok=True)
     run_ffmpeg(args)
     return FreezeResult(
@@ -665,14 +670,15 @@ def change_tempo(take: Path, out: Path, *, factor: float = SLOW_TEMPO) -> Path:
     if out.exists():
         raise FileExistsError(f"{out} exists; tempo never overwrites")
     info = probe_video(take)
-    graph = f"[0:v]setpts=PTS/{factor},fps={HOUSE_FPS:g}[v]"
+    picture, cover = video_streams(take)
+    graph = f"[0:v:{picture}]setpts=PTS/{factor},fps={HOUSE_FPS:g}[v]"
     maps = ["-map", "[v]"]
     if info.has_audio:
         graph += f";[0:a]atempo={factor}[a]"
         maps += ["-map", "[a]", "-c:a", "aac", "-b:a", "192k"]
     out.parent.mkdir(parents=True, exist_ok=True)
     run_ffmpeg(["-i", str(take), "-filter_complex", graph, *maps,
-                "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", str(out)])  # fmt: skip
+                "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", *keep_cover_args(cover), str(out)])  # fmt: skip
     return out
 
 
@@ -814,16 +820,17 @@ def soften_seams(
     if out.exists():
         raise FileExistsError(f"{out} exists; soften never overwrites")
     info = probe_video(take)
+    picture, cover = video_streams(take)
     fps = info.fps or 24.0
     out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         inputs = ["-i", str(take)]
         graph: list[str] = []
-        last = "0:v"
+        last = f"0:v:{picture}"
         for index, cut in enumerate(sorted(cuts), start=1):
             still = Path(tmp) / f"cut{index}.png"
-            run_ffmpeg(["-ss", f"{max(0.0, cut - 1 / fps):.4f}", "-i", str(take), "-frames:v", "1", "-update", "1",
-                        str(still)])  # fmt: skip
+            run_ffmpeg(["-ss", f"{max(0.0, cut - 1 / fps):.4f}", "-i", str(take), "-map", f"0:v:{picture}",
+                        "-frames:v", "1", "-update", "1", str(still)])  # fmt: skip
             inputs += ["-loop", "1", "-framerate", f"{fps:g}", "-i", str(still)]
             graph.append(
                 f"[{index}:v]format=yuva420p,fade=t=out:st={cut:.4f}:d={seconds}:alpha=1[o{index}]"
@@ -835,13 +842,9 @@ def soften_seams(
         args = [*inputs, "-filter_complex", ";".join(graph), "-map", f"[{last}]"]
         if info.has_audio:
             args += ["-map", "0:a", "-c:a", "copy"]
+        args += ["-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p"]
         args += [
-            "-c:v",
-            "libx264",
-            "-crf",
-            "16",
-            "-pix_fmt",
-            "yuv420p",
+            *keep_cover_args(cover),
             "-t",
             f"{info.duration_seconds:.3f}",
             str(out),

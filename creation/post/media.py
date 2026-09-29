@@ -112,7 +112,8 @@ def probe_video(path: Path) -> VideoInfo:
 
     result = subprocess.run(
         [ffprobe_bin(), "-v", "error", "-show_entries",
-         "stream=codec_type,width,height,r_frame_rate:format=duration", "-of", "json", str(path)],
+         "stream=codec_type,width,height,r_frame_rate:stream_disposition=attached_pic:format=duration",
+         "-of", "json", str(path)],
         capture_output=True, text=True, check=False,
     )  # fmt: skip
     if result.returncode != 0:
@@ -121,7 +122,11 @@ def probe_video(path: Path) -> VideoInfo:
         )
     data = json.loads(result.stdout)
     streams = data.get("streams") or []
-    video = next((s for s in streams if s.get("codec_type") == "video"), None)
+    # An attached cover (finish's thumbnail) is a video stream too: never the picture.
+    video = next(
+        (s for s in streams if s.get("codec_type") == "video" and not _is_cover(s)),
+        None,
+    )
     if video is None:
         raise MediaToolError(f"{path.name} has no video stream")
     num, _, den = str(video.get("r_frame_rate") or "24/1").partition("/")
@@ -133,6 +138,74 @@ def probe_video(path: Path) -> VideoInfo:
         fps=fps,
         has_audio=any(s.get("codec_type") == "audio" for s in streams),
     )
+
+
+def _is_cover(stream: dict) -> bool:
+    return bool((stream.get("disposition") or {}).get("attached_pic"))
+
+
+def video_streams(path: Path) -> tuple[int, int | None]:
+    """Where the picture and the attached cover sit among a file's video streams.
+
+    Parameters
+    ----------
+    path
+        Video file.
+
+    Returns
+    -------
+    tuple[int, int | None]
+        ``(picture, cover)``: indexes for ``0:v:N``. ``cover`` is ``None`` when
+        the file has no attached picture (``finish`` embeds one as the platform
+        cover art).
+
+    Raises
+    ------
+    MediaToolError
+        When ffprobe fails or finds no picture stream.
+    """
+
+    result = subprocess.run(
+        [ffprobe_bin(), "-v", "error", "-select_streams", "v",
+         "-show_entries", "stream=index:stream_disposition=attached_pic", "-of", "json", str(path)],
+        capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    if result.returncode != 0:
+        raise MediaToolError(
+            f"ffprobe failed on {path.name}: {result.stderr.strip()[-300:]}"
+        )
+    streams = json.loads(result.stdout).get("streams") or []
+    picture = next((n for n, s in enumerate(streams) if not _is_cover(s)), None)
+    if picture is None:
+        raise MediaToolError(f"{path.name} has no video stream")
+    cover = next((n for n, s in enumerate(streams) if _is_cover(s)), None)
+    return picture, cover
+
+
+def keep_cover_args(cover: int | None, *, output_stream: int = 1) -> list[str]:
+    """ffmpeg output args that copy an attached cover across unchanged.
+
+    Put them after the picture's own ``-c:v`` so the copy wins for the cover.
+
+    Parameters
+    ----------
+    cover
+        The cover's ``0:v:N`` index from :func:`video_streams`, or ``None``.
+    output_stream
+        The cover's video index in the output (after the picture).
+
+    Returns
+    -------
+    list[str]
+        ``[]`` when there is no cover.
+    """
+
+    if cover is None:
+        return []
+    return [
+        "-map", f"0:v:{cover}", f"-c:v:{output_stream}", "copy",
+        f"-disposition:v:{output_stream}", "attached_pic",
+    ]  # fmt: skip
 
 
 def media_duration(path: Path) -> float:

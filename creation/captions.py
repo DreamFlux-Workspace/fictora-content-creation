@@ -1196,6 +1196,7 @@ def caption_take(
     words_json: Path | None = None,
     timing_source: Path | None = None,
     stem: str | None = None,
+    words_on_english: bool = False,
 ) -> CaptionResult:
     """Caption the newest raw take on a desk episode.
 
@@ -1223,6 +1224,10 @@ def caption_take(
     stem
         Output name stem (``take-ep01-t1-cap`` writes ``take-ep01-t1-cap-vN.mp4``
         and ``.ass``); default ``<take>-house`` / ``<take>-captioned``.
+    words_on_english
+        Time an English show's lines on ``words_json`` too (word flicker inside
+        each matched line). ``finish`` sets it for a revoiced or voice-fx take,
+        whose treated speech moves speech spans off the lines.
 
     Returns
     -------
@@ -1263,7 +1268,11 @@ def caption_take(
     # Word timing is for whole English lines over other-language speech; English flicker keeps speech spans.
     from creation.post.whisper import load_words
 
-    words = load_words(words_json) if words_json is not None and whole_lines else None
+    words = (
+        load_words(words_json)
+        if words_json is not None and (whole_lines or words_on_english)
+        else None
+    )
     timing = time_lines(
         caption_lines,
         duration=duration,

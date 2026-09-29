@@ -281,6 +281,37 @@ def test_a_stacked_double_frame_is_flagged(desk: Path) -> None:
     assert 0.9 <= start <= 1.1 and 1.7 <= end <= 2.0
 
 
+def test_a_stacked_stretch_says_its_score(desk: Path) -> None:
+    takes = _desk_ready(desk)
+    frames = _clean(24) + _halves(24, BLUE, BLUE, start=24) + _clean(24, start=48)
+    take = write_frames(takes / "take-ep01-t1-raw-v1.mp4", frames)
+
+    section = _section(review_take(desk, take_file=take), "Frames")
+
+    [line] = [d for d in section.details if d.startswith("stacked double frame")]
+    assert "top-vs-bottom 0.0" in line and "under 0.2" in line, line
+
+
+def test_top_and_bottom_alike_over_the_whole_take_is_a_note_not_a_warning(
+    desk: Path,
+) -> None:
+    takes = _desk_ready(desk)
+    # A dark, even set: top and bottom halves alike for all 3 s (episode 2 flagged 0-14 s on a normal take).
+    take = write_frames(
+        takes / "take-ep01-t1-raw-v1.mp4", _halves(72, (30, 30, 40), (34, 30, 40))
+    )
+
+    section = _section(review_take(desk, take_file=take), "Frames")
+
+    assert section.status == OK, section.lines()
+    assert section.data["stacked"] == []
+    [(start, end)] = section.data["stacked_whole_take"]
+    assert start == 0.0 and end > 2.5
+    assert any(
+        d.startswith("note: top and bottom halves look alike") for d in section.details
+    )
+
+
 def test_a_moving_clean_take_has_no_frozen_or_stacked_frames(desk: Path) -> None:
     takes = _desk_ready(desk)
     take = write_frames(takes / "take-ep01-t1-raw-v1.mp4", _clean())
@@ -397,6 +428,30 @@ def test_a_line_heard_but_never_asked_for_is_still_flagged(desk: Path) -> None:
     assert lines.status == WARN
     assert "1 of 2 approved lines asked" in lines.summary
     assert "heard: 2 of 2" in "\n".join(lines.lines())
+
+
+def test_a_line_laid_by_hand_with_finish_voice_counts_as_on_the_take(
+    desk: Path,
+) -> None:
+    from creation.post.finish_record import write_finish_record
+
+    takes = _desk_ready(desk, facts=_facts((), asked=(1, 0)))
+    take = write_frames(takes / "take-ep01-t1-sokii-v1.mp4", _clean())
+    write_finish_record(
+        desk, episode=1, take_id="t1", complete=True, pre_bed=None, master=take, final=take,
+        bed=None, bed_db=-16.5, duck_db=None,
+        hand_voices=[{"file": "voice-ep01-ren-v1.mp3", "start": 1.5, "seconds": 0.6, "line": "Not for me."}],
+    )  # fmt: skip
+
+    lines = _section(review_take(desk, take_file=take), "Lines")
+
+    text = "\n".join(lines.lines())
+    assert lines.status == OK, text
+    assert lines.data["asked_missing"] == 0
+    assert "1 of 2 approved lines asked" in lines.summary
+    assert "1 laid by hand with finish --voice: 2 of 2 on the take" in lines.summary
+    assert "line 2 ('Not for me.') was laid by hand" in text
+    assert "was not in the take's instructions" not in text
 
 
 def test_without_a_transcript_the_heard_check_says_how_to_get_one(desk: Path) -> None:

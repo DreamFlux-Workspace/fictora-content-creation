@@ -302,6 +302,14 @@ def test_finish_lays_mute_voice_and_cue_at_filmed_times_with_no_shift_after_debo
     assert (
         "Hand voice" in notes and "muted 3.20-4.00s" in notes and "Hand cues" in notes
     )
+    # The finish record names the hand-laid line, so review counts it as on the take.
+    from creation.post.finish_record import latest_finish_record
+
+    record = latest_finish_record(post_desk, 1, "t1")
+    assert record is not None
+    assert [(v["file"], v["start"]) for v in record.hand_voices] == [
+        ("voice-ep01-aya-v1.mp3", 2.5)
+    ]
 
 
 @needs_ffmpeg
@@ -588,3 +596,53 @@ def test_cue_and_voice_line_commands_run_from_the_cli(
     assert audio.calls[0][1]["seconds"] == 1.5
     assert (post_desk / "ep01" / "sfx" / "cue-a-cup-set-down-v1.mp3").is_file()
     assert (post_desk / "ep01" / "voices" / "voice-ep01-aya-v1.mp3").is_file()
+
+
+# ================================================================================================
+# a hand cue on an auto cue of the same sound
+# ================================================================================================
+
+
+def test_a_hand_cue_on_an_auto_cue_of_the_same_sound_says_which_to_drop() -> None:
+    from creation.post.sfx import duplicate_cue_warnings
+
+    laid = (("a door slams", 1.80), ("a door slams", 4.80), ("low hum", 5.0))
+    warnings = duplicate_cue_warnings((("a heavy steel door slam", 5.25),), laid)
+
+    assert len(warnings) == 1, warnings
+    assert "@4.80s" in warnings[0] and '--sfx-adjust "door=drop"' in warnings[0]
+    # Far apart, or a different sound: no warning.
+    assert duplicate_cue_warnings((("a heavy door slam", 3.2),), laid) == []
+    assert duplicate_cue_warnings((("a glass shatters", 4.9),), laid) == []
+
+
+@needs_ffmpeg
+def test_finish_warns_when_a_hand_cue_doubles_an_auto_cue(post_desk: Path) -> None:
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+        json.dumps(FACTS)
+    )
+    slam = make_tone(
+        post_desk / "ep01" / "sfx" / "cue-a-heavy-door-slam-v1.mp3",
+        seconds=0.4,
+        freq=900,
+        volume=0.6,
+    )
+    slam.with_suffix(".json").write_text(
+        json.dumps({"description": "a heavy door slam"})
+    )
+    out = io.StringIO()
+
+    result = run_finish(post_desk, sfx_render=_fake_sfx, bed_maker=_fake_bed, facts_fetcher=lambda *a: None,
+                        colour=False, cues=(Placed(slam, 3.4),), stream=out)  # fmt: skip
+
+    cues = next(s for s in result.steps if s.step == "cues")
+    assert '--sfx-adjust "door=drop"' in cues.detail, cues.detail
+    assert '--sfx-adjust "door=drop"' in out.getvalue()
+
+    from creation.post.sfx import parse_adjustment
+
+    again = run_finish(post_desk, sfx_render=_fake_sfx, bed_maker=_fake_bed, facts_fetcher=lambda *a: None,
+                       colour=False, cues=(Placed(slam, 3.4),), sfx_adjust=(parse_adjustment("door=drop"),),
+                       stream=io.StringIO())  # fmt: skip
+    assert "!!" not in next(s for s in again.steps if s.step == "cues").detail

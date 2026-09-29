@@ -12,7 +12,8 @@ chosen range of the file's own audio:
   around it does not jump, with 20 ms ramps at both edges.
 
 The picture is copied. It writes ``<name>-<preset>-vN.<ext>`` next to the
-file and never overwrites anything.
+file and never overwrites anything. Several ranges (``--range`` repeated) are
+treated in one pass into one file, each matched to its own level.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from __future__ import annotations
 import math
 import re
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -108,18 +110,27 @@ def match_gain_db(before: float, after: float) -> float:
 
 
 def apply_voice_fx(
-    source: Path, *, start: float, end: float, preset: str, out: Path | None = None
+    source: Path,
+    *,
+    preset: str,
+    start: float | None = None,
+    end: float | None = None,
+    ranges: Sequence[tuple[float, float]] = (),
+    out: Path | None = None,
 ) -> Path:
-    """Treat ``source``'s audio between ``start`` and ``end`` with ``preset``; write a new file.
+    """Treat ``source``'s audio in one or more ranges with ``preset``; write one new file.
 
     Parameters
     ----------
     source
         A take (video with audio) or an audio file.
-    start, end
-        The range treated, seconds.
     preset
         ``intercom``, ``phone`` or ``radio``.
+    start, end
+        One range treated, seconds (or give ``ranges``).
+    ranges
+        Every range treated, seconds (``voice-fx --range`` repeated): one
+        pass, one output file. Each range is level-matched on its own.
     out
         Where to write; default ``<stem>-<preset>-vN<suffix>`` next to ``source``.
 
@@ -131,19 +142,32 @@ def apply_voice_fx(
     Raises
     ------
     ValueError
-        Unknown preset, or a range outside the file.
+        Unknown preset, no range, a range outside the file, or ranges that overlap.
     FileExistsError
         When ``out`` exists (post never overwrites).
     """
 
     if preset not in PRESETS:
         raise ValueError(f"--preset is one of {', '.join(PRESETS)}; got {preset!r}")
+    spans = list(ranges) or (
+        [(start, end)] if start is not None and end is not None else []
+    )
+    if not spans:
+        raise ValueError("voice-fx needs a --range")
     total = media_duration(source)
-    if start >= total:
-        raise ValueError(
-            f"the range starts at {start:.2f}s but {source.name} is {total:.2f}s long"
-        )
-    end = min(end, total)
+    spans = sorted(spans)
+    for (_, first_end), (second_start, _) in zip(spans, spans[1:]):
+        if second_start < first_end:
+            raise ValueError(
+                f"--range {second_start:g}-… starts before the range ahead of it ends ({first_end:g}s); "
+                "give ranges that do not overlap"
+            )
+    for begin, _ in spans:
+        if begin >= total:
+            raise ValueError(
+                f"the range starts at {begin:.2f}s but {source.name} is {total:.2f}s long"
+            )
+    spans = [(begin, min(finish, total)) for begin, finish in spans]
     if out is None:
         out = next_versioned_path(
             source.parent, f"{source.stem}-{preset}", source.suffix
@@ -151,15 +175,22 @@ def apply_voice_fx(
     if out.exists():
         raise FileExistsError(f"{out} exists; local post never overwrites")
     chosen = PRESETS[preset]
-    gain = match_gain_db(
-        range_rms_db(source, start, end), range_rms_db(source, start, end, chosen.chain)
-    )
-    inside = f"clip((t-{start})/{EDGE_SECONDS},0,1)*clip(({end}-t)/{EDGE_SECONDS},0,1)"
+    windows = [
+        f"clip((t-{a})/{EDGE_SECONDS},0,1)*clip(({b}-t)/{EDGE_SECONDS},0,1)"
+        for a, b in spans
+    ]
+    # Each range is brought back to its own level: the wet branch's gain is a sum over the windows.
+    gains = [
+        10 ** (match_gain_db(range_rms_db(source, a, b), range_rms_db(source, a, b, chosen.chain)) / 20)
+        for a, b in spans
+    ]  # fmt: skip
+    inside = "+".join(f"({w})" for w in windows)
+    wet_level = "+".join(f"{g:.4f}*({w})" for g, w in zip(gains, windows))
     graph = ";".join(
         [
             "[0:a]aresample=48000,asplit=2[dryin][wetin]",
-            f"[dryin]volume='1-{inside}':eval=frame[dry]",
-            f"[wetin]{chosen.chain},volume={gain:.2f}dB,volume='{inside}':eval=frame[wet]",
+            f"[dryin]volume='1-({inside})':eval=frame[dry]",
+            f"[wetin]{chosen.chain},volume='{wet_level}':eval=frame[wet]",
             f"anoisesrc=color=pink:amplitude={chosen.static}:sample_rate=48000:duration={total:.3f},"
             f"volume='{inside}':eval=frame[static]",
             "[dry][wet][static]amix=inputs=3:normalize=0:duration=first[a]",

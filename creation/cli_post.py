@@ -98,9 +98,10 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     fx.add_argument(
         "--range",
         dest="span",
+        action="append",
         required=True,
         metavar="A-B",
-        help="Seconds treated, like 0-3.5.",
+        help="Seconds treated, like 0-3.5. Repeat for every line the voice speaks: one file.",
     )
     fx.add_argument("--preset", required=True, choices=("intercom", "phone", "radio"))
     fx.add_argument(
@@ -380,16 +381,17 @@ def dispatch_post(args: argparse.Namespace) -> int:
         from creation.post.voice_fx import apply_voice_fx
         from creation.post.voice_fx import parse_range as parse_fx_span
 
-        start, end = parse_fx_span(args.span)
+        spans = [parse_fx_span(raw) for raw in args.span]
         made = apply_voice_fx(
-            args.file.expanduser().resolve(), start=start, end=end, preset=args.preset
+            args.file.expanduser().resolve(), ranges=spans, preset=args.preset
         )
         if args.desk is not None:
             run_dir = args.desk.expanduser().resolve() / f"ep{args.episode:02d}"
             if (run_dir / "run-notes.md").is_file():
+                treated = ", ".join(f"{a:.2f}-{b:.2f}s" for a, b in sorted(spans))
                 append_run_note(
                     run_dir,
-                    f"voice-fx {args.preset} on `{args.file.name}` {start:.2f}-{end:.2f}s -> `{made.name}`, $0.",
+                    f"voice-fx {args.preset} on `{args.file.name}` {treated} -> `{made.name}`, $0.",
                 )
         print(made)
         print("Listen to it; then finish (or caption) with --take-file on it.")

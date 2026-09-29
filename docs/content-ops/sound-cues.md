@@ -13,6 +13,8 @@ uv run fictora-produce finish --desk D --episode N --take tK --cue epNN/sfx/cue-
 
 The take's own effects are levelled or dropped with a drop or level sound note for every take (below), or with `finish --sfx-adjust` (`"door=-6"`, `"hum=drop"`, `"shot:3=+4"`) for one take only, on top. Never re-rendered.
 
+A hand cue on a visible action (the door you see close) usually doubles a take-facts cue of the same sound: a beat's sound cue lands at the beat's time, not at the moment in the picture, so one door can slam three times. Lay the hand cue with the drop for the same auto sound: `finish --cue epNN/sfx/cue-a-heavy-door-slam-v1.mp3@5.25 --sfx-adjust "door=drop"`. When a hand cue lands within about 1 s of an auto cue that shares a word with it, `finish` prints `!! hand cue … the same sound twice` with the `--sfx-adjust "<word>=drop"` to use.
+
 A sound the human asks for on one take goes on the story as a sound note, then into the take's facts:
 
 ```bash
