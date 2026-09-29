@@ -253,6 +253,11 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Mark top offset (never into the top 8%%).",
     )
     fin.add_argument(
+        "--no-thumbnail",
+        action="store_true",
+        help="Skip POST …/episodes/N/thumbnail and embedding cover art on the deliverable.",
+    )
+    fin.add_argument(
         "--json", action="store_true", help="Print the report as JSON on stdout."
     )
 
@@ -432,6 +437,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             mutes=tuple(parse_range(raw) for raw in args.mute),
             voices=tuple(parse_placed(raw, flag="--voice") for raw in args.voice),
             cues=tuple(parse_placed(raw, flag="--cue") for raw in args.cue),
+            thumbnail=not args.no_thumbnail,
         )
         if args.json:
             print(json.dumps(result.as_json(), indent=2))

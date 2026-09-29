@@ -131,7 +131,10 @@ Handler = Callable[[str, str, dict[str, Any] | None], Any]
 
 
 def openapi_doc(
-    *, episode_ordinal: bool = True, one_take_estimate: bool = True
+    *,
+    episode_ordinal: bool = True,
+    one_take_estimate: bool = True,
+    episode_thumbnail: bool = False,
 ) -> dict[str, Any]:
     """The slice of ``/openapi.json`` the kit reads: which request fields the deploy accepts."""
 
@@ -141,7 +144,7 @@ def openapi_doc(
     estimate = {"spine_version": {}, "episode_ids": {}}
     if one_take_estimate:
         estimate["reroll_take_index"] = {}
-    return {
+    doc: dict[str, Any] = {
         "components": {
             "schemas": {
                 "DramaVideoGenerationCreateRequest": {"properties": film},
@@ -149,6 +152,11 @@ def openapi_doc(
             }
         }
     }
+    if episode_thumbnail:
+        doc["paths"] = {
+            "/v1/spines/{spine_id}/episodes/{ordinal}/thumbnail": {"post": {}},
+        }
+    return doc
 
 
 class FakeApi:

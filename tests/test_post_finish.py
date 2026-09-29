@@ -97,11 +97,15 @@ def test_finish_lays_sfx_music_mix_captions_and_mark_as_new_versions(
         "mix",
         "captions",
         "watermark",
+        "thumbnail",
     ]
+    assert result.steps[-1].status == "skipped"
     assert (
         "no board frames" in result.steps[0].detail and result.steps[0].output is None
     )
-    assert all(s.status == "ran" for s in result.steps), out.getvalue()
+    assert all(s.status == "ran" for s in result.steps if s.step != "thumbnail"), (
+        out.getvalue()
+    )
     names = sorted(p.name for p in (post_desk / "ep01" / "takes").glob("*.mp4"))
     assert names == sorted([
         "take-ep01-t1-raw-v1.mp4", "take-ep01-t1-sfx-v1.mp4", "take-ep01-t1-colour-v1.mp4",

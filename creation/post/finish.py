@@ -33,6 +33,9 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    timed on speech spans. ``--line-start``/``--line-end`` set either end by
    hand. The report names what timed each line.
 6. ``watermark`` - the Sokii mark top left, under the covered top strip.
+7. ``thumbnail`` - when the deploy exposes ``POST …/episodes/{n}/thumbnail``,
+   draw the episode card from the take's stored clip URL and embed it as the
+   MP4 attached picture on the marked file (platform cover art).
 
 Every step writes a new versioned file (``take-epNN-tK-<step>-vN.mp4``); nothing
 is overwritten. A failing step is reported and skipped and the chain carries
@@ -100,6 +103,7 @@ from creation.post.sfx import (
     saved_take_facts,
     service_renderer,
 )
+from creation.post.thumbnail import attach_episode_thumbnail_to_finish
 from creation.post.watermark import watermark
 
 #: ``finish`` exit code: files were written but music, SFX or the mix did not go on.
@@ -292,6 +296,7 @@ def run_finish(
     bed_maker: Maker | None = None,
     facts_fetcher: FactsFetcher = api_facts_fetcher,
     transcriber: Transcriber | None = None,
+    thumbnail: bool = True,
     stream: TextIO | None = None,
 ) -> FinishResult:
     """Run the whole local post chain on one accepted take.
@@ -681,6 +686,47 @@ def run_finish(
             marked,
         )
 
+    def do_thumbnail(take: Path) -> StepReport:
+        if not thumbnail:
+            return StepReport("thumbnail", "skipped", "--no-thumbnail")
+        try:
+            final, answer = attach_episode_thumbnail_to_finish(
+                desk,
+                episode=episode,
+                take_id=take_id,
+                marked_video=take,
+                takes_dir=takes,
+                base_stem=base,
+                stream=out,
+            )
+        except (MediaToolError, SystemExit, httpx.HTTPError, OSError) as exc:
+            detail = (
+                str(exc.code)
+                if isinstance(exc, SystemExit)
+                else f"{type(exc).__name__}: {exc}"
+            )
+            return StepReport("thumbnail", "failed", detail[:300])
+        if answer is None:
+            return StepReport(
+                "thumbnail",
+                "skipped",
+                "no stored take URL or the server has no episode thumbnail route yet",
+            )
+        cost = float(answer.get("cost_usd") or 0.0)
+        if cost:
+            book(desk, episode=episode, usd=cost, take_id=take_id, stream=out)
+        cached = " (cached, free)" if answer.get("cached") else ""
+        append_run_note(
+            run_dir, f"Episode thumbnail embedded on `{final.name}`{cached}"
+        )
+        return StepReport(
+            "thumbnail",
+            "ran",
+            f"attached cover from server draw{cached}; deliver `{final.name}`",
+            final,
+            cost,
+        )
+
     step("deboard", "Replacing the board frames at the head of the take", do_deboard)
     if "voice" in hand_steps:
         step("voice", "Muting stray speech and laying the hand voice lines", do_voice)
@@ -692,6 +738,12 @@ def run_finish(
     step("mix", "Mixing the bed under the voice at a measured level", do_mix)
     step("captions", "Burning house captions", do_captions)
     step("watermark", "Putting the Sokii mark on", do_watermark)
+    if result.complete:
+        step(
+            "thumbnail",
+            "Drawing the episode thumbnail and embedding it on the deliverable",
+            do_thumbnail,
+        )
 
     result.final = current
     try:
