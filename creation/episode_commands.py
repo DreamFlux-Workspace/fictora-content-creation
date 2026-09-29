@@ -20,7 +20,9 @@ desk with a versioned name, and never approves (the human's yes goes through
 - ``sound-note``: add a sound to one take, or drop / level one on every take; ``--remove``; list.
 - ``take-facts --refresh``: read a filmed take's facts again (new sound notes, planned impacts), versioned.
 - ``spine --refresh``: save the story again.
-- ``redraw-board``: redraw one board on ``/boards/{set}/regenerate``; stops unpaid when nothing it is drawn from changed (``--reroll`` to re-roll; ``--note`` kept on the desk).
+- ``redraw-board``: redraw one board on ``/boards/{set}/regenerate``; ``--note "what's wrong"`` first turns the note into
+  shot edits through the director (the app's path) and prints them per row; stops unpaid when nothing it is drawn
+  from changed (``--same-shots`` / ``--reroll`` to re-roll).
 - ``plates``: retired (was ``plates --cast NAME --cause``); prints a pointer to ``redraw-plate --note`` and sends nothing.
 - ``redraw-plate --cast X --note "..."``: note one character, then redraw only their plate (one still).
 - ``check-lines``: were the approved lines in the take's instructions, which shot and board row each fell in,
@@ -105,6 +107,15 @@ from creation.production_state import (
     save_production,
     start_episode,
 )
+from creation.board_note import (
+    DIRECTOR_STAGE,
+    beat_change_lines,
+    director_message,
+    regenerate_takes_note,
+    row_change_lines,
+    take_patch,
+)
+from creation.board_note import take_beats as board_take_beats
 from creation.shot_plan import (
     OLDER_SERVER_HINT,
     ShotPlanError,
@@ -173,11 +184,16 @@ PLATE_DEADLINE_SECONDS = 3600.0
 """Poll cap on one plate redraw (the cast enrol's cap)."""
 """Most routes answer ``job_id``; ``pilot-episodes/{n}/author`` answers ``extension_job_id``."""
 REDRAW_CAUSE_IS_A_LABEL = (
-    "The cause and the note are labels for the desk and the run notes; the regenerate route takes no notes, so "
-    "they do not change what is drawn. To change the drawing, edit the frames first (edit --frame ...), edit the "
-    "beat (edit --beat N --shot ...) or add a look note; a redraw with none of these changed stops unless "
-    "--reroll. A beat edit made after the board was drawn is carried into the redraw by the server (it "
-    "re-authors the take's frames first)"
+    "The cause is a label for the desk and the run notes; it does not change what is drawn. To change the "
+    'drawing, say what is wrong with --note "..." (turned into shot edits through the director before the '
+    "redraw), or edit the frames first (edit --frame ...), the beat (edit --beat N --shot ...) or add a look "
+    "note; a redraw with none of these changed stops unless --same-shots. A beat edit made after the board was "
+    "drawn is carried into the redraw by the server (it re-authors the take's frames first)"
+)
+NOTE_CHANGED_NOTHING = (
+    'the note did not change any shot of {take}: the director answered "{reply}" and edited none of the take\'s '
+    "beats. Nothing was drawn or paid. Say it as what the camera should see (size, framing, what is in or out of "
+    "the frame), or edit the frame directly (`edit --episode {episode} --frame N --set FIELD=VALUE`)."
 )
 
 NEW_VOICE_HINT = (
@@ -2973,24 +2989,187 @@ def redraw_needs_an_edit(
 
     where = f"--desk {desk} --episode {episode}"
     lines = [
-        f"{take_id}: nothing this board is drawn from has changed since it was last drawn "
+        f"!! {take_id}: nothing this board is drawn from has changed since it was last drawn "
         f"(frame briefs, the take's beats, look notes, cast plates), so a redraw draws the same direction "
         f"again: a re-roll for ${float(STILL_USD):.2f}. Nothing was sent or paid.",
-        "  --cause and --note are labels for the desk; the redraw route takes no notes and never reads them.",
-        "  Turn the human's note into edits first, then redraw (see 'Fixing a board' in the skill):",
+        "  --cause is a label for the desk; it never changes the drawing.",
+        "  Say what is wrong and the note becomes shot edits before the redraw (the app's director path):",
+        f'    fictora-produce redraw-board {where} --take {take_id} --note "what is wrong, as the camera should see it"',
+        "  Or make the edits yourself, then redraw (see 'Fixing a board' in the skill):",
         f"    fictora-produce edit {where} --frame N --set FIELD=VALUE   (one board row's visual_brief)",
         f'    fictora-produce edit {where} --beat N --shot "size|subject|camera|angle"   '
         "(the server re-authors the take's frames on the redraw)",
         f'    fictora-produce look-note --desk {desk} --add "..."   (the whole story\'s look)',
         "  After the script gate, run the edit with --preview first and show the human the before/after.",
-        "  Only when the frames are right and the drawing was a random miss: redraw-board ... --reroll.",
+        "  Only when the frames are right and the drawing was a random miss: redraw-board ... --same-shots "
+        f"(pays ${float(STILL_USD):.2f} for the same scene).",
     ]
     if legacy:
         lines.append(
             "  (This board was drawn before the desk recorded its beats, look notes and plates: only the frame "
-            "briefs were compared. If a beat, look note or plate did change since, pass --reroll.)"
+            "briefs were compared. If a beat, look note or plate did change since, pass --same-shots.)"
         )
     return "\n".join(lines)
+
+
+def _director_turn(
+    run: DramaApiRunSession, spine_id: str, body: dict[str, Any]
+) -> dict[str, Any]:
+    """One director turn; an older service that does not know ``stage`` is asked again without it (as the app does)."""
+
+    path = f"/v1/spines/{quote(spine_id, safe='')}/director/turns"
+    try:
+        return run.post(path, body)
+    except SystemExit as exc:
+        if "422" not in str(exc.code) or "stage" not in body:
+            raise CommandStopped(
+                f"the director could not read the note: {exc.code}"
+            ) from None
+    older = {key: value for key, value in body.items() if key != "stage"}
+    try:
+        return run.post(path, older)
+    except SystemExit as exc:
+        raise CommandStopped(
+            f"the director could not read the note: {exc.code}"
+        ) from None
+
+
+def note_to_shot_edits(
+    desk: Path,
+    run: DramaApiRunSession,
+    spine: dict[str, Any],
+    *,
+    episode: int,
+    take_id: str,
+    take_count: int,
+    note: str,
+    out: Any,
+) -> dict[str, Any]:
+    """Turn "what's wrong with this board" into edits of the take's beats, the way the app does. Spends nothing.
+
+    The note goes to ``POST /v1/spines/{id}/director/turns`` (stage ``storyboard``,
+    the episode in view), scoped to the take's beats. Its ``patch_story`` step is
+    applied: the server already applied it before the script gate; after it,
+    the beats it re-stages go through the cascade (paid items off, as ``edit``).
+    The redraw that follows re-authors the take's frames from the edited beats.
+    Prints, per board row, the beat before and after.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    run
+        Session that owns the spine.
+    spine
+        The spine before the note.
+    episode
+        Episode ordinal.
+    take_id
+        ``t1``, ``t2`` ...
+    take_count
+        Takes on the desk for the episode.
+    note
+        What is wrong with the board.
+    out
+        Text stream.
+
+    Returns
+    -------
+    dict[str, Any]
+        The spine after the edit.
+
+    Raises
+    ------
+    CommandStopped
+        When the director edited none of the take's beats (nothing is drawn or paid).
+    """
+
+    set_index = int(take_id[1:])
+    before = board_take_beats(
+        spine, episode=episode, set_index=set_index, take_count=take_count
+    )
+    if not before:
+        raise CommandStopped(
+            f"{take_id} of ep{episode:02d} has no beats on the server to change; nothing was drawn or paid"
+        )
+    spine_id = str(spine.get("spine_id") or "")
+    body: dict[str, Any] = {
+        "spine_version": spine["spine_version"],
+        "message": director_message(
+            take_id=take_id, episode=episode, beats=before, note=note
+        ),
+        "episode_id": episode_id_for(spine, episode),
+        "stage": DIRECTOR_STAGE,
+    }
+    print(
+        f"[board] {take_id}: asking the director to turn the note into shot edits ...",
+        file=out,
+    )
+    turn = _director_turn(run, spine_id, body)
+    _save_desk_json(desk, f"board-note-ep{episode:02d}-{take_id}-turn", turn)
+    for step in turn.get("steps") or []:
+        if isinstance(step, Mapping):
+            print(
+                f"  director: [{step.get('state')}] {_short(step.get('summary') or step.get('tool'))}",
+                file=out,
+            )
+    patch, dropped = take_patch(
+        turn, allowed_beat_ids={str(beat.get("beat_id")) for _, beat in before}
+    )
+    for what in dropped:
+        print(f"  left out: {what} (the note is about {take_id}'s drawing)", file=out)
+    if patch:
+        fresh = run.spine(spine_id)
+        cascade = fresh.get("approval_state") == "approved"
+        try:
+            if not cascade:
+                try:
+                    run.patch(
+                        f"/v1/spines/{spine_id}",
+                        {"spine_version": fresh["spine_version"], "patch": patch},
+                    )
+                except SystemExit as exc:
+                    if "cascade_required" not in str(exc.code):
+                        raise CommandStopped(str(exc.code)) from None
+                    cascade = True
+            if cascade:
+                _run_cascade(
+                    desk,
+                    run,
+                    fresh,
+                    patch,
+                    episode=episode,
+                    select_regen=False,
+                    preview_only=False,
+                    out=out,
+                )
+        except CommandStopped as exc:
+            raise CommandStopped(
+                explain_refusal(str(exc), fresh, episode=episode)
+                + "\n  Nothing was drawn or paid."
+            ) from None
+    after = run.spine(spine_id)
+    save_spine_snapshot(desk, episode, after)
+    changes = beat_change_lines(before, after)
+    if not changes:
+        raise CommandStopped(
+            NOTE_CHANGED_NOTHING.format(
+                take=take_id, reply=_short(turn.get("reply") or ""), episode=episode
+            )
+        )
+    print(
+        f"{take_id} shot changes from the note (the redraw re-authors these rows' frames):",
+        file=out,
+    )
+    for line in changes:
+        print(line, file=out)
+    _note(
+        desk,
+        episode,
+        f"board note {take_id}: {note.strip()} -> "
+        + "; ".join(line.strip() for line in changes),
+    )
+    return after
 
 
 def run_redraw_board(
@@ -2998,12 +3177,18 @@ def run_redraw_board(
     *,
     episode: int,
     take_id: str,
-    cause: str,
+    cause: str | None = None,
     note: str | None = None,
     reroll: bool = False,
     out: Any = None,
 ) -> Path:
     """Redraw one board on ``POST /v1/spines/{id}/episodes/{n}/boards/{set}/regenerate``. Spends one still.
+
+    With ``note`` (what is wrong with the board) the note is first turned into
+    edits of the take's beats (:func:`note_to_shot_edits`: the app's director
+    path; on a deploy whose regenerate route takes ``note`` it rides on the
+    redraw instead) and the changes are printed per row before anything is
+    drawn; the rows that changed in the redraw are printed after it.
 
     Stops before anything is paid when nothing the board is drawn from changed
     since it was last drawn (:func:`board_changes`: frame briefs, the take's
@@ -3024,12 +3209,12 @@ def run_redraw_board(
     take_id
         ``t1``, ``t2`` ...
     cause
-        Why it is redrawn: a label on the desk (the route takes no notes).
+        Why it is redrawn: a label on the desk. Defaults to the note.
     note
-        What the human said is wrong, in their words: kept in the run notes and
-        on the take in ``series.json``; never sent anywhere.
+        What the human said is wrong, in their words: turned into shot edits
+        before the redraw, and kept in the run notes and on the take in ``series.json``.
     reroll
-        Redraw even though nothing changed (a plain re-roll of the same frames).
+        Redraw even though nothing changed (``--same-shots`` / ``--reroll``: a plain re-roll of the same frames).
     out
         Text stream.
 
@@ -3040,12 +3225,14 @@ def run_redraw_board(
     """
 
     out = out or sys.stdout
-    if not cause.strip():
-        raise CommandStopped(
-            "--cause is required: why the board is redrawn (a label for the desk)"
-        )
     if note is not None and not note.strip():
         raise CommandStopped("--note is empty: say what is wrong, or leave it out")
+    note = note.strip() if note is not None else None
+    cause = (cause or "").strip() or (note or "")
+    if not cause:
+        raise CommandStopped(
+            "--cause is required (a label for the desk) unless --note says what is wrong with the board"
+        )
     if not (take_id.startswith("t") and take_id[1:].isdigit()):
         raise CommandStopped("--take is t1, t2 ...")
     set_index = int(take_id[1:])
@@ -3055,14 +3242,53 @@ def run_redraw_board(
     slot = episode_by_ordinal(load_series(desk), episode)
     if take_id not in {take.take_id for take in slot.takes}:
         raise CommandStopped(f"{take_id} is not a take on ep{episode:02d}")
-    print(f"[board] {REDRAW_CAUSE_IS_A_LABEL}.", file=sys.stderr)
+    unit = f"boards-ep{episode:02d}-{take_id}-redraw"
+    resuming = bool((state.pending.get(unit) or {}).get("job_id"))
+    if note is None:
+        print(f"[board] {REDRAW_CAUSE_IS_A_LABEL}.", file=sys.stderr)
+    extra: dict[str, Any] = {"episode_count": episode}
+    note_on_redraw = False
     try:
         spine = run.spine(state.spine_id or "")
+        drawn_before = copy.deepcopy(
+            frames_by_set(spine, episode=episode).get(set_index, [])
+        )
         key = f"ep{episode:02d}-{take_id}"
+        if resuming:
+            print(
+                f"[board] {take_id}: a redraw is already under way; picking it up (a note was applied before it "
+                "and is not sent again).",
+                file=out,
+            )
+        elif note is not None:
+            status, openapi = run.get_optional("/openapi.json")
+            if 200 <= status < 300 and regenerate_takes_note(openapi):
+                extra["note"] = note
+                note_on_redraw = True
+                print(
+                    f"[board] {take_id}: the server takes the note on the redraw and turns it into shot edits.",
+                    file=out,
+                )
+            else:
+                spine = note_to_shot_edits(
+                    desk,
+                    run,
+                    spine,
+                    episode=episode,
+                    take_id=take_id,
+                    take_count=len(slot.takes),
+                    note=note,
+                    out=out,
+                )
+                state = load_production(desk)
         changed = board_changes(
             state, spine, episode=episode, take_id=take_id, take_count=len(slot.takes)
         )
-        if changed == [] and not reroll:
+        if changed == [] and (note_on_redraw or (note is not None and not resuming)):
+            # The note's edits are what changed (a legacy desk compares frame briefs only,
+            # and the server re-authors the frames from the edited beats on the redraw).
+            changed = ["the shots, from the note"]
+        if changed == [] and not reroll and not resuming:
             raise CommandStopped(
                 redraw_needs_an_edit(
                     desk,
@@ -3091,12 +3317,12 @@ def run_redraw_board(
             preset_version=state.preset_version,
             video_lane=state.video_lane,
             cut_tempo=cfg.cut_tempo,
-            extra={"episode_count": episode},
+            extra=extra,
         )
         terminal = run_unit(
             desk,
             run,
-            unit=f"boards-ep{episode:02d}-{take_id}-redraw",
+            unit=unit,
             path=f"/v1/spines/{state.spine_id}/episodes/{episode}/boards/{set_index}/regenerate",
             body=body,
             video_route=True,
@@ -3125,6 +3351,17 @@ def run_redraw_board(
         )
     finally:
         run.client.close()
+    moved = row_change_lines(
+        drawn_before, frames_by_set(spine, episode=episode).get(set_index, [])
+    )
+    if moved:
+        report.append(f"{take_id} rows that changed in this redraw:")
+        report += moved
+    elif note is not None and not resuming:
+        report.append(
+            f"!! {take_id}: the redrawn board's rows read the same as before the note (size, angle, viewpoint, "
+            "camera); look at the board before saying yes."
+        )
     if state.episode_ordinal == episode and state.phase in {
         "wait_board",
         "ready_estimate",
@@ -3188,7 +3425,11 @@ def _record_redraw(
         desk,
         episode,
         f"board redraw {take_id}: {board}, ${float(STILL_USD):.2f} ({what}). Cause (label only): {cause}"
-        + (f". Note (label only): {note.strip()}" if note is not None else ""),
+        + (
+            f". Note (turned into shot edits): {note.strip()}"
+            if note is not None
+            else ""
+        ),
     )
 
 
@@ -4498,24 +4739,27 @@ def add_episode_parsers(
 
     redraw = sub.add_parser(
         "redraw-board",
-        help="Redraw one board (regenerate route); prints its shot list. $0.30.",
+        help='Redraw one board; --note "what\'s wrong" edits the shots first and prints them per row. $0.30.',
     )
     redraw.add_argument("--desk", type=Path, required=True)
     redraw.add_argument("--episode", type=int, required=True)
     redraw.add_argument("--take", required=True, help="t1, t2 ...")
     redraw.add_argument(
-        "--cause",
-        required=True,
-        help="Why: a LABEL for the desk; the server takes no redraw notes.",
-    )
-    redraw.add_argument(
         "--note",
-        help="What the human said is wrong, in their words: kept in run notes and series.json; never sent.",
+        help="What is wrong with the board, as the camera should see it: turned into shot edits (the app's "
+        "director path) and printed per row before the redraw; also kept in run notes and series.json.",
     )
     redraw.add_argument(
+        "--cause",
+        help="Why: a LABEL for the desk (never changes the drawing). Defaults to the note.",
+    )
+    redraw.add_argument(
+        "--same-shots",
         "--reroll",
+        dest="reroll",
         action="store_true",
-        help="Redraw although the frames, beats, look notes and plates are unchanged (a random bad draw). $0.30.",
+        help="Redraw although the frames, beats, look notes and plates are unchanged (the same scene; "
+        "a random bad draw). $0.30.",
     )
 
     plates = sub.add_parser(

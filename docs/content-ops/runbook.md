@@ -155,7 +155,7 @@ Budgets are **warnings, never a hard stop**: first 15 s episode of a new series 
 - Frame 0 is mid-motion on a face: a hand already moving, a head already turning. It is the cover frame. Never an establishing wide, never a still.
 - The first line lands by about 0.5 s.
 - The premise's reveal (the thing the episode is about) is on screen or said by about 3 s.
-- Check it in the brief, the script and the board, before the board gate. A board that opens on a wide or a pause is redrawn: fix the frame (`edit --frame … --set …`), then `redraw-board` (the route takes no notes). A weak open is never fixed by re-filming.
+- Check it in the brief, the script and the board, before the board gate. A board that opens on a wide or a pause is redrawn: say it with `redraw-board --take tK --note "opens on a close-up of …"`, or fix the frame (`edit --frame … --set …`) and then `redraw-board`. A weak open is never fixed by re-filming.
 
 ### Social safe zones
 
@@ -194,7 +194,7 @@ Check before the board gate:
 - **Speaking mouths.** No clench, grit, pressed or closed mouth on a speaking row. Big physical acting goes before the line and after it; during the words the mouth moves.
 - The hook, the hand-off, the safe zones, no readable text or digits, brightness reported.
 
-To change a board, change what it is drawn from (`edit --frame N --set …`, `edit --beat N …`, `look-note`), then `redraw-board --desk D --episode N --take tK --cause "…" [--note "the human's words"]`. The cause and the note are labels; the route takes no notes. With nothing changed since the board was drawn (frame briefs, the take's beats, look notes, plates) `redraw-board` stops unpaid; `--reroll` only for a random bad draw with the right frames. A board showing another episode's content is a server bug: report it with the job id. The full procedure is "Fixing a board" in the skill. A frame's `cast_refs` cannot be edited: removing a character from a shot is refused (`400 invalid_patch: subject blocking must match cast_refs`). Rewrite their blocking entry instead ("not in frame; the camera is his point of view").
+To change a board, say what is wrong: `redraw-board --desk D --episode N --take tK --note "medium two-shot walking down the hallway, waist-up, no map"`. The note goes through the director (the app's path) and becomes edits to the take's beats; the kit prints them per row, then redraws, and the server re-authors the take's frames from them. A note that changes no shot stops before paying. Or change what it is drawn from yourself (`edit --frame N --set …`, `edit --beat N …`, `look-note`), then `redraw-board … --cause "…"`. The cause is a label only. With nothing changed since the board was drawn (frame briefs, the take's beats, look notes, plates) `redraw-board` stops unpaid with `!!`; `--same-shots` only for a random bad draw with the right frames. A board showing another episode's content is a server bug: report it with the job id. The full procedure is "Fixing a board" in the skill. A frame's `cast_refs` cannot be edited: removing a character from a shot is refused (`400 invalid_patch: subject blocking must match cast_refs`). Rewrite their blocking entry instead ("not in frame; the camera is his point of view").
 
 ### Characters and age
 

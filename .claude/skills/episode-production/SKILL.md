@@ -56,7 +56,7 @@ Read when you need the detail, not all on the first turn:
 | Look (optional) | `look-frame --desk D --description @look.txt` | `approve --desk D --gate look` after a yes: pins the newest look frame and records the yes (`--path` or `--url` for another). While a drawn look frame is not approved, `step`, `redraw-plate` and `redraw-board` refuse (nothing sent); a look frame drawn after the yes needs its own yes |
 | Plates | `fictora-produce step --desk D` | `approve --desk D --gate plates` after a yes; one character wrong: `redraw-plate --desk D --cast NAME --note "…"` (that character alone, $0.30; show the contact sheet) |
 | Script | (lines from the draft) | `approve --desk D --gate script` after a yes |
-| Board | `fictora-produce step --desk D` (prints the shot list with who speaks on each row, speaker warnings and safe-zone warnings) | `approve --desk D --gate board`; or fix it (see "Fixing a board"): edits first, then `redraw-board --desk D --episode N --take tK --cause "…" [--note "…"]` |
+| Board | `fictora-produce step --desk D` (prints the shot list with who speaks on each row, speaker warnings and safe-zone warnings) | `approve --desk D --gate board`; or fix it (see "Fixing a board"): `redraw-board --desk D --episode N --take tK --note "what is wrong"` (the note becomes shot edits, printed per row, then the redraw) |
 | Estimate | `fictora-produce step --desk D` | The human says yes to the number. The line names the lane and its $/s; a `!! SERVER ESTIMATE FAILED` line means the number is the kit's local table: say that to the human before the yes |
 | Take | `fictora-produce step --desk D --confirm-spend` | — |
 | Read | watch `takes/`, write every fault | Use it, or Change this + cause |
@@ -115,15 +115,16 @@ Open the newest `boards/` file and check (full list: [checklists.md](../../../do
 
 ### Fixing a board
 
-The redraw route takes no notes. `--cause` and `--note` are labels on the desk; the server never reads them. In the app the director turns a complaint into story edits; here you do that. `redraw-board` stops (exit 2, nothing sent or paid) when nothing the board is drawn from changed since it was last drawn: the frame briefs, the take's beats (intent, direction, shot plan, who is in them), the look notes, the cast plates, or a server stale mark from a cascade. Line words alone do not count.
+`--note` does what the app does: the human's complaint goes to the director (`POST /v1/spines/{id}/director/turns`, scoped to the take's beats), its beat edits for that take are applied (the cascade after the script gate, paid items off), the kit prints each changed row (`was` / `now`), then redraws; the server re-authors the take's frames from the edited beats, and the kit prints the rows that changed in the redraw. If the note changed no shot, it stops before paying (nothing drawn). `--cause` is only a label (defaults to the note). Without a note, `redraw-board` stops with `!!` (exit 2, nothing sent or paid) when nothing the board is drawn from changed since it was last drawn: the frame briefs, the take's beats (intent, direction, shot plan, who is in them), the look notes, the cast plates, or a server stale mark from a cascade. Line words alone do not count.
 
-1. Read the human's complaint and map it to specific rows and beats: which frame (`edit --frame N`, one row's `visual_brief`: placement, size, angle, blocking, expression), which beat (`edit --beat N --shot …` or `--intent`), or the whole look (`look-note --add`). A wrong face on a plate is `redraw-plate`, not a board edit.
-2. Preview each edit and show the human the before and after (after the script gate `edit … --preview` prints the cascade and changes nothing; before it, say the old and new value from `api/spine.json`).
-3. Apply the edits after the human's yes.
-4. `redraw-board --desk D --episode N --take tK --cause "short label" --note "the human's words"`. It redraws from the edited frames; after a beat edit the server re-authors the take's frames first. It prints what changed.
-5. Look at the new board and check the complaint is gone before the board gate.
+1. First choice: `redraw-board --desk D --episode N --take tK --note "the human's words, as the camera should see them"` (e.g. "medium two-shot walking down the hallway, waist-up, no map"). Show the human the printed per-row changes and the new board. If it stopped because the note changed no shot, rephrase it as what the camera sees, or do steps 2–5 by hand.
+2. By hand: read the human's complaint and map it to specific rows and beats: which frame (`edit --frame N`, one row's `visual_brief`: placement, size, angle, blocking, expression), which beat (`edit --beat N --shot …` or `--intent`), or the whole look (`look-note --add`). A wrong face on a plate is `redraw-plate`, not a board edit.
+3. Preview each edit and show the human the before and after (after the script gate `edit … --preview` prints the cascade and changes nothing; before it, say the old and new value from `api/spine.json`).
+4. Apply the edits after the human's yes.
+5. `redraw-board --desk D --episode N --take tK --cause "short label"`. It redraws from the edited frames; after a beat edit the server re-authors the take's frames first. It prints what changed.
+6. Look at the new board and check the complaint is gone before the board gate.
 
-`--reroll` only when the drawing was a random miss and the frames are right (a garbled hand, a smeared face): it draws the same direction again for $0.30. A board whose content comes from another episode (another episode's room, cast or story) is a server bug: report it to engineering with the job id; edits do not fix it.
+`--same-shots` (same as `--reroll`) only when the drawing was a random miss and the frames are right (a garbled hand, a smeared face): it draws the same direction again for $0.30. A board whose content comes from another episode (another episode's room, cast or story) is a server bug: report it to engineering with the job id; edits do not fix it.
 
 ## Spend (warn, never block)
 
