@@ -116,7 +116,7 @@ def test_finish_lays_sfx_music_mix_captions_and_mark_as_new_versions(
         "finish books what the money bought"
     )
     captions = next(s for s in result.steps if s.step == "captions")
-    assert "3.2" in captions.detail.split("'Wait for me here.'; ")[1][:5], (
+    assert "3.2" in captions.detail.split("'Wait for me here.' (speech); ")[1][:5], (
         "Aya's caption starts on her line at 3.2 s, not on the door slam at 3.0 s: timed on the take before post"
     )
     mix = next(s for s in result.steps if s.step == "mix")

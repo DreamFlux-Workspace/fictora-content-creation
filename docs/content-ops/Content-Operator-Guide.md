@@ -170,7 +170,7 @@ uv run fictora-produce finish --desk <desk>
 | `ep01/takes/take-ep01-t1-cap-v1.mp4` | House captions |
 | `ep01/takes/take-ep01-t1-sokii-v1.mp4` | **Ship candidate**: Sokii mark top left |
 
-The last line reads `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`. **NOT DONE** (exit 5) names what is missing; that file is not a deliverable. Wrong caption timing? Re-run with `--line-start <seconds>` once per line. Bed too loud under a line? `--duck-db 12`.
+The last line reads `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`. **NOT DONE** (exit 5) names what is missing; that file is not a deliverable. Wrong caption timing? Re-run with `--line-start <seconds>` and/or `--line-end <seconds>` once per line. Bed too loud under a line? `--duck-db 12`.
 
 A character's voice feels off? Never regenerate: `voice --audition`, you pick, `voice --pick N`, `revoice` the takes they speak in, then `finish --take-file <revoice file>` (skill: "Change a character's voice").
 

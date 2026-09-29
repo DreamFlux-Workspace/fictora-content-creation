@@ -21,7 +21,7 @@ import math
 import re
 import unicodedata
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from creation.post.audio_service import AudioService
@@ -62,6 +62,8 @@ class LineWindow:
     end: float | None
     ratio: float
     by: str = "words"
+    #: Indices (into the transcript's words) of the words from the line's first match to its last.
+    words: tuple[int, ...] = field(default=(), compare=False)
 
 
 def transcribe(
@@ -406,6 +408,7 @@ def _line_windows_on(
                 words[ids[-1]].end,
                 round(ratio, 2),
                 by,
+                tuple(ids),
             )
         )
         for other, tokens in enumerate(streams):

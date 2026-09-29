@@ -141,7 +141,7 @@ Compiled prompts are proprietary and stay on the server. Never fetch, save, prin
 The take step stops at the raw clip: the model's sound only, no music, no effects, no captions. Hosted post-production is switched off on the API, so the finish runs on this laptop. As soon as the human says Use it, run it without being asked:
 
 ```bash
-uv run fictora-produce finish --desk D [--episode N] [--take tK] [--take-file F] [--duck-db N] [--sfx-adjust "door=-6"] [--line-start S ...] [--no-colour-match] \
+uv run fictora-produce finish --desk D [--episode N] [--take tK] [--take-file F] [--duck-db N] [--sfx-adjust "door=-6"] [--line-start S ...] [--line-end S ...] [--no-colour-match] \
   [--mute A-B ...] [--voice FILE@S[@DB] ...] [--cue FILE@S[@DB] ...]
 ```
 
@@ -150,6 +150,8 @@ It lays the take's sound effects (from `GET /v1/jobs/{take_job}/take-facts`, nev
 - The last line reads `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`. `NOT DONE` and exit code **5** mean music, SFX or the mix is missing: do not hand the file over; fix what it names and run `finish` again.
 - A `409 hosted_post_off`, or a `503 restate_unavailable` from post-production, is not an outage: never retry it, run `finish`.
 - Captions are always the English line. On a Japanese or Korean show, `finish` / `caption` show each whole English line over its speech (no word flicker); the run note says `whole English lines`.
+- On such a show each whole line is timed on the **words a transcript of the take heard for it**, not on speech spans: the saved `takes/take-epNN-tK-*words-vN.json` (from `review --transcribe`), else `finish` asks the server for one from the take's stored URL (`/v1/transcripts`, a few cents). A stammer (`も、`) or a mid-line pause no longer starts the caption early or ends it early. Each line stays up at least max(1.2 s, 0.3 s a word), never into the next line. A line the transcript did not hear, a take changed by hand (`--voice`/`--mute`, a `--take-file` that is not the raw take), or an English show is timed on speech spans as before. The `captions` report line and the run note say what timed each line: `(words)`, `(speech)`, `(manual)` or a mix like `(words start, manual end)`.
+- Caption still off? `--line-start S` and `--line-end S`, once per line in order (either or both), on `finish` and `caption`. A hand end is exact: no hold, no reading minimum.
 - A voice heard, not seen (a line marked `off_screen`, or any line of a `voice_only` cast member) is captioned in Georgia italic: same drawn size, yellow, edge and place as the house caption. Every other line is Poppins Bold.
 
 ## Hand sound: stray speech, a new line, a missing cue
