@@ -2,13 +2,13 @@
 
 The regenerate route takes no notes, so a redraw with the same frame briefs, beats,
 look notes and plates draws the same direction again for $0.30. The kit refuses
-that unless ``--reroll``; ``--note`` is kept on the desk and never sent.
+that unless ``--same-shots`` (``--reroll``); ``--note`` becomes shot edits first
+(tests/test_redraw_board_note.py) and is also kept on the desk.
 """
 
 from __future__ import annotations
 
 import io
-import json
 from pathlib import Path
 
 import pytest
@@ -60,13 +60,13 @@ def test_unchanged_briefs_stop_before_any_paid_call(
 ) -> None:
     _drawn(desk, api)
 
-    assert _redraw(desk, "--note", NOTE) == 2
+    assert _redraw(desk) == 2
 
     err = capsys.readouterr().err
-    assert "Stopped: t1: nothing this board is drawn from has changed" in err
+    assert "Stopped: !! t1: nothing this board is drawn from has changed" in err
     assert "Nothing was sent or paid." in err
     assert "--frame N --set" in err and "--beat N --shot" in err and "look-note" in err
-    assert "--reroll" in err
+    assert '--take t1 --note "' in err and "--same-shots" in err
     assert _paid(api) == []
     assert episode_by_ordinal(load_series(desk), 1).spend_usd == 0
     assert load_production(desk).phase == "wait_board"
@@ -164,21 +164,43 @@ def test_a_legacy_desk_compares_the_frame_briefs_alone(
     assert _paid(api) == []
 
 
-def test_the_note_is_kept_on_the_desk_and_never_sent(desk: Path, api: FakeApi) -> None:
+def test_the_note_is_kept_on_the_desk(desk: Path, api: FakeApi) -> None:
     _drawn(desk, api)
     api.spine_doc["frames"][1]["visual_brief"]["subject_blocking"][0][
         "frame_position"
     ] = "upper third"
+    api.routes[("POST", "/v1/spines/sp1/director/turns")] = {
+        "reply": "Moved her face up.",
+        "steps": [
+            {
+                "tool": "patch_story",
+                "state": "done",
+                "summary": "Changed 1 beat.",
+                "input": {},
+            }
+        ],
+    }
+    beat = api.spine_doc["beats"][0]
+    real_post = api.post
+
+    def post(path: str, body: dict, *, idempotency_key: str | None = None) -> dict:
+        # Before the script gate the director applies its beat edit itself.
+        if path.endswith("/director/turns"):
+            beat["motion_intent"] = (
+                "Hana wipes the counter, her face in the upper third"
+            )
+        return real_post(path, body, idempotency_key=idempotency_key)
+
+    api.post = post  # type: ignore[method-assign]
 
     assert _redraw(desk, "--note", NOTE) == 0
 
-    assert all(NOTE not in json.dumps(body) for _, _, body, _ in api.calls)
     redraw = episode_by_ordinal(load_series(desk), 1).takes[0].extra["redraws"][0]
     assert redraw["note"] == NOTE and redraw["cause"] == "face under the captions"
-    assert redraw["reroll"] is False and redraw["changed"] == ["the frame briefs"]
-    assert f"Note (label only): {NOTE}" in (desk / "ep01" / "run-notes.md").read_text(
-        encoding="utf-8"
-    )
+    assert redraw["reroll"] is False and "the frame briefs" in redraw["changed"]
+    assert f"Note (turned into shot edits): {NOTE}" in (
+        desk / "ep01" / "run-notes.md"
+    ).read_text(encoding="utf-8")
 
 
 def test_after_a_redraw_the_next_one_needs_another_edit(

@@ -950,7 +950,7 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
                 state.phase,
                 "\n".join(report)
                 + "\nNext: look at the board and the shot list; check its rows follow the shot plan. "
-                "Say yes (`fictora-produce approve --gate board`) or redraw one (`redraw-board --take tN --cause ...`).",
+                "Say yes (`fictora-produce approve --gate board`) or redraw one (`redraw-board --take tN --note 'what is wrong'`).",
                 tuple(paths),
             )
 
