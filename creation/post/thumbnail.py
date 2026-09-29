@@ -1,4 +1,10 @@
-"""Episode thumbnail: server draw + attached cover on the finished take."""
+"""Episode thumbnail: server draw + attached cover on the finished take.
+
+A cover drawn on the server is a paid still, so ``finish`` never draws one
+without the operator's opt-in (``--thumbnail``, after the human's yes to
+:data:`THUMBNAIL_USD`). A cover already on the desk for the same clip
+(``take-epNN-tK-thumb-vN.jpg``) is re-embedded locally, free, on every finish.
+"""
 
 from __future__ import annotations
 
@@ -19,6 +25,11 @@ from creation.media_fetch import download_to_versioned
 from creation.ops.folder import next_versioned_path
 from creation.post.desk import open_api, spine_id, take_stored_url
 from creation.post.media import run_ffmpeg
+from creation.prices import STILL_USD
+
+#: What one episode cover drawn on the server costs (one still; free when the
+#: server already drew the same clip).
+THUMBNAIL_USD = float(STILL_USD)
 
 
 def embed_attached_cover(*, video: Path, cover: Path, out: Path) -> None:
@@ -62,6 +73,57 @@ def embed_attached_cover(*, video: Path, cover: Path, out: Path) -> None:
     )
 
 
+def saved_cover(takes_dir: Path, base_stem: str, video_url: str | None) -> Path | None:
+    """The newest cover already on the desk for this take's clip, if any.
+
+    Parameters
+    ----------
+    takes_dir
+        ``epNN/takes``.
+    base_stem
+        Filename stem without version (``take-ep01-t1``).
+    video_url
+        The take's stored clip URL. A cover whose meta file names a different
+        clip (the take was filmed again) is not reused.
+
+    Returns
+    -------
+    Path | None
+        ``take-epNN-tK-thumb-vN.jpg`` (or ``.png``), newest first; ``None`` when
+        there is none for this clip.
+    """
+
+    covers = sorted(
+        (
+            path
+            for path in takes_dir.glob(f"{base_stem}-thumb-v*.*")
+            if path.suffix.lower() in {".jpg", ".jpeg", ".png"}
+        ),
+        key=_version,
+        reverse=True,
+    )
+    metas = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in takes_dir.glob(f"{base_stem}-thumb-meta-v*.json")
+    ]
+    drawn_from = {
+        str(meta.get("cover_path")): meta.get("video_url")
+        for meta in metas
+        if isinstance(meta, dict)
+    }
+    for cover in covers:
+        clip = drawn_from.get(cover.name)
+        if clip and video_url and clip != video_url:
+            continue
+        return cover
+    return None
+
+
+def _version(path: Path) -> int:
+    tail = path.stem.rsplit("-v", 1)[-1]
+    return int(tail) if tail.isdigit() else 0
+
+
 def attach_episode_thumbnail_to_finish(
     desk: Path,
     *,
@@ -70,9 +132,14 @@ def attach_episode_thumbnail_to_finish(
     marked_video: Path,
     takes_dir: Path,
     base_stem: str,
+    draw: bool = False,
     stream: TextIO | None = None,
 ) -> tuple[Path, dict[str, Any] | None]:
-    """Draw the episode thumbnail on the server and embed it on the marked deliverable.
+    """Embed the episode cover on the marked deliverable; draw it on the server only when asked.
+
+    A cover already on the desk for this clip is re-embedded locally (free, no
+    call). Without one, nothing is drawn unless ``draw`` is true; with ``draw``
+    the price is printed before the server is asked.
 
     Parameters
     ----------
@@ -88,18 +155,39 @@ def attach_episode_thumbnail_to_finish(
         ``epNN/takes``.
     base_stem
         Filename stem without version (``take-ep01-t1``).
+    draw
+        The operator opted in (``finish --thumbnail``) to a paid server draw
+        when no cover is on the desk yet.
     stream
         Progress output.
 
     Returns
     -------
     tuple[Path, dict[str, Any] | None]
-        Final video path (with cover when the draw ran) and the API answer, if any.
+        Final video path (with cover when one went on) and the answer: the
+        server's, or ``{"reused": <cover name>, "cost_usd": 0}`` for a saved
+        cover, or ``{"needs_opt_in": True, ...}`` when nothing was drawn
+        because ``draw`` was false. ``None`` when there is no stored clip URL or
+        the deploy has no thumbnail route.
     """
 
     video_url = take_stored_url(desk, episode, take_id)
+    saved = saved_cover(takes_dir, base_stem, video_url)
+    if saved is not None:
+        out = next_versioned_path(takes_dir, f"{base_stem}-sokii-cover", ".mp4")
+        embed_attached_cover(video=marked_video, cover=saved, out=out)
+        return out, {"reused": saved.name, "cost_usd": 0.0, "cached": True}
     if not video_url:
         return marked_video, None
+    if not draw:
+        return marked_video, {"needs_opt_in": True, "cost_usd": 0.0}
+    if stream is not None:
+        print(
+            f"[thumbnail] Drawing the episode cover on the server: ${THUMBNAIL_USD:.2f} "
+            "(free if the server already drew this clip)",
+            file=stream,
+            flush=True,
+        )
 
     run = open_api(desk, episode)
     try:
@@ -149,7 +237,11 @@ def attach_episode_thumbnail_to_finish(
     embed_attached_cover(video=marked_video, cover=cover, out=out)
     meta = next_versioned_path(takes_dir, f"{base_stem}-thumb-meta", ".json")
     meta.write_text(
-        json.dumps({**answer, "cover_path": str(cover.name)}, indent=2) + "\n",
+        json.dumps(
+            {**answer, "cover_path": str(cover.name), "video_url": video_url},
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
     return out, answer

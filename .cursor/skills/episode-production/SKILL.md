@@ -61,7 +61,7 @@ Read when you need the detail, not all on the first turn:
 | Take | `fictora-produce step --desk D --confirm-spend` | — |
 | Read | watch `takes/`, write every fault | Use it, or Change this + cause |
 | Re-film one take | `film --desk D --episode N --take tK --cause "…"` (prices it), then the same with `--confirm-spend` | The human says yes to the number; nothing else is filmed or booked |
-| Finish | `fictora-produce finish --desk D [--take-file F]`, then `review --desk D --episode N --take tK` (caption boxes vs the covered zones, zone sheet for the face check; warns only) | Watch the final file; the last line must read `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓` |
+| Finish | `fictora-produce finish --desk D [--take-file F]` (the cover: a saved one goes on free; a new one is $0.30 and only with `--thumbnail` after a yes), then `review --desk D --episode N --take tK` (caption boxes vs the covered zones, zone sheet for the face check; warns only) | Watch the final file; the last line must read `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓` |
 | Join (30 s / 60 s, series cut) | `fictora-produce join --desk D --episode N` (or `--episodes 1 2 3`) once every take is finished | Watch every seam; the report must list each seam under 5 dB and the file ends `-sokii-vN.mp4` |
 | Next episode | `arc --desk D --list` / `--pick K` (episode 2), `brief --desk D --episode N` (3 on), `author --desk D --episode N --direction K` or `--line "…"` (400 characters at most unless the deploy says more; counted before sending) | Script yes, then the same Board → Finish loop |
 
@@ -248,6 +248,7 @@ An off-screen voice (speaker, phone, radio) played over another character's face
 - A whole episode again (rare; human yes + cause): `film --desk D --episode N --cause "…"`, then `--confirm-spend`. `retry-video --new-paid-take` does the same for the desk's current episode, once per desk.
 - `film` or `step` says the deployed API does not film one episode alone yet: nothing was sent or charged. Stop and tell engineering; never work around it.
 - Interrupted poll: run the same `step` again; the job may still be running.
+- Boards refused `422 cast_not_approved` for plates the human already approved (nothing changed): after the human's yes to the same plates, `fictora-produce approve --desk D --gate plates --again` ($0, draws nothing), then `retry-step --desk D --cause "plates re-approved"`, then `step`. `step` prints these commands.
 - A `step` failed (`status` says `failed`; e.g. boards "row board prompt exceeds GPT Image 2 provider limit"): fix the cause first, then `fictora-produce retry-step --desk D --cause "…"`. It backs up `production.json`, puts the failed stage back with a fresh key, says what it will re-run and what that costs (boards $0.30 each), and sends nothing; then `step`. Never hand-edit `production.json`. A failed take goes to `retry-video`/`film`, not here.
 - More: reference.md.
 

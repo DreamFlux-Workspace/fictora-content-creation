@@ -11,6 +11,7 @@ with its lines waiting at the script gate; the rest of the loop is the same.
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -1001,6 +1002,11 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             )
 
         if state.phase == "failed":
+            if CAST_NOT_APPROVED in (state.last_error or ""):
+                raise RuntimeError(
+                    f"Episode {ep} stopped at `{state.failed_phase or 'an unrecorded stage'}`: {state.last_error}\n"
+                    f"Nothing more was sent. {reapprove_plates_hint(desk)}"
+                )
             raise RuntimeError(
                 f"Episode {ep} stopped at `{state.failed_phase or 'an unrecorded stage'}`: {state.last_error}\n"
                 'Nothing more was sent. After fixing the cause: `fictora-produce retry-step --desk D --cause "..."`, '
@@ -1013,6 +1019,8 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
         state.phase = "failed"
         state.last_error = str(exc)
         save_production(desk, state)
+        if CAST_NOT_APPROVED in str(exc.code):
+            raise SystemExit(f"{exc.code}\n{reapprove_plates_hint(desk)}") from exc
         raise
     finally:
         run.client.close()
@@ -1294,11 +1302,127 @@ def _film(
     )
 
 
-def approve_gate(
-    desk: Path, *, gate: str, path: Path | None = None, accept_dim: bool | None = None
-) -> StepResult:
-    """Record a human gate and run the matching API approve when needed."""
+#: The server's answer when a board or take is asked for while the cast plates are not approved on the story.
+CAST_NOT_APPROVED = "cast_not_approved"
 
+
+def reapprove_plates_hint(desk: Path | str = "<desk>") -> str:
+    """The fix printed when a step is refused with ``cast_not_approved``.
+
+    Parameters
+    ----------
+    desk
+        Series desk, for a command the operator can paste.
+
+    Returns
+    -------
+    str
+        What to run, in order: re-approve the current plates ($0), put the
+        failed step back, run it again.
+    """
+
+    return (
+        "Fix: the server lost the plates approval (the plates on the desk are unchanged). After the "
+        f"human's yes to the same plates: `fictora-produce approve --desk {desk} --gate plates --again` "
+        f'($0, draws nothing), then `fictora-produce retry-step --desk {desk} --cause "plates re-approved"`, '
+        "then `fictora-produce step`."
+    )
+
+
+def reapprove_plates(desk: Path, *, path: Path | None = None) -> StepResult:
+    """Send the plates approval again on the story's current version, outside ``wait_plates``.
+
+    For a story the server says has unapproved plates (``cast_not_approved``)
+    though the human approved them and nothing changed. Sends
+    ``POST /v1/spines/{id}/cast/approve`` on the current ``spine_version`` with a
+    fresh idempotency key, saves the answer and the story (``api/spine.json``),
+    and records it on the desk. It draws nothing and costs $0; the phase is
+    left as it is.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    path
+        The plate file the human looked at again (recorded on the gate).
+
+    Returns
+    -------
+    StepResult
+        The desk's phase and what to run next (``retry-step`` when a step failed).
+
+    Raises
+    ------
+    RuntimeError
+        When the desk is still at ``wait_plates`` (use the normal approve) or
+        the plates were never approved on this desk.
+    """
+
+    desk = desk.expanduser().resolve()
+    state = load_production(desk)
+    if state.phase == "wait_plates":
+        raise RuntimeError(
+            "The plates are waiting for their first yes: run `fictora-produce approve --gate plates` "
+            "without --again."
+        )
+    if load_series(desk).plates.status != "approved":
+        raise RuntimeError(
+            "Refused: the plates were never approved on this desk, so there is nothing to approve again. "
+            "Show the human the plates first."
+        )
+    ep = state.episode_ordinal
+    ep_dir = _episode_dir(desk, ep)
+    tag = f"ep{ep:02d}-reapprove-{uuid.uuid4().hex[:8]}"
+    run = _open_run(desk, state)
+    try:
+        spine = stages.approve_cast(run, spine_id=state.spine_id or "", tag=tag)
+    finally:
+        run.client.close()
+    save_spine_snapshot(desk, ep, spine)
+    version = spine.get("spine_version")
+    approve_series_gate(
+        desk,
+        "plates",
+        path=str(path) if path else None,
+        note=f"approved again ({tag}) on spine_version {version}",
+    )
+    _note(
+        ep_dir,
+        f"Plates approved again on the server (`{tag}`, spine_version {version}): same plates, "
+        "$0, nothing drawn. Saved api/spine.json.",
+    )
+    if state.phase == "failed":
+        follow = (
+            f'Next: `fictora-produce retry-step --desk {desk} --cause "plates re-approved"`, '
+            "then `fictora-produce step`."
+        )
+    else:
+        follow = "Next: `fictora-produce step`."
+    return StepResult(
+        state.phase,
+        f"Plates approved again on spine_version {version} ($0, nothing drawn). {follow}",
+        (desk / "api" / "spine.json",),
+    )
+
+
+def approve_gate(
+    desk: Path,
+    *,
+    gate: str,
+    path: Path | None = None,
+    accept_dim: bool | None = None,
+    again: bool = False,
+) -> StepResult:
+    """Record a human gate and run the matching API approve when needed.
+
+    ``again`` (plates only) sends the plates approval again outside
+    ``wait_plates``: :func:`reapprove_plates`.
+    """
+
+    if again:
+        if gate != "plates":
+            raise ValueError("--again is for --gate plates only")
+        return reapprove_plates(desk, path=path)
     desk = desk.expanduser().resolve()
     state = load_production(desk)
     run = _open_run(desk, state)

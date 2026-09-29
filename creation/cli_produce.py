@@ -116,6 +116,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Look only: the chosen frame's public https URL (default: the chosen look-frame's image_url).",
     )
     ap.add_argument(
+        "--again",
+        action="store_true",
+        help="Plates only: send the plates approval again on the story's current version, outside "
+        "wait_plates (after a cast_not_approved refusal; same plates, $0, draws nothing). Then retry-step.",
+    )
+    ap.add_argument(
         "--accept-dim",
         action="store_true",
         help="Ignored by the API: board brightness is information only, never a block.",
@@ -252,6 +258,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             for path in result.paths:
                 print(f"  file: {path}")
             return 0
+        if args.command == "approve" and args.again and args.gate != "plates":
+            raise ValueError("--again is for --gate plates only")
         if args.command == "approve" and args.gate == "look":
             run_approve_look(args.desk, url=args.url, path=args.path)
             return 0
@@ -263,6 +271,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 gate=args.gate,
                 path=args.path,
                 accept_dim=True if args.accept_dim else None,
+                again=args.again,
             )
             print(result.message)
             return 0

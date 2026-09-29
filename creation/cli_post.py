@@ -18,6 +18,7 @@ from creation.post.review_command import (
     dispatch_review,
 )
 from creation.post.sfx import parse_adjustment
+from creation.post.thumbnail import THUMBNAIL_USD
 
 POST_COMMANDS = (
     frozenset(
@@ -252,10 +253,18 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         default=None,
         help="Mark top offset (never into the top 8%%).",
     )
-    fin.add_argument(
+    cover = fin.add_mutually_exclusive_group()
+    cover.add_argument(
+        "--thumbnail",
+        action="store_true",
+        help="Draw the episode cover on the server when none is on the desk yet "
+        f"(${THUMBNAIL_USD:.2f}, after the human's yes; free when the server already drew this clip). "
+        "Without it, finish reuses a saved cover or spends nothing.",
+    )
+    cover.add_argument(
         "--no-thumbnail",
         action="store_true",
-        help="Skip POST …/episodes/N/thumbnail and embedding cover art on the deliverable.",
+        help="No cover on the deliverable (not even a saved one).",
     )
     fin.add_argument(
         "--json", action="store_true", help="Print the report as JSON on stdout."
@@ -438,6 +447,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             voices=tuple(parse_placed(raw, flag="--voice") for raw in args.voice),
             cues=tuple(parse_placed(raw, flag="--cue") for raw in args.cue),
             thumbnail=not args.no_thumbnail,
+            draw_thumbnail=args.thumbnail,
         )
         if args.json:
             print(json.dumps(result.as_json(), indent=2))
