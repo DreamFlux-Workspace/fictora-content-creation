@@ -27,7 +27,9 @@ FACTS = {
         "media_kind": "video",
         "reference_image_count": 3,
         "spoken_line_count": 1,
-        "shots": [{"shot_index": 1, "start_seconds": 0.0, "end_seconds": 5.0, "speaks": True}],
+        "shots": [
+            {"shot_index": 1, "start_seconds": 0.0, "end_seconds": 5.0, "speaks": True}
+        ],
         "sfx_cues": [],
     },
 }
@@ -45,7 +47,9 @@ def test_finish_embeds_the_server_thumbnail_on_the_marked_take(
     post_desk: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
-    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(json.dumps(FACTS))
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+        json.dumps(FACTS)
+    )
     (post_desk / "ep01" / "api" / "17_raw_scene_clips.json").write_text(
         json.dumps(
             {
@@ -75,7 +79,9 @@ def test_finish_embeds_the_server_thumbnail_on_the_marked_take(
         "cost_usd": 0.3,
     }
 
-    def fake_download(client, url: str, directory: Path, stem: str, **kwargs: object) -> Path:
+    def fake_download(
+        client, url: str, directory: Path, stem: str, **kwargs: object
+    ) -> Path:
         assert url == THUMB_URL
         path = directory / f"{stem}-v1.jpg"
         path.write_bytes(png_bytes())
@@ -103,4 +109,6 @@ def test_finish_embeds_the_server_thumbnail_on_the_marked_take(
     assert result.final.name == "take-ep01-t1-sokii-cover-v1.mp4"
     assert list((post_desk / "ep01" / "takes").glob("take-ep01-t1-thumb-v*.jpg"))
     posted = [c for c in fake.calls if c[0] == "POST" and c[1] == ROUTE]
-    assert posted and posted[0][2] == {"video_url": "https://r2.example/takes/ep01-t1.mp4"}
+    assert posted and posted[0][2] == {
+        "video_url": "https://r2.example/takes/ep01-t1.mp4"
+    }

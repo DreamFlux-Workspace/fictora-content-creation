@@ -700,7 +700,11 @@ def run_finish(
                 stream=out,
             )
         except (MediaToolError, SystemExit, httpx.HTTPError, OSError) as exc:
-            detail = str(exc.code) if isinstance(exc, SystemExit) else f"{type(exc).__name__}: {exc}"
+            detail = (
+                str(exc.code)
+                if isinstance(exc, SystemExit)
+                else f"{type(exc).__name__}: {exc}"
+            )
             return StepReport("thumbnail", "failed", detail[:300])
         if answer is None:
             return StepReport(
@@ -712,7 +716,9 @@ def run_finish(
         if cost:
             book(desk, episode=episode, usd=cost, take_id=take_id, stream=out)
         cached = " (cached, free)" if answer.get("cached") else ""
-        append_run_note(run_dir, f"Episode thumbnail embedded on `{final.name}`{cached}")
+        append_run_note(
+            run_dir, f"Episode thumbnail embedded on `{final.name}`{cached}"
+        )
         return StepReport(
             "thumbnail",
             "ran",
@@ -733,7 +739,11 @@ def run_finish(
     step("captions", "Burning house captions", do_captions)
     step("watermark", "Putting the Sokii mark on", do_watermark)
     if result.complete:
-        step("thumbnail", "Drawing the episode thumbnail and embedding it on the deliverable", do_thumbnail)
+        step(
+            "thumbnail",
+            "Drawing the episode thumbnail and embedding it on the deliverable",
+            do_thumbnail,
+        )
 
     result.final = current
     try:

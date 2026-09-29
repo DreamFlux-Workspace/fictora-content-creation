@@ -10,7 +10,6 @@ from typing import Any, TextIO
 import httpx
 
 from creation.harness.http_util import api_error_text
-from creation.harness.session import DramaApiRunSession
 from creation.harness.thumbnail_api import (
     episode_thumbnail_route_missing,
     post_episode_thumbnail,
@@ -19,7 +18,7 @@ from creation.harness.thumbnail_api import (
 from creation.media_fetch import download_to_versioned
 from creation.ops.folder import next_versioned_path
 from creation.post.desk import open_api, spine_id, take_stored_url
-from creation.post.media import MediaToolError, run_ffmpeg
+from creation.post.media import run_ffmpeg
 
 
 def embed_attached_cover(*, video: Path, cover: Path, out: Path) -> None:
@@ -42,23 +41,25 @@ def embed_attached_cover(*, video: Path, cover: Path, out: Path) -> None:
 
     ext = cover.suffix.lower()
     codec = "mjpeg" if ext in {".jpg", ".jpeg"} else "png"
-    run_ffmpeg([
-        "-i",
-        str(video),
-        "-i",
-        str(cover),
-        "-map",
-        "0",
-        "-map",
-        "1",
-        "-c",
-        "copy",
-        "-c:v:1",
-        codec,
-        "-disposition:v:1",
-        "attached_pic",
-        str(out),
-    ])
+    run_ffmpeg(
+        [
+            "-i",
+            str(video),
+            "-i",
+            str(cover),
+            "-map",
+            "0",
+            "-map",
+            "1",
+            "-c",
+            "copy",
+            "-c:v:1",
+            codec,
+            "-disposition:v:1",
+            "attached_pic",
+            str(out),
+        ]
+    )
 
 
 def attach_episode_thumbnail_to_finish(
@@ -120,7 +121,11 @@ def attach_episode_thumbnail_to_finish(
         text = str(exc.code)
         if episode_thumbnail_route_missing(text):
             if stream is not None:
-                print("[thumbnail] skipped: server has no episode thumbnail route yet", file=stream, flush=True)
+                print(
+                    "[thumbnail] skipped: server has no episode thumbnail route yet",
+                    file=stream,
+                    flush=True,
+                )
             return marked_video, None
         raise
     finally:
@@ -128,7 +133,9 @@ def attach_episode_thumbnail_to_finish(
 
     image_url = answer.get("image_url")
     if not image_url:
-        raise SystemExit(f"episode thumbnail answer has no image_url: {api_error_text(answer)}")
+        raise SystemExit(
+            f"episode thumbnail answer has no image_url: {api_error_text(answer)}"
+        )
 
     with httpx.Client(timeout=120.0) as client:
         cover = download_to_versioned(
@@ -141,5 +148,8 @@ def attach_episode_thumbnail_to_finish(
     out = next_versioned_path(takes_dir, f"{base_stem}-sokii-cover", ".mp4")
     embed_attached_cover(video=marked_video, cover=cover, out=out)
     meta = next_versioned_path(takes_dir, f"{base_stem}-thumb-meta", ".json")
-    meta.write_text(json.dumps({**answer, "cover_path": str(cover.name)}, indent=2) + "\n", encoding="utf-8")
+    meta.write_text(
+        json.dumps({**answer, "cover_path": str(cover.name)}, indent=2) + "\n",
+        encoding="utf-8",
+    )
     return out, answer

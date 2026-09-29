@@ -31,7 +31,11 @@ def openapi_has_episode_thumbnail_route(openapi: Any) -> bool | None:
         return None
     paths = openapi.get("paths") or {}
     for path, ops in paths.items():
-        if _EPISODE_THUMBNAIL_PATH.search(path) and isinstance(ops, dict) and "post" in ops:
+        if (
+            _EPISODE_THUMBNAIL_PATH.search(path)
+            and isinstance(ops, dict)
+            and "post" in ops
+        ):
             return True
     return False
 
@@ -61,7 +65,9 @@ def episode_thumbnail_route_missing(message: str) -> bool:
     """True when the server answered 404 because the route is not on this deploy."""
 
     lower = message.lower()
-    return "http 404" in lower and "thumbnail" in lower and "spine_not_found" not in lower
+    return (
+        "http 404" in lower and "thumbnail" in lower and "spine_not_found" not in lower
+    )
 
 
 def post_episode_thumbnail(
@@ -99,7 +105,10 @@ def post_episode_thumbnail(
     """
 
     body = {"video_url": video_url}
-    run.save(f"ep{episode:02d}_thumbnail_request.json", {**body, "idempotency_key": idempotency_key})
+    run.save(
+        f"ep{episode:02d}_thumbnail_request.json",
+        {**body, "idempotency_key": idempotency_key},
+    )
     answer = run.post(
         f"/v1/spines/{spine_id}/episodes/{episode}/thumbnail",
         body,
