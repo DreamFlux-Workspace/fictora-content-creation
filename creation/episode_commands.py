@@ -2553,7 +2553,11 @@ SOUND_NOTE_HINTS = {
         "a drop or level note applies to every take: send it without --take/--shot/--row "
         "(for one take only, use finish --sfx-adjust)"
     ),
-    "sound_notes_limit": "remove one first: sound-note --desk D --remove N (list them with sound-note --desk D)",
+    "sound_note_names_no_sound": "say the sound to add: '... a soft chime as she smiles'",
+    "sound_notes_limit": (
+        "that scope is full (5 drop/level notes per story; 8 added sounds per take, 16 per episode): "
+        "remove one first: sound-note --desk D --remove N (list them with sound-note --desk D)"
+    ),
     "episode_not_found": "that episode is not on the story; check --episode",
 }
 
