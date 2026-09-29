@@ -42,9 +42,13 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    origin), is timed on speech spans. ``--line-start``/``--line-end`` set either end by
    hand. The report names what timed each line.
 6. ``watermark`` - the Sokii mark top left, under the covered top strip.
-7. ``thumbnail`` - when the deploy exposes ``POST …/episodes/{n}/thumbnail``,
-   draw the episode card from the take's stored clip URL and embed it as the
-   MP4 attached picture on the marked file (platform cover art).
+7. ``thumbnail`` - the episode cover as the MP4 attached picture on the marked
+   file (platform cover art). A cover already on the desk for this clip
+   (``take-epNN-tK-thumb-vN.jpg``) is re-embedded, free. Drawing a new one
+   (``POST …/episodes/{n}/thumbnail`` from the take's stored clip URL) is a
+   paid still: only with ``--thumbnail`` after the human's yes; the price is
+   printed first and booked as ``thumbnail``. Without it, finish says what a
+   cover would cost and spends nothing.
 
 Every step writes a new versioned file (``take-epNN-tK-<step>-vN.mp4``); nothing
 is overwritten. A failing step is reported and skipped and the chain carries
@@ -119,7 +123,7 @@ from creation.post.sfx import (
     saved_take_facts,
     service_renderer,
 )
-from creation.post.thumbnail import attach_episode_thumbnail_to_finish
+from creation.post.thumbnail import THUMBNAIL_USD, attach_episode_thumbnail_to_finish
 from creation.post.watermark import watermark
 
 #: ``finish`` exit code: files were written but music, SFX or the mix did not go on.
@@ -314,6 +318,7 @@ def run_finish(
     transcriber: Transcriber | None = None,
     cut_meter: Cuts | None = None,
     thumbnail: bool = True,
+    draw_thumbnail: bool = False,
     stream: TextIO | None = None,
 ) -> FinishResult:
     """Run the whole local post chain on one accepted take.
@@ -357,6 +362,13 @@ def run_finish(
     sfx_render, bed_maker, facts_fetcher, transcriber, cut_meter
         Injected for tests (``transcriber`` makes a transcript of the take on the server;
         ``cut_meter`` measures the take's hard cuts, :func:`creation.post.edit.measure_cuts`).
+    thumbnail
+        Put the episode cover on the deliverable (``--no-thumbnail`` turns it
+        off). A cover already on the desk for this clip is re-embedded, free.
+    draw_thumbnail
+        ``--thumbnail``: when no cover is on the desk, draw one on the server
+        (:data:`creation.post.thumbnail.THUMBNAIL_USD`, printed first). Off by
+        default: finish never spends on a cover without the opt-in.
     stream
         Progress output (stderr by default).
 
@@ -767,6 +779,7 @@ def run_finish(
                 marked_video=take,
                 takes_dir=takes,
                 base_stem=base,
+                draw=draw_thumbnail,
                 stream=out,
             )
         except (MediaToolError, SystemExit, httpx.HTTPError, OSError) as exc:
@@ -782,12 +795,38 @@ def run_finish(
                 "skipped",
                 "no stored take URL or the server has no episode thumbnail route yet",
             )
+        if answer.get("needs_opt_in"):
+            ask = (
+                f"no cover on the desk yet. Drawing one on the server costs ${THUMBNAIL_USD:.2f}; "
+                f"after the human's yes, finish again with --thumbnail"
+            )
+            append_run_note(run_dir, f"Finish · thumbnail: skipped, {ask}")
+            return StepReport("thumbnail", "skipped", ask)
+        if answer.get("reused"):
+            append_run_note(
+                run_dir,
+                f"Episode cover `{answer['reused']}` re-embedded on `{final.name}`, $0",
+            )
+            return StepReport(
+                "thumbnail",
+                "ran",
+                f"attached the saved cover `{answer['reused']}` (free); deliver `{final.name}`",
+                final,
+            )
         cost = float(answer.get("cost_usd") or 0.0)
         if cost:
-            book(desk, episode=episode, usd=cost, take_id=take_id, stream=out)
+            book(
+                desk,
+                episode=episode,
+                usd=cost,
+                take_id=take_id,
+                stream=out,
+                unit="thumbnail",
+            )
         cached = " (cached, free)" if answer.get("cached") else ""
         append_run_note(
-            run_dir, f"Episode thumbnail embedded on `{final.name}`{cached}"
+            run_dir,
+            f"Episode thumbnail embedded on `{final.name}`{cached}, ${cost:.2f}",
         )
         return StepReport(
             "thumbnail",
@@ -811,7 +850,7 @@ def run_finish(
     if result.complete:
         step(
             "thumbnail",
-            "Drawing the episode thumbnail and embedding it on the deliverable",
+            "Putting the episode cover on the deliverable",
             do_thumbnail,
         )
 

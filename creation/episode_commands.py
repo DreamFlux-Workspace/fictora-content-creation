@@ -2046,6 +2046,37 @@ def _after_line_edit(
         print(line, file=out)
 
 
+def new_voice_pick_warning(desk: Path, new_voice: str) -> str:
+    """The warning for a ``--new-voice`` sent without ``--provider-voice``.
+
+    The server gives the new character the first catalog voice nobody in the
+    cast uses; ``--voice-description`` is stored on the card but does not choose
+    the voice (an "adult man" can get a woman's voice).
+
+    Parameters
+    ----------
+    desk
+        Series desk, for the command to paste.
+    new_voice
+        The new character's name.
+
+    Returns
+    -------
+    str
+        The warning and the audition command for the new cast id.
+    """
+
+    cast_id = voice_cast_id(new_voice)
+    return (
+        f"!! No --provider-voice: the server gives {new_voice} the first catalog voice nobody uses. "
+        "The --voice-description is saved on the card but does NOT choose the voice, so it can come back "
+        "the wrong age, gender or accent. Hear it before filming: "
+        f"`fictora-produce voice --desk {desk} --cast {cast_id} --audition --voices A,B,C,D` "
+        "(four voices that fit the description), then `voice --pick N`. Or send the line again with "
+        "--provider-voice NAME."
+    )
+
+
 def run_line(
     desk: Path,
     *,
@@ -2162,6 +2193,8 @@ def run_line(
                 episode,
                 f"line: {what}: " + "; ".join(item.strip() for item in changed),
             )
+        if new_voice is not None and provider_voice is None:
+            print(new_voice_pick_warning(desk, new_voice), file=out)
         return path
     if beat is not None or speaker_moves:
         raise CommandStopped("--beat and --speaker-moves go with --add")
@@ -4972,7 +5005,7 @@ def add_episode_parsers(
     arc.add_argument(
         "--line",
         default=None,
-        help="With --pick: the human's rewrite of the line (<=400).",
+        help=f"With --pick: the human's rewrite of the line (<={ARC_LINE_MAX} characters).",
     )
     arc.add_argument(
         "--episodes",
@@ -5191,7 +5224,8 @@ def add_episode_parsers(
     line.add_argument(
         "--provider-voice",
         default=None,
-        help="With --new-voice: an Eleven v3 voice; left out, the server picks one nobody uses.",
+        help="With --new-voice: an Eleven v3 voice. Left out, the server gives the first voice nobody uses "
+        "and the --voice-description does not choose it: audition the new cast id after.",
     )
     line.add_argument(
         "--select-regen",

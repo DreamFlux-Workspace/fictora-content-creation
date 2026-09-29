@@ -351,6 +351,9 @@ def test_a_new_voice_after_the_gate_goes_through_the_cascade_off_screen_and_reop
     text = out.getvalue()
     assert "+ voice Speaker voice (cast_speaker-voice), heard, never drawn" in text
     assert "Speaker voice (off-screen): D-9341." in text
+    # No --provider-voice: say the description does not pick the voice, and how to hear it.
+    assert "does NOT choose the voice" in text
+    assert "--cast cast_speaker-voice --audition --voices A,B,C,D" in text
     assert "the server keeps this script approved" in text
     assert "pending again" in text
     assert episode_by_ordinal(load_series(desk), 1).script.status == "pending"
@@ -437,7 +440,7 @@ def test_an_unknown_refusal_is_passed_through_unchanged() -> None:
 
 
 def test_the_cli_takes_add_new_voice_and_provider_voice(
-    desk: Path, api: FakeApi
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _before_gate(api)
     api.spine_doc["beats"][1]["motion_direction"]["subject_cast_id"] = "cast_intercom"
@@ -451,3 +454,4 @@ def test_the_cli_takes_add_new_voice_and_provider_voice(
     patch = _patches(api)[0]
     assert patch["add_voice_only_cast"][0]["provider_voice"] == "Rachel"
     assert patch["add_dialogue_lines"][0]["off_screen"] is True
+    assert "does NOT choose the voice" not in capsys.readouterr().out
