@@ -13,9 +13,10 @@ anything, and refuses on a deploy older than the field (its
 ``/openapi.json`` beat patch has no ``reaction_kind``, or it has no
 ``/v1/capabilities``) instead of sending a field the server would drop.
 
-Two things stay open on the server: the comedy kinds are not refused on a
-serious scene (the register is not enforced), and the request does not say
-whose face wears the kind when a row stages two people.
+Every kind may go on any beat: the scene decides, not the genre (founder
+decision 2026-09-29), so a comedy kind on a serious story is never refused.
+One thing stays open on the server: the request does not say whose face
+wears the kind when a row stages two people.
 """
 
 from __future__ import annotations

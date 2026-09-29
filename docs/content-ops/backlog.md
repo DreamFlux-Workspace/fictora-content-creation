@@ -8,7 +8,7 @@ Closed 2026-09-28: adding or removing a line and adding an off-screen voice afte
 
 Closed 2026-09-28: the automatic effects now plan the impacts a beat states (fictora-drama #462), and a sound note can add one sound to one take (#467). The kit sends it with `sound-note`, and `take-facts --refresh` brings both into a take filmed before them (SCP-173 #44, #45). Drop and level notes now reach `finish` too, through the take facts (fictora-drama #475): no `--sfx-adjust` copy of a story note.
 
-Closed 2026-09-29: a creator can ask a beat for an expression before the board (fictora-drama #482, `fictora-produce edit --beat N --expression KIND`, `expressions`; Hanakaze #3, #24; SCP-173 #53). The two rows below it (register, whose face) stay open.
+Closed 2026-09-29: a creator can ask a beat for an expression before the board (fictora-drama #482, `fictora-produce edit --beat N --expression KIND`, `expressions`; Hanakaze #3, #24; SCP-173 #53). Not enforcing a register is decided, not a gap: any kind may go on any beat, whatever the genre, because the scene decides (2026-09-29, Expression learnings L9). The whose-face row below stays open.
 
 Closed 2026-09-28 by founder decision: a finished cut shorter than its 15 / 30 / 60 s band (e.g. 14.2 s after trimming a bad half-second) is allowed and is not a deviation. Takes still film at the normal clip length (`clip_duration_seconds` 4–15); a finished episode longer than its band is still a deviation.
 
@@ -19,7 +19,6 @@ Closed 2026-09-28 by founder decision: a finished cut shorter than its 15 / 30 /
 | Script | The server restores a trimmed or reworded "keep exactly" line, but a locked line the writers dropped, gave to another speaker, or translated (ja/ko) is only logged (fictora-drama #457) | Caught by hand from the draft's kept/rewritten/cut list at the script gate | SCP-173 #9, #14 |
 | Captions | Japanese / Korean captions and a CJK caption font are deferred (English only) | A Japan-market cut needs captions made by hand | Hanakaze #40, #41 |
 | Board | The safe-zone check reads placement text only; there is no measured face box | A face drawn into a covered zone with clean placement words is caught only by eye | Safe zones, 2026-09-28 |
-| Board | A requested expression's register is not enforced: a comedy kind (veins, gloom lines, chibi squash) on a serious beat is sent and drawn | The agent judges the register at the board gate | Expression learnings L9 |
 | Board | A beat's expression does not say whose face wears it; on a two-person anchor row the frames author picks | Check the face on the board; fix it on the frame (`edit --frame N --set …`) and redraw | Expression learnings L10 |
 | Board | A stated move lost across a camera change, and a horror threat without its own row, are server log lines the board shot list does not print (fictora-drama #459) | Read every board for "does the picture show the rule" | SCP-173 #11, #28 |
 
