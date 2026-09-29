@@ -18,9 +18,12 @@ Routes (bearer token, ``X-Drama-Session-Id`` and ``Idempotency-Key`` on each):
 Each call's ``Idempotency-Key`` is stable across re-runs, so a replay returns
 the first answer and never pays twice. ``429`` and ``409
 operator_audio_in_progress`` are waited out per ``Retry-After``; ``502
-operator_audio_failed`` is replayed with the same key (the server retries up
-to three attempts). ``cost_usd`` in the answers is operator-only: it goes to
-run notes and the desk ledger, never to printed output.
+operator_audio_failed`` and ``504 operator_audio_timed_out`` are replayed with
+the same key (the server retries up to three attempts). Every request has an
+overall deadline, waits included (a ``cue`` 120 s): past it the command stops
+with a message saying to re-run it, never waiting on "in progress" forever.
+``cost_usd`` in the answers is operator-only: it goes to run notes and the desk
+ledger, never to printed output.
 """
 
 from __future__ import annotations
@@ -38,8 +41,17 @@ from creation.harness.http_util import api_error_text
 MAX_WAITS = 12
 #: Longest single wait honoured from ``Retry-After``.
 MAX_WAIT_SECONDS = 60.0
-#: Replays of a ``502 operator_audio_failed`` (the server allows three attempts per key).
+#: Replays of a ``502 operator_audio_failed`` / ``504 operator_audio_timed_out``
+#: (the server allows three attempts per key).
 MAX_FAILED_REPLAYS = 2
+#: Longest one ``cue`` waits for the server, waits on 429 / in progress included.
+#: The server cancels its own SFX call sooner, so a stall normally comes back
+#: as a 504 first; this is the kit's own floor. A cue that hung >10 min with
+#: no output on 2026-09-29 came back in seconds on retry.
+CUE_DEADLINE_SECONDS = 120.0
+#: Longest any other generated-audio request waits: auditions and a voice line
+#: make several provider calls, and a music bed is the slowest single call.
+DEFAULT_DEADLINE_SECONDS = 600.0
 
 HINTS = {
     "operator_audio_unavailable": "the Drama API has no media storage configured for generated audio; tell engineering",
@@ -48,6 +60,8 @@ HINTS = {
     "audio_url_not_owned": "the transcript needs a file in our storage (the take's stored URL), not a local file",
     "idempotency_conflict": "this request key was used with another body; tell engineering (the desk's keys are stable)",
     "budget_cap_exceeded": "the audio budget cap is reached; tell engineering",
+    "operator_audio_timed_out": "the audio provider kept timing out on the server; run the same command "
+    "again later (it replays the same Idempotency-Key, so nothing is paid twice)",
     "voice_audition_unknown_voice": "use a voice from the catalog the server listed; nothing was spent",
     "voice_audition_voice_count": "name 1-10 voices in --voices; nothing was spent",
     "voice_audition_text_too_long": "shorten --text to 300 characters or fewer; nothing was spent",
@@ -60,6 +74,10 @@ HINTS = {
 
 class AudioServiceError(RuntimeError):
     """The server refused or failed a generated-audio request (message says what to do)."""
+
+
+class AudioServiceTimeout(AudioServiceError):
+    """The server gave no answer within the request's deadline (message says how to retry)."""
 
 
 class AudioService(Protocol):
@@ -131,6 +149,8 @@ class DramaApiAudio:
         Episode whose ``api/`` folder the session writes to.
     sleep
         Injected for tests.
+    clock
+        Monotonic seconds; injected for tests.
     """
 
     def __init__(
@@ -139,18 +159,33 @@ class DramaApiAudio:
         *,
         episode: int = 1,
         sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.desk = desk
         self.episode = episode
         self.sleep = sleep
+        self.clock = clock
 
-    def _post(self, path: str, body: dict[str, Any], key: str) -> dict[str, Any]:
+    def _post(
+        self,
+        path: str,
+        body: dict[str, Any],
+        key: str,
+        *,
+        deadline_seconds: float = DEFAULT_DEADLINE_SECONDS,
+    ) -> dict[str, Any]:
         from creation.post.desk import open_api
 
         run = open_api(self.desk, self.episode)
         try:
             return post_with_retries(
-                run.client, run.url(path), run.headers(key), body, sleep=self.sleep
+                run.client,
+                run.url(path),
+                run.headers(key),
+                body,
+                sleep=self.sleep,
+                deadline_seconds=deadline_seconds,
+                clock=self.clock,
             )
         finally:
             run.client.close()
@@ -204,10 +239,13 @@ class DramaApiAudio:
     def sfx_cue(
         self, *, spine_id: str, sound: str, seconds: float, key: str
     ) -> dict[str, Any]:
-        """POST ``/v1/spines/{id}/sfx-cues``."""
+        """POST ``/v1/spines/{id}/sfx-cues`` with the :data:`CUE_DEADLINE_SECONDS` deadline."""
 
         return self._post(
-            f"/v1/spines/{spine_id}/sfx-cues", {"sound": sound, "seconds": seconds}, key
+            f"/v1/spines/{spine_id}/sfx-cues",
+            {"sound": sound, "seconds": seconds},
+            key,
+            deadline_seconds=CUE_DEADLINE_SECONDS,
         )
 
     def music_bed(
@@ -246,6 +284,15 @@ def _code(detail: Any) -> str:
     return str(error.get("code") or "") if isinstance(error, dict) else ""
 
 
+def _timed_out(url: str, deadline_seconds: float, why: str) -> AudioServiceTimeout:
+    route = url.rsplit("/v1/", 1)[-1]
+    return AudioServiceTimeout(
+        f"{route}: no answer from the server within {deadline_seconds:g} s ({why}); nothing was saved. "
+        "Run the same command again: it sends the same Idempotency-Key, so a render the server "
+        "finished is returned without paying twice. If it stops here again, tell engineering."
+    )
+
+
 def post_with_retries(
     client: httpx.Client,
     url: str,
@@ -253,6 +300,8 @@ def post_with_retries(
     body: dict[str, Any],
     *,
     sleep: Callable[[float], None] = time.sleep,
+    deadline_seconds: float = DEFAULT_DEADLINE_SECONDS,
+    clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
     """POST one operator audio request, waiting out rate limits and replaying a failed render.
 
@@ -268,6 +317,10 @@ def post_with_retries(
         JSON body.
     sleep
         Wait function.
+    deadline_seconds
+        Longest the whole call may take, every request and wait included.
+    clock
+        Monotonic seconds.
 
     Returns
     -------
@@ -276,13 +329,29 @@ def post_with_retries(
 
     Raises
     ------
+    AudioServiceTimeout
+        When the deadline passes (a request with no answer, or waits that would
+        run past it).
     AudioServiceError
         On a refusal, or when waits and replays run out.
     """
 
+    started = clock()
+
+    def left() -> float:
+        return deadline_seconds - (clock() - started)
+
     waits = replays = 0
     while True:
-        response = client.post(url, headers=headers, json=body)
+        remaining = left()
+        if remaining <= 0:
+            raise _timed_out(url, deadline_seconds, "the deadline passed")
+        try:
+            response = client.post(url, headers=headers, json=body, timeout=remaining)
+        except httpx.TimeoutException as exc:
+            raise _timed_out(
+                url, deadline_seconds, "the request got no answer"
+            ) from exc
         if response.is_success:
             return response.json()
         try:
@@ -293,18 +362,31 @@ def post_with_retries(
         if response.status_code == 429 or code == "operator_audio_in_progress":
             if waits < MAX_WAITS and code != "budget_cap_exceeded":
                 waits += 1
-                sleep(
-                    _retry_after(
-                        response, 15.0 if code == "operator_audio_in_progress" else 6.0
-                    )
+                wait = _retry_after(
+                    response, 15.0 if code == "operator_audio_in_progress" else 6.0
                 )
+                if wait >= left():
+                    raise _timed_out(
+                        url,
+                        deadline_seconds,
+                        "the server still says in progress"
+                        if code == "operator_audio_in_progress"
+                        else "still rate limited",
+                    )
+                sleep(wait)
                 continue
-        elif (
-            response.status_code == 502
-            and code == "operator_audio_failed"
-            and replays < MAX_FAILED_REPLAYS
-        ):
+        elif (response.status_code, code) in {
+            (502, "operator_audio_failed"),
+            (504, "operator_audio_timed_out"),
+        } and replays < MAX_FAILED_REPLAYS:
             replays += 1
+            if response.status_code == 504:
+                wait = _retry_after(response, 15.0)
+                if wait >= left():
+                    raise _timed_out(
+                        url, deadline_seconds, "the provider timed out on the server"
+                    )
+                sleep(wait)
             continue
         hint = HINTS.get(code, "")
         raise AudioServiceError(
