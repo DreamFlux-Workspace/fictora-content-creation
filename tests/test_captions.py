@@ -158,7 +158,9 @@ def test_english_show_cues_are_unchanged_word_flicker() -> None:
 
 def test_japanese_show_shows_each_whole_english_line_over_its_speech() -> None:
     cues = build_cues(ENGLISH_LINES, ENGLISH_ANCHORS, whole_lines=True)
-    assert cues == [Cue(1.0, 2.15, "Go now, it is late."), Cue(2.5, 3.15, "Run.")]
+    # Each whole line stays up long enough to read (max(1.2 s, 0.3 s a word)), extended forward
+    # only and never into the next line: 5 words want 1.5 s but the next line starts at 2.5 s.
+    assert cues == [Cue(1.0, 2.5, "Go now, it is late."), Cue(2.5, 3.7, "Run.")]
 
 
 def test_whole_line_hold_stops_at_the_next_line() -> None:

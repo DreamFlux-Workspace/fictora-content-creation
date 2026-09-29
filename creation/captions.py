@@ -14,6 +14,15 @@ Captions are always the English line. On a show spoken in Japanese or Korean
 against the speech, so step 3-4 show each whole line over its speech span
 instead of flickering word by word.
 
+On such a show, when a Whisper transcript of the take is given (``words_json``:
+the words the server heard, ``/v1/transcripts``), each whole line is timed on
+the words matched to it (:func:`creation.post.whisper.line_windows`) instead of
+on speech spans: a stammer or a mid-line pause no longer moves the caption. A
+line the transcript does not match falls back to its speech span. Each whole
+line then stays up long enough to read (:func:`readable_seconds`), extended
+only forward, never into the next line. ``--line-start`` / ``--line-end``
+override either end by hand.
+
 A voice that is heard, not seen (a line marked ``off_screen``, or any line of a
 cast member the server flags ``voice_only``) is captioned in Georgia italic:
 same size, colour, edge and place as the house caption, only the face changes
@@ -44,7 +53,7 @@ import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from creation.ops.folder import next_versioned_path
 
@@ -95,6 +104,18 @@ MAX_PAUSE_IN_LINE_SECONDS = 0.6
 SECONDS_PER_WORD = 0.32
 LAST_WORD_HOLD_SECONDS = 0.15
 
+#: Word timing (a transcript of the take): hold after the line's last heard word.
+WORD_HOLD_SECONDS = 0.25
+#: One word longer than this (and than :data:`SECONDS_PER_WORD_CHAR` per character) is a
+#: Whisper stretch into the silence before or after it (a stammer drawn out to the next word).
+MAX_WORD_SECONDS = 1.2
+SECONDS_PER_WORD_CHAR = 0.25
+#: A leading word this short (characters), cut off from the rest by a pause, is a stammer.
+STAMMER_MAX_CHARS = 2
+#: A whole English line stays up at least max(this, words x READ_SECONDS_PER_WORD) to be read.
+MIN_LINE_SECONDS = 1.2
+READ_SECONDS_PER_WORD = 0.3
+
 FONTS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
 
 #: CJK punctuation (、。「」) and fullwidth forms (！？): the caption font has no glyph for these either.
@@ -142,6 +163,10 @@ class CaptionLine:
     line_id: str
     text: str
     italic: bool = False
+    #: What is heard (``spoken_text``, else ``text``): matched against a transcript of the take.
+    performed: str = ""
+    #: Other spellings of what is heard (``text``, ``spoken_text``), for the transcript match.
+    spellings: tuple[str, ...] = ()
 
     @property
     def english(self) -> bool:
@@ -223,8 +248,8 @@ def episode_caption_lines(
             continue
         for line in beat.get("dialogue_lines") or []:
             # Captions are English subtitles: ``subtitle_text`` when the line has one, else ``text``.
-            # Their timing never reads words: it comes from where speech is heard on the take
-            # (``silencedetect``), so a Japanese or Korean performance is timed the same way.
+            # Their timing comes from where speech is heard on the take (``silencedetect``), or on a
+            # show not spoken in English from the words a transcript matched to ``performed``.
             text = str(line.get("subtitle_text") or line.get("text") or "").strip()
             if not text:
                 continue
@@ -232,11 +257,15 @@ def episode_caption_lines(
                 line.get("off_screen") is True
                 or str(line.get("cast_id") or "") in voice_only
             )
+            spoken = str(line.get("spoken_text") or "").strip()
+            written = str(line.get("text") or "").strip()
             lines.append(
                 CaptionLine(
                     str(line.get("line_id") or f"line {len(lines) + 1}"),
                     text,
                     heard_not_seen,
+                    spoken or written or text,
+                    tuple(dict.fromkeys(t for t in (written, spoken) if t)),
                 )
             )
     return lines
@@ -332,6 +361,210 @@ def anchor_lines(lines: Sequence[str], spans: Sequence[Span]) -> list[Span]:
     return anchored
 
 
+class HeardWord(Protocol):
+    """One word of a transcript (:class:`creation.post.whisper.Word`)."""
+
+    @property
+    def start(self) -> float: ...
+    @property
+    def end(self) -> float: ...
+    @property
+    def text(self) -> str: ...
+    @property
+    def reading(self) -> str | None: ...
+
+
+def _word_chars(word: HeardWord) -> int:
+    return max(1, len(re.sub(r"[\W_]", "", word.reading or word.text)))
+
+
+def _word_limit(word: HeardWord) -> float:
+    """Longest a word can plausibly last: 1.2 s, or 0.25 s per character for a long word."""
+
+    return max(MAX_WORD_SECONDS, SECONDS_PER_WORD_CHAR * _word_chars(word))
+
+
+def word_span(words: Sequence[HeardWord]) -> Span | None:
+    """Where one line is spoken, from the transcript words matched to it.
+
+    The span runs from the start of the line's core to the end of its last
+    word. The core skips, at the head:
+
+    - a word Whisper stretched past what one word can last
+      (:func:`_word_limit`: ``もう`` over 1.86 s is a stammer drawn out to
+      the next word), and
+    - one short leading word (up to two characters, a stammer such as
+      ``も、``) cut off from the rest by a pause over 0.6 s.
+
+    A last word that is stretched is cut to what it can last from its start;
+    a single stretched word keeps what it can last up to its end.
+
+    Parameters
+    ----------
+    words
+        The line's words in order (``start``, ``end``, ``text``, ``reading``).
+
+    Returns
+    -------
+    Span or None
+        None when there are no words.
+    """
+
+    core = [w for w in words if w.end >= w.start]
+    if not core:
+        return None
+    stammer_dropped = False
+    while len(core) > 1:
+        head, after = core[0], core[1]
+        if head.end - head.start > _word_limit(head):
+            core.pop(0)
+        elif (
+            not stammer_dropped
+            and after.start - head.end > MAX_PAUSE_IN_LINE_SECONDS
+            and _word_chars(head) <= STAMMER_MAX_CHARS
+        ):
+            core.pop(0)
+            stammer_dropped = True
+        else:
+            break
+    first, last = core[0], core[-1]
+    if len(core) == 1 and first.end - first.start > _word_limit(first):
+        return Span(round(first.end - _word_limit(first), 3), round(first.end, 3))
+    end = min(last.end, last.start + _word_limit(last))
+    return Span(round(first.start, 3), round(max(end, first.start), 3))
+
+
+def word_anchors(
+    lines: Sequence[CaptionLine], words: Sequence[HeardWord]
+) -> list[Span | None]:
+    """Each line's span from a transcript of the take, or None where the line was not matched.
+
+    Lines are matched in order with :func:`creation.post.whisper.line_windows`
+    on what is heard (``performed`` and every spelling), so a Japanese line is
+    matched on its reading; :func:`word_span` then trims the matched words.
+    """
+
+    from creation.post.whisper import line_windows
+
+    heard = tuple(words)
+    windows = line_windows(
+        heard,  # type: ignore[arg-type]
+        tuple(line.performed or line.text for line in lines),
+        alternates=tuple(line.spellings for line in lines),
+    )
+    return [
+        word_span([heard[i] for i in window.words])
+        if window.start is not None and window.words
+        else None
+        for window in windows
+    ]
+
+
+@dataclass(frozen=True)
+class LineTiming:
+    """Where each line is placed and how.
+
+    ``methods[i]`` says what timed line ``i``: ``words`` (the transcript),
+    ``speech`` (speech spans), ``manual`` (``--line-start`` and ``--line-end``),
+    or a mix such as ``manual start, words end``; ``estimated`` is the old
+    end from a hand start and the line's length.
+    """
+
+    anchors: tuple[Span, ...]
+    methods: tuple[str, ...]
+    holds: tuple[float, ...]
+    fixed_ends: tuple[bool, ...]
+
+
+def time_lines(
+    lines: Sequence[CaptionLine],
+    *,
+    duration: float,
+    line_starts: Sequence[float] | None = None,
+    line_ends: Sequence[float] | None = None,
+    words: Sequence[HeardWord] | None = None,
+    spans: Callable[[], Sequence[Span]] | None = None,
+) -> LineTiming:
+    """Place every line: transcript words first, then speech spans, hand times on top.
+
+    Parameters
+    ----------
+    lines
+        The episode's caption lines in order.
+    duration
+        Take length in seconds.
+    line_starts, line_ends
+        Hand times, one per line in order (``--line-start`` / ``--line-end``).
+    words
+        Transcript words of the take; only given on a show captioned with whole
+        English lines (see :func:`caption_take`).
+    spans
+        Speech spans of the take, asked for only when a line needs them (no
+        hand start and no transcript match).
+
+    Returns
+    -------
+    LineTiming
+
+    Raises
+    ------
+    ValueError
+        When a hand list has the wrong length, a line would end before it
+        starts, or there are fewer speech spans than lines.
+    """
+
+    texts = [line.text for line in lines]
+    n = len(texts)
+    for flag, given in (("--line-start", line_starts), ("--line-end", line_ends)):
+        if given and len(given) != n:
+            raise ValueError(f"{flag} given {len(given)} time(s) for {n} line(s)")
+    by_words: list[Span | None] = word_anchors(lines, words) if words else [None] * n
+    by_speech: list[Span | None] = [None] * n
+    if not line_starts and any(span is None for span in by_words):
+        if spans is None:
+            raise ValueError("no speech spans to time the lines; pass --line-start")
+        by_speech = list(anchor_lines(texts, spans()))
+    anchors: list[Span] = []
+    methods: list[str] = []
+    holds: list[float] = []
+    fixed: list[bool] = []
+    for i, text in enumerate(texts):
+        auto, auto_how = (
+            (by_words[i], "words")
+            if by_words[i] is not None
+            else (by_speech[i], "speech")
+        )
+        if line_starts:
+            start, start_how = float(line_starts[i]), "manual"
+        else:
+            assert auto is not None
+            start, start_how = auto.start, auto_how
+        if line_ends:
+            end, end_how = float(line_ends[i]), "manual"
+        elif auto is not None and auto.end > start:
+            end, end_how = auto.end, auto_how
+        else:
+            # A hand start with nothing heard to end on: as long as the line needs, up to the next start.
+            following = (
+                float(line_starts[i + 1]) if line_starts and i + 1 < n else duration
+            )
+            end = min(following, start + max(0.6, len(text.split()) * SECONDS_PER_WORD))
+            end_how = "estimated"
+        if end <= start:
+            raise ValueError(
+                f"line {i + 1} ends at {end:.2f}s, not after its start {start:.2f}s; check --line-start/--line-end"
+            )
+        anchors.append(Span(start, end))
+        methods.append(
+            start_how if start_how == end_how else f"{start_how} start, {end_how} end"
+        )
+        holds.append(
+            WORD_HOLD_SECONDS if end_how == "words" else LAST_WORD_HOLD_SECONDS
+        )
+        fixed.append(end_how == "manual")
+    return LineTiming(tuple(anchors), tuple(methods), tuple(holds), tuple(fixed))
+
+
 def time_words(text: str, span: Span) -> list[Cue]:
     """Spread the words of one line across its span, weighted by length."""
 
@@ -349,11 +582,16 @@ def time_words(text: str, span: Span) -> list[Cue]:
     return cues
 
 
-def flicker_cues(words: Sequence[Cue], *, hold_until: float | None = None) -> list[Cue]:
+def flicker_cues(
+    words: Sequence[Cue],
+    *,
+    hold_until: float | None = None,
+    hold: float = LAST_WORD_HOLD_SECONDS,
+) -> list[Cue]:
     """Build up to three words at a time, then reset (house flicker).
 
-    Each event lasts until the next word starts; the last word holds briefly,
-    never past ``hold_until`` (the next line's start).
+    Each event lasts until the next word starts; the last word holds ``hold``
+    seconds, never past ``hold_until`` (the next line's start).
     """
 
     cues: list[Cue] = []
@@ -363,38 +601,61 @@ def flicker_cues(words: Sequence[Cue], *, hold_until: float | None = None) -> li
         if i + 1 < len(words):
             end = words[i + 1].start
         else:
-            end = word.end + LAST_WORD_HOLD_SECONDS
+            end = word.end + hold
             if hold_until is not None:
                 end = min(end, hold_until)
         cues.append(Cue(word.start, max(end, word.start + 0.05), text))
     return cues
 
 
-def whole_line_cue(text: str, span: Span, *, hold_until: float | None = None) -> Cue:
+def readable_seconds(text: str) -> float:
+    """Least time a whole English line stays on screen: max(1.2 s, 0.3 s per word)."""
+
+    return max(MIN_LINE_SECONDS, len(text.split()) * READ_SECONDS_PER_WORD)
+
+
+def whole_line_cue(
+    text: str,
+    span: Span,
+    *,
+    hold_until: float | None = None,
+    hold: float = LAST_WORD_HOLD_SECONDS,
+    min_seconds: float = 0.0,
+) -> Cue:
     """One cue showing the whole line over its speech span.
 
-    The last-word hold still applies, never past ``hold_until`` (the next line's start).
+    The line holds ``hold`` seconds after the span and stays up at least
+    ``min_seconds`` (extended forward only), never past ``hold_until`` (the
+    next line's start).
     """
 
-    end = span.end + LAST_WORD_HOLD_SECONDS
+    end = max(span.end + hold, span.start + min_seconds)
     if hold_until is not None:
         end = min(end, hold_until)
     return Cue(round(span.start, 3), round(max(end, span.start + 0.05), 3), text)
 
 
-def build_cues(
+def build_line_cues(
     lines: Sequence[str],
     anchors: Sequence[Span],
     *,
     whole_lines: bool = False,
     italic: Sequence[bool] = (),
     skip: Sequence[bool] = (),
-) -> list[Cue]:
-    """Cues for every line on its anchor span.
+    holds: Sequence[float] = (),
+    fixed_ends: Sequence[bool] = (),
+) -> list[list[Cue]]:
+    """Cues for every line on its anchor span, grouped per line (empty for a skipped line).
 
     ``italic[i]`` sets line ``i``'s cues in Georgia italic; ``skip[i]`` leaves
     line ``i`` uncaptioned (not English) while its span still bounds the hold
-    of the line before it. Missing entries mean False.
+    of the line before it. Missing entries mean False. ``holds[i]`` is how
+    long line ``i`` holds after its span (default 0.15 s). ``fixed_ends[i]``
+    (a ``--line-end`` given by hand) ends line ``i`` exactly at its span end:
+    no hold and no readable minimum.
+
+    A whole line stays up at least :func:`readable_seconds`, extended forward
+    only, never into the next line.
 
     English shows flicker word by word (:func:`flicker_cues`). With
     ``whole_lines`` (a show spoken in Japanese or Korean, captioned with the
@@ -404,21 +665,55 @@ def build_cues(
     server follows for a translated subtitle.
     """
 
-    cues: list[Cue] = []
+    groups: list[list[Cue]] = []
     for i, (text, span) in enumerate(zip(lines, anchors)):
         if i < len(skip) and skip[i]:
+            groups.append([])
             continue
         next_start = anchors[i + 1].start if i + 1 < len(anchors) else None
+        fixed = i < len(fixed_ends) and fixed_ends[i]
+        hold = 0.0 if fixed else holds[i] if i < len(holds) else LAST_WORD_HOLD_SECONDS
         if whole_lines:
-            line_cues = [whole_line_cue(text, span, hold_until=next_start)]
+            line_cues = [
+                whole_line_cue(
+                    text,
+                    span,
+                    hold_until=next_start,
+                    hold=hold,
+                    min_seconds=0.0 if fixed else readable_seconds(text),
+                )
+            ]
         else:
-            line_cues = flicker_cues(time_words(text, span), hold_until=next_start)
+            line_cues = flicker_cues(
+                time_words(text, span), hold_until=next_start, hold=hold
+            )
         slanted = i < len(italic) and italic[i]
-        cues.extend(
-            Cue(c.start, c.end, c.text, italic=True) if slanted else c
-            for c in line_cues
+        groups.append(
+            [
+                Cue(c.start, c.end, c.text, italic=True) if slanted else c
+                for c in line_cues
+            ]
         )
-    return cues
+    return groups
+
+
+def build_cues(
+    lines: Sequence[str],
+    anchors: Sequence[Span],
+    *,
+    whole_lines: bool = False,
+    italic: Sequence[bool] = (),
+    skip: Sequence[bool] = (),
+    holds: Sequence[float] = (),
+    fixed_ends: Sequence[bool] = (),
+) -> list[Cue]:
+    """Every cue of :func:`build_line_cues`, in order."""
+
+    groups = build_line_cues(
+        lines, anchors, whole_lines=whole_lines, italic=italic, skip=skip,
+        holds=holds, fixed_ends=fixed_ends,
+    )  # fmt: skip
+    return [cue for group in groups for cue in group]
 
 
 def captions_whole_lines(spine: dict[str, Any]) -> bool:
@@ -872,6 +1167,23 @@ class CaptionResult:
     not_english: tuple[str, ...] = ()
     #: ``FONT: …`` when an italic line falls back from Georgia Italic (also printed on stderr), else "".
     font_warning: str = ""
+    #: Per line: what timed it (``words``, ``speech``, ``manual``, or a mix; see :class:`LineTiming`).
+    methods: tuple[str, ...] = ()
+    #: Per line: when it is on screen (first cue start to last cue end); None for a line not drawn.
+    shown: tuple[Span | None, ...] = ()
+    #: The transcript the lines were timed on, when one was used.
+    words_json: Path | None = None
+
+    def timing_lines(self) -> list[str]:
+        """One ``on screen a-b s 'line' (method)`` entry per line, for the report and run notes."""
+
+        rows: list[str] = []
+        for i, line in enumerate(self.lines):
+            shown = self.shown[i] if i < len(self.shown) else None
+            span = shown or self.anchors[i]
+            how = self.methods[i] if i < len(self.methods) else "speech"
+            rows.append(f"{span.start:.2f}-{span.end:.2f}s {line!r} ({how})")
+        return rows
 
 
 def caption_take(
@@ -880,6 +1192,8 @@ def caption_take(
     episode_ordinal: int = 1,
     take: Path | None = None,
     line_starts: Sequence[float] | None = None,
+    line_ends: Sequence[float] | None = None,
+    words_json: Path | None = None,
     timing_source: Path | None = None,
     stem: str | None = None,
 ) -> CaptionResult:
@@ -895,6 +1209,14 @@ def caption_take(
         Raw MP4 to caption; defaults to the newest ``takes/take-epNN-t1-raw-v*.mp4``.
     line_starts
         Manual start time per line, overriding speech detection.
+    line_ends
+        Manual end time per line (the caption goes off exactly there).
+    words_json
+        A saved transcript of this take (``/v1/transcripts`` words). Used only
+        on a show captioned with whole English lines (spoken language not
+        English): each line is timed on its matched words, a line not matched
+        falls back to its speech span. An English show keeps speech-span word
+        flicker and ignores it.
     timing_source
         File whose speech is detected (default ``take``). ``finish`` passes the
         take before the music bed, since silence cannot be found under music.
@@ -937,30 +1259,34 @@ def caption_take(
 
     ffmpeg, ffprobe = find_ffmpeg()
     width, height, duration = probe_video(ffprobe, take)
-    if line_starts:
-        if len(line_starts) != len(lines):
-            raise ValueError(
-                f"--line-start given {len(line_starts)} time(s) for {len(lines)} line(s)"
-            )
-        ends = list(line_starts[1:]) + [duration]
-        anchors = [
-            Span(s, min(e, s + max(0.6, len(t.split()) * SECONDS_PER_WORD)))
-            for s, e, t in zip(line_starts, ends, lines)
-        ]
-    else:
-        source = timing_source or take
-        spans = speech_spans(detect_silences(ffmpeg, source, duration), duration)
-        anchors = anchor_lines(lines, spans)
+    source = timing_source or take
+    # Word timing is for whole English lines over other-language speech; English flicker keeps speech spans.
+    from creation.post.whisper import load_words
+
+    words = load_words(words_json) if words_json is not None and whole_lines else None
+    timing = time_lines(
+        caption_lines,
+        duration=duration,
+        line_starts=line_starts,
+        line_ends=line_ends,
+        words=words,
+        spans=lambda: speech_spans(detect_silences(ffmpeg, source, duration), duration),
+    )
+    anchors = list(timing.anchors)
 
     italic = tuple(line.italic for line in caption_lines)
+    skip = [not line.english for line in caption_lines]
     # Every line keeps its speech span (timing); only English lines are drawn.
-    cues = build_cues(
+    per_line = build_line_cues(
         lines,
         anchors,
         whole_lines=whole_lines,
         italic=italic,
-        skip=[not line.english for line in caption_lines],
+        skip=skip,
+        holds=timing.holds,
+        fixed_ends=timing.fixed_ends,
     )
+    cues = [cue for group in per_line for cue in group]
     not_english = tuple(
         not_english_warning(line) for line in caption_lines if not line.english
     )
@@ -980,4 +1306,9 @@ def caption_take(
         italic,
         not_english,
         font_warning,
+        timing.methods,
+        tuple(
+            Span(group[0].start, group[-1].end) if group else None for group in per_line
+        ),
+        words_json if words is not None else None,
     )

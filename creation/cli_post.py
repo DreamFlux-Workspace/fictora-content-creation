@@ -228,6 +228,13 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Caption line start, per line.",
     )
     fin.add_argument(
+        "--line-end",
+        type=float,
+        action="append",
+        default=None,
+        help="Caption line end (the caption goes off exactly here), once per line in order.",
+    )
+    fin.add_argument(
         "--mute", action="append", default=[],
         help="Silence stray speech in the take's own audio: A-B seconds on the take as filmed (repeat).",
     )  # fmt: skip
@@ -420,6 +427,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             duck_db=args.duck_db,
             sfx_adjust=tuple(parse_adjustment(raw) for raw in args.sfx_adjust),
             line_starts=tuple(args.line_start) if args.line_start else None,
+            line_ends=tuple(args.line_end) if args.line_end else None,
             watermark_y=args.watermark_y,
             mutes=tuple(parse_range(raw) for raw in args.mute),
             voices=tuple(parse_placed(raw, flag="--voice") for raw in args.voice),

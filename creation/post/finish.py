@@ -24,6 +24,14 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    (``take-epNN-tK-mix-vN-{raw,ducked,key}-bus.wav``): ``review`` measures
    the duck depth from them.
 5. ``captions``  - house captions (English), timed on the take before the bed.
+   On a show spoken in another language (whole English lines) each line is
+   timed on the words a transcript of the take heard for it: the saved
+   ``take-epNN-tK-*words-vN.json`` (``review --transcribe``), else one made on
+   the server from the take's stored URL (``/v1/transcripts``, a few cents).
+   A line with no match, or a take whose sound was changed by hand
+   (``--voice``/``--mute``, a ``--take-file`` that is not the raw take), is
+   timed on speech spans. ``--line-start``/``--line-end`` set either end by
+   hand. The report names what timed each line.
 6. ``watermark`` - the Sokii mark top left, under the covered top strip.
 
 Every step writes a new versioned file (``take-epNN-tK-<step>-vN.mp4``); nothing
@@ -60,7 +68,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
-from creation.captions import caption_take
+import httpx
+
+from creation.captions import caption_take, captions_whole_lines
 from creation.harness.raw_video import fetch_take_facts
 from creation.ops.floor import record_spend
 from creation.ops.folder import next_versioned_path
@@ -107,6 +117,8 @@ STEP_ERRORS: tuple[type[BaseException], ...] = (
 )
 
 FactsFetcher = Callable[[Path, int, str], Path | None]
+Transcriber = Callable[[Path, int, str], Path]
+"""``(desk, episode, take_id) -> saved words JSON`` (:func:`creation.post.review.server_transcript`)."""
 
 
 @dataclass
@@ -271,6 +283,7 @@ def run_finish(
     duck_db: float | None = None,
     sfx_adjust: tuple[Adjustment, ...] = (),
     line_starts: tuple[float, ...] | None = None,
+    line_ends: tuple[float, ...] | None = None,
     watermark_y: int | None = None,
     mutes: tuple[tuple[float, float], ...] = (),
     voices: tuple[Placed, ...] = (),
@@ -278,6 +291,7 @@ def run_finish(
     sfx_render: Renderer | None = None,
     bed_maker: Maker | None = None,
     facts_fetcher: FactsFetcher = api_facts_fetcher,
+    transcriber: Transcriber | None = None,
     stream: TextIO | None = None,
 ) -> FinishResult:
     """Run the whole local post chain on one accepted take.
@@ -308,6 +322,8 @@ def run_finish(
         Per-take SFX level changes.
     line_starts
         Manual caption line starts.
+    line_ends
+        Manual caption line ends (``--line-end``), one per line in order.
     watermark_y
         Mark top offset override (never into the top 8%).
     mutes
@@ -316,8 +332,8 @@ def run_finish(
         ``--voice`` dry lines laid into the take's own audio (take seconds as filmed).
     cues
         ``--cue`` hand cues laid after the SFX step (take seconds as filmed).
-    sfx_render, bed_maker, facts_fetcher
-        Injected for tests.
+    sfx_render, bed_maker, facts_fetcher, transcriber
+        Injected for tests (``transcriber`` makes a transcript of the take on the server).
     stream
         Progress output (stderr by default).
 
@@ -578,13 +594,47 @@ def run_finish(
         )
         return StepReport("mix", "ran", mixed.one_line(), mixed.output)
 
+    def caption_words() -> tuple[Path | None, str]:
+        """The transcript to time whole English lines on, and a note saying which (or why none)."""
+
+        from creation.post.review import saved_words, server_transcript
+
+        if spine is None or not captions_whole_lines(spine):
+            return None, ""
+        if voice_state["path"] is not None:
+            return (
+                None,
+                "no transcript timing: the hand voice step changed the take's speech",
+            )
+        try:
+            raw = latest_raw_take(desk, episode, take_id)
+        except FileNotFoundError:
+            raw = None
+        if raw is None or raw.resolve() != source:
+            return None, (
+                f"no transcript timing: `{source.name}` is not the raw take the server transcribes"
+            )
+        saved = saved_words(desk, episode, take_id)
+        if saved is not None:
+            return saved, f"transcript `{saved.name}`"
+        try:
+            made = (transcriber or server_transcript)(desk, episode, take_id)
+        except (ValueError, RuntimeError, OSError, KeyError, httpx.HTTPError) as exc:
+            return None, f"no transcript ({type(exc).__name__}: {exc})"[:300]
+        return made, f"transcript made on the server: `{made.name}`"
+
     def do_captions(take: Path) -> StepReport:
+        words_json, words_note = caption_words()
+        if words_note:
+            append_run_note(run_dir, f"Finish · captions: {words_note}")
         try:
             captioned = caption_take(
                 desk,
                 episode_ordinal=episode,
                 take=take,
                 line_starts=list(line_starts) if line_starts else None,
+                line_ends=list(line_ends) if line_ends else None,
+                words_json=words_json,
                 timing_source=voice_state["path"] or source,
                 stem=f"{base}-cap",
             )
@@ -596,11 +646,10 @@ def run_finish(
                     "no dialogue lines in the spine (wordless take)",
                 )
             raise
-        timing = "; ".join(
-            f"{a.start:.2f}-{a.end:.2f}s {line!r}"
-            for line, a in zip(captioned.lines, captioned.anchors)
-        )
+        timing = "; ".join(captioned.timing_lines())
         treatment = "whole English lines" if captioned.whole_lines else "word flicker"
+        if words_note:
+            treatment += f", {words_note}"
         # A line that is not English is left uncaptioned, and an italic line may miss
         # Georgia Italic on this laptop; the summary line says which.
         warnings = "".join(

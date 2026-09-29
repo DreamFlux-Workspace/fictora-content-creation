@@ -174,6 +174,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Seconds where a line starts, once per line in order. Overrides speech detection.",
     )
     cap.add_argument(
+        "--line-end",
+        type=float,
+        action="append",
+        default=None,
+        help="Seconds where a line's caption goes off, once per line in order.",
+    )
+    cap.add_argument(
+        "--words-json",
+        type=Path,
+        default=None,
+        help="Transcript of the take to time whole English lines on (a show not spoken in English); "
+        "default: the newest take-epNN-t1-*words-vN.json when captioning the raw take.",
+    )
+    cap.add_argument(
         "--no-open", action="store_true", help="Do not open the captioned file."
     )
 
@@ -253,17 +267,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(result.message)
             return 0
         if args.command == "caption":
+            from creation.post.review import saved_words
+
+            words_json = args.words_json or (
+                saved_words(args.desk.expanduser().resolve(), args.episode, "t1")
+                if args.take is None
+                else None
+            )
             result = caption_take(
                 args.desk,
                 episode_ordinal=args.episode,
                 take=args.take,
                 line_starts=args.line_start,
+                line_ends=args.line_end,
+                words_json=words_json,
             )
             ep_dir = args.desk.expanduser().resolve() / f"ep{args.episode:02d}"
-            timing = "; ".join(
-                f'"{line}" {span.start:.2f}-{span.end:.2f}s'
-                for line, span in zip(result.lines, result.anchors)
-            )
+            timing = "; ".join(result.timing_lines())
             warnings = "".join(
                 f" {w}." for w in (*result.not_english, result.font_warning) if w
             )
@@ -273,15 +293,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{result.video.name} (cues {result.ass.name}). Lines: {timing}.{warnings}",
             )
             italic = result.italic or (False,) * len(result.lines)
-            for line, span, slanted in zip(result.lines, result.anchors, italic):
+            methods = result.methods or ("speech",) * len(result.lines)
+            shown = result.shown or (None,) * len(result.lines)
+            for line, span, seen, how, slanted in zip(
+                result.lines, result.anchors, shown, methods, italic
+            ):
                 mark = "  (italic: heard, not seen)" if slanted else ""
-                print(f"  {span.start:6.2f}-{span.end:6.2f}s  {line}{mark}")
+                span = seen or span
+                print(f"  {span.start:6.2f}-{span.end:6.2f}s  {line}{mark}  [{how}]")
             for warning in result.not_english:
                 print(warning)
             print(f"  file: {result.ass}")
             print(f"  file: {result.video}")
             print(
-                "Human QC: watch the captioned take. Wrong timing? Re-run with --line-start per line."
+                "Human QC: watch the captioned take. Wrong timing? Re-run with --line-start / --line-end per line."
             )
             if not args.no_open and sys.platform == "darwin":
                 subprocess.run(["open", str(result.video)], check=False)
