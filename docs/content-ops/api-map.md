@@ -12,6 +12,7 @@ Do not call `scripts/drama_create_flow_smoke.py` on a content production. That w
 | Approvals | `fictora-produce approve --desk D --gate look\|plates\|script\|board` |
 | Arc, brief, episode 2 on, memory | `arc`, `brief`, `author`, `memory` |
 | Line and spine edits | `line`, `edit`, `spine --refresh` |
+| Expression library, a beat's expression | `expressions`, `edit --beat N --expression KIND\|none` |
 | Look | `look-frame`, `look`, `look-note` |
 | Sound notes, a take's facts again | `sound-note`, `take-facts --refresh` |
 | One board or one plate again | `redraw-board`, `redraw-plate` |
@@ -44,6 +45,8 @@ Credentials: `FICTORA_DRAMA_GENERATION_SERVICE_TOKEN` and optional `FICTORA_DRAM
 | Delivery | Not used | `GET /v1/video-generations/{id}/delivery`. Hosted post is off, so there is nothing to deliver: the take stops at the raw clip and `fictora-produce finish` makes the deliverable on the laptop. |
 | One unbroken shot | Aligned | `cut_tempo=one_shot`. One camera move. Every cell is one shot. The camera is a little closer in each cell. |
 | A beat's own shots | Aligned (fictora-drama #464, merged via #471) | `beats[].shot_plan`: 1–4 shots `{size, subject, camera?, angle?}` in words; `PATCH /v1/spines/{id}` before the script gate, the cascade after it (marks the take's frames; its next board redraw follows the plan); `null` clears it. Shot 1 is the beat's first board row; shots past the beat's rows are clamped and logged, never refused. Kit: `edit --beat N --shot "size\|subject\|camera\|angle"` (repeatable), `--shot-plan JSON\|@FILE`, `--clear-shot-plan`. An older server answers `422`. |
+| Expression library | Aligned once fictora-drama #482 is live | `GET /v1/capabilities` → `{schema_version: "fictora.drama-capabilities.v1", reaction_kinds: [{kind, label, comedy}]}` in library order. Kit: `fictora-produce expressions --desk D [--episode N]` (spends nothing). |
+| A beat's expression | Aligned once fictora-drama #482 is live | `beats[].reaction_kind` on `PATCH /v1/spines/{id}` (one kind from `/v1/capabilities`; `null` clears; an invalid kind is `400`); the cascade after the script gate (marks the take's board). The server gives it to the beat's anchor frame (its row on a row board), so it reaches the board prompt ("Expression (…)") and the take prompt. Kit: `edit --beat N --expression KIND\|none`, checked against `/v1/capabilities` first; an older deploy (no `reaction_kind` on `DramaBeatPatch` in `/openapi.json`, or no `/v1/capabilities`) is refused before anything is sent. Open: the comedy register is not enforced, and the request does not name whose face on a two-person row. |
 | Episode ids | Aligned | New episodes are `episode_NN`; a story made before 2026-09-28 keeps `ep_02` on for later episodes. The spine routes take either form; the kit looks episodes up by ordinal (fictora-drama #456). |
 | Take length other than 15s | Aligned | `clip_duration_seconds` accepts 4–15. Default remains 15. 16 is still a rejection. |
 | Inner-voice / narration track | Aligned | `PUT /v1/spines/{id}/episodes/{n}/inner-voice` replaces dry cues. Mixed in post. Take compile refuses inner-voice / voice-over / narration / V.O. as spoken fixture lines. |

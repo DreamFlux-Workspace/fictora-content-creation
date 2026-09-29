@@ -175,7 +175,7 @@ Every episode goes to TikTok, Instagram Reels and YouTube Shorts with one layout
 
 ### Expression library
 
-The writers pick an anime expression (`reaction_kind`) for every emotional moment, on any cell. The creator does not pick it; the agent checks it at the board gate. The kinds and the marks each must show are in the skill's [reference.md](../../.claude/skills/episode-production/reference.md). What was learned paying for it:
+The writers pick an anime expression (`reaction_kind`) for every emotional moment, on any cell. The creator can ask for one on a beat (`fictora-produce edit --beat N --expression KIND`, `none` clears; `expressions` lists the kinds the deploy offers); the beat's anchor row then wears it. The agent checks it at the board gate. The kinds and the marks each must show are in the skill's [reference.md](../../.claude/skills/episode-production/reference.md). What was learned paying for it:
 
 - Smiling rage keeps the eyes OPEN with tiny trembling pupils and the too-wide grin: the smile must stay. Drawn with blank white eyes it played as a scowl.
 - Gloom draws tatesen lines on a VISIBLE face. A hidden face or the back of a head loses it.

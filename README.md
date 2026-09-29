@@ -72,6 +72,8 @@ uv run fictora-produce author --desk … --episode 2 --direction 1   # or --line
 uv run fictora-produce edit --desk … --episode 1 --frame 3 --set shot_scale="close up"
 uv run fictora-produce edit --desk … --episode 1 --beat 2 --shot "extreme close-up|her hands|handheld" --shot "wide|the shop|locked|high angle"
 uv run fictora-produce redraw-board --desk … --episode 1 --take t1 --note "her face sits in the upper third, clear of the caption band"   # note -> shot edits (printed per row) -> redraw; without a note it stops unpaid unless something changed; --same-shots for a random bad draw
+uv run fictora-produce expressions --desk … --episode 1                       # the expressions the deploy offers + each beat's request; free
+uv run fictora-produce edit --desk … --episode 1 --beat 2 --expression freeze   # the beat's expression; `none` clears
 uv run fictora-produce check-lines --desk … --episode 1
 
 # After estimate is shown in chat (films the desk's current episode alone)
