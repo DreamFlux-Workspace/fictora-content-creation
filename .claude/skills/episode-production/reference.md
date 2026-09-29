@@ -56,7 +56,7 @@ Product gap:           <one line for docs/content-ops/backlog.md>
 Extra cost:            <$ and minutes>
 ```
 
-Always a deviation: a finished episode longer than its 15 / 30 / 60 s band; any route with no command here; hand-rolled HTTP. Editing product code or settings is never acceptable. Not a deviation: a finished cut shorter than its band after trimming (e.g. 14.2 s from a 15 s episode); takes still film at the normal clip length, so say the new length and carry on. Aligned, with commands (below): episode 2 on (`arc`, `brief`, `author`), line edits (`line`), beat and frame edits (`edit`), board redraws (`redraw-board`; the regenerate route takes no notes, so the change goes in first with `edit --frame`, `edit --beat` or `look-note`; with nothing changed it stops unpaid unless `--reroll`), one character corrected and redrawn (`redraw-plate --cast NAME --note`; the old `plates --cast --cause` is retired and only prints that pointer).
+Always a deviation: a finished episode longer than its 15 / 30 / 60 s band; any route with no command here; hand-rolled HTTP. Editing product code or settings is never acceptable. Not a deviation: a finished cut shorter than its band after trimming (e.g. 14.2 s from a 15 s episode); takes still film at the normal clip length, so say the new length and carry on. Aligned, with commands (below): episode 2 on (`arc`, `brief`, `author`), line edits (`line`), beat and frame edits (`edit`), board redraws (`redraw-board --note`: the note rides on the redraw where the server takes it, and becomes shot edits through the director where it does not (a 422 on the field falls back by itself); or put the change in first with `edit --frame`, `edit --beat` or `look-note`; with nothing changed and no note it stops unpaid unless `--reroll`), one character corrected and redrawn (`redraw-plate --cast NAME --note`; the old `plates --cast --cause` is retired and only prints that pointer).
 
 ## Script gate
 
@@ -369,7 +369,7 @@ uv run fictora-produce sound-note --desk D [--episode N] [--take tK [--shot S | 
 uv run fictora-produce sound-note --desk D [--remove ID|N]      # list the story's sound notes, or remove one
 uv run fictora-produce take-facts --desk D --episode N --take tK [--refresh]   # show the saved SFX plan; --refresh reads it again (new version) and prints what changed
 uv run fictora-produce spine --desk D --refresh
-uv run fictora-produce redraw-board --desk D --episode N --take tK --note "what is wrong"   # $0.30; shot edits first (director), printed per row; back to the board gate
+uv run fictora-produce redraw-board --desk D --episode N --take tK --note "what is wrong"   # $0.30; the note rides on the redraw (older server: shot edits first via the director); back to the board gate
 uv run fictora-produce redraw-board --desk D --episode N --take tK --cause "why" [--same-shots]   # after your own edits; stops unpaid when nothing changed
 uv run fictora-produce redraw-plate --desk D --cast NAME --note "what to change"   # one character, $0.30 (`plates --cast` is retired: a pointer, exit 2)
 uv run fictora-produce check-lines --desk D --episode N [--take tK]                # exit 5 when an approved line was not asked for; prints each line's shot + row, !! when its speaker is not in that row

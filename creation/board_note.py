@@ -10,7 +10,11 @@ down that same path; nothing here plans shots itself.
 
 When the deployed regenerate route takes a ``note`` of its own (its request
 schema lists ``note`` in ``/openapi.json``), the note goes on the redraw
-instead and the server does the whole thing in one call.
+instead and the server does the whole thing in one call: it re-authors the
+take's frames from the note and draws the board with the note as a correction.
+When ``/openapi.json`` cannot be read, the note is tried on the redraw; a
+server that refuses the field (422 naming ``note``) gets it as shot edits
+instead (:func:`note_refused_by_server`).
 
 A redraw without a note of a board nothing has changed for is refused by
 ``redraw-board`` itself (``board_changes``); this module only serves the note.
@@ -67,6 +71,51 @@ def regenerate_takes_note(openapi: Any) -> bool:
         ):
             return True
     return False
+
+
+def regenerate_note_support(status: int, openapi: Any) -> bool | None:
+    """Whether the deploy's regenerate route takes ``note``, as far as ``/openapi.json`` says.
+
+    Parameters
+    ----------
+    status
+        HTTP status of the ``/openapi.json`` read.
+    openapi
+        Its body.
+
+    Returns
+    -------
+    bool | None
+        ``True`` or ``False`` from a readable schema; ``None`` when the schema
+        could not be read (the note is then tried on the redraw, and a refusal
+        falls back to shot edits).
+    """
+
+    if not 200 <= status < 300 or not isinstance(openapi, Mapping):
+        return None
+    return regenerate_takes_note(openapi)
+
+
+def note_refused_by_server(message: Any) -> bool:
+    """Whether a failed redraw was refused only because the server does not know ``note``.
+
+    Parameters
+    ----------
+    message
+        The error the redraw POST stopped with (``HTTP 422 POST …: invalid_request: …``).
+
+    Returns
+    -------
+    bool
+        ``True`` for a 422 whose refusal names the ``note`` field as not permitted.
+    """
+
+    text = str(message or "")
+    if "HTTP 422" not in text:
+        return False
+    names_note = '"note"' in text or "note:" in text
+    unknown = "extra_forbidden" in text or "not permitted" in text
+    return names_note and unknown
 
 
 def take_beats(
@@ -274,6 +323,8 @@ def row_change_lines(
 
 
 __all__ = [
+    "note_refused_by_server",
+    "regenerate_note_support",
     "DIRECTOR_STAGE",
     "beat_change_lines",
     "director_message",

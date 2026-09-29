@@ -15,7 +15,12 @@ import pytest
 
 from conftest import set_phase
 from creation import episode_commands as ec
-from creation.board_note import regenerate_takes_note, take_patch
+from creation.board_note import (
+    note_refused_by_server,
+    regenerate_note_support,
+    regenerate_takes_note,
+    take_patch,
+)
 from creation.cli_produce import main as produce_main
 from creation.ops.state import episode_by_ordinal, load_series
 from creation.spine_view import frames_by_set, frames_digest
@@ -289,3 +294,108 @@ def test_helpers_read_the_deploy_and_the_turn_conservatively() -> None:
         ]
     }
     assert take_patch(done, allowed_beat_ids={"b1"}) == ({}, [])
+
+
+def _note_turn(api: FakeApi) -> None:
+    api.routes[("POST", TURNS)] = _turn(
+        {
+            "step_id": "s1",
+            "tool": "patch_story",
+            "summary": "Changing 1 beat",
+            "state": "needs_confirmation",
+            "input": {
+                "beats": [
+                    {"beat_id": "beat_episode_01_01", "motion_intent": NEW_INTENT}
+                ]
+            },
+        }
+    )
+
+
+_NOTE_REFUSED = SystemExit(
+    "HTTP 422 POST https://drama.example/v1/spines/sp1/episodes/1/boards/1/regenerate: "
+    'invalid_request: note: Extra inputs are not permitted (details {"validation_errors": '
+    '[{"loc": ["body", "note"], "msg": "Extra inputs are not permitted", "type": "extra_forbidden"}]})'
+)
+
+
+def test_an_unreadable_schema_tries_the_note_and_falls_back_to_shot_edits_on_a_422(
+    desk: Path, api: FakeApi
+) -> None:
+    _record_digest(desk, api)
+    _regen_routes(api)
+    _cascade_routes(api)
+    _note_turn(api)
+    accepts_note = api.routes[("POST", REGEN)]
+
+    def older_server(method: str, path: str, body: dict | None) -> dict:
+        if body and "note" in body:
+            raise _NOTE_REFUSED
+        return accepts_note(method, path, body)
+
+    api.routes[("POST", REGEN)] = older_server
+    api.routes[("GET", "/openapi.json")] = SystemExit("HTTP 404 GET /openapi.json")
+    out = io.StringIO()
+
+    ec.run_redraw_board(desk, episode=1, take_id="t1", note=NOTE, out=out)
+
+    regen = [(body, key) for m, p, body, key in api.calls if m == "POST" and p == REGEN]
+    assert [("note" in (body or {})) for body, _ in regen] == [True, False]
+    # The refused body never ran: the plain redraw goes under a fresh key.
+    assert regen[0][1] != regen[1][1]
+    # The note went down the director path between the two.
+    assert _call_order(api, TURNS) < max(
+        i for i, (m, p, _, _) in enumerate(api.calls) if m == "POST" and p == REGEN
+    )
+    text = out.getvalue()
+    assert "does not take a note on a redraw yet" in text
+    redraw = episode_by_ordinal(load_series(desk), 1).takes[0].extra["redraws"][0]
+    assert redraw["note"] == NOTE and redraw["reroll"] is False
+
+
+def test_an_unreadable_schema_on_a_server_that_takes_the_note_sends_it_once(
+    desk: Path, api: FakeApi
+) -> None:
+    _record_digest(desk, api)
+    _regen_routes(api)
+    api.routes[("GET", "/openapi.json")] = SystemExit("HTTP 404 GET /openapi.json")
+
+    ec.run_redraw_board(desk, episode=1, take_id="t1", note=NOTE, out=io.StringIO())
+
+    assert api.posted(TURNS) == []
+    assert [body["note"] for body in api.posted(REGEN) if body] == [NOTE]
+
+
+def test_a_refusal_that_is_not_about_the_note_is_not_retried(
+    desk: Path, api: FakeApi
+) -> None:
+    _record_digest(desk, api)
+    _regen_routes(api)
+    api.routes[("GET", "/openapi.json")] = SystemExit("HTTP 404 GET /openapi.json")
+    api.routes[("POST", REGEN)] = SystemExit(
+        "HTTP 409 POST /v1/…/regenerate: board_not_drawn: take 1 has no board yet"
+    )
+
+    with pytest.raises(SystemExit, match="board_not_drawn"):
+        ec.run_redraw_board(desk, episode=1, take_id="t1", note=NOTE, out=io.StringIO())
+
+    assert len(api.posted(REGEN)) == 1
+    assert api.posted(TURNS) == []
+
+
+def test_the_note_refusal_and_schema_helpers() -> None:
+    assert note_refused_by_server(_NOTE_REFUSED.code) is True
+    assert (
+        note_refused_by_server(
+            "HTTP 422 POST x: invalid_request: prompt: field required"
+        )
+        is False
+    )
+    assert (
+        note_refused_by_server("HTTP 409 POST x: note: Extra inputs are not permitted")
+        is False
+    )
+    assert note_refused_by_server(None) is False
+    assert regenerate_note_support(404, None) is None
+    assert regenerate_note_support(200, "not json") is None
+    assert regenerate_note_support(200, openapi_doc()) is False

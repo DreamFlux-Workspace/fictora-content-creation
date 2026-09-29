@@ -112,7 +112,8 @@ from creation.board_note import (
     DIRECTOR_STAGE,
     beat_change_lines,
     director_message,
-    regenerate_takes_note,
+    note_refused_by_server,
+    regenerate_note_support,
     row_change_lines,
     take_patch,
 )
@@ -3372,8 +3373,13 @@ def run_redraw_board(
     With ``note`` (what is wrong with the board) the note is first turned into
     edits of the take's beats (:func:`note_to_shot_edits`: the app's director
     path; on a deploy whose regenerate route takes ``note`` it rides on the
-    redraw instead) and the changes are printed per row before anything is
-    drawn; the rows that changed in the redraw are printed after it.
+    redraw instead, where the server re-authors the take's frames from it and
+    draws the board with it as a correction). When ``/openapi.json`` cannot be
+    read the note is tried on the redraw, and a server that refuses the field
+    (422 naming ``note``) gets it as shot edits instead, under a fresh key. The
+    changes are printed per row before anything is drawn; the rows that
+    changed in the redraw are printed after it. A note counts as a change: no
+    ``--reroll`` is needed with one.
 
     Stops before anything is paid when nothing the board is drawn from changed
     since it was last drawn (:func:`board_changes`: frame briefs, the take's
@@ -3447,11 +3453,15 @@ def run_redraw_board(
             )
         elif note is not None:
             status, openapi = run.get_optional("/openapi.json")
-            if 200 <= status < 300 and regenerate_takes_note(openapi):
+            support = regenerate_note_support(status, openapi)
+            if support is not False:
                 extra["note"] = note
                 note_on_redraw = True
                 print(
-                    f"[board] {take_id}: the server takes the note on the redraw and turns it into shot edits.",
+                    f"[board] {take_id}: the server takes the note on the redraw and turns it into shot edits."
+                    if support
+                    else f"[board] {take_id}: the server's schema could not be read; sending the note on the redraw "
+                    "(if the server refuses it, the note becomes shot edits first).",
                     file=out,
                 )
             else:
@@ -3504,15 +3514,59 @@ def run_redraw_board(
             cut_tempo=cfg.cut_tempo,
             extra=extra,
         )
-        terminal = run_unit(
-            desk,
-            run,
-            unit=unit,
-            path=f"/v1/spines/{state.spine_id}/episodes/{episode}/boards/{set_index}/regenerate",
-            body=body,
-            video_route=True,
-            deadline_seconds=cfg.poll_boards_deadline_seconds,
-        )
+        regenerate_path = f"/v1/spines/{state.spine_id}/episodes/{episode}/boards/{set_index}/regenerate"
+        try:
+            terminal = run_unit(
+                desk,
+                run,
+                unit=unit,
+                path=regenerate_path,
+                body=body,
+                video_route=True,
+                deadline_seconds=cfg.poll_boards_deadline_seconds,
+            )
+        except SystemExit as exc:
+            if not (note_on_redraw and note_refused_by_server(exc.code)):
+                raise
+            # An older server: the refused body never ran. Turn the note into shot
+            # edits the way the app's director does, then redraw under a fresh key.
+            print(
+                f"[board] {take_id}: this server does not take a note on a redraw yet; the note becomes "
+                "shot edits first (the note is kept on the desk either way).",
+                file=out,
+            )
+            _forget_unit(desk, unit)
+            extra.pop("note", None)
+            note_on_redraw = False
+            spine = note_to_shot_edits(
+                desk,
+                run,
+                spine,
+                episode=episode,
+                take_id=take_id,
+                take_count=len(slot.takes),
+                note=note or "",
+                out=out,
+            )
+            state = load_production(desk)
+            body = reuse_generation_body(
+                prompt=scene_prompt(spine, state.prompt),
+                spine=spine,
+                preset_id=state.preset_id,
+                preset_version=state.preset_version,
+                video_lane=state.video_lane,
+                cut_tempo=cfg.cut_tempo,
+                extra=extra,
+            )
+            terminal = run_unit(
+                desk,
+                run,
+                unit=unit,
+                path=regenerate_path,
+                body=body,
+                video_route=True,
+                deadline_seconds=cfg.poll_boards_deadline_seconds,
+            )
         _save_desk_json(
             desk, f"boards-redraw-ep{episode:02d}-{take_id}-terminal", terminal
         )
@@ -3571,6 +3625,15 @@ def run_redraw_board(
         changed=changed or [],
     )
     return made[0][1]
+
+
+def _forget_unit(desk: Path, unit: str) -> None:
+    """Drop a unit's recorded key after the server refused its body, so the next POST gets a fresh key."""
+
+    state = load_production(desk)
+    state.pending.pop(unit, None)
+    state.attempts[unit] = state.attempts.get(unit, 0) + 1
+    save_production(desk, state)
 
 
 def _record_redraw(
