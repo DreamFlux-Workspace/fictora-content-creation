@@ -230,6 +230,55 @@ def test_an_off_screen_speaker_needs_no_place_on_the_row() -> None:
     assert "!! row 2: Ren" not in lines
 
 
+def _heard_only_ren_on_the_board() -> dict[str, Any]:
+    """Hanakaze ep 3 shape: Ren's only line is off-screen, yet row 1 lists him."""
+
+    spine = _board_spine()
+    spine["beats"][0]["dialogue_lines"][1]["off_screen"] = True
+    first = spine["frames"][0]
+    first["cast_refs"] = ["cast_ren"]
+    first["visual_brief"]["subject_blocking"][0]["cast_id"] = "cast_ren"
+    return spine
+
+
+def test_an_off_screen_speaker_listed_on_the_board_is_warned() -> None:
+    lines = "\n".join(shot_list_lines(_heard_only_ren_on_the_board(), episode=1))
+
+    assert (
+        "!! Ren is off-screen in this take (heard, not seen) but is listed on frame_episode_01_01 (row 1)"
+        in lines
+    )
+    assert "Hana is off-screen" not in lines
+
+
+def test_an_off_screen_speaker_seen_elsewhere_in_the_take_is_not_warned() -> None:
+    spine = _heard_only_ren_on_the_board()
+    spine["beats"][0]["dialogue_lines"].append(
+        {
+            "line_id": "line_extra",
+            "cast_id": "cast_ren",
+            "text": "Fine.",
+            "off_screen": None,
+        }
+    )
+
+    lines = "\n".join(shot_list_lines(spine, episode=1))
+
+    assert "Ren is off-screen" not in lines
+
+
+def test_an_off_screen_line_on_a_faceless_row_is_warned() -> None:
+    spine = _board_spine()
+    spine["beats"][0]["dialogue_lines"][1]["off_screen"] = True
+    brief = spine["frames"][1]["visual_brief"]
+    brief["cell_role"] = "insert"
+    brief["shot_scale"] = "insert shot"
+
+    lines = "\n".join(shot_list_lines(spine, episode=1))
+
+    assert "!! row 2 carries Ren's off-screen line but shows no face" in lines
+
+
 def test_a_speaker_placed_off_frame_is_warned() -> None:
     spine = _board_spine()
     spine["frames"][1]["visual_brief"]["subject_blocking"].append(
