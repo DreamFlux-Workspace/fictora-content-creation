@@ -10,8 +10,9 @@ desk with a versioned name, and never approves (the human's yes goes through
 - ``brief --episode N``: the next-episode directions (for ``author --direction K``).
 - ``author --episode N``: write episode N (2 on) with a direction; points the desk at it.
 - ``memory --note`` / ``--thread``: standing series notes.
-- ``edit``: a beat's shot, a frame's brief, or a line (pin the performed line) —
-  ``PATCH`` before the script gate, the cascade after it (paid items off by default).
+- ``edit``: a beat's shot, shot plan or expression (``--expression KIND|none``), a frame's brief, or a line
+  (pin the performed line) — ``PATCH`` before the script gate, the cascade after it (paid items off by default).
+- ``expressions [--episode N]``: the expressions the deploy offers (``GET /v1/capabilities``) and what each beat asks for.
 - ``line``: change one line's words, performed line, speaker or seen/heard, add a line to a beat, remove one,
   or add a voice that is only heard with its line, on the server and the desk in one step, and say what that
   does to the script approval (``line`` with no change lists the lines).
@@ -116,6 +117,16 @@ from creation.board_note import (
     take_patch,
 )
 from creation.board_note import take_beats as board_take_beats
+from creation.expression import (
+    CAPABILITIES_PATH,
+    OLDER_SERVER,
+    ExpressionError,
+    beat_expression,
+    expression_options,
+    resolve_expression,
+    server_takes_expression,
+    vocabulary_lines,
+)
 from creation.shot_plan import (
     OLDER_SERVER_HINT,
     ShotPlanError,
@@ -913,6 +924,16 @@ def _shot_plan_change(
     return ["  shot_plan:", *old, *new]
 
 
+def _expression_change(beat: Mapping[str, Any], kind: str | None) -> list[str]:
+    """Printable line for a beat's expression going from what it asks for to ``kind`` (``None`` = cleared)."""
+
+    before = beat_expression(beat)
+    if before == kind:
+        return []
+    chosen = "none (the frames author chooses)"
+    return [f"  expression: {before or chosen}  ->  {kind or chosen}"]
+
+
 def _find(
     spine: Mapping[str, Any],
     items: Sequence[Any],
@@ -1105,6 +1126,8 @@ def build_patch(
     off_screen: bool | None = None,
     shot_plan: list[dict[str, str]] | None = None,
     clear_shot_plan: bool = False,
+    set_reaction_kind: bool = False,
+    reaction_kind: str | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """Build the spine patch for one beat, frame or line, merged onto what the spine has now.
 
@@ -1137,17 +1160,22 @@ def build_patch(
         A beat's new ``shot_plan`` (checked by :mod:`creation.shot_plan`); it replaces the whole plan.
     clear_shot_plan
         Send ``shot_plan: null``: the beat's plan is removed and the frames author chooses its shots again.
+    set_reaction_kind, reaction_kind
+        Send the beat's ``reaction_kind`` (its expression, already checked against the deploy's library by
+        :func:`creation.expression.resolve_expression`); ``None`` clears it.
 
     Returns
     -------
     tuple[dict[str, Any], list[str]]
         ``{"beats"|"frames"|"dialogue_lines": [...]}`` and one line per changed field. A beat edit that only
-        changes the plan sends ``{beat_id, shot_plan}`` and nothing else.
+        changes the plan and/or the expression sends ``{beat_id, shot_plan?, reaction_kind?}`` and nothing else.
     """
 
     targets = [value for value in (beat, frame, line_id) if value is not None]
     if len(targets) != 1:
         raise CommandStopped("pass exactly one of --beat, --frame or --line-id")
+    if set_reaction_kind and beat is None:
+        raise CommandStopped("--expression belongs to a beat: pass --beat N")
     if line_id is not None:
         if assignments or intent is not None:
             raise CommandStopped(
@@ -1213,16 +1241,23 @@ def build_patch(
             episode=episode,
             kind="beat",
         )
-        if planning:
-            plan_changed = _shot_plan_change(
-                found, None if clear_shot_plan else shot_plan
-            )
-            if intent is None and not assignments:
-                if not plan_changed:
-                    raise CommandStopped(f"nothing to change on {found.get('beat_id')}")
-                return {
-                    "beats": [{"beat_id": found["beat_id"], "shot_plan": shot_plan}]
-                }, plan_changed
+        plan_changed = (
+            _shot_plan_change(found, None if clear_shot_plan else shot_plan)
+            if planning
+            else []
+        )
+        expression_changed = (
+            _expression_change(found, reaction_kind) if set_reaction_kind else []
+        )
+        if (planning or set_reaction_kind) and intent is None and not assignments:
+            if not plan_changed + expression_changed:
+                raise CommandStopped(f"nothing to change on {found.get('beat_id')}")
+            only: dict[str, Any] = {"beat_id": found["beat_id"]}
+            if planning:
+                only["shot_plan"] = shot_plan
+            if set_reaction_kind:
+                only["reaction_kind"] = reaction_kind
+            return {"beats": [only]}, plan_changed + expression_changed
         direction = copy.deepcopy(found.get("motion_direction") or {})
         new_intent = (
             intent if intent is not None else str(found.get("motion_intent") or "")
@@ -1243,6 +1278,9 @@ def build_patch(
         if planning:
             entry["shot_plan"] = shot_plan
             changed += plan_changed
+        if set_reaction_kind:
+            entry["reaction_kind"] = reaction_kind
+            changed += expression_changed
         if not changed:
             raise CommandStopped(f"nothing to change on {found.get('beat_id')}")
         return {"beats": [entry]}, changed
@@ -1940,6 +1978,7 @@ def run_edit(
     off_screen: bool | None = None,
     shot_plan: list[dict[str, str]] | None = None,
     clear_shot_plan: bool = False,
+    expression: str | None = None,
     select_regen: bool = False,
     preview_only: bool = False,
     out: Any = None,
@@ -1968,6 +2007,11 @@ def run_edit(
         marks the take's frames and its next ``redraw-board`` re-authors them to the plan. A 422 is
         explained as an older server (:data:`creation.shot_plan.OLDER_SERVER_HINT`); a server that
         answers but does not keep the plan is said plainly.
+    expression
+        A beat's expression: a kind or label from ``GET /v1/capabilities``, or ``none`` to clear. Checked
+        against the deploy's library before anything is sent; a deploy older than the field is refused
+        (:data:`creation.expression.OLDER_SERVER`). After the script gate it goes through the cascade like
+        any beat edit, and the take's board is marked for a redraw.
     select_regen
         After the script gate: also run the cascade's paid items.
     preview_only
@@ -1983,6 +2027,16 @@ def run_edit(
 
     out = out or sys.stdout
     planning = shot_plan is not None or clear_shot_plan
+    setting_expression = expression is not None
+    kind: str | None = None
+    if setting_expression:
+        if beat is None:
+            raise CommandStopped("--expression belongs to a beat: pass --beat N")
+        _, _, check = _desk_session(desk)
+        try:
+            kind = resolve_or_stop(str(expression), deploy_expressions(check))
+        finally:
+            check.client.close()
 
     def build(spine: Mapping[str, Any]) -> tuple[dict[str, Any], list[str], str]:
         patch, changed = build_patch(
@@ -2000,6 +2054,8 @@ def run_edit(
             off_screen=off_screen,
             shot_plan=shot_plan,
             clear_shot_plan=clear_shot_plan,
+            set_reaction_kind=setting_expression,
+            reaction_kind=kind,
         )
         what = (
             f"beat {beat}"
@@ -2031,6 +2087,8 @@ def run_edit(
             wanted=None if clear_shot_plan else shot_plan,
             out=out,
         )
+    if setting_expression and not preview_only:
+        _report_expression(fresh, episode=episode, beat=str(beat), wanted=kind, out=out)
     if line_id is not None and not preview_only:
         relocalized = (
             text is not None and spoken is None and _spoken_language(fresh) != "en-US"
@@ -2079,6 +2137,129 @@ def _report_shot_plan(
             "plans (fictora-drama #464) and dropped the field. Nothing on the board will follow it.",
             file=out,
         )
+
+
+def deploy_expressions(run: DramaApiRunSession) -> list[dict[str, Any]]:
+    """The deploy's expression library, refusing a deploy older than beat expressions. Spends nothing.
+
+    Parameters
+    ----------
+    run
+        Session (reads ``/openapi.json`` and ``GET /v1/capabilities``).
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        ``{kind, label, comedy}`` per expression, in the library's order.
+
+    Raises
+    ------
+    CommandStopped
+        The deploy's beat patch has no ``reaction_kind``, it has no ``/v1/capabilities``, or the answer is
+        not one the kit reads.
+    """
+
+    status, doc = run.get_optional("/openapi.json")
+    if 200 <= status < 300 and server_takes_expression(doc) is False:
+        raise CommandStopped(
+            OLDER_SERVER.format(why="its spine patch has no beats[].reaction_kind")
+        )
+    status, body = run.get_optional(CAPABILITIES_PATH)
+    if status == 404:
+        raise CommandStopped(OLDER_SERVER.format(why=f"it has no {CAPABILITIES_PATH}"))
+    if not 200 <= status < 300:
+        raise CommandStopped(
+            f"{CAPABILITIES_PATH} answered HTTP {status}: {_short(body)}"
+        )
+    try:
+        return expression_options(body)
+    except ExpressionError as exc:
+        raise CommandStopped(str(exc)) from None
+
+
+def resolve_or_stop(raw: str, options: Sequence[Mapping[str, Any]]) -> str | None:
+    """:func:`creation.expression.resolve_expression`, stopping the command on a kind the deploy lacks."""
+
+    try:
+        return resolve_expression(raw, options)
+    except ExpressionError as exc:
+        raise CommandStopped(str(exc)) from None
+
+
+def _report_expression(
+    spine: Mapping[str, Any],
+    *,
+    episode: int,
+    beat: str,
+    wanted: str | None,
+    out: Any,
+) -> None:
+    """Print the beat's expression as the server now holds it, and say so when it did not keep what was sent."""
+
+    found = _find(
+        spine, spine.get("beats") or [], "beat_id", beat, episode=episode, kind="beat"
+    )
+    held = beat_expression(found)
+    print(
+        f"{found.get('beat_id')} expression on the server now: "
+        f"{held or 'none (the frames author chooses)'}",
+        file=out,
+    )
+    if held != wanted:
+        print(
+            "  !! the server answered but does not hold the expression that was sent: it is likely older than beat "
+            "expressions (fictora-drama #482) and dropped the field. Nothing on the board will follow it.",
+            file=out,
+        )
+
+
+def run_expressions(
+    desk: Path, *, episode: int | None = None, out: Any = None
+) -> list[dict[str, Any]]:
+    """Print the deploy's expression library and, with ``episode``, what each of its beats asks for.
+
+    Spends nothing. Refuses a deploy older than beat expressions.
+
+    Parameters
+    ----------
+    desk
+        Series desk with a story.
+    episode
+        Episode ordinal whose beats to list (optional).
+    out
+        Text stream.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        The library.
+    """
+
+    out = out or sys.stdout
+    desk, state, run = _desk_session(desk)
+    try:
+        options = deploy_expressions(run)
+        spine = run.spine(state.spine_id or "") if episode is not None else None
+    finally:
+        run.client.close()
+    print(
+        f"expressions this deploy offers ({len(options)}); set one with "
+        "`edit --episode N --beat B --expression KIND` (`none` clears):",
+        file=out,
+    )
+    for line in vocabulary_lines(options):
+        print(line, file=out)
+    if spine is not None and episode is not None:
+        episode_id = episode_id_for(spine, episode)
+        print(f"ep{episode:02d} beats:", file=out)
+        for found in spine.get("beats") or []:
+            if isinstance(found, Mapping) and found.get("episode_id") == episode_id:
+                print(
+                    f"  beat {found.get('ordinal')} ({found.get('beat_id')}): "
+                    f"{beat_expression(found) or 'none (the frames author chooses)'}",
+                    file=out,
+                )
+    return options
 
 
 def _run_cascade(
@@ -4407,6 +4588,7 @@ EPISODE_COMMANDS = frozenset(
         "author",
         "memory",
         "edit",
+        "expressions",
         "line",
         "look-frame",
         "look",
@@ -4558,6 +4740,22 @@ def add_episode_parsers(
         action="store_true",
         help="Beat: remove its plan (the frames author chooses again).",
     )
+    edit.add_argument(
+        "--expression",
+        default=None,
+        metavar="KIND|none",
+        help=(
+            "Beat: the expression it plays (a kind from `expressions`, e.g. slow_surprise), or `none` to give the "
+            "choice back to the frames author. Checked against the deploy first."
+        ),
+    )
+
+    expressions = sub.add_parser(
+        "expressions",
+        help="List the expressions this deploy offers; with --episode, what each beat asks for. Spends nothing.",
+    )
+    expressions.add_argument("--desk", type=Path, required=True)
+    expressions.add_argument("--episode", type=int, default=None)
     edit.add_argument(
         "--select-regen",
         action="store_true",
@@ -4881,9 +5079,13 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 subtitle=args.subtitle,
                 shot_plan=shot_plan,
                 clear_shot_plan=args.clear_shot_plan,
+                expression=args.expression,
                 select_regen=args.select_regen,
                 preview_only=args.preview,
             )
+            return 0
+        if args.command == "expressions":
+            run_expressions(args.desk, episode=args.episode)
             return 0
         if args.command == "line":
             run_line(
@@ -5007,6 +5209,9 @@ __all__ = [
     "line_row_lines",
     "run_check_lines",
     "run_edit",
+    "run_expressions",
+    "deploy_expressions",
+    "resolve_or_stop",
     "run_film",
     "run_line",
     "run_approve_look",

@@ -275,6 +275,8 @@ def script_lines(
                 f"  shot {beat.get('ordinal')}: {beat.get('motion_intent') or '(no shot written)'}"
             )
             out += plan_lines(beat.get("shot_plan"), indent="    ")
+            if beat.get("reaction_kind"):
+                out.append(f"    expression: {beat['reaction_kind']}")
             for line in spoken_lines(spine, beat):
                 gloss = f"  ({line.translation})" if line.translation else ""
                 out.append(f"    {line.speaker}: {line.original}{gloss}")
@@ -844,12 +846,27 @@ def shot_list_lines(
             continue
         rows = shot_rows(frames)
         lines.append(f"ep{episode:02d} t{set_index} board, row by row:")
-        for beat in planned[set_index - 1] if set_index <= len(planned) else []:
+        take_beats = planned[set_index - 1] if set_index <= len(planned) else []
+        for beat in take_beats:
             if beat.get("shot_plan"):
                 lines.append(
                     f"  beat {beat.get('ordinal')} asks for (its first row is shot 1):"
                 )
                 lines += plan_lines(beat.get("shot_plan"), indent="    ")
+            if beat.get("reaction_kind"):
+                lines.append(
+                    f"  beat {beat.get('ordinal')} asks for expression {beat['reaction_kind']} "
+                    "(its anchor row wears it)"
+                )
+        worn = {kind for row in rows for kind in row.reaction_kinds}
+        for beat in take_beats:
+            kind = beat.get("reaction_kind")
+            if kind and str(kind) not in worn:
+                lines.append(
+                    f"  !! beat {beat.get('ordinal')} asks for expression {kind} and no row on this board wears it: "
+                    f"the board was drawn before the request, or its row stages nobody. "
+                    f"`redraw-board --episode {episode} --take t{set_index} --cause '...'`"
+                )
         for row in rows:
             lines.append(f"  {row.one_line()}")
             lines += row_speech_lines(spine, frames, row=row.row, cast_names=cast_names)
