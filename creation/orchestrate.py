@@ -79,6 +79,7 @@ from creation.production_state import (
 from creation.spine_view import (
     beats_by_take,
     board_assets,
+    board_inputs,
     episode_id_for,
     frames_by_set,
     frames_digest,
@@ -566,7 +567,7 @@ def download_boards(
     desk
         Series desk.
     state
-        Production state; its board paths and frame digests are updated (the caller saves it).
+        Production state; its board paths, frame digests and board inputs are updated (the caller saves it).
     spine
         Spine JSON after the drawing.
     episode
@@ -609,13 +610,18 @@ def download_boards(
     finally:
         fetch.close()
     drawn = frames_by_set(spine, episode=episode)
+    take_count = len(episode_by_ordinal(load_series(desk), episode).takes)
     for index, path in made:
+        key = f"ep{episode:02d}-t{index}"
         state.board_paths[f"t{index}"] = (
             str(path.relative_to(desk)) if path.is_relative_to(desk) else str(path)
         )
-        state.board_digests[f"ep{episode:02d}-t{index}"] = frames_digest(
-            drawn.get(index, [])
+        state.board_digests[key] = frames_digest(drawn.get(index, []))
+        state.board_inputs[key] = board_inputs(
+            spine, episode=episode, set_index=index, take_count=take_count
         )
+        if key in state.boards_stale:
+            state.boards_stale.remove(key)
     return made
 
 

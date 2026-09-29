@@ -370,9 +370,83 @@ def frames_digest(frames: Sequence[Mapping[str, Any]]) -> str:
     """
 
     payload = [(frame.get("frame_id"), frame.get("visual_brief")) for frame in frames]
+    return _digest(payload)
+
+
+def _digest(payload: Any) -> str:
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()[:16]
+
+
+#: Line fields that are words only: changing them does not change what a board draws.
+_WORDS_ONLY_LINE_KEYS = frozenset({"text", "spoken_text", "subtitle_text"})
+
+#: What a board's drawing is made from, as :func:`board_inputs` names them (the order they are reported in).
+BOARD_INPUT_NAMES: dict[str, str] = {
+    "frames": "the frame briefs",
+    "beats": "the take's beats (intent, direction, shot plan, who is in them)",
+    "look": "the look notes",
+    "plates": "the cast plates",
+}
+
+
+def board_inputs(
+    spine: Mapping[str, Any], *, episode: int, set_index: int, take_count: int
+) -> dict[str, str]:
+    """Digest each thing one board is drawn from, to tell a redraw that changes something from a re-roll.
+
+    A redraw draws the take's frames again (the server re-authors them first
+    after a beat edit), in the story's look, with the cast's plates. When none of
+    these changed since the board was drawn, a redraw draws the same direction
+    again: a paid re-roll.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+    set_index
+        The board (take) number, 1-based.
+    take_count
+        Takes on the desk for this episode (:func:`beats_by_take`).
+
+    Returns
+    -------
+    dict[str, str]
+        One short digest per key of :data:`BOARD_INPUT_NAMES`.
+    """
+
+    frames = frames_by_set(spine, episode=episode).get(set_index, [])
+    takes = beats_by_take(spine, episode=episode, take_count=max(take_count, set_index))
+    beats = []
+    for beat in takes[set_index - 1]:
+        drawn = {key: value for key, value in beat.items() if key != "dialogue_lines"}
+        drawn["dialogue_lines"] = [
+            {k: v for k, v in line.items() if k not in _WORDS_ONLY_LINE_KEYS}
+            for line in beat.get("dialogue_lines") or []
+            if isinstance(line, Mapping)
+        ]
+        beats.append(drawn)
+    look = [
+        (note.get("note_id"), note.get("text"))
+        for note in spine.get("look_notes") or []
+        if isinstance(note, Mapping)
+    ]
+    plates = sorted(
+        (str(asset.get("relation_id")), str(asset.get("url")))
+        for asset in spine.get("media_assets") or []
+        if isinstance(asset, Mapping)
+        and asset.get("relation_type") == "cast_card"
+        and not asset.get("stale")
+    )
+    return {
+        "frames": frames_digest(frames),
+        "beats": _digest(beats),
+        "look": _digest(look),
+        "plates": _digest(plates),
+    }
 
 
 @dataclass(frozen=True)
@@ -793,10 +867,12 @@ def shot_list_lines(
 
 
 __all__ = [
+    "BOARD_INPUT_NAMES",
     "SAFE_ZONE_BOARD_CHECK",
     "ShotRow",
     "beats_by_take",
     "board_assets",
+    "board_inputs",
     "covered_placement",
     "dialogue_line_ids",
     "episode_api_id",

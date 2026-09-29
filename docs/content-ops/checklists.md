@@ -62,6 +62,7 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] Interiors are roughly 28–35% mean luma; below 25% is dim-risk
 - [ ] If this take follows another: hand-off frame is in `reference/` and pasted into cell 1, not redrawn
 - [ ] Hand-off is a frame with picture, never fade or black
+- [ ] A redraw followed an edit (frame, beat or look note) the human saw before and after; `--reroll` only for a random bad draw with the right frames
 - [ ] Both men (or both figures) appear once per frame unless the brief says otherwise
 - [ ] No readable text or digits in frame
 - [ ] Frame 0 is mid-motion on a face, not a wide or a still

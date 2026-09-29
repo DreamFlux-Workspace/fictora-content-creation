@@ -94,7 +94,7 @@ Every `CONFIRM` line in the plan (a gate the old desk never recorded, an unfinis
 | `plates` | `P step --desk D` (draws the cast at that phase) |
 | `plates --cause "…"` (the whole cast again) | `P redraw-plate --desk D --cast NAME --note "…"` (one character, corrected) |
 | `board --episode N` | `P step --desk D` (draws the current episode's boards) |
-| `board --episode N --take tK --cause "…"` | `P redraw-board --desk D --episode N --take tK --cause "…"` |
+| `board --episode N --take tK --cause "…"` | edits first (`P edit --frame/--beat`, `P look-note`), then `P redraw-board --desk D --episode N --take tK --cause "…" [--note "…"]` (stops unpaid when nothing changed; `--reroll` for a random bad draw) |
 | `film --episode N --take tK` (first film) | `P step --desk D` (estimate), then `P step --desk D --confirm-spend` |
 | `verdict --change --cause "…"`, then `film` | `P film --desk D --episode N --take tK --cause "…"` (prices), then the same with `--confirm-spend` |
 | `approve --gate look\|plates\|script\|board` | `P approve --desk D --gate look\|plates\|script\|board` (look: pins the frame and records the yes; the others send the API approval); `O approve` records a desk-only yes (post; look without a pin) |
