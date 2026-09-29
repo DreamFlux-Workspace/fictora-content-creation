@@ -110,10 +110,12 @@ from creation.post.desk import (
 from creation.post.media import MediaToolError, measure_loudness, probe_video
 from creation.post.mix import CueLevel, check_duck_db, mix_take
 from creation.post.take_facts import save_take_facts, stale_facts_reason
+from creation.post.voice_fx import PRESETS as VOICE_FX_PRESETS
 from creation.post.sfx import (
     Adjustment,
     Cuts,
     Renderer,
+    duplicate_cue_warnings,
     filmed_shot_windows,
     follow_filmed_cuts,
     lay_sfx,
@@ -268,6 +270,92 @@ def book(
                 desk / f"ep{episode:02d}",
                 f"Not booked on the ledger: ${usd:.3f} ({exc}); fictora-ops spend",
             )
+
+
+#: Name parts of a take whose voice was treated after filming (``revoice``, ``voice-fx``).
+TREATED_VOICE_MARKS = ("-revoice-", *(f"-{name}-v" for name in VOICE_FX_PRESETS))
+
+
+def treated_voice(take: Path) -> bool:
+    """True for a ``revoice`` or ``voice-fx`` output (or a file made from one)."""
+
+    return any(mark in take.name for mark in TREATED_VOICE_MARKS)
+
+
+def newest_versioned(directory: Path, stem: str) -> Path | None:
+    """The highest ``stem-vN.json`` in ``directory``, or ``None``."""
+
+    found: list[tuple[int, Path]] = []
+    for path in directory.glob(f"{stem}-v*.json"):
+        tail = path.stem.rsplit("-v", 1)[-1]
+        if tail.isdigit():
+            found.append((int(tail), path))
+    return max(found)[1] if found else None
+
+
+def voice_line_text(path: Path) -> str:
+    """The words of a ``voice-line`` file (its ``.json``'s ``line``), or ``""`` when unknown."""
+
+    meta = path.with_suffix(".json")
+    if not meta.is_file():
+        return ""
+    return str(json.loads(meta.read_text(encoding="utf-8")).get("line") or "")
+
+
+def with_hand_lines(words_json: Path, hand: HandPlan, out: Path) -> Path:
+    """Write a copy of a transcript with the hand ``--voice`` lines in and the ``--mute`` windows out.
+
+    Parameters
+    ----------
+    words_json
+        The take's transcript (``{"words": [...]}`` or Whisper ``chunks``).
+    hand
+        The checked hand plan: each voice line's words (from the ``voice-line``
+        file's ``.json``: its ``line``) are spread over where it is laid.
+    out
+        New file (``take-epNN-tK-cap-timing-vN.json``).
+
+    Returns
+    -------
+    Path
+        ``out``.
+    """
+
+    from creation.post.whisper import load_words
+
+    muted = [*hand.mutes, *hand.voice_windows]
+    kept = [
+        {"word": w.text, "start": w.start, "end": w.end}
+        for w in load_words(words_json)
+        if not any(a <= (w.start + w.end) / 2 <= b for a, b in muted)
+    ]
+    for line, seconds in hand.voices:
+        parts = voice_line_text(line.path).split()
+        if not parts:
+            continue
+        step = seconds / len(parts)
+        kept += [
+            {
+                "word": part,
+                "start": line.start + i * step,
+                "end": line.start + (i + 1) * step,
+            }
+            for i, part in enumerate(parts)
+        ]
+    kept.sort(key=lambda w: w["start"])
+    out.write_text(json.dumps({"words": kept}, indent=2) + "\n", encoding="utf-8")
+    return out
+
+
+def cue_description(path: Path) -> str:
+    """What a hand cue sounds like: its ``cue`` file's saved description, else its file name."""
+
+    meta = path.with_suffix(".json")
+    if meta.is_file():
+        described = json.loads(meta.read_text(encoding="utf-8")).get("description")
+        if described:
+            return str(described)
+    return path.stem.rsplit("-v", 1)[0].removeprefix("cue-").replace("-", " ")
 
 
 def api_facts_fetcher(desk: Path, episode: int, take_id: str) -> Path | None:
@@ -511,8 +599,19 @@ def run_finish(
             speech=tuple(speech),
         )
         parts = [f"{cue.one_line()} for {seconds:.2f}s" for cue, seconds in hand.cues]
-        append_run_note(run_dir, f"Hand cues -> `{laid.name}`: " + "; ".join(parts))
-        return StepReport("cues", "ran", "; ".join(parts), laid)
+        clashes = duplicate_cue_warnings(
+            tuple((cue_description(cue.path), cue.start) for cue, _ in hand.cues),
+            tuple((c.sound, c.start) for c in bed_state["cues"]),
+        )
+        for warning in clashes:
+            print(f"[cues] {warning}", file=out, flush=True)
+        append_run_note(
+            run_dir,
+            f"Hand cues -> `{laid.name}`: "
+            + "; ".join(parts)
+            + "".join(f"\n- {w}" for w in clashes),
+        )
+        return StepReport("cues", "ran", "; ".join([*parts, *clashes]), laid)
 
     def on_filmed_cuts(
         plan: SfxPlan, payload: dict[str, Any], take: Path
@@ -668,11 +767,40 @@ def run_finish(
         return StepReport("mix", "ran", mixed.one_line(), mixed.output)
 
     def caption_words() -> tuple[Path | None, str]:
-        """The transcript to time whole English lines on, and a note saying which (or why none)."""
+        """The transcript to time the lines on, and a note saying which (or why none).
+
+        A revoiced or voice-fx take is timed on the transcript its revoice
+        read (``take-epNN-tK-revoice-words-vN.json``, the raw take's words: the
+        new lines are laid where the old ones were), with hand ``--voice``
+        lines added and ``--mute`` windows taken out, on any show: the treated
+        speech moves speech spans off the lines.
+        """
 
         from creation.post.review import saved_words, server_transcript
 
-        if spine is None or not captions_whole_lines(spine):
+        if spine is None:
+            return None, ""
+        if treated_voice(source):
+            words = newest_versioned(takes, f"{base}-revoice-words") or saved_words(
+                desk, episode, take_id
+            )
+            if words is None:
+                return None, (
+                    f"no transcript timing: `{source.name}` is a revoice / voice-fx file and no "
+                    f"`{base}-revoice-words-vN.json` is saved (timed on speech spans)"
+                )
+            if hand.voices or hand.mutes:
+                merged = with_hand_lines(
+                    words,
+                    hand,
+                    next_versioned_path(takes, f"{base}-cap-timing", ".json"),
+                )
+                return (
+                    merged,
+                    f"transcript `{words.name}` with the hand lines (`{merged.name}`)",
+                )
+            return words, f"transcript `{words.name}`"
+        if not captions_whole_lines(spine):
             return None, ""
         if voice_state["path"] is not None:
             return (
@@ -724,6 +852,7 @@ def run_finish(
                 words_json=words_json,
                 timing_source=voice_state["path"] or source,
                 stem=f"{base}-cap",
+                words_on_english=words_json is not None and treated_voice(source),
             )
         except ValueError as exc:
             if "no dialogue lines" in str(exc):
@@ -871,7 +1000,12 @@ def run_finish(
         bed=bed_state["path"],
         bed_db=bed_db,
         duck_db=duck_db,
-    )
+        hand_voices=[
+            {"file": line.path.name, "start": line.start, "seconds": round(seconds, 3),
+             "line": voice_line_text(line.path)}
+            for line, seconds in hand.voices
+        ] if result._ran("voice") else [],
+    )  # fmt: skip
     summary.insert(1, f"Record: {record.name} (what `join` reads)")
     append_run_note(
         run_dir,

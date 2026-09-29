@@ -45,6 +45,9 @@ class FinishRecord:
     path: Path | None = None
     #: Edits made after ``finish`` (``trim``, ``tempo``, ...), oldest first; empty on a record ``finish`` wrote.
     edits: tuple[dict[str, Any], ...] = ()
+    #: Dry lines ``finish --voice`` laid into the take: ``{file, start, seconds, line}`` (``line``: the
+    #: ``voice-line`` text, empty when unknown). ``review`` counts them as on the take.
+    hand_voices: tuple[dict[str, Any], ...] = ()
 
     def resolve(self, desk: Path, name: str) -> Path | None:
         """Absolute path of one stored file (``pre_bed``, ``master``, ``final``, ``bed``)."""
@@ -79,6 +82,7 @@ def write_finish_record(
     bed_db: float,
     duck_db: float | None,
     edits: Sequence[Mapping[str, Any]] = (),
+    hand_voices: Sequence[Mapping[str, Any]] = (),
 ) -> Path:
     """Write ``takes/take-epNN-tK-finish-vN.json`` (a new version; never overwrites).
 
@@ -100,6 +104,8 @@ def write_finish_record(
         The bed and how it was mixed.
     edits
         Edits made after ``finish`` that the three files carry, oldest first.
+    hand_voices
+        The ``--voice`` lines laid in (``{file, start, seconds, line}``).
 
     Returns
     -------
@@ -121,6 +127,7 @@ def write_finish_record(
         "bed_db": bed_db,
         "duck_db": duck_db,
         "edits": [dict(edit) for edit in edits],
+        "hand_voices": [dict(voice) for voice in hand_voices],
     }
     path.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
     return path
@@ -138,10 +145,11 @@ def _load(path: Path) -> FinishRecord | None:
     body = {
         f.name: raw.get(f.name)
         for f in fields(FinishRecord)
-        if f.name not in ("path", "edits")
+        if f.name not in ("path", "edits", "hand_voices")
     }
     edits = tuple(e for e in raw.get("edits") or () if isinstance(e, dict))
-    return FinishRecord(**body, path=path, edits=edits)
+    voices = tuple(v for v in raw.get("hand_voices") or () if isinstance(v, dict))
+    return FinishRecord(**body, path=path, edits=edits, hand_voices=voices)
 
 
 def finish_records(desk: Path, episode: int) -> list[FinishRecord]:
@@ -231,4 +239,5 @@ def carry_finish_record(
         bed_db=record.bed_db,
         duck_db=record.duck_db,
         edits=[*record.edits, step],
+        hand_voices=record.hand_voices,
     )

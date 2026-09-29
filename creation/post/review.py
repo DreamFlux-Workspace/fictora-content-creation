@@ -69,6 +69,7 @@ from creation.post.deboard import (
     measure_board_leak,
 )
 from creation.post.edit import FRAME_DIFF_CUT_THRESHOLD, measure_cuts
+from creation.post.finish_record import record_for_file
 from creation.post.media import (
     MediaToolError,
     decode_frames,
@@ -101,6 +102,9 @@ STACK_SIZE = (96, 168)
 STACK_THRESHOLD = 0.2
 #: A stacked stretch longer than this is a fault to look at full size.
 STACK_MIN_SECONDS = 0.3
+#: A "stacked" stretch over at least this share of the take is the set (dark, even, symmetric), not a
+#: split frame: a real stacked double frame comes and goes. Reported as a note, not a warning.
+STACK_WHOLE_TAKE_SHARE = 0.9
 #: Frame-to-frame RMSE (0-1) below which the picture did not move (real H3 takes: lowest pair ~0.0035).
 FREEZE_THRESHOLD = 0.002
 #: A still stretch this long or longer is a stall to look at (a deboarded head is at most 12 frames = 0.5 s).
@@ -561,6 +565,21 @@ def measure_frames(
         ``(start, end)`` in seconds, already filtered to the ones long enough to report.
     """
 
+    frozen, stacked, lowest_move, lowest_stack, _ = _measure_frames(take)
+    return frozen, stacked, lowest_move, lowest_stack
+
+
+def _measure_frames(
+    take: Path,
+) -> tuple[
+    list[tuple[float, float]],
+    list[tuple[float, float]],
+    float,
+    float,
+    npt.NDArray[np.float64],
+]:
+    """:func:`measure_frames` plus the top-vs-bottom score of every 8 fps sample."""
+
     width, height = STACK_SIZE
     frames = decode_frames(take, width=width, height=height, fps=STACK_FPS) / 255.0
     step = 1.0 / STACK_FPS
@@ -586,13 +605,27 @@ def measure_frames(
     else:
         frozen, lowest_move = [], 1.0
     lowest_stack = float(stack_scores.min()) if stack_scores.size else 1.0
-    return frozen, stacked, round(lowest_move, 4), round(lowest_stack, 3)
+    return frozen, stacked, round(lowest_move, 4), round(lowest_stack, 3), stack_scores
 
 
 def frames_section(take: Path, *, steps: set[str]) -> Section:
     """Frozen stretches (stalls) and stacked double frames."""
 
-    frozen, stacked, lowest_move, lowest_stack = measure_frames(take)
+    frozen, all_stacked, lowest_move, lowest_stack, scores = _measure_frames(take)
+    step = 1.0 / STACK_FPS
+    span = max(len(scores) * step, step)
+
+    def score(a: float, b: float) -> float:
+        window = scores[int(round(a / step)) : int(round(b / step)) + 1]
+        return float(np.median(window)) if window.size else 1.0
+
+    # A stretch over (nearly) the whole take is the set, not a split frame: a note with its score.
+    whole = [
+        (a, b)
+        for a, b in all_stacked
+        if (b - a + step) >= STACK_WHOLE_TAKE_SHARE * span
+    ]
+    stacked = [run for run in all_stacked if run not in whole]
     threshold = (
         f"frozen: frame-to-frame RMSE < {FREEZE_THRESHOLD:g} for ≥ {FREEZE_MIN_SECONDS:g} s; stacked: top-vs-bottom "
         f"RMSE < {STACK_THRESHOLD:g} for > {STACK_MIN_SECONDS:g} s; at {STACK_FPS:g} fps"
@@ -602,8 +635,15 @@ def frames_section(take: Path, *, steps: set[str]) -> Section:
         for a, b in frozen
     ]
     details += [
-        f"stacked double frame {a:.2f}-{b:.2f}s: look at it full size (dark or symmetric sets false-positive)"
+        f"stacked double frame {a:.2f}-{b:.2f}s (top-vs-bottom {score(a, b):.3f}, under {STACK_THRESHOLD:g}): "
+        "look at it full size (dark or symmetric sets false-positive)"
         for a, b in stacked
+    ]
+    details += [
+        f"note: top and bottom halves look alike over the whole take ({a:.2f}-{b:.2f}s, top-vs-bottom "
+        f"{score(a, b):.3f}, under {STACK_THRESHOLD:g}). A dark, even or symmetric set reads this way; a real "
+        "stacked double frame comes and goes. Not a warning: glance at the contact sheet"
+        for a, b in whole
     ]
     if frozen and "freeze" in steps:
         details.append(
@@ -614,7 +654,10 @@ def frames_section(take: Path, *, steps: set[str]) -> Section:
         if frozen or stacked
         else f"none (lowest frame-to-frame {lowest_move:.4f}, lowest top-vs-bottom {lowest_stack:.3f})"
     )
+    if whole and not (frozen or stacked):
+        summary = f"none (top and bottom alike over the whole take, top-vs-bottom {score(*whole[0]):.3f}: a note)"
     data = {"frozen": [list(r) for r in frozen], "stacked": [list(r) for r in stacked],
+            "stacked_whole_take": [list(r) for r in whole],
             "lowest_frame_rmse": lowest_move, "lowest_stack_rmse": lowest_stack}  # fmt: skip
     return Section(
         "Frames", WARN if frozen or stacked else OK, summary, threshold, details, data
@@ -753,6 +796,76 @@ def board_section(
 # --- 5. Script vs audio ----------------------------------------------------------------------------------
 
 
+_NOT_ASKED = re.compile(
+    r"^(?P<who>ep\d+ \S+): line (?P<number>\d+) \('(?P<text>.*)'\) was not in the take's instructions$"
+)
+_ASKED_COUNT = re.compile(
+    r"^(?P<who>ep\d+ \S+): (?P<asked>\d+) of (?P<total>\d+) approved lines asked"
+)
+
+
+def _same_words(a: str, b: str) -> bool:
+    def norm(text: str) -> list[str]:
+        return re.findall(r"[\w']+", text.casefold())
+
+    return bool(norm(a)) and norm(a) == norm(b)
+
+
+def hand_laid_rows(
+    rows: list[str], hand_voices: tuple[dict[str, Any], ...]
+) -> tuple[list[str], int]:
+    """Count a line ``finish --voice`` laid by hand as on the take, not as missing.
+
+    Parameters
+    ----------
+    rows
+        ``check-lines`` output rows.
+    hand_voices
+        The finish record's ``hand_voices`` (``{file, start, seconds, line}``).
+
+    Returns
+    -------
+    tuple[list[str], int]
+        The rows with each hand-laid line said as such (and the count row
+        saying how many are on the take), and how many missing lines that covers.
+    """
+
+    covered = 0
+    out: list[str] = []
+    for row in rows:
+        found = _NOT_ASKED.match(row.strip())
+        voice = (
+            next(
+                (
+                    v
+                    for v in hand_voices
+                    if _same_words(str(v.get("line") or ""), found["text"])
+                ),
+                None,
+            )
+            if found
+            else None
+        )
+        if found and voice is not None:
+            covered += 1
+            out.append(
+                f"{found['who']}: line {found['number']} ('{found['text']}') was laid by hand "
+                f"(finish --voice `{voice.get('file')}` at {float(voice.get('start') or 0.0):.2f}s)"
+            )
+        else:
+            out.append(row)
+    if covered:
+        for index, row in enumerate(out):
+            count = _ASKED_COUNT.match(row.strip())
+            if count:
+                on_take = int(count["asked"]) + covered
+                out[index] = (
+                    f"{row.strip()}; {covered} laid by hand with finish --voice: "
+                    f"{on_take} of {count['total']} on the take"
+                )
+    return out, covered
+
+
 def lines_section(
     desk: Path,
     *,
@@ -760,8 +873,13 @@ def lines_section(
     take_id: str,
     words_json: Path | None,
     words_note: str | None = None,
+    hand_voices: tuple[dict[str, Any], ...] = (),
 ) -> Section:
-    """The line check from the take facts (``check-lines``) and, with a transcript, which lines were heard."""
+    """The line check from the take facts (``check-lines``) and, with a transcript, which lines were heard.
+
+    A line the take was not asked for but ``finish --voice`` laid in by hand
+    (the finish record's ``hand_voices``) counts as on the take.
+    """
 
     from creation.episode_commands import CommandStopped, run_check_lines
 
@@ -781,6 +899,8 @@ def lines_section(
         # ``check-lines`` output as it prints it (line counts, each line's shot and board row, ``!!`` flags),
         # with the count first.
         rows = [row for row in asked_text.getvalue().splitlines() if row.strip()]
+        rows, covered = hand_laid_rows(rows, hand_voices)
+        missing -= covered
         rows.sort(key=lambda row: "approved lines asked" not in row)
         asked_rows = [f"check-lines: {row.strip()}" for row in rows]
         if not any("no take facts" in row for row in rows):
@@ -1086,12 +1206,15 @@ def review_take(
         retimed=bool(steps & set(RETIMED_STEPS)),
     )
     frames = frames_section(take, steps=steps)
+    # Only the record that names this file: the raw take has no hand lines on it.
+    record = record_for_file(desk, take)
     lines = lines_section(
         desk,
         episode=episode,
         take_id=take_id,
         words_json=words_json,
         words_note=words_note,
+        hand_voices=record.hand_voices if record is not None else (),
     )
     sections = [loud, cuts, frames, board_sec, lines]
     if kind == "finished":

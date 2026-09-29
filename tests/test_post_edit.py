@@ -427,3 +427,71 @@ def test_soften_with_no_hard_cut_writes_nothing(
     assert _no_new_mp4(takes, before)
     with pytest.raises(ValueError, match="no cuts"):
         soften_seams(takes / "take-ep01-t1-raw-v1.mp4", takes / "x.mp4", ())
+
+
+# ================================================================================================
+# the attached cover (finish's episode thumbnail) survives every edit
+# ================================================================================================
+
+
+def _streams(path: Path) -> list[dict]:
+    probed = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries",
+         "stream=codec_type,codec_name:stream_disposition=attached_pic", "-of", "json", str(path)],
+        capture_output=True, text=True, check=True,
+    )  # fmt: skip
+    return json.loads(probed.stdout)["streams"]
+
+
+def _covered_take(takes: Path) -> Path:
+    from creation.post.thumbnail import embed_attached_cover
+
+    plain = _cut_take(takes / "take-ep01-t1-sokii-v1.mp4")
+    cover = takes / "take-ep01-t1-thumb-v1.jpg"
+    Image.new("RGB", (W, H), (200, 30, 30)).save(cover, format="JPEG")
+    out = takes / "take-ep01-t1-sokii-cover-v1.mp4"
+    embed_attached_cover(video=plain, cover=cover, out=out)
+    return out
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize(
+    ("command", "flags"),
+    [
+        ("trim", ["--cut", "1.46-2.5"]),
+        ("freeze", ["--at", "0.5", "--hold", "0.5"]),
+        ("tempo", ["--factor", "0.9"]),
+        ("soften", ["--cut", "1.5"]),
+    ],
+)
+def test_edits_keep_the_attached_cover_and_say_so_in_the_name(
+    post_desk: Path, command: str, flags: list[str]
+) -> None:
+    takes = post_desk / "ep01" / "takes"
+    covered = _covered_take(takes)
+    frames_before = count_frames(covered)
+
+    code = main(
+        [command, "--desk", str(post_desk), "--take-file", str(covered), *flags]
+    )
+
+    assert code == 0
+    out = takes / f"take-ep01-t1-{command}-cover-v1.mp4"
+    assert out.is_file(), sorted(p.name for p in takes.glob("*.mp4"))
+    streams = _streams(out)
+    kinds = [(s["codec_type"], s["disposition"]["attached_pic"]) for s in streams]
+    assert kinds.count(("video", 1)) == 1, kinds  # the cover
+    assert kinds.count(("video", 0)) == 1, kinds  # the picture, re-encoded
+    assert ("audio", 0) in kinds
+    cover = next(s for s in streams if s["disposition"]["attached_pic"])
+    assert cover["codec_name"] == "mjpeg"
+    # The edit worked on the picture, not on the one-frame cover.
+    expected = {
+        "trim": frames_before - 24,
+        "freeze": frames_before,
+        "soften": frames_before,
+    }
+    if command in expected:
+        assert count_frames(out) == expected[command]
+    else:
+        assert count_frames(out) > frames_before

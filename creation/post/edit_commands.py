@@ -6,6 +6,9 @@ a run note, records the edit in ``epNN/takes/edit-chain.jsonl``
 (:mod:`creation.post.lineage`: ``finish`` reads it to know a ``freeze`` or
 ``soften`` output still has the raw take's sound timeline) and prints what it
 did. Free: ffmpeg and numpy on this laptop.
+A file with the episode cover attached (``finish``'s ``-sokii-cover-``
+deliverable) keeps the cover through the edit and is written
+``take-epNN-tK-<step>-cover-vN.mp4``.
 
 When the file edited is one a finish record names (``trim`` / ``tempo`` on the
 finished take, or ``freeze`` / ``soften`` run on it), the same edit is applied
@@ -48,7 +51,7 @@ from creation.post.finish_record import (
     record_for_file,
 )
 from creation.post.lineage import record_edit
-from creation.post.media import probe_video
+from creation.post.media import probe_video, video_streams
 
 EDIT_COMMANDS = frozenset({"deboard", "trim", "freeze", "tempo", "soften"})
 #: Edits that carry a finish record onto their output.
@@ -303,10 +306,12 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
             "trim needs --take-file: finish the raw take first, then trim the finished file"
         )
     source = _source(args, desk)
+    # A finished file with the episode cover attached keeps it through the edit, and says so in its name.
+    covered = "-cover" if video_streams(source)[1] is not None else ""
 
     def target(step: str) -> Path:
         takes.mkdir(parents=True, exist_ok=True)
-        return next_versioned_path(takes, f"{base}-{step}", ".mp4")
+        return next_versioned_path(takes, f"{base}-{step}{covered}", ".mp4")
 
     carry = RecordCarry(
         desk,

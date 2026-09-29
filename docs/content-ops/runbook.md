@@ -154,7 +154,7 @@ Budgets are **warnings, never a hard stop**: first 15 s episode of a new series 
 
 - Frame 0 is mid-motion on a face: a hand already moving, a head already turning. It is the cover frame. Never an establishing wide, never a still.
 - The first line lands by about 0.5 s.
-- The premise's reveal (the thing the episode is about) is on screen or said by about 3 s.
+- The premise's reveal (the thing the episode is about) is on screen or said by about 3 s. When it must land by 3 s, keep the first line to about 2 s (a 4-second first line put episode 2's reveal at 4 s).
 - Check it in the brief, the script and the board, before the board gate. A board that opens on a wide or a pause is redrawn: say it with `redraw-board --take tK --note "opens on a close-up of …"`, or fix the frame (`edit --frame … --set …`) and then `redraw-board`. A weak open is never fixed by re-filming.
 
 ### Social safe zones
@@ -219,6 +219,8 @@ To change a board, say what is wrong: `redraw-board --desk D --episode N --take 
 - `--preset-id` is required at `start` even when the look will be our own frame. Pick the nearest: the horror preset (Dead Light) is a draft and cannot be picked yet, so horror takes Cold Gate (`modern-dark-fantasy`).
 - A pinned look frame wins over the preset: the preset keeps only its shot composition, and its world, palette, finish and reference images leave every drawing. Pin it before the plates; anything drawn earlier still carries the preset's world (meadows, baskets, a white cat). Without a look frame, steer that world with look notes (`look-note --desk D --add "indoors, an arcade; no meadows"`, at most five) before the plates are drawn.
 - Say what you want. Never name what you don't. "No mirrors" puts mirrors in the frame.
+- Every unnamed extra (a new crew, guards) gets a written look of their own in the brief or the redraw note: a different face, hair and build, their own stencil or name. Left unwritten, the board draws one shared face (episode 2 drew the dead lead's face and stencil on the new crew) and the video may show the same person twice.
+- Extreme close-ups of eyes or skin drift photo-real on a drawn look unless the row's note names the show's style ("flat anime, clean ink lines, no photographic texture").
 - Redraw notes (`redraw-plate --note`, `look-note`, a frame edit) describe shapes, never judgements: "short, round and fat, two clumsy pleats", not "crooked".
 - Faces come from crops of references, never from the reference wholesale, and never from a real person's likeness.
 - Describe the artwork once. The look is settled for the series. A near-copy of the reference is a fault. Look drift between episodes is a fault.

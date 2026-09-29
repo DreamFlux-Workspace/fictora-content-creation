@@ -629,3 +629,61 @@ def test_cli_voice_fx_writes_a_new_file(
         main(["voice-fx", "--file", str(take), "--range", "2-1", "--preset", "radio"])
         == 2
     )
+
+
+@needs_ffmpeg
+def test_voice_fx_treats_every_repeated_range_into_one_file(tmp_path: Path) -> None:
+    take = make_take(
+        tmp_path / "take-ep01-t1-revoice-v1.mp4",
+        seconds=5.0,
+        tones=((0.1, 4.9, 150), (0.1, 4.9, 1000)),
+    )
+
+    assert (
+        main(
+            [
+                "voice-fx",
+                "--file",
+                str(take),
+                "--range",
+                "0.3-1.7",
+                "--range",
+                "3.1-4.5",
+                "--preset",
+                "intercom",
+            ]
+        )  # fmt: skip
+        == 0
+    )
+
+    made = tmp_path / "take-ep01-t1-revoice-v1-intercom-v1.mp4"
+    assert made.is_file()
+    assert not list(tmp_path.glob("*-intercom-v1-intercom-*")), "one pass, not a chain"
+    dry, wet = _samples(take, tmp_path), _samples(made, tmp_path)
+    rate = 16000
+
+    def lows_db(a: np.ndarray) -> float:
+        spectrum = np.abs(np.fft.rfft(a))  # 1 s of audio: bin n is n Hz
+        return 20 * np.log10(spectrum[145:156].max() + 1e-9)
+
+    def second(at: float) -> slice:
+        return slice(int(at * rate), int(at * rate) + rate)
+
+    for at in (0.5, 3.3):
+        assert lows_db(wet[second(at)]) < lows_db(dry[second(at)]) - 15, (
+            f"the range around {at}s is treated"
+        )
+    assert float(np.corrcoef(dry[second(1.9)], wet[second(1.9)])[0, 1]) > 0.99, (
+        "between the ranges the take is as filmed"
+    )
+
+
+def test_voice_fx_refuses_ranges_that_overlap(tmp_path: Path) -> None:
+    from creation.post.voice_fx import apply_voice_fx
+
+    with pytest.raises(ValueError, match="do not overlap"):
+        apply_voice_fx(
+            make_take(tmp_path / "take.mp4", seconds=3.0),
+            ranges=[(0.5, 2.0), (1.5, 2.5)],
+            preset="phone",
+        )

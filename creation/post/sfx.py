@@ -121,6 +121,70 @@ def _applies(cue: SfxCue, adjustment: Adjustment) -> bool:
     return bool(words) and all(word in cue.sound.casefold() for word in words)
 
 
+#: A hand cue this close to an auto cue of the same sound is probably the same event laid twice.
+DUPLICATE_CUE_SECONDS = 1.0
+#: Words that do not say what a sound is ("a", "sound of").
+_CUE_FILLER = frozenset(
+    {"a", "an", "the", "of", "and", "with", "on", "in", "at", "to", "sound", "sounds", "cue",
+     "soft", "loud", "heavy", "light", "small", "big", "distant", "close", "short", "long"}
+)  # fmt: skip
+
+
+def _cue_words(text: str) -> list[str]:
+    return [
+        w
+        for w in re.findall(r"[a-z]+", text.casefold())
+        if len(w) > 2 and w not in _CUE_FILLER
+    ]
+
+
+def duplicate_cue_warnings(
+    hand: tuple[tuple[str, float], ...],
+    laid: tuple[tuple[str, float], ...],
+    *,
+    window: float = DUPLICATE_CUE_SECONDS,
+) -> list[str]:
+    """Warn when a hand cue lands on an auto cue of the same sound (the same event twice).
+
+    Parameters
+    ----------
+    hand
+        ``(description, start)`` of each ``--cue`` (the ``cue`` file's description).
+    laid
+        ``(sound, start)`` of each cue the ``sfx`` step laid from the take facts.
+    window
+        Seconds apart that still counts as the same moment.
+
+    Returns
+    -------
+    list[str]
+        One ``!!`` line per clash, with the ``--sfx-adjust "<word>=drop"`` that
+        takes the auto cue out (the word is checked to match that cue).
+    """
+
+    warnings: list[str] = []
+    for description, start in hand:
+        words = set(_cue_words(description))
+        for sound, at in laid:
+            if abs(at - start) > window:
+                continue
+            probe = SfxCue(0, sound, "event", at, 0.0)
+            shared = [
+                w
+                for w in _cue_words(sound)
+                if w in words and _applies(probe, Adjustment(match=w))
+            ]
+            if not shared:
+                continue
+            key = shared[0]
+            warnings.append(
+                f'!! hand cue "{description}" @{start:.2f}s is {abs(at - start):.2f}s from the auto '
+                f'cue "{sound}" @{at:.2f}s: the same sound twice. Keep one: finish again with '
+                f'--sfx-adjust "{key}=drop" (takes out every auto "{key}" cue on this take)'
+            )
+    return warnings
+
+
 def apply_adjustments(
     cues: tuple[SfxCue, ...], adjustments: tuple[Adjustment, ...]
 ) -> tuple[SfxCue, ...]:
