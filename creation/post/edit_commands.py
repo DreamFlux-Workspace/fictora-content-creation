@@ -2,7 +2,10 @@
 
 Each reads one take on the desk (``--take-file``, else the newest raw take),
 writes ``epNN/takes/take-epNN-tK-<step>-vN.mp4`` (never overwriting), appends
-a run note and prints what it did. Free: ffmpeg and numpy on this laptop.
+a run note, records the edit in ``epNN/takes/edit-chain.jsonl``
+(:mod:`creation.post.lineage`: ``finish`` reads it to know a ``freeze`` or
+``soften`` output still has the raw take's sound timeline) and prints what it
+did. Free: ffmpeg and numpy on this laptop.
 
 When the file edited is one a finish record names (``trim`` / ``tempo`` on the
 finished take, or ``freeze`` / ``soften`` run on it), the same edit is applied
@@ -44,6 +47,7 @@ from creation.post.finish_record import (
     carry_finish_record,
     record_for_file,
 )
+from creation.post.lineage import record_edit
 from creation.post.media import probe_video
 
 EDIT_COMMANDS = frozenset({"deboard", "trim", "freeze", "tempo", "soften"})
@@ -322,6 +326,8 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
                 f"no board for {args.take_id} on the desk; pass --board"
             )
         result = deboard(source, board, target("deboard"), max_frames=args.max_frames)
+        if result.output is not None:
+            record_edit(desk, op="deboard", source=source, output=result.output)
         lines = [f"Deboard `{source.name}` against `{board.name}`: {result.one_line()}"]
     elif args.command == "trim":
         first, after, fps, before = plan_trim(source, parse_cut(args.cut))
@@ -347,6 +353,10 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
             fps=fps,
             duration_before=before,
         )
+        record_edit(
+            desk, op="trim", source=source, output=trimmed.output,
+            cut=[first.seconds, after.seconds],
+        )  # fmt: skip
         record = carry.write(
             trimmed.output,
             {"op": "trim", "cut": [first.seconds, after.seconds],
@@ -373,6 +383,10 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
 
         carry.edit_companions(freeze_same)
         frozen = freeze_frame(source, target("freeze"), at=args.at, hold=args.hold)
+        record_edit(
+            desk, op="freeze", source=source, output=frozen.output,
+            at=frozen.at_seconds, hold=frozen.hold_seconds,
+        )  # fmt: skip
         record = carry.write(
             frozen.output,
             {"op": "freeze", "at": frozen.at_seconds, "hold": frozen.hold_seconds},
@@ -385,6 +399,7 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
 
         carry.edit_companions(tempo_same)
         slowed = change_tempo(source, target("tempo"), factor=args.factor)
+        record_edit(desk, op="tempo", source=source, output=slowed, factor=args.factor)
         record = carry.write(slowed, {"op": "tempo", "factor": args.factor})
         lines = [
             f"Tempo {args.factor:g}x `{source.name}` -> `{slowed.name}`: every time on the old file is now "
@@ -402,6 +417,9 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
 
             carry.edit_companions(soften_same)
             softened = soften_seams(source, target("soften"), cuts)
+            record_edit(
+                desk, op="soften", source=source, output=softened, cuts=list(cuts)
+            )
             record = carry.write(softened, {"op": "soften", "cuts": list(cuts)})
             found = "given" if args.cut else "found"
             lines = [

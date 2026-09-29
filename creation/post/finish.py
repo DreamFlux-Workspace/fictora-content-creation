@@ -14,7 +14,12 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    rendered on the server (the audio service) and cached in ``epNN/sfx/``.
    The plan already carries the story's drop and level sound notes: each cue
    is laid at -8 dB plus its ``gain_offset_db``, and a cue in
-   ``sfx_dropped_cues`` is never laid. ``--sfx-adjust`` moves cues on top.
+   ``sfx_dropped_cues`` is never laid. The cues then follow the FILMED cuts
+   (the server's mix does the same since fictora-drama #487): each planned
+   shot change moves to the nearest hard cut measured on the take (tblend
+   trace, within 1 s, the review's detector; measured on the raw take when the
+   finished file keeps its picture timeline), and each cue keeps its fraction
+   of its shot. ``--sfx-adjust`` moves cues on top.
 2. ``bed``       - the show's music bed (desk pin, else the spine's pinned bed,
    else made once on the server and pinned on the desk).
 3. ``colour``    - match the take to the board the human approved.
@@ -28,9 +33,13 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    timed on the words a transcript of the take heard for it: the saved
    ``take-epNN-tK-*words-vN.json`` (``review --transcribe``), else one made on
    the server from the take's stored URL (``/v1/transcripts``, a few cents).
-   A line with no match, or a take whose sound was changed by hand
-   (``--voice``/``--mute``, a ``--take-file`` that is not the raw take), is
-   timed on speech spans. ``--line-start``/``--line-end`` set either end by
+   A ``--take-file`` made from the newest raw take only by edits that keep
+   its sound timeline (``freeze``, ``soften``, ``deboard``, ``colour``; followed
+   through ``epNN/takes/edit-chain.jsonl`` or, on older desks, the run notes:
+   :mod:`creation.post.lineage`) uses the raw take's transcript too. A line
+   with no match, or a take whose sound was changed (``--voice``/``--mute``,
+   or a ``--take-file`` after ``trim``/``tempo``/a sound step, or of unknown
+   origin), is timed on speech spans. ``--line-start``/``--line-end`` set either end by
    hand. The report names what timed each line.
 6. ``watermark`` - the Sokii mark top left, under the covered top strip.
 7. ``thumbnail`` - when the deploy exposes ``POST …/episodes/{n}/thumbnail``,
@@ -82,8 +91,10 @@ from creation.post.audio_service import DramaApiAudio
 from creation.post.bed import DEFAULT_BED_DB, Maker, resolve_bed, service_music_maker
 from creation.post.colour import colour_match
 from creation.post.deboard import deboard as deboard_take
+from creation.post.edit import measure_cuts
 from creation.post.finish_record import write_finish_record
 from creation.post.hand import HandPlan, Placed, check_hand_plan, lay_cues, lay_voice
+from creation.post.lineage import CHAIN_FILE, raw_take_behind, record_edit
 from creation.post.desk import (
     approved_board,
     latest_raw_take,
@@ -97,9 +108,14 @@ from creation.post.mix import CueLevel, check_duck_db, mix_take
 from creation.post.take_facts import save_take_facts, stale_facts_reason
 from creation.post.sfx import (
     Adjustment,
+    Cuts,
     Renderer,
+    filmed_shot_windows,
+    follow_filmed_cuts,
     lay_sfx,
+    SfxPlan,
     plan_from_take_facts,
+    planned_shots,
     saved_take_facts,
     service_renderer,
 )
@@ -296,6 +312,7 @@ def run_finish(
     bed_maker: Maker | None = None,
     facts_fetcher: FactsFetcher = api_facts_fetcher,
     transcriber: Transcriber | None = None,
+    cut_meter: Cuts | None = None,
     thumbnail: bool = True,
     stream: TextIO | None = None,
 ) -> FinishResult:
@@ -337,8 +354,9 @@ def run_finish(
         ``--voice`` dry lines laid into the take's own audio (take seconds as filmed).
     cues
         ``--cue`` hand cues laid after the SFX step (take seconds as filmed).
-    sfx_render, bed_maker, facts_fetcher, transcriber
-        Injected for tests (``transcriber`` makes a transcript of the take on the server).
+    sfx_render, bed_maker, facts_fetcher, transcriber, cut_meter
+        Injected for tests (``transcriber`` makes a transcript of the take on the server;
+        ``cut_meter`` measures the take's hard cuts, :func:`creation.post.edit.measure_cuts`).
     stream
         Progress output (stderr by default).
 
@@ -386,7 +404,7 @@ def run_finish(
     )
     result = FinishResult(source=source, final=source, hand_steps=hand_steps)
     current = source
-    bed_state: dict[str, Any] = {"path": None, "cues": ()}
+    bed_state: dict[str, Any] = {"path": None, "cues": (), "speech": None}
     voice_state: dict[str, Path | None] = {"path": None}
     # For the finish record `join` reads: what the mix read, and what the mark went on.
     record_state: dict[str, Path | None] = {"pre_bed": None, "master": None}
@@ -419,6 +437,14 @@ def run_finish(
             return
         print(f"[{name}] {report.status}: {report.detail}", file=out, flush=True)
         if report.output is not None:
+            try:
+                record_edit(desk, op=name, source=current, output=report.output)
+            except OSError as exc:
+                print(
+                    f"[{name}] could not record the step in {CHAIN_FILE} ({exc}); a later finish of "
+                    f"`{report.output.name}` will not know how it was made",
+                    file=out,
+                )
             current = report.output
         result.steps.append(report)
 
@@ -458,7 +484,11 @@ def run_finish(
     def do_cues(take: Path) -> StepReport:
         speech = list(hand.voice_windows)
         facts = saved_take_facts(desk, episode, take_id)
-        if facts is not None:
+        if bed_state["speech"] is not None:
+            speech += bed_state[
+                "speech"
+            ]  # the sfx step's speaking windows, on the filmed shots
+        elif facts is not None:
             speech += plan_from_take_facts(
                 json.loads(facts.read_text(encoding="utf-8"))
             ).speech
@@ -471,6 +501,30 @@ def run_finish(
         parts = [f"{cue.one_line()} for {seconds:.2f}s" for cue, seconds in hand.cues]
         append_run_note(run_dir, f"Hand cues -> `{laid.name}`: " + "; ".join(parts))
         return StepReport("cues", "ran", "; ".join(parts), laid)
+
+    def on_filmed_cuts(
+        plan: SfxPlan, payload: dict[str, Any], take: Path
+    ) -> tuple[SfxPlan, str]:
+        """Move the planned cues onto the shots as filmed (fictora-drama #487's placement, done here)."""
+
+        shots = planned_shots(payload)
+        if len(shots) < 2:
+            return plan, "cues as planned (the take facts plan one shot)"
+        # Cuts are measured on the raw take when the finished file keeps its picture timeline: a freeze
+        # hold ends in a jump that would read as a cut, and soften fades the real ones.
+        lineage = raw_take_behind(desk, source)
+        measured = (
+            lineage.raw if lineage.raw is not None and lineage.keeps_timeline else take
+        )
+        try:
+            cuts = (cut_meter or measure_cuts)(measured)
+            duration = probe_video(take).duration_seconds
+        except (RuntimeError, OSError, MediaToolError) as exc:
+            return plan, f"cues on the planned shots (cuts not measured: {exc})"[:300]
+        filmed = filmed_shot_windows(shots, cuts, duration=duration)
+        return follow_filmed_cuts(plan, filmed), (
+            f"cues follow the filmed cuts measured on `{measured.name}`: {filmed.one_line()}"
+        )
 
     def do_sfx(take: Path) -> StepReport:
         facts = saved_take_facts(desk, episode, take_id) or facts_fetcher(
@@ -493,7 +547,9 @@ def run_finish(
             )
             print(f"[sfx] {warning}", file=out, flush=True)
             append_run_note(run_dir, f"Finish · sfx: {warning}")
-        plan = plan_from_take_facts(payload)
+        plan, filmed_note = on_filmed_cuts(plan_from_take_facts(payload), payload, take)
+        bed_state["speech"] = plan.speech
+        append_run_note(run_dir, f"Finish · sfx: {filmed_note}")
         dropped = (
             f"; dropped by sound notes: {', '.join(plan.dropped)}"
             if plan.dropped
@@ -543,7 +599,7 @@ def run_finish(
         return StepReport(
             "sfx",
             "ran",
-            f"{len(sfx.mixed)} cue(s): {cues}{dropped}{older}",
+            f"{len(sfx.mixed)} cue(s): {cues}{dropped}{older}; {filmed_note}",
             sfx.output,
             sfx.cost_usd,
         )
@@ -615,18 +671,32 @@ def run_finish(
             raw = latest_raw_take(desk, episode, take_id)
         except FileNotFoundError:
             raw = None
-        if raw is None or raw.resolve() != source:
-            return None, (
-                f"no transcript timing: `{source.name}` is not the raw take the server transcribes"
-            )
+        if raw is None:
+            return None, "no transcript timing: no raw take on the desk"
+        via = ""
+        if raw.resolve() != source:
+            # A freeze/soften/deboard/colour of the raw take keeps its sound timeline: its transcript still holds.
+            lineage = raw_take_behind(desk, source)
+            if lineage.raw is None or lineage.raw.resolve() != raw.resolve():
+                why = lineage.reason or (
+                    f"it was made from `{lineage.raw.name}`, not the newest raw take `{raw.name}`"
+                    if lineage.raw is not None
+                    else "its raw take is unknown"
+                )
+                return None, (
+                    f"no transcript timing: `{source.name}` is not the raw take the server transcribes ({why})"
+                )
+            if not lineage.keeps_timeline:
+                return None, f"no transcript timing: {lineage.reason}"
+            via = f" (raw take's words; `{source.name}` keeps its sound timeline: {lineage.chain_text()})"
         saved = saved_words(desk, episode, take_id)
         if saved is not None:
-            return saved, f"transcript `{saved.name}`"
+            return saved, f"transcript `{saved.name}`{via}"
         try:
             made = (transcriber or server_transcript)(desk, episode, take_id)
         except (ValueError, RuntimeError, OSError, KeyError, httpx.HTTPError) as exc:
             return None, f"no transcript ({type(exc).__name__}: {exc})"[:300]
-        return made, f"transcript made on the server: `{made.name}`"
+        return made, f"transcript made on the server: `{made.name}`{via}"
 
     def do_captions(take: Path) -> StepReport:
         words_json, words_note = caption_words()

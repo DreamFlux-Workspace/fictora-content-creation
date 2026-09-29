@@ -51,7 +51,7 @@ A desk that already exists for that date and slug is refused, never overwritten.
 5. `estimate` then `preflight`. Exit 0 is the only green light for the API take call.
 6. Film once. `filmed`. Measure the take. `verdict --use` or `verdict --change --cause "…"`.
 
-`preflight` blocks (exit 3) only while a human gate is open. It warns (exit 4) when lines exceed three, the board is at or below 25% luma, the estimate is missing, spend would pass 2× the envelope, a later take has no hand-off, or a second film has no cause. Paste the banner to the human; only their explicit "film anyway" in this turn lets you run `preflight … --proceed-anyway ep0N-tN` (logged, next film only).
+`preflight` blocks (exit 3) only while a human gate is open. It warns (exit 4) when lines exceed three, the board is at or below 25% luma, the estimate is missing, spend would pass 2× the envelope, a later take of an episode (`t2` on) has no hand-off, or a second film has no cause. A new episode's first take with no hand-off is an info line, not a warning: the spine has no field saying an episode continues straight from the one before, so preflight says where both are set (from the saved spine's frame locations) and how to set one if it does pick up the same moment. Paste the banner to the human; only their explicit "film anyway" in this turn lets you run `preflight … --proceed-anyway ep0N-tN` (logged, next film only).
 
 ## Commands
 

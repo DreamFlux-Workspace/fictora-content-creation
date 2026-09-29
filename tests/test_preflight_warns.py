@@ -102,3 +102,98 @@ def test_four_lines_are_approved_with_a_warning_not_refused(tmp_path: Path) -> N
     assert record.status == "approved" and record.note.startswith(
         "WARNING: t1 has 4 lines"
     )
+
+
+# --- hand-off frame on a new episode (Hanakaze ep 2-3: warned on every episode 2 on) ---------------
+
+
+def _two_episodes(tmp_path: Path, *, ep1_location: str, ep2_location: str) -> Path:
+    import json
+
+    desk = init_series_desk(tmp_path, "Handoff Test", band="15s", episode_count=2)
+    spine = {
+        "episode_summaries": [
+            {"episode_id": "episode_01", "ordinal": 1},
+            {"episode_id": "ep_02", "ordinal": 2},
+        ],
+        "beats": [{"beat_id": "b1", "episode_id": "ep_02"}],
+        "frames": [
+            {"frame_id": "f1", "episode_id": "episode_01", "ordinal": 1,
+             "visual_brief": {"location": "the arcade street"}},
+            {"frame_id": "f2", "episode_id": "episode_01", "ordinal": 2,
+             "visual_brief": {"location": ep1_location}},
+            {"frame_id": "f3", "episode_id": "ep_02", "ordinal": 1,
+             "visual_brief": {"location": ep2_location}},
+        ],
+    }  # fmt: skip
+    api = desk / "ep02" / "api"
+    api.mkdir(parents=True, exist_ok=True)
+    (api / "spine.json").write_text(json.dumps(spine), encoding="utf-8")
+    return desk
+
+
+def _handoff(desk: Path, episode: int, take_id: str = "t1"):
+    report = preflight_take(desk, episode=episode, take_id=take_id)
+    return next(check for check in report.checks if check.code == "handoff")
+
+
+def test_a_new_episode_on_a_new_scene_needs_no_hand_off_frame(tmp_path: Path) -> None:
+    desk = _two_episodes(
+        tmp_path,
+        ep1_location="inside the sweet shop",
+        ep2_location="Ren's bakery doors",
+    )
+
+    check = _handoff(desk, 2)
+
+    assert check.ok, "an info line, never a warning"
+    assert check.detail.startswith("info: no hand-off frame")
+    assert (
+        "It opens on a new scene (Ren's bakery doors; episode 1 ended in inside the sweet shop)"
+        in check.detail
+    )
+    assert "fictora-ops handoff --desk D --episode 2 --take t1" in check.detail
+
+
+def test_a_new_episode_where_the_last_one_ended_is_still_only_information(
+    tmp_path: Path,
+) -> None:
+    desk = _two_episodes(
+        tmp_path,
+        ep1_location="inside the sweet shop",
+        ep2_location="Inside the  sweet shop",
+    )
+
+    check = _handoff(desk, 2)
+
+    assert check.ok and "It opens where episode 1 ended" in check.detail
+
+
+def test_without_a_saved_spine_the_new_episode_is_information_too(
+    tmp_path: Path,
+) -> None:
+    desk = init_series_desk(tmp_path, "No Spine", band="15s", episode_count=2)
+    check = _handoff(desk, 2)
+    assert (
+        check.ok
+        and "does not say episode 2 continues straight from episode 1" in check.detail
+    )
+
+
+def test_a_later_take_of_an_episode_still_warns_without_a_hand_off(
+    tmp_path: Path,
+) -> None:
+    from creation.ops.state import TakeState, save_series
+
+    desk = init_series_desk(tmp_path, "Two Takes", band="15s", episode_count=1)
+    series = load_series(desk)
+    slot = episode_by_ordinal(series, 1)
+    slot.takes.append(TakeState(take_id="t2"))
+    save_series(desk, series)
+
+    check = _handoff(desk, 1, "t2")
+
+    assert (
+        not check.ok
+        and check.detail == "Hand-off frame is not set. Paste the previous last frame."
+    )
