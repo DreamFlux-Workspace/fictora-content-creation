@@ -113,6 +113,8 @@ from creation.board_note import (
     beat_change_lines,
     director_message,
     note_refused_by_server,
+    outcome_lines,
+    redraw_note_outcome,
     regenerate_note_support,
     row_change_lines,
     take_patch,
@@ -3367,7 +3369,7 @@ def run_redraw_board(
     note: str | None = None,
     reroll: bool = False,
     out: Any = None,
-) -> Path:
+) -> Path | None:
     """Redraw one board on ``POST /v1/spines/{id}/episodes/{n}/boards/{set}/regenerate``. Spends one still.
 
     With ``note`` (what is wrong with the board) the note is first turned into
@@ -3409,10 +3411,18 @@ def run_redraw_board(
     out
         Text stream.
 
+    On a deploy that takes the note, the server may decide not to draw
+    (``output.board_redraw_note.drawn`` false: the note needed detail, changed
+    nothing, failed, or could not be saved). Then nothing was charged: the
+    still is not booked, the board file is not replaced, the desk stays at its
+    gate, and the reason (with the server's question to put to the human when
+    the note needs detail) is printed. When the note changed a beat's shot plan
+    the spine copy on the desk is saved again either way.
+
     Returns
     -------
-    Path
-        The new board file.
+    Path | None
+        The new board file; ``None`` when the server drew nothing.
     """
 
     out = out or sys.stdout
@@ -3570,7 +3580,23 @@ def run_redraw_board(
         _save_desk_json(
             desk, f"boards-redraw-ep{episode:02d}-{take_id}-terminal", terminal
         )
+        outcome = redraw_note_outcome(terminal)
         spine = run.spine(state.spine_id or "")
+        if outcome is not None and not outcome.drawn:
+            # Nothing drawn, nothing charged: keep the board file, the ledger and the gate as they are.
+            if outcome.updated_shot_plan_beat_ids:
+                save_spine_snapshot(desk, episode, spine)
+            for line in outcome_lines(
+                outcome, desk=str(desk), episode=episode, take_id=take_id
+            ):
+                print(line, file=out)
+            _note(
+                desk,
+                episode,
+                f"board redraw {take_id}: NOT drawn, $0.00 charged ({outcome.reason_code or 'no reason given'}). "
+                f"Note: {note or cause}",
+            )
+            return None
         save_spine_snapshot(desk, episode, spine)
         state = load_production(desk)
         made = download_boards(desk, state, spine, episode=episode, sets=[set_index])
@@ -3590,6 +3616,10 @@ def run_redraw_board(
         )
     finally:
         run.client.close()
+    if outcome is not None:
+        report[:0] = outcome_lines(
+            outcome, desk=str(desk), episode=episode, take_id=take_id
+        )
     moved = row_change_lines(
         drawn_before, frames_by_set(spine, episode=episode).get(set_index, [])
     )

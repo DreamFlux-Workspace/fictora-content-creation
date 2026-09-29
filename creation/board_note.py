@@ -18,11 +18,17 @@ instead (:func:`note_refused_by_server`).
 
 A redraw without a note of a board nothing has changed for is refused by
 ``redraw-board`` itself (``board_changes``); this module only serves the note.
+
+A deploy that takes the note also says what came of it
+(``output.board_redraw_note``): whether the board was drawn at all, and when
+not, why (nothing is charged and the old board stays). :func:`redraw_note_outcome`
+reads that; an older deploy that does not say is read as "drawn", as before.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 from creation.spine_view import (
@@ -116,6 +122,146 @@ def note_refused_by_server(message: Any) -> bool:
     names_note = '"note"' in text or "note:" in text
     unknown = "extra_forbidden" in text or "not permitted" in text
     return names_note and unknown
+
+
+#: ``reason_code`` values the server sends when a note redraw drew nothing, in plain words.
+NOT_DRAWN_REASONS = {
+    "note_needs_detail": "the note needs more detail before the take can change",
+    "note_changed_nothing": "the note did not change any shot of the take",
+    "note_failed": "the note could not be turned into shot changes",
+    "save_failed": "the changed shots could not be saved",
+    "board_type_unsupported": "notes cannot be applied to this board yet",
+}
+
+
+@dataclass(frozen=True)
+class RedrawNoteOutcome:
+    """What the server did with a note sent on a board redraw (``output.board_redraw_note``).
+
+    Attributes
+    ----------
+    drawn
+        Whether the board was drawn (and billed). ``False``: nothing was charged
+        and the existing board was kept.
+    reason_code
+        Why nothing was drawn (``note_needs_detail``, ``note_changed_nothing``,
+        ``note_failed``, ``save_failed``, ``board_type_unsupported``); ``None`` when drawn.
+    reason
+        The server's plain words for it (``not_applied_reason``), when it sent them.
+    clarifying_question
+        With ``note_needs_detail``: the question to put to the human.
+    updated_shot_plan_beat_ids
+        Beats whose shot plan the note changed (the story on the server changed).
+    """
+
+    drawn: bool
+    reason_code: str | None = None
+    reason: str | None = None
+    clarifying_question: str | None = None
+    updated_shot_plan_beat_ids: list[str] = field(default_factory=list)
+
+
+def redraw_note_outcome(terminal: Any) -> RedrawNoteOutcome | None:
+    """Read the note's outcome off a completed redraw job.
+
+    Parameters
+    ----------
+    terminal
+        The completed ``/v1/video-generations/{id}`` JSON.
+
+    Returns
+    -------
+    RedrawNoteOutcome | None
+        ``None`` when the job carries no note outcome, or one from a deploy that
+        does not yet say whether it drew (no ``drawn`` field): the caller keeps
+        its old behaviour (the board was drawn).
+    """
+
+    if not isinstance(terminal, Mapping):
+        return None
+    for key in ("output", "result"):
+        holder = terminal.get(key)
+        found = holder.get("board_redraw_note") if isinstance(holder, Mapping) else None
+        if isinstance(found, Mapping) and isinstance(found.get("drawn"), bool):
+            break
+    else:
+        return None
+
+    def _text(name: str) -> str | None:
+        value = found.get(name)
+        return (" ".join(value.split()) or None) if isinstance(value, str) else None
+
+    return RedrawNoteOutcome(
+        drawn=bool(found["drawn"]),
+        reason_code=_text("reason_code"),
+        reason=_text("not_applied_reason"),
+        clarifying_question=_text("clarifying_question"),
+        updated_shot_plan_beat_ids=[
+            str(beat_id)
+            for beat_id in found.get("updated_shot_plan_beat_ids") or []
+            if beat_id
+        ],
+    )
+
+
+def outcome_lines(
+    outcome: RedrawNoteOutcome, *, desk: str, episode: int, take_id: str
+) -> list[str]:
+    """The note's outcome in plain words, with what to do next when nothing was drawn.
+
+    Parameters
+    ----------
+    outcome
+        :func:`redraw_note_outcome`.
+    desk
+        Series desk, as the operator types it (for the command to answer with).
+    episode
+        Episode ordinal.
+    take_id
+        ``t1``, ``t2`` ...
+
+    Returns
+    -------
+    list[str]
+        Printable lines.
+    """
+
+    lines: list[str] = []
+    if outcome.drawn:
+        lines.append(f"{take_id}: the server applied the note and redrew the board.")
+    else:
+        why = outcome.reason or NOT_DRAWN_REASONS.get(
+            outcome.reason_code or "", "the server did not say why"
+        )
+        code = f" ({outcome.reason_code})" if outcome.reason_code else ""
+        lines.append(
+            f"!! {take_id}: the board was NOT redrawn and nothing was charged; the existing board is kept. "
+            f"Why{code}: {why}"
+        )
+        if outcome.reason_code == "note_needs_detail":
+            question = outcome.clarifying_question or (
+                "What should change in this take? Name the shot, who is in it, or what to leave out."
+            )
+            lines.append(f"Ask the human: {question}")
+            lines.append(
+                f"Then redraw with their answer as the note: fictora-produce redraw-board --desk {desk} "
+                f'--episode {episode} --take {take_id} --note "<answer>"'
+            )
+        elif outcome.reason_code in {"note_changed_nothing", "note_failed"}:
+            lines.append(
+                "Say the change as a concrete shot (size, who is in it, what to leave out) and redraw with that "
+                "note, or edit the frames/beat first and redraw without one."
+            )
+        elif outcome.reason_code == "save_failed":
+            lines.append(
+                "Nothing on the story changed; run the same redraw-board command again."
+            )
+    if outcome.updated_shot_plan_beat_ids:
+        lines.append(
+            f"The note changed the shot plan of {', '.join(outcome.updated_shot_plan_beat_ids)} "
+            "(the newest instruction wins); the desk's spine copy is saved again."
+        )
+    return lines
 
 
 def take_beats(
@@ -326,6 +472,10 @@ __all__ = [
     "note_refused_by_server",
     "regenerate_note_support",
     "DIRECTOR_STAGE",
+    "NOT_DRAWN_REASONS",
+    "RedrawNoteOutcome",
+    "outcome_lines",
+    "redraw_note_outcome",
     "beat_change_lines",
     "director_message",
     "regenerate_takes_note",

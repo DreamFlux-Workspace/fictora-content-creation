@@ -8,6 +8,7 @@ only a label and the redraw reused unchanged shot descriptions.
 from __future__ import annotations
 
 import io
+import json
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ from creation.board_note import (
 )
 from creation.cli_produce import main as produce_main
 from creation.ops.state import episode_by_ordinal, load_series
+from creation.production_state import load_production
 from creation.spine_view import frames_by_set, frames_digest
 from fake_api import FakeApi, openapi_doc
 
@@ -179,11 +181,7 @@ def test_a_note_that_changes_no_shot_stops_before_anything_is_drawn(
     assert episode_by_ordinal(load_series(desk), 1).spend_usd == 0.0
 
 
-def test_a_deploy_whose_regenerate_route_takes_a_note_gets_it_on_the_redraw(
-    desk: Path, api: FakeApi
-) -> None:
-    _record_digest(desk, api)
-    _regen_routes(api)
+def _note_on_redraw_deploy(api: FakeApi) -> None:
     doc = openapi_doc()
     doc["components"]["schemas"]["DramaBoardRegenerateRequest"] = {
         "properties": {"note": {}, "episode_count": {}}
@@ -204,12 +202,151 @@ def test_a_deploy_whose_regenerate_route_takes_a_note_gets_it_on_the_redraw(
         }
     }
     api.routes[("GET", "/openapi.json")] = doc
+
+
+def test_a_deploy_whose_regenerate_route_takes_a_note_gets_it_on_the_redraw(
+    desk: Path, api: FakeApi
+) -> None:
+    _record_digest(desk, api)
+    _regen_routes(api)
+    _note_on_redraw_deploy(api)
     out = io.StringIO()
 
     ec.run_redraw_board(desk, episode=1, take_id="t1", note=NOTE, out=out)
 
     assert api.posted(TURNS) == []
     assert (api.posted(REGEN)[0] or {})["note"] == NOTE
+
+
+def _outcome(**fields: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "note": NOTE,
+        "applied": False,
+        "drawn": False,
+        "reason_code": None,
+        "not_applied_reason": None,
+        "clarifying_question": None,
+        "updated_shot_plan_beat_ids": [],
+    }
+    return {"status": "completed", "output": {"board_redraw_note": {**base, **fields}}}
+
+
+def _boards(desk: Path) -> list[Path]:
+    return sorted((desk / "ep01" / "boards").glob("board-ep01-t1-v*.png"))
+
+
+QUESTION = "What should change in this take: a wider shot of Hana and Ren, or the same shots without the map?"
+
+
+def test_a_note_the_server_needs_detail_on_books_nothing_keeps_the_board_and_prints_its_question(
+    desk: Path, api: FakeApi
+) -> None:
+    _record_digest(desk, api)
+    _regen_routes(api)
+    _note_on_redraw_deploy(api)
+    api.jobs["job_redraw"] = _outcome(
+        reason_code="note_needs_detail",
+        not_applied_reason="The note needs a little more detail.",
+        clarifying_question=QUESTION,
+    )
+    boards_before = _boards(desk)
+    out = io.StringIO()
+
+    made = ec.run_redraw_board(
+        desk, episode=1, take_id="t1", note="make it better", out=out
+    )
+
+    text = out.getvalue()
+    assert made is None
+    assert "NOT redrawn and nothing was charged" in text
+    assert (
+        "note_needs_detail" in text and "The note needs a little more detail." in text
+    )
+    assert f"Ask the human: {QUESTION}" in text
+    assert f'redraw-board --desk {desk} --episode 1 --take t1 --note "<answer>"' in text
+    assert episode_by_ordinal(load_series(desk), 1).spend_usd == 0.0
+    assert _boards(desk) == boards_before
+    assert "redraws" not in episode_by_ordinal(load_series(desk), 1).takes[0].extra
+    assert load_production(desk).phase == "wait_board"
+
+
+def test_a_note_that_changed_nothing_on_the_server_books_nothing_and_says_why(
+    desk: Path, api: FakeApi
+) -> None:
+    _record_digest(desk, api)
+    _regen_routes(api)
+    _note_on_redraw_deploy(api)
+    api.jobs["job_redraw"] = _outcome(reason_code="note_changed_nothing")
+    out = io.StringIO()
+
+    assert (
+        ec.run_redraw_board(desk, episode=1, take_id="t1", note=NOTE, out=out) is None
+    )
+
+    text = out.getvalue()
+    assert "nothing was charged" in text and "note_changed_nothing" in text
+    assert "did not change any shot of the take" in text
+    assert "Ask the human" not in text
+    assert episode_by_ordinal(load_series(desk), 1).spend_usd == 0.0
+
+
+def test_a_note_that_moved_the_shot_plan_resaves_the_spine_drawn_or_not(
+    desk: Path, api: FakeApi
+) -> None:
+    _record_digest(desk, api)
+    _regen_routes(api)
+    _note_on_redraw_deploy(api)
+    api.spine_doc["beats"][0]["shot_plan"] = [{"size": "close-up", "subject": "Hana"}]
+    api.jobs["job_redraw"] = _outcome(
+        reason_code="note_changed_nothing",
+        updated_shot_plan_beat_ids=["beat_episode_01_01"],
+    )
+    out = io.StringIO()
+
+    ec.run_redraw_board(desk, episode=1, take_id="t1", note=NOTE, out=out)
+
+    saved = json.loads((desk / "api" / "spine.json").read_text(encoding="utf-8"))
+    assert saved["beats"][0]["shot_plan"] == [{"size": "close-up", "subject": "Hana"}]
+    assert "changed the shot plan of beat_episode_01_01" in out.getvalue()
+    assert episode_by_ordinal(load_series(desk), 1).spend_usd == 0.0
+
+    api.jobs["job_redraw"] = _outcome(
+        applied=True, drawn=True, updated_shot_plan_beat_ids=["beat_episode_01_01"]
+    )
+    out = io.StringIO()
+
+    made = ec.run_redraw_board(desk, episode=1, take_id="t1", note=NOTE, out=out)
+
+    assert made is not None and made.is_file()
+    text = out.getvalue()
+    assert "the server applied the note and redrew the board" in text
+    assert "changed the shot plan of beat_episode_01_01" in text
+    assert episode_by_ordinal(load_series(desk), 1).spend_usd == pytest.approx(0.30)
+
+
+def test_an_older_deploy_without_the_drawn_field_redraws_and_books_as_before(
+    desk: Path, api: FakeApi
+) -> None:
+    _record_digest(desk, api)
+    _regen_routes(api)
+    _note_on_redraw_deploy(api)
+    api.jobs["job_redraw"] = {
+        "status": "completed",
+        "output": {
+            "board_redraw_note": {
+                "note": NOTE,
+                "applied": False,
+                "not_applied_reason": "x",
+            }
+        },
+    }
+
+    made = ec.run_redraw_board(
+        desk, episode=1, take_id="t1", note=NOTE, out=io.StringIO()
+    )
+
+    assert made is not None and made.is_file()
+    assert episode_by_ordinal(load_series(desk), 1).spend_usd == pytest.approx(0.30)
 
 
 def test_without_a_note_an_unchanged_take_is_refused_loudly_until_same_shots(
