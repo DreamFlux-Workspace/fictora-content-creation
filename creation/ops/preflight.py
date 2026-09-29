@@ -5,7 +5,10 @@ Two kinds of check:
 - **Gates** (look, plates, script, board approved). A human says yes before
   money moves. These block; nothing overrides them.
 - **Warnings** (line count, board luma, estimate, envelope, hand-off,
-  re-roll cause). These never hard-block. They print a loud warning that says
+  re-roll cause). The hand-off warns only on a later take of an episode
+  (``t2`` on), which continues the take before it. A new episode's first take
+  without one is an info line: the spine does not say whether an episode
+  continues straight from the one before. These never hard-block. They print a loud warning that says
   what failed, how many times this unit has been filmed, and the money spent on
   the unit and the episode so far. The operator continues only by an explicit
   confirmation naming the unit (``--proceed-anyway ep01-t1``), and the override
@@ -396,6 +399,13 @@ def _handoff(episode: EpisodeState, take: TakeState, desk: Path) -> PreflightChe
     if not needs:
         return PreflightCheck(code="handoff", ok=True, detail="first take of episode 1")
     if not take.handoff_path:
+        if take.take_id == "t1":
+            # A new episode: the story does not say whether it continues straight from the last one.
+            return PreflightCheck(
+                code="handoff",
+                ok=True,
+                detail=_new_episode_handoff_info(episode.ordinal, desk),
+            )
         return PreflightCheck(
             code="handoff",
             ok=False,
@@ -407,6 +417,64 @@ def _handoff(episode: EpisodeState, take: TakeState, desk: Path) -> PreflightChe
             code="handoff", ok=False, detail=f"Hand-off file missing: {path}"
         )
     return PreflightCheck(code="handoff", ok=True, detail=str(path))
+
+
+def _opening_locations(desk: Path, ordinal: int) -> tuple[str | None, str | None]:
+    """Where the previous episode's last frame and this episode's first frame are set, from the saved spine."""
+
+    from creation.post.desk import saved_spine
+
+    found = saved_spine(desk, ordinal)
+    if found is None:
+        return None, None
+    spine = found[0]
+    ids = {
+        int(summary.get("ordinal") or 0): str(summary.get("episode_id") or "")
+        for summary in spine.get("episode_summaries") or []
+        if isinstance(summary, dict)
+    }
+
+    def frames(episode_id: str) -> list[dict[str, object]]:
+        rows = [
+            frame
+            for frame in spine.get("frames") or []
+            if isinstance(frame, dict) and frame.get("episode_id") == episode_id
+        ]
+        return sorted(rows, key=lambda frame: int(str(frame.get("ordinal") or 0)))
+
+    def location(frame: dict[str, object] | None) -> str | None:
+        brief = frame.get("visual_brief") if frame else None
+        text = brief.get("location") if isinstance(brief, dict) else None
+        return " ".join(str(text).split()) or None if text else None
+
+    before = frames(ids.get(ordinal - 1, ""))
+    now = frames(ids.get(ordinal, ""))
+    return (
+        location(before[-1] if before else None),
+        location(now[0] if now else None),
+    )
+
+
+def _new_episode_handoff_info(ordinal: int, desk: Path) -> str:
+    """The info line for a new episode's first take with no hand-off frame (never a warning).
+
+    The spine carries no field that says an episode continues straight from the
+    one before (``opening_template`` / ``opening_image`` are set on episode 1
+    only; ``hook_type`` is the ending's shape), so preflight cannot know. It
+    says where the two episodes are set when the saved spine names it.
+    """
+
+    before, now = _opening_locations(desk, ordinal)
+    setting = ""
+    if before and now and before.casefold() != now.casefold():
+        setting = f" It opens on a new scene ({now}; episode {ordinal - 1} ended in {before})."
+    elif before and now:
+        setting = f" It opens where episode {ordinal - 1} ended ({now})."
+    return (
+        f"info: no hand-off frame; the story does not say episode {ordinal} continues straight from "
+        f"episode {ordinal - 1}, so none is needed.{setting} If it picks up the same moment, set the last "
+        f"frame of episode {ordinal - 1}: `fictora-ops handoff --desk D --episode {ordinal} --take t1 --path FRAME`."
+    )
 
 
 def _reroll(take: TakeState) -> PreflightCheck:

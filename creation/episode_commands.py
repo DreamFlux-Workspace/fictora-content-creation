@@ -80,6 +80,13 @@ from creation.ops.floor import (
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
 from creation.ops.state import GateRecord, episode_by_ordinal, load_series, save_series
+from creation.patch_refusal import (
+    FRAME_CAST_FIXES,
+    INVALID_PATCH,
+    explain_invalid_patch,
+    refusal_code,
+    server_named_rules,
+)
 from creation.post.take_facts import (
     save_take_facts,
     sfx_plan_changes,
@@ -642,6 +649,91 @@ def author_direction(
     }
 
 
+#: ``author --line`` limit when the deploy's ``/openapi.json`` does not say (``DramaPilotEpisodeDirection.line``).
+DIRECTION_LINE_LIMIT = 400
+#: The OpenAPI schema (suffix) of the author request's ``direction``.
+DIRECTION_SCHEMA = "DramaPilotEpisodeDirection"
+
+
+def direction_line_limit(openapi: Any) -> int | None:
+    """The longest ``direction.line`` the deploy takes, as its ``/openapi.json`` says.
+
+    Parameters
+    ----------
+    openapi
+        ``/openapi.json`` as read from the deploy (anything else reads as unknown).
+
+    Returns
+    -------
+    int | None
+        ``maxLength`` of ``DramaPilotEpisodeDirection.line``, or ``None`` when the schema does not say.
+    """
+
+    if not isinstance(openapi, Mapping):
+        return None
+    schemas = (openapi.get("components") or {}).get("schemas") or {}
+    for name, schema in schemas.items() if isinstance(schemas, Mapping) else ():
+        if not str(name).endswith(DIRECTION_SCHEMA) or not isinstance(schema, Mapping):
+            continue
+        line = (schema.get("properties") or {}).get("line")
+        limit = line.get("maxLength") if isinstance(line, Mapping) else None
+        if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0:
+            return limit
+    return None
+
+
+def check_direction_length(run: DramaApiRunSession, line: str, *, out: Any) -> int:
+    """Count an ``author --line`` direction and stop before sending one the server would refuse (HTTP 422).
+
+    A line within :data:`DIRECTION_LINE_LIMIT` is sent without a schema read. A
+    longer one is checked against the deploy's own limit
+    (``/openapi.json``, :func:`direction_line_limit`), so a deploy that raised
+    it takes the longer line; when the schema cannot be read the default holds.
+
+    Parameters
+    ----------
+    run
+        Session (reads ``/openapi.json`` only for a long line).
+    line
+        The direction, whitespace already collapsed (the server collapses it too).
+    out
+        Where the count is said when the line is long but allowed.
+
+    Returns
+    -------
+    int
+        The limit the line was checked against.
+
+    Raises
+    ------
+    CommandStopped
+        The line is longer than the limit; nothing was sent.
+    """
+
+    count = len(line)
+    if count <= DIRECTION_LINE_LIMIT:
+        return DIRECTION_LINE_LIMIT
+    status, doc = run.get_optional("/openapi.json")
+    read = direction_line_limit(doc) if 200 <= status < 300 else None
+    limit = read or DIRECTION_LINE_LIMIT
+    source = (
+        "this deploy's /openapi.json"
+        if read
+        else f"the known limit; /openapi.json did not say (HTTP {status})"
+    )
+    if count > limit:
+        raise CommandStopped(
+            f"--line is {count} characters; the server takes at most {limit} ({source}). Nothing was sent. "
+            f"Cut it by {count - limit} characters: keep where the episode goes and what turns, and leave "
+            "staging to the script edit after `author`."
+        )
+    print(
+        f"[author] --line is {count} characters (this deploy takes up to {limit}).",
+        file=out,
+    )
+    return limit
+
+
 def run_author(
     desk: Path,
     *,
@@ -683,6 +775,12 @@ def run_author(
         raise CommandStopped(
             "a take is in flight on this desk; finish it (`step`) before writing the next episode"
         )
+    if direction and direction.get("line"):
+        try:
+            check_direction_length(run, str(direction["line"]), out=sys.stderr)
+        except CommandStopped:
+            run.client.close()
+            raise
     cfg = load_production_config(desk)
     while len(load_series(desk).episodes) < episode:
         opened = add_episode(desk)
@@ -847,45 +945,85 @@ def run_memory(
 # --- Edit -------------------------------------------------------------------------------------------
 
 
+#: ``--set`` values read as JSON: a quoted string, a list, an object, ``null``, ``true`` or ``false``.
+_JSON_VALUE_START = ('"', "[", "{")
+_JSON_LITERALS = {"null", "true", "false"}
+
+
 def parse_assignment(raw: str) -> tuple[str, Any]:
-    """Parse one ``--set key=value``; a value starting with ``[`` or ``{``, or ``null``, is JSON.
+    """Parse one ``--set key=value``: a JSON value when the value is one, else the raw text.
+
+    A value that starts with ``"``, ``[`` or ``{``, or is ``null``, ``true`` or
+    ``false``, is read as JSON, so ``shot_scale="extreme close-up"`` stores
+    ``extreme close-up`` (not the quotes). Anything else is kept as typed
+    (``shot_scale=close up``); numbers stay text, as every brief field is text.
 
     Parameters
     ----------
     raw
-        ``shot_scale=close up``, ``row_direction.camera_move=dolly_in``, ``story_objects=["a"]``.
+        ``shot_scale=close up``, ``shot_scale="extreme close-up"``,
+        ``row_direction.camera_move=dolly_in``, ``story_objects=["a"]``,
+        ``subject_blocking.0.pose=arms crossed``.
 
     Returns
     -------
     tuple[str, Any]
         Dotted key and value.
+
+    Raises
+    ------
+    CommandStopped
+        No ``=``, an empty key, or a value that looks like JSON but does not parse.
     """
 
     key, sep, value = raw.partition("=")
     if not sep or not key.strip():
         raise CommandStopped(f"--set needs key=value: {raw!r}")
     text = value.strip()
-    if text[:1] in {"[", "{"} or text == "null":
+    if text[:1] in _JSON_VALUE_START or text in _JSON_LITERALS:
         try:
             return key.strip(), json.loads(text)
         except json.JSONDecodeError as exc:
             raise CommandStopped(
-                f"--set {key.strip()}: the value looks like JSON but does not parse ({exc})"
+                f"--set {key.strip()}: the value looks like JSON but does not parse ({exc}); "
+                "quote a JSON string with double quotes, or pass the text without quotes"
             ) from exc
     return key.strip(), value
 
 
-def _apply(target: dict[str, Any], key: str, value: Any, *, label: str) -> None:
+def _apply(target: Any, key: str, value: Any, *, label: str) -> None:
+    """Set a dotted ``key`` inside ``target``; a numeric part indexes a list (``subject_blocking.0.pose``)."""
+
     head, _, rest = key.partition(".")
+    if isinstance(target, list):
+        if not head.isdigit():
+            raise CommandStopped(
+                f"{label} is a list, so {head!r} must be a number (0 to {len(target) - 1})"
+            )
+        index = int(head)
+        if index >= len(target):
+            raise CommandStopped(
+                f"{label} has {len(target)} item(s); {head} is past the end (0 to {len(target) - 1})"
+            )
+        where = f"{label}.{index}"
+        if rest:
+            _apply(target[index], rest, value, label=where)
+        else:
+            target[index] = value
+        return
+    if not isinstance(target, dict):
+        raise CommandStopped(
+            f"{label} is not an object or a list, so {key!r} cannot be set"
+        )
     if head not in target:
         raise CommandStopped(
             f"{label} has no field {head!r}; it has: {', '.join(sorted(target))}"
         )
     if rest:
         inner = target[head]
-        if not isinstance(inner, dict):
+        if not isinstance(inner, (dict, list)):
             raise CommandStopped(
-                f"{label}.{head} is not an object, so {key!r} cannot be set"
+                f"{label}.{head} is not an object or a list, so {key!r} cannot be set"
             )
         _apply(inner, rest, value, label=f"{label}.{head}")
         return
@@ -905,6 +1043,16 @@ def _changes(
         old, new = before.get(key), after.get(key)
         if isinstance(old, Mapping) and isinstance(new, Mapping):
             lines += _changes(old, new, f"{prefix}{key}.")
+        elif (
+            isinstance(old, list)
+            and isinstance(new, list)
+            and len(old) == len(new)
+            and old != new
+            and all(isinstance(item, Mapping) for item in [*old, *new])
+        ):
+            # One field changed inside a list of objects (subject_blocking.0.pose): name that field.
+            for index, (was, now) in enumerate(zip(old, new)):
+                lines += _changes(was, now, f"{prefix}{key}.{index}.")
         elif old != new:
             lines.append(f"  {prefix}{key}: {_short(old)}  ->  {_short(new)}")
     return lines
@@ -1299,18 +1447,80 @@ def build_patch(
         episode=episode,
         kind="frame",
     )
-    brief = copy.deepcopy(found.get("visual_brief") or {})
+    return _frame_patch(spine, found, assignments)
+
+
+def _blocking_ids(brief: Mapping[str, Any]) -> list[str]:
+    return [
+        str(entry.get("cast_id"))
+        for entry in brief.get("subject_blocking") or []
+        if isinstance(entry, Mapping) and entry.get("cast_id")
+    ]
+
+
+def _frame_patch(
+    spine: Mapping[str, Any],
+    found: Mapping[str, Any],
+    assignments: Sequence[tuple[str, Any]],
+) -> tuple[dict[str, Any], list[str]]:
+    """A frame's patch: the WHOLE current ``visual_brief`` with only the set fields changed, and its cast.
+
+    The server replaces the frame's brief with what is sent, so the brief always
+    goes whole. ``--set cast_refs=[...]`` (cast names or ids) is the frame's own
+    field, not the brief's. Who is in the shot is said twice, ``cast_refs`` and
+    the brief's ``subject_blocking``, and the two must name the same people:
+
+    - a ``subject_blocking`` edit that changes who is staged also sends
+      ``cast_refs`` as the blocking's ids (what fictora-drama #498 derives; an
+      older server needs both in one patch);
+    - ``cast_refs`` alone (no brief change) sends no brief: the server keeps the
+      staging of whoever stays and drops the rest (#498; an older server refuses);
+    - both, naming different people, is refused here before anything is sent.
+    """
+
+    frame_id = found["frame_id"]
+    stored = found.get("visual_brief") or {}
+    brief = copy.deepcopy(stored)
+    wanted_refs: list[str] | None = None
     for key, value in assignments:
-        if isinstance(value, Mapping) and isinstance(brief.get(key), dict):
+        if key == "cast_refs":
+            if not isinstance(value, list) or not all(
+                isinstance(v, str) for v in value
+            ):
+                raise CommandStopped(
+                    'cast_refs is a JSON list of cast names or ids: --set \'cast_refs=["Hana", "Ren"]\''
+                )
+            wanted_refs = [resolve_speaker(spine, who) for who in value]
+        elif isinstance(value, Mapping) and isinstance(brief.get(key), dict):
             brief[key] = {**brief[key], **value}
         else:
             _apply(brief, key, value, label="visual_brief")
-    changed = _changes(
-        {"visual_brief": found.get("visual_brief") or {}}, {"visual_brief": brief}
-    )
+    old_refs = [
+        str(ref) for ref in found.get("cast_refs") or [] if ref
+    ] or _blocking_ids(stored)
+    changed = _changes({"visual_brief": stored}, {"visual_brief": brief})
+    entry: dict[str, Any] = {"frame_id": frame_id}
+    if changed:
+        entry["visual_brief"] = brief
+    staged = _blocking_ids(brief)
+    if wanted_refs is not None and changed and sorted(wanted_refs) != sorted(staged):
+        raise CommandStopped(
+            f"cast_refs {wanted_refs} and the edited subject_blocking {staged} name different people; "
+            "send one of them (the other follows) or make them agree"
+        )
+    refs = wanted_refs
+    if refs is None and changed and staged != _blocking_ids(stored):
+        refs = staged
+    if refs is not None and refs != old_refs:
+        names = _cast_names(spine)
+        entry["cast_refs"] = refs
+        changed.append(
+            f"  cast_refs: {', '.join(names.get(r, r) for r in old_refs) or '(nobody)'}  ->  "
+            f"{', '.join(names.get(r, r) for r in refs) or '(nobody)'}"
+        )
     if not changed:
         raise CommandStopped(f"nothing to change on {found.get('frame_id')}")
-    return {"frames": [{"frame_id": found["frame_id"], "visual_brief": brief}]}, changed
+    return {"frames": [entry]}, changed
 
 
 def line_edit_consequences(
@@ -1758,8 +1968,11 @@ def _send_story_edit(
                     out=out,
                 )
         except CommandStopped as exc:
+            fields = _explain_field_refusal(run, str(exc), patch, changed)
             raise CommandStopped(
-                explain_refusal(str(exc), spine, episode=episode)
+                f"{exc}\n{fields}"
+                if fields
+                else explain_refusal(str(exc), spine, episode=episode)
             ) from None
         fresh = run.spine(state.spine_id or "")
     finally:
@@ -1771,6 +1984,33 @@ def _send_story_edit(
         cascade,
         what,
         changed,
+    )
+
+
+def _explain_field_refusal(
+    run: DramaApiRunSession, message: str, patch: Mapping[str, Any], changed: list[str]
+) -> str | None:
+    """:func:`creation.patch_refusal.explain_invalid_patch`; the deploy's schema is read only for bare copy."""
+
+    if not (patch.get("frames") or patch.get("beats")):
+        return None
+    code = refusal_code(message)
+    if code in FRAME_CAST_FIXES or (
+        code == INVALID_PATCH and server_named_rules(message) is not None
+    ):
+        return explain_invalid_patch(message, patch, changed)
+    if code != INVALID_PATCH:
+        return None
+    try:
+        status, doc = run.get_optional("/openapi.json")
+    except (SystemExit, httpx.HTTPError) as exc:
+        status, doc = 0, None
+        print(
+            f"(could not read /openapi.json to check the fields: {exc})",
+            file=sys.stderr,
+        )
+    return explain_invalid_patch(
+        message, patch, changed, openapi=doc if 200 <= status < 300 else None
     )
 
 
@@ -4767,7 +5007,10 @@ def add_episode_parsers(
         help="Direction N from the newest saved brief.",
     )
     author.add_argument(
-        "--line", default=None, help="The human's own direction for this episode."
+        "--line",
+        default=None,
+        help="The human's own direction for this episode (400 characters at most, or the deploy's own limit; "
+        "counted before sending).",
     )
     author.add_argument(
         "--title", default=None, help="With --line: a short name for it."
@@ -4803,7 +5046,7 @@ def add_episode_parsers(
         action="append",
         default=[],
         metavar="KEY=VALUE",
-        help="motion_direction field (beat) or visual_brief field (frame); dotted keys; JSON values.",
+        help='motion_direction field (beat) or visual_brief field (frame). Dotted keys; a number indexes a list (subject_blocking.0.pose). A value starting with " [ { (or null/true/false) is JSON: \'shot_scale="extreme close-up"\' stores the text without quotes; plain text works too. On a frame, cast_refs=["Hana"] (names or ids) changes who is in the shot.',
     )
     edit.add_argument("--text", default=None, help="Line: the English script text.")
     edit.add_argument(

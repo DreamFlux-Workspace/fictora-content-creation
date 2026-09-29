@@ -10,6 +10,8 @@ Closed 2026-09-28: the automatic effects now plan the impacts a beat states (fic
 
 Closed 2026-09-29: a creator can ask a beat for an expression before the board (fictora-drama #482, `fictora-produce edit --beat N --expression KIND`, `expressions`; Hanakaze #3, #24; SCP-173 #53). Not enforcing a register is decided, not a gap: any kind may go on any beat, whatever the genre, because the scene decides (2026-09-29, Expression learnings L9). The whose-face row below stays open.
 
+Closed 2026-09-29 in the kit (Hanakaze eps 2–3, findings #3 #4 #7 #8 #11): `edit --set` reads a JSON string value (`"extreme close-up"` without the quotes) and indexes lists (`subject_blocking.0.pose`); `finish --take-file` a `freeze`/`soften`/`deboard`/`colour` of the raw take keeps the raw take's transcript for caption timing (`epNN/takes/edit-chain.jsonl`); `author --line` is counted against the server's limit before sending; the kit's SFX follow the filmed cuts like the server's mix (fictora-drama #487); preflight no longer warns about a hand-off on a new episode's first take (info line); a frame's cast changes through `edit --frame N --set subject_blocking=[…]` / `cast_refs=[…]` (fictora-drama #498).
+
 Closed 2026-09-28 by founder decision: a finished cut shorter than its 15 / 30 / 60 s band (e.g. 14.2 s after trimming a bad half-second) is allowed and is not a deviation. Takes still film at the normal clip length (`clip_duration_seconds` 4–15); a finished episode longer than its band is still a deviation.
 
 | Stage | Gap | Why it costs money or time | Source |
@@ -20,6 +22,8 @@ Closed 2026-09-28 by founder decision: a finished cut shorter than its 15 / 30 /
 | Captions | Japanese / Korean captions and a CJK caption font are deferred (English only) | A Japan-market cut needs captions made by hand | Hanakaze #40, #41 |
 | Board | The safe-zone check reads placement text only; there is no measured face box | A face drawn into a covered zone with clean placement words is caught only by eye | Safe zones, 2026-09-28 |
 | Board | A beat's expression does not say whose face wears it; on a two-person anchor row the frames author picks | Check the face on the board; fix it on the frame (`edit --frame N --set …`) and redraw | Expression learnings L10 |
+| Edit | Before fictora-drama #498, `PATCH /v1/spines/{id}` and `…/cascade/preview` answered a contract refusal with a fixed `invalid_patch` message and no field detail. #498 names the field and rule (`details.validation_errors`); the kit prints them and keeps its guess only for an older deploy | Until #498 is deployed the kit can name the fields it sent and the strict ones, not the one that failed | Hanakaze ep 2–3 #3 |
+| Board | The spine has no field saying an episode continues straight from the previous one (`opening_template` / `opening_image` are episode 1 only) | Preflight cannot tell whether a new episode needs a hand-off frame, so it prints an info line and the human decides | Hanakaze ep 2–3 #11 |
 | Board | A stated move lost across a camera change, and a horror threat without its own row, are server log lines the board shot list does not print (fictora-drama #459) | Read every board for "does the picture show the rule" | SCP-173 #11, #28 |
 
 When you add a row, name the production that hit it.

@@ -227,6 +227,216 @@ def plan_from_take_facts(payload: dict[str, Any]) -> SfxPlan:
     return SfxPlan(cues, speech, dropped)
 
 
+# --- filmed cuts -----------------------------------------------------------------------------------
+
+#: A planned shot change moves to the nearest measured cut within this (fictora-drama #487's window).
+FILMED_CUT_WINDOW_SECONDS = 1.0
+#: Measured cuts this close to either end of the take are ignored (the board-frame flash at the head).
+FILMED_CUT_EDGE_SECONDS = 0.25
+
+Cuts = Callable[[Path], tuple[float, ...]]
+"""``take -> hard-cut times`` (:func:`creation.post.edit.measure_cuts` in production)."""
+
+
+@dataclass(frozen=True)
+class PlannedShot:
+    """One shot of the take facts: its index and planned window, in take seconds."""
+
+    index: int
+    start: float
+    end: float
+
+
+def planned_shots(payload: dict[str, Any]) -> tuple[PlannedShot, ...]:
+    """The take facts' shots in order (``shots[]``: ``shot_index``, ``start_seconds``, ``end_seconds``).
+
+    Parameters
+    ----------
+    payload
+        ``GET /v1/jobs/{id}/take-facts`` JSON (``{"take_facts": {...}}`` or the facts alone).
+
+    Returns
+    -------
+    tuple[PlannedShot, ...]
+        Shots with a positive window, earliest first; empty when the facts carry none.
+    """
+
+    facts = payload.get("take_facts", payload)
+    shots: list[PlannedShot] = []
+    for shot in facts.get("shots") or []:
+        try:
+            item = PlannedShot(
+                int(shot["shot_index"]),
+                float(shot["start_seconds"]),
+                float(shot["end_seconds"]),
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+        if item.end > item.start:
+            shots.append(item)
+    return tuple(sorted(shots, key=lambda shot: shot.start))
+
+
+@dataclass(frozen=True)
+class FilmedShots:
+    """Each planned shot's window on the take as filmed.
+
+    Parameters
+    ----------
+    planned
+        The take facts' shots.
+    windows
+        ``shot_index -> (start, end)`` as filmed.
+    moved
+        ``(planned change, filmed cut)`` for each shot change that followed a measured cut.
+    kept
+        Planned shot changes with no measured cut near them (kept where planned).
+    """
+
+    planned: tuple[PlannedShot, ...]
+    windows: dict[int, tuple[float, float]]
+    moved: tuple[tuple[float, float], ...]
+    kept: tuple[float, ...]
+
+    def one_line(self) -> str:
+        """``shot changes on the filmed cuts: 3.80->3.88s, 7.50->7.33s; kept as planned: 11.20s``."""
+
+        parts: list[str] = []
+        if self.moved:
+            parts.append(
+                "shot changes on the filmed cuts: "
+                + ", ".join(f"{a:.2f}->{b:.2f}s" for a, b in self.moved)
+            )
+        if self.kept:
+            parts.append(
+                "no cut within 1 s, kept as planned: "
+                + ", ".join(f"{t:.2f}s" for t in self.kept)
+            )
+        return "; ".join(parts) or "no shot changes planned"
+
+
+def filmed_shot_windows(
+    shots: tuple[PlannedShot, ...], cuts: tuple[float, ...], *, duration: float
+) -> FilmedShots:
+    """Move each planned shot change to the nearest measured cut within :data:`FILMED_CUT_WINDOW_SECONDS`.
+
+    Each measured cut is used once, and the changes stay in order. A change with
+    no cut near it stays where it was planned. The first shot's start and the
+    last shot's end never move.
+
+    Parameters
+    ----------
+    shots
+        :func:`planned_shots`.
+    cuts
+        Hard-cut times measured on the take.
+    duration
+        The take's length (cuts within :data:`FILMED_CUT_EDGE_SECONDS` of either end are ignored).
+
+    Returns
+    -------
+    FilmedShots
+        The filmed windows and what moved.
+    """
+
+    free = sorted(
+        cut
+        for cut in cuts
+        if FILMED_CUT_EDGE_SECONDS < cut < duration - FILMED_CUT_EDGE_SECONDS
+    )
+    starts = [shot.start for shot in shots]
+    moved: list[tuple[float, float]] = []
+    kept: list[float] = []
+    previous = starts[0] if starts else 0.0
+    for position in range(1, len(shots)):
+        change = shots[position].start
+        near = [
+            cut
+            for cut in free
+            if abs(cut - change) <= FILMED_CUT_WINDOW_SECONDS and cut > previous
+        ]
+        if near:
+            cut = min(near, key=lambda value: abs(value - change))
+            free.remove(cut)
+            starts[position] = cut
+            moved.append((change, cut))
+        else:
+            kept.append(change)
+            starts[position] = max(change, previous)
+        previous = starts[position]
+    windows = {
+        shot.index: (
+            starts[position],
+            starts[position + 1] if position + 1 < len(shots) else shot.end,
+        )
+        for position, shot in enumerate(shots)
+    }
+    return FilmedShots(shots, windows, tuple(moved), tuple(kept))
+
+
+def _on_filmed(time: float, shot: PlannedShot, filmed: FilmedShots) -> float:
+    """``time`` at the same fraction of ``shot`` as filmed."""
+
+    start, end = filmed.windows[shot.index]
+    fraction = min(1.0, max(0.0, (time - shot.start) / (shot.end - shot.start)))
+    return round(start + fraction * (end - start), 3)
+
+
+def _shot_at(time: float, shots: tuple[PlannedShot, ...]) -> PlannedShot | None:
+    for shot in shots:
+        if shot.start <= time < shot.end:
+            return shot
+    return shots[-1] if shots and abs(time - shots[-1].end) < 1e-6 else None
+
+
+def follow_filmed_cuts(plan: SfxPlan, filmed: FilmedShots) -> SfxPlan:
+    """Place each cue and speaking window on the shots as filmed, at the same fraction of its shot.
+
+    What fictora-drama #487 does in the server's mix when it is given the planned
+    shots: an event keeps its length and moves with its shot; a sustained
+    sound's end moves with its shot too when it ends inside it; a cue whose shot
+    the facts do not list stays where it was planned.
+
+    Parameters
+    ----------
+    plan
+        :func:`plan_from_take_facts`.
+    filmed
+        :func:`filmed_shot_windows`.
+
+    Returns
+    -------
+    SfxPlan
+        The same cues and windows on the filmed shots.
+    """
+
+    by_index = {shot.index: shot for shot in filmed.planned}
+    cues: list[SfxCue] = []
+    for cue in plan.cues:
+        shot = by_index.get(cue.shot_index)
+        if shot is None:
+            cues.append(cue)
+            continue
+        start = _on_filmed(cue.start, shot, filmed)
+        seconds = cue.seconds
+        end = cue.start + cue.seconds
+        if cue.kind == "sustained" and shot.start < end <= shot.end + 1e-6:
+            seconds = max(
+                SFX_MIN_PLACED_SECONDS, round(_on_filmed(end, shot, filmed) - start, 3)
+            )
+        cues.append(replace(cue, start=start, seconds=seconds))
+    speech: list[tuple[float, float]] = []
+    for a, b in plan.speech:
+        first, last = _shot_at(a, filmed.planned), _shot_at(b - 1e-6, filmed.planned)
+        speech.append(
+            (
+                _on_filmed(a, first, filmed) if first else a,
+                _on_filmed(b, last, filmed) if last else b,
+            )
+        )
+    return SfxPlan(tuple(cues), tuple(speech), plan.dropped)
+
+
 def saved_take_facts(desk: Path, episode: int, take_id: str) -> Path | None:
     """Newest ``epNN/api/take-facts-epNN-tK-vN.json``."""
 
