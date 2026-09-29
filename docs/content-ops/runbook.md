@@ -285,7 +285,7 @@ Extra cost:            <$ and minutes>
 
 Always warn for: assembling a length other than 15, 30, or 60s; editing product code or settings (never acceptable — propose it to engineering).
 
-Do not warn for: `clip_duration_seconds` in 4–15; `cut_tempo=one_shot`; `caption_style=house`; product hand-off paste; 2×N row boards when every frame sets `board_row`; `PUT .../inner-voice`; voice auditions and pick; `POST .../audio-bed`; product sidechain ducking; `arc`, `brief`, `author`, `memory`, `edit`, `look-frame`, `look`, `look-note`, `redraw-board`, `check-lines`. Those are aligned.
+Do not warn for: `clip_duration_seconds` in 4–15; `cut_tempo=one_shot`; `caption_style=house`; product hand-off paste; 2×N row boards when every frame sets `board_row`; `PUT .../inner-voice`; voice auditions; `POST .../audio-bed`; product sidechain ducking; `arc`, `brief`, `author`, `memory`, `edit`, `look-frame`, `look`, `look-note`, `redraw-board`, `check-lines`. Those are aligned. **`voice --pick` is aligned for the pick call itself; if filming then `422 spine_reuse_invalid` on `seedance_vocal_signature`, stop — product gap in [api-map.md](api-map.md), not a desk workaround.**
 
 Money warnings:
 
