@@ -809,6 +809,148 @@ def row_speech_lines(
     return out
 
 
+def heard_not_seen(beats: Sequence[Mapping[str, Any]]) -> set[str]:
+    """Cast ids one take only hears: an off-screen line here and nothing that shows them.
+
+    The server's rule (``off_screen_staging``): someone with an ``off_screen``
+    line in the take, and no on-screen line, no vocalization, and not the motion
+    subject of a beat that does not carry their off-screen line.
+
+    Parameters
+    ----------
+    beats
+        The take's beats (spine JSON).
+
+    Returns
+    -------
+    set[str]
+        Cast ids that must not be on any frame of the take's board.
+    """
+
+    heard: set[str] = set()
+    seen: set[str] = set()
+    for beat in beats:
+        off: set[str] = set()
+        for line in beat.get("dialogue_lines") or []:
+            if not isinstance(line, Mapping) or not line.get("cast_id"):
+                continue
+            (off if line.get("off_screen") is True else seen).add(str(line["cast_id"]))
+        heard |= off
+        vocal = beat.get("vocalization")
+        if isinstance(vocal, Mapping) and vocal.get("cast_id"):
+            seen.add(str(vocal["cast_id"]))
+        motion = beat.get("motion_direction")
+        subject = (
+            str(motion.get("subject_cast_id") or "")
+            if isinstance(motion, Mapping)
+            else ""
+        )
+        if subject and subject not in off:
+            seen.add(subject)
+    return heard - seen
+
+
+_FACELESS = re.compile(
+    r"\b(?:face|head)\b[^.;]{0,40}?\b(?:outside|out of|not visible|hidden|cropped)\b|\bheadless\b|\bfaceless\b"
+    r"|\bshoulders? to (?:the )?waist\b",
+    re.I,
+)
+
+
+def _shows_a_face(frame: Mapping[str, Any]) -> bool:
+    raw = frame.get("visual_brief")
+    brief: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
+    if str(brief.get("cell_role") or "") in ("insert", "cover"):
+        return False
+    if re.search(
+        r"\b(?:insert|macro|detail)\b", str(brief.get("shot_scale") or ""), re.I
+    ):
+        return False
+    staged = [b for b in brief.get("subject_blocking") or [] if isinstance(b, Mapping)]
+    return any(
+        not any(
+            _FACELESS.search(str(b.get(field) or ""))
+            for field in ("frame_position", "pose", "gaze")
+        )
+        for b in staged
+    )
+
+
+def off_screen_speaker_lines(
+    spine: Mapping[str, Any],
+    frames: Sequence[Mapping[str, Any]],
+    take_beats: Sequence[Mapping[str, Any]],
+    *,
+    cast_names: Mapping[str, str],
+) -> list[str]:
+    """Warn when a speaker the take only hears is on the board, or their line plays on no face.
+
+    Hanakaze Sweets ep 3: Genzō (heard through the ceiling) was listed on a cell
+    written about Mitsu, so the board drew him and his plate went to the image
+    model; his line's row was two headless inserts. Warning only: the server
+    takes him off the frames when it draws.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    frames
+        One board's frames.
+    take_beats
+        That take's beats.
+    cast_names
+        ``cast_id`` to display name.
+
+    Returns
+    -------
+    list[str]
+        ``!!`` lines, empty when nothing is wrong.
+    """
+
+    hidden = heard_not_seen(take_beats)
+    if not hidden:
+        return []
+    out: list[str] = []
+    rows = {frame.get("frame_id"): _row_number(frame) for frame in frames}
+    for cast_id in sorted(hidden):
+        who = cast_names.get(cast_id, cast_id)
+        listed = [
+            frame
+            for frame in frames
+            if cast_id in {str(c) for c in frame.get("cast_refs") or []}
+            or any(
+                isinstance(b, Mapping) and str(b.get("cast_id") or "") == cast_id
+                for b in (frame.get("visual_brief") or {}).get("subject_blocking") or []
+            )
+        ]
+        for frame in listed:
+            out.append(
+                f"  !! {who} is off-screen in this take (heard, not seen) but is listed on "
+                f"{frame.get('frame_id')} (row {_row_number(frame)}): the board may draw them and their plate is "
+                f"sent. Edit that frame's cast to the character it shows, then redraw (warning only)."
+            )
+    for beat in take_beats:
+        unseen = [
+            str(line.get("cast_id"))
+            for line in beat.get("dialogue_lines") or []
+            if isinstance(line, Mapping)
+            and line.get("off_screen") is True
+            and str(line.get("cast_id")) in hidden
+        ]
+        anchor = str(beat.get("frame_id") or "")
+        if not unseen or anchor not in rows:
+            continue
+        row = rows[anchor]
+        cells = [frame for frame in frames if _row_number(frame) == row]
+        if cells and not any(_shows_a_face(frame) for frame in cells):
+            out.append(
+                f"  !! row {row} carries {cast_names.get(unseen[0], unseen[0])}'s off-screen line but shows no face "
+                "(only inserts or cropped bodies): the line lands on nobody. Put the listener's reaction on that row "
+                "(warning only)."
+            )
+    return out
+
+
 def _clip(text: str, size: int = 60) -> str:
     return text if len(text) <= size else text[: size - 1] + "…"
 
@@ -879,6 +1021,9 @@ def shot_list_lines(
                     f"  !! rows {above.row} and {below.row} share size and angle "
                     f"({above.shot_scale}, {above.camera_angle}): the cut will not read as a new shot"
                 )
+        lines += off_screen_speaker_lines(
+            spine, frames, take_beats, cast_names=cast_names
+        )
         lines += safe_zone_lines(frames, cast_names=cast_names)
     return lines
 
@@ -898,6 +1043,8 @@ __all__ = [
     "frame_cast",
     "frames_by_set",
     "frames_digest",
+    "heard_not_seen",
+    "off_screen_speaker_lines",
     "row_speech_lines",
     "safe_zone_lines",
     "script_lines",
