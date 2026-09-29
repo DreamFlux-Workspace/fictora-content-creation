@@ -56,7 +56,7 @@ Read when you need the detail, not all on the first turn:
 | Look (optional) | `look-frame --desk D --description @look.txt` | `approve --desk D --gate look` after a yes: pins the newest look frame and records the yes (`--path` or `--url` for another). While a drawn look frame is not approved, `step`, `redraw-plate` and `redraw-board` refuse (nothing sent); a look frame drawn after the yes needs its own yes |
 | Plates | `fictora-produce step --desk D` | `approve --desk D --gate plates` after a yes; one character wrong: `redraw-plate --desk D --cast NAME --note "…"` (that character alone, $0.30; show the contact sheet) |
 | Script | (lines from the draft) | `approve --desk D --gate script` after a yes |
-| Board | `fictora-produce step --desk D` (prints the shot list with who speaks on each row, speaker warnings and safe-zone warnings) | `approve --desk D --gate board`; or `redraw-board --desk D --episode N --take tK --cause "…"` |
+| Board | `fictora-produce step --desk D` (prints the shot list with who speaks on each row, speaker warnings and safe-zone warnings) | `approve --desk D --gate board`; or fix it (see "Fixing a board"): edits first, then `redraw-board --desk D --episode N --take tK --cause "…" [--note "…"]` |
 | Estimate | `fictora-produce step --desk D` | The human says yes to the number. The line names the lane and its $/s; a `!! SERVER ESTIMATE FAILED` line means the number is the kit's local table: say that to the human before the yes |
 | Take | `fictora-produce step --desk D --confirm-spend` | — |
 | Read | watch `takes/`, write every fault | Use it, or Change this + cause |
@@ -111,7 +111,19 @@ Open the newest `boards/` file and check (full list: [checklists.md](../../../do
 - **Stated moves.** A move the beat states (the statue now at arm's length) is drawn nearer in the next row that shows it, never in the same place. The server redraws only a position copied on the same setup and logs the rest, so check it by eye. On a `punchy` horror take the threat gets its own insert or point-of-view row, nearer the lens than last seen.
 - **Expressions** fit the moment and the right face (library in reference.md).
 - **Redraws.** Notes describe shapes, never judgements ("short, round, two clumsy pleats", not "crooked"). A frame's `cast_refs` cannot be edited: rewrite the character's blocking entry ("not in frame; the camera is his point of view"). After an exit, name the destination with their back to the portal. A plate or board refused by image moderation (more often with a child) is reported with its job id, never retried blind.
-- The hook, the hand-off, the safe zones, no readable text or digits. Report brightness: information only, a dark board is the human's call. To change a board, fix the frame first (`edit --frame … --set …`), then `redraw-board` (it takes no notes). When the human names a beat's shots, set them on the beat instead: `edit --beat N --shot "size|subject|camera|angle"` (repeat, 1–4; shot 1 is the beat's first row), then `redraw-board` if the board is already drawn. Never write "SHOT n —" into `--intent`.
+- The hook, the hand-off, the safe zones, no readable text or digits. Report brightness: information only, a dark board is the human's call. To change a board, follow "Fixing a board" below. When the human names a beat's shots, set them on the beat: `edit --beat N --shot "size|subject|camera|angle"` (repeat, 1–4; shot 1 is the beat's first row), then `redraw-board` if the board is already drawn. Never write "SHOT n —" into `--intent`.
+
+### Fixing a board
+
+The redraw route takes no notes. `--cause` and `--note` are labels on the desk; the server never reads them. In the app the director turns a complaint into story edits; here you do that. `redraw-board` stops (exit 2, nothing sent or paid) when nothing the board is drawn from changed since it was last drawn: the frame briefs, the take's beats (intent, direction, shot plan, who is in them), the look notes, the cast plates, or a server stale mark from a cascade. Line words alone do not count.
+
+1. Read the human's complaint and map it to specific rows and beats: which frame (`edit --frame N`, one row's `visual_brief`: placement, size, angle, blocking, expression), which beat (`edit --beat N --shot …` or `--intent`), or the whole look (`look-note --add`). A wrong face on a plate is `redraw-plate`, not a board edit.
+2. Preview each edit and show the human the before and after (after the script gate `edit … --preview` prints the cascade and changes nothing; before it, say the old and new value from `api/spine.json`).
+3. Apply the edits after the human's yes.
+4. `redraw-board --desk D --episode N --take tK --cause "short label" --note "the human's words"`. It redraws from the edited frames; after a beat edit the server re-authors the take's frames first. It prints what changed.
+5. Look at the new board and check the complaint is gone before the board gate.
+
+`--reroll` only when the drawing was a random miss and the frames are right (a garbled hand, a smeared face): it draws the same direction again for $0.30. A board whose content comes from another episode (another episode's room, cast or story) is a server bug: report it to engineering with the job id; edits do not fix it.
 
 ## Spend (warn, never block)
 

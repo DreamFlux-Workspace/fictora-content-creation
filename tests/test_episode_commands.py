@@ -333,7 +333,7 @@ def test_look_note_add_is_capped_at_five(desk: Path, api: FakeApi) -> None:
     ]
 
 
-def test_redraw_board_uses_the_regenerate_route_warns_a_reroll_and_reopens_the_gate(
+def test_redraw_board_uses_the_regenerate_route_rerolls_on_request_and_reopens_the_gate(
     desk: Path, api: FakeApi
 ) -> None:
     from creation.spine_view import frames_by_set, frames_digest
@@ -354,6 +354,7 @@ def test_redraw_board_uses_the_regenerate_route_warns_a_reroll_and_reopens_the_g
         episode=1,
         take_id="t1",
         cause="her face was under the caption band",
+        reroll=True,
         out=out,
     )
 

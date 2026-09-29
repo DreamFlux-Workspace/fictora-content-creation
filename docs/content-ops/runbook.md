@@ -194,7 +194,7 @@ Check before the board gate:
 - **Speaking mouths.** No clench, grit, pressed or closed mouth on a speaking row. Big physical acting goes before the line and after it; during the words the mouth moves.
 - The hook, the hand-off, the safe zones, no readable text or digits, brightness reported.
 
-To change a board, change what it is drawn from (`edit --frame N --set …`, `edit --beat N …`, `look-note`), then `redraw-board --desk D --episode N --take tK --cause "…"`. The cause is a label; the route takes no notes. A frame's `cast_refs` cannot be edited: removing a character from a shot is refused (`400 invalid_patch: subject blocking must match cast_refs`). Rewrite their blocking entry instead ("not in frame; the camera is his point of view").
+To change a board, change what it is drawn from (`edit --frame N --set …`, `edit --beat N …`, `look-note`), then `redraw-board --desk D --episode N --take tK --cause "…" [--note "the human's words"]`. The cause and the note are labels; the route takes no notes. With nothing changed since the board was drawn (frame briefs, the take's beats, look notes, plates) `redraw-board` stops unpaid; `--reroll` only for a random bad draw with the right frames. A board showing another episode's content is a server bug: report it with the job id. The full procedure is "Fixing a board" in the skill. A frame's `cast_refs` cannot be edited: removing a character from a shot is refused (`400 invalid_patch: subject blocking must match cast_refs`). Rewrite their blocking entry instead ("not in frame; the camera is his point of view").
 
 ### Characters and age
 

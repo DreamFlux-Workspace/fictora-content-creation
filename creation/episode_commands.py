@@ -20,7 +20,7 @@ desk with a versioned name, and never approves (the human's yes goes through
 - ``sound-note``: add a sound to one take, or drop / level one on every take; ``--remove``; list.
 - ``take-facts --refresh``: read a filmed take's facts again (new sound notes, planned impacts), versioned.
 - ``spine --refresh``: save the story again.
-- ``redraw-board``: redraw one board on ``/boards/{set}/regenerate``.
+- ``redraw-board``: redraw one board on ``/boards/{set}/regenerate``; stops unpaid when nothing it is drawn from changed (``--reroll`` to re-roll; ``--note`` kept on the desk).
 - ``plates``: retired (was ``plates --cast NAME --cause``); prints a pointer to ``redraw-plate --note`` and sends nothing.
 - ``redraw-plate --cast X --note "..."``: note one character, then redraw only their plate (one still).
 - ``check-lines``: were the approved lines in the take's instructions, which shot and board row each fell in,
@@ -42,6 +42,7 @@ import json
 import re
 import sys
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import quote
@@ -75,7 +76,7 @@ from creation.ops.floor import (
 )
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
-from creation.ops.state import GateRecord, episode_by_ordinal, load_series
+from creation.ops.state import GateRecord, episode_by_ordinal, load_series, save_series
 from creation.post.take_facts import (
     save_take_facts,
     sfx_plan_changes,
@@ -112,13 +113,14 @@ from creation.shot_plan import (
     plan_lines,
 )
 from creation.spine_view import (
+    BOARD_INPUT_NAMES,
     beats_by_take,
+    board_inputs,
     dialogue_line_ids,
     episode_id_for,
     episode_summary,
     frame_cast,
     frames_by_set,
-    frames_digest,
 )
 
 ARC_TITLE_MAX = 80
@@ -171,10 +173,11 @@ PLATE_DEADLINE_SECONDS = 3600.0
 """Poll cap on one plate redraw (the cast enrol's cap)."""
 """Most routes answer ``job_id``; ``pilot-episodes/{n}/author`` answers ``extension_job_id``."""
 REDRAW_CAUSE_IS_A_LABEL = (
-    "The cause is a label for the desk and the run notes; the regenerate route takes no notes, so it does not "
-    "change what is drawn. To change the drawing, edit the frames first (edit --frame ...) or add a look note. "
-    "A beat edit made after the board was drawn is carried into the redraw by the server (it re-authors the "
-    "take's frames first)"
+    "The cause and the note are labels for the desk and the run notes; the regenerate route takes no notes, so "
+    "they do not change what is drawn. To change the drawing, edit the frames first (edit --frame ...), edit the "
+    "beat (edit --beat N --shot ...) or add a look note; a redraw with none of these changed stops unless "
+    "--reroll. A beat edit made after the board was drawn is carried into the redraw by the server (it "
+    "re-authors the take's frames first)"
 )
 
 NEW_VOICE_HINT = (
@@ -2148,14 +2151,19 @@ def _run_cascade(
                     f"  !! {item.get('item_id')} ran on the server and is not priced here; book it by hand",
                     file=out,
                 )
+    marked = load_production(desk)
     for stale in answer.get("stale_storyboard_sets") or []:
         if isinstance(stale, Mapping):
+            key = f"ep{int(stale.get('episode_ordinal') or episode):02d}-t{stale.get('set_index')}"
+            if key not in marked.boards_stale:
+                marked.boards_stale.append(key)
             print(
                 f"  board t{stale.get('set_index')} of ep{int(stale.get('episode_ordinal') or episode):02d} no longer "
                 f"matches the story: `redraw-board --episode {stale.get('episode_ordinal') or episode} "
                 f"--take t{stale.get('set_index')} --cause '...'`",
                 file=out,
             )
+    save_production(desk, marked)
 
 
 # --- Look -------------------------------------------------------------------------------------------
@@ -2881,17 +2889,131 @@ def run_spine_refresh(desk: Path, *, out: Any = None) -> Path:
 # --- Board redraw --------------------------------------------------------------------------------
 
 
+def board_changes(
+    state: ProductionState,
+    spine: Mapping[str, Any],
+    *,
+    episode: int,
+    take_id: str,
+    take_count: int,
+) -> list[str] | None:
+    """Say what changed in one board's drawing since it was last drawn.
+
+    Compares the digests recorded when the board was drawn
+    (``state.board_inputs``: frames, beats, look notes, plates) with the story
+    now, and counts a board the server marked stale after a cascade. A desk drawn
+    before the kit recorded all four has only the frame digest
+    (``state.board_digests``); that one is compared alone.
+
+    Parameters
+    ----------
+    state
+        Production state.
+    spine
+        Spine JSON now.
+    episode
+        Episode ordinal.
+    take_id
+        ``t1``, ``t2`` ...
+    take_count
+        Takes on the desk for this episode.
+
+    Returns
+    -------
+    list[str] | None
+        What changed, in words (empty: nothing did, a redraw is a re-roll);
+        ``None`` when the desk has no record of the last drawing.
+    """
+
+    key = f"ep{episode:02d}-{take_id}"
+    set_index = int(take_id[1:])
+    now = board_inputs(
+        spine, episode=episode, set_index=set_index, take_count=take_count
+    )
+    changed: list[str] = []
+    if key in state.boards_stale:
+        changed.append("the server marked this board stale after a story edit")
+    before = state.board_inputs.get(key)
+    if before:
+        changed.extend(
+            BOARD_INPUT_NAMES[name]
+            for name in BOARD_INPUT_NAMES
+            if name in before and before[name] != now[name]
+        )
+        return changed
+    legacy = state.board_digests.get(key)
+    if legacy:
+        if legacy != now["frames"]:
+            changed.append(BOARD_INPUT_NAMES["frames"])
+        return changed
+    return changed or None
+
+
+def redraw_needs_an_edit(
+    desk: Path, *, episode: int, take_id: str, legacy: bool
+) -> str:
+    """The stop message when a redraw would draw the same board again. Nothing was sent or paid.
+
+    Parameters
+    ----------
+    desk
+        Series desk (named in the commands).
+    episode
+        Episode ordinal.
+    take_id
+        ``t1``, ``t2`` ...
+    legacy
+        The desk only recorded the frame briefs for this board (drawn before the kit kept the rest).
+
+    Returns
+    -------
+    str
+        The message.
+    """
+
+    where = f"--desk {desk} --episode {episode}"
+    lines = [
+        f"{take_id}: nothing this board is drawn from has changed since it was last drawn "
+        f"(frame briefs, the take's beats, look notes, cast plates), so a redraw draws the same direction "
+        f"again: a re-roll for ${float(STILL_USD):.2f}. Nothing was sent or paid.",
+        "  --cause and --note are labels for the desk; the redraw route takes no notes and never reads them.",
+        "  Turn the human's note into edits first, then redraw (see 'Fixing a board' in the skill):",
+        f"    fictora-produce edit {where} --frame N --set FIELD=VALUE   (one board row's visual_brief)",
+        f'    fictora-produce edit {where} --beat N --shot "size|subject|camera|angle"   '
+        "(the server re-authors the take's frames on the redraw)",
+        f'    fictora-produce look-note --desk {desk} --add "..."   (the whole story\'s look)',
+        "  After the script gate, run the edit with --preview first and show the human the before/after.",
+        "  Only when the frames are right and the drawing was a random miss: redraw-board ... --reroll.",
+    ]
+    if legacy:
+        lines.append(
+            "  (This board was drawn before the desk recorded its beats, look notes and plates: only the frame "
+            "briefs were compared. If a beat, look note or plate did change since, pass --reroll.)"
+        )
+    return "\n".join(lines)
+
+
 def run_redraw_board(
-    desk: Path, *, episode: int, take_id: str, cause: str, out: Any = None
+    desk: Path,
+    *,
+    episode: int,
+    take_id: str,
+    cause: str,
+    note: str | None = None,
+    reroll: bool = False,
+    out: Any = None,
 ) -> Path:
     """Redraw one board on ``POST /v1/spines/{id}/episodes/{n}/boards/{set}/regenerate``. Spends one still.
 
-    Warns when the take's frame briefs have not changed since the last drawing
-    (a re-roll). The server carries a beat edit into the redraw itself (it
-    re-authors the take's frames first). Prints the redrawn board's shot list and
-    safe-zone check, and sends the desk back to the board gate.
-    Refused before anything is sent while a drawn look frame awaits its yes
-    (as ``step`` is).
+    Stops before anything is paid when nothing the board is drawn from changed
+    since it was last drawn (:func:`board_changes`: frame briefs, the take's
+    beats, look notes, cast plates, or a server stale mark): that redraw would
+    draw the same direction again. The operator turns the human's note into
+    edits first, or passes ``reroll`` for a plain re-roll of a random bad draw.
+    The server carries a beat edit into the redraw itself (it re-authors the
+    take's frames first). Prints the redrawn board's shot list and safe-zone
+    check, and sends the desk back to the board gate. Refused before anything
+    is sent while a drawn look frame awaits its yes (as ``step`` is).
 
     Parameters
     ----------
@@ -2903,6 +3025,11 @@ def run_redraw_board(
         ``t1``, ``t2`` ...
     cause
         Why it is redrawn: a label on the desk (the route takes no notes).
+    note
+        What the human said is wrong, in their words: kept in the run notes and
+        on the take in ``series.json``; never sent anywhere.
+    reroll
+        Redraw even though nothing changed (a plain re-roll of the same frames).
     out
         Text stream.
 
@@ -2917,6 +3044,8 @@ def run_redraw_board(
         raise CommandStopped(
             "--cause is required: why the board is redrawn (a label for the desk)"
         )
+    if note is not None and not note.strip():
+        raise CommandStopped("--note is empty: say what is wrong, or leave it out")
     if not (take_id.startswith("t") and take_id[1:].isdigit()):
         raise CommandStopped("--take is t1, t2 ...")
     set_index = int(take_id[1:])
@@ -2929,14 +3058,32 @@ def run_redraw_board(
     print(f"[board] {REDRAW_CAUSE_IS_A_LABEL}.", file=sys.stderr)
     try:
         spine = run.spine(state.spine_id or "")
-        drawn = frames_by_set(spine, episode=episode).get(set_index, [])
-        before = state.board_digests.get(f"ep{episode:02d}-{take_id}")
-        if before and before == frames_digest(drawn):
+        key = f"ep{episode:02d}-{take_id}"
+        changed = board_changes(
+            state, spine, episode=episode, take_id=take_id, take_count=len(slot.takes)
+        )
+        if changed == [] and not reroll:
+            raise CommandStopped(
+                redraw_needs_an_edit(
+                    desk,
+                    episode=episode,
+                    take_id=take_id,
+                    legacy=key not in state.board_inputs,
+                )
+            )
+        if changed == []:
             print(
-                f"!! {take_id}: the frame briefs have not changed since this board was last drawn, so this redraw draws "
-                f"the same direction again (a re-roll, ${float(STILL_USD):.2f}) unless a beat was edited since",
+                f"--reroll: {take_id} is drawn again from the same frames, look and plates "
+                f"(a re-roll, ${float(STILL_USD):.2f})",
                 file=out,
             )
+        elif changed is None:
+            print(
+                f"{take_id}: the desk has no record of what this board was drawn from; redrawing as asked",
+                file=out,
+            )
+        else:
+            print(f"{take_id} redraws with changed: {'; '.join(changed)}", file=out)
         body = reuse_generation_body(
             prompt=scene_prompt(spine, state.prompt),
             spine=spine,
@@ -2991,12 +3138,58 @@ def run_redraw_board(
     save_production(desk, state)
     for line in report:
         print(line, file=out)
+    _record_redraw(
+        desk,
+        episode=episode,
+        take_id=take_id,
+        board=made[0][1].name,
+        cause=cause,
+        note=note,
+        reroll=changed == [],
+        changed=changed or [],
+    )
+    return made[0][1]
+
+
+def _record_redraw(
+    desk: Path,
+    *,
+    episode: int,
+    take_id: str,
+    board: str,
+    cause: str,
+    note: str | None,
+    reroll: bool,
+    changed: Sequence[str],
+) -> None:
+    """Keep one redraw on the take in ``series.json`` (``extra.redraws``) and in the run notes. Labels only."""
+
+    series = load_series(desk)
+    take = next(
+        t for t in episode_by_ordinal(series, episode).takes if t.take_id == take_id
+    )
+    entry: dict[str, Any] = {
+        "at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "board": board,
+        "cause": cause,
+        "reroll": reroll,
+        "changed": list(changed),
+    }
+    if note is not None:
+        entry["note"] = note.strip()
+    take.extra.setdefault("redraws", []).append(entry)
+    save_series(desk, series)
+    what = (
+        "re-roll, same frames"
+        if reroll
+        else ("; ".join(changed) or "no record of the last drawing")
+    )
     _note(
         desk,
         episode,
-        f"board redraw {take_id}: {made[0][1].name}, ${float(STILL_USD):.2f}. Cause (label only): {cause}",
+        f"board redraw {take_id}: {board}, ${float(STILL_USD):.2f} ({what}). Cause (label only): {cause}"
+        + (f". Note (label only): {note.strip()}" if note is not None else ""),
     )
-    return made[0][1]
 
 
 # --- Plate redraw ------------------------------------------------------------------------------------
@@ -4315,6 +4508,15 @@ def add_episode_parsers(
         required=True,
         help="Why: a LABEL for the desk; the server takes no redraw notes.",
     )
+    redraw.add_argument(
+        "--note",
+        help="What the human said is wrong, in their words: kept in run notes and series.json; never sent.",
+    )
+    redraw.add_argument(
+        "--reroll",
+        action="store_true",
+        help="Redraw although the frames, beats, look notes and plates are unchanged (a random bad draw). $0.30.",
+    )
 
     plates = sub.add_parser(
         "plates",
@@ -4490,7 +4692,12 @@ def dispatch_episode(args: argparse.Namespace) -> int:
             return 0
         if args.command == "redraw-board":
             run_redraw_board(
-                args.desk, episode=args.episode, take_id=args.take, cause=args.cause
+                args.desk,
+                episode=args.episode,
+                take_id=args.take,
+                cause=args.cause,
+                note=args.note,
+                reroll=args.reroll,
             )
             return 0
         if args.command == "plates":
@@ -4562,6 +4769,8 @@ __all__ = [
     "run_take_facts",
     "run_memory",
     "plate_contact_sheet",
+    "board_changes",
+    "redraw_needs_an_edit",
     "run_redraw_board",
     "plates_cast_retired",
     "run_redraw_plate_with_note",

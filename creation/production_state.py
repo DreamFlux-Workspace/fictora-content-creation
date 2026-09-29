@@ -58,6 +58,12 @@ class ProductionState:
     board_paths: dict[str, str] = field(default_factory=dict)
     #: Frame-brief digest per drawn board (``ep01-t1``), to warn when a redraw would draw the same briefs.
     board_digests: dict[str, str] = field(default_factory=dict)
+    #: What each drawn board (``ep01-t1``) was drawn from: frames, beats, look notes, plates
+    #: (``spine_view.board_inputs``). ``redraw-board`` stops before paying when none changed.
+    board_inputs: dict[str, dict[str, str]] = field(default_factory=dict)
+    #: Boards (``ep01-t1``) the server said no longer match the story (a cascade's
+    #: ``stale_storyboard_sets``); cleared when the board is drawn again.
+    boards_stale: list[str] = field(default_factory=list)
     #: Series arcs offered by the episode-2 brief (``arc --list``) and the one kept (``arc --pick``).
     arc_options: list[dict[str, str]] = field(default_factory=list)
     series_arc: dict[str, Any] | None = None
