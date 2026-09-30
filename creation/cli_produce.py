@@ -321,10 +321,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 subprocess.run(["open", str(result.video)], check=False)
             return 0
         if args.command == "cancel-job":
-            payload = cancel_video_job(args.desk, args.job_id)
+            payload, lines = cancel_video_job(args.desk, args.job_id)
             print(payload)
-            print("Cancelled. Do not enrol another take.")
-            print("A new take starts another ffmpeg job on Railway.")
+            for line in lines:
+                print(line)
             return 0
         if args.command == "retry-step":
             retried = retry_failed_step(args.desk, cause=args.cause, phase=args.phase)

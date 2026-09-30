@@ -3,14 +3,84 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 import httpx
 
 _TERMINAL = frozenset({"completed", "failed", "cancelled"})
+
+#: A running job whose ``updated_at`` and ``progress`` have not moved for this long
+#: gets a plain "it may be stuck" warning (and again every this long). Never cancels.
+STALE_JOB_SECONDS = 600.0
+
+
+class PollClock(Protocol):
+    """What the poll loop needs from a clock (``time`` itself, or a fake in tests)."""
+
+    def monotonic(self) -> float:
+        """Seconds on a clock that never goes back."""
+        ...
+
+    def sleep(self, seconds: float) -> None:
+        """Wait ``seconds``."""
+        ...
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_utc(value: Any) -> datetime | None:
+    """Read an ISO-8601 ``updated_at`` as UTC; ``None`` when it is not one."""
+
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def stale_job_warning(
+    *, minutes: int, last_update: datetime, job_id: str | None, desk: str | None
+) -> str:
+    """The plain warning for a job the server has stopped updating.
+
+    Parameters
+    ----------
+    minutes
+        Whole minutes since the job last changed.
+    last_update
+        When it last changed (UTC).
+    job_id
+        The job, for the cancel command (``<id>`` when unknown).
+    desk
+        The desk, for the cancel command (``D`` when unknown).
+
+    Returns
+    -------
+    str
+        One line to show the operator.
+    """
+
+    return (
+        f"The server has not updated this job for {minutes} min "
+        f"(last update {last_update.astimezone(timezone.utc):%H:%M} UTC). It may be stuck: "
+        "check `fictora-produce status`; stop it with "
+        f"`fictora-produce cancel-job --desk {desk or 'D'} --job-id {job_id or '<id>'}`."
+    )
+
+
+def _print_warning(message: str) -> None:
+    print(f"WARNING: {message}", file=sys.stderr, flush=True)
 
 
 def api_headers(
@@ -222,6 +292,7 @@ def _get_json_with_transport_retries(
     headers: dict[str, str],
     label: str,
     deadline: float,
+    clock: PollClock = time,
 ) -> dict[str, Any]:
     """GET JSON from a poll URL, retrying transient transport failures until ``deadline``.
 
@@ -237,6 +308,8 @@ def _get_json_with_transport_retries(
         Human-readable poll label for errors.
     deadline
         Monotonic time after which retries stop.
+    clock
+        Monotonic clock and sleep (``time``; a fake in tests).
 
     Returns
     -------
@@ -252,7 +325,7 @@ def _get_json_with_transport_retries(
     max_backoff_seconds = 30.0
 
     while True:
-        now = time.monotonic()
+        now = clock.monotonic()
         if now >= deadline:
             raise SystemExit(f"timed out polling {label} after transport retries")
         try:
@@ -267,11 +340,11 @@ def _get_json_with_transport_retries(
         except SystemExit:
             raise
         except httpx.HTTPError as exc:
-            remaining = deadline - time.monotonic()
+            remaining = deadline - clock.monotonic()
             if remaining <= 0:
                 raise SystemExit(f"transport error polling {label}: {exc}") from exc
             sleep_for = min(backoff_seconds, max_backoff_seconds, remaining)
-            time.sleep(sleep_for)
+            clock.sleep(sleep_for)
             backoff_seconds = min(backoff_seconds * 2, max_backoff_seconds)
 
 
@@ -284,8 +357,20 @@ def poll_until_terminal(
     label: str,
     deadline_seconds: float,
     interval_seconds: float = 20.0,
+    job_id: str | None = None,
+    desk: str | None = None,
+    stale_after_seconds: float = STALE_JOB_SECONDS,
+    warn: Callable[[str], None] | None = _print_warning,
+    clock: PollClock = time,
+    utc_now: Callable[[], datetime] = _utc_now,
 ) -> dict[str, Any]:
     """Poll a drama job URL until it reaches a terminal status or times out.
+
+    While the job runs, its ``updated_at`` and ``progress`` are watched. When
+    neither has moved for ``stale_after_seconds`` (10 minutes), one plain warning
+    says the job may be stuck and how to check and cancel it, and it is said
+    again every ``stale_after_seconds`` while nothing moves. The poll never
+    cancels or retries on its own, and the deadline is unchanged.
 
     Parameters
     ----------
@@ -303,6 +388,18 @@ def poll_until_terminal(
         Maximum wall time before ``SystemExit``.
     interval_seconds
         Sleep between polls.
+    job_id
+        The job polled, named in the stuck warning's cancel command.
+    desk
+        The desk, named in the stuck warning's cancel command.
+    stale_after_seconds
+        How long without a change before the stuck warning (and between repeats).
+    warn
+        Where the stuck warning goes (stderr); ``None`` stays quiet.
+    clock
+        Monotonic clock and sleep (``time``; a fake in tests).
+    utc_now
+        Wall clock for the "last update" time when the job has no ``updated_at``.
 
     Returns
     -------
@@ -314,19 +411,24 @@ def poll_until_terminal(
     SystemExit
         On HTTP failure or timeout.
     """
-    deadline = time.monotonic() + deadline_seconds
+    deadline = clock.monotonic() + deadline_seconds
     poll_headers = {
         key: value for key, value in headers.items() if key != "Content-Type"
     }
     last_payload: dict[str, Any] = {}
+    seen: tuple[Any, Any] | None = None
+    changed_at = clock.monotonic()
+    changed_utc = utc_now()
+    next_warning = changed_at + stale_after_seconds
 
-    while time.monotonic() < deadline:
+    while clock.monotonic() < deadline:
         payload = _get_json_with_transport_retries(
             client,
             url=url,
             headers=poll_headers,
             label=label,
             deadline=deadline,
+            clock=clock,
         )
         last_payload = payload
         status = payload.get("status")
@@ -341,7 +443,25 @@ def poll_until_terminal(
         if status in _TERMINAL:
             return payload
 
-        time.sleep(interval_seconds)
+        now = clock.monotonic()
+        marker = (payload.get("updated_at"), progress)
+        if marker != seen:
+            seen = marker
+            changed_at = now
+            changed_utc = _parse_utc(payload.get("updated_at")) or utc_now()
+            next_warning = now + stale_after_seconds
+        elif warn is not None and now >= next_warning:
+            warn(
+                stale_job_warning(
+                    minutes=int((now - changed_at) // 60),
+                    last_update=changed_utc,
+                    job_id=job_id or payload.get("job_id"),
+                    desk=desk,
+                )
+            )
+            next_warning += stale_after_seconds
+
+        clock.sleep(interval_seconds)
 
     raise SystemExit(
         f"timed out polling {label} after {deadline_seconds:.0f}s; last payload: {_payload_summary(last_payload)}"

@@ -118,7 +118,10 @@ from creation.production_state import (
     start_episode,
 )
 from creation.board_note import (
+    BOARD_NOTE_MAX,
+    CAST_NOTE_MAX,
     DIRECTOR_STAGE,
+    check_note_length,
     beat_change_lines,
     director_message,
     note_refused_by_server,
@@ -3710,6 +3713,11 @@ def run_redraw_board(
     if note is not None and not note.strip():
         raise CommandStopped("--note is empty: say what is wrong, or leave it out")
     note = note.strip() if note is not None else None
+    if note is not None:
+        try:
+            check_note_length(note, limit=BOARD_NOTE_MAX, command="redraw-board")
+        except ValueError as exc:
+            raise CommandStopped(str(exc)) from None
     cause = (cause or "").strip() or (note or "")
     if not cause:
         raise CommandStopped(
@@ -4155,6 +4163,10 @@ def run_redraw_plate_with_note(
         raise CommandStopped(
             "--note is required: what to change about this character, in your words"
         )
+    try:
+        check_note_length(note, limit=CAST_NOTE_MAX, command="redraw-plate")
+    except ValueError as exc:
+        raise CommandStopped(str(exc)) from None
     _hold_for_look(desk, "redraw-plate")
     desk, state, run = _desk_session(desk)
     folder, ep = _plates_home(desk)
@@ -5326,8 +5338,9 @@ def add_episode_parsers(
     redraw.add_argument("--take", required=True, help="t1, t2 ...")
     redraw.add_argument(
         "--note",
-        help="What is wrong with the board, as the camera should see it: turned into shot edits (the app's "
-        "director path) and printed per row before the redraw; also kept in run notes and series.json.",
+        help=f"What is wrong with the board, as the camera should see it (<={BOARD_NOTE_MAX} characters; "
+        "longer is refused before anything is sent): turned into shot edits (the app's director path) and "
+        "printed per row before the redraw; also kept in run notes and series.json.",
     )
     redraw.add_argument(
         "--cause",
@@ -5358,7 +5371,7 @@ def add_episode_parsers(
     plate.add_argument(
         "--note",
         required=True,
-        help="What to change about this character, in your words.",
+        help=f"What to change about this character, in your words (<={CAST_NOTE_MAX} characters).",
     )
 
     film = sub.add_parser(
