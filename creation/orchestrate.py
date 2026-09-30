@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -53,7 +53,11 @@ from creation.ops.luma import measure_board_luma
 from creation.ops.notes import append_run_note
 from creation.ops.state import episode_by_ordinal, load_series
 from creation.plan_prompt import ensure_plan_prompt
-from creation.post.take_facts import save_take_facts
+from creation.post.take_facts import (
+    cast_names_from,
+    save_take_facts,
+    shot_people_lines,
+)
 from creation.prices import (
     H3_MAX_R2V_ENDPOINT,
     H3_MAX_TURBO_I2V_ENDPOINT,
@@ -1036,6 +1040,8 @@ class CollectedTakes:
     first_url: str | None
     #: Clips the job returned for another episode (an older server filmed more than asked).
     foreign: list[str]
+    #: Who is on screen per shot, from each take's facts (``shots[].people``); empty on an older server.
+    on_screen: list[str] = field(default_factory=list)
 
 
 def seed_attempt_for(
@@ -1124,6 +1130,8 @@ def collect_takes(
     booked = 0.0
     jobs: list[str] = []
     paths: list[str] = []
+    on_screen: list[str] = []
+    cast_names = cast_names_from(spine)
     try:
         for position, clip in enumerate(clips, start=1):
             index = clip.get("set_index") or position
@@ -1152,6 +1160,7 @@ def collect_takes(
                     desk, episode=episode, take_id=take_id, facts=facts, spine=spine
                 )
                 priced = take_facts_usd(facts, on=today)
+                on_screen += on_screen_lines(take_id, facts, cast_names)
                 state.remember_server_lane(
                     server_lane(facts)
                 )  # the caller saves the state
@@ -1185,8 +1194,41 @@ def collect_takes(
     finally:
         fetch.close()
     return CollectedTakes(
-        jobs, booked, paths, str(clips[0]["url"]) if clips else None, foreign
+        jobs,
+        booked,
+        paths,
+        str(clips[0]["url"]) if clips else None,
+        foreign,
+        on_screen,
     )
+
+
+def on_screen_lines(
+    take_id: str, facts: dict[str, Any] | None, cast_names: dict[str, str]
+) -> list[str]:
+    """``tK on screen, per shot:`` then one line per shot with a head count; empty when the server sent none.
+
+    Parameters
+    ----------
+    take_id
+        ``t1`` ...
+    facts
+        The take facts (or ``None``).
+    cast_names
+        ``cast_id`` to display name.
+
+    Returns
+    -------
+    list[str]
+        Printable lines (indented under the header).
+    """
+
+    shots = shot_people_lines(facts, cast_names)
+    if not shots:
+        return []
+    return [f"{take_id} on screen, per shot (take facts):"] + [
+        f"  {line}" for line in shots
+    ]
 
 
 def foreign_warning(foreign: list[str]) -> str:
@@ -1295,7 +1337,7 @@ def _film(
     return StepResult(
         state.phase,
         f"Episode {ep} filmed: {len(got.jobs)} take(s), ${got.booked_usd:.2f} booked. Video job {video_job_id}.{hint}\n"
-        + "\n".join(f"  {line}" for line in got.jobs)
+        + "\n".join(f"  {line}" for line in got.jobs + got.on_screen)
         + f"\nNext episode: fictora-produce {follow} --desk <desk>."
         + foreign_warning(got.foreign),
         tuple(paths),

@@ -28,7 +28,8 @@ def add_review_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
     review = sub.add_parser(
         "review",
         help="Free, local, numbers-only read of one take (raw or finished): loudness, hard cuts vs the take "
-        "facts, frozen/stacked frames, board frames anywhere, lines asked and heard, and on a finished file the "
+        "facts, frozen/stacked frames, board frames anywhere, lines asked and heard, people per shot (take facts; counted "
+        "by eye), and on a finished file the "
         "caption safe zones (zone sheet for the face check). Each section ✓/⚠ with its threshold; always exits 0.",
     )
     review.add_argument("--desk", type=Path, required=True)

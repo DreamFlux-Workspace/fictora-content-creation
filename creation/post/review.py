@@ -32,7 +32,11 @@ command exits 0 whatever it finds.
    line matched on the server's readings is reported ``(by sound, NN%)``. The
    ``check-lines`` output is folded in as it prints it (each line's shot and
    board row; an ``!!`` on-screen speaker out of frame marks the section ⚠).
-6. **Safe zones** (finished files only) - the caption safe-zone check
+6. **People** - the head count the take facts expect per shot (``shots[].people``,
+   newer servers) with the names from the story's cast, and the by-eye check
+   for one person drawn twice (no face detector: a human counts). ``–`` always;
+   one line says so when the server sent no head counts.
+7. **Safe zones** (finished files only) - the caption safe-zone check
    (:func:`creation.post.safe_zones.run_review`, unchanged): the caption box on
    sampled frames against the covered zones and the caption band, with the zone
    sheet and its JSON written beside the take for the face check by eye.
@@ -184,7 +188,7 @@ class TakeReview:
     duration_seconds, fps
         Probe.
     sections
-        The five sections, in order.
+        The sections, in order.
     """
 
     take: Path
@@ -1055,6 +1059,63 @@ def safe_zones_section(take: Path) -> Section:
     )
 
 
+# --- People on screen (a human check) ----------------------------------------------------------------------
+
+
+def people_section(
+    facts: Mapping[str, Any] | None, cast_names: Mapping[str, str]
+) -> Section:
+    """Who the take facts expect on screen per shot, and the by-eye check for one person drawn twice.
+
+    Nothing is detected: the kit has no face detector. The head counts come from
+    the take facts (``shots[].people``, sent by newer servers); the operator
+    counts the people in each shot against them.
+
+    Parameters
+    ----------
+    facts
+        The saved take facts (or ``None``).
+    cast_names
+        ``cast_id`` to display name.
+
+    Returns
+    -------
+    Section
+        Always ``–`` (nothing measured); the per-shot counts and the check as details.
+    """
+
+    from creation.post.take_facts import TWICE_CAUSE, shot_people_lines
+
+    threshold = (
+        "head counts from the take facts; counted by eye (no face detector here)"
+    )
+    if facts is None:
+        return Section("People", NONE, "no take facts on the desk", threshold)
+    shots = shot_people_lines(facts, cast_names)
+    if not shots:
+        return Section(
+            "People",
+            NONE,
+            "the server didn't send head counts for this take (older server): count by eye",
+            threshold,
+            data={"people": None},
+        )
+    details = [
+        *shots,
+        "Check by eye, shot by shot (on a finished file also the zone sheet): is anyone on screen twice, "
+        "the same face in two poses or a look-alike extra? Watch the cuts where a character changes pose.",
+        f"If so, re-film with the cause '{TWICE_CAUSE.format(shot='N')}'.",
+    ]
+    return Section(
+        "People",
+        NONE,
+        f"{len(shots)} shot(s) with an expected head count: count them by eye",
+        threshold,
+        details,
+        {"people": shots},
+    )
+
+
 # --- The review ---------------------------------------------------------------------------------------------
 
 
@@ -1159,7 +1220,7 @@ def review_take(
     Returns
     -------
     TakeReview
-        Five sections, each ✓, ⚠ or – with its threshold.
+        Every section, each ✓, ⚠ or – with its threshold.
 
     Raises
     ------
@@ -1167,8 +1228,9 @@ def review_take(
         When the take file is missing.
     """
 
-    from creation.post.desk import approved_board
+    from creation.post.desk import approved_board, saved_spine
     from creation.post.sfx import saved_take_facts
+    from creation.post.take_facts import cast_names_from
 
     desk = desk.expanduser().resolve()
     if take_file is not None:
@@ -1216,7 +1278,9 @@ def review_take(
         words_note=words_note,
         hand_voices=record.hand_voices if record is not None else (),
     )
-    sections = [loud, cuts, frames, board_sec, lines]
+    found = saved_spine(desk, episode)
+    people = people_section(facts, cast_names_from(found[0] if found else None))
+    sections = [loud, cuts, frames, board_sec, lines, people]
     if kind == "finished":
         sections.append(safe_zones_section(take))
     return TakeReview(
@@ -1246,6 +1310,7 @@ __all__ = [
     "measure_duck",
     "measure_frames",
     "measure_true_peak",
+    "people_section",
     "planned_shot_changes",
     "review_take",
     "scan_board",

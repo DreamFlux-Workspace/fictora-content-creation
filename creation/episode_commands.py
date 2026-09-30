@@ -88,7 +88,9 @@ from creation.patch_refusal import (
     server_named_rules,
 )
 from creation.post.take_facts import (
+    cast_names_from,
     save_take_facts,
+    shot_people_lines,
     sfx_plan_changes,
     sfx_plan_lines,
     stale_facts_reason,
@@ -3263,6 +3265,10 @@ def run_take_facts(
         print(f"{label}: {old_path.name}", file=out)
         for line in sfx_plan_lines(old):
             print(f"  {line}", file=out)
+        for line in shot_people_lines(
+            old, cast_names_from(found[0] if found else None)
+        ):
+            print(f"  {line}", file=out)
         if stale:
             print(
                 f"!! older than the story's sound notes: {stale}. Run take-facts --desk {desk} --episode {episode} "
@@ -3299,6 +3305,8 @@ def run_take_facts(
     changes = sfx_plan_changes(old, facts)
     was = f" (was {old_path.name})" if old_path else " (none saved before)"
     print(f"{label}: saved {path.name}{was}", file=out)
+    for line in shot_people_lines(facts, cast_names_from(spine)):
+        print(f"  {line}", file=out)
     if changes:
         print("SFX plan changes:", file=out)
         for line in changes:
@@ -4859,7 +4867,7 @@ def _run_film(
     lines = [
         f"Filmed {what}: {len(got.jobs)} take(s), ${got.booked_usd:.2f} booked. Video job {job_id}."
     ]
-    lines += [f"  {line}" for line in got.jobs]
+    lines += [f"  {line}" for line in got.jobs + got.on_screen]
     lines.append(
         f"Watch the new take in ep{episode:02d}/takes/. After the human says Use it: "
         f"`fictora-produce finish --desk <desk> --episode {episode} --take {take_id or 'tK'}`."

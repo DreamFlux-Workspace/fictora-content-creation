@@ -557,7 +557,7 @@ def test_review_json_and_a_missing_take(
     assert main(["review", "--desk", str(desk), "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["kind"] == "raw" and [s["name"] for s in payload["sections"]] == [
-        "Loudness", "Cuts", "Frames", "Board", "Lines",
+        "Loudness", "Cuts", "Frames", "Board", "Lines", "People",
     ]  # fmt: skip
     assert all(s["status"] in {OK, WARN, NONE} for s in payload["sections"])
 
@@ -685,3 +685,34 @@ def test_a_take_without_sound_is_flagged_not_a_crash(desk: Path) -> None:
     )  # fmt: skip
     loud = _section(review_take(desk, take_file=silent), "Loudness")
     assert loud.status == WARN and loud.summary == "no audio track in the file"
+
+
+# --- People ----------------------------------------------------------------------------------------------
+
+
+def test_review_prints_the_people_section_with_names_from_the_saved_spine(
+    desk: Path,
+) -> None:
+    facts = _facts((1.5,))
+    facts["shots"][1]["people"] = {"count": 2, "named": ["cast_hana"], "unnamed": 1}
+    takes = _desk_ready(desk, facts=facts)
+    take = _cut_take(takes / "take-ep01-t1-raw-v1.mp4")
+
+    review = review_take(desk, take_file=take)
+    people = _section(review, "People")
+
+    assert people.status == NONE
+    assert (
+        "shot 2 (1.50-3.00s): On screen: 2 people (Hana, + 1 unnamed)" in people.details
+    )
+    assert "People" in review.block()
+
+
+def test_review_on_facts_without_head_counts_says_so_in_one_line(desk: Path) -> None:
+    takes = _desk_ready(desk, facts=_facts((1.5,)))
+    take = _cut_take(takes / "take-ep01-t1-raw-v1.mp4")
+
+    people = _section(review_take(desk, take_file=take), "People")
+
+    assert people.details == []
+    assert "the server didn't send head counts" in people.summary
