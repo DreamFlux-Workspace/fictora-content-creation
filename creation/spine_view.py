@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -951,6 +952,120 @@ def off_screen_speaker_lines(
     return out
 
 
+def _plain_text(text: str) -> str:
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)
+    )
+
+
+def _name_patterns(cast_names: Mapping[str, str]) -> dict[str, list[re.Pattern[str]]]:
+    """Per cast member, the name parts only they carry ("Ren", not the shared "Hanakaze")."""
+
+    words = {
+        cast_id: [
+            w
+            for w in re.findall(r"[\w'-]+", _plain_text(name))
+            if w.casefold() not in {"the", "a", "an"}
+        ]
+        for cast_id, name in cast_names.items()
+    }
+    patterns: dict[str, list[re.Pattern[str]]] = {}
+    for cast_id, own in words.items():
+        shared = {
+            w.casefold() for other, ws in words.items() if other != cast_id for w in ws
+        }
+        found = (
+            [re.compile(rf"(?<![\w-]){re.escape(' '.join(own))}(?![\w-])", re.I)]
+            if own
+            else []
+        )
+        for word in own:
+            if len(own) == 1 or len(word) < 3 or word.casefold() in shared:
+                continue
+            flags = re.I if len(word) >= 4 else 0
+            found.append(
+                re.compile(
+                    rf"(?<![\w-]){re.escape(word if flags else word.capitalize())}(?![\w-])",
+                    flags,
+                )
+            )
+        patterns[cast_id] = found
+    return patterns
+
+
+def named_cast_mismatch_lines(
+    frames: Sequence[Mapping[str, Any]],
+    take_beats: Sequence[Mapping[str, Any]] = (),
+    *,
+    cast_names: Mapping[str, str],
+) -> list[str]:
+    """Warn when a frame's words name one cast member but its cast list has another it never names.
+
+    Hanakaze Sweets ep 4: frames 4, 6 and 8 said "Catches Ren lowering his
+    phone" and "Ren and pastry counter background right" but listed Genzō, and
+    the board drew an old man in a brown robe. The board draws whom the cast
+    list names. Read from ``beat_label``, ``beat_prompt``, ``story_moment`` and
+    ``depth_order``; ``forbidden_elements`` ("no visible Genzō") never count.
+    Someone with a line on a beat anchored to the frame belongs on its list
+    whether or not its words name them. Warning only.
+
+    Parameters
+    ----------
+    frames
+        One board's frames.
+    take_beats
+        That take's beats.
+    cast_names
+        ``cast_id`` to display name.
+
+    Returns
+    -------
+    list[str]
+        ``!!`` lines, empty when every frame lists whom it names.
+    """
+
+    patterns = _name_patterns(cast_names)
+    speakers: dict[str, set[str]] = {}
+    for beat in take_beats:
+        speakers.setdefault(str(beat.get("frame_id") or ""), set()).update(
+            str(line.get("cast_id"))
+            for line in beat.get("dialogue_lines") or []
+            if isinstance(line, Mapping)
+        )
+    out: list[str] = []
+    for frame in frames:
+        brief = frame.get("visual_brief") or {}
+        text = _plain_text(
+            " ".join(
+                str(value)
+                for value in (
+                    frame.get("beat_label"),
+                    frame.get("beat_prompt"),
+                    brief.get("story_moment"),
+                    brief.get("depth_order"),
+                )
+                if value
+            )
+        )
+        named = {
+            cast_id
+            for cast_id, found in patterns.items()
+            if any(p.search(text) for p in found)
+        }
+        drawn, _off_frame = frame_cast(frame)
+        missing = [c for c in cast_names if c in named - drawn]
+        speaking = speakers.get(str(frame.get("frame_id") or ""), set())
+        unnamed = [c for c in cast_names if c in drawn - named - speaking]
+        if missing and unnamed:
+            out.append(
+                f"  !! {frame.get('frame_id')} (row {_row_number(frame)}) names "
+                f"{', '.join(cast_names.get(c, c) for c in missing)} but lists "
+                f"{', '.join(cast_names.get(c, c) for c in unnamed)}: the board draws whom the cast list names. "
+                "Edit that frame's cast to the character it describes, then redraw (warning only)."
+            )
+    return out
+
+
 #: Body postures a pose names plainly. A pose that names exactly one of them has that posture.
 _POSTURES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
@@ -1125,6 +1240,7 @@ def shot_list_lines(
             spine, frames, take_beats, cast_names=cast_names
         )
         lines += safe_zone_lines(frames, cast_names=cast_names)
+        lines += named_cast_mismatch_lines(frames, take_beats, cast_names=cast_names)
     return lines
 
 
@@ -1144,6 +1260,7 @@ __all__ = [
     "frames_by_set",
     "frames_digest",
     "heard_not_seen",
+    "named_cast_mismatch_lines",
     "off_screen_speaker_lines",
     "pose_change_at_cut_lines",
     "pose_posture",
