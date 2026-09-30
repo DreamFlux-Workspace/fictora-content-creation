@@ -27,4 +27,7 @@ Closed 2026-09-28 by founder decision: a finished cut shorter than its 15 / 30 /
 | Board | The spine has no field saying an episode continues straight from the previous one (`opening_template` / `opening_image` are episode 1 only) | Preflight cannot tell whether a new episode needs a hand-off frame, so it prints an info line and the human decides | Hanakaze ep 2–3 #11 |
 | Board | A stated move lost across a camera change, and a horror threat without its own row, are server log lines the board shot list does not print (fictora-drama #459) | Read every board for "does the picture show the rule" | SCP-173 #11, #28 |
 
+| Script | Removing a voice-only character's only line (`line --remove`) leaves them in the cast with no lines and no look; the film gate then counts them as drawn and refuses the whole request (`422 spine_reuse_invalid: cast.<id>.visual_brief is required`), even for a take they are not in. No command (and no API field) removes a character | Filming is blocked until the server is fixed; give the voice a line back rather than removing it | Hana inner voice, ep 1 (2026-09-30) |
+| Script | The kit has no command for `PUT /v1/spines/{id}/episodes/{n}/inner-voice`, so a character's own thoughts get added as a separate `--new-voice` character: it takes one of the four cast places and hits the row above when its line goes | Thoughts cost a cast place and can block filming | Hana inner voice, ep 1 (2026-09-30) |
+
 When you add a row, name the production that hit it.
