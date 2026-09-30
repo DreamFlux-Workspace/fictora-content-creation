@@ -44,6 +44,7 @@ one line is set smaller so it still fits on one line inside that band.
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import shutil
@@ -112,6 +113,8 @@ MAX_WORD_SECONDS = 1.2
 SECONDS_PER_WORD_CHAR = 0.25
 #: A leading word this short (characters), cut off from the rest by a pause, is a stammer.
 STAMMER_MAX_CHARS = 2
+#: A speech onset this close to a stretched word's end is the next word's, not this one's.
+ONSET_END_MARGIN_SECONDS = 0.05
 #: A whole English line stays up at least max(this, words x READ_SECONDS_PER_WORD) to be read.
 MIN_LINE_SECONDS = 1.2
 READ_SECONDS_PER_WORD = 0.3
@@ -384,25 +387,68 @@ def _word_limit(word: HeardWord) -> float:
     return max(MAX_WORD_SECONDS, SECONDS_PER_WORD_CHAR * _word_chars(word))
 
 
-def word_span(words: Sequence[HeardWord]) -> Span | None:
+def speech_onset_in(word: HeardWord, spans: Sequence[Span]) -> float | None:
+    """Where speech starts inside a word Whisper stretched back over silence, or None.
+
+    The last speech span that starts inside the word (after its start, not
+    in its last :data:`ONSET_END_MARGIN_SECONDS`) after a real pause (over
+    :data:`MAX_PAUSE_IN_LINE_SECONDS` of silence since the span before it; a
+    shorter gap is a breath inside speech). Hanakaze ep 4's 「ちょっと!」 was
+    heard 9.37-12.45 s and said from 11.34 s; ep 6's 「悪」 8.81-12.57 s from
+    12.42 s.
+
+    Parameters
+    ----------
+    word
+        A stretched transcript word.
+    spans
+        Speech spans of the take (:func:`speech_spans`), in order.
+
+    Returns
+    -------
+    float or None
+        The onset in seconds.
+    """
+
+    onset: float | None = None
+    previous_end = 0.0
+    for span in sorted(spans, key=lambda s: s.start):
+        if (
+            word.start < span.start <= word.end - ONSET_END_MARGIN_SECONDS
+            and span.start - previous_end > MAX_PAUSE_IN_LINE_SECONDS
+        ):
+            onset = span.start
+        previous_end = max(previous_end, span.end)
+    return onset
+
+
+def word_span(
+    words: Sequence[HeardWord],
+    speech: Callable[[], Sequence[Span]] | None = None,
+) -> Span | None:
     """Where one line is spoken, from the transcript words matched to it.
 
     The span runs from the start of the line's core to the end of its last
-    word. The core skips, at the head:
+    word. At the head:
 
     - a word Whisper stretched past what one word can last
-      (:func:`_word_limit`: ``もう`` over 1.86 s is a stammer drawn out to
-      the next word), and
+      (:func:`_word_limit`) starts where its speech starts
+      (:func:`speech_onset_in`, on the take's ``speech`` spans), and is
+      skipped only when no onset is found inside it (``もう`` over 1.86 s,
+      a stammer drawn out to the next word);
     - one short leading word (up to two characters, a stammer such as
-      ``も、``) cut off from the rest by a pause over 0.6 s.
+      ``も、``) cut off from the rest by a pause over 0.6 s is skipped.
 
     A last word that is stretched is cut to what it can last from its start;
-    a single stretched word keeps what it can last up to its end.
+    a single stretched word starts at its onset, else keeps what it can last
+    up to its end.
 
     Parameters
     ----------
     words
         The line's words in order (``start``, ``end``, ``text``, ``reading``).
+    speech
+        Speech spans of the take, asked for only when a word is stretched.
 
     Returns
     -------
@@ -413,10 +459,20 @@ def word_span(words: Sequence[HeardWord]) -> Span | None:
     core = [w for w in words if w.end >= w.start]
     if not core:
         return None
+
+    def onset(word: HeardWord) -> float | None:
+        if speech is None or word.end - word.start <= _word_limit(word):
+            return None
+        return speech_onset_in(word, speech())
+
     stammer_dropped = False
+    start_at: float | None = None
     while len(core) > 1:
         head, after = core[0], core[1]
         if head.end - head.start > _word_limit(head):
+            start_at = onset(head)
+            if start_at is not None:
+                break
             core.pop(0)
         elif (
             not stammer_dropped
@@ -429,19 +485,26 @@ def word_span(words: Sequence[HeardWord]) -> Span | None:
             break
     first, last = core[0], core[-1]
     if len(core) == 1 and first.end - first.start > _word_limit(first):
-        return Span(round(first.end - _word_limit(first), 3), round(first.end, 3))
+        start_at = onset(first)
+        if start_at is None:
+            start_at = first.end - _word_limit(first)
+        return Span(round(start_at, 3), round(first.end, 3))
+    begin = first.start if start_at is None else start_at
     end = min(last.end, last.start + _word_limit(last))
-    return Span(round(first.start, 3), round(max(end, first.start), 3))
+    return Span(round(begin, 3), round(max(end, begin), 3))
 
 
 def word_anchors(
-    lines: Sequence[CaptionLine], words: Sequence[HeardWord]
+    lines: Sequence[CaptionLine],
+    words: Sequence[HeardWord],
+    speech: Callable[[], Sequence[Span]] | None = None,
 ) -> list[Span | None]:
     """Each line's span from a transcript of the take, or None where the line was not matched.
 
     Lines are matched in order with :func:`creation.post.whisper.line_windows`
     on what is heard (``performed`` and every spelling), so a Japanese line is
-    matched on its reading; :func:`word_span` then trims the matched words.
+    matched on its reading; :func:`word_span` then trims the matched words
+    (a stretched first word starts at its onset in ``speech``).
     """
 
     from creation.post.whisper import line_windows
@@ -453,7 +516,7 @@ def word_anchors(
         alternates=tuple(line.spellings for line in lines),
     )
     return [
-        word_span([heard[i] for i in window.words])
+        word_span([heard[i] for i in window.words], speech)
         if window.start is not None and window.words
         else None
         for window in windows
@@ -500,7 +563,8 @@ def time_lines(
         English lines (see :func:`caption_take`).
     spans
         Speech spans of the take, asked for only when a line needs them (no
-        hand start and no transcript match).
+        hand start and no transcript match, or a first word Whisper stretched
+        back over silence: :func:`speech_onset_in`). Asked at most once.
 
     Returns
     -------
@@ -518,7 +582,11 @@ def time_lines(
     for flag, given in (("--line-start", line_starts), ("--line-end", line_ends)):
         if given and len(given) != n:
             raise ValueError(f"{flag} given {len(given)} time(s) for {n} line(s)")
-    by_words: list[Span | None] = word_anchors(lines, words) if words else [None] * n
+    if spans is not None:
+        spans = functools.cache(spans)  # silencedetect runs once, whoever asks first
+    by_words: list[Span | None] = (
+        word_anchors(lines, words, spans) if words else [None] * n
+    )
     by_speech: list[Span | None] = [None] * n
     if not line_starts and any(span is None for span in by_words):
         if spans is None:

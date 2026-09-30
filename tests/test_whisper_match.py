@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import time
 
-from creation.post.whisper import LineWindow, Word, line_windows
+import pytest
+
+from creation.post.whisper import LineWindow, Word, heard_reading, line_windows
 
 
 def _words(*items: tuple[str, float, float]) -> tuple[Word, ...]:
@@ -188,3 +190,83 @@ def test_lines_stay_in_order_across_whisper_text_and_readings() -> None:
     # 今夜 matches Whisper's text; the kana line after it must not reuse that word's reading.
     windows = line_windows(words, ("今夜", "こんや"))
     assert [(w.start, w.end) for w in windows] == [(0.0, 0.4), (2.0, 2.4)]
+
+
+# --------------------------------------------------------------------------- #
+# Every plausible reading (``words[].readings``): a kanji read more than one way.
+# --------------------------------------------------------------------------- #
+
+
+def _alts(*items: tuple[str, tuple[str, ...], float, float]) -> tuple[Word, ...]:
+    return tuple(
+        Word(start, end, text, readings[0], readings)
+        for text, readings, start, end in items
+    )
+
+
+#: Hanakaze ep 5 take 1 (``take-ep05-t1-review-words-v1.json``), with the readings the server now sends.
+HANAKAZE_EP05 = _alts(
+    ("食べ", ("タベ",), 0.17, 0.57), ("な", ("ナ",), 0.57, 0.75), ("さい", ("サイ",), 0.75, 1.11),
+    ("よ", ("ヨ",), 1.11, 1.35), ("ー!", ("",), 1.35, 2.19), ("うん", ("ウン",), 5.57, 6.51),
+    ("…", ("",), 6.51, 6.69), ("美味", ("ビミ", "ウマ"), 7.89, 8.17), ("い", ("イ",), 8.17, 8.49),
+)  # fmt: skip
+
+
+def test_hanakaze_ep05_umai_heard_as_bimi_plus_i_is_found() -> None:
+    lines = ("食べなさいよ！", "……うまい。")
+    # The words' own readings alone: 美味 + い read ビミ + イ and the line is missing.
+    own = tuple(Word(w.start, w.end, w.text, w.reading) for w in HANAKAZE_EP05)
+    assert line_windows(own, lines)[1].start is None
+    first, second = line_windows(HANAKAZE_EP05, lines)
+    assert (first.start, first.end) == (0.17, 1.35)
+    assert (second.start, second.end, second.ratio, second.by) == (
+        7.89,
+        8.49,
+        1.0,
+        "sound",
+    )
+
+
+@pytest.mark.parametrize(
+    ("heard", "line"),
+    [
+        ((("今日", ("キョウ", "コンニチ"), 0.2, 0.6), ("は", ("ハ",), 0.6, 0.8)), "こんにちは"),
+        ((("上手", ("ジョウズ", "ウワテ", "カミテ"), 0.2, 0.6), ("だ", ("ダ",), 0.6, 0.7), ("ね", ("ネ",), 0.7, 0.8)),
+         "うわてだね"),
+        ((("明日", ("アス", "アシタ"), 0.2, 0.6), ("ね", ("ネ",), 0.6, 0.8)), "あしたね"),
+    ],
+)  # fmt: skip
+def test_a_kanji_with_another_reading_meets_the_kana_line(
+    heard: tuple[tuple[str, tuple[str, ...], float, float], ...], line: str
+) -> None:
+    words = _alts(*heard)
+    own = tuple(Word(w.start, w.end, w.text, w.reading) for w in words)
+    assert line_windows(own, (line,))[0].start is None
+    [window] = line_windows(words, (line,))
+    assert (window.start, window.end, window.by) == (0.2, 0.8, "sound")
+
+
+def test_the_own_reading_is_kept_when_a_line_has_it() -> None:
+    today = _alts(("今日", ("キョウ", "コンニチ"), 0.0, 0.4))[0]
+    assert heard_reading(today, ("キョウハ",)) == "キョウ"
+    assert heard_reading(today, ("サヨウナラ",)) == "キョウ"
+    assert heard_reading(today, ("コンニチハ",)) == "コンニチ"
+    # A different line is still not heard just because the word has many readings.
+    assert (
+        line_windows(
+            _alts(("今日", ("キョウ", "コンニチ"), 0.0, 0.4)), ("さようなら",)
+        )[0].start
+        is None
+    )
+
+
+def test_readings_load_from_the_api_transcript(tmp_path) -> None:
+    import json
+
+    from creation.post.whisper import load_words
+
+    path = tmp_path / "words.json"
+    path.write_text(json.dumps({"words": [
+        {"word": "美味", "start": 7.89, "end": 8.17, "reading": "ビミ", "readings": ["ビミ", "ウマ"]},
+    ]}))  # fmt: skip
+    assert load_words(path) == (Word(7.89, 8.17, "美味", "ビミ", ("ビミ", "ウマ")),)
