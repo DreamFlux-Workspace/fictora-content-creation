@@ -24,6 +24,8 @@ from creation.captions import (
     build_cues,
     caption_take,
     episode_caption_lines,
+    parse_silencedetect,
+    speech_onset_in,
     speech_spans,
     time_lines,
     word_span,
@@ -92,12 +94,20 @@ def _no_spans() -> list[Span]:
 
 
 def test_hanakaze_lines_follow_the_words_not_the_stammer_or_the_pause() -> None:
-    timing = time_lines(_lines(), duration=15.0, words=_words(), spans=_no_spans)
+    asked: list[bool] = []
+
+    def spans() -> list[Span]:
+        asked.append(True)
+        return HANAKAZE_SPEECH
+
+    timing = time_lines(_lines(), duration=15.0, words=_words(), spans=spans)
     one, two = timing.anchors
     assert timing.methods == ("words", "words")
+    assert asked == [True], "measured once, for the stretched もう"
     assert one.start == pytest.approx(0.03) and one.end >= 3.05
-    assert two.start == pytest.approx(11.33, abs=0.05), (
-        "not 9.47: 'もう' lasts 1.86 s (a stammer Whisper drew out to the next word)"
+    assert two.start == pytest.approx(11.15), (
+        "not 9.47: 'もう' lasts 1.86 s (a stammer Whisper drew out to the next word);"
+        " the last speech onset inside it, after a pause, is where 申し訳 starts"
     )
     assert two.end >= 13.25
     cues = build_cues(
@@ -106,8 +116,90 @@ def test_hanakaze_lines_follow_the_words_not_the_stammer_or_the_pause() -> None:
     )  # fmt: skip
     assert cues == [
         Cue(0.03, 3.3, "Free mochi! Right this way!"),
-        Cue(11.33, 13.5, "I-I'm terribly sorry!!"),
+        Cue(11.15, 13.5, "I-I'm terribly sorry!!"),
     ]
+
+
+def test_without_speech_spans_a_stretched_first_word_is_skipped() -> None:
+    """No spans to look in (or no onset inside the word): the line starts on its next word."""
+
+    timing = time_lines(_lines(), duration=15.0, words=_words())
+    assert timing.anchors[1].start == pytest.approx(11.33)
+
+
+def test_no_stretched_word_no_speech_spans_asked() -> None:
+    """Every line matched on words said at a plausible length: silencedetect never runs."""
+
+    # もう said in 0.43 s rather than drawn out over 1.86 s.
+    words = tuple(
+        Word(10.9, w.end, w.text, w.reading) if w.text == "もう" else w
+        for w in _words()
+    )
+    timing = time_lines(_lines(), duration=15.0, words=words, spans=_no_spans)
+    assert timing.methods == ("words", "words")
+    assert timing.anchors[1].start == pytest.approx(10.9)
+
+
+# Hanakaze ep 4 and ep 6 (2026-09-26 desk): the line's first word stretched back
+# over the silence before it. ``silencedetect`` (-30 dB, 0.3 s) on the raw takes.
+EP04_SILENCEDETECT = """
+silence_start: 2.059469
+silence_end: 2.874313 | silence_duration: 0.814844
+silence_start: 5.709125
+silence_end: 7.353281 | silence_duration: 1.644156
+silence_start: 8.418563
+silence_end: 9.153531 | silence_duration: 0.734969
+silence_start: 9.381875
+silence_end: 9.882594 | silence_duration: 0.500719
+silence_start: 9.999531
+silence_end: 11.342156 | silence_duration: 1.342625
+"""
+EP06_SILENCEDETECT = """
+silence_start: 3.147219
+silence_end: 3.678875 | silence_duration: 0.531656
+silence_start: 4.012281
+silence_end: 7.956094 | silence_duration: 3.943812
+silence_start: 10.247406
+silence_end: 12.418563 | silence_duration: 2.171156
+silence_start: 13.344062
+silence_end: 13.865906 | silence_duration: 0.521844
+"""
+
+
+@pytest.mark.parametrize(
+    ("silences", "words", "onset"),
+    [
+        # ep 4 「ちょっと!」 heard 9.37-12.45 s; a 0.12 s click at 9.88 s after a 0.5 s breath is not it.
+        (EP04_SILENCEDETECT,
+         [(9.37, 12.45, "ちょっと!", "チョット"), (12.45, 13.21, "あの", "アノ"), (13.21, 13.47, "人", "ヒト")],
+         11.342),
+        # ep 6 「悪」 heard 8.81-12.57 s, the sound at 7.96-10.25 s before it notwithstanding.
+        (EP06_SILENCEDETECT,
+         [(8.81, 12.57, "悪", "アク"), (12.57, 12.77, "く", "ク"), (12.77, 12.95, "ない", "ナイ")],
+         12.419),
+    ],
+)  # fmt: skip
+def test_a_stretched_first_word_starts_where_its_speech_does(
+    silences: str, words: list[tuple[float, float, str, str]], onset: float
+) -> None:
+    spans = speech_spans(parse_silencedetect(silences, 15.104), 15.104)
+    heard = [Word(*w) for w in words]
+    # Before: the stretched word was skipped and the line started on its second word.
+    assert word_span(heard).start == pytest.approx(words[1][0])  # type: ignore[union-attr]
+    assert word_span(heard, lambda: spans).start == pytest.approx(onset)  # type: ignore[union-attr]
+    # Alone, too: its onset rather than what one word can last up to its end.
+    assert word_span(heard[:1], lambda: spans).start == pytest.approx(onset)  # type: ignore[union-attr]
+
+
+def test_the_last_onset_after_a_pause_inside_the_word_is_its_start() -> None:
+    word = Word(4.2, 9.0, "ちょっと!", "チョット")
+    # A cough at 6.0-6.3 s inside the stretch, the word from 8.5 s; a 0.4 s breath before 8.9 s.
+    spans = [Span(3.0, 4.0), Span(6.0, 6.3), Span(8.5, 8.6), Span(9.0, 9.4)]
+    assert speech_onset_in(word, spans) == pytest.approx(8.5)
+    # Speech running into the word with only breaths inside it: no onset of its own.
+    assert (
+        speech_onset_in(word, [Span(3.0, 5.0), Span(5.3, 7.0), Span(7.4, 9.5)]) is None
+    )
 
 
 def test_speech_spans_put_the_same_take_on_the_stammer() -> None:
@@ -169,15 +261,16 @@ def test_a_whole_line_stays_up_long_enough_to_read_but_never_into_the_next() -> 
 
 def test_line_end_overrides_the_end_exactly() -> None:
     timing = time_lines(
-        _lines(), duration=15.0, words=_words(), line_ends=[2.0, 14.0], spans=_no_spans
-    )
-    assert timing.anchors == (Span(0.03, 2.0), Span(11.33, 14.0))
+        _lines(), duration=15.0, words=_words(), line_ends=[2.0, 14.0],
+        spans=lambda: HANAKAZE_SPEECH,
+    )  # fmt: skip
+    assert timing.anchors == (Span(0.03, 2.0), Span(11.15, 14.0))
     assert timing.methods == ("words start, manual end", "words start, manual end")
     cues = build_cues(
         [line.text for line in _lines()], list(timing.anchors), whole_lines=True,
         holds=timing.holds, fixed_ends=timing.fixed_ends,
     )  # fmt: skip
-    assert [(c.start, c.end) for c in cues] == [(0.03, 2.0), (11.33, 14.0)], (
+    assert [(c.start, c.end) for c in cues] == [(0.03, 2.0), (11.15, 14.0)], (
         "a hand end has no hold and no readable minimum"
     )
 
@@ -404,3 +497,39 @@ def test_load_words_reads_the_saved_hanakaze_transcript(tmp_path: Path) -> None:
     path = tmp_path / "w.json"
     path.write_text(json.dumps(HANAKAZE_WORDS, ensure_ascii=False), encoding="utf-8")
     assert load_words(path) == _words()
+
+
+@needs_ffmpeg
+def test_caption_take_starts_a_stretched_first_word_on_the_take_onset(
+    tmp_path: Path,
+) -> None:
+    """Synthetic take: line 1 at 1.0-1.9 s, silence, line 2 at 4.0-4.7 s; Whisper stretched ちょっと back to 2.0 s."""
+
+    spine = {
+        "spoken_language": "ja-JP",
+        "beats": [{"episode_id": "episode_01", "dialogue_lines": [
+            {"line_id": "l1", "text": "Wait here.", "spoken_text": "ここで待ってて", "subtitle_text": "Wait here for me."},
+            {"line_id": "l2", "text": "Hey, wait.", "spoken_text": "ちょっと待って", "subtitle_text": "Hey, wait!"},
+        ]}],
+    }  # fmt: skip
+    (tmp_path / "ep01" / "api").mkdir(parents=True)
+    (tmp_path / "ep01" / "api" / "03_spine.json").write_text(
+        json.dumps(spine, ensure_ascii=False), encoding="utf-8"
+    )
+    make_take(tmp_path / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", seconds=6.0,
+              tones=((1.0, 1.9, 440), (4.0, 4.7, 880)))  # fmt: skip
+    words = tmp_path / "words.json"
+    words.write_text(json.dumps({"words": [
+        {"word": "ここ", "start": 1.0, "end": 1.3, "reading": "ココ"},
+        {"word": "で", "start": 1.3, "end": 1.4, "reading": "デ"},
+        {"word": "待って", "start": 1.4, "end": 1.75, "reading": "マッテ"},
+        {"word": "て", "start": 1.75, "end": 1.9, "reading": "テ"},
+        {"word": "ちょっと", "start": 2.0, "end": 4.3, "reading": "チョット"},
+        {"word": "待って", "start": 4.3, "end": 4.7, "reading": "マッテ"},
+    ]}, ensure_ascii=False), encoding="utf-8")  # fmt: skip
+
+    result = caption_take(tmp_path, words_json=words)
+
+    assert result.methods == ("words", "words")
+    # Not 2.0 s (the stretch) and not 4.3 s (the next word, dropping ちょっと): where the tone starts.
+    assert result.anchors[1].start == pytest.approx(4.0, abs=0.05)

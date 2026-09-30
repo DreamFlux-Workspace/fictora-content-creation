@@ -5,7 +5,10 @@ English and Korean lines are matched word by word / syllable by syllable.
 A Japanese line is matched on how it sounds. When the server's transcript
 carries a ``reading`` per word (katakana, made by the server's reading
 analyzer), Whisper's words are compared as those readings, so a kana-pinned
-line meets Whisper's kanji as kana. On an older server without readings the
+line meets Whisper's kanji as kana. A kanji read more than one way (今日
+キョウ / コンニチ, or 美味 cut from its い) carries every plausible reading in
+``readings``, and the word is compared on the one a line has
+(:func:`heard_reading`). On an older server without readings the
 kit falls back to reading *shape*: kana are folded (hiragana to katakana, no
 long-vowel mark) and a kanji Whisper heard may stand for the kana of a
 kana-pinned line (and the reverse). The kit has no reading dictionary of its
@@ -39,12 +42,15 @@ class Word:
 
     ``reading`` is the server's katakana reading of a Japanese word (``None``
     for other languages and for transcripts from servers that predate it).
+    ``readings`` is every plausible reading, ``reading`` first (empty on a
+    server that predates it).
     """
 
     start: float
     end: float
     text: str
     reading: str | None = None
+    readings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -124,7 +130,9 @@ def load_words(path: Path) -> tuple[Word, ...]:
         return tuple(
             Word(start=float(w.get("start") or 0.0), end=float(w.get("end") or w.get("start") or 0.0),
                  text=str(w.get("word") or "").strip(),
-                 reading=w["reading"] if isinstance(w.get("reading"), str) else None)
+                 reading=w["reading"] if isinstance(w.get("reading"), str) else None,
+                 readings=tuple(r for r in w["readings"] if isinstance(r, str))
+                 if isinstance(w.get("readings"), list) else ())
             for w in payload["words"]
         )  # fmt: skip
     chunks = payload.get("chunks") if isinstance(payload, dict) else None
@@ -181,6 +189,43 @@ def _reading_tokens(reading: str) -> list[str]:
 
     kana = re.sub(r"[\W_]", "", unicodedata.normalize("NFKC", reading))
     return [_fold_kana(char) for char in kana if char != "\u30fc"]
+
+
+def heard_reading(word: Word, lines_kana: tuple[str, ...]) -> str | None:
+    """Which of a word's readings to hear it as: the one a line has.
+
+    Its own ``reading`` when some line's kana have it; otherwise its longest
+    other reading some line has (美味, heard for うまい, as ウマ rather than
+    ビミ); otherwise its own. Every candidate is a reading of what was heard,
+    so this never hears a word that was not said.
+
+    Parameters
+    ----------
+    word
+        A transcript word.
+    lines_kana
+        Every spelling of every line, as folded kana (see :func:`_reading_tokens`).
+
+    Returns
+    -------
+    str | None
+        A reading, or ``None`` when the word has none.
+    """
+
+    if word.reading is None:
+        return None
+    own = "".join(_reading_tokens(word.reading))
+    if not own or any(own in kana for kana in lines_kana):
+        return word.reading
+    others = [
+        reading
+        for reading in word.readings
+        if (key := "".join(_reading_tokens(reading)))
+        and any(key in kana for kana in lines_kana)
+    ]
+    return (
+        max(others, key=lambda r: len(_reading_tokens(r))) if others else word.reading
+    )
 
 
 def _same(a: str, b: str) -> bool:
@@ -343,16 +388,22 @@ def line_windows(
         return _line_windows_on(
             words, lines, alternates, flat
         )  # an older server: reading shape only
-    # Japanese words as the server read them; a word without a reading keeps its text.
-    read = [
-        (token, index)
-        for index, word in enumerate(words)
-        for token in (
-            _reading_tokens(word.reading)
-            if word.reading is not None
-            else _tokens(word.text)
+    # Japanese words as the server read them (the reading a line has, when it gave several);
+    # a word without a reading keeps its text.
+    lines_kana = tuple(
+        "".join(token for token in _tokens(spelling) if _KANA.fullmatch(token))
+        for index, line in enumerate(lines)
+        for spelling in (
+            line,
+            *(alternates[index] if alternates and index < len(alternates) else ()),
         )
-    ]
+        if spelling
+    )
+    read: list[tuple[str, int]] = []
+    for index, word in enumerate(words):
+        reading = heard_reading(word, lines_kana)
+        tokens = _reading_tokens(reading) if reading is not None else _tokens(word.text)
+        read.extend((token, index) for token in tokens)
     return _line_windows_on(words, lines, alternates, flat, read)
 
 
