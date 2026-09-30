@@ -277,6 +277,32 @@ uv run fictora-ops adopt-desk --desk D             # only after the human agrees
 
 It only creates files: `series.pre-adopt.json` (a backup), a hard link `take-epNN-tK-raw-vN.mp4` beside each old raw take, `epNN/api/17_raw_scene_clips.json` and `epNN/api/spine.json`, `production.config.json`, and `production.json` with the episode and phase it inferred. Nothing is renamed, moved, deleted or overwritten, and the take list's `provider_spec` is dropped unread. Running it twice changes nothing. An existing, different `production.json` stops it; `--force` replaces it only after a backup. Every `CONFIRM` line in the plan (a gate the old desk never recorded, an unfinished job, a take without a verdict) goes to the human before the next paid step.
 
+## Learnings: after every video, without being asked
+
+The human makes episodes through this kit only and cannot see the server or app code. Never ask them to open or check it; say how sure you are about where a fault comes from.
+
+**Each run.** When an episode is accepted, abandoned or stops partway, write or update `learnings.md` in the production folder (beside `run-notes.md`, shape from [templates/learnings.md](../../../docs/content-ops/templates/learnings.md)), then add the same items to the running ledger `~/Downloads/documents/fictora-learnings/ledger.md` (create it the first time; save its path to your memory). One item each:
+
+- **ID** `L-YYYYMMDD-n`; **series / episode / stage** (brief, script, cast, look, board, take, finish, captions, sound, export)
+- **What happened**, in plain words, and **cause**: `confirmed` (the kit or server said so) or `suspected` (say why). No guesses about model internals.
+- **Fix belongs in**: `server` (refused, wrong answer, wrong render), `kit` (a command or script here), `app` (seen in the Sokii app), `runbook rule` (nothing broken; do it differently), or `unsure`
+- **Cost** (re-renders, dollars, minutes), **evidence** (job ids, the command, the exact error code; never prompt text), **workaround**
+- **Kind**: `bug`, `issue` (works, badly), `fix` (a change that worked), `learning` (a rule for next time)
+
+A learning names the cause and changes what is typed next time. An item already in the ledger is not added again: append "seen again: <series> ep N, <date>" and raise its count. A clean run writes "no new learnings"; never invent items. Then tell the human in two or three lines what you added and ask: "Anything you want to add in your own words?"
+
+**Their own words stay separate.** Anything the human adds, asked or not, goes verbatim into `~/Downloads/documents/fictora-learnings/my-notes.md` with the date and series. Never rewrite or merge it into your items; if it names the same problem, add a `see L-…` link and keep both.
+
+**Offer the composite.** At the start of a session and after each video, count ledger items not marked `shared`. If any: "You have N learnings from M runs since <date> that haven't been shared. Want the composite?" On a yes, write `~/Downloads/documents/fictora-learnings/composite-YYYY-MM-DD.md` (a new dated file, never an overwrite; also publish it as a page if you can publish Artifacts here):
+
+1. Top: repeats first, by count, then anything that cost money
+2. Server, Kit, App, Runbook rules, Unsure: bugs before issues
+3. Fixes that worked
+4. Producer notes (<name>), verbatim
+5. Runs covered: series, episodes, dates, re-render cost
+
+After the human says it was sent (write-ups go to the addresses in [README.md](../../../docs/content-ops/README.md)), mark those items `shared: <date>`. An item seen again after sharing is flagged "seen again after sharing". A product gap still gets its [backlog.md](../../../docs/content-ops/backlog.md) line when the series closes; the ledger does not replace it.
+
 ## Setup check, one plate again, the ledger
 
 - **First thing on a new laptop:** `uv run fictora-produce setup-check`. One ✓/✗ line each: the API token set and accepted (one free authenticated read), ffmpeg and ffprobe, libass (captions), the filters the finish and edits use, Georgia Italic (the heard-not-seen caption face), Python 3.12+, uv. Any ✗ exits 1: fix it before the first paid step. A ⚠ on Georgia Italic does not block, but off-screen and voice-only captions will come out in the fallback face it names until Georgia is installed. It never prints the token.
