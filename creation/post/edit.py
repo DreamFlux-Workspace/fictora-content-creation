@@ -1,6 +1,6 @@
-"""Local picture edits on one take: trim, freeze, tempo, soften.
+"""Local picture edits on one take: trim, freeze, tempo, soften, blur.
 
-All four are ffmpeg + numpy on this laptop, free, and write a new file; the
+All five are ffmpeg + numpy on this laptop, free, and write a new file; the
 take is never overwritten.
 
 - ``trim``   cuts ``A-B`` seconds out, each edge snapped to the strongest
@@ -16,6 +16,9 @@ take is never overwritten.
   seams that ffmpeg scene detect misses) and softens each in place: the last
   pre-cut frame is held over the new shot and faded out over 0.33 s. Same
   length, sound copied.
+- ``blur``   Gaussian-blurs pixel boxes of the picture inside a time window
+  (garbled text the video invented): crop, ``gblur``, overlay back with
+  ``enable=between(t,from,to)``. Same length, sound copied. A patch.
 """
 
 from __future__ import annotations
@@ -851,3 +854,200 @@ def soften_seams(
         ]
         run_ffmpeg(args)
     return out
+
+
+# ================================================================================================
+# blur
+# ================================================================================================
+
+#: Gaussian sigma of the blur (pixels of the take): what hid garbled signs on Hanakaze ep 4 / ep 6.
+BLUR_SIGMA = 20.0
+_BOX = re.compile(r"^\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*$")
+
+
+@dataclass(frozen=True)
+class BlurBox:
+    """One rectangle to blur, in pixels of the take (``x``, ``y`` = top-left corner)."""
+
+    x: int
+    y: int
+    w: int
+    h: int
+
+    def as_list(self) -> list[int]:
+        """``[x, y, w, h]`` for a record."""
+
+        return [self.x, self.y, self.w, self.h]
+
+    def label(self) -> str:
+        """``x,y,w,h`` as the operator typed it."""
+
+        return f"{self.x},{self.y},{self.w},{self.h}"
+
+
+def parse_box(text: str) -> BlurBox:
+    """Read ``x,y,w,h`` (whole pixels) into a :class:`BlurBox`.
+
+    Parameters
+    ----------
+    text
+        ``--box`` value, e.g. ``120,340,260,90``.
+
+    Returns
+    -------
+    BlurBox
+        The box.
+
+    Raises
+    ------
+    ValueError
+        When it is not four whole numbers or the width or height is 0.
+    """
+
+    match = _BOX.match(text)
+    if not match:
+        raise ValueError(
+            f"--box {text!r}: expected x,y,w,h in whole pixels of the take, e.g. 120,340,260,90"
+        )
+    box = BlurBox(*(int(value) for value in match.groups()))
+    if box.w <= 0 or box.h <= 0:
+        raise ValueError(f"--box {text!r}: width and height must be more than 0")
+    return box
+
+
+def _even_box(box: BlurBox, width: int, height: int) -> BlurBox:
+    """Grow ``box`` outward to even edges (4:2:0 chroma), never past the frame."""
+
+    x0, y0 = box.x - box.x % 2, box.y - box.y % 2
+    x1 = min(width, box.x + box.w + (box.x + box.w) % 2)
+    y1 = min(height, box.y + box.h + (box.y + box.h) % 2)
+    return BlurBox(x0, y0, x1 - x0, y1 - y0)
+
+
+@dataclass(frozen=True)
+class BlurResult:
+    """What :func:`blur_boxes` wrote."""
+
+    output: Path
+    boxes: tuple[BlurBox, ...]
+    start_seconds: float
+    end_seconds: float
+    strength: float
+    feather: int
+
+    def one_line(self) -> str:
+        """Report line."""
+
+        boxes = " ".join(box.label() for box in self.boxes)
+        edge = (
+            f", feathered {self.feather} px outside each box"
+            if self.feather
+            else ", hard edge"
+        )
+        return (
+            f"blurred {len(self.boxes)} box(es) [{boxes}] {self.start_seconds:.2f}-{self.end_seconds:.2f}s "
+            f"(sigma {self.strength:g}{edge}) -> {self.output.name}; length and sound unchanged"
+        )
+
+
+def blur_boxes(take: Path, out: Path, boxes: tuple[BlurBox, ...], *, start: float, end: float,
+               strength: float = BLUR_SIGMA, feather: int = 0) -> BlurResult:  # fmt: skip
+    """Blur rectangles of the picture between ``start`` and ``end`` seconds. The audio is copied.
+
+    Each box is cropped from the picture, Gaussian-blurred (``gblur``) and laid
+    back over itself with ``overlay`` enabled only inside the window, so the
+    take keeps its length, its frame count and its sound. The box is fully
+    blurred to its edge. ``feather`` adds a soft ramp OUTSIDE the box (the blur
+    fades out over that many pixels), so the box itself stays as obscured as
+    with the hard edge: a feather that eats into the box leaves text readable.
+
+    Parameters
+    ----------
+    take
+        Video.
+    out
+        New file.
+    boxes
+        Rectangles in pixels of the take; each must lie inside the frame.
+        Edges are grown outward to even pixels (4:2:0 chroma).
+    start, end
+        Seconds into the take: the blur shows from ``start`` to ``end``.
+    strength
+        Gaussian sigma in pixels (default 20).
+    feather
+        Pixels of soft edge outside each box (0 = hard edge, the default).
+
+    Returns
+    -------
+    BlurResult
+        The file, the boxes as blurred, and the window.
+
+    Raises
+    ------
+    ValueError
+        When there is no box, a box runs outside the frame, the window is empty
+        or outside the take, or ``strength`` / ``feather`` is out of range.
+    FileExistsError
+        When ``out`` exists.
+    """
+
+    if not boxes:
+        raise ValueError("blur needs at least one --box")
+    if not 0 < strength <= 200:
+        raise ValueError("--strength (blur sigma) must be within 0-200")
+    if feather < 0:
+        raise ValueError("--feather must be 0 or more pixels")
+    info = probe_video(take)
+    width, height, total = info.width, info.height, info.duration_seconds
+    for box in boxes:
+        if box.x < 0 or box.y < 0 or box.x + box.w > width or box.y + box.h > height:
+            raise ValueError(
+                f"--box {box.label()} runs outside the {width}x{height} frame "
+                f"(x+w must be <= {width}, y+h <= {height})"
+            )
+    if start < 0 or end <= start:
+        raise ValueError(
+            f"--from {start:g} / --to {end:g}: the window must start at 0 or later and end after it starts"
+        )
+    if start >= total:
+        raise ValueError(
+            f"--from {start:.2f}s is past the end of the {total:.2f}s take"
+        )
+    end = min(end, total)
+    if out.exists():
+        raise FileExistsError(f"{out} exists; blur never overwrites")
+    snapped = tuple(_even_box(box, width, height) for box in boxes)
+    picture, cover = video_streams(take)
+    labels = [f"c{index}" for index in range(len(snapped))]
+    graph = [
+        f"[0:v:{picture}]format=yuv420p,split={len(snapped) + 1}[base]{''.join(f'[{x}]' for x in labels)}"
+    ]
+    last = "base"
+    window = f"between(t,{start:.4f},{end:.4f})"
+    for index, box in enumerate(snapped):
+        pad = feather + feather % 2
+        x0, y0 = max(0, box.x - pad), max(0, box.y - pad)
+        x1, y1 = min(width, box.x + box.w + pad), min(height, box.y + box.h + pad)
+        chain = f"[c{index}]crop={x1 - x0}:{y1 - y0}:{x0}:{y0},gblur=sigma={strength:g}"
+        if feather:
+            # Alpha 255 on the box, ramping to 0 over `feather` px outside it (never inside).
+            left, top = box.x - x0, box.y - y0
+            right, bottom = left + box.w - 1, top + box.h - 1
+            dx = f"max(max({left}-X,0),max(X-{right},0))"
+            dy = f"max(max({top}-Y,0),max(Y-{bottom},0))"
+            chain += (
+                f",format=yuva444p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)'"
+                f":a='255*clip(1-max({dx},{dy})/{feather},0,1)'"
+            )
+        graph.append(f"{chain}[b{index}]")
+        graph.append(f"[{last}][b{index}]overlay={x0}:{y0}:enable='{window}'[v{index}]")
+        last = f"v{index}"
+    args = ["-i", str(take), "-filter_complex", ";".join(graph), "-map", f"[{last}]"]
+    if info.has_audio:
+        args += ["-map", "0:a", "-c:a", "copy"]
+    args += ["-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p"]
+    args += [*keep_cover_args(cover), "-t", f"{total:.3f}", str(out)]
+    out.parent.mkdir(parents=True, exist_ok=True)
+    run_ffmpeg(args)
+    return BlurResult(output=out, boxes=snapped, start_seconds=start, end_seconds=end,
+                      strength=strength, feather=feather)  # fmt: skip

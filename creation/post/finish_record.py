@@ -8,7 +8,7 @@ voice, effects, hand cues, the look) and the un-marked captioned picture
 all takes instead of stitching each take's own bed, and marks the joined file
 once.
 
-A take edited after ``finish`` (``trim``, ``tempo``, ``freeze``, ``soften`` on
+A take edited after ``finish`` (``trim``, ``tempo``, ``freeze``, ``soften``, ``blur`` on
 a file a record names) gets a new record from :func:`carry_finish_record`: the
 same edit is applied to the pre-bed take and the un-marked master, and the
 record lists every edit since ``finish`` in ``edits``, so ``join`` reads an

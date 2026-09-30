@@ -191,7 +191,7 @@ Free and local (ffmpeg + numpy); only `--transcribe` asks the server for a Whisp
 - **Safe zones** (finished files only): the caption box on sampled frames vs the covered zones and the 55–70% band; it writes a zone sheet (covered zones shaded) for the face check by eye.
 - Not measured: what must not be on screen per board row. Check that by eye. Thresholds and how to read each number: reference.md.
 
-## Local edits: deboard, soften, freeze, trim, tempo
+## Local edits: deboard, soften, freeze, trim, tempo, blur
 
 Free, on this laptop (ffmpeg + numpy). Each writes a new `take-epNN-tK-<step>-vN.mp4` and a run note; nothing is overwritten. Details and thresholds: reference.md.
 
@@ -202,6 +202,7 @@ Free, on this laptop (ffmpeg + numpy). Each writes a new `take-epNN-tK-<step>-vN
 - `trim` only on the finished file (`--take-file` is required). Check the first frame after the cut at full size. A finished cut shorter than its band (e.g. 14.2 s from a 15 s episode) is allowed: say the new length; it is not a deviation.
 - `tempo --factor 0.9` only for a show cut slow, and only on the finished file: `finish` lays effects at the filmed times.
 - Keep the un-marked master (`…-cap-vN.mp4`); the marked `…-sokii-vN.mp4` goes out.
+- `blur --box x,y,w,h --from S --to S` is a **patch** for garbled readable text the video invented (a sign reading "…nakaze Swettes", a shop name that is not a word) when re-filming is not worth it. Run it on the finished file. Boxes are pixels of the take (top-left x, y, width, height; frame-grab the moment to measure; must lie inside the frame); cover the whole sign with a margin and the whole time it is readable. Hard edge by default: a feather that fades INTO the box leaves text readable, so `--feather PX` only softens outside the box. Watch the window at full size. Always report it (learnings row + the reply): it hides the symptom, the server should stop making the text.
 
 ```bash
 uv run fictora-produce deboard --desk D [--episode N] [--take tK] [--take-file F] [--board B]
@@ -209,6 +210,7 @@ uv run fictora-produce soften  --desk D [--take-file F] [--cut S ...]
 uv run fictora-produce freeze  --desk D [--take-file F] --at 6.2 --hold 0.6
 uv run fictora-produce trim    --desk D --take-file FINAL --cut 10.17-12.15 [--cues-json J]
 uv run fictora-produce tempo   --desk D --take-file FINAL [--factor 0.9]
+uv run fictora-produce blur    --desk D --take-file FINAL --box 0,208,178,234 [--box ...] --from 2.38 --to 6.62 [--strength 20] [--feather 0]
 ```
 
 On a finished file with the cover attached these keep the cover and write `…-<step>-cover-vN.mp4`.
@@ -228,7 +230,7 @@ uv run fictora-produce join --desk D --take-file F1 --take-file F2   # these fin
 - Each take gets one gain to the takes' median level, then one measured mix gain and one limiter. No loudnorm.
 - Refused before anything is written: a take that is not finished (every take on the desk needs a complete finish), a take not at 24 fps, mixed sizes. The joined file is counted at 24 frames a second.
 - Each seam's room-level step is printed. Over 5 dB: `NOT DONE`, exit **5**, the master is kept to listen to and nothing is marked; do not hand it over.
-- `trim` / `tempo` (and `freeze` / `soften`) on a finished file apply the same edit to the take before the bed and the un-marked master and write a new finish record (the edit chain in `edits`), so the edited take joins at its new length; the newest record wins, so `--episode N` joins the edited take. A file no record names (edited from a raw take, or while a record file was gone: the edit says `No finish record`) is refused: finish again, then edit. Never join the -sokii files by hand (that stitches two beds and two marks).
+- `trim` / `tempo` (and `freeze` / `soften` / `blur`) on a finished file apply the same edit to the take before the bed and the un-marked master and write a new finish record (the edit chain in `edits`), so the edited take joins at its new length; the newest record wins, so `--episode N` joins the edited take. A file no record names (edited from a raw take, or while a record file was gone: the edit says `No finish record`) is refused: finish again, then edit. Never join the -sokii files by hand (that stitches two beds and two marks).
 - A take finished before `join` existed has no record: run `finish` on it again before the join.
 
 ## Change a character's voice (never regenerate)
