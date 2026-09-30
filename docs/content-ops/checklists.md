@@ -70,6 +70,7 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] Each row opens on the emotion the row before it ended on
 - [ ] A move the beat states is drawn nearer in the next row that shows it; a horror threat has its own insert or POV row
 - [ ] Each spoken line sits on a row with its speaker in frame, medium or closer; no off-screen speaker drawn
+- [ ] No `!! ... names X but lists Y` in the shot list: each cell lists the character its words describe
 - [ ] No clench, grit, pressed or closed mouth on a speaking row; big acting before and after the line
 - [ ] Expressions fit the moment (not the genre) and sit on the right face
 - [ ] No face, eyes, mouth or key prop in the top 8%, bottom 20%, or right 12% of the lower two thirds of any cell
