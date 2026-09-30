@@ -11,6 +11,7 @@ with its lines waiting at the script gate; the rest of the loop is the same.
 from __future__ import annotations
 
 import json
+import sys
 import uuid
 from dataclasses import dataclass, field
 from datetime import date
@@ -92,6 +93,7 @@ from creation.spine_view import (
     shot_list_lines,
     spoken_lines,
 )
+from creation.stranded_voice import explain_film_refusal, stranded_preflight
 
 
 #: Phases whose ``step`` pays for drawings (cast plates, boards): held while a drawn look frame awaits its yes.
@@ -970,6 +972,10 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             state.estimate_usd, source, warnings = price_estimate(
                 state, cfg, estimate, cast_count=cast_count, takes=len(slot.takes)
             )
+            warnings = [
+                *stranded_preflight(spine, unit=f"ep{ep:02d}", desk=desk, episode=ep),
+                *warnings,
+            ]
             state.phase = "wait_spend"
             save_production(desk, state)
             budget = envelope_line(desk, episode=ep, next_usd=state.estimate_usd)
@@ -1025,6 +1031,9 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
         save_production(desk, state)
         if CAST_NOT_APPROVED in str(exc.code):
             raise SystemExit(f"{exc.code}\n{reapprove_plates_hint(desk)}") from exc
+        plain = explain_film_refusal(str(exc.code))
+        if plain is not None:
+            raise SystemExit(f"{exc.code}\n{plain}") from exc
         raise
     finally:
         run.client.close()
@@ -1262,6 +1271,11 @@ def _film(
     )
     delivery: dict[str, Any] | None = None
     if raw is None:
+        before = run.spine(state.spine_id or "")
+        for warning in stranded_preflight(
+            before, unit=f"ep{ep:02d}", desk=desk, episode=ep
+        ):
+            print(warning, file=sys.stderr)
         state.video_enrolled_suffix = state.video_idempotency_suffix
         save_production(desk, state)
         result = stages.enrol_video(

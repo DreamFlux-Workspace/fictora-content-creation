@@ -52,6 +52,7 @@ from urllib.parse import quote
 
 import httpx
 
+from creation import inner_voice
 from creation import orchestrate as _orchestrate
 from creation.cli_text import TextArgError, text_or_file
 from creation.desk_media_urls import drawn_cast_rows
@@ -141,6 +142,14 @@ from creation.expression import (
     resolve_expression,
     server_takes_expression,
     vocabulary_lines,
+)
+from creation.stranded_voice import (
+    STRAND_FLAG,
+    explain_film_refusal,
+    strand_override_note,
+    strand_refusal,
+    stranded_preflight,
+    voices_left_without_lines,
 )
 from creation.shot_plan import (
     OLDER_SERVER_HINT,
@@ -2102,6 +2111,7 @@ def run_line(
     provider_voice: str | None = None,
     select_regen: bool = False,
     preview_only: bool = False,
+    strand_voice: bool = False,
     out: Any = None,
 ) -> Path | None:
     """Change, add or remove a line on the server and on the desk in one step; with no change, list the lines.
@@ -2128,6 +2138,9 @@ def run_line(
         As :func:`build_line_add_remove_patch`.
     select_regen, preview_only
         As :func:`run_edit`.
+    strand_voice
+        Let an edit through that leaves a heard-only character with no lines
+        (:func:`creation.stranded_voice.voices_left_without_lines`); without it the kit stops before sending.
     out
         Text stream.
 
@@ -2163,6 +2176,18 @@ def run_line(
                 )
                 if on
             )
+            stranded = voices_left_without_lines(
+                spine,
+                removed=patch.get("remove_dialogue_line_ids") or [],
+                added=[
+                    str(a.get("cast_id")) for a in patch.get("add_dialogue_lines") or []
+                ],
+            )
+            _guard_strand(
+                stranded, strand_voice=strand_voice, desk=desk, episode=episode,
+                what="removing " + ", ".join(patch.get("remove_dialogue_line_ids") or []),
+                changed=changed, out=out,
+            )  # fmt: skip
             sent.update(patch)
             return patch, changed, what
 
@@ -2239,8 +2264,35 @@ def run_line(
         off_screen=off_screen,
         select_regen=select_regen,
         preview_only=preview_only,
+        strand_voice=strand_voice,
         out=out,
     )
+
+
+def _guard_strand(
+    stranded: list[tuple[str, str]],
+    *,
+    strand_voice: bool,
+    desk: Path,
+    episode: int,
+    what: str,
+    changed: list[str],
+    out: Any,
+) -> None:
+    """Stop a line edit that leaves a heard-only character with no lines, unless ``--strand-voice``.
+
+    With the flag the warning is printed and added to the change lines (so the run note keeps it).
+    """
+
+    if not stranded:
+        return
+    if not strand_voice:
+        raise CommandStopped(
+            strand_refusal(stranded, desk=desk, episode=episode, what=what)
+        )
+    warning = strand_override_note(stranded)
+    print(warning, file=out)
+    changed.append(f"  {warning}")
 
 
 def run_edit(
@@ -2262,6 +2314,7 @@ def run_edit(
     expression: str | None = None,
     select_regen: bool = False,
     preview_only: bool = False,
+    strand_voice: bool = False,
     out: Any = None,
 ) -> Path:
     """Edit one beat, frame or line: ``PATCH`` before the script gate, cascade preview + execute after it.
@@ -2297,6 +2350,8 @@ def run_edit(
         After the script gate: also run the cascade's paid items.
     preview_only
         After the script gate: print the cascade and stop.
+    strand_voice
+        Let a speaker change through that leaves a heard-only character with no lines (as :func:`run_line`).
     out
         Text stream.
 
@@ -2343,6 +2398,17 @@ def run_edit(
             if beat is not None
             else (f"frame {frame}" if frame is not None else f"line {line_id}")
         )
+        moved = {
+            str(entry["line_id"]): str(entry["cast_id"])
+            for entry in patch.get("dialogue_lines") or []
+            if entry.get("cast_id")
+        }
+        if moved:
+            _guard_strand(
+                voices_left_without_lines(spine, speakers=moved),
+                strand_voice=strand_voice, desk=desk, episode=episode,
+                what="giving " + ", ".join(moved) + " to another speaker", changed=changed, out=out,
+            )  # fmt: skip
         return patch, changed, what
 
     try:
@@ -3204,6 +3270,262 @@ def run_sound_note(
             f"sound-note: {what}; {len(listed)} sound note(s) on the story",
         )
     return listed
+
+
+INNER_VOICE_NOT_LAID = (
+    "Not heard yet: `finish` does not lay inner-voice cues and does not caption them (backlog). To hear this "
+    "thought in a finished take now, make it dry in {name}'s voice: `fictora-produce voice-line --desk {desk} "
+    '--episode {episode} --cast "{name}" --text "{text}"` (about $0.10 per 1,000 characters), play it to the '
+    "human, then `finish --voice FILE@{at:g}`. That laid line has no caption, and a take changed by hand is "
+    "captioned on speech spans, which may count the thought as a spoken line: watch the captions (fix one "
+    "with --line-start/--line-end)."
+)
+
+
+def run_inner_voice(
+    desk: Path,
+    *,
+    episode: int,
+    cast: str | None = None,
+    text: str | None = None,
+    at: float | None = None,
+    until: float | None = None,
+    remove: str | None = None,
+    clear: bool = False,
+    out: Any = None,
+) -> list[dict[str, Any]]:
+    """Add, remove, clear or list an episode's inner-voice cues (a character's own thoughts). Spends nothing.
+
+    ``PUT /v1/spines/{id}/episodes/{n}/inner-voice`` replaces the episode's whole
+    cue list (:mod:`creation.inner_voice`), so the command reads the story, changes
+    one cue, sends the list back and saves the story on the desk again. A thought
+    goes on the character who thinks it (someone already in the cast) and costs
+    no cast place, unlike ``line --new-voice``. The server's refusal is printed as
+    it said it, with plain words (:func:`creation.inner_voice.refusal_words`).
+
+    Parameters
+    ----------
+    desk
+        Series desk with a story.
+    episode
+        Episode ordinal.
+    cast
+        Who thinks it: a cast name or id (with ``text`` and ``at``).
+    text
+        The thought.
+    at, until
+        Seconds on the episode as filmed (take 1 starts at 0); ``until`` defaults from the word count.
+    remove
+        A cue id, or its number in the listing.
+    clear
+        Remove every cue of the episode.
+    out
+        Text stream.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        The episode's cues after the command.
+
+    Raises
+    ------
+    CommandStopped
+        On a bad flag combination (nothing sent), or when the server refuses the cues.
+    """
+
+    adding = any(value is not None for value in (cast, text, at, until))
+    if sum((adding, remove is not None, clear)) > 1:
+        raise CommandStopped(
+            "pass one of: a thought (--cast, --text, --at), --remove, or --clear"
+        )
+    if adding and (cast is None or text is None or at is None):
+        raise CommandStopped(
+            'a thought needs --cast NAME (who thinks it), --text "..." and --at S (seconds on the episode)'
+        )
+    out = out or sys.stdout
+    desk, state, run = _desk_session(desk)
+    try:
+        spine = run.spine(state.spine_id or "")
+        names = _cast_names(spine)
+        cues = inner_voice.episode_cues(spine, episode=episode)
+        added: dict[str, Any] | None = None
+        what = ""
+        if adding:
+            wanted = str(cast).strip().lower()
+            speaker = next(
+                (
+                    cid
+                    for cid, name in names.items()
+                    if wanted in {cid.lower(), name.lower()}
+                ),
+                None,
+            )
+            if speaker is None:
+                listed = ", ".join(f"{n} ({cid})" for cid, n in names.items()) or "none"
+                raise CommandStopped(
+                    f"no cast member {cast!r} on this story; the cast is: {listed}. A thought goes on the "
+                    "character who thinks it, someone already in the cast"
+                )
+            try:
+                new, added = inner_voice.add_cue(
+                    cues,
+                    episode=episode,
+                    speaker_cast_id=speaker,
+                    text=str(text),
+                    at=float(at or 0),
+                    until=until,
+                )
+            except inner_voice.InnerVoiceError as exc:
+                raise CommandStopped(str(exc)) from None
+            what = f"added {added['cue_id']} ({names.get(speaker, speaker)} thinks: {_short(added['line'])})"
+        elif remove is not None:
+            try:
+                new, gone = inner_voice.remove_cue(cues, str(remove))
+            except inner_voice.InnerVoiceError as exc:
+                raise CommandStopped(str(exc)) from None
+            what = f"removed {gone['cue_id']} ({_short(gone.get('line') or '')})"
+        elif clear:
+            if not cues:
+                raise CommandStopped(
+                    f"episode {episode} has no inner-voice cues to clear"
+                )
+            new = []
+            what = f"cleared {len(cues)} cue(s)"
+        else:
+            print(
+                f"ep{episode:02d} inner voice (a character's own thoughts; --remove takes the number or id):",
+                file=out,
+            )
+            for row in inner_voice.cue_listing(cues, names) or ["  (none)"]:
+                print(row, file=out)
+            return cues
+        approved_before = spine.get("approval_state") == "approved"
+        body = inner_voice.request_body(spine, episode=episode, cues=new)
+        try:
+            run.put(f"/v1/spines/{state.spine_id}/episodes/{episode}/inner-voice", body)
+        except SystemExit as exc:
+            message = (
+                exc.code if isinstance(exc.code, str) else api_error_text(exc.code)
+            )
+            raise CommandStopped(
+                f"{message}\n  {inner_voice.refusal_words(message)}"
+            ) from None
+        fresh = run.spine(state.spine_id or "")
+    finally:
+        run.client.close()
+    save_spine_snapshot(desk, episode, fresh)
+    kept = inner_voice.episode_cues(fresh, episode=episode)
+    fresh_names = _cast_names(fresh)
+    print(f"ep{episode:02d} inner voice: {what}", file=out)
+    for row in inner_voice.cue_listing(kept, fresh_names) or ["  (none)"]:
+        print(row, file=out)
+    if added is not None and not any(c.get("cue_id") == added["cue_id"] for c in kept):
+        print(
+            f"!! the server answered but its story does not list {added['cue_id']}: it may not be saved. "
+            "Run `inner-voice` again to list the cues before going on.",
+            file=out,
+        )
+    _say_inner_voice_approval(
+        desk,
+        before=approved_before,
+        after=fresh.get("approval_state") == "approved",
+        out=out,
+    )
+    if added is not None:
+        _say_new_thought(
+            desk,
+            fresh,
+            episode=episode,
+            added=added,
+            kept=kept,
+            timed=until is not None,
+            out=out,
+        )
+    _note(
+        desk, episode, f"inner-voice: {what}; {len(kept)} cue(s) on episode {episode}"
+    )
+    return kept
+
+
+def _say_inner_voice_approval(
+    desk: Path, *, before: bool, after: bool, out: Any
+) -> None:
+    if before and not after:
+        print(
+            "!! script approval: the server no longer has the script approved. Show the human the lines and "
+            f"thoughts, then `fictora-produce approve --desk {desk} --gate script`.",
+            file=out,
+        )
+    elif after:
+        print(
+            "script approval: unchanged (the server keeps the script approved). Thoughts are not spoken lines: "
+            "the desk's lines and its script yes stand.",
+            file=out,
+        )
+    else:
+        print(
+            "script approval: not given yet; the thoughts are saved beside the lines: show the human both at "
+            "the script gate.",
+            file=out,
+        )
+
+
+def _say_new_thought(
+    desk: Path,
+    spine: Mapping[str, Any],
+    *,
+    episode: int,
+    added: Mapping[str, Any],
+    kept: list[dict[str, Any]],
+    timed: bool,
+    out: Any,
+) -> None:
+    names = _cast_names(spine)
+    who = str(added["speaker_cast_id"])
+    if not timed:
+        print(
+            f"  (no --until: {(added['end_ms'] - added['start_ms']) / 1000:.2f}s from the word count; "
+            "pass --until S to set the end)",
+            file=out,
+        )
+    clash = inner_voice.overlaps(kept, added)
+    if clash:
+        print(
+            f"!! {added['cue_id']} overlaps {', '.join(clash)} in time (warning only).",
+            file=out,
+        )
+    takes = len(episode_by_ordinal(load_series(desk), episode).takes)
+    seconds = load_production_config(desk).clip_duration_seconds * max(1, takes)
+    if added["start_ms"] >= seconds * 1000:
+        print(
+            f"!! --at {added['start_ms'] / 1000:g}s is past the episode's {seconds}s (warning only). "
+            "Times count from the start of take 1.",
+            file=out,
+        )
+    card = next(
+        (
+            c
+            for c in spine.get("cast") or []
+            if isinstance(c, Mapping) and c.get("cast_id") == who
+        ),
+        {},
+    )
+    if card.get("voice_only") is True:
+        print(
+            f"  {names.get(who, who)} is only heard, never seen. That fits a narrator; a character's own "
+            "thoughts go on the character we watch.",
+            file=out,
+        )
+    print(
+        INNER_VOICE_NOT_LAID.format(
+            name=names.get(who, who),
+            desk=desk,
+            episode=episode,
+            text=str(added["line"]).replace('"', '\\"'),
+            at=added["start_ms"] / 1000,
+        ),
+        file=out,
+    )
 
 
 def run_take_facts(
@@ -4774,6 +5096,8 @@ def _run_film(
     seed = seed_attempt_for(desk, episode=episode, take_ids=take_ids)
     unit = f"film-{key}" + (f"-s{seed}" if seed else "")
     spine = run.spine(state.spine_id or "")
+    for warning in stranded_preflight(spine, unit=key, desk=desk, episode=episode):
+        print(warning, file=out)
     body = stages.video_request_body(
         run,
         spine=spine,
@@ -4816,9 +5140,19 @@ def _run_film(
             file=sys.stderr,
         )
     else:
-        job = stages.post_video_generation(
-            run, body, idempotency_key=str(pending["key"]), episode=episode
-        )
+        try:
+            job = stages.post_video_generation(
+                run, body, idempotency_key=str(pending["key"]), episode=episode
+            )
+        except SystemExit as exc:
+            message = (
+                exc.code if isinstance(exc.code, str) else api_error_text(exc.code)
+            )
+            plain = explain_film_refusal(message, spine)
+            if plain is None:
+                raise
+            _note(desk, episode, f"film {what} refused, nothing charged: {plain}")
+            raise CommandStopped(f"{message}\n{plain}") from None
         job_id = admitted_job_id(job)
         if not job_id:
             raise CommandStopped(
@@ -4916,6 +5250,10 @@ def _price_film(
     usd, source, warnings = price_estimate(
         state, cfg, estimate, cast_count=cast_count, takes=len(take_ids)
     )
+    warnings = [
+        *stranded_preflight(spine, unit=key, desk=desk, episode=episode),
+        *warnings,
+    ]
     if (
         warnings
         and take_index is not None
@@ -4980,6 +5318,7 @@ EPISODE_COMMANDS = frozenset(
         "look",
         "look-note",
         "sound-note",
+        "inner-voice",
         "take-facts",
         "spine",
         "redraw-board",
@@ -5257,6 +5596,13 @@ def add_episode_parsers(
         action="store_true",
         help="After the gate: print the cascade and stop.",
     )
+    line.add_argument(
+        STRAND_FLAG,
+        dest="strand_voice",
+        action="store_true",
+        help="Remove (or give away) the last line of someone who is only heard anyway. Without it the kit stops: "
+        "they would stay in the cast with no look, and the server may refuse to film until its fix is live.",
+    )
 
     frame = sub.add_parser(
         "look-frame",
@@ -5312,6 +5658,47 @@ def add_episode_parsers(
         "--row", type=int, default=None, help="A row of that take's board."
     )
     sound.add_argument("--remove", default=None, metavar="ID|N")
+
+    thought = sub.add_parser(
+        "inner-voice",
+        help=(
+            "A character's own thoughts on an episode (inner voice): add one (--cast, --text, --at), --remove one, "
+            "--clear, or list them. On the character who thinks it; no cast place. Spends nothing."
+        ),
+        description=(
+            'Add a thought: --cast NAME --text "..." --at S [--until S] (seconds on the episode as filmed; take 1 '
+            "starts at 0). For someone heard and never seen (an intercom, a phone, a narrator) use `line --add "
+            "--new-voice` instead. `finish` does not lay or caption these cues yet: the command prints the "
+            "voice-line + finish --voice path to hear one now."
+        ),
+    )
+    thought.add_argument("--desk", type=Path, required=True)
+    thought.add_argument("--episode", type=int, required=True)
+    thought.add_argument(
+        "--cast",
+        default=None,
+        help="Who thinks it: someone already in the cast (name or cast id).",
+    )
+    thought.add_argument("--text", default=None, help="The thought, in words.")
+    thought.add_argument(
+        "--at",
+        type=float,
+        default=None,
+        metavar="S",
+        help="Start, seconds on the episode as filmed.",
+    )
+    thought.add_argument(
+        "--until",
+        type=float,
+        default=None,
+        metavar="S",
+        help="End, seconds. Left out: about 0.4 s a word (at least 1.2 s).",
+    )
+    change_thought = thought.add_mutually_exclusive_group()
+    change_thought.add_argument("--remove", default=None, metavar="ID|N")
+    change_thought.add_argument(
+        "--clear", action="store_true", help="Remove every thought on the episode."
+    )
 
     facts = sub.add_parser(
         "take-facts",
@@ -5498,6 +5885,7 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 provider_voice=args.provider_voice,
                 select_regen=args.select_regen,
                 preview_only=args.preview,
+                strand_voice=args.strand_voice,
             )
             return 0
         if args.command == "look-frame":
@@ -5518,6 +5906,18 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 shot=args.shot,
                 row=args.row,
                 remove=args.remove,
+            )
+            return 0
+        if args.command == "inner-voice":
+            run_inner_voice(
+                args.desk,
+                episode=args.episode,
+                cast=args.cast,
+                text=args.text,
+                at=args.at,
+                until=args.until,
+                remove=args.remove,
+                clear=args.clear,
             )
             return 0
         if args.command == "take-facts":
@@ -5609,6 +6009,7 @@ __all__ = [
     "run_look",
     "run_look_frame",
     "run_look_note",
+    "run_inner_voice",
     "run_sound_note",
     "run_take_facts",
     "run_memory",
