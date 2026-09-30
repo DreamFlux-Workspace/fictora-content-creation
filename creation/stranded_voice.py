@@ -1,16 +1,20 @@
 """A voice-only character left with no lines: the guard on line edits and the film preflight.
 
 A character who is only heard (every line off screen, in no frame) has no plate
-and no visual brief (fictora-drama #469). When their last line goes, the deployed
-server counts them as drawn again and refuses the whole film request with
-``422 spine_reuse_invalid: cast.<id>.visual_brief is required``, even for a take
-they are not in (Hana inner voice, 2026-09-30). No command and no API field
-removes a character, so the kit stops a line edit that would strand one before
-anything is sent, and warns before a film when a character is already stranded.
+and no visual brief (fictora-drama #469). When their last line went, a server
+before fictora-drama #517 counted them as drawn again and refused the whole film
+request with ``422 spine_reuse_invalid: cast.<id>.visual_brief is required``, even
+for a take they are not in (Hana inner voice, 2026-09-30). No command and no API
+field removes a character, so the kit stops a line edit that would strand one
+before anything is sent, and says so before a film when one is already stranded.
 
-A server fix (unused characters no longer block filming) is on its way in
-fictora-drama. The kit cannot tell from the deploy whether it is live, so the
-film check warns and the refusal, if it comes, is explained (it charges nothing).
+fictora-drama #517 (deployed) skips such a character when filming and draws no
+plate for them. The film preflight therefore only informs; an older deploy's
+refusal, if it comes, is still explained (it charges nothing).
+
+:func:`unused_cast_ids` and :func:`unlooked_unused_cast_ids` mirror #517's
+rule (``voice_only_cast.py``), so the kit's plate count matches the plates the
+server draws (:func:`creation.desk_media_urls.drawn_cast_rows`).
 """
 
 from __future__ import annotations
@@ -142,6 +146,87 @@ def voices_left_without_lines(
     ]
 
 
+def _reached_cast(spine: Mapping[str, Any]) -> set[str]:
+    """Every cast id the film reaches: a line (on or off screen), a vocalization, an inner-voice cue, a frame."""
+
+    reached = framed_cast(spine)
+    for beat in spine.get("beats") or []:
+        if not isinstance(beat, Mapping):
+            continue
+        reached.update(
+            str(line.get("cast_id"))
+            for line in beat.get("dialogue_lines") or []
+            if isinstance(line, Mapping) and line.get("cast_id")
+        )
+        sound = beat.get("vocalization")
+        if isinstance(sound, Mapping) and sound.get("cast_id"):
+            reached.add(str(sound["cast_id"]))
+    for summary in spine.get("episode_summaries") or []:
+        if not isinstance(summary, Mapping):
+            continue
+        reached.update(
+            str(cue.get("speaker_cast_id"))
+            for cue in summary.get("inner_voice") or []
+            if isinstance(cue, Mapping) and cue.get("speaker_cast_id")
+        )
+    return reached
+
+
+def unused_cast_ids(spine: Mapping[str, Any]) -> frozenset[str]:
+    """Cast the film neither shows nor lets anyone hear, once the spine has frames (fictora-drama #517).
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+
+    Returns
+    -------
+    frozenset[str]
+        Cast ids with no dialogue line, vocalization, inner-voice cue or frame
+        (``cast_refs`` / ``subject_blocking``); empty while the spine has no frames
+        (it has not said who is on screen yet).
+    """
+
+    if not spine.get("frames"):
+        return frozenset()
+    reached = _reached_cast(spine)
+    return frozenset(
+        str(card["cast_id"])
+        for card in spine.get("cast") or []
+        if isinstance(card, Mapping)
+        and card.get("cast_id")
+        and str(card["cast_id"]) not in reached
+    )
+
+
+def unlooked_unused_cast_ids(spine: Mapping[str, Any]) -> frozenset[str]:
+    """The unused cast with no visual brief: the server draws no plate for them and films without them.
+
+    A character with a visual brief who is in no frame yet (written for a later
+    episode) is unused but still drawn, so they still owe a plate.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+
+    Returns
+    -------
+    frozenset[str]
+        Ids from :func:`unused_cast_ids` whose card has no ``visual_brief``.
+    """
+
+    unused = unused_cast_ids(spine)
+    return frozenset(
+        str(card["cast_id"])
+        for card in spine.get("cast") or []
+        if isinstance(card, Mapping)
+        and str(card.get("cast_id")) in unused
+        and _no_look(card)
+    )
+
+
 def strand_refusal(
     stranded: list[tuple[str, str]], *, desk: Any, episode: int, what: str
 ) -> str:
@@ -177,8 +262,8 @@ def strand_refusal(
         "  - if it was a character's own thought, put it on that character with "
         f'`inner-voice --desk {desk} --episode {episode} --cast NAME --text "..." --at S` '
         f"(no cast place); {name} still stays in the cast, so removing their line still needs {STRAND_FLAG}.\n"
-        f"  To do it anyway: add {STRAND_FLAG}. A server fix so unused characters no longer block filming is on "
-        "the way; until it is live, filming may be refused."
+        f"  To do it anyway: add {STRAND_FLAG}. The server skips such a character when filming (fictora-drama "
+        "#517); only an older deploy refuses."
     )
 
 
@@ -187,8 +272,9 @@ def strand_override_note(stranded: list[tuple[str, str]]) -> str:
 
     who = ", ".join(f"{name} ({cast_id})" for cast_id, name in stranded)
     return (
-        f"!! {STRAND_FLAG}: {who} now has no lines and no look. Until the server fix is live, filming may be "
-        "refused (`spine_reuse_invalid … visual_brief is required`); `film` and `step` warn before any spend."
+        f"!! {STRAND_FLAG}: {who} now has no lines and no look. They stay in the cast; the server films without "
+        "them and draws no plate (fictora-drama #517). An older deploy refuses the film "
+        "(`spine_reuse_invalid … visual_brief is required`, nothing charged); `film` and `step` say so first."
     )
 
 
@@ -222,10 +308,12 @@ def stranded_cast(spine: Mapping[str, Any]) -> list[tuple[str, str]]:
 def stranded_preflight(
     spine: Mapping[str, Any], *, unit: str, desk: Any, episode: int
 ) -> list[str]:
-    """The film preflight lines for a stranded character; empty when there is none.
+    """The film preflight's information lines for a stranded character; empty when there is none.
 
-    The kit cannot tell whether the deployed server has the fix, so this warns
-    and never blocks; a refusal that follows charges nothing (:func:`explain_film_refusal`).
+    fictora-drama #517 is deployed: the server films without such a character
+    and draws no plate for them, so this only informs and never blocks. An
+    older deploy's refusal charges nothing and is explained
+    (:func:`explain_film_refusal`).
 
     Parameters
     ----------
@@ -241,25 +329,24 @@ def stranded_preflight(
     Returns
     -------
     list[str]
-        Printable lines in the preflight banner's shape.
+        Printable ``info:`` lines.
     """
 
     found = stranded_cast(spine)
     if not found:
         return []
-    lines = [f"!! PREFLIGHT WARNING — {unit} — this is not blocked, but read it"]
+    lines: list[str] = []
     for cast_id, name in found:
         lines.append(
-            f"!! stranded_voice: {name} ({cast_id}) is in the cast with no lines, no look (no visual brief) and in "
-            "no frame. The deployed server may count them as drawn and refuse the whole film request "
-            f"(`422 spine_reuse_invalid: cast.{cast_id}.visual_brief is required`), even for a take they are not "
-            "in; that refusal charges nothing."
+            f"info: stranded_voice ({unit}): {name} ({cast_id}) is in the cast with no lines, no look (no visual "
+            "brief) and in no frame. The server films without them and draws no plate (fictora-drama #517): "
+            "nothing to do. Only an older deploy refuses the whole film request "
+            f"(`422 spine_reuse_invalid: cast.{cast_id}.visual_brief is required`, nothing charged)."
         )
     name = found[0][1]
     lines.append(
-        f'!! Before filming, give them a line back: `line --desk {desk} --episode {episode} --add --beat N --speaker "{name}" '
-        '--text "..." --off-screen`. No command removes a character; a server fix so unused characters no '
-        "longer block filming is on the way."
+        f'info: to hear them again, give them a line: `line --desk {desk} --episode {episode} --add --beat N --speaker "{name}" '
+        '--text "..." --off-screen`. No command removes a character.'
     )
     return lines
 
@@ -292,8 +379,8 @@ def explain_film_refusal(
         "brief). This happens to a character who was only heard and lost their last line: the server then "
         "counts them as drawn and needs a look for the whole request, even a take they are not in. Fix: give "
         f'{name} a line back (`line --add --beat N --speaker "{name}" --text "..." --off-screen`), then film '
-        "again. A server fix so unused characters no longer block filming is on the way; do not work around it "
-        "with raw HTTP."
+        "again. fictora-drama #517 films without such a character; this refusal means the deploy is older than "
+        "#517: tell engineering. Do not work around it with raw HTTP."
     )
 
 
@@ -307,5 +394,7 @@ __all__ = [
     "strand_refusal",
     "stranded_cast",
     "stranded_preflight",
+    "unlooked_unused_cast_ids",
+    "unused_cast_ids",
     "voices_left_without_lines",
 ]

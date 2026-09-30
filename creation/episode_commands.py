@@ -3272,13 +3272,12 @@ def run_sound_note(
     return listed
 
 
-INNER_VOICE_NOT_LAID = (
-    "Not heard yet: `finish` does not lay inner-voice cues and does not caption them (backlog). To hear this "
-    "thought in a finished take now, make it dry in {name}'s voice: `fictora-produce voice-line --desk {desk} "
-    '--episode {episode} --cast "{name}" --text "{text}"` (about $0.10 per 1,000 characters), play it to the '
-    "human, then `finish --voice FILE@{at:g}`. That laid line has no caption, and a take changed by hand is "
-    "captioned on speech spans, which may count the thought as a spoken line: watch the captions (fix one "
-    "with --line-start/--line-end)."
+INNER_VOICE_IN_FINISH = (
+    "Heard in `finish`: the take its start falls in (take N starts where the raw takes before it end, "
+    "{at:g}s on the episode) makes it dry in {name}'s locked voice on the server (about $0.10 per 1,000 "
+    "characters, once: a re-run reuses the line on the desk), lays it at the cue and captions it in Georgia "
+    "italic: `fictora-produce finish --desk {desk} --episode {episode} --take tK`. {name} needs a locked voice "
+    "(`voice --audition`, then `--pick N`); without one, finish names the cue and the take is NOT DONE."
 )
 
 
@@ -3517,11 +3516,10 @@ def _say_new_thought(
             file=out,
         )
     print(
-        INNER_VOICE_NOT_LAID.format(
+        INNER_VOICE_IN_FINISH.format(
             name=names.get(who, who),
             desk=desk,
             episode=episode,
-            text=str(added["line"]).replace('"', '\\"'),
             at=added["start_ms"] / 1000,
         ),
         file=out,
@@ -5668,8 +5666,8 @@ def add_episode_parsers(
         description=(
             'Add a thought: --cast NAME --text "..." --at S [--until S] (seconds on the episode as filmed; take 1 '
             "starts at 0). For someone heard and never seen (an intercom, a phone, a narrator) use `line --add "
-            "--new-voice` instead. `finish` does not lay or caption these cues yet: the command prints the "
-            "voice-line + finish --voice path to hear one now."
+            "--new-voice` instead. `finish` makes each cue dry in the thinker's locked voice on the take it falls "
+            "in, lays it and captions it in Georgia italic."
         ),
     )
     thought.add_argument("--desk", type=Path, required=True)

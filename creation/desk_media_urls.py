@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from creation.stranded_voice import unlooked_unused_cast_ids
+
 
 def _latest_terminal_path(api_dir: Path, glob_pattern: str) -> Path | None:
     """Return the newest matching terminal JSON under ``api_dir``."""
@@ -28,11 +30,20 @@ def _terminal_output(api_dir: Path, glob_pattern: str) -> dict[str, Any] | None:
 def drawn_cast_rows(spine: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the cast rows that get an identity plate, in spine order.
 
-    The drama server marks a character it only ever hears (an intercom, a
-    phone caller, a narrator: every line off screen, in no frame) with
-    ``voice_only: true`` on the cast card and draws no plate for them
-    (fictora-drama #453). The kit reads that flag and never re-derives the
-    rule. A row without the flag (an older server) counts as drawn.
+    Mirrors the server's ``drawn_cast`` (fictora-drama #517): every cast row
+    except
+
+    - a character it only ever hears (an intercom, a phone caller, a narrator:
+      every line off screen, in no frame), flagged ``voice_only: true`` on the
+      card (fictora-drama #453 / #469); the kit reads that flag and never
+      re-derives it, so a row without it (an older server) counts as drawn;
+    - an unused character with no visual brief (no line, vocalization,
+      inner-voice cue or frame, on a spine that has frames:
+      :func:`creation.stranded_voice.unlooked_unused_cast_ids`), such as a voice
+      whose only line was removed. The server keeps the card but draws no plate.
+
+    An unused character who has a visual brief (written for a later episode) is
+    still drawn and still counted.
 
     Parameters
     ----------
@@ -42,15 +53,17 @@ def drawn_cast_rows(spine: dict[str, Any]) -> list[dict[str, Any]]:
     Returns
     -------
     list[dict[str, Any]]
-        Cast rows with a ``cast_id`` whose ``voice_only`` is not true.
+        Cast rows with a ``cast_id`` the server draws a plate for.
     """
 
+    skipped = unlooked_unused_cast_ids(spine)
     return [
         row
         for row in (spine.get("cast") or [])
         if isinstance(row, dict)
         and row.get("cast_id")
         and row.get("voice_only") is not True
+        and str(row["cast_id"]) not in skipped
     ]
 
 
