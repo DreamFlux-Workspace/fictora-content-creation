@@ -951,6 +951,105 @@ def off_screen_speaker_lines(
     return out
 
 
+#: Body postures a pose names plainly. A pose that names exactly one of them has that posture.
+_POSTURES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "standing",
+        re.compile(r"\b(?:stand(?:s|ing)?|upright|on (?:his|her|their) feet)\b", re.I),
+    ),
+    (
+        "kneeling",
+        re.compile(r"\b(?:kneel(?:s|ing)?|knelt|on (?:his|her|their) knees)\b", re.I),
+    ),
+    ("sitting", re.compile(r"\b(?:sit(?:s|ting)?|seated|sat)\b", re.I)),
+    (
+        "lying",
+        re.compile(
+            r"\b(?:lying|lies|face[- ]down|face[- ]up|prone|supine|sprawled)\b", re.I
+        ),
+    ),
+    (
+        "crouching",
+        re.compile(r"\b(?:crouch(?:es|ing|ed)?|squat(?:s|ting)?|hunkered)\b", re.I),
+    ),
+)
+
+
+def pose_posture(pose: str) -> str | None:
+    """The one body posture a pose names (``standing``, ``kneeling`` ...), or ``None``.
+
+    ``None`` when the pose names no posture or more than one (``rises from kneeling
+    to standing``): only a plain posture counts, so a pose change is never guessed.
+    """
+
+    found = {name for name, pattern in _POSTURES if pattern.search(pose)}
+    return found.pop() if len(found) == 1 else None
+
+
+def _postures(frame: Mapping[str, Any]) -> dict[str, tuple[str, str]]:
+    """``cast_id -> (posture, pose)`` for each drawn cast member whose pose names one posture."""
+
+    drawn, _ = frame_cast(frame)
+    raw = frame.get("visual_brief")
+    brief: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
+    out: dict[str, tuple[str, str]] = {}
+    for blocking in brief.get("subject_blocking") or []:
+        if not isinstance(blocking, Mapping):
+            continue
+        cast_id = str(blocking.get("cast_id") or "")
+        pose = str(blocking.get("pose") or "")
+        posture = pose_posture(pose)
+        if cast_id in drawn and posture:
+            out[cast_id] = (posture, pose)
+    return out
+
+
+def pose_change_at_cut_lines(
+    frames: Sequence[Mapping[str, Any]], *, cast_names: Mapping[str, str]
+) -> list[str]:
+    """Warn when one character is drawn in the cells either side of a cut in plainly different postures.
+
+    Turbo films from the board picture alone: the same person drawn in two
+    panels (kneeling at the end of row 3, standing at the start of row 4) can
+    come out as two people in one shot. The cells either side of a cut are the
+    last cell of one row and the first cell of the next. Only postures a pose
+    names in plain words are compared (:func:`pose_posture`); anything else is
+    not guessed at.
+
+    Parameters
+    ----------
+    frames
+        One board's frames, in board order.
+    cast_names
+        ``cast_id`` to display name.
+
+    Returns
+    -------
+    list[str]
+        One ``!!`` line per character and cut; empty when nothing reads that way.
+    """
+
+    by_row: dict[int, list[Mapping[str, Any]]] = {}
+    for frame in frames:
+        by_row.setdefault(_row_number(frame), []).append(frame)
+    rows = sorted(by_row)
+    out: list[str] = []
+    for above, below in zip(rows, rows[1:], strict=False):
+        last, first = by_row[above][-1], by_row[below][0]
+        before, after = _postures(last), _postures(first)
+        for cast_id in sorted(set(before) & set(after)):
+            (was, _), (now, _) = before[cast_id], after[cast_id]
+            if was == now:
+                continue
+            who = cast_names.get(cast_id, cast_id)
+            out.append(
+                f"  !! rows {above} and {below}: {who} is {was} in row {above} cell {len(by_row[above])} and {now} "
+                f"in row {below} cell 1, right at the cut. Turbo sees the whole board and can draw {who} twice in "
+                f"one shot: count the people at that cut in the take (warning only)."
+            )
+    return out
+
+
 def _clip(text: str, size: int = 60) -> str:
     return text if len(text) <= size else text[: size - 1] + "…"
 
@@ -1021,6 +1120,7 @@ def shot_list_lines(
                     f"  !! rows {above.row} and {below.row} share size and angle "
                     f"({above.shot_scale}, {above.camera_angle}): the cut will not read as a new shot"
                 )
+        lines += pose_change_at_cut_lines(frames, cast_names=cast_names)
         lines += off_screen_speaker_lines(
             spine, frames, take_beats, cast_names=cast_names
         )
@@ -1045,6 +1145,8 @@ __all__ = [
     "frames_digest",
     "heard_not_seen",
     "off_screen_speaker_lines",
+    "pose_change_at_cut_lines",
+    "pose_posture",
     "row_speech_lines",
     "safe_zone_lines",
     "script_lines",

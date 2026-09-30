@@ -353,13 +353,162 @@ def sfx_plan_changes(
     return added + moved + gone
 
 
+# --- Who is on screen per shot (``shots[].people``, optional) ------------------------------------------------
+
+#: What to name as the re-film cause when a take draws one person twice.
+TWICE_CAUSE = "same person rendered twice at shot {shot}"
+
+
+def cast_names_from(spine: Mapping[str, Any] | None) -> dict[str, str]:
+    """``cast_id`` to display name from a spine's cast (empty without one).
+
+    Parameters
+    ----------
+    spine
+        ``GET /v1/spines/{id}`` JSON (or ``None``).
+
+    Returns
+    -------
+    dict[str, str]
+        Display name per cast id.
+    """
+
+    if not spine:
+        return {}
+    return {
+        str(card.get("cast_id")): str(card.get("name") or card.get("cast_id"))
+        for card in spine.get("cast") or []
+        if isinstance(card, Mapping) and card.get("cast_id")
+    }
+
+
+def _count(raw: Any) -> int | None:
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        return None
+    return raw
+
+
+def shot_people(shot: Mapping[str, Any]) -> dict[str, Any] | None:
+    """A shot's ``people`` (``{count, named, unnamed}``) when the server sent a usable one, else ``None``.
+
+    Parameters
+    ----------
+    shot
+        One entry of the take facts' ``shots``.
+
+    Returns
+    -------
+    dict[str, Any] | None
+        ``{"count": int, "named": [cast_id, ...], "unnamed": int}``; ``None``
+        when the field is missing (an older server) or has no count.
+    """
+
+    raw = shot.get("people")
+    if not isinstance(raw, Mapping):
+        return None
+    count = _count(raw.get("count"))
+    if count is None:
+        return None
+    named = [str(cast_id) for cast_id in raw.get("named") or [] if cast_id]
+    unnamed = _count(raw.get("unnamed"))
+    return {
+        "count": count,
+        "named": named,
+        "unnamed": unnamed if unnamed is not None else max(count - len(named), 0),
+    }
+
+
+def people_text(people: Mapping[str, Any], cast_names: Mapping[str, str]) -> str:
+    """``On screen: 2 people (D-9341, + 1 unnamed)`` for one shot's ``people``.
+
+    Parameters
+    ----------
+    people
+        :func:`shot_people` result.
+    cast_names
+        ``cast_id`` to display name (an unknown id prints as itself).
+
+    Returns
+    -------
+    str
+        The line, without the shot label.
+    """
+
+    count = int(people["count"])
+    who = [cast_names.get(cast_id, cast_id) for cast_id in people["named"]]
+    unnamed = int(people["unnamed"])
+    if unnamed:
+        who.append(f"+ {unnamed} unnamed")
+    noun = "person" if count == 1 else "people"
+    return f"On screen: {count} {noun}" + (f" ({', '.join(who)})" if who else "")
+
+
+def _shots(facts: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:
+    if not facts:
+        return []
+    body = facts.get("take_facts", facts)
+    shots = [shot for shot in body.get("shots") or [] if isinstance(shot, Mapping)]
+    return sorted(shots, key=lambda shot: float(shot.get("start_seconds") or 0.0))
+
+
+def shot_label(shot: Mapping[str, Any], position: int) -> str:
+    """``shot 3 (7.70-10.20s)``: a take-facts shot as the kit prints it."""
+
+    index = shot.get("shot_index") or position
+    start, end = shot.get("start_seconds"), shot.get("end_seconds")
+    if start is None or end is None:
+        return f"shot {index}"
+    return f"shot {index} ({float(start):.2f}-{float(end):.2f}s)"
+
+
+def has_people(facts: Mapping[str, Any] | None) -> bool:
+    """Whether any shot in the facts carries a head count (``people``)."""
+
+    return any(shot_people(shot) is not None for shot in _shots(facts))
+
+
+def shot_people_lines(
+    facts: Mapping[str, Any] | None, cast_names: Mapping[str, str]
+) -> list[str]:
+    """One ``shot N (a-bs): On screen: …`` line per shot that has a head count; empty when none has.
+
+    Parameters
+    ----------
+    facts
+        A saved facts file (``{"take_facts": {...}}`` or the facts alone), or ``None``.
+    cast_names
+        ``cast_id`` to display name (:func:`cast_names_from`).
+
+    Returns
+    -------
+    list[str]
+        Nothing when the server sent no ``people`` (older servers): the kit says nothing then.
+    """
+
+    lines: list[str] = []
+    for position, shot in enumerate(_shots(facts), start=1):
+        people = shot_people(shot)
+        if people is not None:
+            lines.append(
+                f"{shot_label(shot, position)}: {people_text(people, cast_names)}"
+            )
+    return lines
+
+
 __all__ = [
     "SOUND_NOTES_KEY",
+    "TWICE_CAUSE",
     "carried_notes",
+    "cast_names_from",
+    "has_people",
+    "people_text",
     "level_notes",
     "save_take_facts",
     "sfx_plan_changes",
     "sfx_plan_lines",
+    "shot_label",
+    "shot_people",
+    "shot_people_lines",
     "stale_facts_reason",
     "stamp_facts",
     "take_add_notes",

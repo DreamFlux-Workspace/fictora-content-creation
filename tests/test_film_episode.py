@@ -481,3 +481,42 @@ def test_a_japanese_show_films_with_its_spoken_language_and_locale_from_the_spin
         "the take's coordinator must know the show is Japanese"
     )
     assert body["locale"] == "en-US", "subtitles stay English"
+
+
+def test_a_filmed_take_says_who_is_on_screen_per_shot_when_the_facts_carry_it(
+    desk30: Path, api30: FakeApi
+) -> None:
+    _filmed_once(desk30)
+    api30.routes[("POST", ESTIMATE)] = {
+        "cost_estimate": {"total_usd": "1.20", "takes": 1}
+    }
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
+    _take_two_of_episode_two(api30)
+    facts = api30.routes[("GET", "/v1/jobs/job_take_e2t2/take-facts")]["take_facts"]
+    facts["shots"] = [
+        {"shot_index": 1, "start_seconds": 0.0, "end_seconds": 5.0,
+         "people": {"count": 2, "named": ["cast_hana", "cast_ren"], "unnamed": 0}},
+        {"shot_index": 2, "start_seconds": 5.0, "end_seconds": 15.0,
+         "people": {"count": 1, "named": ["cast_ren"], "unnamed": 0}},
+    ]  # fmt: skip
+
+    text = run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+
+    assert "t2 on screen, per shot (take facts):" in text
+    assert "shot 1 (0.00-5.00s): On screen: 2 people (Hana, Ren)" in text
+    assert "shot 2 (5.00-15.00s): On screen: 1 person (Ren)" in text
+
+
+def test_a_filmed_take_from_an_older_server_says_nothing_about_who_is_on_screen(
+    desk30: Path, api30: FakeApi
+) -> None:
+    _filmed_once(desk30)
+    api30.routes[("POST", ESTIMATE)] = {
+        "cost_estimate": {"total_usd": "1.20", "takes": 1}
+    }
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
+    _take_two_of_episode_two(api30)
+
+    text = run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+
+    assert "Filmed ep02 t2" in text and "On screen" not in text
