@@ -44,6 +44,39 @@ REGENERATE_PATH_SUFFIX = "/episodes/{ordinal}/boards/{set_index}/regenerate"
 DIRECTOR_STAGE = "storyboard"
 #: The director tool that re-stages beats.
 PATCH_TOOL = "patch_story"
+#: The longest ``redraw-board --note`` the server takes (``MAX_BOARD_REDRAW_NOTE_LENGTH``
+#: on ``DramaBoardRegenerationRequest.note``; counted after whitespace collapses).
+BOARD_NOTE_MAX = 500
+#: The longest ``redraw-plate --note`` (``DramaCastNoteAddRequest.text``, ``MAX_CREATOR_NOTE_TEXT_LENGTH``).
+CAST_NOTE_MAX = 2000
+
+
+def check_note_length(note: str, *, limit: int, command: str) -> None:
+    """Stop before anything is sent when a note is longer than the server takes (it would answer HTTP 422).
+
+    The server collapses whitespace before it counts, so the count here does too.
+
+    Parameters
+    ----------
+    note
+        The note as typed.
+    limit
+        The server's limit in characters.
+    command
+        The command, for the message (``redraw-board``).
+
+    Raises
+    ------
+    ValueError
+        The note is longer than ``limit``; nothing was sent or booked.
+    """
+
+    count = len(" ".join(note.split()))
+    if count > limit:
+        raise ValueError(
+            f"{command} --note is {count} characters; the server takes at most {limit}. "
+            f"Nothing was sent or booked. Cut it by {count - limit} characters and run it again."
+        )
 
 
 def regenerate_takes_note(openapi: Any) -> bool:

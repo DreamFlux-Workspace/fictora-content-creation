@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from pathlib import Path
@@ -258,7 +259,17 @@ class DramaApiRunSession:
             label=label,
             deadline_seconds=deadline_seconds,
             interval_seconds=self.poll_interval_seconds,
+            job_id=job_id,
+            desk=self.desk_hint(),
         )
+
+    def desk_hint(self) -> str | None:
+        """The desk this run writes under (``<desk>/epNN/api``), for commands the kit prints; else ``None``."""
+
+        out = self.out
+        if out.name == "api" and re.fullmatch(r"ep\d+", out.parent.name):
+            return str(out.parent.parent)
+        return None
 
     def spine(self, spine_id: str) -> dict[str, Any]:
         """Fetch the latest story spine snapshot."""

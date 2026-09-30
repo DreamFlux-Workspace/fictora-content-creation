@@ -2,17 +2,102 @@
 
 from __future__ import annotations
 
+import time
 import uuid
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from creation.harness.credentials import load_drama_api_credentials
 from creation.harness.session import DramaApiRunSession
 from creation.production_state import load_production
 
 
-def cancel_video_job(desk: Path, job_id: str) -> dict:
-    """POST cancel for one coordinator or video job id.
+#: How long ``cancel-job`` waits before reading a job again when the cancel did not stop it at once.
+CANCEL_RECHECK_SECONDS = 15.0
+
+_STOPPED = frozenset({"completed", "failed", "cancelled"})
+
+
+def _job_status(payload: Any) -> str | None:
+    if not isinstance(payload, Mapping):
+        return None
+    job = payload.get("job")
+    holder = job if isinstance(job, Mapping) else payload
+    status = holder.get("status")
+    return str(status) if status is not None else None
+
+
+def cancel_and_check(
+    run: Any,
+    job_id: str,
+    *,
+    wait_seconds: float = CANCEL_RECHECK_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[dict[str, Any], list[str]]:
+    """POST cancel for one job and say plainly whether it has stopped.
+
+    When the answer says ``terminal: false`` the cancel was only requested: the
+    operator is told so (server sub-steps may keep running; a server fix is in
+    progress), and the job is read once more after ``wait_seconds``. Nothing is
+    retried or re-enrolled.
+
+    Parameters
+    ----------
+    run
+        Session with ``post`` and ``get_optional``.
+    job_id
+        The job to cancel.
+    wait_seconds
+        The wait before the one follow-up read.
+    sleep
+        Sleep function (a fake in tests).
+
+    Returns
+    -------
+    tuple[dict[str, Any], list[str]]
+        The cancel response, and the lines to show the operator.
+    """
+
+    payload = run.post(
+        f"/v1/jobs/{job_id}/cancel",
+        {},
+        idempotency_key=f"{run.prefix}-cancel-{job_id}",
+    )
+    after = [
+        "Do not enrol another take.",
+        "A new take starts another ffmpeg job on Railway.",
+    ]
+    if payload.get("terminal") is not False:
+        status = _job_status(payload)
+        head = f"Cancelled (job status: {status})." if status else "Cancelled."
+        return payload, [head, *after]
+    status = _job_status(payload) or "unknown"
+    lines = [
+        f"Cancel requested, but job {job_id} has not stopped yet (status: {status}).",
+        "Steps already started on the server may keep running for a while (a server fix is in progress).",
+        f"Reading the job again in {wait_seconds:.0f}s ...",
+    ]
+    sleep(wait_seconds)
+    code, body = run.get_optional(f"/v1/jobs/{job_id}")
+    now = _job_status(body) if 200 <= code < 300 else None
+    if now is None:
+        lines.append(
+            f"Could not read the job (HTTP {code}). Check it with `fictora-produce status`."
+        )
+    elif now in _STOPPED:
+        lines.append(f"The job has stopped (status: {now}).")
+    else:
+        lines.append(
+            f"The job is still {now}. Check again with `fictora-produce status`; the cancel stands, "
+            "do not send it again or enrol another take while it runs."
+        )
+    return payload, [*lines, *after]
+
+
+def cancel_video_job(desk: Path, job_id: str) -> tuple[dict[str, Any], list[str]]:
+    """POST cancel for one coordinator or video job id (see :func:`cancel_and_check`).
 
     Parameters
     ----------
@@ -23,8 +108,8 @@ def cancel_video_job(desk: Path, job_id: str) -> dict:
 
     Returns
     -------
-    dict
-        Cancel response JSON.
+    tuple[dict[str, Any], list[str]]
+        Cancel response JSON, and the lines to show the operator.
     """
 
     state = load_production(desk)
@@ -36,11 +121,7 @@ def cancel_video_job(desk: Path, job_id: str) -> dict:
         session_id=state.session_id,
     )
     try:
-        return run.post(
-            f"/v1/jobs/{job_id}/cancel",
-            {},
-            idempotency_key=f"{run.prefix}-cancel-{job_id}",
-        )
+        return cancel_and_check(run, job_id)
     finally:
         run.client.close()
 
