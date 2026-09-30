@@ -1265,6 +1265,7 @@ def caption_take(
     timing_source: Path | None = None,
     stem: str | None = None,
     words_on_english: bool = False,
+    fixed_lines: Sequence[tuple[CaptionLine, Span]] = (),
 ) -> CaptionResult:
     """Caption the newest raw take on a desk episode.
 
@@ -1296,6 +1297,13 @@ def caption_take(
         Time an English show's lines on ``words_json`` too (word flicker inside
         each matched line). ``finish`` sets it for a revoiced or voice-fx take,
         whose treated speech moves speech spans off the lines.
+    fixed_lines
+        Lines placed where they were laid, not found on the take: ``finish``'s
+        inner-voice lines (a character's thoughts), each with the span its dry
+        line plays. They follow the script lines in the result, are drawn like
+        them (flicker, or whole lines on a show not spoken in English; heard, not
+        seen, so Georgia italic when ``italic``) and are left uncaptioned with
+        ``NOT ENGLISH`` when not English. Their method is ``laid``.
 
     Returns
     -------
@@ -1325,7 +1333,8 @@ def caption_take(
             whole_lines = captions_whole_lines(spine)
             break
     lines = [line.text for line in caption_lines]
-    if not lines:
+    fixed = sorted(fixed_lines, key=lambda item: item[1].start)
+    if not lines and not fixed:
         raise ValueError(
             f"episode {episode_ordinal} has no dialogue lines in any spine snapshot in {api}"
         )
@@ -1341,13 +1350,19 @@ def caption_take(
         if words_json is not None and (whole_lines or words_on_english)
         else None
     )
-    timing = time_lines(
-        caption_lines,
-        duration=duration,
-        line_starts=line_starts,
-        line_ends=line_ends,
-        words=words,
-        spans=lambda: speech_spans(detect_silences(ffmpeg, source, duration), duration),
+    timing = (
+        time_lines(
+            caption_lines,
+            duration=duration,
+            line_starts=line_starts,
+            line_ends=line_ends,
+            words=words,
+            spans=lambda: speech_spans(
+                detect_silences(ffmpeg, source, duration), duration
+            ),
+        )
+        if caption_lines
+        else LineTiming((), (), (), ())
     )
     anchors = list(timing.anchors)
 
@@ -1363,7 +1378,24 @@ def caption_take(
         holds=timing.holds,
         fixed_ends=timing.fixed_ends,
     )
-    cues = [cue for group in per_line for cue in group]
+    methods = tuple(timing.methods)
+    if fixed:
+        # Laid lines (inner voice) sit where their dry line plays; they bound each other's hold, not the script's.
+        per_line += build_line_cues(
+            [line.text for line, _ in fixed],
+            [span for _, span in fixed],
+            whole_lines=whole_lines,
+            italic=[line.italic for line, _ in fixed],
+            skip=[not line.english for line, _ in fixed],
+        )
+        caption_lines = [*caption_lines, *(line for line, _ in fixed)]
+        lines = [line.text for line in caption_lines]
+        anchors += [span for _, span in fixed]
+        italic = tuple(line.italic for line in caption_lines)
+        methods += tuple("laid" for _ in fixed)
+    cues = sorted(
+        (cue for group in per_line for cue in group), key=lambda cue: cue.start
+    )
     not_english = tuple(
         not_english_warning(line) for line in caption_lines if not line.english
     )
@@ -1383,7 +1415,7 @@ def caption_take(
         italic,
         not_english,
         font_warning,
-        timing.methods,
+        methods,
         tuple(
             Span(group[0].start, group[-1].end) if group else None for group in per_line
         ),

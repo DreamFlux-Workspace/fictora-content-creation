@@ -254,14 +254,19 @@ def test_film_pricing_names_the_stranded_character_before_any_spend(
     text = run_film(desk, episode=1, out=io.StringIO())
 
     assert api.posted(VIDEO) == []
-    assert "!! PREFLIGHT WARNING — ep01 — this is not blocked, but read it" in text
+    assert "PREFLIGHT WARNING" not in text, (
+        "fictora-drama #517 films without them: information only"
+    )
     assert (
-        f"!! stranded_voice: Hana (inner voice) ({VOICE}) is in the cast with no lines"
+        f"info: stranded_voice (ep01): Hana (inner voice) ({VOICE}) is in the cast with no lines"
         in text
     )
+    assert (
+        "The server films without them and draws no plate (fictora-drama #517)" in text
+    )
+    assert "Only an older deploy refuses" in text
     assert f"cast.{VOICE}.visual_brief is required" in text
-    assert "give them a line back" in text
-    assert text.index("PREFLIGHT") < text.index("Film episode 1 alone")
+    assert text.index("stranded_voice") < text.index("Film episode 1 alone")
 
 
 def test_film_pricing_says_nothing_when_nobody_is_stranded(
@@ -292,9 +297,10 @@ def test_the_servers_refusal_is_explained_and_nothing_is_charged(
     assert "spine_reuse_invalid" in message
     assert "nothing was filmed or charged" in message
     assert "Hana (inner voice)" in message and "a line back" in message
+    assert "older than #517" in message
     assert episode_by_ordinal(load_series(desk), 1).spend_usd == spend_before
     assert load_production(desk).pending["film-ep01"]["job_id"] is None
-    assert "!! stranded_voice" in out.getvalue()  # warned again before sending
+    assert "info: stranded_voice" in out.getvalue()  # said again before sending
 
 
 def test_step_estimate_warns_before_the_spend_yes(desk: Path, api: FakeApi) -> None:
@@ -305,8 +311,8 @@ def test_step_estimate_warns_before_the_spend_yes(desk: Path, api: FakeApi) -> N
     result = orchestrate.run_step(desk)
 
     first = result.message.split("\n")[0]
-    assert first == "!! PREFLIGHT WARNING — ep01 — this is not blocked, but read it"
-    assert "!! stranded_voice: Hana (inner voice)" in result.message
+    assert first.startswith("info: stranded_voice (ep01): Hana (inner voice)")
+    assert "PREFLIGHT WARNING" not in result.message
 
 
 def test_step_film_refusal_is_explained(desk: Path, api: FakeApi) -> None:
@@ -383,9 +389,10 @@ def test_a_thought_goes_on_the_character_with_the_whole_list_and_no_cast_place(
     text = out.getvalue()
     assert "Hana (thinks): Don't look at him." in text
     assert "script approval: unchanged" in text
-    assert "`finish` does not lay inner-voice cues and does not caption them" in text
-    assert '--cast "Hana" --text "Don\'t look at him."' in text
-    assert "finish --voice FILE@3.2" in text
+    assert "Heard in `finish`" in text and "3.2s on the episode" in text
+    assert "lays it at the cue and captions it in Georgia italic" in text
+    assert "--episode 1 --take tK" in text
+    assert "does not lay" not in text
     assert "no --until: 1.60s from the word count" in text
     notes = (desk / "ep01" / "run-notes.md").read_text(encoding="utf-8")
     assert "inner-voice: added iv_ep01_02" in notes

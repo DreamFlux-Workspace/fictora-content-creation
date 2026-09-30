@@ -83,6 +83,7 @@ def write_finish_record(
     duck_db: float | None,
     edits: Sequence[Mapping[str, Any]] = (),
     hand_voices: Sequence[Mapping[str, Any]] = (),
+    inner_voice: Sequence[Mapping[str, Any]] = (),
 ) -> Path:
     """Write ``takes/take-epNN-tK-finish-vN.json`` (a new version; never overwrites).
 
@@ -106,6 +107,9 @@ def write_finish_record(
         Edits made after ``finish`` that the three files carry, oldest first.
     hand_voices
         The ``--voice`` lines laid in (``{file, start, seconds, line}``).
+    inner_voice
+        The inner-voice cues laid on this take (``{cue_id, file, start, seconds,
+        episode_start, speaker_cast_id, line}``; ``start`` on the take).
 
     Returns
     -------
@@ -128,6 +132,7 @@ def write_finish_record(
         "duck_db": duck_db,
         "edits": [dict(edit) for edit in edits],
         "hand_voices": [dict(voice) for voice in hand_voices],
+        "inner_voice": [dict(cue) for cue in inner_voice],
     }
     path.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
     return path

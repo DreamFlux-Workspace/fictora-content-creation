@@ -76,6 +76,29 @@ the take as filmed (deboard keeps the timeline, so nothing is shifted):
 Every hand file is checked before any step runs (missing, silent, outside the
 take: an error, nothing written). A requested hand step that then fails makes
 the take ``NOT DONE`` like missing music.
+
+Inner voice (a character's own thoughts, ``episode_summaries[].inner_voice`` on
+the saved spine, saved with ``inner-voice``) runs as the ``inner-voice`` step
+right after the hand voice step, on every take that has a cue:
+
+- **Which take.** Cue times count from the start of the episode as filmed. Take
+  ``tN`` starts at the sum of the raw lengths of ``t1`` .. ``tN-1`` (ffprobe on
+  each newest raw take); a cue belongs to the take its start falls in
+  (:func:`creation.inner_voice.take_cues`). One that runs past the seam stays on
+  the take where it starts and is flagged ``!!``.
+- **The dry line** is made on the server in the thinker's locked voice
+  (``voice-lines``, the route ``voice-line`` uses; same key, same ledger unit).
+  A line already on the desk for the same words and voice is reused: a re-run
+  never pays twice.
+- **Laid** like ``--voice``: into the take's own audio at the cue's start,
+  levelled to -18 LUFS, so the bed ducks under it; the SFX and hand cues duck
+  under it like speech. Script captions stay timed on the take without it.
+- **Captioned** in Georgia italic (heard, not seen) where it plays.
+
+A cue that cannot go on (no locked voice, a refusal from the route, a line that
+runs past the take, an earlier take not on the desk, a start after the last
+filmed take) is named: the rest of the take still finishes and it is ``NOT
+DONE``.
 """
 
 from __future__ import annotations
@@ -83,18 +106,19 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, TextIO
 
 import httpx
 
-from creation.captions import caption_take, captions_whole_lines
+from creation import inner_voice as thoughts
+from creation.captions import CaptionLine, Span, caption_take, captions_whole_lines
 from creation.harness.raw_video import fetch_take_facts
 from creation.ops.floor import record_spend
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
-from creation.post.audio_service import DramaApiAudio
+from creation.post.audio_service import AudioService, AudioServiceError, DramaApiAudio
 from creation.post.bed import DEFAULT_BED_DB, Maker, resolve_bed, service_music_maker
 from creation.post.colour import colour_match
 from creation.post.deboard import deboard as deboard_take
@@ -130,6 +154,9 @@ from creation.post.sfx import (
 )
 from creation.post.thumbnail import THUMBNAIL_USD, attach_episode_thumbnail_to_finish
 from creation.post.watermark import watermark
+
+#: The finish step that lays and captions the episode's inner-voice cues on this take.
+INNER_VOICE_STEP = "inner-voice"
 
 #: ``finish`` exit code: files were written but music, SFX or the mix did not go on.
 FINISH_INCOMPLETE = 5
@@ -194,7 +221,12 @@ class FinishResult:
             missing.append("SFX")
         if not self._ran("mix"):
             missing.append("mix")
-        missing += [name for name in self.hand_steps if not self._ran(name)]
+        missing += [
+            name
+            for name in self.hand_steps
+            if not self._ran(name)
+            or (name == INNER_VOICE_STEP and self.inner_voice_not_laid)
+        ]
         return tuple(missing)
 
     @property
@@ -211,6 +243,17 @@ class FinishResult:
             cue for step in self.steps if step.step == "sfx" for cue in step.not_laid
         )
 
+    @property
+    def inner_voice_not_laid(self) -> tuple[str, ...]:
+        """Inner-voice cues of this take that are not on it, each ``cue_id ... (why)``."""
+
+        return tuple(
+            cue
+            for step in self.steps
+            if step.step == INNER_VOICE_STEP
+            for cue in step.not_laid
+        )
+
     def sound_line(self) -> str:
         """``Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`` (✗ for what did not go on)."""
 
@@ -223,7 +266,9 @@ class FinishResult:
             marks[1] += f" (!! {len(self.cues_not_laid)} planned cue(s) not laid)"
         marks.append(f"captions {'✓' if self._ran('captions') else '✗'}")
         marks += [
-            f"hand {name} {'✗' if name in missing else '✓'}" for name in self.hand_steps
+            f"{'inner voice' if name == INNER_VOICE_STEP else f'hand {name}'} "
+            f"{'✗' if name in missing else '✓'}"
+            for name in self.hand_steps
         ]
         return "Sound: " + " · ".join(marks)
 
@@ -247,6 +292,7 @@ class FinishResult:
             "complete": self.complete,
             "missing": list(self.sound_missing),
             "cues_not_laid": list(self.cues_not_laid),
+            "inner_voice_not_laid": list(self.inner_voice_not_laid),
             "steps": [
                 {"step": s.step, "status": s.status, "detail": s.detail,
                  "output": str(s.output) if s.output else None}
@@ -259,7 +305,9 @@ INCOMPLETE_FIX = (
     "Music: pin a bed (`fictora-produce set-bed --desk D --path <file>`, or let finish make one on the server). "
     "SFX: finish needs the take's facts (GET /v1/jobs/{take_job}/take-facts; it fetches them when "
     "api/17_raw_scene_clips.json names the take job) and the server's audio endpoints. "
-    "Mix, or a hand voice / cues step you asked for: read that step's error above."
+    "Mix, or a hand voice / cues step you asked for: read that step's error above. "
+    "Inner voice: read the cue the inner-voice step names (a voice to lock with `voice --audition` / "
+    "`--pick`, a refusal to tell engineering about, or a cue to move with `inner-voice`)."
 )
 
 
@@ -397,6 +445,59 @@ def api_facts_fetcher(desk: Path, episode: int, take_id: str) -> Path | None:
     )
 
 
+def take_lengths(
+    desk: Path, episode: int, take_id: str, *, source: Path
+) -> tuple[list[float | None], bool]:
+    """The raw length of takes ``t1`` .. this one, and whether this is the last take filmed.
+
+    Each length is ffprobe on the take's newest raw file (the episode as filmed,
+    the timeline inner-voice cues count on); ``None`` for an earlier take with no
+    raw file on the desk. This take falls back to ``source`` when its raw file is
+    gone.
+
+    Returns
+    -------
+    tuple[list[float | None], bool]
+        Lengths in take order, and True when no later take has a raw file.
+    """
+
+    number = thoughts.take_number(take_id)
+    lengths: list[float | None] = []
+    for index in range(1, number + 1):
+        try:
+            raw = latest_raw_take(desk, episode, f"t{index}")
+        except FileNotFoundError:
+            lengths.append(
+                probe_video(source).duration_seconds if index == number else None
+            )
+            continue
+        lengths.append(probe_video(raw).duration_seconds)
+    try:
+        latest_raw_take(desk, episode, f"t{number + 1}")
+    except FileNotFoundError:
+        return lengths, True
+    return lengths, False
+
+
+def take_inner_voice(
+    spine: dict[str, Any] | None,
+    desk: Path,
+    *,
+    episode: int,
+    take_id: str,
+    source: Path,
+) -> thoughts.TakeCuePlan:
+    """The episode's inner-voice cues that fall in this take (:func:`creation.inner_voice.take_cues`)."""
+
+    cues = thoughts.episode_cues(spine, episode=episode) if spine else []
+    if not cues:
+        return thoughts.TakeCuePlan()
+    lengths, last = take_lengths(desk, episode, take_id, source=source)
+    return thoughts.take_cues(
+        cues, take=thoughts.take_number(take_id), lengths=lengths, last_filmed=last
+    )
+
+
 def run_finish(
     desk: Path,
     *,
@@ -423,6 +524,7 @@ def run_finish(
     cut_meter: Cuts | None = None,
     thumbnail: bool = True,
     draw_thumbnail: bool = False,
+    voice_audio: AudioService | None = None,
     stream: TextIO | None = None,
 ) -> FinishResult:
     """Run the whole local post chain on one accepted take.
@@ -463,9 +565,10 @@ def run_finish(
         ``--voice`` dry lines laid into the take's own audio (take seconds as filmed).
     cues
         ``--cue`` hand cues laid after the SFX step (take seconds as filmed).
-    sfx_render, bed_maker, facts_fetcher, transcriber, cut_meter
+    sfx_render, bed_maker, facts_fetcher, transcriber, cut_meter, voice_audio
         Injected for tests (``transcriber`` makes a transcript of the take on the server;
-        ``cut_meter`` measures the take's hard cuts, :func:`creation.post.edit.measure_cuts`).
+        ``cut_meter`` measures the take's hard cuts, :func:`creation.post.edit.measure_cuts`;
+        ``voice_audio`` makes the inner-voice dry lines, the Drama API by default).
     thumbnail
         Put the episode cover on the deliverable (``--no-thumbnail`` turns it
         off). A cover already on the desk for this clip is re-embedded, free.
@@ -515,13 +618,20 @@ def run_finish(
     audio = DramaApiAudio(desk, episode=episode)
     sfx_render = sfx_render or service_renderer(audio, spine_id(desk))
     bed_maker = bed_maker or service_music_maker(audio)
-    hand_steps = (("voice",) if hand.mutes or hand.voices else ()) + (
-        ("cues",) if hand.cues else ()
+    thought_plan = take_inner_voice(
+        spine, desk, episode=episode, take_id=take_id, source=source
+    )
+    hand_steps = (
+        (("voice",) if hand.mutes or hand.voices else ())
+        + ((INNER_VOICE_STEP,) if thought_plan.any else ())
+        + (("cues",) if hand.cues else ())
     )
     result = FinishResult(source=source, final=source, hand_steps=hand_steps)
     current = source
     bed_state: dict[str, Any] = {"path": None, "cues": (), "speech": None}
     voice_state: dict[str, Path | None] = {"path": None}
+    # The inner-voice step's output (what the mix ducks under) and each laid thought: (cue, placed, seconds).
+    thought_state: dict[str, Any] = {"path": None, "laid": []}
     # For the finish record `join` reads: what the mix read, and what the mark went on.
     record_state: dict[str, Path | None] = {"pre_bed": None, "master": None}
     print(
@@ -597,8 +707,109 @@ def run_finish(
         append_run_note(run_dir, f"Hand voice -> `{voiced.name}`: " + "; ".join(parts))
         return StepReport("voice", "ran", "; ".join(parts), voiced)
 
+    def thought_windows() -> list[tuple[float, float]]:
+        return [
+            (placed.start, placed.start + seconds)
+            for _cue, placed, seconds in thought_state["laid"]
+        ]
+
+    def do_inner_voice(take: Path) -> StepReport:
+        from creation.post.handmade import make_voice_line
+
+        cards = {
+            str(card.get("cast_id")): dict(card)
+            for card in (spine or {}).get("cast") or []
+            if isinstance(card, dict) and card.get("cast_id")
+        }
+        service = voice_audio or audio
+        take_seconds = probe_video(take).duration_seconds
+        not_laid = list(thought_plan.problems)
+        flags = [f"!! {cue.seam}" for cue in thought_plan.cues if cue.seam]
+        placed: list[tuple[thoughts.TakeCue, Placed]] = []
+        paid = 0.0
+        reused = 0
+        for cue in thought_plan.cues:
+            card = cards.get(cue.speaker_cast_id)
+            who = str((card or {}).get("name") or cue.speaker_cast_id)
+            if card is None:
+                not_laid.append(
+                    f"{cue.cue_id} ({who}): not in the cast on the saved spine"
+                )
+                continue
+            try:
+                made = make_voice_line(
+                    desk, spine=spine or {}, card=card, text=cue.line, episode=episode,
+                    audio=service, out=out, take_id=take_id, reuse=True,
+                    extra={"cue_id": cue.cue_id, "inner_voice": True},
+                )  # fmt: skip
+            except (
+                ValueError,
+                KeyError,
+                AudioServiceError,
+                httpx.HTTPError,
+                OSError,
+            ) as exc:
+                not_laid.append(f"{cue.cue_id} ({who}): {exc}"[:300])
+                continue
+            paid += made.cost_usd
+            reused += made.reused
+            if made.reading.get("checked") and not made.reading.get("read_right"):
+                flags.append(
+                    f"!! {cue.cue_id}: the dry line may be misread, listen to `{made.path.name}`"
+                )
+            placed.append((cue, Placed(made.path, cue.start)))
+        checked: list[tuple[thoughts.TakeCue, Placed, float]] = []
+        for cue, line in placed:
+            try:
+                ((_line, seconds),) = check_hand_plan(
+                    take_seconds, voices=(line,)
+                ).voices
+            except (ValueError, FileNotFoundError, MediaToolError) as exc:
+                not_laid.append(f"{cue.cue_id}: {exc}"[:300])
+                continue
+            checked.append((cue, line, seconds))
+        parts = [
+            f"{cue.cue_id} {line.path.name} @{line.start:.2f}s ({seconds:.2f}s)"
+            for cue, line, seconds in checked
+        ]
+        tail = "".join(
+            [
+                *(f"; {flag}" for flag in flags),
+                *(f"; !! NOT LAID {item}" for item in not_laid),
+            ]
+        )
+        where = (
+            f"t{thoughts.take_number(take_id)} starts at {thought_plan.offset:.2f}s on the episode"
+            if thought_plan.offset is not None
+            else "where this take starts is unknown"
+        )
+        made_note = f"; {reused} dry line(s) reused from the desk" if reused else ""
+        if not checked:
+            append_run_note(
+                run_dir, f"Finish · inner voice ({where}): nothing laid{tail}"
+            )
+            return StepReport(
+                INNER_VOICE_STEP, "ran", f"nothing laid ({where}){tail}", None, paid,
+                not_laid=tuple(not_laid),
+            )  # fmt: skip
+        laid = lay_voice(
+            take,
+            next_versioned_path(takes, f"{base}-inner-voice", ".mp4"),
+            HandPlan(voices=tuple((line, seconds) for _cue, line, seconds in checked)),
+        )
+        thought_state["path"] = laid
+        thought_state["laid"] = checked
+        append_run_note(
+            run_dir,
+            f"Inner voice ({where}) -> `{laid.name}`: {'; '.join(parts)}{made_note}{tail}, ${paid:.3f}",
+        )
+        return StepReport(
+            INNER_VOICE_STEP, "ran", f"{'; '.join(parts)} ({where}){made_note}{tail}", laid, paid,
+            not_laid=tuple(not_laid),
+        )  # fmt: skip
+
     def do_cues(take: Path) -> StepReport:
-        speech = list(hand.voice_windows)
+        speech = list(hand.voice_windows) + thought_windows()
         facts = saved_take_facts(desk, episode, take_id)
         if bed_state["speech"] is not None:
             speech += bed_state[
@@ -675,6 +886,9 @@ def run_finish(
             print(f"[sfx] {warning}", file=out, flush=True)
             append_run_note(run_dir, f"Finish · sfx: {warning}")
         plan, filmed_note = on_filmed_cuts(plan_from_take_facts(payload), payload, take)
+        if thought_state["laid"]:
+            # The effects duck under a laid thought like under any line.
+            plan = replace(plan, speech=(*plan.speech, *thought_windows()))
         bed_state["speech"] = plan.speech
         append_run_note(run_dir, f"Finish · sfx: {filmed_note}")
         dropped = (
@@ -780,7 +994,7 @@ def run_finish(
             bed=bed_state["path"],
             bed_db=bed_db,
             duck_db=duck_db,
-            voice_source=voice_state["path"] or source,
+            voice_source=thought_state["path"] or voice_state["path"] or source,
             cues=bed_state["cues"],
             buses=True,
         )
@@ -881,6 +1095,13 @@ def run_finish(
                 timing_source=voice_state["path"] or source,
                 stem=f"{base}-cap",
                 words_on_english=words_json is not None and treated_voice(source),
+                fixed_lines=[
+                    (
+                        CaptionLine(cue.cue_id, cue.line, True, cue.line),
+                        Span(line.start, line.start + seconds),
+                    )
+                    for cue, line, seconds in thought_state["laid"]
+                ],
             )
         except ValueError as exc:
             if "no dialogue lines" in str(exc):
@@ -996,6 +1217,12 @@ def run_finish(
     step("deboard", "Replacing the board frames at the head of the take", do_deboard)
     if "voice" in hand_steps:
         step("voice", "Muting stray speech and laying the hand voice lines", do_voice)
+    if INNER_VOICE_STEP in hand_steps:
+        step(
+            INNER_VOICE_STEP,
+            "Making and laying the episode's inner-voice lines on this take",
+            do_inner_voice,
+        )
     step("sfx", "Laying the take's sound effects", do_sfx)
     if "cues" in hand_steps:
         step("cues", "Laying the hand cues", do_cues)
@@ -1033,6 +1260,11 @@ def run_finish(
              "line": voice_line_text(line.path)}
             for line, seconds in hand.voices
         ] if result._ran("voice") else [],
+        inner_voice=[
+            {"cue_id": cue.cue_id, "file": line.path.name, "start": line.start, "seconds": round(seconds, 3),
+             "episode_start": cue.episode_start, "speaker_cast_id": cue.speaker_cast_id, "line": cue.line}
+            for cue, line, seconds in thought_state["laid"]
+        ],
     )  # fmt: skip
     summary.insert(1, f"Record: {record.name} (what `join` reads)")
     append_run_note(
