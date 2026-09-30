@@ -559,11 +559,14 @@ class SfxResult:
 
     output: Path
     mixed: tuple[SfxCue, ...]
+    #: Planned cues that could not be laid, each ``sound (reason)``: render failed, wrong shape, past the take.
     skipped: tuple[str, ...]
     rendered: int
     cost_usd: float
     #: Each mixed cue's loudest 0.5 s window as placed (rendered level + its gain), same order as ``mixed``.
     peaks_db: tuple[float, ...] = ()
+    #: Planned cues left out on purpose by ``--sfx-adjust ... drop``, each ``sound (reason)``.
+    dropped: tuple[str, ...] = ()
 
 
 def _cue_chain(
@@ -633,6 +636,12 @@ def lay_sfx(
     cache_dir.mkdir(parents=True, exist_ok=True)
     kept: list[tuple[SfxCue, Path]] = []
     skipped: list[str] = []
+    # A cue an adjustment drops is still a planned cue the take will not have: say so.
+    dropped = [
+        f"{cue.sound} (dropped by --sfx-adjust)"
+        for cue in plan.cues
+        if not apply_adjustments((cue,), adjustments)
+    ]
     rendered = 0
     cost = 0.0
     for cue in apply_adjustments(plan.cues, adjustments):
@@ -665,7 +674,11 @@ def lay_sfx(
     if not kept:
         raise RuntimeError(
             "no sound effect could be laid: "
-            + ("; ".join(skipped) if skipped else "the take facts plan no cue")
+            + (
+                "; ".join([*skipped, *dropped])
+                if skipped or dropped
+                else "the take facts plan no cue"
+            )
         )
     inputs: list[str] = ["-i", str(take)]
     parts: list[str] = []
@@ -691,4 +704,5 @@ def lay_sfx(
         rendered,
         round(cost, 4),
         peaks,
+        tuple(dropped),
     )

@@ -443,3 +443,70 @@ def test_a_hand_voice_line_on_a_revoiced_take_is_timed_where_it_was_laid(
     assert "with the hand lines" in captions.detail, captions.detail
     assert "1.00-" in captions.detail and "3.50-" in captions.detail, captions.detail
     assert list(takes.glob("take-ep01-t1-cap-timing-v1.json"))
+
+
+#: Hanakaze ep 5: a planned sustained cue the server refuses (its render collapses), next to one that lays.
+UNLAID_FACTS = {
+    "job_id": "job_video_scene_1",
+    "take_facts": {
+        **FACTS["take_facts"],
+        "sfx_cues": [
+            *FACTS["take_facts"]["sfx_cues"],
+            {"shot_index": 2, "sound": "a hushed crowd gasp as he bites", "kind": "sustained",
+             "start_seconds": 2.5, "duration_seconds": 2.5, "source": "note"},
+            {"shot_index": 2, "sound": "a fridge hum", "kind": "sustained",
+             "start_seconds": 2.5, "duration_seconds": 2.5},
+        ],
+    },
+}  # fmt: skip
+
+
+@needs_ffmpeg
+def test_finish_names_every_planned_cue_it_does_not_lay_with_the_reason(
+    post_desk: Path,
+) -> None:
+    from creation.post.sfx import parse_adjustment
+
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+        json.dumps(UNLAID_FACTS)
+    )
+    _board(post_desk)
+    calls: list[str] = []
+    laid = fake_sfx(calls)
+
+    def render(cue: SfxCue, target: Path) -> Path:
+        if "gasp" in cue.sound:
+            # What service_renderer raises when the server's shape check refuses the cue.
+            raise ValueError(
+                "wrong shape: sustained cue collapses after its first half second"
+            )
+        return laid(cue, target)
+
+    out = io.StringIO()
+    result = run_finish(post_desk, sfx_render=render, bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+                        sfx_adjust=(parse_adjustment("hum=drop"),), stream=out)  # fmt: skip
+
+    sfx = next(s for s in result.steps if s.step == "sfx")
+    assert sfx.status == "ran" and calls == ["a door slams"]
+    gasp = "a hushed crowd gasp as he bites (render failed: wrong shape: sustained cue collapses after its first half second)"
+    assert result.cues_not_laid == (gasp,)
+    assert f"!! NOT LAID 1 of 3 planned: {gasp}" in sfx.detail, sfx.detail
+    assert (
+        "left out on purpose: a fridge hum (dropped by --sfx-adjust)" in sfx.detail
+    ), sfx.detail
+    printed = out.getvalue()
+    assert (
+        "Sound: music ✓ · SFX ✓ (!! 1 planned cue(s) not laid) · mix ✓ · captions ✓"
+        in printed
+    ), printed
+    assert (
+        "- sfx: ran — 1 cue(s): a door slams" in printed
+        and gasp in printed.split("Finish summary")[-1]
+    )
+    assert result.as_json()["cues_not_laid"] == [gasp]
+    notes = (post_desk / "ep01" / "run-notes.md").read_text()
+    assert (
+        f"- skipped: {gasp}" in notes
+        and "- left out: a fridge hum (dropped by --sfx-adjust)" in notes
+    )
