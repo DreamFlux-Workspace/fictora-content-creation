@@ -1066,6 +1066,184 @@ def named_cast_mismatch_lines(
     return out
 
 
+_WHOSE = r"(?:(?:his|her|their|its|the|one's|my|your|a)\s+)?(?:own\s+)?"
+_MOUTH_WORD = r"(?:mouth|lips)\b"
+_COVERING_THING = (
+    r"(?:hands?|palms?|fingers?|fingertips?|fists?|knuckles?|wrists?|sleeves?|arms?|fan|napkin|towel|tissue|"
+    r"handkerchief|cloth|cup|teacup|mug|glass|bottle|straw|phone|mask|scarf|book|menu|paper|tray|chopsticks?|"
+    r"spoon|fork|food|mochi|snack)"
+)
+#: Staging that hides a mouth: kept in step with the server's
+#: ``speaking_mouth_free.MOUTH_HIDDEN_PATTERN`` (which rewrites it at compile).
+MOUTH_HIDDEN = re.compile(
+    "|".join(
+        (
+            r"\b(?:cover(?:s|ed|ing)?|hid(?:e|es|ing|den)|muffl(?:e|es|ed|ing)|block(?:s|ed|ing)?|"
+            r"obscur(?:e|es|ed|ing)|conceal(?:s|ed|ing)?|stifl(?:e|es|ed|ing)|smother(?:s|ed|ing)?)\b"
+            rf"[^,;.]{{0,24}}\b{_MOUTH_WORD}",
+            rf"\b{_MOUTH_WORD}\s+(?:(?:still|half|fully|partly)\s+)?(?:covered|hidden|muffled|blocked|obscured|concealed)\b",
+            rf"\b{_COVERING_THING}\b[^,;.]{{0,28}}?\b(?:over|on|onto|to|against|across|at|near|by|beside|"
+            rf"in\s+front\s+of|covering|up\s+to|under)\s+{_WHOSE}{_MOUTH_WORD}",
+            r"\b(?:wip(?:e|es|ed|ing)|clear(?:s|ed|ing)?|dab(?:s|bed|bing)?|rub(?:s|bed|bing)?)\s+"
+            rf"(?:[a-z]+\s+(?:from|off)\s+)?{_WHOSE}(?:mouth|lips|chin)\b",
+            rf"\b{_MOUTH_WORD}\s+(?:clearing|wiping|wiped|cleared|dabbed)\b",
+            rf"\bbehind\s+{_WHOSE}(?:hands?|palms?|fingers?|fan|sleeves?|cup|teacup|mug|phone|menu|napkin|"
+            r"tissue|handkerchief|scarf|mask)\b",
+            rf"\b{_MOUTH_WORD}\s+(?:full|stuffed|crammed)\b",
+            r"\bhand-over-(?:the-)?mouth\b",
+        )
+    ),
+    re.I,
+)
+#: Expression kinds whose drawn marks put a hand over the mouth.
+_MOUTH_COVERING_KINDS = frozenset({"dramatic_gasp"})
+
+
+def _speaking_cells(
+    frames: Sequence[Mapping[str, Any]], take_beats: Sequence[Mapping[str, Any]]
+) -> dict[str, set[str]]:
+    """Frame id to the on-screen speakers it stages: the anchor's whole row."""
+
+    rows = {str(frame.get("frame_id") or ""): _row_number(frame) for frame in frames}
+    out: dict[str, set[str]] = {}
+    for beat in take_beats:
+        anchor = str(beat.get("frame_id") or "")
+        if anchor not in rows:
+            continue
+        speakers = {
+            str(line.get("cast_id"))
+            for line in beat.get("dialogue_lines") or []
+            if isinstance(line, Mapping)
+            and str(line.get("text") or "").strip()
+            and line.get("off_screen") is not True
+        }
+        for frame in frames:
+            if _row_number(frame) != rows[anchor]:
+                continue
+            drawn, _off = frame_cast(frame)
+            if staged := speakers & drawn:
+                out.setdefault(str(frame.get("frame_id") or ""), set()).update(staged)
+    return out
+
+
+def speaking_mouth_hidden_lines(
+    frames: Sequence[Mapping[str, Any]],
+    take_beats: Sequence[Mapping[str, Any]],
+    *,
+    cast_names: Mapping[str, str],
+) -> list[str]:
+    """Warn when a cell a line plays over hides the speaker's mouth.
+
+    Hanakaze Sweets ep 6: frame 01 carried Mitsu's shrieked line, its pose said
+    "mouth clearing after the spray" and it played ``dramatic_gasp`` ("one hand
+    over the mouth"); the board drew her hand clamped over her mouth on both
+    cells of the row. Reads the speaker's ``pose`` and ``interaction``, the
+    cell's ``story_moment`` and its row direction. The server rewrites these at
+    compile; this is a warning so the gate catches a board drawn before that.
+
+    Parameters
+    ----------
+    frames
+        One board's frames.
+    take_beats
+        That take's beats.
+    cast_names
+        ``cast_id`` to display name.
+
+    Returns
+    -------
+    list[str]
+        ``!!`` lines, empty when every speaking mouth is free.
+    """
+
+    speaking = _speaking_cells(frames, take_beats)
+    out: list[str] = []
+    for frame in frames:
+        frame_id = str(frame.get("frame_id") or "")
+        speakers = speaking.get(frame_id)
+        if not speakers:
+            continue
+        raw = frame.get("visual_brief")
+        brief: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
+        texts = [str(brief.get("story_moment") or "")]
+        for blocking in brief.get("subject_blocking") or []:
+            if (
+                isinstance(blocking, Mapping)
+                and str(blocking.get("cast_id") or "") in speakers
+            ):
+                texts += [
+                    str(blocking.get("pose") or ""),
+                    str(blocking.get("interaction") or ""),
+                ]
+        direction = brief.get("row_direction")
+        if isinstance(direction, Mapping):
+            texts += [
+                str(direction.get("starts") or ""),
+                str(direction.get("ends") or ""),
+            ]
+            texts += [str(step) for step in direction.get("chain") or []]
+        hits = [m.group(0) for text in texts if (m := MOUTH_HIDDEN.search(text))]
+        kind = str(brief.get("reaction_kind") or "")
+        if kind in _MOUTH_COVERING_KINDS:
+            hits.append(f"expression {kind} (hand over the mouth)")
+        if hits:
+            who = ", ".join(cast_names.get(c, c) for c in sorted(speakers))
+            out.append(
+                f"  !! {frame_id} (row {_row_number(frame)}) carries {who}'s line but its staging hides the mouth "
+                f"({'; '.join(dict.fromkeys(hits))}): the take cannot show the words. Look for a hand or cup at "
+                "the mouth on the board; edit the pose to an open gesture and redraw (warning only)."
+            )
+    return out
+
+
+def _is_insert_cell(frame: Mapping[str, Any]) -> bool:
+    raw = frame.get("visual_brief")
+    brief: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
+    return str(brief.get("cell_role") or "") in ("insert", "cover") or bool(
+        re.search(r"\binsert\b", str(brief.get("shot_scale") or ""), re.I)
+    )
+
+
+def insert_run_lines(frames: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Warn when a take has two or more consecutive insert cells.
+
+    Hanakaze Sweets ep 6: row 2 (frames 03 and 04) was two countertop inserts,
+    about 3.5 s with no face straight after the hook. The server turns the
+    second into a reaction close-up at compile on a dialogue take; this is a
+    warning so the gate catches a board drawn before that.
+
+    Parameters
+    ----------
+    frames
+        One board's frames, in board order.
+
+    Returns
+    -------
+    list[str]
+        One ``!!`` line per run of two or more insert (or cover) cells.
+    """
+
+    ordered = sorted(frames, key=lambda frame: int(frame.get("ordinal") or 0))
+    runs: list[list[Mapping[str, Any]]] = []
+    current: list[Mapping[str, Any]] = []
+    for frame in ordered:
+        if _is_insert_cell(frame):
+            current.append(frame)
+            continue
+        if len(current) >= 2:
+            runs.append(current)
+        current = []
+    if len(current) >= 2:
+        runs.append(current)
+    return [
+        f"  !! {len(run)} insert cells in a row ({', '.join(str(f.get('frame_id')) for f in run)}; rows "
+        f"{', '.join(str(r) for r in dict.fromkeys(_row_number(f) for f in run))}): about "
+        f"{len(run) * 1.75:.1f} s with no face. Keep one insert and make the other a reaction close-up "
+        "(warning only)."
+        for run in runs
+    ]
+
+
 #: Body postures a pose names plainly. A pose that names exactly one of them has that posture.
 _POSTURES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
@@ -1241,6 +1419,8 @@ def shot_list_lines(
         )
         lines += safe_zone_lines(frames, cast_names=cast_names)
         lines += named_cast_mismatch_lines(frames, take_beats, cast_names=cast_names)
+        lines += speaking_mouth_hidden_lines(frames, take_beats, cast_names=cast_names)
+        lines += insert_run_lines(frames)
     return lines
 
 
@@ -1260,12 +1440,14 @@ __all__ = [
     "frames_by_set",
     "frames_digest",
     "heard_not_seen",
+    "insert_run_lines",
     "named_cast_mismatch_lines",
     "off_screen_speaker_lines",
     "pose_change_at_cut_lines",
     "pose_posture",
     "row_speech_lines",
     "safe_zone_lines",
+    "speaking_mouth_hidden_lines",
     "script_lines",
     "shot_list_lines",
     "shot_rows",
