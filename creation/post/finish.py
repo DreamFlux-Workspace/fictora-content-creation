@@ -19,7 +19,10 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    shot change moves to the nearest hard cut measured on the take (tblend
    trace, within 1 s, the review's detector; measured on the raw take when the
    finished file keeps its picture timeline), and each cue keeps its fraction
-   of its shot. ``--sfx-adjust`` moves cues on top.
+   of its shot. ``--sfx-adjust`` moves cues on top. Every planned cue that
+   is not laid is named with its reason (render failed, wrong shape, starts
+   past the take: ``!! NOT LAID`` on the step and on the sound line; left out
+   by ``--sfx-adjust`` or a sound note: listed). None is dropped silently.
 2. ``bed``       - the show's music bed (desk pin, else the spine's pinned bed,
    else made once on the server and pinned on the desk).
 3. ``colour``    - match the take to the board the human approved.
@@ -156,6 +159,8 @@ class StepReport:
     detail: str
     output: Path | None = None
     cost_usd: float = 0.0
+    #: Planned pieces the step did not lay, each ``what (why)`` (the sfx step's cues).
+    not_laid: tuple[str, ...] = ()
 
 
 @dataclass
@@ -198,6 +203,14 @@ class FinishResult:
 
         return not self.sound_missing
 
+    @property
+    def cues_not_laid(self) -> tuple[str, ...]:
+        """Planned effects that went wrong and are not on the take, each ``sound (reason)``."""
+
+        return tuple(
+            cue for step in self.steps if step.step == "sfx" for cue in step.not_laid
+        )
+
     def sound_line(self) -> str:
         """``Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`` (✗ for what did not go on)."""
 
@@ -206,6 +219,8 @@ class FinishResult:
             f"{part} {'✗' if part in missing else '✓'}"
             for part in ("music", "SFX", "mix")
         ]
+        if self.cues_not_laid and "SFX" not in missing:
+            marks[1] += f" (!! {len(self.cues_not_laid)} planned cue(s) not laid)"
         marks.append(f"captions {'✓' if self._ran('captions') else '✗'}")
         marks += [
             f"hand {name} {'✗' if name in missing else '✓'}" for name in self.hand_steps
@@ -231,6 +246,7 @@ class FinishResult:
             "loudness": self.loudness,
             "complete": self.complete,
             "missing": list(self.sound_missing),
+            "cues_not_laid": list(self.cues_not_laid),
             "steps": [
                 {"step": s.step, "status": s.status, "detail": s.detail,
                  "output": str(s.output) if s.output else None}
@@ -703,16 +719,28 @@ def run_finish(
         note = f"SFX -> `{sfx.output.name}`: {cues}; rendered {sfx.rendered}, ${sfx.cost_usd:.3f}"
         note += "".join(f"\n- skipped: {s}" for s in sfx.skipped)
         note += "".join(f"\n- dropped by a sound note: {d}" for d in plan.dropped)
+        note += "".join(f"\n- left out: {d}" for d in sfx.dropped)
         append_run_note(run_dir, note)
         older = (
             f"; laid from facts older than the sound notes ({stale})" if stale else ""
         )
+        # Every planned cue that is not on the take is named with its reason, never dropped silently.
+        planned = len(sfx.mixed) + len(sfx.skipped) + len(sfx.dropped)
+        not_laid = (
+            f"; !! NOT LAID {len(sfx.skipped)} of {planned} planned: {'; '.join(sfx.skipped)}"
+            if sfx.skipped
+            else ""
+        )
+        left_out = (
+            f"; left out on purpose: {'; '.join(sfx.dropped)}" if sfx.dropped else ""
+        )
         return StepReport(
             "sfx",
             "ran",
-            f"{len(sfx.mixed)} cue(s): {cues}{dropped}{older}; {filmed_note}",
+            f"{len(sfx.mixed)} cue(s): {cues}{not_laid}{left_out}{dropped}{older}; {filmed_note}",
             sfx.output,
             sfx.cost_usd,
+            not_laid=sfx.skipped,
         )
 
     def do_bed(_take: Path) -> StepReport:
