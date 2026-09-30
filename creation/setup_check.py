@@ -45,6 +45,8 @@ REQUIRED_FILTERS: tuple[str, ...] = (
     "silencedetect",  # captions: line starts
     "astats",  # sfx shape check, reading a take
     "signalstats",  # edits: brightness
+    "gblur",  # blur: the patch over invented text
+    "geq",  # blur --feather: the soft edge outside the box
 )
 """ffmpeg filters the local finish and edits call (libass's ``ass`` is checked on its own line)."""
 

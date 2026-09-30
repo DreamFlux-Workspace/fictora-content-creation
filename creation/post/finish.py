@@ -34,7 +34,7 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    ``take-epNN-tK-*words-vN.json`` (``review --transcribe``), else one made on
    the server from the take's stored URL (``/v1/transcripts``, a few cents).
    A ``--take-file`` made from the newest raw take only by edits that keep
-   its sound timeline (``freeze``, ``soften``, ``deboard``, ``colour``; followed
+   its sound timeline (``freeze``, ``soften``, ``blur``, ``deboard``, ``colour``; followed
    through ``epNN/takes/edit-chain.jsonl`` or, on older desks, the run notes:
    :mod:`creation.post.lineage`) uses the raw take's transcript too. A line
    with no match, or a take whose sound was changed (``--voice``/``--mute``,

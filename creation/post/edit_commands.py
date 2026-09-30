@@ -1,4 +1,4 @@
-"""``fictora-produce`` local edit commands: deboard, trim, freeze, tempo, soften.
+"""``fictora-produce`` local edit commands: deboard, trim, freeze, tempo, soften, blur.
 
 Each reads one take on the desk (``--take-file``, else the newest raw take),
 writes ``epNN/takes/take-epNN-tK-<step>-vN.mp4`` (never overwriting), appends
@@ -11,13 +11,13 @@ deliverable) keeps the cover through the edit and is written
 ``take-epNN-tK-<step>-cover-vN.mp4``.
 
 When the file edited is one a finish record names (``trim`` / ``tempo`` on the
-finished take, or ``freeze`` / ``soften`` run on it), the same edit is applied
+finished take, or ``freeze`` / ``soften`` / ``blur`` run on it), the same edit is applied
 to the record's other files first: the take before the bed (``pre_bed``) and
 the un-marked master (``take-epNN-tK-<step>-prebed-vN.mp4``,
 ``-master-vN.mp4``, ``-final-vN.mp4``), then to the named file, and a new
 finish record names the edited three with the edit chain, so ``join`` still
-lays one bed across the edited take and marks once. ``freeze`` and ``soften``
-leave the sound alone, so the record keeps the same pre-bed take.
+lays one bed across the edited take and marks once. ``freeze``, ``soften`` and
+``blur`` leave the sound alone, so the record keeps the same pre-bed take.
 """
 
 from __future__ import annotations
@@ -33,12 +33,16 @@ from creation.ops.notes import append_run_note
 from creation.post.deboard import BOARD_LEAK_MAX_FRAMES, deboard
 from creation.post.desk import approved_board, latest_raw_take
 from creation.post.edit import (
+    BLUR_SIGMA,
     SLOW_TEMPO,
+    BlurResult,
     TrimResult,
+    blur_boxes,
     change_tempo,
     cut_frames,
     freeze_frame,
     measure_cuts,
+    parse_box,
     parse_cut,
     plan_trim,
     shift_json_file,
@@ -53,11 +57,11 @@ from creation.post.finish_record import (
 from creation.post.lineage import record_edit
 from creation.post.media import probe_video, video_streams
 
-EDIT_COMMANDS = frozenset({"deboard", "trim", "freeze", "tempo", "soften"})
+EDIT_COMMANDS = frozenset({"deboard", "trim", "freeze", "tempo", "soften", "blur"})
 #: Edits that carry a finish record onto their output.
-CARRIED = frozenset({"trim", "tempo", "freeze", "soften"})
+CARRIED = frozenset({"trim", "tempo", "freeze", "soften", "blur"})
 #: Edits that leave the sound as it was: the record keeps the same pre-bed take.
-PICTURE_ONLY = frozenset({"freeze", "soften"})
+PICTURE_ONLY = frozenset({"freeze", "soften", "blur"})
 #: Name part of each edited record file: ``take-epNN-tK-<step>-<part>-vN.mp4``.
 COMPANION = {"pre_bed": "prebed", "master": "master", "final": "final"}
 
@@ -76,7 +80,7 @@ class RecordCarry:
     source
         The file the operator named.
     step
-        ``trim``, ``tempo``, ``freeze`` or ``soften``.
+        ``trim``, ``tempo``, ``freeze``, ``soften`` or ``blur``.
     """
 
     def __init__(
@@ -263,6 +267,34 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Cut time in seconds (repeat).",
     )
 
+    blur = sub.add_parser(
+        "blur",
+        help="PATCH: Gaussian-blur boxes of the picture (garbled readable text the video invented, e.g. a sign) "
+        "from --from to --to seconds. Same length, sound copied. Run it on the FINISHED take; report it.",
+    )
+    _take_args(
+        blur,
+        take_file_help="The take to blur (the finished take). Default: the newest raw take.",
+    )
+    blur.add_argument(
+        "--box", dest="boxes", type=parse_box, action="append", required=True,
+        help="x,y,w,h in pixels of the take (top-left corner, width, height); must lie inside the frame (repeat).",
+    )  # fmt: skip
+    blur.add_argument(
+        "--from", dest="start", type=float, required=True, help="Seconds: blur starts."
+    )
+    blur.add_argument(
+        "--to", dest="end", type=float, required=True, help="Seconds: blur ends."
+    )
+    blur.add_argument(
+        "--strength", type=float, default=BLUR_SIGMA,
+        help=f"Blur sigma in pixels (default {BLUR_SIGMA:g}).",
+    )  # fmt: skip
+    blur.add_argument(
+        "--feather", type=int, default=0,
+        help="Pixels of soft edge OUTSIDE each box (default 0, a hard edge). The box itself stays fully blurred.",
+    )  # fmt: skip
+
 
 def _source(args: argparse.Namespace, desk: Path) -> Path:
     if args.take_file is not None:
@@ -432,6 +464,30 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
                 f"-> `{softened.name}` (hold-and-fade 0.33 s; length and sound unchanged)",
                 *carry.lines(record),
             ]
+    elif args.command == "blur":
+        boxes = tuple(args.boxes)
+
+        def blur_same(take: Path, out: Path) -> BlurResult:
+            return blur_boxes(take, out, boxes, start=args.start, end=args.end,
+                              strength=args.strength, feather=args.feather)  # fmt: skip
+
+        carry.edit_companions(blur_same)
+        blurred = blur_same(source, target("blur"))
+        detail: dict[str, Any] = {
+            "boxes": [box.as_list() for box in blurred.boxes],
+            "from": blurred.start_seconds,
+            "to": blurred.end_seconds,
+            "strength": blurred.strength,
+            "feather": blurred.feather,
+        }
+        record_edit(desk, op="blur", source=source, output=blurred.output, **detail)
+        record = carry.write(blurred.output, {"op": "blur", **detail})
+        lines = [
+            f"Blur `{source.name}`: {blurred.one_line()}",
+            "- PATCH, not a fix: this hides text the video invented; report it (learnings / the PR) so the "
+            "source stops making it.",
+            *carry.lines(record),
+        ]
     else:
         raise ValueError(f"unknown command {args.command}")
     if (run_dir / "run-notes.md").is_file():

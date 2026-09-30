@@ -1,6 +1,6 @@
 """Which take a local edit came from, so later steps can trust the raw take's timeline.
 
-Every local edit (``deboard``, ``freeze``, ``soften``, ``trim``, ``tempo``, and
+Every local edit (``deboard``, ``freeze``, ``soften``, ``blur``, ``trim``, ``tempo``, and
 each step ``finish`` writes) appends one line to
 ``epNN/takes/edit-chain.jsonl``: ``{op, source, output}`` (paths relative to
 the desk). :func:`raw_take_behind` walks that chain back from any file to the
@@ -8,7 +8,7 @@ raw take it was made from and says whether every edit on the way kept the
 sound timeline, i.e. a word the server heard at 3.20 s on the raw take is still
 at 3.20 s on the file.
 
-``freeze``, ``soften``, ``deboard`` and ``colour`` keep it (same length, same
+``freeze``, ``soften``, ``blur``, ``deboard`` and ``colour`` keep it (same length, same
 frame count, sound copied or untouched). ``trim`` and ``tempo`` move it; the
 hand ``voice`` step (``--voice`` / ``--mute``) and the sound steps (``sfx``,
 ``cues``, ``mix``) change the speech or the sound, so a transcript of the raw
@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 #: Edits that keep the length, the frame count and the sound: the raw take's word times still hold.
-KEEPS_TIMELINE = frozenset({"freeze", "soften", "deboard", "colour"})
+KEEPS_TIMELINE = frozenset({"freeze", "soften", "blur", "deboard", "colour"})
 #: Why each other known edit breaks the raw take's word times.
 BREAKS_TIMELINE = {
     "trim": "trim cuts time out, so every word after the cut moved",
@@ -87,7 +87,7 @@ def record_edit(
     desk
         Series desk.
     op
-        ``freeze``, ``soften``, ``deboard``, ``colour``, ``trim``, ``tempo``, or a ``finish`` step name.
+        ``freeze``, ``soften``, ``blur``, ``deboard``, ``colour``, ``trim``, ``tempo``, or a ``finish`` step name.
     source
         The file the edit read.
     output
