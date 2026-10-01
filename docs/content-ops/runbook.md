@@ -95,7 +95,7 @@ This is the order `fictora-produce` runs them in.
 3. **Cast plates.** One full-length figure plus a bust per character, plus object plates for any prop that must stay consistent, plus a location sheet for a set that recurs. Gate: show the plates, get a yes.
 4. **Script.** Beats and lines per take, three lines maximum. Gate: the lines, in the original language, with the translation, and every line the writers changed from the brief.
 5. **Board.** The storyboard mosaic. Measure mean luma and report it with the board; a dark board is the human's call, not a fault. Gate: the board image itself, checked against the board checks below.
-6. **Estimate.** Price the batch before enrolling it. The line always names the lane and its $/s. If it starts with `!! SERVER ESTIMATE FAILED`, the server gave no dollars and the kit priced from its own table: tell the human before they say yes.
+6. **Estimate.** Price the batch before enrolling it. The line always names the lane and its $/s. If it starts with `!! SERVER ESTIMATE FAILED`, the server gave no dollars and the kit priced from its own table; `!! SERVER ESTIMATE DOES NOT ADD UP` means the server's own parts (rate x seconds, video + stills) disagree with its total and the higher is shown. Tell the human either before they say yes. The server prices on `priced_on`, fal's billing day (San Francisco time), and the kit trusts it: on a rate-change day the morning in India is still the old rate.
 7. **Take.** The only expensive call. Everything above exists to make this call succeed once.
 8. **Read the take.** Measure first: transcript, cut count, loudness, exposure. Then compare against the board. Write down every fault, including the ones you will not fix.
 9. **Finish.** Local, on the laptop: `fictora-produce finish` (sound effects from the take facts, the show's music bed, colour match to the board, mix near −18 LUFS, captions, the mark; on a locked-voice take also the location's ambience, one cue per episode at about -28 dB between the lines and continuous across the takes' seam (room tone only when no cue can be made), the bed ducked in each line window and captions from the line windows), then the join. A take is not done until the finish ran. A raw take is never a deliverable.
@@ -128,7 +128,7 @@ On Turbo the take is image-to-video from the take's whole storyboard board: the 
 | --- | --- | --- |
 | Cast or object plate | $0.30 | Per image. A character needs two (full + bust). |
 | Storyboard | $0.30 | Per board, first draw or redraw. |
-| Take (15 s, H3 Max Turbo I2V, 768p), the default | $0.30 through 30 Sep 2026; $0.60 from 1 Oct 2026 | $0.02/s (fal promo), then $0.04/s. A 12 s take is $0.24 / $0.48. No image charge. A take under 5 s films and bills 5 s. |
+| Take (15 s, H3 Max Turbo I2V, 768p), the default | $0.30 through 30 Sep 2026; $0.60 from 1 Oct 2026 | $0.02/s (fal promo), then $0.04/s from 2026-10-01T07:00Z (fal's day; 12:30 IST). A 12 s take is $0.24 / $0.48. No image charge. A take under 5 s films and bills 5 s. |
 | Take (15 s, H3 Max R2V, 768p), engineering switch only | $1.20 | $0.08/s. Plus $0.02048 per reference image past four (the board plus every cast plate, at most nine). Quote only when the estimate or take facts name it. |
 | Voice audition set | $0.30 | Candidates on the real lines. Once per character; a second set needs a written cause. |
 | Voice line | $0.10 per 1,000 characters | |
