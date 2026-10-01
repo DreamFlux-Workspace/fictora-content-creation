@@ -684,16 +684,26 @@ def test_an_unnumbered_clip_the_request_cannot_place_is_refused_loudly_not_guess
     }
     run_film(desk30, episode=2)
     api30.routes[("POST", VIDEO)] = {"job_id": "job_video_7"}
+    # Two unnumbered clips for episode 2 and one for episode 1: the job's take order is not this
+    # episode's, so neither clip can be placed.
     api30.routes[("GET", "/v1/jobs/job_video_7")] = {
-        "status": "running",
-        "depends_on": ["job_a"],
-    }
-    api30.routes[("GET", "/v1/jobs/job_a")] = {
         "status": "completed",
-        "episode_ids": ["ep_02"],
-        "result": {"video": {"url": "https://r2.example/ep2-x.mp4"}},
+        "progress": 100,
+        "depends_on": ["job_ep1", "job_a", "job_b"],
     }
-    api30.routes[("GET", "/v1/jobs/job_a/take-facts")] = {"take_facts": {}}
+    api30.routes[("GET", "/v1/jobs/job_ep1")] = {
+        "status": "completed",
+        "episode_ids": ["episode_01"],
+        "relation": {"id": "scene_episode_01_set01"},
+        "result": {"video": {"url": "https://r2.example/ep1.mp4"}},
+    }
+    for job in ("job_a", "job_b"):
+        api30.routes[("GET", f"/v1/jobs/{job}")] = {
+            "status": "completed",
+            "episode_ids": ["ep_02"],
+            "result": {"video": {"url": f"https://r2.example/{job}.mp4"}},
+        }
+        api30.routes[("GET", f"/v1/jobs/{job}/take-facts")] = {"take_facts": {}}
 
     text = run_film(desk30, episode=2, confirm_spend=True)
 
