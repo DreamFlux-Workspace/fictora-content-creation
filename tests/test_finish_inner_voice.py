@@ -367,14 +367,18 @@ def test_a_character_nobody_sees_or_hears_with_no_look_owes_no_plate() -> None:
     )
 
 
-def test_an_unused_character_with_a_visual_brief_still_owes_a_plate() -> None:
-    spine = _plated(
-        visual_brief={"face": "sharp"}
-    )  # written for a later episode, in no frame yet
+def test_an_unused_look_owes_no_plate_once_frames_exist() -> None:
+    """Sighted ep 1 (L-20261001-2 / -4): a narrator with a full look and no line left.
+
+    The server's drawn_cast now skips every unused character once the spine has
+    frames, brief or not, so the kit's plate count must not count him either.
+    """
+
+    spine = _plated(visual_brief={"face": "sharp"})
 
     assert unused_cast_ids(spine) == {"cast_voice"}
     assert unlooked_unused_cast_ids(spine) == frozenset()
-    assert _ids(spine) == ["cast_hana", "cast_voice"]
+    assert _ids(spine) == ["cast_hana"]
 
 
 def test_before_any_frame_nobody_is_unused() -> None:
