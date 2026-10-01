@@ -359,6 +359,7 @@ def approve_episode_boards(
     spine: Mapping[str, Any],
     episode: int = 1,
     accept_dim: bool = False,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     """Measure an episode's exposure (the server needs it measured), then approve its boards.
 
@@ -377,6 +378,8 @@ def approve_episode_boards(
         Episode ordinal.
     accept_dim
         Kept for older servers; ignored by the current API.
+    idempotency_key
+        A fresh key for approving again (a redrawn board); default the episode's first-approval key.
 
     Returns
     -------
@@ -392,9 +395,12 @@ def approve_episode_boards(
             "episode_ordinal": episode,
             "accept_dim": accept_dim,
         },
-        idempotency_key=f"{run.prefix}-boards-approve"
-        if episode == 1
-        else f"{run.prefix}-ep{episode:02d}-boards-approve",
+        idempotency_key=idempotency_key
+        or (
+            f"{run.prefix}-boards-approve"
+            if episode == 1
+            else f"{run.prefix}-ep{episode:02d}-boards-approve"
+        ),
     )
     run.save(
         "11_boards_approved.json"

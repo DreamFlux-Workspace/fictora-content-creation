@@ -100,5 +100,5 @@ def test_again_refuses_before_the_first_yes_and_on_other_gates(
         produce_main(["approve", "--desk", str(desk), "--gate", "script", "--again"])
         == 2
     )
-    assert "plates only" in capsys.readouterr().err
+    assert "--gate plates or --gate board" in capsys.readouterr().err
     assert api.posted(APPROVE) == []

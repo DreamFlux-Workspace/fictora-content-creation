@@ -149,8 +149,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument(
         "--again",
         action="store_true",
-        help="Plates only: send the plates approval again on the story's current version, outside "
-        "wait_plates (after a cast_not_approved refusal; same plates, $0, draws nothing). Then retry-step.",
+        help="Plates or board: send the approval again on the story's current version. Plates: outside "
+        "wait_plates (after a cast_not_approved refusal; same plates, $0, draws nothing), then retry-step. "
+        "Board: a board redrawn after its yes on a desk past the board gate (a board approve outside "
+        "wait_board does this too); $0, the phase is kept.",
     )
     ap.add_argument(
         "--accept-dim",
@@ -343,8 +345,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             for path in result.paths:
                 print(f"  file: {path}")
             return 0
-        if args.command == "approve" and args.again and args.gate != "plates":
-            raise ValueError("--again is for --gate plates only")
+        if (
+            args.command == "approve"
+            and args.again
+            and args.gate not in ("plates", "board")
+        ):
+            raise ValueError("--again is for --gate plates or --gate board")
         if args.command == "approve" and args.gate == "look":
             run_approve_look(args.desk, url=args.url, path=args.path)
             return 0
