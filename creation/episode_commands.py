@@ -58,7 +58,12 @@ from creation.cli_text import TextArgError, text_or_file
 from creation.desk_media_urls import drawn_cast_rows
 from creation.harness import stages_gated as stages
 from creation.harness.http_util import api_error_text, describe_job_error
-from creation.harness.raw_video import wait_for_raw_scene_clips
+from creation.harness.raw_video import (
+    STEP_RAW_CLIPS,
+    VideoJobFailed,
+    raw_clips_name,
+    wait_for_raw_scene_clips,
+)
 from creation.harness.session import DramaApiRunSession
 from creation.harness.stages_gated import scene_prompt
 from creation.harness.visual_first_ep1 import reuse_generation_body
@@ -1664,6 +1669,38 @@ def voice_cast_id(name: str) -> str:
     return f"cast_{slug}"[:64]
 
 
+def dialogue_tier(text: str) -> str:
+    """The pacing tier the server gives a line of this length: ``micro``, ``standard`` or ``extended``.
+
+    The server's own thresholds (fictora-drama ``classify_dialogue_tier``): up
+    to 2 words is ``micro``, up to 6 words in one sentence is ``standard``,
+    anything longer is ``extended``. An added line must carry one: a line
+    stored without a tier stops the next episode's author ("Every beat must
+    set dialogue.tier").
+
+    Parameters
+    ----------
+    text
+        The line as written (``text``, not the performed ``spoken_text``).
+
+    Returns
+    -------
+    str
+        The tier.
+    """
+
+    normalized = " ".join(text.split())
+    if not normalized:
+        return "standard"
+    words = len(normalized.split())
+    sentences = len([part for part in re.split(r"[.!?]+", normalized) if part.strip()])
+    if words <= 2:
+        return "micro"
+    if words <= 6 and sentences <= 1:
+        return "standard"
+    return "extended"
+
+
 def build_line_add_remove_patch(
     spine: Mapping[str, Any],
     *,
@@ -1824,6 +1861,7 @@ def build_line_add_remove_patch(
         "beat_id": found_beat["beat_id"],
         "cast_id": cast_id,
         "text": text,
+        "tier": dialogue_tier(text),
     }
     for key, value in (
         ("spoken_text", spoken),
@@ -3602,7 +3640,8 @@ def run_take_facts(
     job = take_job_id(desk, episode, take_id)
     if job is None:
         raise CommandStopped(
-            f"{label}: api/17_raw_scene_clips.json names no job for this take; film it first"
+            f"{label}: api/ names no job for this take in its clip records "
+            f"({STEP_RAW_CLIPS}, film-*-raw-scene-clips.json); film it first"
         )
     desk, state, run = _desk_session(desk)
     try:
@@ -5164,12 +5203,21 @@ def _run_film(
         f"[film] Filming {what} (video job {job_id}). Usually 5-15 minutes.",
         file=sys.stderr,
     )
-    raw = wait_for_raw_scene_clips(
-        run,
-        str(job_id),
-        deadline_seconds=cfg.poll_video_deadline_seconds,
-        save_as=f"{unit}-raw-scene-clips.json",
-    )
+    try:
+        raw = wait_for_raw_scene_clips(
+            run,
+            str(job_id),
+            deadline_seconds=cfg.poll_video_deadline_seconds,
+            save_as=raw_clips_name(unit),
+        )
+    except VideoJobFailed as exc:
+        _forget_failed_film(desk, unit, job_id=str(job_id), what=what, episode=episode)
+        raise VideoJobFailed(
+            f"{exc.code}\nNothing was collected or booked for {what}. The failed job is cleared: "
+            f"the next `film --episode {episode}"
+            + (f" --take {take_id}" if take_id else "")
+            + " --confirm-spend` starts a NEW paid job under a fresh key (only after the human's yes)."
+        ) from None
     spine = run.spine(state.spine_id or "")
     save_spine_snapshot(desk, episode, spine)
     collecting = load_production(desk)
@@ -5219,6 +5267,27 @@ def _run_film(
     text = "\n".join(lines) + foreign_warning(got.foreign)
     print(text, file=out)
     return text
+
+
+def _forget_failed_film(
+    desk: Path, unit: str, *, job_id: str, what: str, episode: int
+) -> None:
+    """Clear a film unit whose job ended failed, so the next ``film`` enrols afresh.
+
+    The pending entry is dropped and the unit's attempts bumped, so the next
+    idempotency key (``…-<unit>-aN``) is new and the server starts a new job
+    instead of answering with the failed one (as ``retry-step`` does for a
+    stage). Only for a job the server says is over: a timeout or a broken poll
+    keeps the entry, so an interrupted film picks up its job and pays once.
+    """
+
+    _forget_unit(desk, unit)
+    _note(
+        desk,
+        episode,
+        f"film {what}: video job `{job_id}` failed; nothing collected or booked. "
+        "Cleared it: the next film enrols a new job under a fresh key.",
+    )
 
 
 def _price_film(

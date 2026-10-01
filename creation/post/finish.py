@@ -304,7 +304,7 @@ class FinishResult:
 INCOMPLETE_FIX = (
     "Music: pin a bed (`fictora-produce set-bed --desk D --path <file>`, or let finish make one on the server). "
     "SFX: finish needs the take's facts (GET /v1/jobs/{take_job}/take-facts; it fetches them when "
-    "api/17_raw_scene_clips.json names the take job) and the server's audio endpoints. "
+    "a clip record in api/ (17_raw_scene_clips.json or film-*-raw-scene-clips.json) names the take job) and the server's audio endpoints. "
     "Mix, or a hand voice / cues step you asked for: read that step's error above. "
     "Inner voice: read the cue the inner-voice step names (a voice to lock with `voice --audition` / "
     "`--pick`, a refusal to tell engineering about, or a cue to move with `inner-voice`)."
@@ -872,7 +872,8 @@ def run_finish(
             return StepReport(
                 "sfx",
                 "skipped",
-                f"no take facts: api/17_raw_scene_clips.json names no job for {take_id} and no "
+                f"no take facts: no clip record in api/ (17_raw_scene_clips.json, film-*-raw-scene-clips.json) "
+                f"names a job for {take_id} and no "
                 f"api/take-facts-ep{episode:02d}-{take_id}-vN.json is saved",
             )
         payload = json.loads(facts.read_text(encoding="utf-8"))

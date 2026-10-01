@@ -1171,7 +1171,8 @@ def server_transcript(desk: Path, episode: int, take_id: str) -> Path:
     stored = take_stored_url(desk, episode, take_id)
     if stored is None:
         raise ValueError(
-            f"no stored URL for ep{episode:02d} {take_id} in api/17_raw_scene_clips.json to transcribe "
+            f"no stored URL for ep{episode:02d} {take_id} in api/ (17_raw_scene_clips.json or film-*-raw-scene-clips.json) "
+            "to transcribe "
             "(this kit never uploads local files); pass --words-json"
         )
     found = take_lines(desk, episode, take_id)

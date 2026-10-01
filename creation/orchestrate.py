@@ -29,6 +29,7 @@ from creation.desk_media_urls import (
 from creation.harness import stages_gated as stages
 from creation.harness.credentials import load_drama_api_credentials
 from creation.harness.raw_video import (
+    STEP_RAW_CLIPS,
     episode_clips,
     fetch_take_facts,
     wait_for_raw_scene_clips,
@@ -246,7 +247,7 @@ def _resume_raw_clips(
     job_id = enrol.get("job_id") if isinstance(enrol, dict) else None
     if not isinstance(job_id, str) or not job_id.strip():
         return None
-    raw_path = api_dir / "17_raw_scene_clips.json"
+    raw_path = api_dir / STEP_RAW_CLIPS
     if raw_path.is_file():
         try:
             raw = json.loads(raw_path.read_text(encoding="utf-8"))

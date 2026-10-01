@@ -88,7 +88,7 @@ def transcribe(
     Parameters
     ----------
     audio_url
-        Durable URL of the take (``17_raw_scene_clips.json``) or of audio the server made.
+        Durable URL of the take (its clip record: ``17_raw_scene_clips.json`` or a ``film-*-raw-scene-clips.json``) or of audio the server made.
     out_json
         Where the answer is saved.
     audio
