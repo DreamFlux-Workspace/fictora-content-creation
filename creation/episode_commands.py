@@ -175,6 +175,7 @@ from creation.spine_view import (
     episode_summary,
     frame_cast,
     frames_by_set,
+    shot_rows,
 )
 
 ARC_TITLE_MAX = 80
@@ -4028,6 +4029,48 @@ def note_to_shot_edits(
     return after
 
 
+def restaging_warning(
+    desk: Path, frames: Sequence[Mapping[str, Any]], *, episode: int, take_id: str
+) -> list[str]:
+    """Before a paid redraw that re-authors the take's frames: say staging may change, and list the rows now.
+
+    A note (on the redraw, or turned into beat edits) or a beat edit makes the server re-author the
+    take's frames when it draws: who is in a row, its size and its role can change, and the server has
+    no preview, so the kit sees the new rows only after paying. The rows as they stand are printed so
+    the after-draw diff can be read against them, with the free, exact alternative for a staging fix.
+
+    Parameters
+    ----------
+    desk
+        Series desk (for the command to paste).
+    frames
+        The take's frames as they stand before the redraw.
+    episode
+        Episode ordinal.
+    take_id
+        ``t1``, ``t2`` ...
+
+    Returns
+    -------
+    list[str]
+        Printable lines.
+    """
+
+    lines = [
+        f"!! STAGING MAY CHANGE: the server re-authors {take_id}'s frames when it draws (paid). Who is in a "
+        "row (cast_refs, subject_blocking), its size (shot_scale) and its role (cell_role) can change, and "
+        "the server has no preview of the new rows: the kit shows them only after the draw.",
+        f"  For a fix about one row's who, where or size, edit the frame instead (free, exact): "
+        f"`fictora-produce edit --desk {desk} --episode {episode} --frame N --set FIELD=VALUE`, "
+        f"then `redraw-board --take {take_id} --cause '...'` draws it as written.",
+    ]
+    rows = shot_rows(list(frames))
+    if rows:
+        lines.append(f"{take_id} rows now (compare after the redraw):")
+        lines += [f"  {row.one_line()}" for row in rows]
+    return lines
+
+
 def run_redraw_board(
     desk: Path,
     *,
@@ -4188,6 +4231,14 @@ def run_redraw_board(
             )
         else:
             print(f"{take_id} redraws with changed: {'; '.join(changed)}", file=out)
+        reauthors = (note is not None and not resuming) or BOARD_INPUT_NAMES[
+            "beats"
+        ] in (changed or [])
+        if reauthors:
+            for line in restaging_warning(
+                desk, drawn_before, episode=episode, take_id=take_id
+            ):
+                print(line, file=out)
         body = reuse_generation_body(
             prompt=scene_prompt(spine, state.prompt),
             spine=spine,

@@ -133,6 +133,8 @@ A `redraw-board --note` is at most 500 characters (counted after whitespace coll
 5. `redraw-board --desk D --episode N --take tK --cause "short label"`. It redraws from the edited frames; after a beat edit the server re-authors the take's frames first. It prints what changed.
 6. Look at the new board and check the complaint is gone before the board gate.
 
+Before a paid redraw that re-authors the frames (any `--note`, or a beat edit) the kit prints `!! STAGING MAY CHANGE` and the take's rows as they stand: who is in a row, its size and its role can change, and the server has no preview, so the per-row diff comes only after the draw. When the human's complaint is about one row's who, where or size, step 2's `edit --frame N --set …` is free and exact: the redraw then draws that frame as written. A redraw of edited frames alone (no note, no beat edit) prints no warning.
+
 `--same-shots` (same as `--reroll`) only when the drawing was a random miss and the frames are right (a garbled hand, a smeared face): it draws the same direction again for $0.30. A board whose content comes from another episode (another episode's room, cast or story) is a server bug: report it to engineering with the job id; edits do not fix it.
 
 ## Spend (warn, never block)
