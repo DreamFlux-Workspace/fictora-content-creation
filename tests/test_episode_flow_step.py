@@ -372,7 +372,8 @@ def _video_routes(
 ) -> None:
     api.routes[("POST", "/v1/video-generations")] = {"job_id": "job_video_1"}
     api.routes[("GET", "/v1/jobs/job_video_1")] = {
-        "status": "running",
+        "status": "completed",
+        "progress": 100,
         "depends_on": list(children),
     }
     api.routes[("GET", "/v1/jobs/job_take_a")] = {

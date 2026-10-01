@@ -793,6 +793,7 @@ def enrol_video(
     poll_deadline_seconds: float = 7200.0,
     episode: int = 1,
     seed_attempt: int | None = None,
+    expected_clips: int | None = None,
 ) -> dict[str, Any]:
     """Film episode ``episode``'s takes and collect them raw (hosted delivery only when asked and available).
 
@@ -812,6 +813,8 @@ def enrol_video(
         Episode ordinal.
     seed_attempt
         A whole-episode re-film's compile attempt (the previous plus one); ``None`` on the first film.
+    expected_clips
+        How many takes the episode films (the desk's takes); the clips count only when the job lists that many.
 
     Returns
     -------
@@ -849,7 +852,12 @@ def enrol_video(
     job = post_video_generation(run, body, idempotency_key=idem, episode=episode)
     run.save("16_video_enrol.json", job)
     job_id = str(job["job_id"])
-    raw = wait_for_raw_scene_clips(run, job_id, deadline_seconds=poll_deadline_seconds)
+    raw = wait_for_raw_scene_clips(
+        run,
+        job_id,
+        deadline_seconds=poll_deadline_seconds,
+        expected_clips=expected_clips,
+    )
     delivery = (
         finish_video_job(run, job_id, poll_deadline_seconds=poll_deadline_seconds)
         if api_captions

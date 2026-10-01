@@ -21,3 +21,88 @@ def test_clip_url_from_job_payload_reads_fictora_media() -> None:
         }
     }
     assert clip_url_from_job_payload(payload) == "https://example.com/media.mp4"
+
+
+# --- a take counts only when its video job is complete (L-20260925-1) -------------------------------
+
+import pytest  # noqa: E402
+
+from creation.harness import raw_video  # noqa: E402
+
+
+class _Run:
+    """Answers ``GET /v1/jobs/{id}`` from a list of parent answers (one per poll) and fixed children."""
+
+    def __init__(self, parents: list[dict], children: dict[str, dict]) -> None:
+        self.parents = parents
+        self.children = children
+        self.saved: dict[str, dict] = {}
+        self.polls = 0
+
+    def get(self, path: str) -> dict:
+        job = path.rsplit("/", 1)[-1]
+        if job == "job_video_1":
+            answer = self.parents[min(self.polls, len(self.parents) - 1)]
+            self.polls += 1
+            return answer
+        return self.children[job]
+
+    def save(self, name: str, payload: dict) -> None:
+        self.saved[name] = payload
+
+    def emit(self, *_a, **_k) -> None:
+        return None
+
+
+def _child(index: int) -> dict:
+    return {
+        "status": "completed",
+        "episode_ids": ["ep_01"],
+        "relation": {"id": f"scene_ep_01_set0{index}"},
+        "result": {"video": {"url": f"https://r2.example/t{index}.mp4"}},
+    }
+
+
+HALF = {"status": "running", "progress": 50, "depends_on": ["job_t1"]}
+BOTH_RUNNING = {"status": "running", "progress": 75, "depends_on": ["job_t1", "job_t2"]}
+DONE = {"status": "completed", "progress": 100, "depends_on": ["job_t1", "job_t2"]}
+
+
+@pytest.fixture(autouse=True)
+def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(raw_video.time, "sleep", lambda _s: None)
+
+
+def test_a_half_done_job_with_its_first_clip_listed_is_not_a_finished_take() -> None:
+    run = _Run(
+        [HALF, HALF, BOTH_RUNNING, DONE], {"job_t1": _child(1), "job_t2": _child(2)}
+    )
+
+    raw = raw_video.wait_for_raw_scene_clips(
+        run, "job_video_1", interval_seconds=0, expected_clips=2
+    )
+
+    assert [clip["set_index"] for clip in raw["clips"]] == [1, 2]
+    assert raw["coordinator_status"] == "completed"
+    assert run.polls == 4, "it waited for the job to complete, not just the listed clip"
+
+
+def test_a_job_that_never_completes_is_not_done_at_the_deadline() -> None:
+    run = _Run([HALF], {"job_t1": _child(1)})
+
+    with pytest.raises(SystemExit, match="NOT done"):
+        raw_video.wait_for_raw_scene_clips(
+            run, "job_video_1", deadline_seconds=0.05, interval_seconds=0
+        )
+    assert run.saved == {}, "no clip record is written for half a take"
+
+
+def test_a_completed_job_with_fewer_clips_than_asked_stops_loud() -> None:
+    short = {"status": "completed", "progress": 100, "depends_on": ["job_t1"]}
+    run = _Run([short], {"job_t1": _child(1)})
+
+    with pytest.raises(SystemExit, match="asked for 2: the take is short"):
+        raw_video.wait_for_raw_scene_clips(
+            run, "job_video_1", interval_seconds=0, expected_clips=2
+        )
+    assert run.saved == {}

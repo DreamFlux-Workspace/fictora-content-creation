@@ -133,8 +133,16 @@ def wait_for_raw_scene_clips(
     deadline_seconds: float = 7200.0,
     interval_seconds: float = 15.0,
     save_as: str = STEP_RAW_CLIPS,
+    expected_clips: int | None = None,
 ) -> dict[str, Any]:
-    """Poll until every take job on the coordinator has a clip URL.
+    """Poll until the coordinator is complete and every take job on it has a clip URL.
+
+    The coordinator lists its take jobs in ``depends_on`` as it starts them, so
+    a 30 s take at 50 % lists only its first clip: every listed child done is
+    not the take done (L-20260925-1). The clips are returned only once the
+    coordinator itself is ``completed`` and, when ``expected_clips`` is given,
+    it lists at least that many take jobs (more is another episode's clip,
+    which the caller reports).
 
     Stops loud, with the server's code and rule, when the coordinator or a take
     job fails: a take the server refuses (for example one that would drop an
@@ -152,18 +160,22 @@ def wait_for_raw_scene_clips(
         Sleep between polls.
     save_as
         Artefact name for the clip list (:func:`raw_clips_name`: a ``film`` keeps its own, never the step's).
+    expected_clips
+        How many takes (storyboard sets) this film asked for; ``None`` when the caller cannot tell.
 
     Returns
     -------
     dict[str, Any]
-        ``{"coordinator_job_id", "clips": [{"job_id", "url", "relation_id", "set_index", "episode_id"}]}``.
+        ``{"coordinator_job_id", "coordinator_status": "completed", "clips": [{"job_id", "url",
+        "relation_id", "set_index", "episode_id"}]}``.
 
     Raises
     ------
     VideoJobFailed
         When the coordinator or a take job ended failed or cancelled.
     SystemExit
-        At the deadline, or when a poll is refused (the job may still finish).
+        At the deadline, when a poll is refused (the job may still finish), or
+        when the completed coordinator lists fewer takes than were asked for (nothing is saved; the job is not forgotten).
     """
 
     deadline = time.monotonic() + deadline_seconds
@@ -212,8 +224,23 @@ def wait_for_raw_scene_clips(
                         "episode_id": str(episodes[0]) if episodes else "",
                     }
                 )
-            if clips and not pending and len(clips) == len(child_ids):
-                payload = {"coordinator_job_id": coordinator_job_id, "clips": clips}
+            parent_done = str(parent.get("status") or "") == "completed"
+            if (
+                parent_done
+                and expected_clips is not None
+                and len(child_ids) < expected_clips
+            ):
+                raise SystemExit(
+                    f"video job {coordinator_job_id} completed with {len(child_ids)} take job(s) but this film "
+                    f"asked for {expected_clips}: the take is short; nothing was collected or marked done. Check the job on the "
+                    "server before filming again (the clips it has are paid for)."
+                )
+            if parent_done and clips and not pending and len(clips) == len(child_ids):
+                payload = {
+                    "coordinator_job_id": coordinator_job_id,
+                    "coordinator_status": "completed",
+                    "clips": clips,
+                }
                 run.save(save_as, payload)
                 return payload
         elif str(parent.get("status") or "") == "completed":
@@ -226,10 +253,17 @@ def wait_for_raw_scene_clips(
             progress=parent.get("progress"),
             job_id=coordinator_job_id,
             children=len(child_ids),
+            clips=len(clips),
+            expected=expected_clips,
         )
         time.sleep(interval_seconds)
 
-    raise SystemExit(f"timed out waiting for raw scene clips on {coordinator_job_id}")
+    raise SystemExit(
+        f"timed out waiting for raw scene clips on {coordinator_job_id} "
+        f"({len(clips)} clip(s) of {len(child_ids)} listed"
+        + (f", {expected_clips} asked for" if expected_clips is not None else "")
+        + "; the video job is not complete, so the take is NOT done)"
+    )
 
 
 def episode_clips(raw: dict[str, Any], *, episode_id: str) -> list[dict[str, Any]]:

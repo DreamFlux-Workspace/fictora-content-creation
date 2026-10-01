@@ -5295,6 +5295,7 @@ def _run_film(
             str(job_id),
             deadline_seconds=cfg.poll_video_deadline_seconds,
             save_as=raw_clips_name(unit),
+            expected_clips=len(take_ids),
         )
     except VideoJobFailed as exc:
         _forget_failed_film(desk, unit, job_id=str(job_id), what=what, episode=episode)

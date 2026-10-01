@@ -84,7 +84,8 @@ def _take_two_of_episode_two(api: FakeApi) -> None:
 
     api.routes[("POST", VIDEO)] = {"job_id": "job_video_9"}
     api.routes[("GET", "/v1/jobs/job_video_9")] = {
-        "status": "running",
+        "status": "completed",
+        "progress": 100,
         "depends_on": ["job_take_e2t2"],
     }
     api.routes[("GET", "/v1/jobs/job_take_e2t2")] = {
@@ -432,7 +433,8 @@ def test_film_episode_n_sends_episode_ordinal_and_no_take(
     assert "episode 2 alone (2 take(s))" in text
     api30.routes[("POST", VIDEO)] = {"job_id": "job_video_7"}
     api30.routes[("GET", "/v1/jobs/job_video_7")] = {
-        "status": "running",
+        "status": "completed",
+        "progress": 100,
         "depends_on": ["job_a", "job_b"],
     }
     for job, index in (("job_a", 1), ("job_b", 2)):
@@ -535,7 +537,8 @@ def test_clips_of_another_episode_are_not_booked_and_are_said_out_loud(
     run_film(desk30, episode=2, take_id="t2")
     _take_two_of_episode_two(api30)
     api30.routes[("GET", "/v1/jobs/job_video_9")] = {
-        "status": "running",
+        "status": "completed",
+        "progress": 100,
         "depends_on": ["job_ep1", "job_take_e2t2"],
     }
     api30.routes[("GET", "/v1/jobs/job_ep1")] = {
@@ -566,7 +569,8 @@ def test_a_whole_episode_retry_films_with_a_fresh_seed(
     )
     api.routes[("POST", VIDEO)] = {"job_id": "job_video_1"}
     api.routes[("GET", "/v1/jobs/job_video_1")] = {
-        "status": "running",
+        "status": "completed",
+        "progress": 100,
         "depends_on": ["job_take_a"],
     }
     api.routes[("GET", "/v1/jobs/job_take_a")] = {

@@ -224,7 +224,12 @@ def script_gate_text(desk: Path, spine: dict[str, Any], *, episode: int) -> str:
 
 
 def _resume_raw_clips(
-    api_dir: Path, *, run: DramaApiRunSession, state: ProductionState, deadline: float
+    api_dir: Path,
+    *,
+    run: DramaApiRunSession,
+    state: ProductionState,
+    deadline: float,
+    expected_clips: int | None = None,
 ) -> dict[str, Any] | None:
     """Pick up the take job this desk already paid for, or ``None`` to enrol a new one.
 
@@ -253,13 +258,18 @@ def _resume_raw_clips(
             raw = json.loads(raw_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             raw = None
+        # Only a record written once the job was complete counts (an older one could hold half a take).
         if (
             isinstance(raw, dict)
             and raw.get("coordinator_job_id") == job_id
+            and raw.get("coordinator_status") == "completed"
             and raw.get("clips")
+            and (expected_clips is None or len(raw["clips"]) >= expected_clips)
         ):
             return raw
-    return wait_for_raw_scene_clips(run, job_id, deadline_seconds=deadline)
+    return wait_for_raw_scene_clips(
+        run, job_id, deadline_seconds=deadline, expected_clips=expected_clips
+    )
 
 
 def _delivery_video_url(delivery: dict[str, Any]) -> str | None:
@@ -1310,8 +1320,13 @@ def _film(
     ep = state.episode_ordinal
     ep_dir = _episode_dir(desk, ep)
     api_dir = api_dir_for_episode(desk, ep)
+    expected = len(episode_by_ordinal(load_series(desk), ep).takes) or None
     raw = _resume_raw_clips(
-        api_dir, run=run, state=state, deadline=cfg.poll_video_deadline_seconds
+        api_dir,
+        run=run,
+        state=state,
+        deadline=cfg.poll_video_deadline_seconds,
+        expected_clips=expected,
     )
     delivery: dict[str, Any] | None = None
     if raw is None:
@@ -1337,6 +1352,7 @@ def _film(
             poll_deadline_seconds=cfg.poll_video_deadline_seconds,
             episode=ep,
             seed_attempt=seed_attempt_for(desk, episode=ep),
+            expected_clips=expected,
         )
         raw = result["raw_scenes"]
         delivery = result.get("delivery")
