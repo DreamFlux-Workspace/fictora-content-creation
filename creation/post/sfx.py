@@ -361,11 +361,21 @@ class FilmedShots:
     windows: dict[int, tuple[float, float]]
     moved: tuple[tuple[float, float], ...]
     kept: tuple[float, ...]
+    #: How far a planned change could move to a measured cut.
+    window: float = FILMED_CUT_WINDOW_SECONDS
+    #: Every hard cut measured on the take, earliest first; printed only when ``show_measured``.
+    measured: tuple[float, ...] = ()
+    show_measured: bool = False
 
     def one_line(self) -> str:
         """``shot changes on the filmed cuts: 3.80->3.88s, 7.50->7.33s; kept as planned: 11.20s``."""
 
         parts: list[str] = []
+        if self.show_measured:
+            parts.append(
+                "measured cuts: "
+                + (", ".join(f"{t:.2f}s" for t in self.measured) or "none")
+            )
         if self.moved:
             parts.append(
                 "shot changes on the filmed cuts: "
@@ -373,16 +383,21 @@ class FilmedShots:
             )
         if self.kept:
             parts.append(
-                "no cut within 1 s, kept as planned: "
+                f"no cut within {self.window:g} s, kept as planned: "
                 + ", ".join(f"{t:.2f}s" for t in self.kept)
             )
         return "; ".join(parts) or "no shot changes planned"
 
 
 def filmed_shot_windows(
-    shots: tuple[PlannedShot, ...], cuts: tuple[float, ...], *, duration: float
+    shots: tuple[PlannedShot, ...],
+    cuts: tuple[float, ...],
+    *,
+    duration: float,
+    window: float = FILMED_CUT_WINDOW_SECONDS,
+    show_measured: bool = False,
 ) -> FilmedShots:
-    """Move each planned shot change to the nearest measured cut within :data:`FILMED_CUT_WINDOW_SECONDS`.
+    """Move each planned shot change to the nearest measured cut within ``window`` (default 1 s).
 
     Each measured cut is used once, and the changes stay in order. A change with
     no cut near it stays where it was planned. The first shot's start and the
@@ -396,6 +411,10 @@ def filmed_shot_windows(
         Hard-cut times measured on the take.
     duration
         The take's length (cuts within :data:`FILMED_CUT_EDGE_SECONDS` of either end are ignored).
+    window
+        How far a change may move (:data:`FILMED_CUT_WINDOW_SECONDS`; a locked-voice take widens it).
+    show_measured
+        Print every measured cut in :meth:`FilmedShots.one_line`.
 
     Returns
     -------
@@ -414,11 +433,7 @@ def filmed_shot_windows(
     previous = starts[0] if starts else 0.0
     for position in range(1, len(shots)):
         change = shots[position].start
-        near = [
-            cut
-            for cut in free
-            if abs(cut - change) <= FILMED_CUT_WINDOW_SECONDS and cut > previous
-        ]
+        near = [cut for cut in free if abs(cut - change) <= window and cut > previous]
         if near:
             cut = min(near, key=lambda value: abs(value - change))
             free.remove(cut)
@@ -435,7 +450,16 @@ def filmed_shot_windows(
         )
         for position, shot in enumerate(shots)
     }
-    return FilmedShots(shots, windows, tuple(moved), tuple(kept))
+    measured = tuple(
+        sorted(
+            round(cut, 3)
+            for cut in cuts
+            if FILMED_CUT_EDGE_SECONDS < cut < duration - FILMED_CUT_EDGE_SECONDS
+        )
+    )
+    return FilmedShots(
+        shots, windows, tuple(moved), tuple(kept), window, measured, show_measured
+    )
 
 
 def _on_filmed(time: float, shot: PlannedShot, filmed: FilmedShots) -> float:

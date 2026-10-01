@@ -309,6 +309,7 @@ def mix_take(
     voice_source: Path | None = None,
     cues: Sequence[CueLevel] = (),
     buses: bool = False,
+    duck_windows: Sequence[tuple[float, float]] | None = None,
 ) -> MixResult:
     """Mix ``take`` with ``bed`` into ``out`` at a measured take gain.
 
@@ -331,6 +332,9 @@ def mix_take(
     buses
         Also write the bed before and after ducking and the duck key beside ``out``
         (:func:`bus_paths`, what ``review`` measures the duck depth from); only when there is a bed.
+    duck_windows
+        With ``duck_db``: the exact voice windows to duck in (a locked-voice take's
+        line windows), instead of finding them by level in ``voice_source``.
 
     Returns
     -------
@@ -354,11 +358,14 @@ def mix_take(
     if not info.has_audio:
         raise ValueError(f"{take.name} has no audio to mix")
     total = info.duration_seconds
-    windows = (
-        voice_windows(voice_source or take, total=total)
-        if duck_db is not None
-        else None
-    )
+    if duck_db is None:
+        windows = None
+    elif duck_windows is not None:
+        windows = [
+            (round(a, 3), round(min(b, total), 3)) for a, b in duck_windows if a < total
+        ]
+    else:
+        windows = voice_windows(voice_source or take, total=total)
     take_lufs = measure_loudness(take)
     gain = pick_gain(take_lufs)
     kwargs = {
@@ -386,7 +393,9 @@ def mix_take(
     if duck_db is None:
         ducking = "sidechain compressor" if bed else "none"
     else:
-        ducking = f"{duck_db:.0f} dB in {len(windows or [])} voice window(s)"
+        ducking = f"{duck_db:.0f} dB in {len(windows or [])} voice window(s)" + (
+            " (the take's line windows)" if duck_windows is not None else ""
+        )
     warnings: list[str] = []
     if bed is not None and cues:
         levels = measure_rms_windows(bed, window_seconds=BED_WINDOW_SECONDS)

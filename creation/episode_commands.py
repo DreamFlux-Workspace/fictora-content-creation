@@ -3564,6 +3564,18 @@ def _say_new_thought(
     )
 
 
+def _soundtrack_rows(
+    facts: dict[str, Any] | None, cast_names: dict[str, str]
+) -> list[str]:
+    """The take's soundtrack and its line windows, when the server sent one (nothing from an older server)."""
+
+    from creation.post.soundtrack import soundtrack_from, soundtrack_lines
+
+    if not soundtrack_from(facts).sent:
+        return []
+    return soundtrack_lines(facts, cast_names)
+
+
 def run_take_facts(
     desk: Path, *, episode: int, take_id: str, refresh: bool = False, out: Any = None
 ) -> Path:
@@ -3630,6 +3642,8 @@ def run_take_facts(
             old, cast_names_from(found[0] if found else None)
         ):
             print(f"  {line}", file=out)
+        for line in _soundtrack_rows(old, cast_names_from(found[0] if found else None)):
+            print(f"  {line}", file=out)
         if stale:
             print(
                 f"!! older than the story's sound notes: {stale}. Run take-facts --desk {desk} --episode {episode} "
@@ -3668,6 +3682,8 @@ def run_take_facts(
     was = f" (was {old_path.name})" if old_path else " (none saved before)"
     print(f"{label}: saved {path.name}{was}", file=out)
     for line in shot_people_lines(facts, cast_names_from(spine)):
+        print(f"  {line}", file=out)
+    for line in _soundtrack_rows(facts, cast_names_from(spine)):
         print(f"  {line}", file=out)
     if changes:
         print("SFX plan changes:", file=out)

@@ -130,6 +130,12 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     revoice.add_argument(
         "--voice-db", type=float, default=0.0, help="Gain on the new lines."
     )
+    revoice.add_argument(
+        "--over-locked-voices",
+        action="store_true",
+        help="Revoice a take whose sound is already the locked voices (take facts soundtrack target_audio): "
+        "only when a new voice was picked after it was filmed. Refused without it.",
+    )
 
     line = sub.add_parser(
         "voice-line",
@@ -248,6 +254,12 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--cue", action="append", default=[],
         help="Lay a hand cue (cue): PATH@SECONDS[@DB] on the take as filmed; -8 dB unless @DB, clamped (repeat).",
     )  # fmt: skip
+    fin.add_argument(
+        "--over-locked-voices",
+        action="store_true",
+        help="Allow --mute, --voice or a revoice file on a take whose sound is already the locked voices "
+        "(take facts soundtrack target_audio). Refused without it.",
+    )
     fin.add_argument(
         "--watermark-y",
         type=int,
@@ -405,6 +417,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             take_file=args.take_file,
             words_json=args.words_json,
             voice_db=args.voice_db,
+            over_locked_voices=args.over_locked_voices,
         )
         return 0
     if args.command == "voice-line":
@@ -450,6 +463,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             cues=tuple(parse_placed(raw, flag="--cue") for raw in args.cue),
             thumbnail=not args.no_thumbnail,
             draw_thumbnail=args.thumbnail,
+            over_locked_voices=args.over_locked_voices,
         )
         if args.json:
             print(json.dumps(result.as_json(), indent=2))
