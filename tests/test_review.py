@@ -489,6 +489,77 @@ def test_transcribe_asks_the_injected_server_only_when_no_transcript_is_saved(
     assert first.status == WARN and again.status == WARN  # line 2 was not heard
 
 
+def test_transcribe_after_a_refilm_makes_a_new_transcript_of_the_new_take(
+    desk: Path,
+) -> None:
+    """A re-filmed take never reads the old take's transcript (line checks ran on the wrong take)."""
+
+    import os
+
+    takes = _desk_ready(desk, facts=_facts(()))
+    old_take = write_frames(takes / "take-ep01-t1-raw-v1.mp4", _clean())
+    os.utime(old_take, (100, 100))
+    old_words = _words(
+        takes / "take-ep01-t1-review-words-v1.json",
+        [("We're", 0.2, 0.4), ("closed.", 0.4, 0.8), ("Not", 1.5, 1.7), ("for", 1.7, 1.8), ("me.", 1.8, 2.0)],
+    )  # fmt: skip
+    os.utime(old_words, (200, 200))
+    new_take = write_frames(takes / "take-ep01-t1-raw-v2.mp4", _clean(start=5))
+    os.utime(new_take, (300, 300))
+    calls: list[str] = []
+
+    def fake(desk_: Path, episode: int, take_id: str) -> Path:
+        calls.append(take_id)
+        return _words(
+            takes / "take-ep01-t1-raw-v2-review-words-v1.json",
+            [("We're", 0.2, 0.4), ("closed.", 0.4, 0.8)],
+        )
+
+    lines = _section(
+        review_take(desk, take_file=new_take, transcribe=True, transcriber=fake),
+        "Lines",
+    )
+    text = "\n".join(lines.lines())
+
+    assert calls == ["t1"], "the old take's transcript was reused"
+    assert "take-ep01-t1-raw-v2-review-words-v1.json" in text
+    assert "of take v2, `take-ep01-t1-raw-v2.mp4`" in text
+    assert (
+        lines.data["heard"] is not None and lines.status == WARN
+    )  # line 2 not heard on v2
+
+    again = _section(
+        review_take(desk, take_file=new_take, transcribe=True, transcriber=fake),
+        "Lines",
+    )
+    assert calls == ["t1"], "an unchanged take keeps its transcript"
+    assert "of take v2" in "\n".join(again.lines())
+
+
+def test_without_transcribe_an_old_takes_transcript_is_named_not_used(
+    desk: Path,
+) -> None:
+    import os
+
+    takes = _desk_ready(desk, facts=_facts(()))
+    os.utime(write_frames(takes / "take-ep01-t1-raw-v1.mp4", _clean()), (100, 100))
+    os.utime(
+        _words(takes / "take-ep01-t1-v1-words-v1.json", [("We're", 0.2, 0.4)]),
+        (200, 200),
+    )
+    new_take = write_frames(takes / "take-ep01-t1-raw-v2.mp4", _clean(start=5))
+
+    lines = _section(review_take(desk, take_file=new_take), "Lines")
+    text = "\n".join(lines.lines())
+
+    assert lines.data["heard"] is None
+    assert (
+        "take-ep01-t1-v1-words-v1.json" in text
+        and "take v1" in text
+        and "--transcribe" in text
+    )
+
+
 def test_a_japanese_line_heard_on_the_server_readings_says_by_sound(desk: Path) -> None:
     spine = copy.deepcopy(spine_fixture(spoken_language="ja-JP"))
     first = spine["beats"][0]["dialogue_lines"][0]

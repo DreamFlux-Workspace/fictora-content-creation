@@ -12,12 +12,19 @@ server and is never fetched.
 from __future__ import annotations
 
 import re
+import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import quote
 
-from creation.harness.http_util import describe_job_error
+from creation.harness.http_util import (
+    STALE_JOB_SECONDS,
+    _parse_utc,
+    describe_job_error,
+    stale_job_warning,
+)
 from creation.harness.session import DramaApiRunSession
 
 _SET_SUFFIX = re.compile(r"_set(\d+)$")
@@ -119,6 +126,74 @@ def _job_record(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _print_warning(message: str) -> None:
+    print(f"WARNING: {message}", file=sys.stderr, flush=True)
+
+
+def video_generation_failure(
+    run: DramaApiRunSession, coordinator_job_id: str
+) -> dict[str, Any] | None:
+    """The ``/v1/video-generations/{id}`` record when that route says the filming ended failed or cancelled.
+
+    ``/v1/jobs/{id}`` can still read ``running`` (progress 0) after the
+    video-generation route has reported ``failed`` (seen twice, up to an hour
+    of "running 0%"). The film poll reads both and stops on whichever ends
+    first. A route that does not answer (an older server, a blip) is not a
+    failure: the job poll carries on.
+
+    Parameters
+    ----------
+    run
+        Active harness session.
+    coordinator_job_id
+        The video generation's job id.
+
+    Returns
+    -------
+    dict[str, Any] | None
+        The failed or cancelled record, else ``None``.
+    """
+
+    status, body = run.get_optional(f"/v1/video-generations/{coordinator_job_id}")
+    if not (200 <= status < 300) or not isinstance(body, dict):
+        return None
+    record = _job_record(body)
+    return record if str(record.get("status") or "") in _FAILED else None
+
+
+def stuck_film_warning(
+    *, minutes: int, last_update: datetime, job_id: str, desk: str | None
+) -> str:
+    """The stuck warning for a film whose job has not moved: what to check, never a paid retry.
+
+    Parameters
+    ----------
+    minutes
+        Whole minutes without a change.
+    last_update
+        When it last changed (UTC).
+    job_id
+        The video job.
+    desk
+        The desk, for the commands (``D`` when unknown).
+
+    Returns
+    -------
+    str
+        One warning.
+    """
+
+    return (
+        f"video job {job_id}: "
+        + stale_job_warning(
+            minutes=minutes, last_update=last_update, job_id=job_id, desk=desk
+        )
+        + " Do not film again or pass --confirm-spend again while it runs (that starts another paid job); "
+        "tell the human and send the job id to engineering. The poll keeps watching and stops at once if "
+        "the server reports it failed."
+    )
+
+
 def set_index_of(relation_id: str | None) -> int | None:
     """Return the 1-based board (take) index from a child's ``relation.id`` (``..._set02`` -> 2)."""
 
@@ -134,6 +209,8 @@ def wait_for_raw_scene_clips(
     interval_seconds: float = 15.0,
     save_as: str = STEP_RAW_CLIPS,
     expected_clips: int | None = None,
+    stale_after_seconds: float = STALE_JOB_SECONDS,
+    warn: Callable[[str], None] | None = _print_warning,
 ) -> dict[str, Any]:
     """Poll until the coordinator is complete and every take job on it has a clip URL.
 
@@ -146,7 +223,14 @@ def wait_for_raw_scene_clips(
 
     Stops loud, with the server's code and rule, when the coordinator or a take
     job fails: a take the server refuses (for example one that would drop an
-    approved line) fails before any child is filmed.
+    approved line) fails before any child is filmed. Each poll also reads
+    ``/v1/video-generations/{id}`` (:func:`video_generation_failure`): the job
+    route can still say ``running`` 0 % after that route reported ``failed``.
+
+    When nothing moves (the job's status, ``updated_at`` and progress, the take
+    jobs listed, the clips collected) for ``stale_after_seconds`` (10 minutes), ``warn`` gets
+    :func:`stuck_film_warning` with the job id and what to do, and again every
+    ``stale_after_seconds`` while nothing moves. Nothing is cancelled or retried.
 
     Parameters
     ----------
@@ -162,6 +246,10 @@ def wait_for_raw_scene_clips(
         Artefact name for the clip list (:func:`raw_clips_name`: a ``film`` keeps its own, never the step's).
     expected_clips
         How many takes (storyboard sets) this film asked for; ``None`` when the caller cannot tell.
+    stale_after_seconds
+        How long without a change before the stuck warning (and between repeats).
+    warn
+        Where the stuck warning goes (stderr); ``None`` stays quiet.
 
     Returns
     -------
@@ -172,7 +260,7 @@ def wait_for_raw_scene_clips(
     Raises
     ------
     VideoJobFailed
-        When the coordinator or a take job ended failed or cancelled.
+        When the coordinator, its video generation or a take job ended failed or cancelled.
     SystemExit
         At the deadline, when a poll is refused (the job may still finish), or
         when the completed coordinator lists fewer takes than were asked for (nothing is saved; the job is not forgotten).
@@ -181,6 +269,12 @@ def wait_for_raw_scene_clips(
     deadline = time.monotonic() + deadline_seconds
     child_ids: list[str] = []
     clips: list[dict[str, Any]] = []
+    seen: tuple[Any, ...] | None = None
+    changed_at = time.monotonic()
+    changed_utc = datetime.now(timezone.utc)
+    next_warning = changed_at + stale_after_seconds
+    desk_hint = getattr(run, "desk_hint", None)
+    desk = desk_hint() if callable(desk_hint) else None
 
     while time.monotonic() < deadline:
         parent = _job_record(run.get(f"/v1/jobs/{coordinator_job_id}"))
@@ -188,6 +282,14 @@ def wait_for_raw_scene_clips(
             run.save("17_video_terminal.json", parent)
             raise VideoJobFailed(
                 f"video job {coordinator_job_id} {describe_job_error(parent)}"
+            )
+        generation = video_generation_failure(run, coordinator_job_id)
+        if generation is not None:
+            run.save("17_video_terminal.json", generation)
+            raise VideoJobFailed(
+                f"video job {coordinator_job_id} {describe_job_error(generation)} "
+                f"(reported by /v1/video-generations/{coordinator_job_id}; /v1/jobs still said "
+                f"{parent.get('status') or 'nothing'} {parent.get('progress') or 0}%)"
             )
         depends = parent.get("depends_on")
         if isinstance(depends, list) and depends:
@@ -256,6 +358,31 @@ def wait_for_raw_scene_clips(
             clips=len(clips),
             expected=expected_clips,
         )
+        now = time.monotonic()
+        marker = (
+            parent.get("updated_at"),
+            parent.get("progress"),
+            parent.get("status"),
+            len(child_ids),
+            len(clips),
+        )
+        if marker != seen:
+            seen = marker
+            changed_at = now
+            changed_utc = _parse_utc(parent.get("updated_at")) or datetime.now(
+                timezone.utc
+            )
+            next_warning = now + stale_after_seconds
+        elif warn is not None and now >= next_warning:
+            warn(
+                stuck_film_warning(
+                    minutes=int((now - changed_at) // 60),
+                    last_update=changed_utc,
+                    job_id=coordinator_job_id,
+                    desk=desk,
+                )
+            )
+            next_warning += stale_after_seconds
         time.sleep(interval_seconds)
 
     raise SystemExit(

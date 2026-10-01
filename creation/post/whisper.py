@@ -82,6 +82,7 @@ def transcribe(
     audio: AudioService,
     spine_id: str | None = None,
     language: str = "en",
+    media_version: str | None = None,
 ) -> Path:
     """Get Whisper word timings for a file already in our storage (the take's stored URL) and save them.
 
@@ -100,6 +101,9 @@ def transcribe(
         Books the call on the story.
     language
         Whisper language (English).
+    media_version
+        The take's content hash when known: part of the request key, so a take
+        filmed again is never answered with the transcript of the media before it.
 
     Returns
     -------
@@ -107,9 +111,10 @@ def transcribe(
         ``out_json``.
     """
 
-    key = (
-        "whisper-" + hashlib.sha256(f"{audio_url}|{language}".encode()).hexdigest()[:16]
+    identity = f"{audio_url}|{language}" + (
+        f"|{media_version}" if media_version else ""
     )
+    key = "whisper-" + hashlib.sha256(identity.encode()).hexdigest()[:16]
     output = audio.transcribe(
         audio_url=audio_url, language=language, spine_id=spine_id, key=key
     )

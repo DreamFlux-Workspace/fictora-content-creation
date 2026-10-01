@@ -207,7 +207,12 @@ class FakeApi:
         return self._answer("GET", path, None)
 
     def get_optional(self, path: str) -> tuple[int, Any]:
-        """GET without raising."""
+        """GET without raising; an unset ``/v1/video-generations/{id}`` answers 404 (the film poll reads it)."""
+        if (
+            path.startswith("/v1/video-generations/")
+            and ("GET", path) not in self.routes
+        ):
+            return 404, {"error": {"code": "not_found"}}
         try:
             return 200, self._answer("GET", path, None)
         except SystemExit as exc:

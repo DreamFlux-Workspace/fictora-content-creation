@@ -47,6 +47,9 @@ class _Run:
             return answer
         return self.children[job]
 
+    def get_optional(self, _path: str) -> tuple[int, dict]:
+        return 404, {"error": {"code": "not_found"}}
+
     def save(self, name: str, payload: dict) -> None:
         self.saved[name] = payload
 
@@ -106,3 +109,136 @@ def test_a_completed_job_with_fewer_clips_than_asked_stops_loud() -> None:
             run, "job_video_1", interval_seconds=0, expected_clips=2
         )
     assert run.saved == {}
+
+
+# --- the film poll reads /v1/video-generations too, and says when the job is stuck ----------------------
+
+
+class _RunWithGeneration(_Run):
+    """Also answers ``GET /v1/video-generations/{id}`` (``None``: the route 404s, an older server)."""
+
+    def __init__(self, parents, children, generation=None) -> None:
+        super().__init__(parents, children)
+        self.generation = generation
+        self.generation_reads = 0
+
+    def get_optional(self, path: str) -> tuple[int, dict]:
+        assert path == "/v1/video-generations/job_video_1", path
+        self.generation_reads += 1
+        if self.generation is None:
+            return 404, {"error": {"code": "not_found"}}
+        return 200, self.generation
+
+
+STUCK_AT_ZERO = {
+    "status": "running",
+    "progress": 0,
+    "updated_at": "2026-10-01T09:00:00Z",
+}
+GENERATION_FAILED = {
+    "job_id": "job_video_1",
+    "status": "failed",
+    "progress": 0,
+    "error": {"code": "provider_rejected", "message": "the provider refused the take"},
+}
+
+
+def test_a_failed_video_generation_stops_the_poll_while_the_job_still_says_running() -> (
+    None
+):
+    run = _RunWithGeneration([STUCK_AT_ZERO], {}, generation=GENERATION_FAILED)
+
+    with pytest.raises(raw_video.VideoJobFailed) as stopped:
+        raw_video.wait_for_raw_scene_clips(
+            run, "job_video_1", deadline_seconds=1, interval_seconds=0
+        )
+
+    text = str(stopped.value.code)
+    assert "provider_rejected" in text and "the provider refused the take" in text
+    assert "/v1/video-generations/job_video_1" in text
+    assert run.polls == 1, "stopped on the first poll, not after the deadline"
+    assert run.saved["17_video_terminal.json"]["status"] == "failed"
+
+
+def test_a_cancelled_video_generation_stops_the_poll_too() -> None:
+    run = _RunWithGeneration(
+        [STUCK_AT_ZERO], {}, generation={"job": {"status": "cancelled"}}
+    )
+
+    with pytest.raises(raw_video.VideoJobFailed, match="cancelled"):
+        raw_video.wait_for_raw_scene_clips(
+            run, "job_video_1", deadline_seconds=1, interval_seconds=0
+        )
+
+
+def test_a_video_generation_route_that_does_not_answer_is_not_a_failure() -> None:
+    run = _RunWithGeneration(
+        [HALF, DONE], {"job_t1": _child(1), "job_t2": _child(2)}, generation=None
+    )
+
+    raw = raw_video.wait_for_raw_scene_clips(
+        run, "job_video_1", interval_seconds=0, expected_clips=2
+    )
+
+    assert raw["coordinator_status"] == "completed"
+    assert run.generation_reads == 2
+
+
+class _Clock:
+    """``time.monotonic`` that moves ``step`` seconds per sleep."""
+
+    def __init__(self, step: float) -> None:
+        self.now = 0.0
+        self.step = step
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, _seconds: float) -> None:
+        self.now += self.step
+
+
+def test_a_film_whose_progress_never_moves_gets_a_stuck_warning_with_its_job_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _Clock(step=300.0)
+    monkeypatch.setattr(raw_video.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(raw_video.time, "sleep", clock.sleep)
+    run = _RunWithGeneration([STUCK_AT_ZERO], {}, generation={"status": "running"})
+    warnings: list[str] = []
+
+    with pytest.raises(SystemExit, match="NOT done"):
+        raw_video.wait_for_raw_scene_clips(
+            run,
+            "job_video_1",
+            deadline_seconds=1300,
+            interval_seconds=0,
+            warn=warnings.append,
+        )
+
+    assert len(warnings) == 2, warnings  # at 10 and 20 minutes without a change
+    first = warnings[0]
+    assert "job_video_1" in first and "10 min" in first and "09:00 UTC" in first
+    assert "cancel-job" in first and "--confirm-spend again" in first
+
+
+def test_a_film_that_keeps_moving_is_never_called_stuck(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _Clock(step=300.0)
+    monkeypatch.setattr(raw_video.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(raw_video.time, "sleep", clock.sleep)
+    moving = [{"status": "running", "progress": p} for p in range(0, 100, 10)]
+    run = _RunWithGeneration(moving, {}, generation={"status": "running"})
+    warnings: list[str] = []
+
+    with pytest.raises(SystemExit, match="NOT done"):
+        raw_video.wait_for_raw_scene_clips(
+            run,
+            "job_video_1",
+            deadline_seconds=2900,
+            interval_seconds=0,
+            warn=warnings.append,
+        )
+
+    assert warnings == []

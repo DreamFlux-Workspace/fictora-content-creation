@@ -163,3 +163,107 @@ def test_a_line_heard_wholly_elsewhere_or_over_a_silent_window_is_still_named(
                            measure=_levels((4.3, 5.0))) == [
         "l2: heard at 4.35s, its window is 6.00-7.50s"
     ], "no voice in the window: the stretched start stands"  # fmt: skip
+
+
+# --- a transcript is keyed to the exact media it was made from (re-film reuse) -----------------------
+
+
+def _tagged(path: Path, raw: Path, *, at: float, url: str | None = None) -> Path:
+    import hashlib
+    import json
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    source = {
+        "raw_take": raw.name,
+        "version": 1,
+        "sha256": hashlib.sha256(raw.read_bytes()).hexdigest(),
+        "size": raw.stat().st_size,
+        "url": url,
+    }
+    path.write_text(json.dumps({"words": [], "kit_source": source}))
+    os.utime(path, (at, at))
+    return path
+
+
+def test_a_transcript_of_other_media_is_not_used_even_when_saved_after_the_take(
+    tmp_path: Path,
+) -> None:
+    takes = tmp_path / "ep01" / "takes"
+    old = takes / "take-ep01-t1-raw-v1.mp4"
+    _touch(old, at=100)
+    v2 = _touch(takes / "take-ep01-t1-raw-v2.mp4", at=200)
+    v2.write_bytes(b"the new take")
+    os.utime(v2, (200, 200))
+    # Unversioned name, saved after v2 landed: the old rule (mtime) would hand it to v2.
+    stale = _tagged(takes / "take-ep01-t1-review-words-v1.json", old, at=300)
+
+    words, why = take_words(tmp_path, 1, "t1", v2)
+
+    assert words is None
+    assert stale.name in why and "take-ep01-t1-raw-v1.mp4" in why
+
+
+def test_a_transcript_of_this_exact_media_is_kept(tmp_path: Path) -> None:
+    takes = tmp_path / "ep01" / "takes"
+    v2 = _touch(takes / "take-ep01-t1-raw-v2.mp4", at=200)
+    mine = _tagged(takes / "take-ep01-t1-raw-v2-review-words-v1.json", v2, at=100)
+
+    assert take_words(tmp_path, 1, "t1", v2)[0] == mine
+
+
+def test_a_transcript_of_another_stored_url_is_not_used(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from creation.post import desk as desk_mod
+
+    takes = tmp_path / "ep01" / "takes"
+    v2 = _touch(takes / "take-ep01-t1-raw-v2.mp4", at=200)
+    _tagged(
+        takes / "take-ep01-t1-raw-v2-review-words-v1.json",
+        v2,
+        at=300,
+        url="https://r2/old.mp4",
+    )
+    monkeypatch.setattr(desk_mod, "take_stored_url", lambda *_a: "https://r2/new.mp4")
+
+    assert take_words(tmp_path, 1, "t1", v2)[0] is None
+    monkeypatch.setattr(desk_mod, "take_stored_url", lambda *_a: "https://r2/old.mp4")
+    assert take_words(tmp_path, 1, "t1", v2)[0] is not None
+
+
+def test_server_transcript_names_the_take_version_and_records_its_media(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import hashlib
+    import json
+
+    from creation.post import audio_service, desk as desk_mod, review
+
+    takes = tmp_path / "ep01" / "takes"
+    v2 = _touch(takes / "take-ep01-t1-raw-v2.mp4", at=200)
+    keys: list[str] = []
+
+    class _Audio:
+        def __init__(self, *_a, **_k) -> None:
+            pass
+
+        def transcribe(self, *, audio_url, language, spine_id, key):
+            keys.append(key)
+            return {"words": [{"word": "hi", "start": 0.1, "end": 0.3}]}
+
+    monkeypatch.setattr(audio_service, "DramaApiAudio", _Audio)
+    monkeypatch.setattr(desk_mod, "take_stored_url", lambda *_a: "https://r2/t1.mp4")
+    monkeypatch.setattr(desk_mod, "spine_id", lambda *_a: None)
+    monkeypatch.setattr(review, "take_lines", lambda *_a: None)
+
+    saved = review.server_transcript(tmp_path, 1, "t1", take=v2)
+
+    assert saved.name == "take-ep01-t1-raw-v2-review-words-v1.json"
+    source = json.loads(saved.read_text())["kit_source"]
+    assert source["sha256"] == hashlib.sha256(v2.read_bytes()).hexdigest()
+    assert source["url"] == "https://r2/t1.mp4" and source["raw_take"] == v2.name
+    assert take_words(tmp_path, 1, "t1", v2)[0] == saved
+
+    v2.write_bytes(b"filmed again, same name")
+    review.server_transcript(tmp_path, 1, "t1", take=v2)
+    assert keys[0] != keys[1], "new media is a new request, never the old answer"
