@@ -11,6 +11,7 @@ with its lines waiting at the script gate; the rest of the loop is the same.
 from __future__ import annotations
 
 import json
+import re
 import sys
 import uuid
 from dataclasses import dataclass, field
@@ -21,6 +22,7 @@ from typing import Any
 import httpx
 
 from creation.brief_lines import brief_vs_spine_lines
+from creation.new_cast import cast_owing_pictures
 from creation.desk_media_urls import (
     board_urls_for_episode,
     cast_plate_urls,
@@ -870,18 +872,26 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             if effective_prompt != state.prompt:
                 state.prompt = effective_prompt
                 save_production(desk, state)
-            spine_id, plan = stages.start_draft(
-                run,
-                prompt=effective_prompt,
-                preset_id=state.preset_id,
-                preset_version=state.preset_version,
-                band=state.band,
-                video_lane=state.video_lane,
-                cut_tempo=cfg.cut_tempo,
-                spoken_language=cfg.spoken_language,
-                locale=cfg.locale,
-                deadline_seconds=cfg.poll_plan_deadline_seconds,
-            )
+            try:
+                spine_id, plan = stages.start_draft(
+                    run,
+                    prompt=effective_prompt,
+                    preset_id=state.preset_id,
+                    preset_version=state.preset_version,
+                    band=state.band,
+                    video_lane=state.video_lane,
+                    cut_tempo=cfg.cut_tempo,
+                    spoken_language=cfg.spoken_language,
+                    locale=cfg.locale,
+                    deadline_seconds=cfg.poll_plan_deadline_seconds,
+                )
+            except SystemExit as exc:
+                pause = locked_lines_pause(str(exc.code), desk=desk)
+                if pause is None:
+                    raise
+                _note(ep_dir, pause)
+                # Not a failure: the desk stays at `new` so the edited brief drafts next.
+                raise RuntimeError(pause) from exc
             state.spine_id = spine_id
             state.phase = "ready_cast_enrol"
             state.last_error = None
@@ -915,6 +925,17 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
         if state.phase == "ready_cast_enrol":
             if not state.spine_id:
                 raise RuntimeError("spine_id missing")
+            # From episode 2 this gate is for the characters the episode
+            # brought in: only their pictures are new (the approved ones are
+            # reused), and the enrol carries the episode's own tag.
+            owing: set[str] | None = None
+            if ep >= 2:
+                owing = {
+                    cast_id
+                    for cast_id, _ in cast_owing_pictures(
+                        run.spine(state.spine_id), episode=ep
+                    )
+                }
             stages.enrol_cast(
                 run,
                 spine_id=state.spine_id,
@@ -922,13 +943,16 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
                 preset_id=state.preset_id,
                 preset_version=state.preset_version,
                 video_lane=state.video_lane,
+                tag=f"ep{ep}" if ep >= 2 else "ep1",
             )
             spine = run.spine(state.spine_id)
             api_dir = api_dir_for_episode(desk, ep)
             (ep_dir / "plates").mkdir(parents=True, exist_ok=True)
             fetch = httpx.Client(timeout=120.0)
             try:
-                for index, url in enumerate(cast_plate_urls(spine, api_dir), start=1):
+                for index, url in enumerate(
+                    cast_plate_urls(spine, api_dir, only=owing), start=1
+                ):
                     path = download_to_versioned(
                         fetch, url, ep_dir / "plates", f"plate-ep{ep:02d}-{index}"
                     )
@@ -1543,6 +1567,48 @@ def _film(
 CAST_NOT_APPROVED = "cast_not_approved"
 
 
+#: The server's refusal when the brief's locked lines do not fit the episode (fictora-drama).
+LOCKED_LINES_OUT_OF_BOUNDS = "locked_lines_out_of_bounds"
+
+
+def locked_lines_pause(message: str, *, desk: Path | str = "<desk>") -> str | None:
+    """The creator-facing pause for a brief whose locked lines do not fit, or None for any other error.
+
+    The server never shortens, splits, merges or drops a locked line: it stops
+    the draft before any writer runs and names each line and its overrun. The
+    desk stays at ``new``; nothing was drafted.
+
+    Parameters
+    ----------
+    message
+        The draft's failure text (``plan failed authoring_validation_failed: ...``).
+    desk
+        Series desk, for the commands to paste.
+
+    Returns
+    -------
+    str | None
+        What to tell the creator, or None when the failure is something else.
+    """
+
+    if LOCKED_LINES_OUT_OF_BOUNDS not in message:
+        return None
+    # The server's own words: "locked_lines_out_of_bounds at scene_prompt: <refusal>".
+    found = re.search(
+        rf"{LOCKED_LINES_OUT_OF_BOUNDS} at scene_prompt: (.+?)(?: \(\+\d+ more in details\.errors\)| \(details |$)",
+        message,
+        re.S,
+    )
+    listed = "\n  " + (found.group(1).strip() if found else message.strip()[:1200])
+    return (
+        "PAUSED for the creator: the brief locks its lines word for word and they do not fit this episode, "
+        "so nothing was drafted (the server never shortens, splits, merges or drops a locked line)."
+        f"{listed}\n"
+        "Ask the creator to edit the brief's Lines (shorten a line, or move it to the next episode), then "
+        f"`fictora-produce bind --desk {desk} --prompt <edited brief> ...` and `fictora-produce step` again."
+    )
+
+
 def reapprove_plates_hint(desk: Path | str = "<desk>") -> str:
     """The fix printed when a step is refused with ``cast_not_approved``.
 
@@ -1669,10 +1735,27 @@ def approve_gate(
         if gate == "plates":
             if state.phase != "wait_plates":
                 raise RuntimeError(f"expected wait_plates, got {state.phase}")
-            stages.approve_cast(run, spine_id=state.spine_id or "")
+            stages.approve_cast(
+                run, spine_id=state.spine_id or "", tag=f"ep{ep}" if ep >= 2 else "ep1"
+            )
             record = approve_series_gate(
                 desk, "plates", path=str(path) if path else None
             )
+            # A character a later episode brought in is approved after that
+            # episode's script yes: go on to its boards.
+            if (
+                ep >= 2
+                and episode_by_ordinal(load_series(desk), ep).script.status
+                == "approved"
+            ):
+                state.phase = "ready_boards_enrol"
+                save_production(desk, state)
+                return StepResult(
+                    state.phase,
+                    f"Plates approved ({record.status}), including episode {ep}'s new character(s). "
+                    "Next: fictora-produce step (boards).",
+                    (),
+                )
             state.phase = "wait_script"
             save_production(desk, state)
             return StepResult(
@@ -1689,6 +1772,20 @@ def approve_gate(
             )
             save_spine_snapshot(desk, ep, spine)
             record = record_script_gate(desk, episode=ep)
+            owing = cast_owing_pictures(spine, episode=ep) if ep >= 2 else []
+            if owing:
+                # Boards are drawn from the characters' pictures; the server
+                # refuses them (cast_not_approved) until a newcomer's is approved.
+                state.phase = "ready_cast_enrol"
+                save_production(desk, state)
+                who = ", ".join(name for _, name in owing)
+                return StepResult(
+                    state.phase,
+                    f"Episode {ep} script approved on the API. New character(s) {who} need a picture before "
+                    f"boards: `fictora-produce step` draws it (~${float(STILL_USD) * len(owing):.2f}), then "
+                    "the human approves it with `fictora-produce approve --gate plates`.",
+                    (),
+                )
             state.phase = "ready_boards_enrol"
             save_production(desk, state)
             warning = (

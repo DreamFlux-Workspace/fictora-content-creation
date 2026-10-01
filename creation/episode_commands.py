@@ -55,6 +55,7 @@ import httpx
 from creation import inner_voice
 from creation import orchestrate as _orchestrate
 from creation.cli_text import TextArgError, text_or_file
+from creation.new_cast import new_cast_notice, newcomers
 from creation.desk_media_urls import drawn_cast_rows
 from creation.harness import stages_gated as stages
 from creation.harness.http_util import api_error_text, describe_job_error
@@ -808,6 +809,7 @@ def run_author(
         print(f"[author] Opened desk slot {opened.slug}.", file=sys.stderr)
     try:
         spine = run.spine(state.spine_id or "")
+        before = spine
         body: dict[str, Any] = {"spine_version": spine["spine_version"]}
         if direction:
             body["direction"] = dict(direction)
@@ -849,7 +851,12 @@ def run_author(
     if summary.get("summary"):
         print(f"  {summary['summary']}", file=out)
     print(script_gate_text(desk, spine, episode=episode), file=out)
+    arrived = new_cast_notice(newcomers(before, spine))
+    for line in arrived:
+        print(line, file=out)
     steer = f" Direction: {direction.get('line')}" if direction else ""
+    if arrived:
+        steer += " " + " ".join(arrived)
     _note(
         desk,
         episode,
