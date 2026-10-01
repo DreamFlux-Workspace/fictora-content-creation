@@ -650,3 +650,89 @@ def test_a_filmed_take_from_an_older_server_says_nothing_about_who_is_on_screen(
     text = run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
 
     assert "Filmed ep02 t2" in text and "On screen" not in text
+
+
+# --- Take identity: a clip is filed under a take only when the kit knows which (#66 review) ---------
+
+
+def test_a_one_take_re_film_whose_clip_has_no_take_number_is_filed_under_the_take_asked(
+    desk30: Path, api30: FakeApi
+) -> None:
+    _filmed_once(desk30)
+    api30.routes[("POST", ESTIMATE)] = {
+        "cost_estimate": {"total_usd": "1.20", "takes": 1}
+    }
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
+    _take_two_of_episode_two(api30)
+    api30.routes[("GET", "/v1/jobs/job_take_e2t2")].pop("relation")
+
+    text = run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+
+    t1, t2 = episode_by_ordinal(load_series(desk30), 2).takes
+    assert (t1.filmed_count, t2.filmed_count) == (1, 2), "never t1 by position"
+    api_dir = desk30 / "ep02" / "api"
+    assert list(api_dir.glob("take-facts-ep02-t2-v*.json"))
+    assert not list(api_dir.glob("take-facts-ep02-t1-v*.json"))
+    assert "Not filed" not in text
+
+
+def test_an_unnumbered_clip_the_request_cannot_place_is_refused_loudly_not_guessed(
+    desk30: Path, api30: FakeApi
+) -> None:
+    api30.routes[("POST", ESTIMATE)] = {
+        "cost_estimate": {"total_usd": "2.40", "takes": 2}
+    }
+    run_film(desk30, episode=2)
+    api30.routes[("POST", VIDEO)] = {"job_id": "job_video_7"}
+    # Two unnumbered clips for episode 2 and one for episode 1: the job's take order is not this
+    # episode's, so neither clip can be placed.
+    api30.routes[("GET", "/v1/jobs/job_video_7")] = {
+        "status": "completed",
+        "progress": 100,
+        "depends_on": ["job_ep1", "job_a", "job_b"],
+    }
+    api30.routes[("GET", "/v1/jobs/job_ep1")] = {
+        "status": "completed",
+        "episode_ids": ["episode_01"],
+        "relation": {"id": "scene_episode_01_set01"},
+        "result": {"video": {"url": "https://r2.example/ep1.mp4"}},
+    }
+    for job in ("job_a", "job_b"):
+        api30.routes[("GET", f"/v1/jobs/{job}")] = {
+            "status": "completed",
+            "episode_ids": ["ep_02"],
+            "result": {"video": {"url": f"https://r2.example/{job}.mp4"}},
+        }
+        api30.routes[("GET", f"/v1/jobs/{job}/take-facts")] = {"take_facts": {}}
+
+    text = run_film(desk30, episode=2, confirm_spend=True)
+
+    t1, t2 = episode_by_ordinal(load_series(desk30), 2).takes
+    assert (t1.filmed_count, t2.filmed_count) == (0, 0)
+    assert not list((desk30 / "ep02" / "api").glob("take-facts-ep02-t*-v*.json"))
+    assert "!! Not filed under any take" in text and "job_a" in text
+    assert "no take number (set_index)" in text
+    assert "NOT FILED" in (desk30 / "ep02" / "run-notes.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("clips", "asked", "foreign", "wanted"),
+    [
+        ([{"set_index": 2}], ["t2"], False, ["t2"]),
+        ([{}], ["t2"], False, ["t2"]),
+        ([{}, {}], ["t1", "t2"], False, ["t1", "t2"]),
+        ([{}, {}], ["t1", "t2"], True, [None, None]),
+        ([{}], ["t1", "t2"], False, [None]),
+        ([{"set_index": 5}], ["t1", "t2"], False, [None]),
+        ([{"set_index": 2}, {}], ["t1", "t2"], False, ["t2", None]),
+    ],
+)
+def test_take_for_clip_uses_explicit_identity_only(
+    clips: list[dict], asked: list[str], foreign: bool, wanted: list[str | None]
+) -> None:
+    got = [
+        orchestrate.take_for_clip(clip, position, desk_takes=["t1", "t2"], asked=asked, clips=clips,
+                                  foreign=foreign)[0]
+        for position, clip in enumerate(clips, start=1)
+    ]  # fmt: skip
+    assert got == wanted

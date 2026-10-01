@@ -1105,6 +1105,76 @@ class CollectedTakes:
     foreign: list[str]
     #: Who is on screen per shot, from each take's facts (``shots[].people``); empty on an older server.
     on_screen: list[str] = field(default_factory=list)
+    #: Clips of this episode the kit could not tie to a take (no take number and no request that names
+    #: one): not downloaded, not booked, no facts saved; never filed under a guessed take.
+    unplaced: list[str] = field(default_factory=list)
+
+
+def take_for_clip(
+    clip: dict[str, Any],
+    position: int,
+    *,
+    desk_takes: list[str],
+    asked: list[str],
+    clips: list[dict[str, Any]],
+    foreign: bool,
+) -> tuple[str | None, str]:
+    """The desk take a filmed clip belongs to, by explicit identity only, or ``None`` and why.
+
+    1. The clip's take number from the server (``set_index``, from ``relation.id`` ``..._setNN``).
+    2. Without one: the film request, when it asked for exactly one take and one clip came back.
+    3. Without one: a whole-episode film whose job returned exactly the episode's takes and
+       nothing else, none numbered: the server numbers takes by their place in the job's
+       ``depends_on`` (``take_index``), so the place is the server's own identity.
+
+    Anything else is not guessed: a clip with no take number on a film that asked for
+    some of the takes would otherwise land on t1 by position (#66 review), and its
+    facts and sound effects with it.
+
+    Parameters
+    ----------
+    clip
+        One clip from :func:`creation.harness.raw_video.wait_for_raw_scene_clips`.
+    position
+        Its 1-based place among this episode's clips.
+    desk_takes
+        The episode's takes on the desk.
+    asked
+        The takes the film request asked for.
+    clips
+        Every clip of this episode the job returned.
+    foreign
+        Whether the job also returned another episode's clips.
+
+    Returns
+    -------
+    tuple[str | None, str]
+        ``(take_id, "")`` or ``(None, reason)``.
+    """
+
+    index = clip.get("set_index")
+    if isinstance(index, int):
+        take_id = f"t{index}"
+        if take_id in desk_takes:
+            return take_id, ""
+        return (
+            None,
+            f"the server numbers it take {index}, which is not a take on the desk ({', '.join(desk_takes)})",
+        )
+    if len(asked) == 1 and len(clips) == 1:
+        return asked[0], ""
+    numbered = any(isinstance(c.get("set_index"), int) for c in clips)
+    if (
+        asked == desk_takes
+        and len(clips) == len(desk_takes)
+        and not numbered
+        and not foreign
+    ):
+        return desk_takes[position - 1], ""
+    return None, (
+        f"it has no take number (set_index) and this film asked for {', '.join(asked) or 'no take'} "
+        f"with {len(clips)} clip(s) back; not filed under a guessed take"
+    )
 
 
 def seed_attempt_for(
@@ -1148,6 +1218,7 @@ def collect_takes(
     episode: int,
     clip_seconds: int,
     spine: dict[str, Any],
+    asked: list[str] | None = None,
 ) -> CollectedTakes:
     """Download one episode's filmed takes raw, save their take facts, book spend, mark them filmed.
 
@@ -1170,11 +1241,15 @@ def collect_takes(
         Take length, for pricing a take without facts.
     spine
         Spine JSON (the episode's id).
+    asked
+        The takes the film request asked for (default: every take of the episode).
+        A clip is filed under a take only by explicit identity (:func:`take_for_clip`).
 
     Returns
     -------
     CollectedTakes
-        Job lines, dollars booked, files, the first clip URL, and clips of other episodes.
+        Job lines, dollars booked, files, the first clip URL, clips of other episodes, and
+        clips that could not be tied to a take.
     """
 
     ep_dir = _episode_dir(desk, episode)
@@ -1194,18 +1269,23 @@ def collect_takes(
     jobs: list[str] = []
     paths: list[str] = []
     on_screen: list[str] = []
+    unplaced: list[str] = []
     cast_names = cast_names_from(spine)
     try:
         for position, clip in enumerate(clips, start=1):
-            index = clip.get("set_index") or position
-            take_id = (
-                f"t{index}"
-                if f"t{index}" in take_ids
-                else (take_ids[position - 1] if position <= len(take_ids) else None)
-            )
+            take_id, why = take_for_clip(
+                clip, position, desk_takes=take_ids, asked=list(asked or take_ids), clips=clips,
+                foreign=bool(foreign),
+            )  # fmt: skip
             if take_id is None:
                 run.emit(
-                    "take_without_desk_slot", job_id=clip.get("job_id"), index=index
+                    "take_without_desk_slot",
+                    job_id=clip.get("job_id"),
+                    index=clip.get("set_index"),
+                    reason=why,
+                )
+                unplaced.append(
+                    f"take job `{clip.get('job_id')}` ({clip.get('url')}): {why}"
                 )
                 continue
             path = download_to_versioned(
@@ -1264,6 +1344,7 @@ def collect_takes(
         str(clips[0]["url"]) if clips else None,
         foreign,
         on_screen,
+        unplaced,
     )
 
 
@@ -1317,6 +1398,19 @@ def take_soundtrack_lines(take_id: str, facts: dict[str, Any] | None) -> list[st
     if not soundtrack.sent:
         return []
     return [f"{take_id} {soundtrack.one_line()}"]
+
+
+def unplaced_warning(unplaced: list[str]) -> str:
+    """Say loudly which clips were not filed under any take (and why), so a human places them."""
+
+    if not unplaced:
+        return ""
+    return (
+        "\n!! Not filed under any take (not downloaded, no facts saved, not booked, not marked filmed): "
+        + "; ".join(unplaced)
+        + ". It was paid for: book it by hand, and tell engineering with the take job id. Never file it "
+        "under a take by hand without knowing which take it is."
+    )
 
 
 def foreign_warning(foreign: list[str]) -> str:
@@ -1424,7 +1518,8 @@ def _film(
         ep_dir,
         f"Takes filmed: video job `{video_job_id}`; "
         + "; ".join(got.jobs)
-        + f". Booked ${got.booked_usd:.2f}.",
+        + f". Booked ${got.booked_usd:.2f}."
+        + (f" NOT FILED: {'; '.join(got.unplaced)}." if got.unplaced else ""),
     )
     follow = (
         "arc --list (pick the series arc)" if ep == 1 else f"author --episode {ep + 1}"
@@ -1438,7 +1533,8 @@ def _film(
         f"Episode {ep} filmed: {len(got.jobs)} take(s), ${got.booked_usd:.2f} booked. Video job {video_job_id}.{hint}\n"
         + "\n".join(f"  {line}" for line in got.jobs + got.on_screen)
         + f"\nNext episode: fictora-produce {follow} --desk <desk>."
-        + foreign_warning(got.foreign),
+        + foreign_warning(got.foreign)
+        + unplaced_warning(got.unplaced),
         tuple(paths),
     )
 

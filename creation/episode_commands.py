@@ -109,6 +109,7 @@ from creation.orchestrate import (
     download_boards,
     envelope_line,
     foreign_warning,
+    unplaced_warning,
     price_estimate,
     save_spine_snapshot,
     script_gate_text,
@@ -5333,6 +5334,7 @@ def _run_film(
         episode=episode,
         clip_seconds=cfg.clip_duration_seconds,
         spine=spine,
+        asked=take_ids,
     )
     fresh = load_production(desk)
     fresh.remember_server_lane(collecting.server_lane())
@@ -5358,7 +5360,8 @@ def _run_film(
         episode,
         f"film {what}: video job `{job_id}`; "
         + "; ".join(got.jobs)
-        + f". Booked ${got.booked_usd:.2f}.{cause_note}",
+        + f". Booked ${got.booked_usd:.2f}.{cause_note}"
+        + (f" NOT FILED: {'; '.join(got.unplaced)}." if got.unplaced else ""),
     )
     lines = [
         f"Filmed {what}: {len(got.jobs)} take(s), ${got.booked_usd:.2f} booked. Video job {job_id}."
@@ -5368,7 +5371,9 @@ def _run_film(
         f"Watch the new take in ep{episode:02d}/takes/. After the human says Use it: "
         f"`fictora-produce finish --desk <desk> --episode {episode} --take {take_id or 'tK'}`."
     )
-    text = "\n".join(lines) + foreign_warning(got.foreign)
+    text = (
+        "\n".join(lines) + foreign_warning(got.foreign) + unplaced_warning(got.unplaced)
+    )
     print(text, file=out)
     return text
 
