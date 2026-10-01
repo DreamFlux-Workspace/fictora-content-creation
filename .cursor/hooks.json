@@ -3,7 +3,7 @@
   "hooks": {
     "sessionStart": [
       {
-        "command": ".cursor/hooks/pull-latest.sh",
+        "command": "bash .cursor/hooks/pull-latest.sh",
         "timeout": 30
       }
     ]
