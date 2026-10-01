@@ -58,6 +58,7 @@ checklist is not here: it needs the server's image-compile rules.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -1091,6 +1092,80 @@ def _heard_rows(
     return rows, data, len(heard) < len(lines)
 
 
+_WORDS_VERSION = re.compile(r"-(?:raw-)?v(\d+)-.*words")
+_RAW_VERSION = re.compile(r"^take-ep\d+-t\d+-raw-v(\d+)\.mp4$")
+
+WORDS_SOURCE_KEY = "kit_source"
+"""Key in a transcript the kit saved: which media it was made from (:func:`media_source`)."""
+
+
+def raw_take_of(desk: Path, take: Path) -> Path | None:
+    """The raw take behind ``take`` (``take`` itself when it is one); ``None`` when the desk has no record."""
+
+    from creation.post.lineage import raw_take_behind
+
+    return take if _RAW_VERSION.match(take.name) else raw_take_behind(desk, take).raw
+
+
+def raw_version(raw: Path) -> int | None:
+    """``3`` for ``take-ep01-t1-raw-v3.mp4``; ``None`` for any other name."""
+
+    match = _RAW_VERSION.match(raw.name)
+    return int(match.group(1)) if match else None
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def media_source(desk: Path, episode: int, take_id: str, raw: Path) -> dict[str, Any]:
+    """What a transcript of the raw take ``raw`` is made from: the file's content hash and the stored URL.
+
+    Saved in the transcript (:data:`WORDS_SOURCE_KEY`), so a re-filmed take, whose
+    raw file and stored URL are new, never reads the old take's words, and an
+    unchanged take keeps its transcript.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    episode, take_id
+        Which take.
+    raw
+        The raw take file (``takes/take-epNN-tK-raw-vN.mp4``).
+
+    Returns
+    -------
+    dict[str, Any]
+        ``{"raw_take", "version", "sha256", "size", "url"}``.
+    """
+
+    from creation.post.desk import take_stored_url
+
+    return {
+        "raw_take": raw.name,
+        "version": raw_version(raw),
+        "sha256": _sha256(raw),
+        "size": raw.stat().st_size,
+        "url": take_stored_url(desk, episode, take_id),
+    }
+
+
+def words_source(words: Path) -> dict[str, Any] | None:
+    """The media a saved transcript says it was made from (:func:`media_source`), or ``None`` (older transcripts)."""
+
+    try:
+        body = json.loads(words.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    source = body.get(WORDS_SOURCE_KEY) if isinstance(body, dict) else None
+    return source if isinstance(source, dict) and source.get("sha256") else None
+
+
 def saved_words(desk: Path, episode: int, take_id: str) -> Path | None:
     """Newest saved Whisper transcript of this take on the desk (``takes/take-epNN-tK-…words-vN.json``)."""
 
@@ -1103,20 +1178,23 @@ def saved_words(desk: Path, episode: int, take_id: str) -> Path | None:
     return max(found, key=lambda p: p.stat().st_mtime) if found else None
 
 
-_WORDS_VERSION = re.compile(r"-(?:raw-)?v(\d+)-.*words")
-_RAW_VERSION = re.compile(r"^take-ep\d+-t\d+-raw-v(\d+)\.mp4$")
-
-
 def take_words(
     desk: Path, episode: int, take_id: str, take: Path
 ) -> tuple[Path | None, str]:
     """The newest saved transcript of exactly this take file, or why there is none.
 
     A transcript belongs to the raw take behind ``take`` (an edit is walked back with
-    :func:`creation.post.lineage.raw_take_behind`) when its name carries that take's version
-    (``take-ep01-t1-v3-words-…``, ``…-raw-v3-words-…``), or, carrying no version
-    (``…-review-words-vN.json``), when it was saved after that raw take. A transcript of an
-    earlier version of the take (re-filmed since) is never used: its words are another take's.
+    :func:`creation.post.lineage.raw_take_behind`):
+
+    - when the kit saved where it came from (:data:`WORDS_SOURCE_KEY`, written by
+      ``review --transcribe``), only when that is this raw take's content (its
+      sha256) and, when both are known, the take's current stored URL;
+    - else when its name carries that take's version (``take-ep01-t1-v3-words-…``,
+      ``…-raw-v3-words-…``);
+    - else (``…-review-words-vN.json``, no version) when it was saved after that raw take.
+
+    A transcript of an earlier version of the take (re-filmed since) is never used:
+    its words are another take's.
 
     Parameters
     ----------
@@ -1133,35 +1211,66 @@ def take_words(
         The transcript, or ``None`` and a one-line reason.
     """
 
-    from creation.post.lineage import raw_take_behind
+    from creation.post.desk import take_stored_url
 
-    raw = take if _RAW_VERSION.match(take.name) else raw_take_behind(desk, take).raw
+    raw = raw_take_of(desk, take)
     if raw is None:
         return None, f"no record of the raw take behind `{take.name}`"
-    version = int(_RAW_VERSION.match(raw.name).group(1))  # type: ignore[union-attr]
+    version = raw_version(raw)
     takes = desk / f"ep{episode:02d}" / "takes"
     mine: list[Path] = []
-    others: list[Path] = []
+    others: list[tuple[Path, str]] = []
+    known: dict[str, Any] = {}
+
+    def current(key: str) -> Any:
+        if key not in known:
+            known[key] = (
+                _sha256(raw)
+                if key == "sha256"
+                else take_stored_url(desk, episode, take_id)
+            )
+        return known[key]
+
     for words in takes.glob(f"take-ep{episode:02d}-{take_id}-*words*-v*.json"):
         if not words.is_file():
             continue
+        source = words_source(words)
         named = _WORDS_VERSION.search(words.name)
-        if named is not None:
-            (mine if int(named.group(1)) == version else others).append(words)
+        if source is not None:
+            url = source.get("url")
+            same = source["sha256"] == current("sha256") and not (
+                url and current("url") and url != current("url")
+            )
+            whose = f"`{source.get('raw_take') or 'another file'}` as it was when transcribed"
+            (mine.append(words) if same else others.append((words, whose)))
+        elif named is not None:
+            if int(named.group(1)) == version:
+                mine.append(words)
+            else:
+                others.append((words, f"take v{named.group(1)}"))
         elif words.stat().st_mtime >= raw.stat().st_mtime:
             mine.append(words)
         else:
-            others.append(words)
+            others.append((words, "a take saved before it"))
     if mine:
         return max(mine, key=lambda p: p.stat().st_mtime), ""
     if others:
-        newest = max(others, key=lambda p: p.stat().st_mtime)
-        named = _WORDS_VERSION.search(newest.name)
-        whose = f"take v{named.group(1)}" if named else "a take saved before it"
+        newest, whose = max(others, key=lambda pair: pair[0].stat().st_mtime)
         return None, (
             f"the only transcript, `{newest.name}`, is of {whose}, not `{raw.name}` (re-filmed since)"
         )
     return None, f"no transcript of `{raw.name}`"
+
+
+def words_belong_note(words: Path, raw: Path | None, *, made: bool = False) -> str:
+    """One line naming the transcript and the take version it belongs to, for the Lines section."""
+
+    how = "transcript made on the server from the stored take" if made else "transcript"
+    if raw is None:
+        return f"{how}: `{words.name}`"
+    version = raw_version(raw)
+    of = f"take v{version}, `{raw.name}`" if version is not None else f"`{raw.name}`"
+    return f"{how}: `{words.name}` (of {of})"
 
 
 # --- 6. Safe zones (finished takes) -----------------------------------------------------------------------
@@ -1349,8 +1458,24 @@ Transcribe = Callable[[Path, int, str], Path]
 """``(desk, episode, take_id) -> saved words JSON``: a transcript made on the server."""
 
 
-def server_transcript(desk: Path, episode: int, take_id: str) -> Path:
+def server_transcript(
+    desk: Path, episode: int, take_id: str, *, take: Path | None = None
+) -> Path:
     """Ask the server for a Whisper transcript of the take's stored URL and save it (a few cents).
+
+    The saved transcript is named for the raw take's version
+    (``take-epNN-tK-raw-vN-review-words-vM.json``) and records the media it was
+    made from (:func:`media_source`: the raw file's sha256 and the stored URL),
+    so :func:`take_words` hands it only to that take.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    episode, take_id
+        Which take.
+    take
+        The file being checked (its raw take is the one transcribed); default the newest raw take.
 
     Raises
     ------
@@ -1360,7 +1485,7 @@ def server_transcript(desk: Path, episode: int, take_id: str) -> Path:
 
     from creation.ops.folder import next_versioned_path
     from creation.post.audio_service import DramaApiAudio
-    from creation.post.desk import spine_id, take_stored_url
+    from creation.post.desk import latest_raw_take, spine_id, take_stored_url
     from creation.post.whisper import transcribe
 
     stored = take_stored_url(desk, episode, take_id)
@@ -1373,13 +1498,38 @@ def server_transcript(desk: Path, episode: int, take_id: str) -> Path:
     found = take_lines(desk, episode, take_id)
     language = found[1] if found else "en"
     takes = desk / f"ep{episode:02d}" / "takes"
-    target = next_versioned_path(
-        takes, f"take-ep{episode:02d}-{take_id}-review-words", ".json"
+    if take is not None:
+        raw = raw_take_of(desk, take)
+    else:
+        try:
+            raw = latest_raw_take(desk, episode, take_id)
+        except FileNotFoundError:
+            raw = None
+    source = media_source(desk, episode, take_id, raw) if raw is not None else None
+    version = source.get("version") if source else None
+    stem = (
+        f"take-ep{episode:02d}-{take_id}-raw-v{version}-review-words"
+        if version is not None
+        else f"take-ep{episode:02d}-{take_id}-review-words"
     )
+    target = next_versioned_path(takes, stem, ".json")
     audio = DramaApiAudio(desk, episode=episode)
-    return transcribe(
-        stored, target, audio=audio, spine_id=spine_id(desk), language=language
+    saved = transcribe(
+        stored,
+        target,
+        audio=audio,
+        spine_id=spine_id(desk),
+        language=language,
+        media_version=source["sha256"] if source else None,
     )
+    if source is not None:
+        body = json.loads(saved.read_text(encoding="utf-8"))
+        if isinstance(body, dict):
+            body[WORDS_SOURCE_KEY] = source
+            saved.write_text(
+                json.dumps(body, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+            )
+    return saved
 
 
 def review_take(
@@ -1465,10 +1615,25 @@ def review_take(
             "the reel plan (reels/reel-plan-epNN-vN.json) lists which lines it keeps"
         )
     elif words_json is None:
-        words_json = saved_words(desk, episode, take_id)
-        if words_json is None and transcribe:
-            words_json = (transcriber or server_transcript)(desk, episode, take_id)
-            words_note = f"transcript made on the server from the stored take: `{words_json.name}`"
+        # Only a transcript of this exact take: after a re-film the old take's words are another take's.
+        raw = raw_take_of(desk, take)
+        if raw is None:
+            words_json, why = saved_words(desk, episode, take_id), ""
+        else:
+            words_json, why = take_words(desk, episode, take_id, take)
+        if words_json is not None:
+            words_note = words_belong_note(words_json, raw)
+            if raw is None:
+                words_note += " (the desk has no record of the raw take behind this file: check it is this take's)"
+        elif transcribe:
+            words_json = (
+                transcriber(desk, episode, take_id)
+                if transcriber is not None
+                else server_transcript(desk, episode, take_id, take=take)
+            )
+            words_note = words_belong_note(words_json, raw, made=True)
+        elif why:
+            words_note = f"saved transcript not used: {why}; `--transcribe` makes one of this take (a few cents)"
     loud = loudness_section(take, kind, has_audio=info.has_audio)
     board_sec, head = board_section(
         take, board_path, fps=fps, deboarded=bool(steps & set(DEBOARDED_STEPS))
