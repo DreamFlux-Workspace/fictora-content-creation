@@ -1247,6 +1247,110 @@ def speaking_mouth_hidden_lines(
     return out
 
 
+#: A shot size close enough that the face is the picture.
+_CLOSE_SCALE = re.compile(r"\bclose\b", re.IGNORECASE)
+
+
+def _emotional_reasons(
+    cells: Sequence[Mapping[str, Any]], anchored: Sequence[Mapping[str, Any]]
+) -> list[str]:
+    reasons: list[str] = []
+    for beat in anchored:
+        direction = beat.get("motion_direction")
+        end_state = (
+            str(direction.get("end_state") or "").strip()
+            if isinstance(direction, Mapping)
+            else ""
+        )
+        if end_state:
+            reasons.append(f"beat {beat.get('ordinal')} ends on {end_state[:60]!r}")
+        payoff = str(beat.get("satisfaction_type") or "").strip()
+        if payoff and payoff != "none":
+            reasons.append(f"beat {beat.get('ordinal')} pays off a {payoff}")
+    for cell in cells:
+        raw = cell.get("visual_brief")
+        brief: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
+        if not brief.get("subject_blocking"):
+            continue  # no face on the cell
+        if str(brief.get("cell_role") or "") == "reaction":
+            reasons.append(f"{cell.get('frame_id')} is a reaction cell")
+        elif _CLOSE_SCALE.search(str(brief.get("shot_scale") or "")):
+            reasons.append(
+                f"{cell.get('frame_id')} is a {brief.get('shot_scale')} on a face"
+            )
+    return list(dict.fromkeys(reasons))
+
+
+def missing_expression_lines(
+    frames: Sequence[Mapping[str, Any]],
+    take_beats: Sequence[Mapping[str, Any]],
+    *,
+    episode: int,
+) -> list[str]:
+    """Warn when an emotional row has no expression picked (``reaction_kind``).
+
+    The take prints a row's expression kind as a picture of the face the
+    video model keeps; a row without one plays its emotion from the motion
+    text alone, which the provider's rewrite thins or drops (Hanakaze ep 5,
+    2026-10-01). A row is an emotional moment when a beat anchored on it ends
+    on a stated ``end_state`` or pays off a ``satisfaction_type``, or a cell
+    with a staged face is a ``reaction`` cell or a close-up. Reads the spine
+    fields only. A warning: the gate still takes a yes.
+
+    Parameters
+    ----------
+    frames
+        One board's frames.
+    take_beats
+        That take's beats.
+    episode
+        Episode ordinal, for the suggested command.
+
+    Returns
+    -------
+    list[str]
+        ``!!`` lines naming the row and the beat to give an expression; empty
+        when every emotional row wears one.
+    """
+
+    rows: dict[int, list[Mapping[str, Any]]] = {}
+    for frame in frames:
+        rows.setdefault(_row_number(frame), []).append(frame)
+    beats = sorted(take_beats, key=lambda beat: int(beat.get("ordinal") or 0))
+    anchor_row = {
+        str(beat.get("frame_id") or ""): beat for beat in beats if beat.get("frame_id")
+    }
+    out: list[str] = []
+    owner: Mapping[str, Any] | None = beats[0] if beats else None
+    for row, cells in sorted(rows.items()):
+        anchored = [
+            anchor_row[str(cell.get("frame_id") or "")]
+            for cell in cells
+            if str(cell.get("frame_id") or "") in anchor_row
+        ]
+        if anchored:
+            owner = anchored[0]
+        briefs = [cell.get("visual_brief") for cell in cells]
+        if any(
+            isinstance(brief, Mapping) and brief.get("reaction_kind")
+            for brief in briefs
+        ):
+            continue
+        if any(beat.get("reaction_kind") for beat in anchored):
+            continue  # asked for and not worn: the shot list already says so
+        reasons = _emotional_reasons(cells, anchored)
+        if not reasons or owner is None:
+            continue
+        beat_ordinal = owner.get("ordinal")
+        out.append(
+            f"  !! row {row}: an emotional moment ({'; '.join(reasons)}) with no expression picked; the take "
+            "plays it from the motion text alone. Give it one (warning only): "
+            f"`edit --episode {episode} --beat {beat_ordinal} --expression KIND` "
+            "(`expressions` lists them), then redraw the board."
+        )
+    return out
+
+
 def _is_insert_cell(frame: Mapping[str, Any]) -> bool:
     raw = frame.get("visual_brief")
     brief: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
@@ -1472,6 +1576,7 @@ def shot_list_lines(
         lines += safe_zone_lines(frames, cast_names=cast_names)
         lines += named_cast_mismatch_lines(frames, take_beats, cast_names=cast_names)
         lines += speaking_mouth_hidden_lines(frames, take_beats, cast_names=cast_names)
+        lines += missing_expression_lines(frames, take_beats, episode=episode)
         lines += insert_run_lines(frames)
     return lines
 
@@ -1493,6 +1598,7 @@ __all__ = [
     "frames_digest",
     "heard_not_seen",
     "insert_run_lines",
+    "missing_expression_lines",
     "named_cast_mismatch_lines",
     "off_screen_speaker_lines",
     "pose_change_at_cut_lines",
