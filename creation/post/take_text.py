@@ -27,6 +27,18 @@ with its times, the box to blur, and a saved crop sheet.
 
 No ``tesseract`` on the machine means the check says so ("text check skipped
 (no OCR installed)"): never a silent pass.
+
+**Possible lettering on a sign** is a note, never a fault. Garbled pseudo-text
+on a sign (Hanakaze ep 7, 2026-10-01: invented kanji on two shop signs for
+2.5 s) never reads as words, so every rule above drops it. The same OCR pass
+also keeps the glyph boxes it was unsure of: plausible letter height, roughly
+letter-shaped (not a bar or a stroke), outside the caption band. Two or more
+of them side by side (or stacked, for vertical signs) on one sample are a
+cluster; a cluster seen in the same spot (it may drift with the camera) on at
+least :data:`LETTERING_MIN_SAMPLES` samples across :data:`LETTERING_MIN_SECONDS`
+or more is reported as "possible lettering on a sign at t1-t2s", with a crop on
+the sheet. One glyph, a flicker, hair and edges, and a blank hanging board
+(nothing letter-shaped on it) do not count. No second OCR pass is run.
 """
 
 from __future__ import annotations
@@ -40,7 +52,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageStat
 
 from creation.ops.folder import next_versioned_path
 from creation.post.media import MediaToolError, ffmpeg_bin, probe_video
@@ -67,6 +79,33 @@ SET_DRESSING_SHARE = 0.9
 LINE_MATCH_SHARE = 0.5
 #: Tesseract language packs for the show's spoken language (Latin script is always read).
 OCR_LANGUAGES = {"ja": "jpn", "ko": "kor", "zh": "chi_sim"}
+
+#: Possible lettering on a sign: a glyph box this tall (share of the frame height).
+LETTERING_MIN_HEIGHT = 0.02
+#: A glyph box is letter-shaped: its long side at most this many times its short side.
+LETTERING_MAX_ASPECT = 4.0
+#: One unsure box counts alone when OCR read this many letters in it (a run of glyphs).
+LETTERING_LONE_LETTERS = 3
+#: A sign hangs above the action: a glyph box centred this far down the frame or less.
+LETTERING_MAX_CENTRE_Y = 0.45
+#: Boxes on one sample within this many glyph sizes of each other are one cluster.
+LETTERING_LINK = 0.8
+#: Heights of boxes in one cluster differ by at most this ratio.
+LETTERING_HEIGHT_RATIO = 1.8
+#: A glyph group this close to the spot's last sighting (share of frame width / height) is the same sign.
+LETTERING_SPOT_SLACK = 0.05
+#: Glyph heights along one spot differ by at most this ratio (one sign, one lettering size).
+LETTERING_TRACK_HEIGHT_RATIO = 1.6
+#: The spot is lettering when seen on this many samples across this many seconds.
+LETTERING_MIN_SAMPLES = 3
+LETTERING_MIN_SECONDS = 1.0
+#: A gap longer than this (seconds) between two sightings ends the run.
+LETTERING_MAX_GAP = 0.6
+#: Painted lettering stands out from its board: the median grey standard deviation inside
+#: the spot's boxes (0-255) is at least this. Grain in a dark corner stays under it.
+LETTERING_MIN_CONTRAST = 20.0
+#: OCR "glyphs" made only of these are strokes and edges, not letters.
+_STROKES = set("|/\\()[]{}<>-_—–~=+*^.,:;!?'\"`“”‘’«» ")
 
 SKIPPED_NO_OCR = (
     "text check skipped (no OCR installed): drawn subtitles were NOT looked for. "
@@ -193,7 +232,29 @@ class TextCheck:
     def other(self) -> list[Finding]:
         """Other readable text (signs, set dressing): a note, not a fault."""
 
-        return [f for f in self.findings if f.kind != "subtitle"]
+        return [f for f in self.findings if f.kind == "text"]
+
+    @property
+    def lettering(self) -> list[Finding]:
+        """Possible lettering on a sign (unreadable glyphs that hold still): a note, not a fault."""
+
+        return [f for f in self.findings if f.kind == "sign_lettering"]
+
+    def note_lines(self) -> list[str]:
+        """One quiet line per possible-lettering spot, with the crop sheet."""
+
+        if not self.lettering:
+            return []
+        lines = [
+            f"possible lettering on a sign at {f.times[0]:.2f}–{f.times[-1]:.2f}s "
+            f"(unreadable glyphs held in one spot, box {','.join(str(v) for v in f.blur_box(self.size))})"
+            for f in self.lettering
+        ]
+        if self.sheet is not None and not self.subtitles:
+            lines.append(
+                f"crop: {self.sheet}"
+            )  # with subtitles the loud lines already give it
+        return lines
 
     def warning_lines(self, *, desk: Path | str = "<desk>", episode: int = 1,
                       take_id: str = "t1", final: Path | None = None) -> list[str]:  # fmt: skip
@@ -240,6 +301,10 @@ class TextCheck:
         found = len(self.subtitles)
         extra = (
             f"; {len(self.other)} other text group(s) (signs?)" if self.other else ""
+        )
+        extra += "".join(
+            f"; possible lettering on a sign at {f.times[0]:.2f}–{f.times[-1]:.2f}s"
+            for f in self.lettering
         )
         if found:
             return f"{found} drawn subtitle group(s) on {self.samples} sampled frame(s){extra}"
@@ -448,6 +513,172 @@ def classify(
     return findings
 
 
+def _glyph_ok(word: Word, size: tuple[int, int]) -> bool:
+    """A box OCR was unsure of, shaped like a letter, high in the frame where signs hang."""
+
+    if word.conf >= MIN_WORD_CONF:
+        return False  # read with confidence: a word, or a sure mark (an eye, a drawn symbol)
+    if not set(word.text) - _STROKES:
+        return False  # "|", "(", "——": an edge or a stroke
+    share = word.height / max(1, size[1])
+    if not LETTERING_MIN_HEIGHT <= share <= MAX_TEXT_HEIGHT:
+        return False
+    long_side = max(word.width, word.height)
+    short_side = max(1, min(word.width, word.height))
+    if long_side / short_side > LETTERING_MAX_ASPECT:
+        return False
+    return (word.top + word.height / 2) / max(1, size[1]) <= LETTERING_MAX_CENTRE_Y
+
+
+def _linked(a: Word, b: Word) -> bool:
+    """Two glyph boxes side by side or stacked, of similar height."""
+
+    if max(a.height, b.height) > LETTERING_HEIGHT_RATIO * min(a.height, b.height):
+        return False
+    gap_x = max(a.left, b.left) - min(a.left + a.width, b.left + b.width)
+    gap_y = max(a.top, b.top) - min(a.top + a.height, b.top + b.height)
+    centre_dy = abs((a.top + a.height / 2) - (b.top + b.height / 2))
+    centre_dx = abs((a.left + a.width / 2) - (b.left + b.width / 2))
+    # The gap is measured in the smaller glyph (a hair tip near a big blob is
+    # not the next letter); the centres may wander by the larger one.
+    across = gap_x <= LETTERING_LINK * min(
+        a.height, b.height
+    ) and centre_dy <= 0.6 * max(a.height, b.height)
+    down = gap_y <= LETTERING_LINK * min(a.width, b.width) and centre_dx <= 0.6 * max(
+        a.width, b.width
+    )
+    return across or down
+
+
+def _glyph_groups(glyphs: Sequence[Word]) -> list[list[Word]]:
+    """Glyph groups on one sample: two or more linked boxes, or one box OCR read as two or more letters."""
+
+    clusters: list[list[Word]] = []
+    for glyph in glyphs:
+        joined = [c for c in clusters if any(_linked(glyph, other) for other in c)]
+        merged = [glyph]
+        for cluster in joined:
+            merged.extend(cluster)
+            clusters.remove(cluster)
+        clusters.append(merged)
+    return [
+        c for c in clusters if len(c) >= 2 or c[0].letters >= LETTERING_LONE_LETTERS
+    ]
+
+
+def _median_contrast(rows: Sequence[Row], frames: Sequence[Path]) -> float:
+    """Median grey standard deviation inside each sighting's box."""
+
+    spreads: list[float] = []
+    for row in rows:
+        if row.sample >= len(frames):
+            continue
+        with Image.open(frames[row.sample]) as opened:
+            spreads.append(ImageStat.Stat(opened.convert("L").crop(row.box)).stddev[0])
+    spreads.sort()
+    return spreads[len(spreads) // 2] if spreads else 0.0
+
+
+def _centre(
+    box: tuple[int, int, int, int], size: tuple[int, int]
+) -> tuple[float, float]:
+    return (box[0] + box[2]) / 2 / max(1, size[0]), (box[1] + box[3]) / 2 / max(
+        1, size[1]
+    )
+
+
+def _same_spot(row: Row, last: Row, size: tuple[int, int]) -> bool:
+    """The group sits where the spot was last seen (it may drift a little with the camera)."""
+
+    (x, y), (lx, ly) = _centre(row.box, size), _centre(last.box, size)
+    return abs(x - lx) <= LETTERING_SPOT_SLACK and abs(y - ly) <= LETTERING_SPOT_SLACK
+
+
+def sign_lettering(
+    words: Iterable[Word],
+    times: Sequence[float],
+    size: tuple[int, int],
+    *,
+    readable: Sequence[Row] = (),
+    frames: Sequence[Path] = (),
+) -> list[Finding]:
+    """Spots where unreadable letter-shaped glyphs hold still for a second or more: possible sign lettering.
+
+    Parameters
+    ----------
+    words
+        Every word tesseract returned (low confidence included).
+    times
+        Sample times, by sample index.
+    size
+        ``(width, height)`` of the take.
+    readable
+        Rows already read as words; glyphs inside them are not counted again.
+    frames
+        The sampled grey frames, by sample index. When given, a spot must
+        stand out from its surroundings (:data:`LETTERING_MIN_CONTRAST`).
+
+    Returns
+    -------
+    list[Finding]
+        ``sign_lettering`` findings (a note, never a fault), each with the
+        sample times it was seen at.
+    """
+
+    def inside_readable(word: Word) -> bool:
+        cx, cy = word.left + word.width / 2, word.top + word.height / 2
+        return any(
+            row.sample == word.sample
+            and row.box[0] <= cx <= row.box[2]
+            and row.box[1] <= cy <= row.box[3]
+            for row in readable
+        )
+
+    by_sample: dict[int, list[Word]] = {}
+    for word in words:
+        if (
+            word.sample < len(times)
+            and _glyph_ok(word, size)
+            and not inside_readable(word)
+        ):
+            by_sample.setdefault(word.sample, []).append(word)
+    # A spot follows its last sighting, so it may drift with a slow camera move.
+    tracks: list[list[Row]] = []
+    for sample in sorted(by_sample):
+        joined: set[int] = set()
+        for group in _glyph_groups(by_sample[sample]):
+            row = Row(sample, tuple(sorted(group, key=lambda w: (w.left, w.top))))
+            for index, rows in enumerate(tracks):
+                last = rows[-1]
+                if (
+                    index in joined
+                    or last.sample == sample
+                    or times[sample] - times[last.sample] > LETTERING_MAX_GAP
+                    or not _same_spot(row, last, size)
+                ):
+                    continue
+                rows.append(row)
+                joined.add(index)
+                break
+            else:
+                tracks.append([row])
+                joined.add(len(tracks) - 1)
+    findings: list[Finding] = []
+    for rows in tracks:
+        seen = sorted({times[row.sample] for row in rows})
+        heights = [word.height for row in rows for word in row.words]
+        if (
+            len(seen) >= LETTERING_MIN_SAMPLES
+            and seen[-1] - seen[0] >= LETTERING_MIN_SECONDS
+            and max(heights) <= LETTERING_TRACK_HEIGHT_RATIO * min(heights)
+            and (not frames or _median_contrast(rows, frames) >= LETTERING_MIN_CONTRAST)
+        ):
+            findings.append(
+                Finding("sign_lettering", list(rows), [round(t, 3) for t in seen])
+            )
+    return findings
+
+
 def sample_times(
     duration: float, windows: Sequence[tuple[float, float]] = ()
 ) -> list[float]:
@@ -590,7 +821,10 @@ def check_take_text(
         frames = _grab(take, times, Path(tmp))
         times = times[: len(frames)]
         words = parse_tsv(ocr(frames, languages))
-        findings = classify(rows_of(words, size), times, size, lines=lines)
+        readable = rows_of(words, size)
+        findings = classify(readable, times, size, lines=lines)
+        # The same OCR pass: glyphs it could not read but that hold still on a sign.
+        findings += sign_lettering(words, times, size, readable=readable, frames=frames)
         check = TextCheck(
             take,
             "found" if any(f.kind == "subtitle" for f in findings) else "clean",
@@ -599,10 +833,10 @@ def check_take_text(
             len(frames),
             size,
         )
-        if check.subtitles and sheet_dir is not None:
+        if (check.subtitles or check.lettering) and sheet_dir is not None:
             sheet_dir.mkdir(parents=True, exist_ok=True)
             check.sheet = crop_sheet(
-                check.subtitles,
+                [*check.subtitles, *check.lettering],
                 frames,
                 next_versioned_path(sheet_dir, sheet_stem, ".png"),
             )
@@ -650,5 +884,6 @@ __all__ = [
     "parse_tsv",
     "rows_of",
     "sample_times",
+    "sign_lettering",
     "tesseract_bin",
 ]

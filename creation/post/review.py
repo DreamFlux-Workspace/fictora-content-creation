@@ -842,6 +842,8 @@ def text_section(
     )[1:]]  # fmt: skip
     details += [f"other text (sign or set dressing?): '{f.text}' at {f.times[0]:.2f}s"
                 for f in check.other[:4]]  # fmt: skip
+    # A note, not a fault: unreadable glyphs held on a sign (garbled lettering).
+    details += check.note_lines()
     if check.note and check.status != "skipped":
         details.append(check.note)
     status = WARN if check.subtitles else NONE if check.status == "skipped" else OK
