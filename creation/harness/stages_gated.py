@@ -131,7 +131,10 @@ def start_draft(
 ) -> tuple[str, dict[str, Any]]:
     """Draft episode 1 alone (arc picked at episode 2) and poll the plan job.
 
-    A retryable ``authoring_stalled`` is re-drafted (up to three tries). Any other
+    A retryable ``authoring_stalled`` is re-drafted (up to three tries), but only
+    after the original plan job is read again: one that completed after all is
+    adopted (its spine bound, nothing re-drafted), one still running is waited
+    on, and only one still failed is re-drafted under a new key. Any other
     failure stops with the server's own code, message and rule details: a
     deterministic authoring failure names the rule that failed.
 
@@ -179,22 +182,47 @@ def start_draft(
             deadline_seconds=deadline_seconds,
         )
         run.save(f"02_plan_terminal{suffix}.json", plan)
+        if _retryable_stall(plan):
+            # A stalled plan can still finish (the stall line is a clock, not the worker), and a
+            # re-draft is a second paid authoring run (L-20260922-2): read the original job again,
+            # adopt it if it completed, wait if it is still running, re-draft only if it is still failed.
+            time.sleep(5.0)
+            plan = run.poll_job(
+                draft["plan_job_id"],
+                label="plan",
+                video_route=False,
+                deadline_seconds=deadline_seconds,
+            )
+            run.save(f"02_plan_terminal{suffix}-recheck.json", plan)
+            if plan.get("status") == "completed":
+                run.emit(
+                    "plan_adopted",
+                    job_id=draft["plan_job_id"],
+                    spine_id=draft.get("spine_id"),
+                    note="the stalled plan completed after all; no re-draft",
+                )
         last_plan = plan
         if plan.get("status") == "completed":
             spine_id = str(draft["spine_id"])
             run.save("03_spine.json", run.spine(spine_id))
             return spine_id, plan
-        error = plan.get("error") if isinstance(plan.get("error"), dict) else {}
-        if (
-            _terminal_error_code(plan) == "authoring_stalled"
-            and error.get("retryable") is True
-            and attempt + 1 < 3
-        ):
+        if _retryable_stall(plan) and attempt + 1 < 3:
             run.emit("plan_retry", code="authoring_stalled", attempt=attempt + 1)
             time.sleep(5.0)
             continue
         break
     raise SystemExit(f"plan {describe_job_error(last_plan)}")
+
+
+def _retryable_stall(plan: Mapping[str, Any]) -> bool:
+    """A plan job that ended failed with a retryable ``authoring_stalled``."""
+
+    error = plan.get("error") if isinstance(plan.get("error"), dict) else {}
+    return (
+        plan.get("status") not in {"completed", "queued", "running", None, ""}
+        and _terminal_error_code(dict(plan)) == "authoring_stalled"
+        and error.get("retryable") is True
+    )
 
 
 def _episode_ids_from_spine(spine: Mapping[str, Any]) -> list[str]:
