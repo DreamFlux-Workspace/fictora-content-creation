@@ -1,33 +1,32 @@
 #!/bin/bash
 # Fast-forward this checkout to origin/main when a session starts.
+#
+# Needs only bash and git: no python (on Windows, python3 is often the
+# Microsoft Store stub). Every answer says what really happened; a skip
+# never reads as a pull.
 
 set -u
 
-root="${CURSOR_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-$(pwd)}}"
 input=$(cat || true)
-event=$(printf '%s' "$input" | python3 -c 'import json,sys
-try:
-    data=json.load(sys.stdin)
-except Exception:
-    data={}
-print(data.get("hook_event_name", ""))
-' 2>/dev/null || true)
+event=""
+if printf '%s' "$input" | grep -Eq '"hook_event_name"[[:space:]]*:[[:space:]]*"SessionStart"'; then
+  event="SessionStart"
+fi
+
+json_string() {
+  # A JSON string literal of $1: backslash and quote escaped, tabs and line breaks as spaces,
+  # other control characters dropped. sed and tr only, so bash 3.2 (macOS) parses it too.
+  printf '"%s"' "$(printf '%s' "$1" | LC_ALL=C tr '\t\r\n' '   ' | LC_ALL=C tr -d '\000-\037' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
+}
 
 emit() {
-  EVENT="$event" MESSAGE="$1" python3 -c 'import json, os
-message = os.environ["MESSAGE"]
-event = os.environ.get("EVENT", "")
-if event == "SessionStart":
-    payload = {
-        "hookSpecificOutput": {
-            "hookEventName": "SessionStart",
-            "additionalContext": message,
-        }
-    }
-else:
-    payload = {"additional_context": message}
-print(json.dumps(payload))
-' || printf '%s\n' '{"additional_context":"Pull finished. Local work was left in place."}'
+  local message
+  message=$(json_string "$1")
+  if [[ "$event" == "SessionStart" ]]; then
+    printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' "$message"
+  else
+    printf '{"additional_context":%s}\n' "$message"
+  fi
 }
 
 if ! command -v git >/dev/null 2>&1; then
@@ -35,8 +34,20 @@ if ! command -v git >/dev/null 2>&1; then
   exit 0
 fi
 
-if ! git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  emit "Pull skipped: ${root} is not a git checkout."
+# The checkout this hook belongs to, wherever the session started: the editor's
+# project dir when it is a checkout, else the checkout holding this script, else pwd.
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
+root=""
+for candidate in "${CURSOR_PROJECT_DIR:-}" "${CLAUDE_PROJECT_DIR:-}" "${here:-}" "$(pwd)"; do
+  [[ -n "$candidate" ]] || continue
+  top=$(git -C "$candidate" rev-parse --show-toplevel 2>/dev/null) || continue
+  if [[ -n "$top" ]]; then
+    root=$top
+    break
+  fi
+done
+if [[ -z "$root" ]]; then
+  emit "Pull skipped: no git checkout found (looked at the project dir, ${here:-the folder of this hook} and $(pwd)). Local files were left in place."
   exit 0
 fi
 
@@ -47,8 +58,8 @@ if [[ "$branch" != "main" ]]; then
 fi
 
 export GIT_TERMINAL_PROMPT=0
+status=0
 pull_log=$(git -C "$root" pull --ff-only --no-rebase origin main 2>&1) || status=$?
-status=${status:-0}
 sha=$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo "unknown")
 subject=$(git -C "$root" log -1 --format=%s 2>/dev/null || true)
 
@@ -62,10 +73,11 @@ if [[ "$status" -eq 0 ]]; then
 fi
 
 if printf '%s' "$pull_log" | grep -q 'would be overwritten'; then
-  emit "Pull skipped. Local edits would be overwritten, so this checkout stayed put."
+  emit "Pull skipped. Local edits would be overwritten, so this checkout stayed put at ${sha}."
 elif printf '%s' "$pull_log" | grep -Eq 'Not possible to fast-forward|have diverged|diverging'; then
-  emit "Pull skipped. main has local commits that are not on origin. Those commits stayed put."
+  emit "Pull skipped. main has local commits that are not on origin. Those commits stayed put at ${sha}."
 else
-  emit "Pull skipped. Local work on main was left in place."
+  reason=$(printf '%s' "$pull_log" | tail -n 1)
+  emit "Pull skipped (git said: ${reason:-no reason given}). This checkout stayed at ${sha}; ask the operator to run git pull if they need the latest kit."
 fi
 exit 0

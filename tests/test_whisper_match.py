@@ -270,3 +270,29 @@ def test_readings_load_from_the_api_transcript(tmp_path) -> None:
         {"word": "美味", "start": 7.89, "end": 8.17, "reading": "ビミ", "readings": ["ビミ", "ウマ"]},
     ]}))  # fmt: skip
     assert load_words(path) == (Word(7.89, 8.17, "美味", "ビミ", ("ビミ", "ウマ")),)
+
+
+def test_a_misspelt_name_still_hears_the_line() -> None:
+    """L-20261001-16: "Hello, Wren." transcribed "Hello, Ren." is heard, not MISSING."""
+
+    words = _words(("Hello,", 0.2, 0.5), ("Ren.", 0.5, 0.9))
+    [window] = line_windows(words, ("Hello, Wren.",))
+    assert (window.start, window.end) == (0.2, 0.9)
+
+
+@pytest.mark.parametrize(
+    ("line", "heard"),
+    [("Thanks, Jon.", "John"), ("Go, Kat.", "Cat"), ("Hi, Maya.", "Mya")],
+)
+def test_a_name_heard_as_a_sound_alike_counts(line: str, heard: str) -> None:
+    words = _words((line.split()[0], 0.0, 0.3), (heard, 0.3, 0.6))
+    [window] = line_windows(words, (line,))
+    assert window.start == 0.0, window
+
+
+def test_a_lower_case_word_still_needs_its_own_spelling() -> None:
+    """Sound-alike is for names: "cat" is not "bat"."""
+
+    words = _words(("the", 0.0, 0.2), ("bat", 0.2, 0.5))
+    [window] = line_windows(words, ("the cat",))
+    assert window.start is None

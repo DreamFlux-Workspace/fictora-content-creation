@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -1404,6 +1405,29 @@ MAC_FONT_DIRS: tuple[Path, ...] = (
     Path("/Library/Fonts"),
     Path("~/Library/Fonts"),
 )
+
+
+def windows_font_dirs() -> tuple[Path, ...]:
+    """Where Windows keeps fonts: the system folder (``%WINDIR%\\Fonts``), then per-user installs."""
+
+    dirs = [Path(os.environ.get("WINDIR") or "C:/Windows") / "Fonts"]
+    if os.environ.get("LOCALAPPDATA"):
+        dirs.append(
+            Path(os.environ["LOCALAPPDATA"]) / "Microsoft" / "Windows" / "Fonts"
+        )
+    return tuple(dirs)
+
+
+def system_font_dirs(platform: str) -> tuple[Path, ...]:
+    """Font folders searched by file name after the bundled dir (Linux asks fontconfig instead)."""
+
+    if platform == "darwin":
+        return MAC_FONT_DIRS
+    if platform.startswith("win"):
+        return windows_font_dirs()
+    return ()
+
+
 #: Georgia Italic's file name: macOS, then the Microsoft core fonts package on Linux.
 ITALIC_FONT_FILES: tuple[str, ...] = ("Georgia Italic.ttf", "georgiai.ttf")
 #: Georgia regular's file name (libass slants it when there is no italic face).
@@ -1412,7 +1436,9 @@ GEORGIA_INSTALL_HINT = (
     "install Georgia: macOS ships it in /System/Library/Fonts/Supplemental "
     "(Font Book > File > Restore Standard Fonts brings it back); Linux: "
     "sudo apt install ttf-mscorefonts-installer, or copy Georgia.ttf and "
-    "'Georgia Italic.ttf' into ~/.local/share/fonts and run fc-cache -f"
+    "'Georgia Italic.ttf' into ~/.local/share/fonts and run fc-cache -f; Windows: "
+    "it ships as C:\\Windows\\Fonts\\georgiai.ttf (Settings > Personalization > Fonts "
+    "to check; right-click a copied georgiai.ttf > Install brings it back)"
 )
 
 #: ``(pattern) -> (family, style, file)`` from fontconfig, or None when fc-match is missing.
@@ -1514,7 +1540,8 @@ def find_italic_font(
 
     ``burn_ass`` passes the bundled fonts dir to libass, so that is searched
     first. After it, libass asks the system font provider: CoreText on macOS
-    (the standard font folders, :data:`MAC_FONT_DIRS`) and fontconfig on Linux
+    (the standard font folders, :data:`MAC_FONT_DIRS`), DirectWrite on Windows
+    (:func:`windows_font_dirs`) and fontconfig on Linux
     (``fc-match Georgia:italic``).
 
     Parameters
@@ -1523,7 +1550,7 @@ def find_italic_font(
         ``sys.platform`` by default; tests pass one.
     font_dirs
         Folders searched by file name (default: the bundled fonts dir, plus
-        :data:`MAC_FONT_DIRS` on macOS).
+        :func:`system_font_dirs`).
     match
         fontconfig lookup (default :func:`fc_match`); tests pass a fake.
 
@@ -1536,7 +1563,7 @@ def find_italic_font(
     platform = platform or sys.platform
     match = match or fc_match
     if font_dirs is None:
-        font_dirs = (FONTS_DIR, *(MAC_FONT_DIRS if platform == "darwin" else ()))
+        font_dirs = (FONTS_DIR, *system_font_dirs(platform))
     italic = _first_file(font_dirs, ITALIC_FONT_FILES)
     regular = _first_file(font_dirs, REGULAR_FONT_FILES)
     if italic is not None:
@@ -1580,13 +1607,15 @@ def italic_font_warning(cues: Sequence[Cue]) -> str:
     return warning
 
 
-#: Arial Bold's file name: macOS, then the Microsoft core fonts package on Linux.
+#: Arial Bold's file name: macOS, then the Microsoft core fonts package on Linux (and Windows).
 HOUSE_FONT_FILES: tuple[str, ...] = ("Arial Bold.ttf", "Arial_Bold.ttf", "arialbd.ttf")
 ARIAL_INSTALL_HINT = (
     "install Arial: macOS ships it in /System/Library/Fonts/Supplemental "
     "(Font Book > File > Restore Standard Fonts brings it back); Linux: "
     "sudo apt install ttf-mscorefonts-installer, or copy 'Arial Bold.ttf' "
-    "into ~/.local/share/fonts and run fc-cache -f"
+    "into ~/.local/share/fonts and run fc-cache -f; Windows: it ships as "
+    "C:\\Windows\\Fonts\\arialbd.ttf (Settings > Personalization > Fonts to check; "
+    "right-click a copied arialbd.ttf > Install brings it back)"
 )
 
 
@@ -1633,7 +1662,8 @@ def find_house_font(
     """Resolve Arial Bold the way libass does when captions are burned.
 
     Same search as :func:`find_italic_font`: the bundled fonts dir, then the
-    macOS font folders (:data:`MAC_FONT_DIRS`), then ``fc-match Arial:bold``
+    macOS font folders (:data:`MAC_FONT_DIRS`) or the Windows ones
+    (:func:`windows_font_dirs`, ``arialbd.ttf``), then ``fc-match Arial:bold``
     on Linux.
 
     Parameters
@@ -1654,7 +1684,7 @@ def find_house_font(
     platform = platform or sys.platform
     match = match or fc_match
     if font_dirs is None:
-        font_dirs = (FONTS_DIR, *(MAC_FONT_DIRS if platform == "darwin" else ()))
+        font_dirs = (FONTS_DIR, *system_font_dirs(platform))
     found = _first_file(font_dirs, HOUSE_FONT_FILES)
     if found is not None:
         return HouseFont(found)

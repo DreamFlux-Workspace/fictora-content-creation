@@ -205,6 +205,7 @@ from creation.post.sfx import (
     follow_filmed_cuts,
     lay_sfx,
     SfxPlan,
+    apply_adjustments,
     plan_from_take_facts,
     planned_shots,
     saved_take_facts,
@@ -1166,6 +1167,20 @@ def run_finish(
                 f"the take facts plan no effect (every shot speaks, or a sound note dropped every cue); "
                 f"`{facts.name}`{dropped}"
                 + (f"; facts older than the sound notes ({stale})" if stale else ""),
+            )
+        if not apply_adjustments(plan.cues, sfx_adjust):
+            # The operator dropped every planned cue: zero effects is the choice, the step is done.
+            left = "; ".join(
+                f"{cue.sound} (dropped by --sfx-adjust)" for cue in plan.cues
+            )
+            append_run_note(run_dir, f"SFX: none laid; left out: {left}")
+            return StepReport(
+                "sfx",
+                "ran",
+                f"0 cue(s): every planned effect was dropped by --sfx-adjust; "
+                f"left out on purpose: {left}{dropped}"
+                + (f"; facts older than the sound notes ({stale})" if stale else "")
+                + f"; {filmed_note}",
             )
         sfx = lay_sfx(
             take,

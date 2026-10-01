@@ -716,3 +716,23 @@ def test_review_on_facts_without_head_counts_says_so_in_one_line(desk: Path) -> 
 
     assert people.details == []
     assert "the server didn't send head counts" in people.summary
+
+
+def test_a_short_line_not_heard_says_check_by_ear_never_re_film(desk: Path) -> None:
+    """L-20261001-16: a transcript misses short lines; under three words is never a re-film call."""
+
+    takes = _desk_ready(desk, facts=_facts(()))
+    take = write_frames(takes / "take-ep01-t1-raw-v1.mp4", _clean())
+    words = _words(
+        takes / "take-ep01-t1-review-words-v1.json",
+        [("Not", 1.5, 1.7), ("for", 1.7, 1.8), ("me.", 1.8, 2.0)],
+    )
+
+    lines = _section(review_take(desk, take_file=take, words_json=words), "Lines")
+
+    text = "\n".join(lines.lines())
+    assert '1. CHECK BY EAR  "We\'re closed."' in text, text
+    assert 'MISSING  "We\'re closed."' not in text
+    row = next(r for r in text.splitlines() if "CHECK BY EAR" in r)
+    assert "re-film" not in row.replace("never re-film", ""), row
+    assert lines.data["heard"][0]["check_by_ear"] is True

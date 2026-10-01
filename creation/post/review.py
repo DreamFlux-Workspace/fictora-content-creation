@@ -105,6 +105,8 @@ DUCK_RELEASE_SECONDS = 0.6
 
 #: A detected cut within this of a planned shot change is that shot change.
 CUT_MATCH_SECONDS = 0.5
+#: A line with fewer words than this is never a re-film call on the transcript alone ("check by ear").
+SHORT_LINE_WORDS = 3
 
 #: Frozen / stacked analysis: 8 fps at 96x168 (internal kit's stack score).
 STACK_FPS = 8.0
@@ -955,7 +957,7 @@ def lines_section(
 
     from creation.episode_commands import CommandStopped, run_check_lines
 
-    threshold = "asked: every approved line in the take facts; heard: ≥ 60% of a line's words in order"
+    threshold = "asked: every approved line in the take facts; heard: ≥ 60% of a line's words in order (names by sound); under 3 words: check by ear"
     details: list[str] = []
     data: dict[str, Any] = {"asked_missing": None, "heard": None}
     faults = False
@@ -1026,7 +1028,7 @@ def take_lines(
 def _heard_rows(
     desk: Path, *, episode: int, take_id: str, words_json: Path | None
 ) -> tuple[list[str], list[dict[str, Any]] | None, bool]:
-    from creation.post.whisper import line_windows, load_words
+    from creation.post.whisper import line_windows, load_words, word_count
 
     if words_json is None:
         why = "no transcript on the desk; pass --words-json F, or --transcribe for a few cents"
@@ -1057,7 +1059,14 @@ def _heard_rows(
             "shape": " (by reading shape, {:.0%})",
         }.get(window.by, "")
         how = how.format(window.ratio)
-        if window.start is None or window.end is None:
+        short = word_count(window.line) < SHORT_LINE_WORDS
+        if (window.start is None or window.end is None) and short:
+            # A transcript often misses or misspells a line this short: never a re-film call on its own.
+            rows.append(
+                f"  {window.index + 1}. CHECK BY EAR  {window.line!r}: under {SHORT_LINE_WORDS} words, "
+                "the transcript did not find it; listen to the take before deciding (never re-film on this alone)"
+            )
+        elif window.start is None or window.end is None:
             rows.append(
                 f"  {window.index + 1}. MISSING  {window.line!r}: the one real re-film (name the cause)"
             )
@@ -1067,7 +1076,8 @@ def _heard_rows(
                 f"  {window.index + 1}. {when}  {window.line!r}  {window.ratio:.0%}{how}"
             )
         data.append({"line": window.index + 1, "text": window.line, "start": window.start, "end": window.end,
-                     "ratio": window.ratio, "by": window.by})  # fmt: skip
+                     "ratio": window.ratio, "by": window.by,
+                     "check_by_ear": window.start is None and short})  # fmt: skip
     return rows, data, len(heard) < len(lines)
 
 
