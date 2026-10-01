@@ -1875,7 +1875,7 @@ def build_line_add_remove_patch(
         voice = (
             f", voice {provider_voice}"
             if provider_voice
-            else ", voice: the first catalog voice nobody uses"
+            else ", voice: the server picks one (see below)"
         )
         changed.append(
             f"  + voice {new_voice} ({cast_id}), heard, never drawn: {_short(role)}; sounds {_short(voice_description)}{voice}"
@@ -2202,12 +2202,17 @@ def _after_line_edit(
         print(line, file=out)
 
 
-def new_voice_pick_warning(desk: Path, new_voice: str) -> str:
-    """The warning for a ``--new-voice`` sent without ``--provider-voice``.
+def new_voice_pick_warning(
+    desk: Path, new_voice: str, *, picked: str | None = None
+) -> str:
+    """Name the voice the server chose for a ``--new-voice`` sent without ``--provider-voice``, to confirm by ear.
 
-    The server gives the new character the first catalog voice nobody in the
-    cast uses; ``--voice-description`` is stored on the card but does not choose
-    the voice (an "adult man" can get a woman's voice).
+    A server with fictora-drama ec6fec0e picks the catalog voice that best
+    fits ``--voice-description``: the gender it names is a filter, then
+    accent, age and timbre words rank the rest, and an unused voice beats a
+    taken one. An older deploy gave the first catalog voice nobody used (an
+    "adult man" got a woman's voice, SCP-173 ep 2; L-20260929-20). The answer
+    does not say which rule ran, so the pick is named and heard either way.
 
     Parameters
     ----------
@@ -2215,22 +2220,39 @@ def new_voice_pick_warning(desk: Path, new_voice: str) -> str:
         Series desk, for the command to paste.
     new_voice
         The new character's name.
+    picked
+        ``voice_brief.provider_voice`` on the new card in the server's answer (``None`` on a preview,
+        or when the answer does not carry it).
 
     Returns
     -------
     str
-        The warning and the audition command for the new cast id.
+        The pick, how it was made, and the audition command for the new cast id.
     """
 
     cast_id = voice_cast_id(new_voice)
-    return (
-        f"!! No --provider-voice: the server gives {new_voice} the first catalog voice nobody uses. "
-        "The --voice-description is saved on the card but does NOT choose the voice, so it can come back "
-        "the wrong age, gender or accent. Hear it before filming: "
-        f"`fictora-produce voice --desk {desk} --cast {cast_id} --audition --voices A,B,C,D` "
-        "(four voices that fit the description), then `voice --pick N`. Or send the line again with "
-        "--provider-voice NAME."
+    chose = (
+        f"the server picked {picked} for {new_voice}"
+        if picked
+        else f"the server picks {new_voice}'s voice when the edit is sent"
     )
+    return (
+        f"!! No --provider-voice: {chose}. A current server picks the catalog voice that best fits "
+        "--voice-description (the gender it names first, then accent, age and timbre); an older deploy "
+        "gave the first voice nobody uses, whatever the description says. Hear it before filming: "
+        f"`fictora-produce voice --desk {desk} --cast {cast_id} --audition --voices A,B,C,D` "
+        f"(include {picked or 'the picked voice'} and three that fit the description), then `voice --pick N`. "
+        "Or send the line again with --provider-voice NAME."
+    )
+
+
+def _card_voice(spine: Mapping[str, Any], cast_id: str) -> str | None:
+    for card in spine.get("cast") or []:
+        if isinstance(card, Mapping) and card.get("cast_id") == cast_id:
+            brief = card.get("voice_brief")
+            voice = brief.get("provider_voice") if isinstance(brief, Mapping) else None
+            return str(voice) if voice else None
+    return None
 
 
 def run_line(
@@ -2366,7 +2388,10 @@ def run_line(
                 f"line: {what}: " + "; ".join(item.strip() for item in changed),
             )
         if new_voice is not None and provider_voice is None:
-            print(new_voice_pick_warning(desk, new_voice), file=out)
+            picked = (
+                None if preview_only else _card_voice(fresh, voice_cast_id(new_voice))
+            )
+            print(new_voice_pick_warning(desk, new_voice, picked=picked), file=out)
         return path
     if beat is not None or speaker_moves:
         raise CommandStopped("--beat and --speaker-moves go with --add")
@@ -5966,8 +5991,9 @@ def add_episode_parsers(
     line.add_argument(
         "--provider-voice",
         default=None,
-        help="With --new-voice: an Eleven v3 voice. Left out, the server gives the first voice nobody uses "
-        "and the --voice-description does not choose it: audition the new cast id after.",
+        help="With --new-voice: an Eleven v3 voice. Left out, the server picks one: a current server from "
+        "--voice-description (gender, accent, age, timbre), an older one the first voice nobody uses. The "
+        "pick is printed: audition the new cast id before filming.",
     )
     line.add_argument(
         "--select-regen",

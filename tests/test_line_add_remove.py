@@ -91,9 +91,12 @@ def _server(api: FakeApi) -> Any:
                     },
                 )
         for card in patch.get("add_voice_only_cast") or []:
+            # The server picks a voice when none is named (from the description since fictora-drama ec6fec0e).
+            voice = card.get("provider_voice") or "Bill"
             api.spine_doc["cast"].append(
-                {"cast_id": card["cast_id"], "name": card["name"], "role": card["role"]}
-            )
+                {"cast_id": card["cast_id"], "name": card["name"], "role": card["role"],
+                 "voice_brief": {"provider_voice": voice}}
+            )  # fmt: skip
         for beat in api.spine_doc["beats"]:
             beat["dialogue_lines"] = [
                 ln for ln in beat["dialogue_lines"] if ln["line_id"] not in removed
@@ -355,9 +358,14 @@ def test_a_new_voice_after_the_gate_goes_through_the_cascade_off_screen_and_reop
     text = out.getvalue()
     assert "+ voice Speaker voice (cast_speaker-voice), heard, never drawn" in text
     assert "Speaker voice (off-screen): D-9341." in text
-    # No --provider-voice: say the description does not pick the voice, and how to hear it.
-    assert "does NOT choose the voice" in text
+    # No --provider-voice: name the voice the server picked, say how it was picked, and how to hear it.
+    assert "the server picked Bill for Speaker voice" in text
+    assert "best fits --voice-description" in text
     assert "--cast cast_speaker-voice --audition --voices A,B,C,D" in text
+    assert (
+        "first catalog voice nobody uses"
+        not in text.split("+ voice")[1].splitlines()[0]
+    )
     assert "the server keeps this script approved" in text
     assert "pending again" in text
     assert episode_by_ordinal(load_series(desk), 1).script.status == "pending"
@@ -458,7 +466,7 @@ def test_the_cli_takes_add_new_voice_and_provider_voice(
     patch = _patches(api)[0]
     assert patch["add_voice_only_cast"][0]["provider_voice"] == "Rachel"
     assert patch["add_dialogue_lines"][0]["off_screen"] is True
-    assert "does NOT choose the voice" not in capsys.readouterr().out
+    assert "the server picked" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
