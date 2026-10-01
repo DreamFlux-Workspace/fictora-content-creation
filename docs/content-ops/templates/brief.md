@@ -9,6 +9,8 @@ Date: {{date}}
 | Name | Role | Speaks? | Existing plates? |
 | --- | --- | --- | --- |
 
+Write real ages. Each character gets a clearly different outfit and silhouette; no stock names ("Mara Voss"). Jackets and uniforms: plain back, no lettering or logos. A child: camera at or above their eye level, falls feet-first or seated, leggings or shorts under coats and dresses (runbook, Characters and age). A creature inspired by a reference is a new original design.
+
 ## Set
 
 ## Arc (this episode)
@@ -26,6 +28,8 @@ These must be spoken in a line. Decide now.
 ## Look
 
 Reference crops go in `reference/`. An image sets the medium. Words do not.
+
+Music bed: instruments and mood only, never a composer or studio. Japanese/Korean-voiced: `start --language ja|ko`.
 
 ## Lines (three maximum per take)
 
