@@ -96,7 +96,10 @@ from creation.ops.state import GateRecord, episode_by_ordinal, load_series, save
 from creation.patch_refusal import (
     FRAME_CAST_FIXES,
     INVALID_PATCH,
+    LINE_DELIVERIES,
     STRICT_FIELDS,
+    delivery_refusal,
+    delivery_values,
     explain_invalid_patch,
     refusal_code,
     server_named_rules,
@@ -2434,6 +2437,39 @@ def _guard_strand(
     changed.append(f"  {warning}")
 
 
+def _check_delivery(
+    desk: Path, assignments: Sequence[tuple[str, Any]], *, beat: str | None
+) -> None:
+    """Stop a ``--set delivery=…`` the server would refuse, before anything is sent (L-20260923-3).
+
+    The values come from the deploy's ``/openapi.json`` (one free read, only when a delivery is set),
+    else :data:`creation.patch_refusal.LINE_DELIVERIES`. ``null`` clears it and needs no read.
+    """
+
+    wanted = [value for key, value in assignments if key.split(".")[-1] == "delivery"]
+    if not wanted:
+        return
+    if beat is None:
+        raise CommandStopped(
+            "delivery is a beat field (how the speaker plays the beat's line): "
+            "pass --beat N, e.g. `edit --episode E --beat N --set delivery=whispered`"
+        )
+    if all(value is None for value in wanted):
+        return
+    _, _, check = _desk_session(desk)
+    try:
+        status, doc = check.get_optional("/openapi.json")
+    except (SystemExit, httpx.HTTPError):
+        status, doc = 0, None
+    finally:
+        check.client.close()
+    values, source = delivery_values(doc if 200 <= status < 300 else None)
+    for value in wanted:
+        refused = delivery_refusal(value, values, source)
+        if refused:
+            raise CommandStopped(refused)
+
+
 def run_edit(
     desk: Path,
     *,
@@ -2503,6 +2539,7 @@ def run_edit(
     out = out or sys.stdout
     planning = shot_plan is not None or clear_shot_plan
     setting_expression = expression is not None
+    _check_delivery(desk, assignments, beat=beat)
     kind: str | None = None
     if setting_expression:
         if beat is None:
@@ -5781,7 +5818,10 @@ def add_episode_parsers(
         action="append",
         default=[],
         metavar="KEY=VALUE",
-        help='motion_direction field (beat) or visual_brief field (frame). Dotted keys; a number indexes a list (subject_blocking.0.pose). A value starting with " [ { (or null/true/false) is JSON: \'shot_scale="extreme close-up"\' stores the text without quotes; plain text works too. On a frame, cast_refs=["Hana"] (names or ids) changes who is in the shot.',
+        help='motion_direction field (beat) or visual_brief field (frame). Dotted keys; a number indexes a list (subject_blocking.0.pose). A value starting with " [ { (or null/true/false) is JSON: \'shot_scale="extreme close-up"\' stores the text without quotes; plain text works too. On a frame, cast_refs=["Hana"] (names or ids) changes who is in the shot. '
+        "On a beat, delivery (how the speaker plays the line) is one of "
+        + ", ".join(LINE_DELIVERIES)
+        + ", or null for plain; checked before sending.",
     )
     edit.add_argument("--text", default=None, help="Line: the English script text.")
     edit.add_argument(
