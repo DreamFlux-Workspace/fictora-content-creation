@@ -23,6 +23,7 @@ lays one bed across the edited take and marks once. ``freeze``, ``soften`` and
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from collections.abc import Callable
@@ -57,6 +58,7 @@ from creation.post.finish_record import (
 )
 from creation.post.lineage import record_edit
 from creation.post.media import probe_video, video_streams
+from creation.post.take_timeline import UnsureRun, unsure_head
 
 EDIT_COMMANDS = frozenset({"deboard", "trim", "freeze", "tempo", "soften", "blur"})
 #: Edits that carry a finish record onto their output.
@@ -209,19 +211,42 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Default: the take's approved board on the desk.",
     )
     deb.add_argument("--max-frames", type=int, default=BOARD_LEAK_MAX_FRAMES)
+    deb.add_argument(
+        "--hold-unsure", action="store_true",
+        help="Hold the start even though the server left possible board frames there as filmed "
+        "(take facts board_frames.unsure, fictora-drama #559). Only after a person looked and saw the board.",
+    )  # fmt: skip
 
     trim = sub.add_parser(
         "trim",
-        help="Cut A-B seconds out of a FINISHED take on the real shot change (each edge snapped within 0.1 s), "
-        "frame-accurate; prints how far later cues, lines and captions move.",
+        help="Two kinds. --start S --end E (or --reset): set where the take starts and ends when it plays "
+        "(the server's trim handles, fictora-drama #563; no file is cut, nothing billed; finish and join cut "
+        "there). --cut A-B: cut A-B seconds out of a FINISHED take on the real shot change (each edge snapped "
+        "within 0.1 s), frame-accurate; prints how far later cues, lines and captions move.",
     )
     _take_args(
         trim,
-        take_file_help="The finished take to cut (required: finish the raw take first).",
+        take_file_help="--cut only: the finished take to cut (required: finish the raw take first).",
     )
     trim.add_argument(
-        "--cut", required=True, help="A-B seconds on the take, e.g. 10.17-12.15."
+        "--cut", default=None, help="A-B seconds on the take, e.g. 10.17-12.15."
     )
+    trim.add_argument(
+        "--start", type=float, default=None,
+        help="Handles: where the take starts playing, seconds on the take as filmed (take-facts times).",
+    )  # fmt: skip
+    trim.add_argument(
+        "--end", type=float, default=None,
+        help="Handles: where it stops playing, seconds on the take as filmed (at least 1 s after --start).",
+    )  # fmt: skip
+    trim.add_argument(
+        "--reset", action="store_true",
+        help="Handles: back to the automatic handles (just past the board frames the server held).",
+    )  # fmt: skip
+    trim.add_argument(
+        "--preview", action="store_true",
+        help="Handles: print what would change; send nothing.",
+    )  # fmt: skip
     trim.add_argument(
         "--cues-json", type=Path, action="append", default=[],
         help="A cues or captions JSON list [{start, end?, ...}] to shift: writes <stem>-trim-vN.json (repeat).",
@@ -302,6 +327,45 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )  # fmt: skip
 
 
+def _saved_facts(desk: Path, episode: int, take_id: str) -> dict[str, Any] | None:
+    from creation.post.sfx import saved_take_facts
+
+    path = saved_take_facts(desk, episode, take_id)
+    if path is None:
+        return None
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    return loaded if isinstance(loaded, dict) else None
+
+
+def unsure_refusal(doubt: UnsureRun, episode: int, take_id: str) -> str:
+    """Why ``deboard`` will not hold a start the server left as filmed, and what the producer decides.
+
+    Parameters
+    ----------
+    doubt
+        The server's unsure run at the head.
+    episode, take_id
+        The take.
+
+    Returns
+    -------
+    str
+        The question for the producer, ending on ``Refused: ...``.
+    """
+
+    return "\n".join(
+        [
+            f"The server found {doubt.frames} possible board frame(s) at the start of ep{episode:02d} {take_id} "
+            f"and left them as filmed: {doubt.reason}.",
+            "It was not sure they are the board, so the kit does not hold them on its own either. "
+            "Look at the start of the take (`review --original` writes the original beside it), then decide:",
+            "  - they are the board: run deboard again with --hold-unsure",
+            "  - they are real footage: leave them; finish keeps them",
+            "Refused: deboard holds no end the server left as filmed without --hold-unsure",
+        ]
+    )
+
+
 _TAKE_IN_NAME = re.compile(r"^take-ep(\d+)-(t\d+)(?:-|\.|$)")
 
 
@@ -353,7 +417,7 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
     Returns
     -------
     int
-        ``0``.
+        ``0``; ``2`` when ``trim --start/--end/--reset`` was refused.
 
     Raises
     ------
@@ -369,6 +433,32 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
     run_dir = desk / f"ep{args.episode:02d}"
     takes = run_dir / "takes"
     base = f"take-ep{args.episode:02d}-{args.take_id}"
+    handles = args.command == "trim" and (
+        args.start is not None or args.end is not None or args.reset
+    )
+    if handles:
+        if args.cut is not None or args.take_file is not None:
+            raise ValueError(
+                "trim --start/--end/--reset sets the take's handles on the server; --cut and --take-file "
+                "cut a finished file on this laptop: use one or the other"
+            )
+        from creation.post.take_handles import run_take_trim
+
+        return run_take_trim(
+            desk,
+            episode=args.episode,
+            take_id=args.take_id,
+            start_s=args.start,
+            end_s=args.end,
+            reset=args.reset,
+            preview=args.preview,
+            out=out,
+        )
+    if args.command == "trim" and args.cut is None:
+        raise ValueError(
+            "trim needs --start S --end E (or --reset) for the take's handles, or --cut A-B with --take-file "
+            "to cut a finished file"
+        )
     if args.command == "trim" and args.take_file is None:
         raise ValueError(
             "trim needs --take-file: finish the raw take first, then trim the finished file"
@@ -398,10 +488,18 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
             raise FileNotFoundError(
                 f"no board for {args.take_id} on the desk; pass --board"
             )
+        doubt = unsure_head(_saved_facts(desk, args.episode, args.take_id))
+        if doubt is not None and not args.hold_unsure:
+            raise ValueError(unsure_refusal(doubt, args.episode, args.take_id))
         result = deboard(source, board, target("deboard"), max_frames=args.max_frames)
         if result.output is not None:
             record_edit(desk, op="deboard", source=source, output=result.output)
         lines = [f"Deboard `{source.name}` against `{board.name}`: {result.one_line()}"]
+        if doubt is not None:
+            lines.append(
+                f"- held although the server left {doubt.frames} possible board frame(s) at the start as filmed "
+                f"({doubt.reason}): --hold-unsure"
+            )
     elif args.command == "trim":
         first, after, fps, before = plan_trim(source, parse_cut(args.cut))
 

@@ -124,7 +124,17 @@ FREEZE_THRESHOLD = 0.002
 FREEZE_MIN_SECONDS = 0.6
 
 #: File steps that come after the mix: such a file is a finished take (``final``/``captions``: adopted desks).
-FINISHED_STEPS = ("mix", "cap", "sokii", "trim", "tempo", "final", "captions", "reel")
+FINISHED_STEPS = (
+    "mix",
+    "cap",
+    "sokii",
+    "trim",
+    "tempo",
+    "final",
+    "captions",
+    "reel",
+    "handles",
+)
 #: File steps after which the head board frames should be gone.
 DEBOARDED_STEPS = (
     "deboard",
@@ -1440,6 +1450,12 @@ def review_take(
     )
     facts_path = saved_take_facts(desk, episode, take_id)
     facts = json.loads(facts_path.read_text(encoding="utf-8")) if facts_path else None
+    handled_record = record_for_file(desk, take)
+    if handled_record is not None:
+        from creation.post.take_handles import facts_on_handled_file
+
+        # A file finish cut to its trim handles: the facts' times minus start_s (fictora-drama #563).
+        facts = facts_on_handled_file(facts, handled_record.edits)  # type: ignore[assignment]
     words_note = None
     if "reel" in steps:
         # A transcript of the take does not say what the reel plays: its plan lists the lines it keeps.
@@ -1460,11 +1476,36 @@ def review_take(
     held = server_board_frames(facts)
     if held is not None:
         # The server already cleaned the raw take: its head reads 0 here, and nothing is shifted.
-        board_sec.details.append(held.one_line())
+        board_sec.details.extend(held.lines())
         board_sec.data["server_held"] = {
             "head_frames": held.head_frames,
             "tail_frames": held.tail_frames,
+            "original": (
+                {
+                    "url": held.original.url,
+                    "content_sha256": held.original.content_sha256,
+                    "content_length": held.original.content_length,
+                }
+                if held.original is not None
+                else None
+            ),
+            "unsure": [
+                {"end": run.end, "frames": run.frames, "reason": run.reason}
+                for run in held.unsure
+            ],
         }
+        if held.unsure_at("head") is not None and head:
+            # finish leaves an end the server was unsure of: say so instead of "finish removes them".
+            board_sec.details = [
+                detail.replace(
+                    "finish removes them (deboard)",
+                    "finish leaves them (the server was unsure); if they are the board, "
+                    "`deboard --hold-unsure` then finish --take-file the result",
+                )
+                for detail in board_sec.details
+            ]
+        if held.unsure and board_sec.status == OK:
+            board_sec.status = WARN
     moved = facts_shift_s(facts)
     if moved is not None:
         board_sec.details.append(

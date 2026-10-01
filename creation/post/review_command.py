@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 from typing import TextIO
 
+import httpx
+
 REVIEW_COMMANDS = frozenset({"review"})
 
 
@@ -56,6 +58,12 @@ def add_review_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
     review.add_argument(
         "--json", action="store_true", help="Print the review as JSON on stdout."
     )
+    review.add_argument(
+        "--original", action="store_true",
+        help="Also download the provider's original the server kept when it held board frames "
+        "(take facts board_frames.original, fictora-drama #559), check its sha256 and length, and write a "
+        "side-by-side of the held ends (takes/take-epNN-tK-original-compare-vN.mp4). Free.",
+    )  # fmt: skip
 
 
 def dispatch_review(args: argparse.Namespace, *, stream: TextIO | None = None) -> int:
@@ -107,4 +115,31 @@ def dispatch_review(args: argparse.Namespace, *, stream: TextIO | None = None) -
         print(json.dumps(result.as_json(), indent=2, ensure_ascii=False), file=out)
     else:
         print(result.block(), file=out)
+    if getattr(args, "original", False):
+        from creation.post.desk import latest_raw_take
+        from creation.post.sfx import saved_take_facts
+        from creation.post.take_timeline import fetch_original
+
+        facts_path = saved_take_facts(desk, args.episode, args.take_id)
+        try:
+            raw = latest_raw_take(desk, args.episode, args.take_id)
+        except FileNotFoundError:
+            raw = None
+        try:
+            copy = fetch_original(
+                desk,
+                episode=args.episode,
+                take_id=args.take_id,
+                payload=json.loads(facts_path.read_text(encoding="utf-8"))
+                if facts_path
+                else None,
+                held_take=raw,
+            )
+        except (ValueError, OSError, httpx.HTTPError) as exc:
+            print(f"original: not fetched: {exc}", file=out)
+        else:
+            for line in copy.lines():
+                print(line, file=out)
+            if (run_dir / "run-notes.md").is_file():
+                append_run_note(run_dir, "Review · " + "; ".join(copy.lines()))
     return 0

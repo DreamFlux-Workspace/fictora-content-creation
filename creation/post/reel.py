@@ -377,6 +377,13 @@ def measure_take(desk: Path, episode: int, source: TakeSource) -> TakeInput:
     facts_path = saved_take_facts(desk, episode, source.take_id)
     if facts_path is not None:
         payload = json.loads(facts_path.read_text(encoding="utf-8"))
+        if source.record is not None:
+            from creation.post.take_handles import facts_on_handled_file
+
+            # The record's files were cut to the take's trim handles: its times minus start_s.
+            payload = dict(
+                facts_on_handled_file(payload, source.record.edits) or payload
+            )
         facts = payload.get("take_facts", payload)
         planned = planned_shots(payload)
         if planned:

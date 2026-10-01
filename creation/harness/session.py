@@ -206,7 +206,9 @@ class DramaApiRunSession:
             answer = response.text
         return response.status_code, answer
 
-    def put(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+    def put(
+        self, path: str, body: dict[str, Any], *, idempotency_key: str | None = None
+    ) -> dict[str, Any]:
         """PUT JSON to a drama API path.
 
         Parameters
@@ -215,6 +217,8 @@ class DramaApiRunSession:
             Drama API path.
         body
             JSON object.
+        idempotency_key
+            Optional ``Idempotency-Key`` (the take trim route requires one).
 
         Returns
         -------
@@ -223,7 +227,9 @@ class DramaApiRunSession:
         """
 
         return self._ok(
-            self.client.put(self.url(path), headers=self.headers(), json=body)
+            self.client.put(
+                self.url(path), headers=self.headers(idempotency_key), json=body
+            )
         )
 
     def patch(self, path: str, body: dict[str, Any]) -> dict[str, Any]:

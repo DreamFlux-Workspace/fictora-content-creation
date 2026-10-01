@@ -244,7 +244,7 @@ def test_a_take_the_server_held_is_never_shifted_or_measured(tmp_path: Path) -> 
     )
 
     assert checked.facts == facts_path
-    assert "server held 10 head" in checked.note
+    assert "server held 10 start / 0 end" in checked.note
     held = server_board_frames(json.loads(facts_path.read_text(encoding="utf-8")))
     assert held is not None and (held.head_frames, held.tail_frames) == (10, 0)
 

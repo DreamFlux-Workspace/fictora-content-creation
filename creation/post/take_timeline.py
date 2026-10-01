@@ -19,14 +19,27 @@ every time moved by it (``take_facts_shifted_s`` records how much), so every
 command that reads the newest facts (finish, captions, review) agrees with the
 clip. A native take from that window cannot be measured; it is reported.
 
+Since fictora-drama #559 the server keeps the provider's untouched take
+whenever it holds frames (``board_frames.original``), and it holds only frames
+that are surely the board: a run it found but was not sure of is left as
+filmed and listed under ``board_frames.unsure`` with the reason. Review says
+all of it (:meth:`ServerBoardFrames.lines`), ``review --original`` fetches the
+original and checks it (:func:`fetch_original`), and the kit's ``deboard``
+never holds an end the server listed as unsure: it asks the producer
+(:func:`unsure_head`).
+
 Server contract (``GET /v1/jobs/{id}/take-facts``)::
 
     board_frames: {"head_frames", "tail_frames", "head_s", "tail_s",
-                   "frame_rate", "timeline_shift_s": 0} | null
+                   "frame_rate", "timeline_shift_s": 0,
+                   "original": {"url", "content_sha256", "content_length"},  # #559, when held
+                   "unsure": [{"end": "head" | "tail", "frames", "reason"}]}  # #559, when any
+                  | null
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -58,19 +71,99 @@ TrackFetcher = Callable[[str, Path], Path]
 
 
 @dataclass(frozen=True)
+class KeptOriginal:
+    """The provider's untouched take the server kept when it held frames (``board_frames.original``)."""
+
+    url: str
+    content_sha256: str
+    content_length: int | None
+
+
+@dataclass(frozen=True)
+class UnsureRun:
+    """Possible board frames at one end the server left as filmed (``board_frames.unsure[]``)."""
+
+    end: str
+    frames: int
+    reason: str
+
+    @property
+    def where(self) -> str:
+        """``start`` or ``end`` (the server says ``head`` / ``tail``)."""
+
+        return "start" if self.end == "head" else "end"
+
+    def one_line(self) -> str:
+        """``!! possible board frames at the start (9) left as filmed: <reason>``."""
+
+        return (
+            f"!! possible board frames at the {self.where} ({self.frames} frame(s)) left as filmed: {self.reason}. "
+            f"The kit does not hold them either: look at the {self.where} of the take before deciding"
+        )
+
+
+@dataclass(frozen=True)
 class ServerBoardFrames:
     """The board frames the server held at the stored take's ends (``take_facts.board_frames``)."""
 
     head_frames: int
     tail_frames: int
+    original: KeptOriginal | None = None
+    unsure: tuple[UnsureRun, ...] = ()
+    frame_rate: float = 24.0
+
+    @property
+    def held(self) -> int:
+        """Frames held at both ends."""
+
+        return self.head_frames + self.tail_frames
+
+    def unsure_at(self, end: str) -> UnsureRun | None:
+        """The unsure run at ``head`` or ``tail``, if the server listed one."""
+
+        return next((run for run in self.unsure if run.end == end), None)
+
+    def lines(self) -> list[str]:
+        """What the server did at the take's ends, one line each (never "held 0" next to an unsure run).
+
+        Returns
+        -------
+        list[str]
+            The held line (with the kept original, or that none was stored), then
+            one ``!!`` line per end the server left as filmed.
+        """
+
+        rows: list[str] = []
+        if self.held:
+            held = (
+                f"server held {self.head_frames} start / {self.tail_frames} end frame(s) "
+                "(same length and sound; no time moves)"
+            )
+            if self.original is not None:
+                size = (
+                    f", {self.original.content_length} bytes"
+                    if self.original.content_length
+                    else ""
+                )
+                held += (
+                    f" · original kept: {self.original.url} (sha256 {self.original.content_sha256[:12]}…{size}); "
+                    "`review --original` downloads it, checks it and writes a side-by-side of the held ends"
+                )
+            else:
+                held += (
+                    " · held frames but no original stored (before fictora-drama #559): the provider's take "
+                    "cannot be restored"
+                )
+            rows.append(held)
+        elif not self.unsure:
+            rows.append("server found no board frames at either end (nothing held)")
+        rows += [run.one_line() for run in self.unsure]
+        return rows
 
     def one_line(self) -> str:
-        """``the server held 10 head and 0 tail board frame(s) when it stored the take``."""
+        """Every line of :meth:`lines`, joined for a single run-notes line."""
 
-        return (
-            f"the server held {self.head_frames} head and {self.tail_frames} tail board frame(s) "
-            "when it stored the take (same length and sound; no time moves)"
-        )
+        return "; ".join(self.lines())
 
 
 def _inner(payload: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -101,7 +194,54 @@ def server_board_frames(payload: Mapping[str, Any] | None) -> ServerBoardFrames 
     head, tail = record.get("head_frames"), record.get("tail_frames")
     if not isinstance(head, int) or not isinstance(tail, int):
         return None
-    return ServerBoardFrames(head_frames=head, tail_frames=tail)
+    kept = record.get("original")
+    original = None
+    if (
+        isinstance(kept, Mapping)
+        and isinstance(kept.get("url"), str)
+        and isinstance(kept.get("content_sha256"), str)
+    ):
+        length = kept.get("content_length")
+        original = KeptOriginal(
+            url=kept["url"],
+            content_sha256=kept["content_sha256"],
+            content_length=length if isinstance(length, int) else None,
+        )
+    unsure = tuple(
+        UnsureRun(
+            end=str(run.get("end")),
+            frames=int(run.get("frames") or 0),
+            reason=str(run.get("reason") or "no reason given"),
+        )
+        for run in record.get("unsure") or ()
+        if isinstance(run, Mapping) and run.get("end") in ("head", "tail")
+    )
+    rate = record.get("frame_rate")
+    return ServerBoardFrames(
+        head_frames=head,
+        tail_frames=tail,
+        original=original,
+        unsure=unsure,
+        frame_rate=float(rate) if isinstance(rate, (int, float)) and rate > 0 else 24.0,
+    )
+
+
+def unsure_head(payload: Mapping[str, Any] | None) -> UnsureRun | None:
+    """The run at the start the server left as filmed, which ``deboard`` must not hold on its own.
+
+    Parameters
+    ----------
+    payload
+        Saved take facts, or ``None``.
+
+    Returns
+    -------
+    UnsureRun | None
+        ``None`` when the server listed no unsure run at the head (or sent no record).
+    """
+
+    record = server_board_frames(payload)
+    return record.unsure_at("head") if record is not None else None
 
 
 def facts_shift_s(payload: Mapping[str, Any] | None) -> float | None:
@@ -176,7 +316,13 @@ def measure_track_lag(take: Path, track: Path) -> float | None:
     return best_lag / _RATE
 
 
-def shift_take_facts(payload: Mapping[str, Any], seconds: float) -> dict[str, Any]:
+def shift_take_facts(
+    payload: Mapping[str, Any],
+    seconds: float,
+    *,
+    until: float | None = None,
+    record_as: str = SHIFTED_KEY,
+) -> dict[str, Any]:
     """Move every time in the take facts ``seconds`` earlier, clamped at 0.
 
     Shot windows, ``soundtrack.lines``, line windows and SFX cues (played and
@@ -189,11 +335,20 @@ def shift_take_facts(payload: Mapping[str, Any], seconds: float) -> dict[str, An
         Saved take facts (``{"take_facts": {...}}`` or the facts alone).
     seconds
         How far the clip's timeline is ahead of the facts' (the cut head).
+    until
+        The clip's length after the move, when its end was cut too (a take
+        cut to its trim handles, :mod:`creation.post.take_handles`): a window
+        or cue starting at or after it is dropped, an end past it is clipped,
+        and a cue that started before the cut head is dropped (it is not on
+        the clip) instead of moved to 0.
+    record_as
+        The key the shift is recorded under (:data:`SHIFTED_KEY` for a take
+        the server cut; the handles keep theirs apart).
 
     Returns
     -------
     dict[str, Any]
-        A new payload in the same shape, with :data:`SHIFTED_KEY` recorded.
+        A new payload in the same shape, with the shift recorded under ``record_as``.
     """
 
     def move(value: Any) -> Any:
@@ -212,11 +367,19 @@ def shift_take_facts(payload: Mapping[str, Any], seconds: float) -> dict[str, An
                 kept.append(item)
                 continue
             moved = dict(item)
+            began = item.get(start)
+            if until is not None and isinstance(began, (int, float)):
+                if float(began) - seconds >= until:
+                    continue  # after the cut tail
+                if end is None and float(began) < seconds:
+                    continue  # a cue in the cut head is not on the clip
             if end is not None and isinstance(item.get(end), (int, float)):
                 if float(item[end]) - seconds <= 0:
                     continue
                 moved[end] = move(item[end])
-            moved[start] = move(item.get(start))
+                if until is not None:
+                    moved[end] = round(min(float(moved[end]), until), 3)
+            moved[start] = move(began)
             kept.append(moved)
         return kept
 
@@ -235,7 +398,7 @@ def shift_take_facts(payload: Mapping[str, Any], seconds: float) -> dict[str, An
             **soundtrack,
             "lines": windows(soundtrack.get("lines"), "start_s", "end_s"),
         }
-    facts[SHIFTED_KEY] = round(seconds, 3)
+    facts[record_as] = round(seconds, 3)
     if nested:
         return {**payload, "take_facts": facts}
     return facts
@@ -361,3 +524,120 @@ def align_take_facts(
         f"take timeline: the server cut {frames} head frame(s) with their sound ({shift:.3f}s; fictora-drama #543), "
         f"so every take-facts time moved {shift:.3f}s earlier -> `{out.name}`",
     )
+
+
+@dataclass(frozen=True)
+class OriginalCopy:
+    """The provider's original fetched beside the held take, checked, with a side-by-side of the held ends."""
+
+    path: Path
+    compare: Path | None
+
+    def lines(self) -> list[str]:
+        """What ``review --original`` prints."""
+
+        rows = [
+            f"original: `{self.path.name}` (sha256 and length match the server's record)"
+        ]
+        if self.compare is not None:
+            rows.append(
+                f"compare: `{self.compare.name}` (left the held take, right the original, at each held end)"
+            )
+        return rows
+
+
+def _held_ends_graph(record: ServerBoardFrames, seconds: float) -> str:
+    """``select`` expression keeping the held ends plus a quarter second of the real take after each."""
+
+    rate = record.frame_rate or 24.0
+    parts = []
+    if record.head_frames:
+        parts.append(f"lt(t\\,{record.head_frames / rate + 0.25:.3f})")
+    if record.tail_frames:
+        parts.append(
+            f"gte(t\\,{max(0.0, seconds - record.tail_frames / rate - 0.25):.3f})"
+        )
+    return "+".join(parts) or "lt(t\\,0.5)"
+
+
+def fetch_original(
+    desk: Path,
+    *,
+    episode: int,
+    take_id: str,
+    payload: Mapping[str, Any] | None,
+    held_take: Path | None,
+    fetch: TrackFetcher = _download,
+) -> OriginalCopy:
+    """Download the original the server kept, check it against its record, and compare it with the held take.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    episode
+        Episode ordinal.
+    take_id
+        ``t1`` ...
+    payload
+        The take's saved facts.
+    held_take
+        The raw take on the desk (the held clip), for the side-by-side; ``None`` skips it.
+    fetch
+        Reads ``url`` into a path (tests pass a local copy).
+
+    Returns
+    -------
+    OriginalCopy
+        ``epNN/takes/take-epNN-tK-original-vN.mp4`` and the compare clip.
+
+    Raises
+    ------
+    ValueError
+        When the facts name no original (nothing held, or stored before
+        fictora-drama #559), or the download's sha256 or length does not match.
+    """
+
+    record = server_board_frames(payload)
+    if record is None or record.original is None:
+        why = (
+            "the facts carry no board-frame record"
+            if record is None
+            else "held frames but no original stored (before fictora-drama #559)"
+            if record.held
+            else "the server held nothing, so the stored take is the original"
+        )
+        raise ValueError(f"no original to fetch: {why}")
+    takes = desk / f"ep{episode:02d}" / "takes"
+    takes.mkdir(parents=True, exist_ok=True)
+    out = next_versioned_path(takes, f"take-ep{episode:02d}-{take_id}-original", ".mp4")
+    fetch(record.original.url, out)
+    data = out.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    expected = record.original.content_length
+    if digest != record.original.content_sha256 or (
+        expected is not None and len(data) != expected
+    ):
+        out.unlink()
+        raise ValueError(
+            f"the downloaded original does not match the server's record (sha256 {digest[:12]}…, "
+            f"{len(data)} bytes; expected {record.original.content_sha256[:12]}…, {expected} bytes): not kept"
+        )
+    compare = None
+    if held_take is not None and held_take.is_file():
+        compare = next_versioned_path(
+            takes, f"take-ep{episode:02d}-{take_id}-original-compare", ".mp4"
+        )
+        keep = _held_ends_graph(record, probe_video(held_take).duration_seconds)
+        side = f"select='{keep}',setpts=N/FRAME_RATE/TB,scale=-2:480"
+        run = subprocess.run(
+            [ffmpeg_bin(), "-v", "error", "-i", str(held_take), "-i", str(out), "-filter_complex",
+             f"[0:v]{side}[a];[1:v]{side}[b];[a][b]hstack=inputs=2[v]", "-map", "[v]", "-an",
+             "-c:v", "libx264", "-pix_fmt", "yuv420p", str(compare)],
+            capture_output=True, check=False,
+        )  # fmt: skip
+        if run.returncode != 0:
+            raise ValueError(
+                f"could not write the side-by-side: {run.stderr.decode(errors='replace')[-300:]}"
+            )
+    return OriginalCopy(path=out, compare=compare)
