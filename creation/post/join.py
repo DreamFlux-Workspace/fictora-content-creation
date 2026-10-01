@@ -26,7 +26,12 @@ What ``join`` does, in order:
    loudnorm). The show's bed is looped seamlessly (silent head and tail cut,
    1 s equal-power crossfade at each loop point) to cover the whole join, then
    mixed under it by :func:`creation.post.mix.mix_take`: ducked under the
-   voice, a measured gain to about -18 LUFS, ONE limiter.
+   voice, a measured gain to about -18 LUFS, ONE limiter. The bed is the
+   harness's (the harness bed pinned on the desk, else the one the takes were
+   finished with, :func:`creation.post.bed.harness_bed`); there is no flag to
+   pass a file of your own. When every take already carries the harness's music
+   in its own soundtrack (finish record ``music_in_take``) no bed is laid, only
+   the gain and limiter; a join that mixes such takes with bedded ones is refused.
 4. **Seams.** Takes of one episode are filmed to hand off on the same frame, so
    they meet on a straight cut; episodes meet on a 0.25 s dissolve (picture
    ``xfade`` and sound ``acrossfade``). ``--dissolve S`` sets every seam.
@@ -66,7 +71,13 @@ import numpy as np
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
 from creation.ops.state import episode_by_ordinal, load_series
-from creation.post.bed import bed_level, chosen_record_level, pinned_bed
+from creation.post.bed import (
+    MUSIC_IS_HARNESS,
+    bed_level,
+    chosen_record_level,
+    harness_bed,
+    pinned_bed,
+)
 from creation.post.finish_record import (
     FinishRecord,
     latest_finish_record,
@@ -197,7 +208,8 @@ class JoinResult:
     parts: list[JoinPart]
     master: Path
     marked: Path | None
-    bed: Path
+    #: ``None`` when every take carries the harness's music in its own soundtrack.
+    bed: Path | None
     gains_db: list[float]
     dissolves: list[float]
     seams: list[float]
@@ -250,7 +262,11 @@ class JoinResult:
                 f"{p.label} `{p.picture.name}` {g:+.1f} dB"
                 for p, g in zip(self.parts, self.gains_db)
             ),
-            f"Bed: one bed across the join, `{self.bed.name}`; {self.mix_line}",
+            (
+                f"Bed: one bed across the join, `{self.bed.name}`; {self.mix_line}"
+                if self.bed is not None
+                else f"Bed: none, every take carries the harness's music in its own soundtrack; {self.mix_line}"
+            ),
             f"Seams: {seams}",
             f"Frames / seconds: {self.fps:.2f}; loudness {self.loudness}",
         ]
@@ -956,7 +972,6 @@ def run_join(
     take_files: tuple[Path, ...] = (),
     from_records: tuple[Path, ...] = (),
     dissolve: float | None = None,
-    bed: Path | None = None,
     bed_db: float | None = None,
     duck_db: float | None = None,
     gain_match: bool = True,
@@ -979,8 +994,6 @@ def run_join(
         With ``take_files``: the recorded file each unrecorded take file was copied from (:func:`file_parts`).
     dissolve
         Seconds at every seam; default a cut between takes, 0.25 s between episodes.
-    bed
-        Bed file; default the bed pinned on the desk, else the one the takes were finished with.
     bed_db
         ``--bed-db``. Default: the desk's ``series.json`` ``bed_db``, else the level
         every take was finished at when one was chosen, else measured from the bed
@@ -1007,7 +1020,8 @@ def run_join(
     Raises
     ------
     ValueError
-        When the parts cannot be joined (unfinished, mixed size or rate, one part, no bed).
+        When the parts cannot be joined (unfinished, mixed size or rate, one part, no harness bed, or
+        takes carrying their own music mixed with bedded ones).
     FileNotFoundError
         When a named file is gone.
     MediaToolError
@@ -1042,22 +1056,38 @@ def run_join(
         duck_db if duck_db is not None else _agreed([r.duck_db for r in records], None)
     )
     check_duck_db(duck_db)
-    recorded_bed = _agreed([r.bed for r in records], None)
-    bed = (bed.expanduser().resolve() if bed else None) or pinned_bed(desk)
-    if bed is None and recorded_bed:
-        bed = records[0].resolve(desk, "bed")
-    if bed is None or not bed.is_file():
-        raise ValueError(
-            "no bed to lay across the join: pin the show's bed (`fictora-produce set-bed --desk D --path F`) "
-            "or pass --bed F. join never makes one (it is free)."
+    in_take = [part.label for part in parts if part.record.music_in_take]
+    bed: Path | None = None
+    level = None
+    if in_take and len(in_take) != len(parts):
+        bedded = ", ".join(
+            part.label for part in parts if not part.record.music_in_take
         )
-    level = bed_level(
-        desk,
-        bed,
-        flag=bed_db,
-        recorded=chosen_record_level([(r.bed_db, r.bed_db_source) for r in records]),
-    )
-    bed_db = level.db
+        raise ValueError(
+            f"{', '.join(in_take)} carry the harness's music in their own soundtrack and {bedded} were finished "
+            "with the show's bed: one bed across the join would double the music on the first. Join them "
+            "separately, or re-finish so every take has its music the same way."
+        )
+    if not in_take:
+        recorded_bed = _agreed([r.bed for r in records], None)
+        bed = pinned_bed(desk)
+        if bed is None and recorded_bed:
+            found = records[0].resolve(desk, "bed")
+            bed = found if found is not None and harness_bed(desk, found) else None
+        if bed is None or not bed.is_file():
+            raise ValueError(
+                "no harness bed to lay across the join: `finish` a take first (it finds or has the server make "
+                f"the show's bed and pins it). join never makes one (it is free). {MUSIC_IS_HARNESS}"
+            )
+        level = bed_level(
+            desk,
+            bed,
+            flag=bed_db,
+            recorded=chosen_record_level(
+                [(r.bed_db, r.bed_db_source) for r in records]
+            ),
+        )
+        bed_db = level.db
 
     episode_set = sorted({part.episode for part in parts})
     if len(episode_set) == 1:
@@ -1079,19 +1109,32 @@ def run_join(
         )
 
     print(
-        f"Joining {len(parts)} take(s): {', '.join(p.label for p in parts)} (one bed, free)",
+        f"Joining {len(parts)} take(s): {', '.join(p.label for p in parts)} "
+        f"({'one bed' if bed is not None else 'music in each take'}, free)",
         file=out,
         flush=True,
     )
-    print(f"Bed level: {level.one_line()}", file=out, flush=True)
+    if level is not None:
+        print(f"Bed level: {level.one_line()}", file=out, flush=True)
     gains = match_gains(parts) if gain_match else [0.0] * len(parts)
     total = sum(lengths) - sum(dissolves)
     master = next_versioned_path(folder, stem, ".mp4")
     with tempfile.TemporaryDirectory() as scratch:
         bedless = Path(scratch) / "joined-no-bed.mkv"
         seams = _join_bedless(parts, lengths, gains, dissolves, bedless)
-        looped = loop_bed(bed, total + 1.0, Path(scratch) / "bed-looped.wav")
-        mixed = mix_take(bedless, master, bed=looped, bed_db=bed_db, duck_db=duck_db)
+        looped = (
+            loop_bed(bed, total + 1.0, Path(scratch) / "bed-looped.wav")
+            if bed is not None
+            else None
+        )
+        mixed = mix_take(
+            bedless,
+            master,
+            bed=looped,
+            bed_db=bed_db if bed_db is not None else -16.5,
+            duck_db=duck_db if looped is not None else None,
+            music_in_take=looped is None,
+        )
     fps = assert_house_fps(master)
     speech: list[tuple[float, float]] = []
     speech_notes: list[str] = []
@@ -1109,7 +1152,8 @@ def run_join(
         loudness=f"{mixed.mix_lufs:.1f} LUFS", mix_line=mixed.one_line(), seam_levels=levels,
         bed_db=bed_db,
     )  # fmt: skip
-    result.notes.append(f"bed level {level.one_line()}")
+    if level is not None:
+        result.notes.append(f"bed level {level.one_line()}")
     result.notes += [f"SUBSTITUTED: {p.stands_in}" for p in parts if p.stands_in]
     result.notes += speech_notes
     if result.loud_seams and accept_seam:

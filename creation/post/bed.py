@@ -1,14 +1,24 @@
-"""The show's one music bed: found or made once, pinned on the desk, mixed under every take.
+"""The show's one music bed: the harness's music, found or made once, pinned on the desk, mixed under every take.
 
+The music is always the harness's (the Drama API's), never the operator's.
 Order ``finish`` uses (first that exists wins):
 
-1. the bed pinned on this desk (``series.json`` ``bed_path``; ``set-bed --path`` sets it);
-2. the show's bed pinned on the spine (``series_audio_bed_url``, set by
-   ``POST /v1/spines/{id}/audio-bed``), downloaded once into ``shared/beds/``;
+1. the harness bed already pinned on this desk (``series.json`` ``bed_path``),
+   i.e. one this kit downloaded from the spine or had the server make
+   (``shared/beds/series-bed-vN.*`` or ``shared/beds/show-bed-vN.*``,
+   :func:`harness_bed`). A file pinned by hand (the old ``set-bed --path``) is
+   not harness music: it is ignored, with a ``!!`` line;
+2. the show's bed pinned on the spine (``series_audio_bed_url``), downloaded
+   once into ``shared/beds/``;
 3. a bed made once per show on the server (:class:`~creation.post.audio_service.AudioService`,
-   a few cents; the server writes the music brief from the show's genre, or
-   uses the operator's ``--music`` words), downloaded and levelled here to
-   -20 LUFS.
+   Stable Audio, a few cents; the server writes the music brief from the show's
+   genre), downloaded and levelled here to -20 LUFS.
+
+An operator never chooses the music. A change they want ("calmer", "quieter
+under the lines") is a music change note (:func:`record_music_note`, the
+``music-note`` command or ``finish --music``): saved on the desk in
+``shared/music-notes.jsonl`` and printed with every finish, so it goes to the
+harness with the next re-run. Nothing is rendered from it here.
 
 The bed's level in the mix (:func:`bed_level`, what ``finish``, ``join`` and
 ``reel`` mix it at), first that exists wins:
@@ -41,6 +51,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from creation.ops.folder import next_versioned_path
+from creation.ops.notes import append_run_note
 from creation.ops.state import load_series, save_series
 from creation.post.audio_service import AudioService, download
 from creation.post.media import MediaToolError, measure_loudness, run_ffmpeg
@@ -62,7 +73,21 @@ BED_USD = 0.20
 """One generated bed, roughly; booked to the ledger by the caller."""
 
 Maker = Callable[[Mapping[str, Any], str | None, Path], Path]
-"""``(spine, music words or None, target) -> raw bed file``."""
+"""``(spine, brief, target) -> raw bed file``; ``finish`` always passes ``None`` (the server's genre brief)."""
+
+#: The beds this kit writes from the harness: downloaded from the spine, or made on the server.
+HARNESS_BED_STEMS = ("series-bed", "show-bed")
+
+#: Where the music change notes for the harness are kept on the desk.
+MUSIC_NOTES_FILE = Path("shared") / "music-notes.jsonl"
+
+#: What an operator is told wherever the kit used to take their music.
+MUSIC_IS_HARNESS = (
+    "Music is the harness's: the kit never lays a file or a description you choose. To change it, "
+    'describe the change (e.g. "calmer", "quieter under the lines"): '
+    '`fictora-produce music-note --desk D [--episode N] [--take tK] "calmer"`. The note is saved on the '
+    "desk and goes to the harness with the next re-run."
+)
 Downloader = Callable[[str, Path], Path]
 
 
@@ -126,25 +151,145 @@ def pin_bed(desk: Path, path: Path) -> Path:
     return resolved
 
 
-def pinned_bed(desk: Path) -> Path | None:
-    """The bed pinned on this desk, when its file is still there."""
+def harness_bed(desk: Path, path: Path) -> bool:
+    """Whether ``path`` is a bed this kit took from the harness (``shared/beds/{series,show}-bed-vN.*``)."""
+
+    try:
+        relative = (
+            path.expanduser()
+            .resolve()
+            .relative_to((desk / "shared" / "beds").resolve())
+        )
+    except ValueError:
+        return False
+    name = relative.name
+    return len(relative.parts) == 1 and any(
+        name.startswith(f"{stem}-v") and name[len(stem) + 2 : len(stem) + 3].isdigit()
+        for stem in HARNESS_BED_STEMS
+    )
+
+
+def hand_pinned_bed(desk: Path) -> Path | None:
+    """A bed pinned on this desk that is not harness music (pinned by hand), or ``None``."""
 
     stored = load_series(desk).bed_path
     if not stored:
         return None
     path = Path(stored) if Path(stored).is_absolute() else desk / stored
-    return path if path.is_file() else None
+    return None if harness_bed(desk, path) else path
+
+
+def pinned_bed(desk: Path) -> Path | None:
+    """The harness bed pinned on this desk, when its file is still there (a hand-pinned file is not used)."""
+
+    stored = load_series(desk).bed_path
+    if not stored:
+        return None
+    path = Path(stored) if Path(stored).is_absolute() else desk / stored
+    return path if path.is_file() and harness_bed(desk, path) else None
+
+
+def record_music_note(
+    desk: Path,
+    note: str,
+    *,
+    episode: int | None = None,
+    take_id: str | None = None,
+    via: str = "music-note",
+) -> Path:
+    """Save one music change note for the harness on the desk, and in the episode's run notes.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    note
+        The change in the operator's words ("calmer", "quieter under the lines").
+    episode, take_id
+        Where it applies; ``None`` is the whole show.
+    via
+        The command that took it (``music-note`` or ``finish --music``).
+
+    Returns
+    -------
+    Path
+        The notes file (``shared/music-notes.jsonl``).
+
+    Raises
+    ------
+    ValueError
+        When the note is empty.
+    """
+
+    text = " ".join(note.split())
+    if not text:
+        raise ValueError(
+            "a music change note needs words: what should change about the music"
+        )
+    path = desk / MUSIC_NOTES_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entry: dict[str, Any] = {"note": text, "via": via}
+    if episode is not None:
+        entry["episode"] = episode
+    if take_id is not None:
+        entry["take"] = take_id
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+    if episode is not None and (desk / f"ep{episode:02d}" / "run-notes.md").is_file():
+        where = f" ({take_id})" if take_id else ""
+        append_run_note(
+            desk / f"ep{episode:02d}",
+            f"Music change note for the harness{where}: {text}",
+        )
+    return path
+
+
+def music_notes(
+    desk: Path, *, episode: int | None = None, take_id: str | None = None
+) -> list[str]:
+    """The saved music change notes that apply here (show-wide, this episode, this take), oldest first."""
+
+    path = desk / MUSIC_NOTES_FILE
+    if not path.is_file():
+        return []
+    found: list[str] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        try:
+            entry = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict) or not str(entry.get("note") or "").strip():
+            continue
+        if (
+            entry.get("episode") is not None
+            and episode is not None
+            and entry["episode"] != episode
+        ):
+            continue
+        if (
+            entry.get("take") is not None
+            and take_id is not None
+            and entry["take"] != take_id
+        ):
+            continue
+        scope = (
+            f"ep{int(entry['episode']):02d}"
+            + (f" {entry['take']}" if entry.get("take") else "")
+            if entry.get("episode") is not None
+            else "show"
+        )
+        found.append(f"{entry['note']} ({scope})")
+    return found
 
 
 def resolve_bed(
     desk: Path,
     *,
     spine: Mapping[str, Any] | None,
-    music: str | None = None,
     maker: Maker,
     downloader: Downloader = download,
 ) -> Bed:
-    """Find or make the show's bed and pin it on the desk.
+    """Find or make the show's harness bed and pin it on the desk.
 
     Parameters
     ----------
@@ -152,17 +297,15 @@ def resolve_bed(
         Series desk.
     spine
         Saved spine (genre, spine id, ``series_audio_bed_url``).
-    music
-        Operator's own description for a bed that has to be made.
     maker
-        Makes a raw bed (:func:`service_music_maker` in production).
+        Makes a raw bed on the server (:func:`service_music_maker` in production).
     downloader
         Fetches the spine's pinned bed.
 
     Returns
     -------
     Bed
-        The bed to mix.
+        The bed to mix (``source`` says where it came from, and that a hand-pinned file was ignored).
 
     Raises
     ------
@@ -170,33 +313,39 @@ def resolve_bed(
         When nothing is pinned and there is no spine to make one from.
     """
 
+    ignored = hand_pinned_bed(desk)
+    note = (
+        f" (!! ignored the hand-pinned `{ignored.name}`: not harness music)"
+        if ignored is not None
+        else ""
+    )
     found = pinned_bed(desk)
-    if found is not None and not music:
+    if found is not None:
         return Bed(found, "pinned")
     beds = desk / "shared" / "beds"
     beds.mkdir(parents=True, exist_ok=True)
     url = str((spine or {}).get("series_audio_bed_url") or "")
-    if url and not music:
+    if url:
         suffix = Path(urlparse(url).path).suffix or ".mp3"
         path = downloader(url, next_versioned_path(beds, "series-bed", suffix))
-        return Bed(pin_bed(desk, path), "the show's (spine)")
+        return Bed(pin_bed(desk, path), f"the show's (spine){note}")
     if spine is None:
         raise ValueError(
-            "no bed pinned and no saved spine to make one: pin a file with `set-bed --path`"
+            "no harness bed on the desk and no saved spine to have the server make one: "
+            "`fictora-produce spine --desk D --refresh`, then finish again"
         )
     target = next_versioned_path(beds, "show-bed", ".mp3")
     with tempfile.TemporaryDirectory() as scratch:
-        raw = maker(spine, music, Path(scratch) / "raw-bed")
+        raw = maker(spine, None, Path(scratch) / "raw-bed")
         level_bed(raw, target)
     target.with_suffix(".json").write_text(
         json.dumps(
-            {"spine_id": spine.get("spine_id"), "music": music, "made_by": "drama-api"},
-            indent=2,
+            {"spine_id": spine.get("spine_id"), "made_by": "drama-api"}, indent=2
         )
         + "\n",
         encoding="utf-8",
     )
-    return Bed(pin_bed(desk, target), "made", BED_USD)
+    return Bed(pin_bed(desk, target), f"made{note}", BED_USD)
 
 
 @dataclass(frozen=True)

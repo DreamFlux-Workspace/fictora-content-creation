@@ -289,7 +289,7 @@ Repurposing an episode (a new idea on an episode already authored): update its t
 - Music and effects are compressed under the voice, not simply turned down.
 - Check that a generated sound effect actually contains a sound.
 - A generated music bed is about 30 seconds. Loop it for anything longer.
-- Describe a music bed by its instruments and mood ("slow piano and soft strings, wistful"). Never name a composer or a studio: the bed is refused `content_policy_violation`.
+- The music is the harness's: never pin a file or write a music brief. Say what should change ("calmer", "quieter under the lines") with `fictora-produce music-note`; the note goes to the harness with the next re-run. Never name a composer or a studio in a note.
 
 ### Hosted post is off
 

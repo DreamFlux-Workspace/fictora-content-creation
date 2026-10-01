@@ -19,9 +19,12 @@ inferred step printed with a ⚠):
   (:func:`creation.captions.build_ass`), so a caption never rides on a
   reordered picture it does not belong to. English shows keep their word
   flicker; other spoken languages their whole English lines.
-- **Bed**: the record's bed (else the desk's pinned bed), laid ONCE under the
-  whole reel like ``join`` (looped seamlessly, ducked under the voice, measured
-  gain to about -18 LUFS, one limiter), so the music runs on across every cut.
+- **Bed**: the harness's bed (the record's, else the harness bed pinned on the
+  desk; a hand-pinned file is never used, :func:`creation.post.bed.harness_bed`),
+  laid ONCE under the whole reel like ``join`` (looped seamlessly, ducked under
+  the voice, measured gain to about -18 LUFS, one limiter), so the music runs on
+  across every cut. A take whose record says the harness's music is in its own
+  soundtrack (``music_in_take``) gets no bed: its music cuts with the picture.
 
 Render: each run of picture is cut on the frame grid; the sound before the bed
 is cut with short equal-power crossfades centred on each cut (no clicks); the
@@ -691,7 +694,12 @@ def render_reel(
         When a segment names a take with no source, or the sources differ in size.
     """
 
-    from creation.post.bed import bed_level, chosen_record_level, pinned_bed
+    from creation.post.bed import (
+        bed_level,
+        chosen_record_level,
+        harness_bed,
+        pinned_bed,
+    )
     from creation.post.join import decode_stereo, loop_bed, write_wav
     from creation.post.mix import mix_take
     from creation.post.watermark import watermark
@@ -715,11 +723,16 @@ def render_reel(
     record = next((s.record for s in sources if s.record is not None), None)
     # A source that already carries its take's bed (an older desk's mix) gets no second bed.
     baked = [s.take_id for s in sources if s.inferred and s.inferred.bed_in_source]
+    # Nor does a take whose own soundtrack carries the harness's music.
+    in_take = [
+        s.take_id for s in sources if s.record is not None and s.record.music_in_take
+    ]
     bed: Path | None = None
     bed_db = -16.5  # mix_take's default; unused when no bed goes under
-    if not baked:
+    if not baked and not in_take:
+        recorded = record.resolve(desk, "bed") if record and record.bed else None
         bed = (
-            record.resolve(desk, "bed") if record and record.bed else None
+            recorded if recorded is not None and harness_bed(desk, recorded) else None
         ) or pinned_bed(desk)
         level = bed_level(
             desk,
@@ -758,7 +771,26 @@ def render_reel(
         )  # fmt: skip
         mixed = scratch / "reel-mix.mp4"
         total = reel_seconds(plan.segments, fps)
-        if baked:
+        if in_take and not baked:
+            mix = mix_take(
+                bedless,
+                mixed,
+                bed=None,
+                bed_db=bed_db,
+                duck_db=None,
+                music_in_take=True,
+            )
+            report.append(
+                f"no bed laid: {', '.join(in_take)} carry the harness's music in their own soundtrack, so the "
+                f"music cuts with the picture (40 ms crossfades); {mix.one_line()}"
+            )
+            silent = [t for t in used if t not in in_take]
+            if silent:
+                report.append(
+                    f"!! {', '.join(silent)} were finished with the show's bed, which is not in their source: "
+                    "their stretch of the reel has no music"
+                )
+        elif baked:
             mix = mix_take(bedless, mixed, bed=None, bed_db=bed_db, duck_db=duck_db)
             report.append(
                 f"⚠ no bed laid: {', '.join(baked)} cut from a file with its own bed in, so the music cuts with "
