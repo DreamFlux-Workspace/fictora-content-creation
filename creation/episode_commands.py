@@ -2505,6 +2505,7 @@ def run_line(
     look: str | None = None,
     new_character: str | None = None,
     staging: str | None = None,
+    language: str | None = None,
     out: Any = None,
 ) -> Path | None:
     """Change, add or remove a line on the server and on the desk in one step; with no change, list the lines.
@@ -2542,6 +2543,9 @@ def run_line(
         (:func:`creation.cast_commands.run_cast_look`). With ``new_character``: required.
     new_character, staging
         A new character who is seen (:func:`creation.cast_commands.run_new_character`).
+    language
+        With ``spoken`` on a show the server holds as English: the language it is really performed in
+        (:func:`creation.cast_commands.english_show_pin`).
     out
         Text stream.
 
@@ -2575,6 +2579,18 @@ def run_line(
             "--look goes with --new-voice or --new-character. To give someone in the cast a look: "
             "`fictora-produce cast --desk D --name NAME --look @look.txt`"
         )
+    if spoken is not None and (line is not None or add):
+        cast_commands.english_show_pin(
+            desk,
+            episode=episode,
+            line=line,
+            beat=beat,
+            spoken=spoken,
+            subtitle=subtitle,
+            language=language,
+        )
+    elif language is not None:
+        raise CommandStopped("--language goes with --spoken")
     adding = add or remove is not None or new_voice is not None
     narrator = (
         new_voice_narrator_answer(
@@ -6419,6 +6435,12 @@ def add_episode_parsers(
         "that stopped.",
     )
     line.add_argument("--staging", default=None, help=STAGING_HELP)
+    line.add_argument(
+        "--language",
+        default=None,
+        help="With --spoken on a show the server holds as English: ja or ko, the language it is really "
+        "performed in. The line is recorded on the desk, not sent (the server cannot change a show's language).",
+    )
     add_narrator_answer_args(line)
 
     cast = sub.add_parser(
@@ -6747,6 +6769,7 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 look=args.look,
                 new_character=args.new_character,
                 staging=args.staging,
+                language=args.language,
             )
             return 0
         if args.command == "cast":

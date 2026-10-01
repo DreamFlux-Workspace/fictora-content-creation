@@ -1,4 +1,4 @@
-"""Give a cast member a look, and put a new character on screen in one step.
+"""Give a cast member a look, put a new character on screen in one step, and pin lines on a mis-labelled show.
 
 Production learnings, 22 Sep to 1 Oct 2026:
 
@@ -25,6 +25,13 @@ Production learnings, 22 Sep to 1 Oct 2026:
   check is checked before the first edit. Each step is skipped when the story
   already has it, so a run stopped half way is finished by running the same
   command again; the stop names what was done and how to undo it.
+- **A show voiced in Japanese but drafted en-US** (L-20261001-21, -28). The
+  server fixes ``spoken_language`` when the story is created (a re-plan carries
+  it too) and refuses ``spoken_text`` on an en-US show. There is no route to
+  change it, so ``line --spoken`` with ``--language ja|ko`` (or performed words
+  that are not English) records the declared language and the pinned line on
+  the desk (``shared/spoken-language.json``), sends nothing, and says so. The
+  server ask is in ``docs/content-ops/backlog.md``.
 """
 
 from __future__ import annotations
@@ -32,13 +39,16 @@ from __future__ import annotations
 import copy
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
 from creation import episode_commands as ec
+from creation.captions import is_english
 from creation.cli_text import TextArgError, text_or_file
 from creation.desk_media_urls import drawn_cast_rows
 from creation.orchestrate import save_spine_snapshot
+from creation.spine_view import episode_id_for
 
 #: A look that names no expression, gaze or posture gets these (printed with the change).
 DEFAULT_EXPRESSION = "neutral, composed"
@@ -122,6 +132,17 @@ STAGING_HELP = (
     "(frame_position, pose, gaze, interaction)."
 )
 STAGING_FIELDS = ("frame_position", "pose", "gaze", "interaction")
+
+#: ``--language`` values and the spine codes they mean.
+LANGUAGES = {
+    "ja": "ja-JP",
+    "ja-jp": "ja-JP",
+    "ko": "ko-KR",
+    "ko-kr": "ko-KR",
+    "en": "en-US",
+    "en-us": "en-US",
+}
+LANGUAGE_RECORD = Path("shared") / "spoken-language.json"
 
 
 # --- The look ----------------------------------------------------------------------------------
@@ -878,13 +899,155 @@ def run_new_character(
     return desk / "api" / "spine.json"
 
 
+# --- The spoken language -----------------------------------------------------------------------
+
+
+def language_code(value: str) -> str:
+    """``ja`` / ``ja-JP`` -> ``ja-JP``; refuses anything but Japanese, Korean or English."""
+
+    code = LANGUAGES.get(value.strip().lower())
+    if code is None:
+        raise ec.CommandStopped(f"--language takes ja, ko or en, not {value!r}")
+    return code
+
+
+def _record_path(desk: Path) -> Path:
+    return desk.expanduser().resolve() / LANGUAGE_RECORD
+
+
+def declared_language(desk: Path) -> str | None:
+    """The spoken language the operator declared on this desk (``shared/spoken-language.json``), if any."""
+
+    path = _record_path(desk)
+    if not path.is_file():
+        return None
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        print(
+            f"(cannot read {path}: {exc}; treated as no declared language)",
+            file=sys.stderr,
+        )
+        return None
+    value = record.get("declared") if isinstance(record, dict) else None
+    return str(value) if value else None
+
+
+def english_show_pin(
+    desk: Path,
+    *,
+    episode: int,
+    line: str | None,
+    beat: str | None,
+    spoken: str,
+    subtitle: str | None,
+    language: str | None,
+) -> None:
+    """Handle ``line --spoken`` before anything is sent, when the server holds the show as English.
+
+    The server refuses ``spoken_text`` on an en-US show and has no route that
+    changes a spine's ``spoken_language`` (it is fixed at creation; a re-plan
+    carries it). A show performed in Japanese or Korean but drafted en-US
+    (Kuchisake-onna) is told so here: with ``--language ja|ko``, a language
+    already declared on the desk, or performed words that are not English, the
+    pinned line and the declared language are recorded on the desk and nothing
+    is sent; otherwise the stop names ``--language``. A show the server holds
+    in another language returns at once and the edit goes ahead.
+
+    Raises
+    ------
+    ec.CommandStopped
+        Always on an en-US show (recorded, or refused with the flag to pass).
+    """
+
+    _, state, run = ec._desk_session(desk)
+    try:
+        spine = run.spine(state.spine_id or "")
+    finally:
+        run.client.close()
+    server = ec._spoken_language(spine)
+    if server != "en-US":
+        return
+    wanted = language_code(language) if language else declared_language(desk)
+    if wanted == "en-US" or (wanted is None and is_english(spoken)):
+        raise ec.CommandStopped(
+            "--spoken pins the performed line of a Japanese or Korean show, and the server holds this show as "
+            "en-US: use --text. If the show is really performed in another language, pass --language ja (or ko): "
+            "the kit records it on the desk; the server cannot change a show's language yet."
+        )
+    code = wanted or ("ko-KR" if any("가" <= ch <= "힣" for ch in spoken) else "ja-JP")
+    line_id = (
+        ec.resolve_line_id(spine, line, episode=episode) if line is not None else None
+    )
+    path = _record_path(desk)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record: dict[str, Any] = {}
+    if path.is_file():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            record = loaded if isinstance(loaded, dict) else {}
+        except ValueError as exc:
+            print(f"(cannot read {path}: {exc}; writing it again)", file=sys.stderr)
+    pin: dict[str, Any] = {"episode": episode}
+    if line_id is not None:
+        pin["line_id"] = line_id
+    else:
+        beat_row = ec._find(
+            spine,
+            spine.get("beats") or [],
+            "beat_id",
+            str(beat),
+            episode=episode,
+            kind="beat",
+        )
+        pin["beat_id"] = beat_row["beat_id"]
+    pin.update(
+        {
+            "spoken": spoken,
+            "subtitle": subtitle or "",
+            "at_utc": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    record.update(
+        {
+            "declared": code,
+            "server": server,
+            "spine_id": state.spine_id,
+            "episode_id": episode_id_for(spine, episode),
+            "pinned_lines": [*(record.get("pinned_lines") or []), pin],
+        }
+    )
+    path.write_text(
+        json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    ec._note(
+        desk,
+        episode,
+        f"line: {code} performed line recorded on the desk, not sent (server holds the show as {server}): "
+        f"{line_id or pin.get('beat_id')} {spoken!r}"
+        + (f" / {subtitle!r}" if subtitle else ""),
+    )
+    raise ec.CommandStopped(
+        f"recorded on the desk, NOT sent: {line_id or pin.get('beat_id')} performed {spoken!r}"
+        + (f", subtitle {subtitle!r}" if subtitle else "")
+        + f" ({code}; {path}). The server holds this show as {server}: it refuses a pinned performed line on an "
+        "English show and has no route that changes a show's language (it is fixed when the story is created). "
+        "The take will speak the English --text until the server can change it; the ask is in "
+        "docs/content-ops/backlog.md. To make the show in Japanese now, start a new story with "
+        "`fictora-produce start … --language ja`."
+    )
+
+
 __all__ = [
     "DEFAULT_EXPRESSION",
     "DEFAULT_GAZE",
     "DEFAULT_POSTURE",
     "LOOK_HELP",
     "STAGING_HELP",
+    "declared_language",
+    "english_show_pin",
     "find_card",
+    "language_code",
     "look_patch",
     "parse_look",
     "parse_staging",
