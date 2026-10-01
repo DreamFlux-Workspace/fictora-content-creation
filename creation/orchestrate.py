@@ -380,10 +380,17 @@ def price_estimate(
     *,
     cast_count: int,
     takes: int,
+    on: date | None = None,
 ) -> tuple[float, str, list[str]]:
-    """Price an estimate answer, naming the lane and $/s, and warn loudly when the server's dollars are missing.
+    """Price an estimate answer, naming the lane and $/s, and warn loudly when the server's dollars are missing or stale.
 
-    The server's dated ``cost_estimate.total_usd`` wins. Without it (the server
+    The server's dated ``cost_estimate.total_usd`` is used when it was priced
+    at today's rate. The server prices on its own UTC day, so just after a rate
+    change (the Turbo promo ended 2026-09-30) it can answer with yesterday's
+    rate while the kit already prints today's (L-20261001-7). The kit re-prices
+    the server's billed seconds at today's rate; when the two totals disagree a
+    ``!!`` line shows both, and the higher one is the estimate, so the human
+    never says yes to the lower number. Without dollars (the server
     refused or skipped the estimate, or answered with no dollars) the kit's own
     price table is used, and a ``!!`` line says so: the number is the kit's,
     not the server's. A lane with no verified rate adds a second ``!!`` line
@@ -401,14 +408,17 @@ def price_estimate(
         Cast cards on the story (R2V reference-image ceiling).
     takes
         Takes being priced.
+    on
+        The filming day (default: today).
 
     Returns
     -------
     tuple[float, str, list[str]]
-        Dollars, a source phrase (always lane + $/s), and warning lines (empty on a server answer).
+        Dollars, a source phrase (always lane + $/s), and warning lines (empty
+        when the server's dollars match today's rate).
     """
 
-    today = date.today()
+    today = on or date.today()
     seconds = cfg.clip_duration_seconds
     rate = lane_rate_words(state, on=today)
     table = table_estimate_usd(state, cfg, cast_count=cast_count, takes=takes)
@@ -420,7 +430,16 @@ def price_estimate(
     if cost is not None and _money(cost.get("total_usd")) is not None:
         usd = _estimate_usd(estimate, fallback_usd=table)
         source = f"server estimate priced {cost.get('priced_on')} ({cost.get('takes')} take(s)); {rate}, {seconds} s a take"
-        return usd, source, []
+        repriced = _reprice_at_rate(cost, state, on=today)
+        if repriced is None or abs(repriced - usd) < 0.005:
+            return usd, source, []
+        warning = (
+            f"!! SERVER ESTIMATE DISAGREES WITH TODAY'S RATE: the server says ${usd:.2f}, priced "
+            f"{cost.get('priced_on')} at ${_money(cost.get('usd_per_second'))}/s; "
+            f"{_money(cost.get('billed_seconds')):g} s at today's {rate} is ${repriced:.2f}. "
+            f"Showing the higher, ${max(usd, repriced):.2f}: check it before the human says yes."
+        )
+        return max(usd, repriced), source, [warning]
     if estimate.get("estimate_skipped"):
         why = (
             f"the server refused it: {str(estimate.get('detail') or 'no detail')[:160]}"
@@ -446,6 +465,30 @@ def price_estimate(
         )
     source = f"price table ({lane_label(state.video_lane, server=server)}, {seconds} s a take); {rate}"
     return table, source, warnings
+
+
+def _reprice_at_rate(
+    cost: dict[str, Any], state: ProductionState, *, on: date
+) -> float | None:
+    """Return the server's total with its billed seconds re-priced at the kit's rate for ``on``.
+
+    Stills and reference images keep the server's figures; only the per-second
+    rate is swapped. ``None`` when the answer names no rate or seconds, or the
+    lane has no verified rate (nothing to check against).
+    """
+
+    total = _money(cost.get("total_usd"))
+    server_rate = _money(cost.get("usd_per_second"))
+    seconds = _money(cost.get("billed_seconds"))
+    lane = server_lane({"cost_estimate": cost}) or lane_endpoint(
+        state.video_lane, server=state.server_lane()
+    )
+    if total is None or server_rate is None or seconds is None or lane is None:
+        return None
+    rate = video_usd_per_second(lane[0], lane[1], on=on)
+    if rate is None:
+        return None
+    return round(total + (float(rate) - server_rate) * seconds, 2)
 
 
 def _estimate_usd(payload: dict[str, Any], *, fallback_usd: float) -> float:
