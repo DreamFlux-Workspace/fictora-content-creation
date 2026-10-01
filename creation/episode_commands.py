@@ -53,6 +53,12 @@ from urllib.parse import quote
 import httpx
 
 from creation import inner_voice
+from creation.authoring_warnings import (
+    authoring_warnings,
+    for_episode,
+    introduced,
+    say_warnings,
+)
 from creation import orchestrate as _orchestrate
 from creation.cli_text import TextArgError, text_or_file
 from creation.new_cast import new_cast_notice, newcomers
@@ -854,9 +860,19 @@ def run_author(
     arrived = new_cast_notice(newcomers(before, spine))
     for line in arrived:
         print(line, file=out)
+    # Nudges only (fictora-drama #538): the job's own list, else the spine's for this episode.
+    notes = say_warnings(
+        for_episode(
+            authoring_warnings(terminal) or authoring_warnings(spine), episode_id, spine
+        ),
+        spine=spine,
+        out=out,
+    )
     steer = f" Direction: {direction.get('line')}" if direction else ""
     if arrived:
         steer += " " + " ".join(arrived)
+    if notes:
+        steer += "\n" + "\n".join(notes)
     _note(
         desk,
         episode,
@@ -1973,6 +1989,38 @@ def explain_refusal(message: str, spine: Mapping[str, Any], *, episode: int) -> 
     return f"the server refused the line edit ({code}): {message}\n  fix: {fix}"
 
 
+def say_patch_warnings(
+    before: Mapping[str, Any], answer: Any, *, out: Any
+) -> list[str]:
+    """Print the authoring warnings a ``PATCH /v1/spines/{id}`` answer has that the spine before it did not.
+
+    The spine response carries every current warning (fictora-drama #538), so the
+    ones the story already had are left out: only what this edit introduced is said.
+    Nudges only; nothing stops.
+
+    Parameters
+    ----------
+    before
+        The spine the patch was made on.
+    answer
+        The PATCH answer (a spine response; anything else reads as no warnings).
+    out
+        Text stream.
+
+    Returns
+    -------
+    list[str]
+        The printed lines, for the run notes.
+    """
+
+    after = answer if isinstance(answer, Mapping) else {}
+    return say_warnings(
+        introduced(authoring_warnings(before), authoring_warnings(after)),
+        spine=after if after.get("beats") else before,
+        out=out,
+    )
+
+
 def _send_story_edit(
     desk: Path,
     *,
@@ -2002,13 +2050,15 @@ def _send_story_edit(
             raise CommandStopped(
                 "--preview is for an approved script; before the script gate the edit is a plain patch"
             )
+        notes: list[str] = []
         try:
             if not cascade:
                 try:
-                    run.patch(
+                    answer = run.patch(
                         f"/v1/spines/{state.spine_id}",
                         {"spine_version": spine["spine_version"], "patch": patch},
                     )
+                    notes = say_patch_warnings(spine, answer, out=out)
                 except SystemExit as exc:
                     if "cascade_required" not in str(exc.code):
                         raise CommandStopped(str(exc.code)) from None
@@ -2018,7 +2068,7 @@ def _send_story_edit(
                         file=out,
                     )
             if cascade:
-                _run_cascade(
+                notes = _run_cascade(
                     desk,
                     run,
                     spine,
@@ -2038,6 +2088,8 @@ def _send_story_edit(
         fresh = run.spine(state.spine_id or "")
     finally:
         run.client.close()
+    if notes and not preview_only:
+        _note(desk, episode, "\n".join(notes))
     return (
         desk,
         save_spine_snapshot(desk, episode, fresh),
@@ -2666,7 +2718,15 @@ def _run_cascade(
     select_regen: bool,
     preview_only: bool,
     out: Any,
-) -> None:
+) -> list[str]:
+    """Preview one edit's cascade, print it (and the warnings it introduces), then execute it unless preview only.
+
+    Returns
+    -------
+    list[str]
+        The authoring-warning lines printed (:func:`creation.authoring_warnings.say_warnings`), for the run notes.
+    """
+
     spine_id = str(spine.get("spine_id") or load_production(desk).spine_id or "")
     edit = {
         "scope": "section",
@@ -2704,11 +2764,16 @@ def _run_cascade(
             f"tier {item.get('estimated_tier')}{paid}  {_short(item.get('reason') or '')}",
             file=out,
         )
+    # The structured list wins (fictora-drama #538); its messages are also in `warnings`, so skip those there.
+    nudges = authoring_warnings(preview)
+    shown = {" ".join(str(w.get("message") or "").split()) for w in nudges}
     for warning in preview.get("warnings") or []:
-        print(f"  warning: {_short(warning)}", file=out)
+        if " ".join(str(warning).split()) not in shown:
+            print(f"  warning: {_short(warning)}", file=out)
+    notes = say_warnings(nudges, spine=spine, out=out)
     if preview_only:
         print("(preview only: nothing was changed)", file=out)
-        return
+        return notes
     state = load_production(desk)
     key = f"{state.idempotency_prefix}-cascade-{str(preview['proposal_id'])[-24:]}"
     try:
@@ -2755,6 +2820,10 @@ def _run_cascade(
                 file=out,
             )
     save_production(desk, marked)
+    if not nudges:
+        # Execute carries the same introduced warnings; said here only when the preview had none.
+        notes = say_warnings(authoring_warnings(answer), spine=spine, out=out)
+    return notes
 
 
 # --- Look -------------------------------------------------------------------------------------------
@@ -3980,10 +4049,11 @@ def note_to_shot_edits(
         try:
             if not cascade:
                 try:
-                    run.patch(
+                    answer = run.patch(
                         f"/v1/spines/{spine_id}",
                         {"spine_version": fresh["spine_version"], "patch": patch},
                     )
+                    say_patch_warnings(fresh, answer, out=out)
                 except SystemExit as exc:
                     if "cascade_required" not in str(exc.code):
                         raise CommandStopped(str(exc.code)) from None

@@ -26,6 +26,8 @@ Closed 2026-10-01 in the kit (L-20260930-6, L-20261001-8): English captions are 
 
 Closed 2026-09-28 by founder decision: a finished cut shorter than its 15 / 30 / 60 s band (e.g. 14.2 s after trimming a bad half-second) is allowed and is not a deviation. Takes still film at the normal clip length (`clip_duration_seconds` 4–15); a finished episode longer than its band is still a deviation.
 
+Closed 2026-10-01 by founder decision (nudge, never block the creator; fictora-drama #538): the first-line and word budgets are warnings, not errors. The server sends `authoring_warnings` (`line_long`, `take_words_over_target`, `first_line_long`); the kit prints them in plain words after the draft, `author`, `line` / `edit` and the cascade preview, groups them per episode and take, and adds them to `run-notes.md`. Never a stop or a non-zero exit, never a kit-side shortening. Aligned once #538 deploys; before that the field is absent and nothing is printed. Open on the server (#538): the locked-line fit stop still uses a 28-word take ceiling (`LOCKED_LINE_TAKE_WORDS`), not the physical speak window of a 15 s take.
+
 | Stage | Gap | Why it costs money or time | Source |
 | --- | --- | --- | --- |
 | Take | A Turbo take can draw one person twice in a shot (the same character from two board panels, or look-alike extras). The kit prints the head count the take facts expect per shot (`shots[].people`, newer servers) and asks for a count by eye; it has no face detector, and the board warning reads only plain posture words in the frame poses | A duplicate found late costs a re-film ($1.20); only a human count catches it today | SCP-173 Blink (2026-09-30) |
