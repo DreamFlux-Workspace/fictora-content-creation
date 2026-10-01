@@ -31,6 +31,7 @@ POST_COMMANDS = (
             "set-bed",
             "finish",
             "join",
+            "reel",
         }
     )
     | EDIT_COMMANDS
@@ -379,6 +380,42 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--json", action="store_true", help="Print the report as JSON on stdout."
     )
 
+    reel = sub.add_parser(
+        "reel",
+        help="A social reel (IG/TikTok) cut from the episode's rendered footage: local, $0, no new video. "
+        "Opens on the strongest frame as a short flash-forward, ends on the new fact; captions re-timed "
+        "from the accepted cut; one bed; the Sokii mark. Writes only under <desk>/reels/.",
+    )
+    reel.add_argument("--desk", type=Path, required=True)
+    reel.add_argument("--episode", type=int, required=True)
+    reel.add_argument(
+        "--seconds",
+        type=float,
+        default=15.0,
+        help="Target length, 6-30 s (default 15).",
+    )
+    reel.add_argument(
+        "--plan-only", action="store_true",
+        help="Write and print the plan (reels/reel-plan-epNN-vN.json); render nothing.",
+    )  # fmt: skip
+    reel.add_argument(
+        "--plan", type=Path, default=None, help="Render this (hand-edited) plan JSON."
+    )
+    reel.add_argument(
+        "--take-file", action="append", default=None, metavar="[tK=]FILE",
+        help="The accepted finished file of a take (picks its finish record). Default: the newest record.",
+    )  # fmt: skip
+    reel.add_argument(
+        "--source", action="append", default=None, metavar="[tK=]FILE",
+        help="The take's picture before captions (default: the finish record's pre_bed).",
+    )  # fmt: skip
+    reel.add_argument(
+        "--captions", action="append", default=None, metavar="[tK=]FILE.ass",
+        help="The accepted cut's caption file (default: the record master's .ass).",
+    )  # fmt: skip
+    add_caption_style_arg(reel)
+    reel.add_argument("--watermark-y", type=int, default=None)
+
     add_edit_parsers(sub)
     add_review_parser(sub)
 
@@ -505,6 +542,22 @@ def dispatch_post(args: argparse.Namespace) -> int:
         else:
             print(result.final)
         return 0 if result.complete else FINISH_INCOMPLETE
+    if args.command == "reel":
+        from creation.post.reel import run_reel
+
+        run_reel(
+            args.desk,
+            episode=args.episode,
+            seconds=args.seconds,
+            plan_only=args.plan_only,
+            plan_file=args.plan,
+            take_files=tuple(args.take_file or ()),
+            sources=tuple(args.source or ()),
+            captions=tuple(args.captions or ()),
+            caption_style=args.caption_style,
+            watermark_y=args.watermark_y,
+        )
+        return 0
     if args.command == "join":
         joined = run_join(
             args.desk,

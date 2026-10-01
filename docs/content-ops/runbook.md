@@ -319,6 +319,7 @@ Faults accepted without a re-film (calibration): a door frame in the opening sec
 - `finish` the raw take first: its effects, hand cues and hand lines are placed at the times as filmed. Then `trim` or `tempo` the finished file, never the raw take. After a trim, check the first frame after the cut at full size (a 0.04 s miss once flashed the removed shot) and say the new length; shorter than the band is fine.
 - Keep the un-marked master. `finish` writes every step to its own file; the captioned file before the mark (`…-cap-vN.mp4`) is the master, the marked file (`…-sokii-vN.mp4`) is what goes out. Never delete the master to save space.
 - The join (`fictora-produce join --desk D --episode N`, or `--episodes 1 2 3` for a series cut): one bed across every take, 24 fps, and the level step at each seam under 5 dB (a 5 dB step is audible; over it the join says `NOT DONE` and exits 5). Place cues on each take before the join, never on the joined file. Never join the marked `-sokii` files by hand: that stitches two beds and two marks.
+- The reel cut (`fictora-produce reel --desk D --episode N`, after the episode is accepted): a separate IG / TikTok edit cut from the footage already rendered. Local, $0, no new video and no server route. It opens on the strongest frame as a short flash-forward and ends on the new fact; it trims the calm setup and keeps one pivot; captions are the accepted ones re-timed through the cut; no line to the viewer and no end-card question (the call to action goes in the suggested post text). It writes only under `reels/` and never overwrites. Detail: reference.md, Reel cut.
 - `join` reads the record `finish` leaves beside each take. A take finished before the kit had `join` has no record: run `finish` on it again first. A take cut with `trim` or `tempo` after `finish` carries a new record (the same cut on the take before the bed and the master), so it joins at its new length; an edit that prints `No finish record` is refused by `join`: finish again, then edit. A re-captioned copy of a finished take joins with `--take-file COPY --from-record <its -cap master>`: same size, frames and sound are checked, and the stand-in is written in the run notes (L-20261001-9).
 
 ## Scratch tools
@@ -369,6 +370,7 @@ fixtures/      beats, lines, camera
 voices/        auditions, pick, generated lines
 sfx/  beds/
 takes/         raw, mix, captioned final, joined episode
+reels/         social reel cuts, their plans and post text (`reel`)
 scripts/       tools used this run
 artifact/      series write-up
 api/           JSON from the drama API (not the review surface)
