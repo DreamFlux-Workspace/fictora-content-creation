@@ -24,6 +24,11 @@ command exits 0 whatever it finds.
    same measurement ``deboard`` uses, so a board frame anywhere in the take is
    found, not only at the head. Head frames on a raw take are what ``finish``
    removes; on a deboarded or finished file any board frame is a fault.
+   **Text** - drawn subtitles: :func:`creation.post.take_text.check_take_text`
+   reads sampled frames of the raw take (a finished file carries house
+   captions, so its raw take is read) with ``tesseract`` when installed, and
+   saves a crop sheet (``takes/text-check-epNN-tK-vN.png``) of what it found.
+   Without tesseract the section says the check was skipped.
 5. **Lines** - :func:`creation.episode_commands.run_check_lines` (were the
    approved lines in the take's instructions, from the take facts), and when a
    Whisper transcript is on the desk (``--words-json``, a saved
@@ -44,6 +49,7 @@ command exits 0 whatever it finds.
 With no ``--take-file`` (alias ``--file``) it reads the newest finished file for
 the take, else the newest raw take, and the block's first line says which.
 
+It writes nothing but an optional transcript and the text check's crop sheet.
 Everything is local and free except ``--transcribe``, which asks the server for
 a Whisper transcript of the take's stored URL (a few cents; nothing is uploaded).
 The compiled prompt is never read. The internal kit's per-row forbidden-elements
@@ -797,6 +803,54 @@ def board_section(
     ), scan.head
 
 
+def text_section(
+    desk: Path,
+    *,
+    episode: int,
+    take_id: str,
+    take: Path,
+    kind: str,
+    ocr: Any = None,
+) -> Section:
+    """Drawn subtitles in the raw take: ⚠ with times and a crop sheet, ``–`` (said so) without OCR."""
+
+    from creation.post.desk import latest_raw_take
+    from creation.post.take_text import (
+        LINE_SAMPLE_FPS,
+        SAMPLE_FPS,
+        desk_text_check,
+    )
+
+    threshold = f"OCR on {SAMPLE_FPS:g} frames/s ({LINE_SAMPLE_FPS:g} in spoken-line windows), raw take"
+    read = take
+    if kind == "finished":
+        try:
+            read = latest_raw_take(desk, episode, take_id)
+        except FileNotFoundError:
+            return Section(
+                "Text",
+                NONE,
+                "not measured: no raw take on the desk (a finished file carries house captions)",
+                threshold,
+            )
+    try:
+        check = desk_text_check(desk, episode, take_id, read, ocr=ocr)
+    except MediaToolError as exc:
+        return Section("Text", NONE, f"not measured: {exc}", threshold)
+    details = [line.strip() for line in check.warning_lines(
+        desk=desk, episode=episode, take_id=take_id, final=take if kind == "finished" else None
+    )[1:]]  # fmt: skip
+    details += [f"other text (sign or set dressing?): '{f.text}' at {f.times[0]:.2f}s"
+                for f in check.other[:4]]  # fmt: skip
+    if check.note and check.status != "skipped":
+        details.append(check.note)
+    status = WARN if check.subtitles else NONE if check.status == "skipped" else OK
+    summary = check.summary() + (f" in `{read.name}`" if read != take else "")
+    return Section(
+        "Text", status, summary, threshold, details, {"text_check": check.as_json()}
+    )
+
+
 # --- 5. Script vs audio ----------------------------------------------------------------------------------
 
 
@@ -1197,6 +1251,7 @@ def review_take(
     words_json: Path | None = None,
     transcribe: bool = False,
     transcriber: Transcribe | None = None,
+    text_ocr: Any = None,
 ) -> TakeReview:
     """Measure one take and return the review. Reads only; writes nothing but an optional transcript.
 
@@ -1217,6 +1272,8 @@ def review_take(
         Ask the server for a transcript when none is saved (a few cents).
     transcriber
         Injected for tests.
+    text_ocr
+        The text check's OCR, injected for tests (default the ``tesseract`` command).
 
     Returns
     -------
@@ -1269,6 +1326,9 @@ def review_take(
         retimed=bool(steps & set(RETIMED_STEPS)),
     )
     frames = frames_section(take, steps=steps)
+    text = text_section(
+        desk, episode=episode, take_id=take_id, take=take, kind=kind, ocr=text_ocr
+    )
     # Only the record that names this file: the raw take has no hand lines on it.
     record = record_for_file(desk, take)
     lines = lines_section(
@@ -1281,7 +1341,7 @@ def review_take(
     )
     found = saved_spine(desk, episode)
     people = people_section(facts, cast_names_from(found[0] if found else None))
-    sections = [loud, cuts, frames, board_sec, lines, people]
+    sections = [loud, cuts, frames, board_sec, text, lines, people]
     if kind == "finished":
         sections.append(safe_zones_section(take))
     return TakeReview(

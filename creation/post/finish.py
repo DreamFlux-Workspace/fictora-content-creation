@@ -152,6 +152,7 @@ from creation.post.sfx import (
     saved_take_facts,
     service_renderer,
 )
+from creation.post.take_text import OcrRunner, TextCheck, desk_text_check
 from creation.post.thumbnail import THUMBNAIL_USD, attach_episode_thumbnail_to_finish
 from creation.post.watermark import watermark
 
@@ -199,6 +200,8 @@ class FinishResult:
     steps: list[StepReport] = field(default_factory=list)
     loudness: str = ""
     hand_steps: tuple[str, ...] = ()
+    #: Loud lines from the drawn-text check on the raw take (empty when it found none).
+    text_warnings: list[str] = field(default_factory=list)
 
     def _ran(self, name: str) -> bool:
         return any(step.step == name and step.status == "ran" for step in self.steps)
@@ -279,6 +282,7 @@ class FinishResult:
         lines += [
             f"- {step.step}: {step.status} — {step.detail}" for step in self.steps
         ]
+        lines += self.text_warnings
         lines.append(self.sound_line())
         return lines
 
@@ -293,6 +297,7 @@ class FinishResult:
             "missing": list(self.sound_missing),
             "cues_not_laid": list(self.cues_not_laid),
             "inner_voice_not_laid": list(self.inner_voice_not_laid),
+            "text_warnings": list(self.text_warnings),
             "steps": [
                 {"step": s.step, "status": s.status, "detail": s.detail,
                  "output": str(s.output) if s.output else None}
@@ -525,6 +530,7 @@ def run_finish(
     thumbnail: bool = True,
     draw_thumbnail: bool = False,
     voice_audio: AudioService | None = None,
+    text_ocr: OcrRunner | None = None,
     stream: TextIO | None = None,
 ) -> FinishResult:
     """Run the whole local post chain on one accepted take.
@@ -568,7 +574,8 @@ def run_finish(
     sfx_render, bed_maker, facts_fetcher, transcriber, cut_meter, voice_audio
         Injected for tests (``transcriber`` makes a transcript of the take on the server;
         ``cut_meter`` measures the take's hard cuts, :func:`creation.post.edit.measure_cuts`;
-        ``voice_audio`` makes the inner-voice dry lines, the Drama API by default).
+        ``voice_audio`` makes the inner-voice dry lines, the Drama API by default;
+        ``text_ocr`` reads frames for the drawn-text check, the ``tesseract`` command by default).
     thumbnail
         Put the episode cover on the deliverable (``--no-thumbnail`` turns it
         off). A cover already on the desk for this clip is re-embedded, free.
@@ -642,6 +649,19 @@ def run_finish(
         run_dir,
         f"Finish chain on `{source.name}` (board: `{board.name if board else 'none'}`)",
     )
+    print("[text] Looking for words the video drew into the take", file=out, flush=True)
+    try:
+        text_check: TextCheck | None = desk_text_check(
+            desk, episode, take_id, source, ocr=text_ocr
+        )
+        print(f"[text] {text_check.summary()}", file=out, flush=True)
+    except STEP_ERRORS as exc:
+        text_check = None
+        result.text_warnings = [
+            f"!! text check failed ({type(exc).__name__}: {str(exc)[:200]}): drawn subtitles were NOT "
+            "looked for; watch the take for drawn text"
+        ]
+        print(f"[text] {result.text_warnings[0]}", file=out, flush=True)
 
     def step(name: str, doing: str, work: Callable[[Path], StepReport]) -> None:
         nonlocal current
@@ -1248,6 +1268,10 @@ def run_finish(
         )
 
     result.final = current
+    if text_check is not None:
+        result.text_warnings = text_check.warning_lines(
+            desk=desk, episode=episode, take_id=take_id, final=current
+        )
     try:
         result.loudness = f"{measure_loudness(current):.1f} LUFS"
     except MediaToolError as exc:

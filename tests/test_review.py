@@ -557,7 +557,7 @@ def test_review_json_and_a_missing_take(
     assert main(["review", "--desk", str(desk), "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["kind"] == "raw" and [s["name"] for s in payload["sections"]] == [
-        "Loudness", "Cuts", "Frames", "Board", "Lines", "People",
+        "Loudness", "Cuts", "Frames", "Board", "Text", "Lines", "People",
     ]  # fmt: skip
     assert all(s["status"] in {OK, WARN, NONE} for s in payload["sections"])
 
