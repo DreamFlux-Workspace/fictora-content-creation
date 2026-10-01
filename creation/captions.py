@@ -3,7 +3,9 @@
 The raw take from the Drama API has no burn-in (``api_captions: false``). This
 module finishes it on the operator's laptop:
 
-1. Read episode dialogue from the desk spine snapshot (``ep01/api/*spine*.json``).
+1. Read episode dialogue from the desk spine snapshot (``ep01/api/*spine*.json``):
+   for one take of a two- or four-take episode, only the lines of the beats that
+   take plays (split as the board splits them, :func:`take_caption_lines`).
 2. Find speech spans with ffmpeg ``silencedetect`` (no transcription model needed:
    the words are already known from the script gate).
 3. Anchor each line on its speech span and spread words by length.
@@ -219,6 +221,9 @@ def episode_caption_lines(
 ) -> list[CaptionLine]:
     """Return every spoken line of one episode as the caption sees it, in beat order.
 
+    This is the whole episode (a joined episode file). One take of a two- or
+    four-take episode plays only its own beats: see :func:`take_caption_lines`.
+
     Parameters
     ----------
     spine
@@ -237,18 +242,156 @@ def episode_caption_lines(
     body = spine.get("spine", spine)
     # Found by ordinal through episode_summaries: episode 2 can be ``ep_02``, not ``episode_02``.
     episode_id = episode_id_for(body, episode_ordinal)
-    # The server marks a character it only ever hears with ``voice_only`` on the cast card.
-    voice_only = {
+    beats = [
+        beat
+        for beat in body.get("beats") or []
+        if isinstance(beat, dict) and beat.get("episode_id") == episode_id
+    ]
+    return _beat_caption_lines(body, beats)
+
+
+def take_caption_lines(
+    spine: dict[str, Any],
+    episode_ordinal: int,
+    *,
+    take_index: int,
+    take_count: int | None,
+) -> tuple[list[CaptionLine], str]:
+    """Return the spoken lines of the beats one take plays, as the caption sees them.
+
+    The beats are split into takes the way the board and ``check-lines`` split
+    them (:func:`creation.spine_view.beats_by_take`, from the spine's
+    ``beats_per_storyboard_set``). A one-take episode gets every line.
+
+    When the split cannot be read (the spine has no ``beats_per_storyboard_set``
+    on a multi-take episode, no take count is known, or the pattern and the take
+    count disagree) every line of the episode is returned, as before, with a
+    warning naming why.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON as saved on the desk (bare spine or ``{"spine": …}``).
+    episode_ordinal
+        1-based episode number.
+    take_index
+        1-based take (``t2`` is 2).
+    take_count
+        Takes on the desk for this episode (its series slot); ``None`` when the
+        desk does not say, then the spine's storyboard pattern gives the count.
+
+    Returns
+    -------
+    tuple[list[CaptionLine], str]
+        The take's lines, and ``""`` or a ``TAKE LINES: …`` warning when every
+        line of the episode was returned because the split is not known.
+    """
+
+    from creation.spine_view import beats_by_take
+
+    body = spine.get("spine", spine)
+    pattern = tuple(
+        int(n)
+        for n in body.get("beats_per_storyboard_set") or ()
+        if isinstance(n, int) or str(n).isdigit()
+    )
+    count = take_count if take_count is not None else (len(pattern) or None)
+    if count == 1 and take_index == 1:
+        return episode_caption_lines(spine, episode_ordinal), ""
+    reason = ""
+    if count is None:
+        reason = (
+            "the desk names no takes for the episode and the spine has no "
+            "beats_per_storyboard_set"
+        )
+    elif not pattern:
+        reason = "the spine has no beats_per_storyboard_set"
+    elif len(pattern) != count:
+        reason = (
+            f"the spine's beats_per_storyboard_set {list(pattern)} does not match "
+            f"the {count} take(s) on the desk"
+        )
+    elif not 1 <= take_index <= count:
+        reason = f"t{take_index} is not one of the {count} take(s) on the desk"
+    if reason:
+        return episode_caption_lines(spine, episode_ordinal), (
+            f"TAKE LINES: ep{episode_ordinal:02d} t{take_index} is captioned with every "
+            f"line of the episode, not only its own, because {reason}. Check the "
+            "captions against what the take says."
+        )
+    grouped = beats_by_take(body, episode=episode_ordinal, take_count=count)
+    return _beat_caption_lines(body, grouped[take_index - 1]), ""
+
+
+def desk_take_count(desk: Path, episode_ordinal: int) -> int | None:
+    """Takes in the desk's series slot for one episode.
+
+    Parameters
+    ----------
+    desk
+        Series desk root.
+    episode_ordinal
+        1-based episode number.
+
+    Returns
+    -------
+    int | None
+        The slot's take count; ``None`` when ``series.json`` is missing, not a
+        v1 desk, or has no such episode (the caller then falls back on the
+        spine's storyboard pattern, see :func:`take_caption_lines`).
+    """
+
+    from creation.ops.state import episode_by_ordinal, load_series
+
+    try:
+        slot = episode_by_ordinal(load_series(desk), episode_ordinal)
+    except (FileNotFoundError, ValueError):
+        return None
+    return len(slot.takes) or None
+
+
+_TAKE_IN_NAME = re.compile(r"^take-ep\d+-t(\d+)(?:-|$)")
+
+
+def take_index_from_name(path: Path) -> int | None:
+    """The take a desk file is, from its name: ``take-ep01-t2-raw-v1.mp4`` is 2.
+
+    Parameters
+    ----------
+    path
+        A take file.
+
+    Returns
+    -------
+    int | None
+        The take number; ``None`` for a file not named for one take (a joined
+        episode file), which is then captioned with every line of the episode.
+    """
+
+    match = _TAKE_IN_NAME.match(path.stem)
+    return int(match.group(1)) if match and int(match.group(1)) >= 1 else None
+
+
+def _voice_only_cast(body: dict[str, Any]) -> set[str]:
+    """Cast ids the server marks ``voice_only`` (a character it only ever hears)."""
+
+    return {
         str(card.get("cast_id"))
         for card in body.get("cast") or []
         if isinstance(card, dict)
         and card.get("cast_id")
         and card.get("voice_only") is True
     }
+
+
+def _beat_caption_lines(
+    body: dict[str, Any], beats: Sequence[dict[str, Any]]
+) -> list[CaptionLine]:
+    """The caption lines of ``beats`` in the order given (see :func:`episode_caption_lines`)."""
+
+    voice_only = _voice_only_cast(body)
     lines: list[CaptionLine] = []
-    for beat in body.get("beats") or []:
-        if beat.get("episode_id") != episode_id:
-            continue
+    for beat in beats:
         for line in beat.get("dialogue_lines") or []:
             # Captions are English subtitles: ``subtitle_text`` when the line has one, else ``text``.
             # Their timing comes from where speech is heard on the take (``silencedetect``), or on a
@@ -1241,6 +1384,9 @@ class CaptionResult:
     shown: tuple[Span | None, ...] = ()
     #: The transcript the lines were timed on, when one was used.
     words_json: Path | None = None
+    #: ``TAKE LINES: …`` when a take was captioned with every line of the episode
+    #: because its beats could not be told apart (also printed on stderr), else "".
+    take_lines_warning: str = ""
 
     def timing_lines(self) -> list[str]:
         """One ``on screen a-b s 'line' (method)`` entry per line, for the report and run notes."""
@@ -1266,6 +1412,7 @@ def caption_take(
     stem: str | None = None,
     words_on_english: bool = False,
     fixed_lines: Sequence[tuple[CaptionLine, Span]] = (),
+    take_index: int | None = None,
 ) -> CaptionResult:
     """Caption the newest raw take on a desk episode.
 
@@ -1304,6 +1451,12 @@ def caption_take(
         them (flicker, or whole lines on a show not spoken in English; heard, not
         seen, so Georgia italic when ``italic``) and are left uncaptioned with
         ``NOT ENGLISH`` when not English. Their method is ``laid``.
+    take_index
+        The take ``take`` is (``t2`` is 2): only the lines of the beats that take
+        plays are captioned (:func:`take_caption_lines`, split as the board
+        splits them). ``None`` with ``take`` given captions every line of the
+        episode (a joined episode file); with no ``take`` the newest ``t1`` raw
+        file is captioned as take 1.
 
     Returns
     -------
@@ -1314,7 +1467,9 @@ def caption_take(
 
     ep_dir = desk.expanduser().resolve() / f"ep{episode_ordinal:02d}"
     takes = ep_dir / "takes"
-    take = take or latest_file(takes, f"take-ep{episode_ordinal:02d}-t1-raw-v*.mp4")
+    if take is None:
+        take = latest_file(takes, f"take-ep{episode_ordinal:02d}-t1-raw-v*.mp4")
+        take_index = 1 if take_index is None else take_index
     if take is None or not take.is_file():
         raise FileNotFoundError(
             f"no raw take in {takes}; run `fictora-produce step --confirm-spend` first"
@@ -1323,20 +1478,41 @@ def caption_take(
     # Newest snapshot that carries beats (approve responses are receipts without them).
     caption_lines: list[CaptionLine] = []
     whole_lines = False
+    take_lines_warning = ""
+    take_count = (
+        desk_take_count(desk.expanduser().resolve(), episode_ordinal)
+        if take_index is not None
+        else None
+    )
     for spine_path in sorted(
         api.glob("*spine*.json"), key=lambda p: p.name, reverse=True
     ):
         spine = json.loads(spine_path.read_text(encoding="utf-8"))
-        if isinstance(spine, dict):
+        if not isinstance(spine, dict) or not episode_caption_lines(
+            spine, episode_ordinal
+        ):
+            continue
+        # Newest snapshot with the episode's lines; a take gets only its own beats' lines.
+        whole_lines = captions_whole_lines(spine)
+        if take_index is None:
             caption_lines = episode_caption_lines(spine, episode_ordinal)
-        if caption_lines:
-            whole_lines = captions_whole_lines(spine)
-            break
+        else:
+            caption_lines, take_lines_warning = take_caption_lines(
+                spine, episode_ordinal, take_index=take_index, take_count=take_count
+            )
+            if take_lines_warning:
+                print(f"WARNING {take_lines_warning}", file=sys.stderr)
+        break
     lines = [line.text for line in caption_lines]
     fixed = sorted(fixed_lines, key=lambda item: item[1].start)
     if not lines and not fixed:
+        scope = (
+            f"t{take_index} of episode {episode_ordinal}"
+            if take_index is not None
+            else f"episode {episode_ordinal}"
+        )
         raise ValueError(
-            f"episode {episode_ordinal} has no dialogue lines in any spine snapshot in {api}"
+            f"{scope} has no dialogue lines in any spine snapshot in {api}"
         )
 
     ffmpeg, ffprobe = find_ffmpeg()
@@ -1420,4 +1596,5 @@ def caption_take(
             Span(group[0].start, group[-1].end) if group else None for group in per_line
         ),
         words_json if words is not None else None,
+        take_lines_warning,
     )
