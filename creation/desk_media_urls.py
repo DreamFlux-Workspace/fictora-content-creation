@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Collection
 
 from creation.stranded_voice import unused_cast_ids
 
@@ -70,7 +70,9 @@ def drawn_cast_rows(spine: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def cast_plate_urls(spine: dict[str, Any], api_dir: Path) -> list[str]:
+def cast_plate_urls(
+    spine: dict[str, Any], api_dir: Path, *, only: Collection[str] | None = None
+) -> list[str]:
     """Return ordered cast still URLs for plate download.
 
     Parameters
@@ -79,6 +81,9 @@ def cast_plate_urls(spine: dict[str, Any], api_dir: Path) -> list[str]:
         Latest ``GET /v1/spines/{id}`` body after cast enrol.
     api_dir
         Episode ``api/`` folder with ``06_*cast_terminal*.json``.
+    only
+        Cast ids to return plates for (a character a later episode brought
+        in); None returns every drawn cast member's.
 
     Returns
     -------
@@ -89,7 +94,11 @@ def cast_plate_urls(spine: dict[str, Any], api_dir: Path) -> list[str]:
     """
 
     urls: list[str] = []
-    cast_rows = drawn_cast_rows(spine)
+    cast_rows = [
+        row
+        for row in drawn_cast_rows(spine)
+        if only is None or str(row["cast_id"]) in only
+    ]
     assets = [row for row in (spine.get("media_assets") or []) if isinstance(row, dict)]
     by_cast: dict[str, str] = {}
     for asset in assets:
@@ -115,7 +124,7 @@ def cast_plate_urls(spine: dict[str, Any], api_dir: Path) -> list[str]:
             if value:
                 urls.append(str(value))
                 break
-    if urls:
+    if urls or only is not None:
         return urls
     output = _terminal_output(api_dir, "06_*cast_terminal*.json")
     if not output:

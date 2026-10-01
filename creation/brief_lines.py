@@ -5,6 +5,20 @@ the desk said so, so a creator could approve a script without noticing their
 line was gone. :func:`compare_lines` pairs each brief line with a spine line by
 speaker and text similarity (deterministic: best pairs first), and
 :func:`brief_vs_spine_lines` prints the result after ``step`` drafts.
+
+Locked lines (founder decision, 1 Oct 2026). On *Fated in the Rain* the brief
+said "keep these lines exactly"; the draft kept the script text, then the
+localization pass rewrote all five performed lines and their subtitles, and this
+report said "kept 5, rewritten 0" because it compared the script text only. It
+now also compares what is *said* and what is *shown*:
+
+* the spoken line - ``spoken_text`` on a Japanese or Korean show, the script on
+  an English one - against the brief's original. A locked line's spoken words
+  are the creator's; the server pins them, so a changed one is flagged loudly as
+  a bug, with the command that puts it back;
+* the subtitle - ``subtitle_text`` against the brief's translation (or the
+  server's ``brief_subtitle_text``). A subtitle may adapt; every adaptation is
+  listed so the creator sees it.
 """
 
 from __future__ import annotations
@@ -25,6 +39,15 @@ RESPEAKER_RATIO = 0.8
 
 _EMPTY_CELL = {"", "-", "—", "–", "n/a"}
 
+#: The server's lock phrases (``locked_lines._LOCK_PHRASE`` in fictora-drama).
+_LOCK_PHRASE = re.compile(
+    r"\bkeep\b[^.\n]{0,40}\bexactly\b|\bexactly as written\b|\bverbatim\b|\bword[- ]for[- ]word\b"
+    r"|\blocked lines?\b",
+    re.IGNORECASE,
+)
+#: Hangul, kana and CJK ideographs: a line written in the language a Korean or Japanese show is performed in.
+_PERFORMED_SCRIPT = re.compile(r"[가-힣ぁ-ゟ゠-ヿ一-鿿]")
+
 
 @dataclass(frozen=True)
 class ScriptLine:
@@ -34,6 +57,10 @@ class ScriptLine:
     text: str
     line_id: str | None = None
     alt_text: str = ""
+    #: Brief line: its ``Translation`` cell. Spine line: ``subtitle_text``.
+    subtitle: str = ""
+    #: Spine line: the brief's own subtitle the server kept (``brief_subtitle_text``).
+    brief_subtitle: str = ""
 
 
 @dataclass(frozen=True)
@@ -89,8 +116,15 @@ def parse_brief_lines(brief: str) -> list[ScriptLine]:
         row = dict(zip(header, cells, strict=False))
         speaker = _speaker_name(row.get("speaker", ""))
         original = row.get("original") or row.get("line") or row.get("text") or ""
+        translation = (
+            row.get("translation") or row.get("english") or row.get("subtitle") or ""
+        ).strip()
+        if translation.lower() in _EMPTY_CELL:
+            translation = ""
         if speaker and original.strip().lower() not in _EMPTY_CELL:
-            lines.append(ScriptLine(speaker=speaker, text=original.strip()))
+            lines.append(
+                ScriptLine(speaker=speaker, text=original.strip(), subtitle=translation)
+            )
     return lines
 
 
@@ -137,6 +171,8 @@ def spine_script_lines(spine: Mapping[str, Any], *, episode: int) -> list[Script
                     text=text,
                     line_id=str(line.get("line_id") or "") or None,
                     alt_text=str(line.get("spoken_text") or "").strip(),
+                    subtitle=str(line.get("subtitle_text") or "").strip(),
+                    brief_subtitle=str(line.get("brief_subtitle_text") or "").strip(),
                 )
             )
     return out
@@ -213,6 +249,87 @@ def compare_lines(
     return out
 
 
+def brief_locks_lines(brief: str) -> bool:
+    """Whether the brief's ``## Lines`` section asks for its lines word for word.
+
+    Parameters
+    ----------
+    brief
+        The brief's markdown.
+
+    Returns
+    -------
+    bool
+        True when a lock phrase ("keep these lines exactly", "verbatim", "word
+        for word", "locked lines") sits in the Lines section.
+    """
+
+    in_lines = False
+    for raw in brief.splitlines():
+        text = raw.strip()
+        if text.startswith("## "):
+            in_lines = text[3:].strip().lower().startswith("lines")
+        if in_lines and _LOCK_PHRASE.search(text):
+            return True
+    return False
+
+
+def spoken_and_subtitle_lines(
+    matches: Sequence[LineMatch], *, locked: bool, desk: Any = "D", episode: int = 1
+) -> tuple[list[str], dict[str, int]]:
+    """Compare what is said and what is shown with the brief, line by line.
+
+    Parameters
+    ----------
+    matches
+        From :func:`compare_lines`.
+    locked
+        Whether the brief locks its lines (:func:`brief_locks_lines`).
+    desk, episode
+        For the command that puts a changed spoken line back.
+
+    Returns
+    -------
+    tuple[list[str], dict[str, int]]
+        Printable lines, and counts: ``locked`` (spoken exactly as the brief),
+        ``changed`` (spoken differs: a bug on a locked brief) and ``adapted``
+        (subtitle differs from the brief's).
+    """
+
+    out: list[str] = []
+    count = {"locked": 0, "changed": 0, "adapted": 0}
+    for match in matches:
+        brief, drafted = match.brief, match.spine
+        if brief is None or drafted is None:
+            continue
+        # The spoken line: spoken_text on a localized show, the script otherwise.
+        # A brief written in English for a localized show is performed by the
+        # localizer, so only an original in the show's script is compared.
+        if drafted.alt_text and _PERFORMED_SCRIPT.search(brief.text):
+            said = drafted.alt_text
+        elif not drafted.alt_text:
+            said = drafted.text
+        else:
+            said = ""
+        if said and match.verdict == "kept" and _norm(said) == _norm(brief.text):
+            count["locked"] += 1
+        elif said and match.verdict == "kept":
+            count["changed"] += 1
+            flag = "!! BUG (the server pins a locked line)" if locked else "!!"
+            out.append(
+                f'  {flag}: the spoken line changed  brief "{brief.text}"  performed "{said}"  '
+                f"[{drafted.line_id}]. Put it back: `fictora-produce line --desk {desk} --episode {episode} "
+                f'--line {drafted.line_id} --spoken "{brief.text}"`'
+            )
+        wanted = drafted.brief_subtitle or brief.subtitle
+        if wanted and drafted.subtitle and _norm(wanted) != _norm(drafted.subtitle):
+            count["adapted"] += 1
+            out.append(
+                f'  subtitle adapted  [{drafted.line_id}]  brief "{wanted}"  ->  shown "{drafted.subtitle}"'
+            )
+    return out, count
+
+
 def brief_vs_spine_lines(
     brief_text: str, spine: Mapping[str, Any], *, episode: int
 ) -> list[str]:
@@ -246,6 +363,15 @@ def brief_vs_spine_lines(
         f"brief lines vs the drafted script: brief {len(brief)} -> script {len(drafted)} "
         f"(kept {count['kept']}, rewritten {count['rewritten']}, cut {count['cut']}, added {count['added']})"
     ]
+    locked = brief_locks_lines(brief_text)
+    said, said_count = spoken_and_subtitle_lines(
+        matches, locked=locked, episode=episode
+    )
+    out.append(
+        f"  spoken: {said_count['locked']} {'locked' if locked else 'as written'}"
+        f"{', ' + str(said_count['changed']) + ' CHANGED' if said_count['changed'] else ''}; "
+        f"subtitles: {said_count['adapted']} adapted"
+    )
     for match in matches:
         if match.verdict == "kept" and match.spine:
             out.append(
@@ -266,6 +392,7 @@ def brief_vs_spine_lines(
             out.append(
                 f'  added      {match.spine.speaker}: "{match.spine.text}"  [{match.spine.line_id}] (not in the brief)'
             )
+    out += said
     if count["kept"] != len(brief) or count["added"]:
         out.append(
             "  !! The writers changed the brief's lines. Before the script gate: keep theirs, or put yours back with "
@@ -280,7 +407,9 @@ __all__ = [
     "KEPT_RATIO",
     "LineMatch",
     "ScriptLine",
+    "brief_locks_lines",
     "brief_vs_spine_lines",
+    "spoken_and_subtitle_lines",
     "compare_lines",
     "parse_brief_lines",
     "spine_script_lines",

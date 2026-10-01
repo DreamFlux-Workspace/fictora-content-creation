@@ -98,13 +98,61 @@ def framed_cast(spine: Mapping[str, Any]) -> set[str]:
     return named
 
 
+def staged_cast(spine: Mapping[str, Any]) -> set[str]:
+    """Cast ids a beat moves, other than on the beat their own off-screen line plays over.
+
+    A character the beats stage is seen, never only heard, whatever their lines
+    say (founder decision, 1 Oct 2026; fictora-drama ``voice_only_cast_ids``).
+    On Sighted ep 1 (desk 2) the draft wrote a sound direction as an off-screen
+    line for the creature on beat 1; with no frames yet, an older server marked
+    the creature ``voice_only`` and this guard refused to remove that line.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+
+    Returns
+    -------
+    set[str]
+        Motion subjects of beats that do not carry their own off-screen line.
+    """
+
+    staged: set[str] = set()
+    for beat in spine.get("beats") or []:
+        if not isinstance(beat, Mapping):
+            continue
+        motion = beat.get("motion_direction")
+        subject = motion.get("subject_cast_id") if isinstance(motion, Mapping) else None
+        if not subject:
+            continue
+        heard_here = {
+            str(line.get("cast_id"))
+            for line in beat.get("dialogue_lines") or []
+            if isinstance(line, Mapping) and line.get("off_screen") is True
+        }
+        if str(subject) not in heard_here:
+            staged.add(str(subject))
+    return staged
+
+
 def _no_look(card: Mapping[str, Any]) -> bool:
     return not card.get("visual_brief")
 
 
-def is_heard_only(card: Mapping[str, Any], framed: set[str]) -> bool:
-    """A character who is only heard: the server's ``voice_only`` flag, or no look and in no frame (older server)."""
+def is_heard_only(
+    card: Mapping[str, Any],
+    framed: set[str],
+    staged: set[str] | frozenset[str] = frozenset(),
+) -> bool:
+    """A character who is only heard: the server's ``voice_only`` flag, or no look and in no frame (older server).
 
+    A character the beats stage (:func:`staged_cast`) is never heard-only, even
+    when an older server still flags them ``voice_only``.
+    """
+
+    if str(card.get("cast_id")) in staged:
+        return False
     if card.get("voice_only") is True:
         return True
     return _no_look(card) and str(card.get("cast_id")) not in framed
@@ -135,6 +183,7 @@ def voices_left_without_lines(
     before = line_counts(spine)
     after = line_counts(spine, removed=removed, speakers=speakers, added=added)
     framed = framed_cast(spine)
+    staged = staged_cast(spine)
     return [
         (str(card["cast_id"]), str(card.get("name") or card["cast_id"]))
         for card in spine.get("cast") or []
@@ -142,14 +191,14 @@ def voices_left_without_lines(
         and card.get("cast_id")
         and before.get(str(card["cast_id"]), 0) > 0
         and after.get(str(card["cast_id"]), 0) == 0
-        and is_heard_only(card, framed)
+        and is_heard_only(card, framed, staged)
     ]
 
 
 def _reached_cast(spine: Mapping[str, Any]) -> set[str]:
     """Every cast id the film reaches: a line (on or off screen), a vocalization, an inner-voice cue, a frame."""
 
-    reached = framed_cast(spine)
+    reached = framed_cast(spine) | staged_cast(spine)
     for beat in spine.get("beats") or []:
         if not isinstance(beat, Mapping):
             continue
@@ -293,7 +342,7 @@ def stranded_cast(spine: Mapping[str, Any]) -> list[tuple[str, str]]:
     """
 
     counts = line_counts(spine)
-    framed = framed_cast(spine)
+    framed = framed_cast(spine) | staged_cast(spine)
     return [
         (str(card["cast_id"]), str(card.get("name") or card["cast_id"]))
         for card in spine.get("cast") or []
