@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from creation import episode_commands as ec
+from creation.episode_commands import dialogue_tier
 from creation.cli_produce import main as produce_main
 from creation.harness.http_util import api_error_text
 from creation.ops.floor import approve_script
@@ -169,6 +170,7 @@ def test_add_before_the_gate_patches_the_new_line_resaves_the_spine_and_syncs_th
                     "beat_id": "beat_episode_01_02",
                     "cast_id": "cast_hana",
                     "text": "Someone is at the door.",
+                    "tier": "standard",
                 }
             ]
         }
@@ -246,6 +248,7 @@ def test_replace_sends_remove_and_add_in_one_patch(desk: Path, api: FakeApi) -> 
                     "beat_id": "beat_episode_01_01",
                     "cast_id": "cast_ren",
                     "text": "Fine.",
+                    "tier": "micro",
                 }
             ],
         }
@@ -341,6 +344,7 @@ def test_a_new_voice_after_the_gate_goes_through_the_cascade_off_screen_and_reop
                         "beat_id": "beat_episode_01_02",
                         "cast_id": "cast_speaker-voice",
                         "text": "D-9341. Do not break eye contact.",
+                        "tier": "extended",
                         "off_screen": True,
                     }
                 ],
@@ -455,3 +459,27 @@ def test_the_cli_takes_add_new_voice_and_provider_voice(
     assert patch["add_voice_only_cast"][0]["provider_voice"] == "Rachel"
     assert patch["add_dialogue_lines"][0]["off_screen"] is True
     assert "does NOT choose the voice" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("text", "tier"),
+    [
+        ("Fine.", "micro"),
+        ("Not now.", "micro"),
+        ("Someone is at the door.", "standard"),
+        ("I said we are closed tonight.", "standard"),
+        ("Wait. Stay here.", "extended"),  # two sentences
+        ("I told you the shop closes at nine, not ten.", "extended"),
+        ("   ", "standard"),
+    ],
+)
+def test_an_added_line_carries_the_tier_the_server_would_classify(
+    text: str, tier: str
+) -> None:
+    """L-20260930-1: an added line with no tier broke the next episode's author.
+
+    Same thresholds as fictora-drama ``dialogue_pacing.classify_dialogue_tier``:
+    up to 2 words micro, up to 6 words in one sentence standard, else extended.
+    """
+
+    assert dialogue_tier(text) == tier

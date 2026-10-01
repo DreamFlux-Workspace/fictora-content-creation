@@ -1669,6 +1669,38 @@ def voice_cast_id(name: str) -> str:
     return f"cast_{slug}"[:64]
 
 
+def dialogue_tier(text: str) -> str:
+    """The pacing tier the server gives a line of this length: ``micro``, ``standard`` or ``extended``.
+
+    The server's own thresholds (fictora-drama ``classify_dialogue_tier``): up
+    to 2 words is ``micro``, up to 6 words in one sentence is ``standard``,
+    anything longer is ``extended``. An added line must carry one: a line
+    stored without a tier stops the next episode's author ("Every beat must
+    set dialogue.tier").
+
+    Parameters
+    ----------
+    text
+        The line as written (``text``, not the performed ``spoken_text``).
+
+    Returns
+    -------
+    str
+        The tier.
+    """
+
+    normalized = " ".join(text.split())
+    if not normalized:
+        return "standard"
+    words = len(normalized.split())
+    sentences = len([part for part in re.split(r"[.!?]+", normalized) if part.strip()])
+    if words <= 2:
+        return "micro"
+    if words <= 6 and sentences <= 1:
+        return "standard"
+    return "extended"
+
+
 def build_line_add_remove_patch(
     spine: Mapping[str, Any],
     *,
@@ -1829,6 +1861,7 @@ def build_line_add_remove_patch(
         "beat_id": found_beat["beat_id"],
         "cast_id": cast_id,
         "text": text,
+        "tier": dialogue_tier(text),
     }
     for key, value in (
         ("spoken_text", spoken),
