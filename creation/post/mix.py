@@ -268,7 +268,13 @@ def _mix_once(
                 graph.append("[take]asplit=2[tk][key]")
             else:
                 graph.append("[take]asplit=3[tk][key][keybus]")
-            graph.append(f"[bed][key]{COMPRESSOR}{ducked}")
+            # sidechaincompress stops at the first input to reach its end and drops what it read of the
+            # other past that point, so its length followed which ffmpeg thread ran ahead: 0.05-0.3 s
+            # short, different each run. Pad both inputs without end and cut the result to the take.
+            graph.append(
+                f"[bed]apad[bedpad];[key]apad[keypad];"
+                f"[bedpad][keypad]{COMPRESSOR},atrim=0:{total:.3f}{ducked}"
+            )
             front = "[tk]"
         else:
             graph.append(f"[bed]{duck_expression(windows or [], duck_db)}{ducked}")

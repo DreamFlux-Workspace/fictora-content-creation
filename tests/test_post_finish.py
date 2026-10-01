@@ -289,11 +289,17 @@ def test_finish_writes_the_mix_buses_and_review_reads_a_duck_depth_in_band(
             capture_output=True, text=True, check=True,
         ).stdout.strip()  # fmt: skip
         assert layout == "pcm_s16le,48000,1", (bus.name, layout)
-        # The compressor drops its last part-block at the end of the key: the mix got the same shorter bed.
-        slack = (
-            0.25 if bus.name.endswith("ducked-bus.wav") and duck_db is None else 0.05
+        assert abs(media_duration(bus) - 5.0) < 0.05, bus.name
+    # Every bus runs the length the mix runs (the raw bus is the bed cut to it), to a few samples. The
+    # ducked bus used to come out 0.05-0.3 s short, by a different amount each run: the compressor ended
+    # at whichever input hit its end first and dropped the bed it had read ahead of the key.
+    total = media_duration(buses[0])
+    for bus in buses[1:]:
+        assert abs(media_duration(bus) - total) < 0.005, (
+            bus.name,
+            media_duration(bus),
+            total,
         )
-        assert abs(media_duration(bus) - 5.0) < slack, bus.name
     assert "buses for review" in (post_desk / "ep01" / "run-notes.md").read_text()
 
     loud = next(
@@ -307,6 +313,21 @@ def test_finish_writes_the_mix_buses_and_review_reads_a_duck_depth_in_band(
     assert abs(duck["outside_db"]) < 1.5, "the bed is not ducked where nobody speaks"
     if duck_db is not None:
         assert abs(duck["under_db"] - duck_db) < 1.0, duck
+
+
+@needs_ffmpeg
+def test_the_ducked_bed_runs_the_whole_take_every_run(tmp_path: Path) -> None:
+    from creation.post.media import media_duration
+    from creation.post.mix import mix_take
+
+    take = make_take(tmp_path / "take-ep01-t1-sfx-v1.mp4", tones=TWO_LINES)
+    bed = make_tone(tmp_path / "bed.wav", seconds=6.0, freq=220, volume=0.9)
+    lengths = {
+        round(media_duration(mix_take(take, tmp_path / f"r{i}-mix-v1.mp4", bed=bed, buses=True).buses[1]), 3)
+        for i in range(4)
+    }  # fmt: skip
+
+    assert lengths == {5.0}, "the sidechain duck must not end on a thread race"
 
 
 @needs_ffmpeg
