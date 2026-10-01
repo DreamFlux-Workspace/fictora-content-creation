@@ -12,6 +12,8 @@ from typing import Any, Callable, Protocol
 
 import httpx
 
+from creation.harness.minor_scene_refusal import minor_scene_fix, says_minor_scene
+
 _TERMINAL = frozenset({"completed", "failed", "cancelled"})
 
 #: A running job whose ``updated_at`` and ``progress`` have not moved for this long
@@ -214,7 +216,8 @@ def api_error_text(body: Any) -> str:
     Returns
     -------
     str
-        ``code: message (details …) [request_id]`` or the raw body when it is not an envelope.
+        ``code: message (details …) [request_id]`` or the raw body when it is not an envelope;
+        a ``minor_in_intimate_scene`` refusal adds a line per scene with its fix.
     """
     if not isinstance(body, dict):
         return str(body)[:2000]
@@ -231,6 +234,9 @@ def api_error_text(body: Any) -> str:
         )
     if body.get("request_id"):
         text += f" [request {body['request_id']}]"
+    if says_minor_scene(code, message):
+        # fictora-drama #562: name each scene and child and how to fix it, wherever the refusal comes from.
+        text += "\n" + minor_scene_fix(details if isinstance(details, dict) else None)
     return text
 
 

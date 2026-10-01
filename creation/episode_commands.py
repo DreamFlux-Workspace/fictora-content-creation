@@ -79,6 +79,10 @@ from creation.new_cast import new_cast_notice, newcomers
 from creation.desk_media_urls import drawn_cast_rows
 from creation.harness import stages_gated as stages
 from creation.harness.http_util import api_error_text, describe_job_error
+from creation.harness.minor_scene_refusal import (
+    MINOR_IN_INTIMATE_SCENE,
+    minor_scene_fix,
+)
 from creation.harness.raw_video import (
     STEP_RAW_CLIPS,
     VideoJobFailed,
@@ -2091,6 +2095,8 @@ REFUSAL_FIXES: dict[str, str] = {
     "line_id_taken": "that line id is used; the kit lets the server name new lines, so re-save the story (`spine --refresh`) and try again",
     "invalid_patch": "an id is not on the story; list the lines with `line --desk D --episode N` and use their numbers",
     "cascade_edit_out_of_scope": "after the script gate one command edits one episode: add and remove lines of episode {episode} only",
+    # fictora-drama #562; the text is built per scene by creation.harness.minor_scene_refusal.minor_scene_fix.
+    MINOR_IN_INTIMATE_SCENE: "move the child out of that shot, or change the scene so it is not intimate",
 }
 
 
@@ -2153,6 +2159,10 @@ def explain_refusal(message: str, spine: Mapping[str, Any], *, episode: int) -> 
     template = REFUSAL_FIXES.get(code)
     if template is None:
         return message
+    if code == MINOR_IN_INTIMATE_SCENE:
+        if "never in a romantic, sexual or intimate scene" in message:
+            return message  # api_error_text already said it
+        return f"{message}\n{minor_scene_fix(_refusal_details(message) or None)}"
     if code == INVALID_PATCH:
         return f"the server refused the edit ({code}): {message}\n  fix: {_invalid_patch_fix(message)}"
     details: dict[str, Any] = {}
