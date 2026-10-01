@@ -34,6 +34,11 @@ class _Run:
         n = len(self.posts)
         return {"plan_job_id": f"job_plan_{n}", "spine_id": f"spine_{n}"}
 
+    def post_optional(
+        self, path: str, body: dict, *, idempotency_key: str
+    ) -> tuple[int, dict[str, Any]]:
+        return 202, self.post(path, body, idempotency_key=idempotency_key)
+
     def poll_job(self, job_id: str, **_k: Any) -> dict[str, Any]:
         self.polled.append(job_id)
         return self.plans[job_id].pop(0)

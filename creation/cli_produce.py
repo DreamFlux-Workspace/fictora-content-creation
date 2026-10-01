@@ -39,6 +39,7 @@ from creation.orchestrate import (
     unbound_desk_recovery,
 )
 from creation.production_config import load_production_config, save_production_config
+from creation.stylised_only import NOTICE_KINDS
 from creation.recover import (
     RETRYABLE_STEPS,
     cancel_video_job,
@@ -124,6 +125,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--confirm-spend",
         action="store_true",
         help="After estimate gate, confirm spend and film the take.",
+    )
+    step.add_argument(
+        "--accept-notice",
+        action="append",
+        default=[],
+        choices=NOTICE_KINDS,
+        help="Draft only: the creator saw this brief notice and chose to go on "
+        "(style_not_available after picking a stylised preset; real_person_not_allowed to let the "
+        "writer make an original character). Repeat for both.",
     )
 
     ap = sub.add_parser(
@@ -340,7 +350,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(status_message(args.desk))
             return 0
         if args.command == "step":
-            result = run_step(args.desk, confirm_spend=args.confirm_spend)
+            result = run_step(
+                args.desk,
+                confirm_spend=args.confirm_spend,
+                accept_notices=args.accept_notice,
+            )
             print(result.message)
             for path in result.paths:
                 print(f"  file: {path}")
