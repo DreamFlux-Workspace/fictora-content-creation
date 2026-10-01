@@ -264,3 +264,28 @@ def write_frames(path: Path, frames: list[Any], *, fps: int = 24,
     )  # fmt: skip
     assert proc.returncode == 0, proc.stderr.decode()[-400:]
     return path
+
+
+@pytest.fixture
+def real_ocr() -> str:
+    """The ``tesseract`` command; the test is skipped on a machine without it."""
+
+    from creation.post import take_text
+
+    found = take_text.tesseract_bin()
+    if found is None:
+        pytest.skip("tesseract is not installed")
+    return found
+
+
+@pytest.fixture(autouse=True)
+def _no_ocr_by_default(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep finish/review tests fast and the same on every machine: no OCR unless a test asks for ``real_ocr``."""
+
+    if "real_ocr" in request.fixturenames:
+        return
+    from creation.post import take_text
+
+    monkeypatch.setattr(take_text, "tesseract_bin", lambda: None)
