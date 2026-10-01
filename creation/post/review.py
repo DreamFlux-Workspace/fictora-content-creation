@@ -1460,11 +1460,36 @@ def review_take(
     held = server_board_frames(facts)
     if held is not None:
         # The server already cleaned the raw take: its head reads 0 here, and nothing is shifted.
-        board_sec.details.append(held.one_line())
+        board_sec.details.extend(held.lines())
         board_sec.data["server_held"] = {
             "head_frames": held.head_frames,
             "tail_frames": held.tail_frames,
+            "original": (
+                {
+                    "url": held.original.url,
+                    "content_sha256": held.original.content_sha256,
+                    "content_length": held.original.content_length,
+                }
+                if held.original is not None
+                else None
+            ),
+            "unsure": [
+                {"end": run.end, "frames": run.frames, "reason": run.reason}
+                for run in held.unsure
+            ],
         }
+        if held.unsure_at("head") is not None and head:
+            # finish leaves an end the server was unsure of: say so instead of "finish removes them".
+            board_sec.details = [
+                detail.replace(
+                    "finish removes them (deboard)",
+                    "finish leaves them (the server was unsure); if they are the board, "
+                    "`deboard --hold-unsure` then finish --take-file the result",
+                )
+                for detail in board_sec.details
+            ]
+        if held.unsure and board_sec.status == OK:
+            board_sec.status = WARN
     moved = facts_shift_s(facts)
     if moved is not None:
         board_sec.details.append(
