@@ -510,6 +510,25 @@ def test_a_redraw_that_leaves_a_plate_missing_keeps_the_failed_plates_step(
     assert "Hana" in out.getvalue() and "redraw-plate" in out.getvalue()
 
 
+def test_a_redraw_after_the_plates_yes_points_at_the_servers_approve_again(
+    desk: Path, api: FakeApi
+) -> None:
+    from creation.ops.floor import approve_series_gate
+
+    _plate_routes(api)
+    approve_series_gate(desk, "plates", path=None)
+    set_phase(desk, "wait_script")
+    out = io.StringIO()
+
+    ec.run_redraw_plate_with_note(desk, cast="Ren", note="older", out=out)
+
+    text = out.getvalue()
+    assert f"fictora-produce approve --desk {desk} --gate plates --again" in text
+    assert "fictora-ops approve" not in text, (
+        "a desk-only yes leaves the server unapproved"
+    )
+
+
 def test_check_lines_names_the_approved_line_the_take_was_not_asked_to_say(
     desk: Path, api: FakeApi
 ) -> None:

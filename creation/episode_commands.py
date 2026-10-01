@@ -4727,7 +4727,9 @@ def run_redraw_plate_with_note(
     elif load_series(desk).plates.status == "approved":
         print(
             f"!! the plates had a yes before this redraw: show {sheet.name} to the human and record the yes again "
-            f"(fictora-ops approve --desk {desk} --gate plates --path {sheet}). Boards drawn before now still show "
+            f"on the server (fictora-produce approve --desk {desk} --gate plates --again --path {sheet}; $0, draws "
+            "nothing; a yes recorded on the desk alone leaves the story unapproved and boards fail cast_not_approved). "
+            "Boards drawn before now still show "
             "the old plate; redraw-board the takes this character is in.",
             file=out,
         )
