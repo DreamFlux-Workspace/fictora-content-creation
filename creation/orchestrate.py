@@ -1762,6 +1762,115 @@ def reapprove_plates(desk: Path, *, path: Path | None = None) -> StepResult:
     )
 
 
+#: Phases before an episode's boards are drawn: nothing to approve again.
+_BEFORE_BOARDS = frozenset(
+    {"new", "ready_cast_enrol", "wait_plates", "wait_script", "ready_boards_enrol"}
+)
+
+
+def _newest_board(desk: Path, episode: int, take_id: str) -> Path | None:
+    found = sorted(
+        (desk / f"ep{episode:02d}" / "boards").glob(
+            f"board-ep{episode:02d}-{take_id}-v*.png"
+        ),
+        key=lambda p: int(p.stem.rsplit("-v", 1)[-1] or 0),
+    )
+    return found[-1] if found else None
+
+
+def reapprove_boards(
+    desk: Path, *, path: Path | None = None, accept_dim: bool = False
+) -> StepResult:
+    """Send the board approval to the server again: a board redrawn after its yes, on a desk past the gate.
+
+    ``redraw-board`` sends the desk back to the board gate only from ``wait_board``,
+    ``ready_estimate`` or ``wait_spend``; on a desk further on (``ready_video``,
+    ``complete``) the new board stayed pending on the server, the desk-only yes
+    (``fictora-ops approve``) never reached it, and film was refused
+    (``boards_not_approved_for_generation``). This measures the episode's boards
+    and approves them on the story's current version under a fresh idempotency
+    key (the first approval's key would replay its old answer), records the yes
+    on the desk for each take's newest board, and leaves the phase as it is.
+    $0, draws nothing.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    path
+        The board file the human looked at (one-take episodes; default each take's newest board).
+    accept_dim
+        Kept for older servers.
+
+    Returns
+    -------
+    StepResult
+        The unchanged phase and what to run next.
+
+    Raises
+    ------
+    RuntimeError
+        When the episode has no board drawn yet.
+    """
+
+    desk = desk.expanduser().resolve()
+    state = load_production(desk)
+    ep = state.episode_ordinal
+    if state.phase in _BEFORE_BOARDS:
+        raise RuntimeError(
+            f"no board drawn for episode {ep} yet (phase {state.phase}): nothing to approve. "
+            "Next: fictora-produce step."
+        )
+    slot = episode_by_ordinal(load_series(desk), ep)
+    images: dict[str, Path] = {}
+    for take in slot.takes:
+        stored = state.board_paths.get(take.take_id)
+        image = (
+            _newest_board(desk, ep, take.take_id)
+            or (desk / stored if stored else None)
+            or path
+        )
+        if image is None:
+            raise ValueError(
+                f"no board on the desk for {take.take_id}; pass --path to the board file reviewed"
+            )
+        images[take.take_id] = image
+    tag = f"ep{ep:02d}-boards-reapprove-{uuid.uuid4().hex[:8]}"
+    run = _open_run(desk, state)
+    try:
+        spine = run.spine(state.spine_id or "")
+        approve_episode_boards(
+            run,
+            spine_id=state.spine_id or "",
+            spine=spine,
+            episode=ep,
+            accept_dim=accept_dim,
+            idempotency_key=f"{run.prefix}-{tag}",
+        )
+    finally:
+        run.client.close()
+    for take_id, image in images.items():
+        approve_board(desk, episode=ep, take_id=take_id, image=image)
+    version = spine.get("spine_version")
+    boards = ", ".join(f"{t} `{p.name}`" for t, p in images.items())
+    _note(
+        _episode_dir(desk, ep),
+        f"Board(s) approved again on the server (`{tag}`, spine_version {version}): {boards}. "
+        "$0, nothing drawn.",
+    )
+    follow = (
+        "Next: film the take again if the redraw was for it (`fictora-produce film … --cause …`)."
+        if state.phase in ("ready_video", "complete")
+        else "Next: fictora-produce step."
+    )
+    return StepResult(
+        state.phase,
+        f"Board(s) of episode {ep} approved again on the server ({boards}; spine_version {version}); "
+        f"phase {state.phase} unchanged. {follow}",
+        (),
+    )
+
+
 def approve_gate(
     desk: Path,
     *,
@@ -1772,16 +1881,20 @@ def approve_gate(
 ) -> StepResult:
     """Record a human gate and run the matching API approve when needed.
 
-    ``again`` (plates only) sends the plates approval again outside
-    ``wait_plates``: :func:`reapprove_plates`.
+    ``again`` sends the plates approval again outside ``wait_plates``
+    (:func:`reapprove_plates`). A board yes outside ``wait_board`` (a board
+    redrawn after its yes, on a desk past the board gate, even ``complete``),
+    or with ``again``, goes to the server too: :func:`reapprove_boards`.
     """
 
-    if again:
-        if gate != "plates":
-            raise ValueError("--again is for --gate plates only")
+    if again and gate not in ("plates", "board"):
+        raise ValueError("--again is for --gate plates or --gate board")
+    if again and gate == "plates":
         return reapprove_plates(desk, path=path)
     desk = desk.expanduser().resolve()
     state = load_production(desk)
+    if gate == "board" and (again or state.phase != "wait_board"):
+        return reapprove_boards(desk, path=path, accept_dim=bool(accept_dim))
     run = _open_run(desk, state)
     ep = state.episode_ordinal
 

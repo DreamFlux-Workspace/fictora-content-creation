@@ -400,6 +400,11 @@ def _dispatch_approve(args: argparse.Namespace) -> int:
         args.desk, episode=args.episode, take_id=args.take, image=args.path
     )
     print(f"{args.take} board {record.status}  {record.note}")
+    print(
+        "This records the yes on the desk only. The server's board approval (what film needs) is "
+        f"`fictora-produce approve --desk {args.desk} --gate board` (after a redraw on a desk past the "
+        "board gate it approves again, $0)."
+    )
     return 0
 
 
