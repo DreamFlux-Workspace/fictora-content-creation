@@ -327,7 +327,7 @@ uv run fictora-produce film --desk D --episode N [--cause "…"] [--confirm-spen
 - Without `--confirm-spend` it prices exactly what will be filmed (`batches/estimate` with `reroll_take_index` for one take) against the envelope and stops. `--confirm-spend` refuses until that number was shown.
 - It sends `POST /v1/video-generations` with `episode_count: N, episode_ordinal: N`, plus `reroll_take_index: K, seed_attempt: <films so far + 1>` for one take. The new take lands as the next `take-epNN-tK-raw-vN.mp4` with its take facts; only it is booked. The other takes stay as filmed.
 - A take (or episode) already filmed needs `--cause` naming what in the direction produced the fault; "try again" is refused. The cause is recorded on the take as Change this and in `run-notes.md`.
-- Only from a board with a human yes on the desk. An interrupted `film` run again picks up its job and never pays twice.
+- Only from a board with a human yes on the desk. An interrupted `film` (a timeout, a broken poll) run again picks up its job and never pays twice. A job the server ended `failed` or `cancelled` is cleared: nothing is collected or booked, and the next `film --confirm-spend` (after the human's yes) enrols a new job under a fresh key instead of re-reporting the old failure.
 - An older deploy without `episode_ordinal` is refused before anything is sent (episode 1 films alone either way). Say so to the human and tell engineering.
 
 

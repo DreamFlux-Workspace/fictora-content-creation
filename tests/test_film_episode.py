@@ -348,6 +348,75 @@ def test_an_interrupted_film_picks_up_its_job_without_posting_again(
     assert episode_by_ordinal(load_series(desk30), 2).takes[1].filmed_count == 2
 
 
+def _video_keys(api: FakeApi) -> list[str | None]:
+    return [
+        key for method, path, _, key in api.calls if method == "POST" and path == VIDEO
+    ]
+
+
+@pytest.mark.parametrize("failed", ["coordinator", "take"])
+def test_a_failed_film_job_is_not_picked_up_again_the_next_film_starts_a_new_job(
+    desk30: Path, api30: FakeApi, failed: str
+) -> None:
+    """L-20260930-7: a job that ended failed is over; the next film enrols afresh."""
+
+    _filmed_once(desk30)
+    api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "1.20"}}
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
+    _take_two_of_episode_two(api30)
+    good_parent = api30.routes[("GET", "/v1/jobs/job_video_9")]
+    good_child = api30.routes[("GET", "/v1/jobs/job_take_e2t2")]
+    if failed == "coordinator":
+        api30.routes[("GET", "/v1/jobs/job_video_9")] = {
+            "status": "failed",
+            "error": {"code": "provider_error", "message": "the provider refused"},
+        }
+    else:
+        api30.routes[("GET", "/v1/jobs/job_take_e2t2")] = {
+            "status": "failed",
+            "error": {"code": "provider_error", "message": "the provider refused"},
+        }
+
+    with pytest.raises(SystemExit) as caught:
+        run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+
+    assert "the provider refused" in str(caught.value.code)
+    state = load_production(desk30)
+    assert "film-ep02-t2-s2" not in state.pending
+    assert state.attempts["film-ep02-t2-s2"] == 1
+    assert episode_by_ordinal(load_series(desk30), 2).takes[1].filmed_count == 1
+
+    api30.routes[("GET", "/v1/jobs/job_video_9")] = good_parent
+    api30.routes[("GET", "/v1/jobs/job_take_e2t2")] = good_child
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+
+    first, second = _video_keys(api30)
+    assert first and second and first != second
+    assert first.endswith("-film-ep02-t2-s2-a1") and second.endswith(
+        "-film-ep02-t2-s2-a2"
+    )
+    assert episode_by_ordinal(load_series(desk30), 2).takes[1].filmed_count == 2
+
+
+def test_a_poll_that_breaks_off_keeps_the_job_so_no_second_charge(
+    desk30: Path, api30: FakeApi
+) -> None:
+    _filmed_once(desk30)
+    api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "1.20"}}
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
+    _take_two_of_episode_two(api30)
+    api30.routes[("GET", "/v1/jobs/job_video_9")] = SystemExit(
+        "HTTP 502 GET https://drama.example/v1/jobs/job_video_9: bad gateway"
+    )
+
+    with pytest.raises(SystemExit):
+        run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+
+    state = load_production(desk30)
+    assert state.pending["film-ep02-t2-s2"]["job_id"] == "job_video_9"
+    assert "film-ep02-t2-s2" not in state.attempts
+
+
 # --- Film episode N alone ---------------------------------------------------------------------------
 
 

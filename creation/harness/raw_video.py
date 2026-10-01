@@ -23,6 +23,18 @@ from creation.harness.session import DramaApiRunSession
 _SET_SUFFIX = re.compile(r"_set(\d+)$")
 _FAILED = frozenset({"failed", "cancelled"})
 
+
+class VideoJobFailed(SystemExit):
+    """The coordinator or a take job ended ``failed`` / ``cancelled``: that job is over.
+
+    A :class:`SystemExit` like every other stop of the poll, so callers that
+    stop loud keep doing so. Callers that keep a pending job to pick up after an
+    interruption tell it apart: polling a failed job again only repeats the
+    failure, while a timeout or a broken connection leaves a job that may still
+    finish (and was paid for).
+    """
+
+
 STEP_RAW_CLIPS = "17_raw_scene_clips.json"
 """The clip record ``step`` writes in ``epNN/api`` (also what ``adopt-desk`` builds for an old desk)."""
 
@@ -148,8 +160,10 @@ def wait_for_raw_scene_clips(
 
     Raises
     ------
+    VideoJobFailed
+        When the coordinator or a take job ended failed or cancelled.
     SystemExit
-        When the coordinator or a take job failed, or at the deadline.
+        At the deadline, or when a poll is refused (the job may still finish).
     """
 
     deadline = time.monotonic() + deadline_seconds
@@ -160,7 +174,7 @@ def wait_for_raw_scene_clips(
         parent = _job_record(run.get(f"/v1/jobs/{coordinator_job_id}"))
         if str(parent.get("status") or "") in _FAILED:
             run.save("17_video_terminal.json", parent)
-            raise SystemExit(
+            raise VideoJobFailed(
                 f"video job {coordinator_job_id} {describe_job_error(parent)}"
             )
         depends = parent.get("depends_on")
@@ -176,7 +190,9 @@ def wait_for_raw_scene_clips(
                     pending = True
                     continue
                 if status in _FAILED:
-                    raise SystemExit(f"take job {child_id} {describe_job_error(child)}")
+                    raise VideoJobFailed(
+                        f"take job {child_id} {describe_job_error(child)}"
+                    )
                 url = clip_url_from_job_payload(child)
                 if url is None:
                     pending = True

@@ -60,6 +60,7 @@ from creation.harness import stages_gated as stages
 from creation.harness.http_util import api_error_text, describe_job_error
 from creation.harness.raw_video import (
     STEP_RAW_CLIPS,
+    VideoJobFailed,
     raw_clips_name,
     wait_for_raw_scene_clips,
 )
@@ -5169,12 +5170,21 @@ def _run_film(
         f"[film] Filming {what} (video job {job_id}). Usually 5-15 minutes.",
         file=sys.stderr,
     )
-    raw = wait_for_raw_scene_clips(
-        run,
-        str(job_id),
-        deadline_seconds=cfg.poll_video_deadline_seconds,
-        save_as=raw_clips_name(unit),
-    )
+    try:
+        raw = wait_for_raw_scene_clips(
+            run,
+            str(job_id),
+            deadline_seconds=cfg.poll_video_deadline_seconds,
+            save_as=raw_clips_name(unit),
+        )
+    except VideoJobFailed as exc:
+        _forget_failed_film(desk, unit, job_id=str(job_id), what=what, episode=episode)
+        raise VideoJobFailed(
+            f"{exc.code}\nNothing was collected or booked for {what}. The failed job is cleared: "
+            f"the next `film --episode {episode}"
+            + (f" --take {take_id}" if take_id else "")
+            + " --confirm-spend` starts a NEW paid job under a fresh key (only after the human's yes)."
+        ) from None
     spine = run.spine(state.spine_id or "")
     save_spine_snapshot(desk, episode, spine)
     collecting = load_production(desk)
@@ -5224,6 +5234,27 @@ def _run_film(
     text = "\n".join(lines) + foreign_warning(got.foreign)
     print(text, file=out)
     return text
+
+
+def _forget_failed_film(
+    desk: Path, unit: str, *, job_id: str, what: str, episode: int
+) -> None:
+    """Clear a film unit whose job ended failed, so the next ``film`` enrols afresh.
+
+    The pending entry is dropped and the unit's attempts bumped, so the next
+    idempotency key (``…-<unit>-aN``) is new and the server starts a new job
+    instead of answering with the failed one (as ``retry-step`` does for a
+    stage). Only for a job the server says is over: a timeout or a broken poll
+    keeps the entry, so an interrupted film picks up its job and pays once.
+    """
+
+    _forget_unit(desk, unit)
+    _note(
+        desk,
+        episode,
+        f"film {what}: video job `{job_id}` failed; nothing collected or booked. "
+        "Cleared it: the next film enrols a new job under a fresh key.",
+    )
 
 
 def _price_film(
