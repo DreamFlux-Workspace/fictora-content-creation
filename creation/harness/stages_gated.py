@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from creation.harness.http_util import (
     HOSTED_POST_OFF_HINT,
@@ -135,6 +135,9 @@ def start_draft(
     deadline_seconds: float = 1800.0,
     accept_notices: Sequence[str] = (),
     desk: str = "<desk>",
+    key_prefix: str | None = None,
+    resume: Mapping[str, Any] | None = None,
+    on_accepted: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Draft episode 1 alone (arc picked at episode 2) and poll the plan job.
 
@@ -166,6 +169,19 @@ def start_draft(
         (``style_not_available``, ``real_person_not_allowed``).
     desk
         Series desk, for the commands a pause prints.
+    key_prefix
+        Prefix of the draft's ``Idempotency-Key`` (``<prefix>-draft``, then
+        ``-a1``/``-a2`` for stall re-drafts). The step passes one built from the
+        desk, so a re-run after a dead session sends the same key and the
+        server hands back the same draft (L-20260926-4). ``run.prefix`` when omitted.
+    resume
+        A draft this desk already had accepted under ``key_prefix``
+        (``{"attempt", "key", "plan_job_id", "spine_id"}``, as given to
+        ``on_accepted``): its plan job is read again and nothing is posted,
+        the same way a stalled plan is adopted (L-20260922-2).
+    on_accepted
+        Called with that record right after the server accepts a draft, so the
+        desk can save it before the (long) plan poll.
 
     Returns
     -------
@@ -199,16 +215,45 @@ def start_draft(
 
     last_plan: dict[str, Any] = {}
     draft: dict[str, Any] = {}
-    for attempt in range(3):
+    base = key_prefix or run.prefix
+    adopted = adoptable_draft(resume, key_prefix=base)
+    first = int(adopted["attempt"]) if adopted else 0
+    for attempt in range(first, 3):
         suffix = f"-a{attempt}" if attempt else ""
-        draft = _post_draft(
-            run,
-            body,
-            idempotency_key=f"{run.prefix}-draft{suffix}",
-            accept_notices=accept_notices,
-            desk=desk,
-        )
-        run.save(f"01_draft_accepted{suffix}.json", draft)
+        key = f"{base}-draft{suffix}"
+        if adopted is not None and attempt == first:
+            # An earlier step already had this draft accepted (its session died before the plan
+            # finished): read that plan job again, never post a second paid draft (L-20260926-4).
+            draft = {
+                "plan_job_id": adopted["plan_job_id"],
+                "spine_id": adopted["spine_id"],
+            }
+            run.emit(
+                "draft_adopted",
+                job_id=draft["plan_job_id"],
+                spine_id=draft["spine_id"],
+                key=key,
+                note="an earlier step's draft was accepted; reading its plan job, no new draft",
+            )
+        else:
+            draft = _post_draft(
+                run,
+                body,
+                idempotency_key=key,
+                accept_notices=accept_notices,
+                desk=desk,
+            )
+            run.save(f"01_draft_accepted{suffix}.json", draft)
+            if on_accepted is not None:
+                on_accepted(
+                    {
+                        "key_prefix": base,
+                        "key": key,
+                        "attempt": attempt,
+                        "plan_job_id": draft.get("plan_job_id"),
+                        "spine_id": draft.get("spine_id"),
+                    }
+                )
         plan = run.poll_job(
             draft["plan_job_id"],
             label="plan",
@@ -249,6 +294,40 @@ def start_draft(
 
 
 _DRAFT_ROUTE = "/v1/prompt-video-authoring-drafts"
+
+
+def adoptable_draft(
+    record: Mapping[str, Any] | None, *, key_prefix: str
+) -> dict[str, Any] | None:
+    """Return a saved accepted draft that belongs to ``key_prefix``, else ``None``.
+
+    A record saved under another prefix (an earlier attempt that ``retry-step``
+    moved past) is never adopted: that stage asked for a fresh draft.
+
+    Parameters
+    ----------
+    record
+        What ``start_draft`` gave ``on_accepted`` on an earlier run.
+    key_prefix
+        The prefix this run would send the draft under.
+
+    Returns
+    -------
+    dict[str, Any] | None
+        The record, with a whole ``attempt`` in 0..2 and both job and spine ids.
+    """
+
+    if not record or record.get("key_prefix") != key_prefix:
+        return None
+    if not record.get("plan_job_id") or not record.get("spine_id"):
+        return None
+    try:
+        attempt = int(record.get("attempt") or 0)
+    except (TypeError, ValueError):
+        return None
+    if not 0 <= attempt < 3:
+        return None
+    return {**record, "attempt": attempt}
 
 
 def _post_draft(

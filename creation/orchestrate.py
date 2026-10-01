@@ -1089,6 +1089,48 @@ def step_retry_prefix(state: ProductionState) -> str | None:
     return f"{state.idempotency_prefix}-{unit}-r{count}"
 
 
+def draft_unit(episode: int) -> str:
+    """Return the ``pending`` unit that holds an accepted draft while its plan job runs.
+
+    Parameters
+    ----------
+    episode
+        Episode ordinal.
+
+    Returns
+    -------
+    str
+        ``draft-epNN``.
+    """
+
+    return f"draft-ep{episode:02d}"
+
+
+def draft_key_prefix(state: ProductionState) -> str:
+    """Return the idempotency prefix the draft is sent under: fixed by the desk, new per retry.
+
+    A re-run of ``step`` after a dead session sends the same key, so the server
+    answers with the draft it already accepted instead of authoring (and
+    charging) a second one (L-20260926-4). ``retry-step`` bumps the stage's
+    retry count, which gives a deliberate re-draft a new key
+    (:func:`step_retry_prefix`).
+
+    Parameters
+    ----------
+    state
+        Production state (its ``idempotency_prefix`` is stable for the desk).
+
+    Returns
+    -------
+    str
+        ``<desk prefix>-epNN`` or, after ``retry-step``, ``<desk prefix>-step-retry-epNN-new-rN``.
+    """
+
+    return step_retry_prefix(state) or (
+        f"{state.idempotency_prefix}-ep{state.episode_ordinal:02d}"
+    )
+
+
 def run_step(
     desk: Path,
     *,
@@ -1165,7 +1207,15 @@ def run_step(
             effective_prompt = ensure_plan_prompt(state.prompt)
             if effective_prompt != state.prompt:
                 state.prompt = effective_prompt
+            # Saved before anything is sent, so a desk that never stored its
+            # prefix keeps this one and a re-run sends the same draft key.
+            save_production(desk, state)
+            unit = draft_unit(ep)
+
+            def keep_accepted(record: dict[str, Any]) -> None:
+                state.pending[unit] = record
                 save_production(desk, state)
+
             try:
                 spine_id, plan = stages.start_draft(
                     run,
@@ -1180,6 +1230,9 @@ def run_step(
                     deadline_seconds=cfg.poll_plan_deadline_seconds,
                     accept_notices=accept_notices,
                     desk=str(desk),
+                    key_prefix=draft_key_prefix(state),
+                    resume=state.pending.get(unit),
+                    on_accepted=keep_accepted,
                 )
             except BriefNoticePause as exc:
                 _note(ep_dir, str(exc))
@@ -1195,6 +1248,7 @@ def run_step(
             state.spine_id = spine_id
             state.phase = "ready_cast_enrol"
             state.last_error = None
+            state.pending.pop(unit, None)
             save_run_meta(
                 api_dir_for_episode(desk, ep),
                 session_id=state.session_id,
