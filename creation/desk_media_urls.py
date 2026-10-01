@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from creation.stranded_voice import unlooked_unused_cast_ids
+from creation.stranded_voice import unused_cast_ids
 
 
 def _latest_terminal_path(api_dir: Path, glob_pattern: str) -> Path | None:
@@ -37,13 +37,16 @@ def drawn_cast_rows(spine: dict[str, Any]) -> list[dict[str, Any]]:
       every line off screen, in no frame), flagged ``voice_only: true`` on the
       card (fictora-drama #453 / #469); the kit reads that flag and never
       re-derives it, so a row without it (an older server) counts as drawn;
-    - an unused character with no visual brief (no line, vocalization,
-      inner-voice cue or frame, on a spine that has frames:
-      :func:`creation.stranded_voice.unlooked_unused_cast_ids`), such as a voice
-      whose only line was removed. The server keeps the card but draws no plate.
+    - an unused character (no line, vocalization, inner-voice cue or frame, on
+      a spine that has frames: :func:`creation.stranded_voice.unused_cast_ids`),
+      with or without a visual brief, such as a narrator whose lines were all
+      removed (Sighted ep 1, 2026-10-01). The server keeps the card but draws no
+      plate (fictora-drama, unused-cast follow-up to #517). Before any frame
+      exists nobody is unused, so Look's count is unchanged.
 
-    An unused character who has a visual brief (written for a later episode) is
-    still drawn and still counted.
+    Against a server without that follow-up, an unused character who has a
+    visual brief is still drawn there, so this count is one plate low for each
+    such character; the server's own reservation is what is charged.
 
     Parameters
     ----------
@@ -56,7 +59,7 @@ def drawn_cast_rows(spine: dict[str, Any]) -> list[dict[str, Any]]:
         Cast rows with a ``cast_id`` the server draws a plate for.
     """
 
-    skipped = unlooked_unused_cast_ids(spine)
+    skipped = unused_cast_ids(spine)
     return [
         row
         for row in (spine.get("cast") or [])
