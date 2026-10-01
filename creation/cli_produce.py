@@ -10,7 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Sequence
 
-from creation.captions import caption_take, find_ffmpeg
+from creation.captions import caption_take, find_ffmpeg, take_index_from_name
 from creation.cli_config import add_production_config_args, config_from_args
 from creation.cli_post import POST_COMMANDS, add_post_parsers, dispatch_post
 from creation.cli_text import HELP_SUFFIX, text_or_file
@@ -170,7 +170,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--take",
         type=Path,
         default=None,
-        help="Raw MP4; default newest take-epNN-t1-raw-v*.mp4.",
+        help="Raw MP4; default newest take-epNN-t1-raw-v*.mp4. A take-epNN-tK-… file gets only "
+        "take K's lines; a file not named for one take (a joined episode) gets every line.",
     )
     cap.add_argument(
         "--line-start",
@@ -290,11 +291,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 line_starts=args.line_start,
                 line_ends=args.line_end,
                 words_json=words_json,
+                # A take file gets only its own beats' lines; a joined episode file gets them all.
+                take_index=take_index_from_name(args.take) if args.take else None,
             )
             ep_dir = args.desk.expanduser().resolve() / f"ep{args.episode:02d}"
             timing = "; ".join(result.timing_lines())
             warnings = "".join(
-                f" {w}." for w in (*result.not_english, result.font_warning) if w
+                f" {w}."
+                for w in (
+                    *result.not_english,
+                    result.font_warning,
+                    result.take_lines_warning,
+                )
+                if w
             )
             append_run_note(
                 ep_dir,

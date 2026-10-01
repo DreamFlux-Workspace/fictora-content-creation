@@ -1102,6 +1102,8 @@ def run_finish(
                     )
                     for cue, line, seconds in thought_state["laid"]
                 ],
+                # Only this take's beats' lines: t2 is never captioned with t1's.
+                take_index=thoughts.take_number(take_id),
             )
         except ValueError as exc:
             if "no dialogue lines" in str(exc):
@@ -1118,7 +1120,13 @@ def run_finish(
         # A line that is not English is left uncaptioned, and an italic line may miss
         # Georgia Italic on this laptop; the summary line says which.
         warnings = "".join(
-            f" · {w}" for w in (*captioned.not_english, captioned.font_warning) if w
+            f" · {w}"
+            for w in (
+                *captioned.not_english,
+                captioned.font_warning,
+                captioned.take_lines_warning,
+            )
+            if w
         )
         append_run_note(
             run_dir,
