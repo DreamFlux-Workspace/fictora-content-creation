@@ -1,6 +1,9 @@
 """Whisper word timing (made on the server), and matching approved lines to what was heard.
 
-English and Korean lines are matched word by word / syllable by syllable.
+English and Korean lines are matched word by word / syllable by syllable. A
+line's capitalised words (cast names) also match a sound-alike spelling
+(:func:`sounds_alike`: Whisper writes "Ren" for "Wren"); other words need
+their own spelling.
 
 A Japanese line is matched on how it sounds. When the server's transcript
 carries a ``reading`` per word (katakana, made by the server's reading
@@ -232,15 +235,100 @@ def _same(a: str, b: str) -> bool:
     return a == b or (min(len(a), len(b)) >= 3 and (a.startswith(b) or b.startswith(a)))
 
 
+#: Spelling pairs that sound alike at the start of a name or inside it (Wren/Ren, Phil/Fil, Kat/Cat).
+_SOUND_FOLDS = (("wr", "r"), ("kn", "n"), ("gn", "n"), ("ph", "f"), ("ck", "k"),
+                ("c", "k"), ("q", "k"), ("z", "s"), ("x", "ks"))  # fmt: skip
+
+
+def _sound_key(word: str) -> str:
+    """A rough sound of a Latin-script word: folded spellings, no inner vowels or h/w/y, no doubles."""
+
+    key = word
+    for spelled, sound in _SOUND_FOLDS:
+        key = key.replace(spelled, sound)
+    key = key[:1] + re.sub(r"[aeiouhwy]", "", key[1:])
+    return re.sub(r"(.)\1+", r"\1", key)
+
+
+def _one_edit_apart(a: str, b: str) -> bool:
+    """True when one letter added, dropped or changed turns ``a`` into ``b``."""
+
+    if abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        return sum(x != y for x, y in zip(a, b)) <= 1
+    short, long = (a, b) if len(a) < len(b) else (b, a)
+    return any(long[:i] + long[i + 1 :] == short for i in range(len(long)))
+
+
+def sounds_alike(heard: str, name: str) -> bool:
+    """Whether a heard word may be a name Whisper spelt another way ("Ren" for "Wren").
+
+    One letter apart (both at least three letters), or the same rough sound
+    (:func:`_sound_key`, at least two letters of it). Only for names: a
+    common word still needs its own spelling.
+
+    Parameters
+    ----------
+    heard
+        A transcript token (lower case).
+    name
+        A name token of the line (lower case).
+
+    Returns
+    -------
+    bool
+        True when they plausibly are the same spoken name.
+    """
+
+    if _same(heard, name):
+        return True
+    if not (heard.isalpha() and name.isalpha()) or min(len(heard), len(name)) < 3:
+        return False
+    if _one_edit_apart(heard, name):
+        return True
+    key = _sound_key(name)
+    return len(key) >= 2 and key == _sound_key(heard)
+
+
+def name_tokens(spelling: str) -> frozenset[str]:
+    """The line's capitalised words (cast names, places), lower case, matched by sound (not ``I``)."""
+
+    return frozenset(
+        word.lower()
+        for word in re.findall(r"\w+", unicodedata.normalize("NFKC", spelling))
+        if word[:1].isupper() and len(word) >= 3 and not _CJK.search(word)
+    )
+
+
+def word_count(line: str) -> int:
+    """How many spoken words a line has (for Japanese / Chinese / Korean: characters)."""
+
+    count = 0
+    for word in unicodedata.normalize("NFKC", line).split():
+        if _CJK.search(word):
+            count += len(_tokens(word))
+        elif re.search(r"\w", word):
+            count += 1  # "We're" is one spoken word
+    return count
+
+
 def _match(
-    flat: list[tuple[str, int]], target: list[str], cursor: int
+    flat: list[tuple[str, int]],
+    target: list[str],
+    cursor: int,
+    names: frozenset[str] = frozenset(),
 ) -> tuple[int, int, float] | None:
     if not target:
         return None
     if any(_KANA.fullmatch(token) for token in target):
         return _match_japanese(flat, target, cursor)
+
+    def same(heard: str, token: str) -> bool:
+        return sounds_alike(heard, token) if token in names else _same(heard, token)
+
     for start in range(cursor, len(flat)):
-        if not any(_same(flat[start][0], token) for token in target[:2]):
+        if not any(same(flat[start][0], token) for token in target[:2]):
             continue
         pos, matched, last = start, 0, start
         for token in target:
@@ -248,7 +336,7 @@ def _match(
             while (
                 probe < len(flat)
                 and probe - pos <= 2
-                and not _same(flat[probe][0], token)
+                and not same(flat[probe][0], token)
             ):
                 probe += 1
             if probe < len(flat) and probe - pos <= 2:
@@ -436,7 +524,12 @@ def _line_windows_on(
             kana = any(_KANA.fullmatch(token) for token in target)
             which = 1 if read is not None and kana else 0
             stream = streams[which]
-            hit = _match(stream, target, cursors[which])
+            hit = _match(
+                stream,
+                target,
+                cursors[which],
+                name_tokens(spelling) if spelling else frozenset(),
+            )
             if hit:
                 first, last, ratio = hit
                 matches.append((first, last, ratio, which, kana))
