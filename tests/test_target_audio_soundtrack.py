@@ -207,7 +207,10 @@ def test_finish_lays_room_tone_bed_ducked_in_line_windows_effects_on_measured_cu
         "ducking 12 dB in 2 voice window(s) (the take's line windows)" in detail["mix"]
     )
     # (d) room tone: the gap between the lines is no longer digital silence; both lines heard where the facts say.
-    assert "2 of 2 line(s) heard in their window" in detail[ROOM_TONE_STEP]
+    assert (
+        "2 of 2 line(s) have voice in their window (levels only); transcript check skipped"
+        in detail[ROOM_TONE_STEP]
+    ), "no transcript of this take on the desk: the count says levels only"
     toned = next(s.output for s in result.steps if s.step == ROOM_TONE_STEP)
     gap = measure_rms_windows(toned, window_seconds=0.1)[
         24:30
