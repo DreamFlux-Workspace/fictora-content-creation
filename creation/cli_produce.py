@@ -37,6 +37,7 @@ from creation.recover import (
     retry_failed_step,
 )
 from creation.setup_check import run_setup_check
+from creation.shared_spine import shared_spine_refusal
 
 
 def _warn_if_no_local_ffmpeg() -> None:
@@ -215,7 +216,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     add_post_parsers(sub)
     add_episode_parsers(sub)
 
+    for command_parser in sub.choices.values():
+        command_parser.add_argument(
+            "--shared-spine-ok",
+            action="store_true",
+            help="Run even though another desk names this desk's story (spine_id): both desks change.",
+        )
+
     args = parser.parse_args(list(argv) if argv is not None else None)
+    desk_arg = getattr(args, "desk", None)
+    if isinstance(desk_arg, Path) and not args.shared_spine_ok:
+        refused = shared_spine_refusal(
+            args.command, desk_arg, transcribe=bool(getattr(args, "transcribe", False))
+        )
+        if refused:
+            print(refused, file=sys.stderr)
+            return 2
     if args.command == "setup-check":
         return run_setup_check()
     if args.command in EPISODE_COMMANDS:

@@ -42,6 +42,7 @@ Read when you need the detail, not all on the first turn:
 - Call hosted post-production, or pass `--api-captions`. Hosted post is off.
 - Regenerate the story or re-film every take to change a voice.
 - Hand over a raw take. A take is not done until the local finish ran.
+- Copy a desk folder to try something. A copy keeps the same `spine_id`, so it is the same server story: an edit, redraw or film on the copy changes the producer's real story. The kit stops such a command and names the other desk (`Stopped: this desk's story (spine …) is also the story of: …`); pass `--shared-spine-ok` only when the human says both desks are meant to share it. Reads and local post (`status`, `spine`, `review`, `join`, `trim` …) are never stopped.
 
 ## Stage order
 

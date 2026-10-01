@@ -320,6 +320,9 @@ Faults accepted without a re-film (calibration): a door frame in the opening sec
 
 ## Scratch tools
 
+Never copy a desk folder to experiment: the copy keeps the same `spine_id`, one story on the server, so an edit, redraw or film on it changes the real desk's story. The kit stops any story-changing or paid command on a desk whose `spine_id` another desk beside it (or under the default desks folder) also names, and lists that desk; `--shared-spine-ok` lets it through when sharing is meant. Reads and local post are never stopped.
+
+
 Allowed: anything in a Gap or Partial row of the API table, and post after the take is delivered.
 
 Not allowed: re-implementing an Aligned row; changing settings inside the product's own code; quietly producing a different outcome than the product.
