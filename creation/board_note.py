@@ -476,7 +476,11 @@ def beat_change_lines(
 def row_change_lines(
     before: Sequence[Mapping[str, Any]], after: Sequence[Mapping[str, Any]]
 ) -> list[str]:
-    """Board rows whose shot changed in the redraw, as ``row N: old -> new``.
+    """Board rows that changed in the redraw: a different row count first, then lost, added and changed rows.
+
+    A redraw can lose a row even when the note says keep every shot (L-20260930-7),
+    so rows are compared both ways: a row only the old board had is named as lost,
+    a row only the new one has as added.
 
     Parameters
     ----------
@@ -486,17 +490,36 @@ def row_change_lines(
     Returns
     -------
     list[str]
-        Printable lines; empty when every row reads the same.
+        Printable lines; empty only when both boards have the same rows and every row reads the same.
     """
 
-    old: dict[int, ShotRow] = {row.row: row for row in shot_rows(before)}
+    old_rows = shot_rows(before)
+    new_rows = shot_rows(after)
+    old: dict[int, ShotRow] = {row.row: row for row in old_rows}
+    new: dict[int, ShotRow] = {row.row: row for row in new_rows}
     lines: list[str] = []
-    for row in shot_rows(after):
-        was = old.get(row.row)
-        if was is None or was.one_line() != row.one_line():
+    if before and len(old_rows) != len(new_rows):
+        lines.append(
+            f"  !! ROW COUNT CHANGED: the board had {len(old_rows)} row(s) before the redraw and has "
+            f"{len(new_rows)} now"
+        )
+    for number, was in sorted(old.items()):
+        if number not in new:
             lines.append(
-                f"  was {was.one_line() if was else f'row {row.row}: (new row)'}"
+                f"  !! ROW LOST: {was.one_line()} (the redrawn board has no row {number})"
             )
+    for row in new_rows:
+        was = old.get(row.row)
+        if was is None:
+            if before:
+                lines.append(
+                    f"  !! ROW ADDED: {row.one_line()} (the board had no row {row.row})"
+                )
+            else:
+                lines.append(f"  was row {row.row}: (new row)")
+                lines.append(f"  now {row.one_line()}")
+        elif was.one_line() != row.one_line():
+            lines.append(f"  was {was.one_line()}")
             lines.append(f"  now {row.one_line()}")
     return lines
 
