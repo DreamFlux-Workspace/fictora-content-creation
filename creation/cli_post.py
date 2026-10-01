@@ -408,7 +408,9 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     reel.add_argument(
         "--take-file", action="append", default=None, metavar="[tK=]FILE",
-        help="The accepted finished file of a take (picks its finish record). Default: the newest record.",
+        help="The accepted finished file of a take (picks its finish record; with none, its source and captions "
+        "are worked out from the desk, each step printed with a ⚠). Default: the newest record, else the newest "
+        "-sokii file the run notes name.",
     )  # fmt: skip
     reel.add_argument(
         "--source", action="append", default=None, metavar="[tK=]FILE",

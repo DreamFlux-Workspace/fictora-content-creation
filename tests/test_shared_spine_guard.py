@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from creation.cli_produce import main as produce_main
-from creation.shared_spine import desks_sharing_spine
+from creation.shared_spine import desks_sharing_spine, shared_spine_refusal
 from fake_api import FakeApi
 
 
@@ -83,3 +83,37 @@ def test_a_read_only_command_is_never_refused(
 
     assert produce_main(["status", "--desk", str(desk)]) == 0
     assert "shares" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("command", ["reel", "set-bed", "join", "review"])
+def test_local_post_commands_are_never_refused_on_a_shared_story(
+    desk: Path, command: str
+) -> None:
+    """``reel`` and ``set-bed`` write only on this desk (``reels/``, ``series.json``), never the server story."""
+
+    _copy(desk)
+
+    assert shared_spine_refusal(command, desk) is None
+
+
+@pytest.mark.parametrize("command", ["edit", "film", "line", "finish"])
+def test_commands_that_write_or_spend_are_still_refused_on_a_shared_story(
+    desk: Path, command: str
+) -> None:
+    copy = _copy(desk)
+
+    refused = shared_spine_refusal(command, desk)
+    assert refused is not None and str(copy) in refused
+
+
+def test_reel_on_a_shared_story_runs_without_the_flag(
+    desk: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _copy(desk)
+
+    # The tiny desk has no finished take, so the reel stops later; what matters is that it is not refused.
+    produce_main(["reel", "--desk", str(desk), "--episode", "1"])
+
+    err = capsys.readouterr().err
+    assert "Stopped: this desk's story" not in err
+    assert "--shared-spine-ok" not in err

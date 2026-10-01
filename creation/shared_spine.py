@@ -27,6 +27,8 @@ READ_OR_LOCAL_COMMANDS = frozenset(
         "expressions", "spine", "take-facts", "check-lines", "plates",
         # local post (ffmpeg on this laptop)
         "join", "trim", "tempo", "freeze", "soften", "blur", "deboard", "voice-fx", "review",
+        # local post that writes only on the desk: the reel (under reels/), the pinned bed (series.json)
+        "reel", "set-bed",
     }
 )  # fmt: skip
 #: Flag that lets a command through on a shared story.
