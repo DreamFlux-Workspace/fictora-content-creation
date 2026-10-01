@@ -208,6 +208,22 @@ def soundtrack_from(facts: Mapping[str, Any] | None) -> Soundtrack:
     )
 
 
+def model_scored(facts: Mapping[str, Any] | None) -> bool:
+    """Whether the take facts say the video model was asked for the genre's music (``model_music: true``).
+
+    A newer server (fictora-drama #569) reports what it asked each take for:
+    ``true`` when nothing would lay a bed after filming, so the take's own
+    sound may carry the harness's score; ``false`` when it asked for no music.
+    Absent (an older server or take) reads as not scored: those takes were
+    asked for no music, and the bed is laid as before.
+    """
+
+    if not facts:
+        return False
+    body = facts.get("take_facts", facts)
+    return isinstance(body, Mapping) and body.get("model_music") is True
+
+
 def _laid(block: Any) -> bool:
     """``{"laid": true, ...}`` is laid; anything else (absent, null, unreadable) is not."""
 

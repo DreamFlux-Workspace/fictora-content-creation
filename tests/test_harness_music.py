@@ -253,6 +253,57 @@ def test_a_locked_take_with_server_ambience_and_music_gets_neither_again(
     assert "!! no location ambience" not in out.getvalue()
 
 
+@needs_ffmpeg
+@pytest.mark.parametrize(
+    ("facts", "bedded"),
+    [
+        ({**NATIVE}, True),
+        (None, True),
+    ],
+)
+def test_without_a_music_fact_the_bed_is_laid_as_before(
+    post_desk: Path, facts: dict | None, bedded: bool
+) -> None:
+    _desk_take(post_desk, facts_with(facts))
+    calls: list[str | None] = []
+
+    result = run_finish(
+        post_desk, sfx_render=fake_sfx([]), bed_maker=_made_bed(calls),
+        facts_fetcher=lambda *a: None, thumbnail=False, stream=io.StringIO(),
+    )  # fmt: skip
+
+    assert result.complete
+    assert (next(s for s in result.steps if s.step == "bed").status == "ran") is bedded
+    assert not result.music_in_take
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("scored", [True, False])
+def test_a_take_the_model_scored_gets_no_bed(post_desk: Path, scored: bool) -> None:
+    """``model_music: true`` (fictora-drama #569): the model was asked for the genre's music."""
+
+    facts = facts_with(NATIVE)
+    facts["take_facts"]["model_music"] = scored
+    _desk_take(post_desk, facts)
+    calls: list[str | None] = []
+
+    result = run_finish(
+        post_desk, sfx_render=fake_sfx([]), bed_maker=_made_bed(calls) if not scored else _never,
+        facts_fetcher=lambda *a: None, thumbnail=False, stream=io.StringIO(),
+    )  # fmt: skip
+
+    assert result.complete
+    bed = next(s for s in result.steps if s.step == "bed")
+    if scored:
+        assert bed.status == "skipped" and "model_music" in bed.detail
+        assert result.music_in_take and "music ✓ (in the take" in result.sound_line()
+        record = latest_finish_record(post_desk, 1, "t1")
+        assert record is not None and record.music_in_take
+    else:
+        assert bed.status == "ran" and calls == [None]
+        assert not result.music_in_take
+
+
 # --- join -------------------------------------------------------------------------------------------------------
 
 

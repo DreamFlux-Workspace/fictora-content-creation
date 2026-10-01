@@ -31,9 +31,10 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    bed lands at about -27 LUFS, about 9 dB under the dialogue
    (:func:`creation.post.bed.bed_level`). The step prints the level and why,
    and a ``!!`` line when it puts the bed outside the band. When the take
-   facts say the harness's music is already in the take's soundtrack
-   (``soundtrack.music.laid``) no bed is laid: the step says so and the take
-   counts as having music. ``--music "…"`` never makes or picks music: it is
+   facts say the harness's music is already on the take (``soundtrack.music.laid``:
+   baked into its track; or ``model_music: true``: the video model was asked
+   for the genre's music, fictora-drama #569) no bed is laid: the step says so
+   and the take counts as having music. A missing fact lays the bed as before. ``--music "…"`` never makes or picks music: it is
    saved as a music change note for the harness (:func:`creation.post.bed.record_music_note`),
    and every finish prints the notes waiting for the next re-run.
 3. ``colour``    - match the take to the board the human approved.
@@ -202,6 +203,7 @@ from creation.post.soundtrack import (
     line_windows,
     locked_voice_refusal,
     misplaced_lines,
+    model_scored,
     soundtrack_from,
     unheard_lines,
 )
@@ -283,7 +285,7 @@ class FinishResult:
     locked_voices: bool = False
     #: Why the chain stopped before a deliverable (a locked-voice take with no bed or room tone).
     stopped: str = ""
-    #: The harness's music is already in the take's soundtrack (take facts ``soundtrack.music.laid``): no bed.
+    #: The harness's music is already on the take (take facts ``soundtrack.music.laid`` or ``model_music``): no bed.
     music_in_take: bool = False
     #: The server laid the location's ambience under the voices (``soundtrack.ambience.laid``).
     ambience_in_take: bool = False
@@ -826,11 +828,24 @@ def run_finish(
         else:
             facts_state["path"] = checked.facts
             timeline_note = checked.note
-    soundtrack = (
-        soundtrack_from(json.loads(facts_state["path"].read_text(encoding="utf-8")))
+    facts_payload = (
+        json.loads(facts_state["path"].read_text(encoding="utf-8"))
         if facts_state["path"] is not None
-        else Soundtrack()
+        else None
     )
+    soundtrack = (
+        soundtrack_from(facts_payload) if facts_payload is not None else Soundtrack()
+    )
+    # The harness's music is already on the take: baked into its track (music.laid), or the model was asked
+    # for the genre's music (model_music). Either way a bed would double it. A missing fact lays the bed.
+    music_why = (
+        "the harness's music is in the take's soundtrack (take facts music.laid)"
+        if soundtrack.music_laid
+        else "the video model was asked for the genre's music (take facts model_music)"
+        if model_scored(facts_payload)
+        else ""
+    )
+    music_in_take = bool(music_why)
     locked = soundtrack.target_audio
     if locked:
         changes = [
@@ -872,7 +887,7 @@ def run_finish(
         hand_steps=hand_steps,
         soundtrack=soundtrack.one_line() if facts_state["path"] is not None else "",
         locked_voices=locked,
-        music_in_take=soundtrack.music_laid,
+        music_in_take=music_in_take,
         ambience_in_take=locked and soundtrack.ambience_laid,
         music_notes=tuple(music_notes(desk, episode=episode, take_id=take_id)),
     )
@@ -1447,17 +1462,10 @@ def run_finish(
         return StepReport(ROOM_TONE_STEP, "ran", detail, toned)
 
     def do_bed(_take: Path) -> StepReport:
-        if soundtrack.music_laid:
-            # The harness's music is already in the take: a bed under it would double the music.
-            append_run_note(
-                run_dir,
-                "Bed: none, the harness's music is in the take's soundtrack (music.laid)",
-            )
-            return StepReport(
-                "bed",
-                "skipped",
-                "the harness's music is already in the take's soundtrack (take facts music.laid)",
-            )
+        if music_in_take:
+            # The harness's music is already on the take: a bed under it would double the music.
+            append_run_note(run_dir, f"Bed: none, {music_why}")
+            return StepReport("bed", "skipped", f"no bed: {music_why}")
         bed = resolve_bed(desk, spine=spine, maker=bed_maker)
         bed_state["path"] = bed.path
         if bed.cost_usd:
@@ -1499,7 +1507,7 @@ def run_finish(
             bed_db=bed_state["db"],
             # Nothing to duck without a bed (the harness's music is in the take).
             duck_db=mix_duck_db if bed_state["path"] is not None else None,
-            music_in_take=soundtrack.music_laid,
+            music_in_take=music_in_take,
             voice_source=thought_state["path"] or voice_state["path"] or source,
             cues=bed_state["cues"],
             buses=True,
@@ -1831,7 +1839,7 @@ def run_finish(
             )
         step(ROOM_TONE_STEP, "Laying room tone under the locked voices", do_room_tone)
     step("bed", "Finding the show's music bed (the harness's)", do_bed)
-    has_music = soundtrack.music_laid or result._ran("bed")
+    has_music = music_in_take or result._ran("bed")
     if locked and not (has_music and result._ran(ROOM_TONE_STEP)):
         lacking = " and ".join(
             name
@@ -1882,7 +1890,7 @@ def run_finish(
         take_id=take_id,
         complete=result.complete,
         pre_bed=record_state["pre_bed"] if result._ran("mix") else None,
-        music_in_take=soundtrack.music_laid,
+        music_in_take=music_in_take,
         master=record_state["master"] or current,
         final=current,
         bed=bed_state["path"],
