@@ -58,7 +58,11 @@ from creation.cli_text import TextArgError, text_or_file
 from creation.desk_media_urls import drawn_cast_rows
 from creation.harness import stages_gated as stages
 from creation.harness.http_util import api_error_text, describe_job_error
-from creation.harness.raw_video import wait_for_raw_scene_clips
+from creation.harness.raw_video import (
+    STEP_RAW_CLIPS,
+    raw_clips_name,
+    wait_for_raw_scene_clips,
+)
 from creation.harness.session import DramaApiRunSession
 from creation.harness.stages_gated import scene_prompt
 from creation.harness.visual_first_ep1 import reuse_generation_body
@@ -3602,7 +3606,8 @@ def run_take_facts(
     job = take_job_id(desk, episode, take_id)
     if job is None:
         raise CommandStopped(
-            f"{label}: api/17_raw_scene_clips.json names no job for this take; film it first"
+            f"{label}: api/ names no job for this take in its clip records "
+            f"({STEP_RAW_CLIPS}, film-*-raw-scene-clips.json); film it first"
         )
     desk, state, run = _desk_session(desk)
     try:
@@ -5168,7 +5173,7 @@ def _run_film(
         run,
         str(job_id),
         deadline_seconds=cfg.poll_video_deadline_seconds,
-        save_as=f"{unit}-raw-scene-clips.json",
+        save_as=raw_clips_name(unit),
     )
     spine = run.spine(state.spine_id or "")
     save_spine_snapshot(desk, episode, spine)

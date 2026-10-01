@@ -39,6 +39,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Literal
 
+from creation.harness.raw_video import STEP_RAW_CLIPS
 from creation.ops.folder import next_versioned_path
 from creation.ops.state import EpisodeState, SeriesState, load_series, series_path
 from creation.production_config import CONFIG_FILENAME, ProductionConfig
@@ -49,7 +50,7 @@ SERIES_BACKUP_FILENAME = "series.pre-adopt.json"
 #: The internal kit's desk-root take list.
 INTERNAL_TAKES = Path("api") / "18_takes.json"
 #: The take list this kit reads, per episode.
-RAW_CLIPS_FILENAME = "17_raw_scene_clips.json"
+RAW_CLIPS_FILENAME = STEP_RAW_CLIPS
 
 #: Only an internal raw take: ``take-ep01-t1-v2.mp4``. Never a post step
 #: (``-colour-v``, ``-mix-v``, ``-cap-v``, ``-deboard-v`` ...) and never a raw one.

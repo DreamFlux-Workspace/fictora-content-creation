@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from creation.harness.credentials import load_drama_api_credentials
-from creation.harness.raw_video import episode_clips
+from creation.harness.raw_video import episode_clips, raw_clips_records
 from creation.harness.session import DramaApiRunSession
 from creation.ops.state import episode_by_ordinal, load_series, take_by_id
 from creation.production_state import load_production
@@ -223,24 +223,29 @@ def approved_board(desk: Path, episode: int, take_id: str) -> Path | None:
 
 
 def take_clip(desk: Path, episode: int, take_id: str) -> dict[str, Any] | None:
-    """The take's clip in ``epNN/api/17_raw_scene_clips.json`` (``job_id`` and the stored ``url``).
+    """The take's newest clip (``job_id`` and the stored ``url``) in the episode's clip records.
 
-    The episode's clips are found by its API id (by ordinal via ``episode_summaries``);
-    take ``tN`` is the clip with board index ``N``, else the ``N``-th clip.
+    The records are the step's ``epNN/api/17_raw_scene_clips.json`` and each
+    ``film`` unit's ``epNN/api/film-*-raw-scene-clips.json``
+    (:func:`creation.harness.raw_video.raw_clips_records`), newest first, so a
+    take filmed again by ``film`` is read from that film, not from the step.
+    In each record the episode's clips are found by its API id (by ordinal via
+    ``episode_summaries``); take ``tN`` is the clip with board index ``N``,
+    else the ``N``-th clip (the way ``film`` collected it).
     """
 
-    path = desk / f"ep{episode:02d}" / "api" / "17_raw_scene_clips.json"
-    if not path.is_file():
-        return None
-    raw = json.loads(path.read_text(encoding="utf-8"))
     found = saved_spine(desk, episode)
     wanted = episode_id_for(found[0], episode) if found else f"episode_{episode:02d}"
-    clips = episode_clips(raw, episode_id=wanted)
     index = int(take_id.lstrip("t") or 1)
-    for clip in clips:
-        if clip.get("set_index") == index:
-            return dict(clip)
-    return dict(clips[index - 1]) if 0 < index <= len(clips) else None
+    for path in raw_clips_records(desk / f"ep{episode:02d}" / "api"):
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        clips = episode_clips(raw, episode_id=wanted)
+        for clip in clips:
+            if clip.get("set_index") == index:
+                return dict(clip)
+        if 0 < index <= len(clips) and clips[index - 1].get("set_index") is None:
+            return dict(clips[index - 1])
+    return None
 
 
 def take_job_id(desk: Path, episode: int, take_id: str) -> str | None:

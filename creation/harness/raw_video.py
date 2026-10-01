@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import time
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -21,6 +22,63 @@ from creation.harness.session import DramaApiRunSession
 
 _SET_SUFFIX = re.compile(r"_set(\d+)$")
 _FAILED = frozenset({"failed", "cancelled"})
+
+STEP_RAW_CLIPS = "17_raw_scene_clips.json"
+"""The clip record ``step`` writes in ``epNN/api`` (also what ``adopt-desk`` builds for an old desk)."""
+
+_UNIT_RAW_CLIPS_SUFFIX = "-raw-scene-clips.json"
+
+
+def raw_clips_name(unit: str | None = None) -> str:
+    """Name of the clip record a filming writes in ``epNN/api``.
+
+    ``step`` keeps :data:`STEP_RAW_CLIPS`; a ``film`` unit (``film-ep02-t2-s2``)
+    keeps its own record so the step's is never overwritten. Every reader finds
+    both through :func:`raw_clips_records`.
+
+    Parameters
+    ----------
+    unit
+        The ``film`` unit, or ``None`` for ``step``.
+
+    Returns
+    -------
+    str
+        The file name.
+    """
+
+    return f"{unit}{_UNIT_RAW_CLIPS_SUFFIX}" if unit else STEP_RAW_CLIPS
+
+
+def raw_clips_records(api_dir: Path) -> list[Path]:
+    """Every clip record in an episode's ``api/`` folder, newest first.
+
+    The step's :data:`STEP_RAW_CLIPS` and each ``film`` unit's record
+    (:func:`raw_clips_name`), ordered by when they were written, so a take
+    filmed again is read from the film that filmed it last.
+
+    Parameters
+    ----------
+    api_dir
+        ``epNN/api``.
+
+    Returns
+    -------
+    list[Path]
+        Existing records, newest first (empty when the episode was never filmed).
+    """
+
+    if not api_dir.is_dir():
+        return []
+    found = [
+        path
+        for path in api_dir.iterdir()
+        if path.is_file()
+        and (path.name == STEP_RAW_CLIPS or path.name.endswith(_UNIT_RAW_CLIPS_SUFFIX))
+    ]
+    return sorted(
+        found, key=lambda path: (path.stat().st_mtime_ns, path.name), reverse=True
+    )
 
 
 def clip_url_from_job_payload(job: dict[str, Any]) -> str | None:
@@ -62,7 +120,7 @@ def wait_for_raw_scene_clips(
     *,
     deadline_seconds: float = 7200.0,
     interval_seconds: float = 15.0,
-    save_as: str = "17_raw_scene_clips.json",
+    save_as: str = STEP_RAW_CLIPS,
 ) -> dict[str, Any]:
     """Poll until every take job on the coordinator has a clip URL.
 
@@ -81,7 +139,7 @@ def wait_for_raw_scene_clips(
     interval_seconds
         Sleep between polls.
     save_as
-        Artefact name for the clip list (a ``film`` re-film keeps its own, never the step's).
+        Artefact name for the clip list (:func:`raw_clips_name`: a ``film`` keeps its own, never the step's).
 
     Returns
     -------

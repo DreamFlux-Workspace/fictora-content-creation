@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +17,7 @@ from creation.harness import stages_gated as stages
 from creation.ops.floor import approve_board, init_series_desk, record_filmed
 from creation.ops.state import episode_by_ordinal, load_series
 from creation.ops.folder import next_versioned_path
+from creation.post.desk import take_job_id, take_stored_url
 from creation.production_state import (
     ensure_production,
     load_production,
@@ -272,6 +276,59 @@ def test_a_second_refilm_of_the_same_take_moves_the_seed_again(
     run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
 
     assert api30.posted(VIDEO)[0]["seed_attempt"] == 3
+
+
+def test_after_a_film_the_desk_reads_the_new_takes_clip_not_the_steps(
+    desk30: Path, api30: FakeApi
+) -> None:
+    """L-20260929-8: finish / transcription read the clip ``film`` just saved."""
+
+    _filmed_once(desk30)
+    api_dir = desk30 / "ep02" / "api"
+    api_dir.mkdir(parents=True, exist_ok=True)
+    step_record = api_dir / "17_raw_scene_clips.json"
+    step_record.write_text(
+        json.dumps(
+            {
+                "coordinator_job_id": "job_video_1",
+                "clips": [
+                    {"job_id": "job_old_t1", "url": "https://r2.example/old-t1.mp4",
+                     "relation_id": "scene_ep_02_set01", "set_index": 1, "episode_id": "ep_02"},
+                    {"job_id": "job_old_t2", "url": "https://r2.example/old-t2.mp4",
+                     "relation_id": "scene_ep_02_set02", "set_index": 2, "episode_id": "ep_02"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )  # fmt: skip
+    earlier = time.time() - 600
+    os.utime(step_record, (earlier, earlier))
+    api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "1.20"}}
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
+    _take_two_of_episode_two(api30)
+
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+
+    assert take_stored_url(desk30, 2, "t2") == "https://r2.example/ep2-t2.mp4"
+    assert take_job_id(desk30, 2, "t2") == "job_take_e2t2"
+    # t1 was not re-filmed: still the step's clip (old desks keep reading the legacy name).
+    assert take_stored_url(desk30, 2, "t1") == "https://r2.example/old-t1.mp4"
+
+
+def test_a_desk_filmed_only_by_film_has_a_stored_url(
+    desk30: Path, api30: FakeApi
+) -> None:
+    _filmed_once(desk30)
+    api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "1.20"}}
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
+    _take_two_of_episode_two(api30)
+
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+
+    assert not (desk30 / "ep02" / "api" / "17_raw_scene_clips.json").exists()
+    assert take_stored_url(desk30, 2, "t2") == "https://r2.example/ep2-t2.mp4"
+    # The film's only clip is t2's (board 2): never handed out as t1's by position.
+    assert take_stored_url(desk30, 2, "t1") is None
 
 
 def test_an_interrupted_film_picks_up_its_job_without_posting_again(
