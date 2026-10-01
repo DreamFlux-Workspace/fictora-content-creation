@@ -1201,7 +1201,8 @@ def soundtrack_section(
     details = [row.strip() for row in rows]
     if soundtrack.target_audio:
         details.append(
-            "The voices are already the locked voices: do not revoice. finish lays room tone, the bed "
+            "The voices are already the locked voices: do not revoice. finish lays the location's ambience "
+            "(room tone when none can be made), the bed "
             "(ducked in each line window) and the effects on the measured cuts, and stops if it cannot."
         )
     return Section(

@@ -21,7 +21,7 @@ from conftest import make_take, needs_ffmpeg
 
 from creation.captions import Span, time_lines
 from creation.orchestrate import take_soundtrack_lines
-from creation.post.finish import ROOM_TONE_STEP, run_finish
+from creation.post.finish import AMBIENCE_STEP, ROOM_TONE_STEP, run_finish
 from creation.post.media import measure_rms_windows
 from creation.post.review import soundtrack_section
 from creation.post.sfx import filmed_shot_windows, planned_shots
@@ -188,8 +188,11 @@ def test_finish_lays_room_tone_bed_ducked_in_line_windows_effects_on_measured_cu
     log = out.getvalue()
     assert result.complete, log
     assert [s.step for s in result.steps] == [
-        "deboard", "sfx", ROOM_TONE_STEP, "bed", "colour", "mix", "captions", "watermark", "thumbnail",
+        "deboard", "sfx", AMBIENCE_STEP, ROOM_TONE_STEP, "bed", "colour", "mix", "captions", "watermark",
+        "thumbnail",
     ]  # fmt: skip
+    # The fixture spine names no location: no ambience cue, room tone is the fallback (test_target_audio_ambience).
+    assert next(s for s in result.steps if s.step == AMBIENCE_STEP).status == "skipped"
     detail = {s.step: s.detail for s in result.steps}
     # (c) the shot change planned at 2.5 s follows the cut measured 1.4 s later, and the cuts are printed.
     assert "measured cuts: 3.90s" in detail["sfx"] and "2.50->3.90s" in detail["sfx"]
@@ -247,7 +250,9 @@ def test_finish_stops_loudly_without_a_bed_and_never_ships_a_voice_only_take(
 
     assert not result.complete and "music" in result.sound_missing
     assert "no music bed" in result.stopped
-    assert [s.step for s in result.steps] == ["deboard", "sfx", ROOM_TONE_STEP, "bed"]
+    assert [s.step for s in result.steps] == [
+        "deboard", "sfx", AMBIENCE_STEP, ROOM_TONE_STEP, "bed",
+    ]  # fmt: skip
     assert "!! STOPPED" in out.getvalue()
     assert not list((post_desk / "ep01" / "takes").glob("*-sokii-*.mp4")), (
         "nothing deliverable is written"
