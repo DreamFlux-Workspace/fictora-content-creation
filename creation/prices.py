@@ -18,7 +18,7 @@ A lane without a verified price is ``None``: never guessed.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Final
 
@@ -48,6 +48,50 @@ H3_MAX_REFERENCE_IMAGES: Final = 9
 H3_TURBO_PROMO_USD_PER_SECOND: Final = Decimal("0.02")
 H3_TURBO_PROMO_LAST_DAY: Final = date(2026, 9, 30)
 H3_TURBO_USD_PER_SECOND: Final = Decimal("0.04")
+
+#: The clock fal bills on: its dated rates ("the discount ends September 30") are read on San Francisco
+#: time. Evidence (fictora-drama #534): at 09:09 UTC on 2026-10-01 fal's own pricing API still returned
+#: the Turbo promo rate, so the promo ended at 2026-10-01T07:00Z, not at UTC or IST midnight. A fixed
+#: offset (Pacific Daylight Time, in force on the 2026-09-30 boundary) mirrors the server's
+#: ``prices.FAL_BILLING_TIMEZONE``; a boundary in Pacific Standard Time (from 2026-11-01) needs UTC-8.
+FAL_BILLING_TIMEZONE: Final = timezone(timedelta(hours=-7), "PDT")
+
+
+def now_utc() -> datetime:
+    """Return this moment, timezone-aware (one seam for tests)."""
+
+    return datetime.now(timezone.utc)
+
+
+def fal_billing_day(instant: datetime | None = None) -> date:
+    """Return the day fal bills work started at ``instant`` on (default: now).
+
+    The desk's own calendar day is the wrong clock: in India it turns over
+    12.5 hours before fal's, so on a rate-change day the kit priced the
+    regular rate all morning while fal (and the server) still billed the
+    promo, and warned that the server was stale (L-20261001-7 follow-up).
+
+    Parameters
+    ----------
+    instant
+        Timezone-aware moment; ``None`` means now.
+
+    Returns
+    -------
+    date
+        The calendar day at that moment on fal's clock.
+
+    Raises
+    ------
+    ValueError
+        When ``instant`` is naive: it names no moment.
+    """
+
+    moment = instant if instant is not None else now_utc()
+    if moment.tzinfo is None or moment.utcoffset() is None:
+        raise ValueError("fal_billing_day needs a timezone-aware instant")
+    return moment.astimezone(FAL_BILLING_TIMEZONE).date()
+
 
 #: One cast plate or one storyboard board (the product's own still price since #404).
 STILL_USD: Final = Decimal("0.30")
@@ -379,6 +423,7 @@ def envelope_usd(*, first_episode: bool, band: str) -> float:
 __all__ = [
     "ENVELOPE_CONTINUING_USD",
     "ENVELOPE_FIRST_USD",
+    "FAL_BILLING_TIMEZONE",
     "H3_MAX_R2V_ENDPOINT",
     "H3_MAX_TURBO_I2V_ENDPOINT",
     "H3_TURBO_MIN_SECONDS",
@@ -386,6 +431,7 @@ __all__ = [
     "STILL_USD",
     "billed_seconds",
     "envelope_usd",
+    "fal_billing_day",
     "lane_endpoint",
     "lane_label",
     "lane_take_usd",

@@ -63,6 +63,7 @@ from creation.post.take_facts import (
     shot_people_lines,
 )
 from creation.prices import (
+    fal_billing_day,
     H3_MAX_R2V_ENDPOINT,
     H3_MAX_TURBO_I2V_ENDPOINT,
     H3_RESOLUTION,
@@ -342,7 +343,7 @@ def table_estimate_usd(
     per_take = lane_take_usd(
         state.video_lane,
         seconds,
-        on=date.today(),
+        on=fal_billing_day(),
         reference_images=references,
         server=server,
     )
@@ -352,7 +353,7 @@ def table_estimate_usd(
             float(fallback)
             if fallback is not None
             else take_usd(
-                H3_MAX_TURBO_I2V_ENDPOINT, H3_RESOLUTION, seconds, on=date.today()
+                H3_MAX_TURBO_I2V_ENDPOINT, H3_RESOLUTION, seconds, on=fal_billing_day()
             )
         )
     return round(float(per_take or 0.0) * takes, 2)
@@ -394,19 +395,22 @@ def price_estimate(
     takes: int,
     on: date | None = None,
 ) -> tuple[float, str, list[str]]:
-    """Price an estimate answer, naming the lane and $/s, and warn loudly when the server's dollars are missing or stale.
+    """Price an estimate answer, naming the lane and $/s, and warn loudly when the server's dollars are missing or do not add up.
 
-    The server's dated ``cost_estimate.total_usd`` is used when it was priced
-    at today's rate. The server prices on its own UTC day, so just after a rate
-    change (the Turbo promo ended 2026-09-30) it can answer with yesterday's
-    rate while the kit already prints today's (L-20261001-7). The kit re-prices
-    the server's billed seconds at today's rate; when the two totals disagree a
-    ``!!`` line shows both, and the higher one is the estimate, so the human
-    never says yes to the lower number. Without dollars (the server
-    refused or skipped the estimate, or answered with no dollars) the kit's own
-    price table is used, and a ``!!`` line says so: the number is the kit's,
-    not the server's. A lane with no verified rate adds a second ``!!`` line
-    naming the rate that was used instead.
+    The server's dated ``cost_estimate.total_usd`` is the estimate: it is
+    priced on ``priced_on``, the day fal bills on (fictora-drama #534), and
+    the kit names the rate for that same day. Kit #68 re-priced it on the
+    desk's own calendar day and showed the higher number; fal's day turns
+    over at 07:00Z (12:30 IST), so on the morning of a rate change in India
+    that over-quoted a correct promo estimate and warned (L-20261001-7). Now
+    a ``!!`` line appears only when the server's own numbers disagree with
+    each other (rate x seconds against the video dollars, video + stills
+    against the total), and then the higher of the total and the re-added
+    sum is shown, so the human never says yes to the lower number. Without
+    dollars (the server refused or skipped the estimate, or answered with no
+    dollars) the kit's own price table is used on fal's billing day, and a
+    ``!!`` line says so. A lane with no verified rate adds a second ``!!``
+    line naming the rate that was used instead.
 
     Parameters
     ----------
@@ -421,37 +425,42 @@ def price_estimate(
     takes
         Takes being priced.
     on
-        The filming day (default: today).
+        Billing day for the kit's own table (default: :func:`fal_billing_day` now).
 
     Returns
     -------
     tuple[float, str, list[str]]
         Dollars, a source phrase (always lane + $/s), and warning lines (empty
-        when the server's dollars match today's rate).
+        when the server's dollars add up).
     """
 
-    today = on or date.today()
+    today = on or fal_billing_day()
     seconds = cfg.clip_duration_seconds
-    rate = lane_rate_words(state, on=today)
-    table = table_estimate_usd(state, cfg, cast_count=cast_count, takes=takes)
     cost = (
         estimate.get("cost_estimate")
         if isinstance(estimate.get("cost_estimate"), dict)
         else None
     )
     if cost is not None and _money(cost.get("total_usd")) is not None:
-        usd = _estimate_usd(estimate, fallback_usd=table)
+        usd = _estimate_usd(estimate, fallback_usd=0.0)
+        priced_on = _iso_day(cost.get("priced_on")) or today
+        rate = lane_rate_words(state, on=priced_on)
+        server_rate = _money(cost.get("usd_per_second"))
+        if server_rate is not None:
+            label = lane_label(state.video_lane, server=state.server_lane())
+            rate = f"{label} {cost.get('video_resolution') or H3_RESOLUTION} at ${server_rate:g}/s"
         source = f"server estimate priced {cost.get('priced_on')} ({cost.get('takes')} take(s)); {rate}, {seconds} s a take"
-        repriced = _reprice_at_rate(cost, state, on=today)
-        if repriced is None or abs(repriced - usd) < 0.005:
+        mismatch = _server_sum_mismatch(cost)
+        if mismatch is None:
             return usd, source, []
+        added, how = mismatch
         warning = (
-            f"!! SERVER ESTIMATE DISAGREES WITH TODAY'S RATE: the server says ${usd:.2f}, priced "
-            f"{cost.get('priced_on')} at ${_money(cost.get('usd_per_second'))}/s; "
-            f"{_money(cost.get('billed_seconds')):g} s at today's {rate} is ${repriced:.2f}. "
-            f"Showing the higher, ${max(usd, repriced):.2f}: check it before the human says yes."
+            f"!! SERVER ESTIMATE DOES NOT ADD UP: the server says ${usd:.2f} total, but {how}, "
+            f"which is ${added:.2f}. Showing the higher, ${max(usd, added):.2f}: check it before the human says yes."
         )
-        return max(usd, repriced), source, [warning]
+        return max(usd, added), source, [warning]
+    rate = lane_rate_words(state, on=today)
+    table = table_estimate_usd(state, cfg, cast_count=cast_count, takes=takes)
     if estimate.get("estimate_skipped"):
         why = (
             f"the server refused it: {str(estimate.get('detail') or 'no detail')[:160]}"
@@ -479,28 +488,58 @@ def price_estimate(
     return table, source, warnings
 
 
-def _reprice_at_rate(
-    cost: dict[str, Any], state: ProductionState, *, on: date
-) -> float | None:
-    """Return the server's total with its billed seconds re-priced at the kit's rate for ``on``.
+def _iso_day(value: Any) -> date | None:
+    try:
+        return date.fromisoformat(str(value)[:10]) if value else None
+    except ValueError:
+        return None
 
-    Stills and reference images keep the server's figures; only the per-second
-    rate is swapped. ``None`` when the answer names no rate or seconds, or the
-    lane has no verified rate (nothing to check against).
+
+def _server_sum_mismatch(cost: dict[str, Any]) -> tuple[float, str] | None:
+    """Check the server's estimate against its own parts; ``None`` when they add up.
+
+    The server sends ``video_usd = usd_per_second x billed_seconds`` (plus
+    reference images past the free ones on R2V), ``stills_usd = still_usd_each
+    x (plates + boards)`` and ``total_usd = video_usd + stills_usd``. A part
+    the answer leaves out is not checked.
+
+    Returns
+    -------
+    tuple[float, str] | None
+        The total re-added from its parts and a phrase saying which sum is off.
     """
 
     total = _money(cost.get("total_usd"))
-    server_rate = _money(cost.get("usd_per_second"))
+    rate = _money(cost.get("usd_per_second"))
     seconds = _money(cost.get("billed_seconds"))
-    lane = server_lane({"cost_estimate": cost}) or lane_endpoint(
-        state.video_lane, server=state.server_lane()
-    )
-    if total is None or server_rate is None or seconds is None or lane is None:
+    video = _money(cost.get("video_usd"))
+    stills = _money(cost.get("stills_usd"))
+    each = _money(cost.get("still_usd_each"))
+    if total is None:
         return None
-    rate = video_usd_per_second(lane[0], lane[1], on=on)
-    if rate is None:
+    problems: list[str] = []
+    if rate is not None and seconds is not None:
+        by_rate = round(rate * seconds, 2)
+        r2v = str(cost.get("video_endpoint_id") or "") == H3_MAX_R2V_ENDPOINT
+        # R2V adds reference images on top of the seconds; nothing else does.
+        if video is None:
+            video = by_rate
+        elif video < by_rate - 0.005 or (not r2v and abs(video - by_rate) >= 0.005):
+            problems.append(f"{seconds:g} s at ${rate:g}/s is ${by_rate:.2f}")
+            video = by_rate
+    if each is not None:
+        count = int(cost.get("plates") or 0) + int(cost.get("boards") or 0)
+        by_count = round(each * count, 2)
+        if stills is not None and abs(stills - by_count) >= 0.005:
+            problems.append(f"{count} still(s) at ${each:.2f} is ${by_count:.2f}")
+        stills = by_count
+    if video is None or stills is None:
         return None
-    return round(total + (float(rate) - server_rate) * seconds, 2)
+    added = round(video + stills, 2)
+    if not problems and abs(added - total) < 0.005:
+        return None
+    problems.append(f"video ${video:.2f} + stills ${stills:.2f}")
+    return added, "; ".join(problems)
 
 
 def _estimate_usd(payload: dict[str, Any], *, fallback_usd: float) -> float:
@@ -749,7 +788,7 @@ def board_report(
     take_price = lane_take_usd(
         state.video_lane,
         clip_seconds,
-        on=date.today(),
+        on=fal_billing_day(),
         reference_images=references,
         server=state.server_lane(),
     )
@@ -793,7 +832,7 @@ def board_report(
             if lane and lane[0] == H3_MAX_R2V_ENDPOINT
             else "it opens on this board; cast plates are not sent"
         )
-        rate = lane_rate_words(state, on=date.today())
+        rate = lane_rate_words(state, on=fal_billing_day())
         lines.append(
             f"A take will cost about ${take_price:.2f} on {rate} ({clip_seconds} s, {what_goes})."
         )
@@ -1287,7 +1326,7 @@ def collect_takes(
     slot = episode_by_ordinal(load_series(desk), episode)
     take_ids = [take.take_id for take in slot.takes]
     (ep_dir / "takes").mkdir(parents=True, exist_ok=True)
-    today = date.today()
+    today = fal_billing_day()
     fetch = httpx.Client(timeout=300.0)
     booked = 0.0
     jobs: list[str] = []

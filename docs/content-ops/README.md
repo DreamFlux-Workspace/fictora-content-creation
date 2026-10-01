@@ -112,7 +112,7 @@ Every `CONFIRM` line in the plan (a gate the old desk never recorded, an unfinis
 
 ## Spend
 
-Lane today is H3 Max Turbo image-to-video (the server's default; H3 Max reference-to-video is an engineering-side switch). A 15s take is **$0.30** through 30 Sep 2026 ($0.02/s, fal promo) and **$0.60** from 1 Oct ($0.04/s). The board is the only picture the take gets: no cast plates, no voice references. A plate or board is **$0.30**.
+Lane today is H3 Max Turbo image-to-video (the server's default; H3 Max reference-to-video is an engineering-side switch). A 15s take is **$0.30** through 30 Sep 2026 ($0.02/s, fal promo) and **$0.60** from 1 Oct ($0.04/s; fal's day, so from 07:00Z / 12:30 IST). The board is the only picture the take gets: no cast plates, no voice references. A plate or board is **$0.30**.
 
 | Episode | Budget |
 | --- | --- |

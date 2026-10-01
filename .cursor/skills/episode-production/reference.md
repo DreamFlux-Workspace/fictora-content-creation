@@ -147,7 +147,7 @@ The writers pick an anime expression (`reaction_kind`) for every emotional momen
 
 | Unit | Cost |
 | --- | --- |
-| Take, 15 s, H3 Max Turbo I2V (`minimax/h3-max-turbo/image-to-video`, 768p), the default | $0.30 through 30 Sep 2026 ($0.02/s, fal promo); $0.60 from 1 Oct 2026 ($0.04/s). A 12 s take is $0.24 / $0.48. No image charge. Under 5 s films and bills 5 s |
+| Take, 15 s, H3 Max Turbo I2V (`minimax/h3-max-turbo/image-to-video`, 768p), the default | $0.30 through 30 Sep 2026 ($0.02/s, fal promo); $0.60 from 1 Oct 2026 ($0.04/s), on fal's day (Pacific): the promo ended 2026-10-01T07:00Z, 12:30 IST. A 12 s take is $0.24 / $0.48. No image charge. Under 5 s films and bills 5 s |
 | Take, 15 s, H3 Max R2V (`minimax/h3-max/reference-to-video`, 768p), engineering switch only | $1.20 ($0.08/s), plus $0.02048 per reference image past four (board + every cast plate, at most nine) |
 | Cast plate, object plate, board | $0.30 each (a character needs two plates: full + bust) |
 | Voice audition set | $0.30, once per character; a second set needs a cause |
