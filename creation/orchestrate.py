@@ -15,6 +15,7 @@ import re
 import shlex
 import sys
 import uuid
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -45,6 +46,7 @@ from creation.harness.visual_first_ep1 import (
     measure_board_exposure,
 )
 from creation.look_gate import look_gate_refusal
+from creation.narrator_cast import NarratorQuestionOpen, settle_narrators
 from creation.media_fetch import download_to_versioned
 from creation.ops.floor import (
     approve_board,
@@ -1088,12 +1090,24 @@ def step_retry_prefix(state: ProductionState) -> str | None:
 
 
 def run_step(
-    desk: Path, *, confirm_spend: bool = False, accept_notices: Sequence[str] = ()
+    desk: Path,
+    *,
+    confirm_spend: bool = False,
+    accept_notices: Sequence[str] = (),
+    narrator_heard_only: Sequence[str] = (),
+    narrator_on_screen: Sequence[str] = (),
+    ask: Callable[[str], str] | None = None,
 ) -> StepResult:
     """Run the next automated API step for the current phase.
 
     Before a paid plate or board drawing it refuses, with nothing sent, when the
     desk drew a look frame the look yes does not cover (:func:`look_gate_refusal`).
+    It also stops before one while a character named like a narrator has no
+    saved answer to "heard only, never seen?" (:mod:`creation.narrator_cast`):
+    ``ask`` asks it, or the ``narrator_*`` names answer it; with neither the
+    step stops and names both flags. Right after the draft it asks when it can,
+    and otherwise says the next step will.
+
     The draft pauses, with nothing sent, on a brief that asks for a photoreal look
     or names a real person until the operator passes ``accept_notices``
     (:mod:`creation.stylised_only`).
@@ -1107,6 +1121,11 @@ def run_step(
     accept_notices
         Brief notice kinds the creator acknowledged (``style_not_available``,
         ``real_person_not_allowed``); read by the draft step only.
+    narrator_heard_only, narrator_on_screen
+        Names the operator answered "heard only" / "on screen" for.
+    ask
+        Prompt function for the narrator question, or ``None`` when nobody
+        can answer.
 
     Returns
     -------
@@ -1129,7 +1148,19 @@ def run_step(
     ep_dir = _episode_dir(desk, ep)
     paths: list[str] = []
 
+    rerun = f"fictora-produce step --desk {desk}"
     try:
+        if state.spine_id and (
+            state.phase in PAID_DRAWING_PHASES
+            or narrator_heard_only
+            or narrator_on_screen
+        ):
+            # Before any plate or board is drawn: a narrator-named character
+            # is heard only or drawn as the operator said, never as guessed.
+            settle_narrators(
+                desk, run, run.spine(state.spine_id), heard_only=narrator_heard_only,
+                on_screen=narrator_on_screen, ask=ask, rerun=rerun, out=sys.stderr,
+            )  # fmt: skip
         if state.phase == "new":
             effective_prompt = ensure_plan_prompt(state.prompt)
             if effective_prompt != state.prompt:
@@ -1180,6 +1211,16 @@ def run_step(
                 f"Draft complete (episode 1 alone). spine_id={spine_id} plan={plan.get('status')}",
             )
             gate = script_gate_text(desk, spine, episode=ep)
+            try:
+                settle_narrators(
+                    desk, run, spine, heard_only=narrator_heard_only, on_screen=narrator_on_screen,
+                    ask=ask, rerun=rerun, out=sys.stderr,
+                )  # fmt: skip
+            except NarratorQuestionOpen as question:
+                # The draft is done; the plates wait for the answer.
+                gate += "\n" + str(question).replace(
+                    "Stopped, nothing drawn: ", "Before the plates: ", 1
+                )
             versus = "\n".join(brief_vs_spine_lines(state.prompt, spine, episode=ep))
             if versus:
                 _note(ep_dir, versus)

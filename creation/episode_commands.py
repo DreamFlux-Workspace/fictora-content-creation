@@ -61,6 +61,18 @@ from creation.authoring_warnings import (
     say_warnings,
 )
 from creation import orchestrate as _orchestrate
+from creation.narrator_cast import (
+    NarratorAnswer,
+    NarratorQuestionOpen,
+    add_narrator_answer_args,
+    interactive_ask,
+    load_answers,
+    named_like_narrator,
+    save_answer,
+    settle_narrators,
+    stop_message,
+)
+from creation.narrator_cast import question as narrator_question
 from creation.cli_text import TextArgError, text_or_file
 from creation.new_cast import new_cast_notice, newcomers
 from creation.desk_media_urls import drawn_cast_rows
@@ -187,6 +199,7 @@ from creation.spine_view import (
     episode_summary,
     frame_cast,
     frames_by_set,
+    heard_line_ids,
     shot_rows,
 )
 
@@ -774,6 +787,9 @@ def run_author(
     *,
     episode: int,
     direction: Mapping[str, str] | None = None,
+    narrator_heard_only: Sequence[str] = (),
+    narrator_on_screen: Sequence[str] = (),
+    ask: Callable[[str], str] | None = None,
     out: Any = None,
 ) -> Path:
     """Write episode N (2 on), save the spine, put its lines on the desk, and point the desk at it. Never approves.
@@ -791,6 +807,11 @@ def run_author(
         Episode ordinal, 2 or more. A missing desk slot is opened.
     direction
         From :func:`author_direction`.
+    narrator_heard_only, narrator_on_screen, ask
+        Answers to "heard only, never seen?" for a character named like a
+        narrator the episode brings in (:mod:`creation.narrator_cast`). With
+        no answer and nobody to ask, the episode is kept and the command stops
+        after it, naming both flags; nothing is drawn until it is answered.
     out
         Text stream for the script gate.
 
@@ -798,6 +819,11 @@ def run_author(
     -------
     Path
         ``api/spine.json``.
+
+    Raises
+    ------
+    NarratorQuestionOpen
+        A narrator-named character has no answer and ``ask`` is ``None``.
     """
 
     if episode < 2:
@@ -890,6 +916,16 @@ def run_author(
         f"(`fictora-produce approve --gate script`) or edit them.",
         file=sys.stderr,
     )
+    # A narrator-named character this episode brought in: heard only or drawn,
+    # as the operator says (founder decision 5), asked before the script gate.
+    _, _, run = _desk_session(desk)
+    try:
+        settle_narrators(
+            desk, run, run.spine(state.spine_id or ""), heard_only=narrator_heard_only,
+            on_screen=narrator_on_screen, ask=ask, rerun=f"fictora-produce step --desk {desk}", out=sys.stderr,
+        )  # fmt: skip
+    finally:
+        run.client.close()
     return path
 
 
@@ -1239,12 +1275,13 @@ def line_listing(spine: Mapping[str, Any], *, episode: int) -> list[str]:
     """
 
     names = _cast_names(spine)
+    heard_ids = heard_line_ids(spine)
     rows = []
     for number, (beat, line) in enumerate(
         episode_lines(spine, episode=episode), start=1
     ):
         who = names.get(str(line.get("cast_id")), str(line.get("cast_id") or "?"))
-        heard = " (off-screen)" if line.get("off_screen") is True else ""
+        heard = " (off-screen)" if str(line.get("line_id")) in heard_ids else ""
         spoken = (
             f"  performed: {line['spoken_text']}" if line.get("spoken_text") else ""
         )
@@ -1646,10 +1683,13 @@ def line_edit_consequences(
             f"server writes a new one {when}. To keep your own words, pin them with --spoken."
         )
     names = _cast_names(spine)
+    heard_ids = heard_line_ids(spine)
     for beat, line in episode_lines(spine, episode=episode):
         if (
             str(line.get("line_id")) != line_id
-            or line.get("off_screen") is True
+            # Heard off screen (flagged, or the server derives it from the
+            # frame and beat): nobody's lips are on that frame.
+            or str(line.get("line_id")) in heard_ids
             or not beat.get("frame_id")
         ):
             continue
@@ -2257,6 +2297,70 @@ def _card_voice(spine: Mapping[str, Any], cast_id: str) -> str | None:
     return None
 
 
+def new_voice_narrator_answer(
+    desk: Path,
+    new_voice: str,
+    *,
+    heard_only: Sequence[str] = (),
+    on_screen: Sequence[str] = (),
+    ask: Callable[[str], str] | None = None,
+) -> NarratorAnswer | None:
+    """Ask, before anything is sent, whether a narrator-named ``--new-voice`` is heard only.
+
+    ``line --new-voice`` adds someone heard and never seen, so a yes goes
+    ahead and a no stops: a drawn character is not added this way. A name
+    not like a narrator's is not asked (founder decision 5).
+
+    Parameters
+    ----------
+    desk
+        Series desk (a saved answer for the same cast id is reused).
+    new_voice
+        The new voice's name.
+    heard_only, on_screen
+        Names from ``--narrator-heard-only`` / ``--narrator-on-screen``.
+    ask
+        Prompt function, or ``None`` when nobody can answer.
+
+    Returns
+    -------
+    NarratorAnswer | None
+        The yes to save once the voice is added; ``None`` for a name not like
+        a narrator's.
+
+    Raises
+    ------
+    NarratorQuestionOpen
+        Nobody to ask and no flag answers it.
+    CommandStopped
+        The answer is "on screen".
+    """
+
+    if not named_like_narrator(new_voice):
+        return None
+    key = new_voice.strip().casefold()
+    cast_id = voice_cast_id(new_voice)
+    saved = load_answers(desk.expanduser().resolve()).get(cast_id)
+    if any(name.strip().casefold() == key for name in heard_only):
+        heard: bool | None = True
+    elif any(name.strip().casefold() == key for name in on_screen):
+        heard = False
+    elif saved is not None:
+        heard = saved.heard_only
+    elif ask is not None:
+        heard = ask(narrator_question(new_voice)).strip().casefold() in {"y", "yes"}
+    else:
+        raise NarratorQuestionOpen(
+            stop_message([new_voice], rerun="your `line` command again, with")
+        )
+    if not heard:
+        raise CommandStopped(
+            f"{new_voice} on screen is an ordinary drawn character, and `line --new-voice` only adds a voice "
+            "heard and never seen. A drawn character joins through the story (the next episode's `author`)."
+        )
+    return NarratorAnswer(cast_id=cast_id, name=new_voice, heard_only=True)
+
+
 def run_line(
     desk: Path,
     *,
@@ -2278,6 +2382,9 @@ def run_line(
     select_regen: bool = False,
     preview_only: bool = False,
     strand_voice: bool = False,
+    narrator_heard_only: Sequence[str] = (),
+    narrator_on_screen: Sequence[str] = (),
+    ask: Callable[[str], str] | None = None,
     out: Any = None,
 ) -> Path | None:
     """Change, add or remove a line on the server and on the desk in one step; with no change, list the lines.
@@ -2307,6 +2414,9 @@ def run_line(
     strand_voice
         Let an edit through that leaves a heard-only character with no lines
         (:func:`creation.stranded_voice.voices_left_without_lines`); without it the kit stops before sending.
+    narrator_heard_only, narrator_on_screen, ask
+        For a ``new_voice`` named like a narrator: the operator's answer to
+        "heard only, never seen?" (:func:`new_voice_narrator_answer`).
     out
         Text stream.
 
@@ -2318,6 +2428,17 @@ def run_line(
 
     out = out or sys.stdout
     adding = add or remove is not None or new_voice is not None
+    narrator = (
+        new_voice_narrator_answer(
+            desk,
+            new_voice,
+            heard_only=narrator_heard_only,
+            on_screen=narrator_on_screen,
+            ask=ask,
+        )
+        if new_voice is not None
+        else None
+    )
     if adding:
         if line is not None:
             raise CommandStopped(
@@ -2394,6 +2515,8 @@ def run_line(
                 None if preview_only else _card_voice(fresh, voice_cast_id(new_voice))
             )
             print(new_voice_pick_warning(desk, new_voice, picked=picked), file=out)
+        if narrator is not None and not preview_only:
+            save_answer(desk.expanduser().resolve(), narrator)
         return path
     if beat is not None or speaker_moves:
         raise CommandStopped("--beat and --speaker-moves go with --add")
@@ -5126,6 +5249,7 @@ def _approved_lines_with_speaker(
     """``(line_id, text, speaker cast_id, off_screen)`` for one take's approved lines, in order."""
 
     found: list[tuple[str, str, str, bool]] = []
+    heard_ids = heard_line_ids(spine)
     for take_beats in beats_by_take(spine, episode=episode, take_count=take_count)[
         take_index - 1 : take_index
     ]:
@@ -5140,7 +5264,7 @@ def _approved_lines_with_speaker(
                             str(raw["line_id"]),
                             text,
                             str(raw.get("cast_id") or ""),
-                            raw.get("off_screen") is True,
+                            str(raw["line_id"]) in heard_ids,
                         )
                     )
     return found
@@ -5871,6 +5995,7 @@ def add_episode_parsers(
     author.add_argument(
         "--title", default=None, help="With --line: a short name for it."
     )
+    add_narrator_answer_args(author)
 
     memory = sub.add_parser(
         "memory", help="Add one standing note or open thread to the series memory."
@@ -6071,6 +6196,7 @@ def add_episode_parsers(
         help="Remove (or give away) the last line of someone who is only heard anyway. Without it the kit stops: "
         "they would stay in the cast with no look, and the server may refuse to film until its fix is live.",
     )
+    add_narrator_answer_args(line)
 
     frame = sub.add_parser(
         "look-frame",
@@ -6311,7 +6437,14 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 line=args.line,
                 title=args.title,
             )
-            run_author(args.desk, episode=args.episode, direction=direction)
+            run_author(
+                args.desk,
+                episode=args.episode,
+                direction=direction,
+                narrator_heard_only=args.narrator_heard_only,
+                narrator_on_screen=args.narrator_on_screen,
+                ask=interactive_ask(),
+            )
             return 0
         if args.command == "memory":
             run_memory(args.desk, note=args.note, thread=args.thread)
@@ -6366,6 +6499,9 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 select_regen=args.select_regen,
                 preview_only=args.preview,
                 strand_voice=args.strand_voice,
+                narrator_heard_only=args.narrator_heard_only,
+                narrator_on_screen=args.narrator_on_screen,
+                ask=interactive_ask(),
             )
             return 0
         if args.command == "look-frame":

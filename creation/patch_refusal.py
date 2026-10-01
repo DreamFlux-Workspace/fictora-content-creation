@@ -87,7 +87,8 @@ FRAME_CAST_FIXES: dict[str, str] = {
     ),
     "off_screen_cast_on_frame": (
         "that character is only heard in this take: bring their line back on screen first "
-        "(`line --line ID --on-screen`), or leave them out of the shot"
+        "(`line --line ID --on-screen`; if their beat forbids 'visible NAME', take that out of the beat's "
+        "forbidden elements too, with `edit --beat`), or leave them out of the shot"
     ),
     "voice_only_cast_on_screen": (
         "a voice-only character is never drawn: leave them out of cast_refs and subject_blocking"

@@ -14,7 +14,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Collection, Mapping, Sequence
 
 from creation.ops.state import SpokenLine
 from creation.shot_plan import plan_lines
@@ -817,17 +817,53 @@ def row_speech_lines(
     return out
 
 
-def heard_not_seen(beats: Sequence[Mapping[str, Any]]) -> set[str]:
+def heard_line_ids(spine: Mapping[str, Any]) -> set[str]:
+    """Line ids the take plays heard off screen, as the server says.
+
+    fictora-drama (founder decision 4) derives it per line: the line is marked
+    ``off_screen``, or the frame or beat that carries it keeps its speaker out
+    of view (Hanakaze ep 1: Genzō's line had no flag while his frame said "NOT
+    VISIBLE"). The spine lists those lines in ``heard_off_screen_line_ids``.
+    A server without the field gives the flagged lines only, as before.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON (``GET /v1/spines/{id}``).
+
+    Returns
+    -------
+    set[str]
+        The server's list, plus every line marked ``off_screen``.
+    """
+
+    listed = {str(line_id) for line_id in spine.get("heard_off_screen_line_ids") or []}
+    flagged = {
+        str(line.get("line_id"))
+        for beat in spine.get("beats") or []
+        if isinstance(beat, Mapping)
+        for line in beat.get("dialogue_lines") or []
+        if isinstance(line, Mapping) and line.get("off_screen") is True
+    }
+    return listed | flagged
+
+
+def heard_not_seen(
+    beats: Sequence[Mapping[str, Any]], *, heard_line_ids: Collection[str] = ()
+) -> set[str]:
     """Cast ids one take only hears: an off-screen line here and nothing that shows them.
 
-    The server's rule (``off_screen_staging``): someone with an ``off_screen``
-    line in the take, and no on-screen line, no vocalization, and not the motion
-    subject of a beat that does not carry their off-screen line.
+    The server's rule (``off_screen_staging``): someone with a line heard off
+    screen in the take, and no on-screen line, no vocalization, and not the
+    motion subject of a beat that does not carry their off-screen line.
 
     Parameters
     ----------
     beats
         The take's beats (spine JSON).
+    heard_line_ids
+        :func:`heard_line_ids` of the spine; a line counts as heard when it is
+        here or marked ``off_screen``.
 
     Returns
     -------
@@ -842,7 +878,11 @@ def heard_not_seen(beats: Sequence[Mapping[str, Any]]) -> set[str]:
         for line in beat.get("dialogue_lines") or []:
             if not isinstance(line, Mapping) or not line.get("cast_id"):
                 continue
-            (off if line.get("off_screen") is True else seen).add(str(line["cast_id"]))
+            is_heard = (
+                line.get("off_screen") is True
+                or str(line.get("line_id")) in heard_line_ids
+            )
+            (off if is_heard else seen).add(str(line["cast_id"]))
         heard |= off
         vocal = beat.get("vocalization")
         if isinstance(vocal, Mapping) and vocal.get("cast_id"):
@@ -915,7 +955,8 @@ def off_screen_speaker_lines(
         ``!!`` lines, empty when nothing is wrong.
     """
 
-    hidden = heard_not_seen(take_beats)
+    heard_ids = heard_line_ids(spine)
+    hidden = heard_not_seen(take_beats, heard_line_ids=heard_ids)
     if not hidden:
         return []
     out: list[str] = []
@@ -942,7 +983,9 @@ def off_screen_speaker_lines(
             str(line.get("cast_id"))
             for line in beat.get("dialogue_lines") or []
             if isinstance(line, Mapping)
-            and line.get("off_screen") is True
+            and (
+                line.get("off_screen") is True or str(line.get("line_id")) in heard_ids
+            )
             and str(line.get("cast_id")) in hidden
         ]
         anchor = str(beat.get("frame_id") or "")
