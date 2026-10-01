@@ -23,6 +23,7 @@ lays one bed across the edited take and marks once. ``freeze``, ``soften`` and
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -176,7 +177,12 @@ class RecordCarry:
 def _take_args(parser: argparse.ArgumentParser, *, take_file_help: str) -> None:
     parser.add_argument("--desk", type=Path, required=True)
     parser.add_argument("--episode", type=int, default=1)
-    parser.add_argument("--take", dest="take_id", default="t1")
+    parser.add_argument(
+        "--take",
+        dest="take_id",
+        default=None,
+        help="Take id (default: the take --take-file names, else t1).",
+    )
     parser.add_argument("--take-file", type=Path, default=None, help=take_file_help)
 
 
@@ -296,6 +302,35 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )  # fmt: skip
 
 
+_TAKE_IN_NAME = re.compile(r"^take-ep(\d+)-(t\d+)(?:-|\.|$)")
+
+
+def take_id_for(args: argparse.Namespace) -> str:
+    """The take an edit writes under: ``--take``, else the take ``--take-file`` names, else ``t1``.
+
+    A trimmed take 2 used to be written as ``t1`` because ``--take`` defaulted to
+    t1 whatever file was passed.
+
+    Raises
+    ------
+    ValueError
+        When ``--take`` and the file name disagree.
+    """
+
+    named = None
+    if args.take_file is not None:
+        match = _TAKE_IN_NAME.match(Path(args.take_file).name)
+        named = match.group(2) if match else None
+    if args.take_id is None:
+        return named or "t1"
+    if named is not None and named != args.take_id:
+        raise ValueError(
+            f"--take {args.take_id} but --take-file `{Path(args.take_file).name}` is {named}; "
+            "drop --take (the file names its take) or pass the right file"
+        )
+    return str(args.take_id)
+
+
 def _source(args: argparse.Namespace, desk: Path) -> Path:
     if args.take_file is not None:
         path = args.take_file.expanduser().resolve()
@@ -330,6 +365,7 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
 
     out = stream or sys.stdout
     desk = args.desk.expanduser().resolve()
+    args.take_id = take_id_for(args)
     run_dir = desk / f"ep{args.episode:02d}"
     takes = run_dir / "takes"
     base = f"take-ep{args.episode:02d}-{args.take_id}"

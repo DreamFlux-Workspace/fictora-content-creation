@@ -279,3 +279,42 @@ def test_the_script_and_board_printouts_show_the_plan() -> None:
         "plan shot" in line
         for line in script_lines(spine_fixture(), episode=1, take_ids=["t1"])
     )
+
+
+def test_a_server_that_keeps_the_plan_in_its_own_shape_is_not_flagged(
+    desk: Path, api: FakeApi
+) -> None:
+    """Exact equality raised a false 'server dropped plan' when the server added nulls or reordered keys."""
+
+    api.spine_doc = spine_fixture(approved=False)
+    held = [
+        {"angle": None, "camera": "handheld", "size": "Extreme close-up ", "subject": "Hana's hands on the counter",
+         "row": 1},
+        {"subject": "the shop", "size": "wide", "angle": "high angle", "camera": "locked", "row": 2},
+    ]  # fmt: skip
+
+    def on_patch(_m: str, _p: str, _b: dict[str, Any] | None) -> dict[str, Any]:
+        api.spine_doc["beats"][0]["shot_plan"] = held
+        return {"spine_version": "v6"}
+
+    api.routes[("PATCH", "/v1/spines/sp1")] = on_patch
+    out = io.StringIO()
+
+    ec.run_edit(desk, episode=1, beat="1", shot_plan=PLAN, out=out)
+
+    assert "does not hold the plan that was sent" not in out.getvalue()
+
+
+def test_same_plan_ignores_shape_but_not_shots() -> None:
+    from creation.shot_plan import same_plan
+
+    assert same_plan(None, []) and same_plan([], None)
+    assert same_plan(
+        [{"size": "wide", "subject": "x", "camera": ""}],
+        [{"subject": "x", "size": "WIDE"}],
+    )
+    assert not same_plan(PLAN[:1], PLAN)
+    assert not same_plan(
+        [{"size": "wide", "subject": "the shop"}],
+        [{"size": "wide", "subject": "the street"}],
+    )
