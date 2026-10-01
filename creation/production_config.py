@@ -25,6 +25,9 @@ class ProductionConfig:
     #: romance, horror, comedy, two-handers), ``slow_burn``, or ``one_shot`` (monologue, making, a walk).
     #: ``None`` sends nothing and the server's default (punchy) applies.
     cut_tempo: str | None = None
+    #: Local caption style ``finish`` and ``caption`` burn: ``house`` (yellow Arial Bold word flicker),
+    #: ``plain`` (white whole lines) or ``none``; ``--caption-style`` on either command overrides it.
+    #: Sent to the API as its ``caption_style`` only with ``api_captions``.
     caption_style: str = "house"
     #: When false, video enrol omits ``captions_enabled`` (faster API tail; caption locally).
     api_captions: bool = False

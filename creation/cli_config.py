@@ -33,7 +33,9 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--caption-style",
         default="house",
-        help="Local caption recipe name (see skill); sent to API only with --api-captions.",
+        help="Caption style for the desk, read by local finish and caption: house (yellow Arial Bold word "
+        "flicker, default), plain (white whole lines) or none (no captions). finish/caption "
+        "--caption-style overrides it per run. Sent to the API as its caption_style only with --api-captions.",
     )
     parser.add_argument(
         "--api-captions",
@@ -54,12 +56,18 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
 def config_from_args(args: argparse.Namespace) -> ProductionConfig:
     """Build ``ProductionConfig`` from parsed CLI namespace."""
 
+    style = str(args.caption_style)
+    if args.api_captions and style in ("plain", "none"):
+        raise ValueError(
+            f"--caption-style {style} is a local caption style: the server does not burn it. "
+            "Drop --api-captions (captions are burned locally by finish), or name a server caption style"
+        )
     return ProductionConfig(
         draft_episode_count=int(args.draft_episodes),
         clip_duration_seconds=int(args.clip_seconds),
         cut_tempo=str(args.cut_tempo) if args.cut_tempo else None,
         spoken_language=str(args.language) if getattr(args, "language", None) else None,
-        caption_style=str(args.caption_style),
+        caption_style=style,
         api_captions=bool(args.api_captions),
         fallback_estimate_usd=(
             float(args.fallback_estimate_usd)

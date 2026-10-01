@@ -12,7 +12,12 @@ from typing import Sequence
 
 from creation.captions import caption_take, find_ffmpeg, take_index_from_name
 from creation.cli_config import add_production_config_args, config_from_args
-from creation.cli_post import POST_COMMANDS, add_post_parsers, dispatch_post
+from creation.cli_post import (
+    POST_COMMANDS,
+    add_caption_style_arg,
+    add_post_parsers,
+    dispatch_post,
+)
 from creation.cli_text import HELP_SUFFIX, force_utf8_output, text_or_file
 from creation.episode_commands import (
     EPISODE_COMMANDS,
@@ -196,6 +201,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Transcript of the take to time whole English lines on (a show not spoken in English); "
         "default: the newest take-epNN-t1-*words-vN.json when captioning the raw take.",
     )
+    add_caption_style_arg(cap)
     cap.add_argument(
         "--no-open", action="store_true", help="Do not open the captioned file."
     )
@@ -223,6 +229,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command in POST_COMMANDS:
             return dispatch_post(args)
         if args.command == "start":
+            config = config_from_args(args)  # refused before the desk is made
             desk = init_series_desk(
                 args.parent, args.series, band=args.band, episode_count=args.episodes
             )
@@ -232,7 +239,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 preset_id=args.preset_id,
                 video_lane=args.video_lane,
             )
-            save_production_config(desk, config_from_args(args))
+            save_production_config(desk, config)
             print(desk)
             _warn_if_no_local_ffmpeg()
             print(f"bound session_id={state.session_id} phase={state.phase}")
@@ -279,7 +286,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(result.message)
             return 0
         if args.command == "caption":
+            from creation.captions import resolve_caption_style
             from creation.post.review import saved_words
+
+            style, style_note = resolve_caption_style(
+                args.desk.expanduser().resolve(), args.caption_style
+            )
+            if style_note:
+                print(f"note: {style_note}")
+            if style == "none":
+                print("caption style none: nothing burned.")
+                return 0
 
             words_json = args.words_json or (
                 saved_words(args.desk.expanduser().resolve(), args.episode, "t1")
@@ -295,6 +312,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 words_json=words_json,
                 # A take file gets only its own beats' lines; a joined episode file gets them all.
                 take_index=take_index_from_name(args.take) if args.take else None,
+                style=style,
             )
             ep_dir = args.desk.expanduser().resolve() / f"ep{args.episode:02d}"
             timing = "; ".join(result.timing_lines())
@@ -309,7 +327,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             append_run_note(
                 ep_dir,
-                f"Local house captions ({'whole English lines' if result.whole_lines else 'word flicker'}): "
+                f"Local {style} captions ({'whole English lines' if result.whole_lines else 'word flicker'}): "
                 f"{result.video.name} (cues {result.ass.name}). Lines: {timing}.{warnings}",
             )
             italic = result.italic or (False,) * len(result.lines)

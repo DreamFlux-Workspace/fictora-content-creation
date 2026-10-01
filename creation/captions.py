@@ -36,12 +36,24 @@ English is left uncaptioned and reported as ``NOT ENGLISH`` so the operator can
 give it an English subtitle. It still takes its place in the timing, so the
 lines after it stay on their own speech.
 
-The look matches the content team's reference captions (yellow ``#FFE500``,
-Poppins Bold, black edge, soft shadow, no box), scaled from the 768x1344 H3
-frame to the take's real size. Placement follows the TikTok / Reels / Shorts
-safe zones: the text's bottom edge sits at 62% of the frame height and the
-caption block stays inside 55-70%. Captions never wrap; a caption too wide for
-one line is set smaller so it still fits on one line inside that band.
+The look is the house style the content team delivers (runbook rule 1):
+Arial Bold 64 on a 1080x1920 canvas, yellow ``#FFE500``, black outline 5,
+soft shadow, no box, one face for every line. It is scaled to the take's real
+frame by height (64 on 1920 is 45 on the 1344-high H3 take), so an operator
+never re-burns at a size meant for another canvas. Placement follows the
+TikTok / Reels / Shorts safe zones: the text's bottom edge sits at 62% of the
+frame height and the caption block stays inside 55-70%. A caption too wide for
+one line is wrapped into at most two balanced lines (:func:`wrap_caption`);
+only a caption that still does not fit on two lines is set smaller.
+
+A line with Japanese, Chinese or Korean characters is set in a CJK face
+(:func:`cjk_font_name`): Arial has no such glyphs. Captions stay English (the
+``NOT ENGLISH`` rule above), so this only matters for a hand-made cue.
+
+Three caption styles (``--caption-style`` on ``finish`` and ``caption``, or
+``caption_style`` in the desk's ``production.config.json``): ``house`` (the
+above), ``plain`` (white whole-line captions, same face, size and safe band)
+and ``none`` (no captions burned).
 """
 
 from __future__ import annotations
@@ -60,38 +72,98 @@ from typing import Any, Protocol
 
 from creation.ops.folder import next_versioned_path
 
-#: Frame the house style was tuned on (H3 vertical take).
-REFERENCE_HEIGHT = 1344
-#: Font size on the reference frame.
-REFERENCE_FONT_SIZE = 50
+#: The house style's canvas height: the content team's 1080x1920 deliverable.
+HOUSE_CANVAS_HEIGHT = 1920
+#: Font size, outline and shadow on that canvas (runbook rule 1: Arial Bold 64, outline 5).
+HOUSE_FONT_SIZE = 64
+HOUSE_OUTLINE = 5
+HOUSE_SHADOW = 2
+#: Left + right ASS margins on the 1080-wide canvas (scaled by width).
+HOUSE_CANVAS_WIDTH = 1080
+HOUSE_SIDE_MARGIN = 60
 #: Bottom edge of the caption text, as a fraction of frame height (social safe zones).
 CAPTION_BOTTOM_FRACTION = 0.62
 #: The caption block must stay inside this band of the frame height.
 CAPTION_BAND = (0.55, 0.70)
-#: Left + right ASS margins, pixels.
-SIDE_MARGIN = 10
-FONT_NAME = "Poppins"
+#: A caption wraps onto at most this many lines (balanced), never more.
+MAX_CAPTION_LINES = 2
+FONT_NAME = "Arial"
 #: Face for a voice heard, not seen (off-screen line or voice-only cast), set in italic.
 ITALIC_FONT_NAME = "Georgia"
-#: libass sets an ASS ``Fontsize`` as the face's OS/2 winAscent + winDescent, not its em,
-#: so one Fontsize draws Georgia about 1.55x larger than Poppins. Em per Fontsize unit:
-#: Poppins Bold 1000 / (1135 + 627); Georgia Italic 2048 / (1878 + 449).
-HOUSE_EM_PER_SIZE = 1000 / (1135 + 627)
+#: libass sets an ASS ``Fontsize`` as the face's OS/2 winAscent + winDescent, not its em.
+#: Em per Fontsize unit: Arial Bold 2048 / (1854 + 434); Georgia Italic 2048 / (1878 + 449).
+HOUSE_EM_PER_SIZE = 2048 / (1854 + 434)
 ITALIC_EM_PER_SIZE = 2048 / (1878 + 449)
+#: Caption styles: ``house`` (yellow word flicker), ``plain`` (white whole lines), ``none``.
+CAPTION_STYLES = ("house", "plain", "none")
+DEFAULT_CAPTION_STYLE = "house"
+
+
+def resolve_caption_style(desk: Path, given: str | None = None) -> tuple[str, str]:
+    """The caption style to burn: ``given`` (the command's flag), else the desk's config.
+
+    Parameters
+    ----------
+    desk
+        Series desk (its ``production.config.json`` ``caption_style``).
+    given
+        ``--caption-style`` on ``finish`` / ``caption``; ``None`` reads the desk.
+
+    Returns
+    -------
+    tuple[str, str]
+        One of :data:`CAPTION_STYLES`, and ``""`` or a note when the desk's
+        value is not a local style (a server recipe set for ``--api-captions``,
+        such as ``viral_karaoke``): those desks are captioned ``house``.
+
+    Raises
+    ------
+    ValueError
+        When ``given`` is not one of :data:`CAPTION_STYLES`.
+    """
+
+    if given is not None:
+        if given not in CAPTION_STYLES:
+            raise ValueError(
+                f"--caption-style {given!r}: choose one of {', '.join(CAPTION_STYLES)}"
+            )
+        return given, ""
+    from creation.production_config import load_production_config
+
+    configured = str(load_production_config(desk).caption_style or "").strip()
+    if configured in CAPTION_STYLES:
+        return configured, ""
+    return DEFAULT_CAPTION_STYLE, (
+        f"the desk's caption_style {configured!r} is not a local caption style "
+        f"({', '.join(CAPTION_STYLES)}); captioned {DEFAULT_CAPTION_STYLE}"
+    )
+
+
+def house_font_size(height: int) -> int:
+    """ASS ``Fontsize`` of the house caption on a frame ``height`` px high (64 on 1920, 45 on 1344)."""
+
+    return max(8, round(HOUSE_FONT_SIZE * height / HOUSE_CANVAS_HEIGHT))
+
+
+def side_margin(width: int) -> int:
+    """Left and right ASS margin on a frame ``width`` px wide (60 on 1080)."""
+
+    return max(1, round(HOUSE_SIDE_MARGIN * width / HOUSE_CANVAS_WIDTH))
 
 
 def italic_size(size: int) -> int:
-    """ASS ``Fontsize`` that draws Georgia italic at the same em as Poppins at ``size``.
+    """ASS ``Fontsize`` that draws Georgia italic at the same em as Arial Bold at ``size``.
 
     Same em is how the retired internal kit set its italic caption (one font
-    size for both faces); cap heights then match within 2%.
+    size for both faces); cap heights then match within a few percent.
     """
 
     return max(1, round(size * HOUSE_EM_PER_SIZE / ITALIC_EM_PER_SIZE))
 
 
-#: ASS colours are &HAABBGGRR: yellow #FFE500, black edge, 50% black shadow.
+#: ASS colours are &HAABBGGRR: yellow #FFE500 (white for ``plain``), black edge, 50% black shadow.
 PRIMARY_COLOUR = "&H0000E5FF"
+PLAIN_COLOUR = "&H00FFFFFF"
 OUTLINE_COLOUR = "&H00000000"
 SHADOW_COLOUR = "&H80000000"
 MAX_WORDS_ON_SCREEN = 3
@@ -977,43 +1049,191 @@ def caption_margin_v(height: int) -> int:
     return round(height * (1.0 - CAPTION_BOTTOM_FRACTION))
 
 
-def text_width(text: str, size: int, *, spacing: float = 1.5) -> float:
-    """Rendered width of ``text`` in Poppins Bold at ``size`` px (bundled font), with letter spacing."""
+#: Kana, CJK ideographs and Hangul (and their punctuation): Arial has none of these glyphs.
+_CJK_CHARS = re.compile("[　-ヿ㐀-䶿一-鿿豈-﫿＀-￯ᄀ-ᇿ㄰-㆏가-힯]")
+_HANGUL = re.compile("[ᄀ-ᇿ㄰-㆏가-힯]")
+
+
+def has_cjk(text: str) -> bool:
+    """True when ``text`` has a Japanese, Chinese or Korean character (Arial cannot set it)."""
+
+    return bool(_CJK_CHARS.search(text))
+
+
+def cjk_font_name(text: str, *, platform: str | None = None) -> str:
+    """The face a line with CJK characters is set in, per line, instead of Arial.
+
+    macOS ships Hiragino Sans (Japanese and Chinese) and Apple SD Gothic Neo
+    (Korean); elsewhere the Noto Sans CJK families are the usual install.
+
+    Parameters
+    ----------
+    text
+        The caption text (Hangul picks the Korean face).
+    platform
+        ``sys.platform`` by default; tests pass one.
+
+    Returns
+    -------
+    str
+        A font family name for the ASS ``\\fn`` override.
+    """
+
+    korean = bool(_HANGUL.search(text))
+    if (platform or sys.platform) == "darwin":
+        return "Apple SD Gothic Neo" if korean else "Hiragino Sans"
+    return "Noto Sans CJK KR" if korean else "Noto Sans CJK JP"
+
+
+#: Em size the measuring face is loaded at; widths scale linearly from it.
+_MEASURE_EM = 100
+
+
+@functools.cache
+def _measuring_font() -> Any:
+    """Arial Bold when this laptop has it, else the bundled Poppins Bold (wider: wraps a little early)."""
 
     from PIL import ImageFont
 
-    font = ImageFont.truetype(str(FONTS_DIR / "Poppins-Bold.ttf"), size)
-    return float(font.getlength(text)) + spacing * max(0, len(text) - 1)
+    found = find_house_font().path
+    path = found if found is not None else FONTS_DIR / "Poppins-Bold.ttf"
+    return ImageFont.truetype(str(path), _MEASURE_EM)
 
 
-def fitted_size(text: str, size: int, width: int) -> int:
-    """The font size at which ``text`` fits on one line inside the side margins (never larger than ``size``)."""
+def text_width(text: str, size: int) -> float:
+    """Drawn width of ``text`` in Arial Bold at ASS ``Fontsize`` ``size``, in pixels.
 
-    room = width - 2 * SIDE_MARGIN
-    wide = text_width(text, size)
-    if wide <= room:
-        return size
-    return max(8, int(size * room / wide))
-
-
-def build_ass(cues: Sequence[Cue], *, width: int, height: int) -> str:
-    """Render house-style ASS for a frame of ``width`` x ``height``.
-
-    Two styles: ``House`` (Poppins Bold) and ``Italic`` (Georgia italic, not
-    bold; same drawn size, colour, edge, shadow and place) for a cue with
-    ``italic``. The italic ``Fontsize`` is :func:`italic_size`, so both faces
-    draw at the same em.
-
-    Captions never wrap (``WrapStyle: 2``): a cue too wide for one line gets a
-    smaller ``\\fs`` so the block stays one line, bottom edge at 62%, inside
-    the 55-70% band.
+    libass draws a ``Fontsize`` at :data:`HOUSE_EM_PER_SIZE` ems, so the width
+    is measured at that em. A CJK character counts one em (a CJK face's full
+    width); the rest is measured in Arial Bold (or the bundled Poppins Bold,
+    which is wider, when Arial is missing).
     """
 
-    scale = height / REFERENCE_HEIGHT
-    size = round(REFERENCE_FONT_SIZE * scale)
+    em = size * HOUSE_EM_PER_SIZE
+    cjk = len(_CJK_CHARS.findall(text))
+    rest = _CJK_CHARS.sub("", text)
+    measured = float(_measuring_font().getlength(rest)) if rest else 0.0
+    return measured * em / _MEASURE_EM + cjk * em
+
+
+def wrap_caption(text: str, size: int, width: int) -> tuple[list[str], int]:
+    """Lay one caption out on at most two balanced lines inside the side margins.
+
+    A caption that fits on one line stays one line. One that does not is
+    broken at the word (or, for text without spaces, the character) that
+    makes the two lines closest in width; the top line is the shorter when
+    two breaks tie. Only when the wider of the two lines still does not fit
+    is the size lowered, never below 8.
+
+    Parameters
+    ----------
+    text
+        The caption text (one cue).
+    size
+        ASS ``Fontsize`` (:func:`house_font_size`).
+    width
+        Frame width in pixels.
+
+    Returns
+    -------
+    tuple[list[str], int]
+        The lines (one or two) and the size to set them at.
+    """
+
+    room = width - 2 * side_margin(width)
+    if text_width(text, size) <= room:
+        return [text], size
+    spaced = " " in text.strip()
+    tokens = text.split() if spaced else list(text.strip())
+    if len(tokens) < 2:
+        return [text], max(8, int(size * room / text_width(text, size)))
+    joiner = " " if spaced else ""
+    best: tuple[float, float, list[str]] | None = None
+    for cut in range(1, len(tokens)):
+        top, bottom = joiner.join(tokens[:cut]), joiner.join(tokens[cut:])
+        top_w, bottom_w = text_width(top, size), text_width(bottom, size)
+        key = (max(top_w, bottom_w), top_w)
+        if best is None or key < best[:2]:
+            best = (*key, [top, bottom])
+    assert best is not None
+    widest, _, lines = best
+    if widest <= room:
+        return lines, size
+    return lines, max(8, int(size * room / widest))
+
+
+def _caption_text(cue: Cue, size: int, width: int, *, platform: str | None) -> str:
+    """One cue's ASS text: wrapped (``\\N``), with ``\\fs`` only when it had to shrink, CJK face per line."""
+
+    lines, fit = wrap_caption(cue.text, size, width)
+    tags = ""
+    if fit != size:
+        tags += f"\\fs{italic_size(fit) if cue.italic else fit}"
+    if has_cjk(cue.text):
+        tags += f"\\fn{cjk_font_name(cue.text, platform=platform)}"
+    prefix = f"{{{tags}}}" if tags else ""
+    return prefix + "\\N".join(_ass_escape(line) for line in lines)
+
+
+def build_ass(
+    cues: Sequence[Cue],
+    *,
+    width: int,
+    height: int,
+    style: str = DEFAULT_CAPTION_STYLE,
+    platform: str | None = None,
+) -> str:
+    """Render the caption ASS for a frame of ``width`` x ``height``.
+
+    The house style (runbook rule 1) is Arial Bold 64 on a 1920-high canvas,
+    yellow, outline 5; every number is scaled to this frame by height
+    (:func:`house_font_size`). Two styles: ``House`` (Arial Bold; ``Plain``
+    and white for ``style="plain"``) and ``Italic`` (Georgia italic, not
+    bold; same drawn size, colour, edge, shadow and place) for a cue with
+    ``italic``. The italic ``Fontsize`` is :func:`italic_size`, so both
+    faces draw at the same em.
+
+    A cue too wide for one line is wrapped into two balanced lines
+    (:func:`wrap_caption`; ``WrapStyle: 2`` so libass adds no breaks of its
+    own). The block's bottom edge sits at 62%, inside the 55-70% band. A
+    cue with CJK characters is set in a CJK face (:func:`cjk_font_name`).
+
+    Parameters
+    ----------
+    cues
+        The cues to draw.
+    width, height
+        The take's frame size.
+    style
+        ``house`` or ``plain`` (``none`` draws nothing and is never rendered).
+    platform
+        ``sys.platform`` by default (picks the CJK face); tests pass one.
+
+    Returns
+    -------
+    str
+        The ASS file text.
+
+    Raises
+    ------
+    ValueError
+        For a style other than ``house`` or ``plain``.
+    """
+
+    if style not in ("house", "plain"):
+        raise ValueError(
+            f"caption style {style!r} draws no captions; use house or plain"
+        )
+    scale = height / HOUSE_CANVAS_HEIGHT
+    size = house_font_size(height)
     margin_v = caption_margin_v(height)
-    outline = max(1, round(3 * scale))
-    shadow = max(1, round(1 * scale))
+    margin_x = side_margin(width)
+    outline = max(1, round(HOUSE_OUTLINE * scale))
+    shadow = max(1, round(HOUSE_SHADOW * scale))
+    colour = PLAIN_COLOUR if style == "plain" else PRIMARY_COLOUR
+    main = "Plain" if style == "plain" else "House"
+    tail = f"{OUTLINE_COLOUR},{SHADOW_COLOUR}"
+    place = f"100,100,0,0,1,{outline},{shadow},2,{margin_x},{margin_x},{margin_v},1"
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -1026,26 +1246,15 @@ def build_ass(cues: Sequence[Cue], *, width: int, height: int) -> str:
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: House,{FONT_NAME},{size},{PRIMARY_COLOUR},{PRIMARY_COLOUR},{OUTLINE_COLOUR},"
-        f"{SHADOW_COLOUR},-1,0,0,0,100,100,1.5,0,1,{outline},{shadow},2,{SIDE_MARGIN},{SIDE_MARGIN},{margin_v},1\n"
-        f"Style: Italic,{ITALIC_FONT_NAME},{italic_size(size)},{PRIMARY_COLOUR},{PRIMARY_COLOUR},{OUTLINE_COLOUR},"
-        f"{SHADOW_COLOUR},0,-1,0,0,100,100,1.5,0,1,{outline},{shadow},2,{SIDE_MARGIN},{SIDE_MARGIN},{margin_v},1\n"
+        f"Style: {main},{FONT_NAME},{size},{colour},{colour},{tail},-1,0,0,0,{place}\n"
+        f"Style: Italic,{ITALIC_FONT_NAME},{italic_size(size)},{colour},{colour},{tail},0,-1,0,0,{place}\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
-
-    def text(cue: Cue) -> str:
-        # Fit is measured in Poppins Bold; Georgia italic at the same em is narrower, so it fits too.
-        fit = fitted_size(cue.text, size, width)
-        if fit == size:
-            prefix = ""
-        else:
-            prefix = f"{{\\fs{italic_size(fit) if cue.italic else fit}}}"
-        return prefix + _ass_escape(cue.text)
-
     events = "".join(
-        f"Dialogue: 0,{_ass_time(c.start)},{_ass_time(c.end)},{'Italic' if c.italic else 'House'},,0,0,0,,{text(c)}\n"
+        f"Dialogue: 0,{_ass_time(c.start)},{_ass_time(c.end)},{'Italic' if c.italic else main},,0,0,0,,"
+        f"{_caption_text(c, size, width, platform=platform)}\n"
         for c in cues
     )
     return header + events
@@ -1263,6 +1472,118 @@ def italic_font_warning(cues: Sequence[Cue]) -> str:
     return warning
 
 
+#: Arial Bold's file name: macOS, then the Microsoft core fonts package on Linux.
+HOUSE_FONT_FILES: tuple[str, ...] = ("Arial Bold.ttf", "Arial_Bold.ttf", "arialbd.ttf")
+ARIAL_INSTALL_HINT = (
+    "install Arial: macOS ships it in /System/Library/Fonts/Supplemental "
+    "(Font Book > File > Restore Standard Fonts brings it back); Linux: "
+    "sudo apt install ttf-mscorefonts-installer, or copy 'Arial Bold.ttf' "
+    "into ~/.local/share/fonts and run fc-cache -f"
+)
+
+
+@dataclass(frozen=True)
+class HouseFont:
+    """Where the house caption face (Arial Bold) resolves on this machine.
+
+    Parameters
+    ----------
+    path
+        The Arial Bold file libass will draw with, or None.
+    fallback
+        The face libass would use instead, as fontconfig names it, or None
+        when that cannot be told.
+    """
+
+    path: Path | None
+    fallback: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        """Arial Bold itself is installed."""
+
+        return self.path is not None
+
+    def warning(self) -> str | None:
+        """The operator warning when captions will not be set in Arial Bold, else None."""
+
+        if self.path is not None:
+            return None
+        instead = self.fallback or "whatever face libass falls back to"
+        return (
+            f"Arial Bold not found; captions will fall back to {instead} (house style is "
+            f"Arial Bold). To fix, {ARIAL_INSTALL_HINT}"
+        )
+
+
+def find_house_font(
+    *,
+    platform: str | None = None,
+    font_dirs: Sequence[Path] | None = None,
+    match: FcMatch | None = None,
+) -> HouseFont:
+    """Resolve Arial Bold the way libass does when captions are burned.
+
+    Same search as :func:`find_italic_font`: the bundled fonts dir, then the
+    macOS font folders (:data:`MAC_FONT_DIRS`), then ``fc-match Arial:bold``
+    on Linux.
+
+    Parameters
+    ----------
+    platform
+        ``sys.platform`` by default; tests pass one.
+    font_dirs
+        Folders searched by file name.
+    match
+        fontconfig lookup (default :func:`fc_match`); tests pass a fake.
+
+    Returns
+    -------
+    HouseFont
+        What was found; ``warning()`` says what to do when it is not Arial Bold.
+    """
+
+    platform = platform or sys.platform
+    match = match or fc_match
+    if font_dirs is None:
+        font_dirs = (FONTS_DIR, *(MAC_FONT_DIRS if platform == "darwin" else ()))
+    found = _first_file(font_dirs, HOUSE_FONT_FILES)
+    if found is not None:
+        return HouseFont(found)
+    answer = match(f"{FONT_NAME}:bold")
+    if answer is None:
+        return HouseFont(None)
+    family, style, file = answer
+    if FONT_NAME.lower() in family.lower().split(",")[0] and platform != "darwin":
+        if "bold" in style.lower():
+            return HouseFont(Path(file))
+    return HouseFont(None, f"{family} ({file})")
+
+
+def house_font_warning(cues: Sequence[Cue]) -> str:
+    """Warn (on stderr, and returned) when the house cues will not be set in Arial Bold.
+
+    Parameters
+    ----------
+    cues
+        The cues about to be burned; nothing is checked when every one is italic.
+
+    Returns
+    -------
+    str
+        ``FONT: …`` warning, or ``""``.
+    """
+
+    if all(cue.italic for cue in cues):
+        return ""
+    problem = find_house_font().warning()
+    if not problem:
+        return ""
+    warning = f"FONT: {problem}"
+    print(f"WARNING {warning}", file=sys.stderr)
+    return warning
+
+
 def probe_video(ffprobe: str, path: Path) -> tuple[int, int, float]:
     """Return ``(width, height, duration_seconds)``."""
 
@@ -1424,6 +1745,7 @@ def caption_take(
     fixed_lines: Sequence[tuple[CaptionLine, Span]] = (),
     take_index: int | None = None,
     line_spans: Mapping[str, Span] | None = None,
+    style: str = DEFAULT_CAPTION_STYLE,
 ) -> CaptionResult:
     """Caption the newest raw take on a desk episode.
 
@@ -1472,6 +1794,10 @@ def caption_take(
         ``line_id`` to the window the line plays in, when known exactly (a
         locked-voice take's ``soundtrack.lines``): those lines are timed on it
         (method ``lines``); any other line is timed as usual.
+    style
+        ``house`` (yellow; word flicker on a show spoken in English) or
+        ``plain`` (white whole lines on any show). ``none`` is the caller's to
+        skip: it is refused here.
 
     Returns
     -------
@@ -1480,6 +1806,11 @@ def caption_take(
         English is timed but not captioned; ``not_english`` says which.
     """
 
+    if style not in ("house", "plain"):
+        raise ValueError(
+            f"caption style {style!r} burns no captions; use house or plain "
+            f"(choices: {', '.join(CAPTION_STYLES)})"
+        )
     ep_dir = desk.expanduser().resolve() / f"ep{episode_ordinal:02d}"
     takes = ep_dir / "takes"
     if take is None:
@@ -1508,7 +1839,8 @@ def caption_take(
         ):
             continue
         # Newest snapshot with the episode's lines; a take gets only its own beats' lines.
-        whole_lines = captions_whole_lines(spine)
+        # ``plain`` is whole lines on any show; ``house`` flickers word by word on an English one.
+        whole_lines = style == "plain" or captions_whole_lines(spine)
         if take_index is None:
             caption_lines = episode_caption_lines(spine, episode_ordinal)
         else:
@@ -1595,9 +1927,13 @@ def caption_take(
     )
     base = take.stem.replace("-raw", "").rsplit("-v", 1)[0]
     ass = next_versioned_path(takes, stem or f"{base}-house", ".ass")
-    ass.write_text(build_ass(cues, width=width, height=height), encoding="utf-8")
+    ass.write_text(
+        build_ass(cues, width=width, height=height, style=style), encoding="utf-8"
+    )
     video = next_versioned_path(takes, stem or f"{base}-captioned", ".mp4")
-    font_warning = italic_font_warning(cues)
+    font_warning = "; ".join(
+        w for w in (house_font_warning(cues), italic_font_warning(cues)) if w
+    )
     burn_ass(ffmpeg, take, ass, video)
     return CaptionResult(
         ass,

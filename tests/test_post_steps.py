@@ -12,7 +12,13 @@ import numpy as np
 import pytest
 from conftest import make_take, make_tone, needs_ffmpeg
 
-from creation.captions import CAPTION_BAND, build_ass, caption_margin_v, fitted_size
+from creation.captions import (
+    CAPTION_BAND,
+    build_ass,
+    caption_margin_v,
+    house_font_size,
+    wrap_caption,
+)
 from creation.harness.http_util import hosted_post_off
 from creation.harness.session import DramaApiRunSession
 from creation.post.media import measure_loudness, measure_rms_windows
@@ -241,26 +247,32 @@ def test_mark_is_drawn_where_the_position_says(tmp_path: Path) -> None:
     assert image[121:184, 700:].max() < 30, "nothing top right"
 
 
-def test_caption_bottom_edge_is_at_62_percent_and_one_line_stays_in_band() -> None:
-    assert caption_margin_v(1344) == 511
-    ass = build_ass([], width=768, height=1344)
-    assert ass.split("Style: House,")[1].split("\n")[0].endswith(",2,10,10,511,1")
-    assert "WrapStyle: 2" in ass
-    size = 50
-    bottom = 1344 - caption_margin_v(1344)
-    top = bottom - size * 1.25
-    assert CAPTION_BAND[0] * 1344 <= top and bottom <= CAPTION_BAND[1] * 1344
+@pytest.mark.parametrize(("width", "height"), [(768, 1344), (1080, 1920)])
+def test_caption_bottom_edge_is_at_62_percent_and_two_lines_stay_in_band(
+    width: int, height: int
+) -> None:
+    ass = build_ass([], width=width, height=height)
+    margin = caption_margin_v(height)
+    assert ass.split("Style: House,")[1].split("\n")[0].endswith(f",{margin},1")
+    assert "WrapStyle: 2" in ass  # the kit breaks lines itself; libass adds none
+    size = house_font_size(height)
+    bottom = height - margin
+    top = (
+        bottom - 2 * size
+    )  # libass line height is the Fontsize (winAscent + winDescent)
+    assert CAPTION_BAND[0] * height <= top and bottom <= CAPTION_BAND[1] * height
 
 
-def test_a_caption_too_wide_for_one_line_is_set_smaller_not_wrapped() -> None:
-    assert fitted_size("Go now.", 50, 768) == 50
-    long = "Extraordinarily unbelievable circumstances"
-    small = fitted_size(long, 50, 768)
-    assert small < 50
+def test_a_caption_too_wide_for_one_line_wraps_instead_of_shrinking() -> None:
+    assert wrap_caption("Go now.", 45, 768) == (["Go now."], 45)
+    long = "I have been waiting for you all day long"
+    lines, size = wrap_caption(long, 45, 768)
+    assert size == 45 and len(lines) == 2 and " ".join(lines) == long
     from creation.captions import Cue
 
     ass = build_ass([Cue(0.0, 1.0, long)], width=768, height=1344)
-    assert f"{{\\fs{small}}}{long}" in ass
+    assert f"House,,0,0,0,,{lines[0]}\\N{lines[1]}" in ass
+    assert "\\fs" not in ass
 
 
 # --- hosted post is off ----------------------------------------------------------------------

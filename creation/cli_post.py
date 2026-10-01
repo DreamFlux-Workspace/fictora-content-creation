@@ -38,6 +38,20 @@ POST_COMMANDS = (
 )
 
 
+def add_caption_style_arg(parser: argparse.ArgumentParser) -> None:
+    """``--caption-style house|plain|none`` on ``finish`` and ``caption`` (default: the desk's config)."""
+
+    from creation.captions import CAPTION_STYLES
+
+    parser.add_argument(
+        "--caption-style",
+        choices=CAPTION_STYLES,
+        default=None,
+        help="house: yellow Arial Bold word flicker (the default); plain: white whole lines, same size and "
+        "safe band; none: no captions. Default: caption_style in the desk's production.config.json.",
+    )
+
+
 def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Register the local post subcommands.
 
@@ -279,6 +293,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         action="store_true",
         help="No cover on the deliverable (not even a saved one).",
     )
+    add_caption_style_arg(fin)
     fin.add_argument(
         "--json", action="store_true", help="Print the report as JSON on stdout."
     )
@@ -477,6 +492,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             thumbnail=not args.no_thumbnail,
             draw_thumbnail=args.thumbnail,
             over_locked_voices=args.over_locked_voices,
+            caption_style=args.caption_style,
         )
         if args.json:
             print(json.dumps(result.as_json(), indent=2))
