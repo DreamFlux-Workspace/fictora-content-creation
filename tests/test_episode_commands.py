@@ -459,6 +459,76 @@ def test_an_interrupted_plate_redraw_picks_up_the_same_job_and_an_unknown_name_s
         )
 
 
+def _failed_plates_step(desk: Path, api: FakeApi, *, stale: tuple[str, ...]) -> None:
+    """The plates step failed on a safety flag: the named plates are not current on the story."""
+
+    _plate_routes(api)
+    for asset in api.spine_doc["media_assets"]:
+        if asset.get("relation_id") in stale:
+            asset["stale"] = True
+
+    def redraw(method: str, path: str, body: dict | None) -> dict:
+        for asset in api.spine_doc["media_assets"]:
+            if asset.get("relation_id") == "cast_ren":
+                asset.update(url="https://r2.example/ren-v2.png", stale=False)
+        return {"job_id": "job_plate"}
+
+    api.routes[("POST", "/v1/spines/sp1/cast/cast_ren/regenerate")] = redraw
+    set_phase(
+        desk,
+        "failed",
+        failed_phase="ready_cast_enrol",
+        last_error="cast job failed: safety flag",
+    )
+
+
+def test_a_good_redraw_after_a_failed_plates_step_puts_the_plates_at_their_gate(
+    desk: Path, api: FakeApi
+) -> None:
+    _failed_plates_step(desk, api, stale=("cast_ren",))
+    out = io.StringIO()
+
+    ec.run_redraw_plate_with_note(desk, cast="Ren", note="no blood", out=out)
+
+    state = load_production(desk)
+    assert state.phase == "wait_plates", "every drawn plate is current: approve works"
+    assert state.failed_phase is None and state.last_error is None
+    assert f"fictora-produce approve --desk {desk} --gate plates" in out.getvalue()
+    assert "--again" not in out.getvalue()
+
+
+def test_a_redraw_that_leaves_a_plate_missing_keeps_the_failed_plates_step(
+    desk: Path, api: FakeApi
+) -> None:
+    _failed_plates_step(desk, api, stale=("cast_ren", "cast_hana"))
+    out = io.StringIO()
+
+    ec.run_redraw_plate_with_note(desk, cast="Ren", note="no blood", out=out)
+
+    state = load_production(desk)
+    assert state.phase == "failed" and state.failed_phase == "ready_cast_enrol"
+    assert "Hana" in out.getvalue() and "redraw-plate" in out.getvalue()
+
+
+def test_a_redraw_after_the_plates_yes_points_at_the_servers_approve_again(
+    desk: Path, api: FakeApi
+) -> None:
+    from creation.ops.floor import approve_series_gate
+
+    _plate_routes(api)
+    approve_series_gate(desk, "plates", path=None)
+    set_phase(desk, "wait_script")
+    out = io.StringIO()
+
+    ec.run_redraw_plate_with_note(desk, cast="Ren", note="older", out=out)
+
+    text = out.getvalue()
+    assert f"fictora-produce approve --desk {desk} --gate plates --again" in text
+    assert "fictora-ops approve" not in text, (
+        "a desk-only yes leaves the server unapproved"
+    )
+
+
 def test_check_lines_names_the_approved_line_the_take_was_not_asked_to_say(
     desk: Path, api: FakeApi
 ) -> None:
