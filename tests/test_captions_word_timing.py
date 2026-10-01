@@ -334,8 +334,13 @@ def _english_desk(root: Path) -> None:
 
 
 @needs_ffmpeg
-def test_english_show_ignores_a_transcript(tmp_path: Path) -> None:
-    """A transcript never changes an English show's captions: word flicker on speech spans."""
+def test_english_show_is_timed_on_a_transcript_when_one_is_given(
+    tmp_path: Path,
+) -> None:
+    """L-20260930-6: an English show is timed on the transcript's words too, still flickering word by word.
+
+    (It used to ignore the transcript, and extra speech on the take pushed every later line onto the wrong words.)
+    """
 
     _english_desk(tmp_path)
     words = tmp_path / "words.json"
@@ -347,12 +352,12 @@ def test_english_show_ignores_a_transcript(tmp_path: Path) -> None:
     ]}))  # fmt: skip
     plain = caption_take(tmp_path)
     with_words = caption_take(tmp_path, words_json=words)
-    assert with_words.cues == plain.cues
-    assert with_words.anchors == plain.anchors
-    assert with_words.methods == ("speech", "speech") and with_words.words_json is None
-    assert plain.cues[0].text == "Wait" and plain.anchors[1].start == pytest.approx(
-        3.2, abs=0.1
-    )
+    assert plain.methods == ("speech", "speech")
+    assert with_words.methods == ("words", "words") and with_words.words_json == words
+    assert with_words.anchors[0].start == pytest.approx(0.2)
+    assert with_words.anchors[1].start == pytest.approx(2.5)
+    assert not with_words.whole_lines
+    assert [c.text for c in with_words.cues[:2]] == ["Wait", "Wait for"]
 
 
 # --- caption and finish on a Japanese show --------------------------------------------------------------

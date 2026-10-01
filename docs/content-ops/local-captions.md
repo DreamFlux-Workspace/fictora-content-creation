@@ -15,7 +15,7 @@ uv run fictora-produce caption --desk <desk>
 | `--line-start S` | Seconds where a line starts; once per line, in order. Overrides speech detection and word timing |
 | `--line-end S` | Seconds where a line's caption goes off; once per line, in order. Exact: no hold, no reading minimum. Works with or without `--line-start` |
 | `--caption-style S` | `house` (default), `plain` (white whole lines) or `none` (nothing burned). Default: `caption_style` in the desk's `production.config.json`. Same flag on `finish` |
-| `--words-json J` | A transcript of the take (`/v1/transcripts` words) to time whole English lines on. Default: the newest `takes/take-epNN-t1-*words-vN.json` when captioning the raw take |
+| `--words-json J` | A transcript of the take (`/v1/transcripts` words) to time the lines on, on any show. Default: the newest `takes/take-epNN-t1-*words-vN.json` when captioning the raw take |
 | `--no-open` | Do not open the result |
 
 Writes, never overwriting:
@@ -56,9 +56,9 @@ Set it per run with `--caption-style` on `finish` or `caption`, or for the desk 
 
 ## How timing works
 
-1. **Lines**: episode dialogue from the newest spine snapshot in `ep01/api/` that has beats (`03_spine.json`; approve receipts are skipped).
+1. **Lines**: the take's dialogue from the **current spine**: `finish` and `caption` read it from the server (a free `GET`, saved on the desk as `spine.json`), so a line deleted or changed before filming is never captioned from an old desk copy (L-20261001-8). Only when the server cannot be read is the newest snapshot in `epNN/api/` used, and the report says `!! captions from the desk's copy …`.
 2. **Speech spans**: `silencedetect=noise=-30dB:d=0.3` on the take. Gaps shorter than 0.12 s are clicks, not speech.
-3. **Anchor**: each line starts on the next speech span (silence-end onset) and absorbs following spans only while the pause is under 0.6 s and the line still needs time. Spans after the last line (ambience, a door, the music tail) are ignored.
+3. **Anchor**: each line starts on the next speech span (silence-end onset) and absorbs following spans only while the pause is under 0.6 s and the line still needs time. Spans after the last line are not captioned, and the report and run notes say **`EXTRA SPEECH: N speech stretch(es) for M line(s); not captioned: a-b s …`** (also on stderr). Lines take spans strictly in order, so one stray stretch of speech before a line (a mumble, a line the take made up) puts every later caption on the wrong words; leftover spans are the only sign of it without a transcript (L-20260930-6: "You must be Hana." over Hana). It can also be a door or the music tail: watch the captions. Fix: a transcript (`review --transcribe`, then finish again: captions follow the words), `finish --mute A-B` for stray speech, or `--line-start` / `--line-end`.
 4. **Words**: spread across the line's span, weighted by word length.
 
 No transcription model is needed for an English show: the words are already fixed at the script gate. If detection picks the wrong sound, watch the raw take, note where each line starts and ends, and re-run with `--line-start` / `--line-end`.
@@ -76,7 +76,11 @@ Speech spans cannot tell a stammer or a mid-line pause from a line: on Hanakaze 
 
 Hanakaze ep02 t1 with its transcript: line 1 `0.03–3.30 s` (was 0.03–1.63), line 2 `11.33–13.50 s` (was 9.47–10.43).
 
-**English shows are unchanged**: word flicker on speech spans, and a transcript is ignored (a test pins it). Flicker spreads each English word across its span by length; timing each word on Whisper's words would be better in principle but has not been checked on real takes, so it is not switched on.
+**English shows use a transcript too** when one is saved (`--words-json`, else the newest `take-epNN-tK-*words-vN.json`; `review --transcribe` makes one): each line is placed on the words heard for it, the same matcher as above, so extra speech on the take no longer moves it. `finish` never asks the server for a transcript of an English take: with none saved it times on speech spans and warns `EXTRA SPEECH` when stretches are left over. A take with hand `--voice` / `--mute` uses the saved transcript with the hand lines added and the mutes taken out (`take-epNN-tK-cap-timing-vN.json`). English still flickers: each word is spread across its line's span by length (per-word Whisper times are not used; they have not been checked on real takes). A locked-voice take (`soundtrack: target_audio`) is still timed on its exact line windows, never a transcript.
+
+### Lines laid by hand
+
+A line laid with `finish --voice FILE@S` is captioned where it is laid, in the heard-not-seen style (Georgia italic), method `(laid)`, with the words saved beside it by `voice-line` (its `.json`). Its window is left out of the take's speech stretches, so the script lines stay on their own speech. A `--voice` line whose words are one of the take's script lines (a replacement read: `--mute` the old line, `--voice` the new one) is that line: captioned once, as the script line. A `--voice` file with no saved words is named: `!! --voice FILE not captioned: no words saved with it`. Inner-voice cues are captioned the same way (they always were).
 
 ## Requirements
 
