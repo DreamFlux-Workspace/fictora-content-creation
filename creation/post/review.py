@@ -72,6 +72,7 @@ import numpy as np
 import numpy.typing as npt
 from PIL import Image
 
+from creation.post.take_timeline import facts_shift_s, server_board_frames
 from creation.post.deboard import (
     BOARD_LEAK_MARGIN_DB,
     LEAK_ANALYSIS_SIZE,
@@ -1444,6 +1445,20 @@ def review_take(
     board_sec, head = board_section(
         take, board_path, fps=fps, deboarded=bool(steps & set(DEBOARDED_STEPS))
     )
+    held = server_board_frames(facts)
+    if held is not None:
+        # The server already cleaned the raw take: its head reads 0 here, and nothing is shifted.
+        board_sec.details.append(held.one_line())
+        board_sec.data["server_held"] = {
+            "head_frames": held.head_frames,
+            "tail_frames": held.tail_frames,
+        }
+    moved = facts_shift_s(facts)
+    if moved is not None:
+        board_sec.details.append(
+            f"take facts moved {moved:.3f}s earlier: the server cut this take's head board frames "
+            "with their sound (fictora-drama #543)"
+        )
     cuts = cuts_section(
         take,
         head_board_frames=head,
