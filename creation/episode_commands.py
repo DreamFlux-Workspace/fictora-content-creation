@@ -74,6 +74,7 @@ from creation.harness.raw_video import (
 from creation.harness.session import DramaApiRunSession
 from creation.harness.stages_gated import scene_prompt
 from creation.harness.visual_first_ep1 import reuse_generation_body
+from creation.stylised_only import photoreal_look_warning
 from creation.look_gate import (
     look_approved,
     look_frame_url,
@@ -3101,6 +3102,13 @@ def run_look_frame(
             f"the description is {len(description)} characters; keep it to {LOOK_FRAME_MAX_CHARS}"
         )
     desk, state, run = _desk_session(desk)
+    # Founder rule, 1 Oct 2026: stylised styles only. Warned, never blocked:
+    # the frame is an operator's calibration drawn from words, and the plates
+    # and boards stay bound to the preset (stylised_only module docstring).
+    warning = photoreal_look_warning(description)
+    if warning:
+        print(warning, file=out)
+        _note(desk, 1, f"look-frame {warning}")
     digest = hashlib.sha256(f"{size}\n{description}".encode()).hexdigest()[:24]
     try:
         try:
@@ -3200,6 +3208,10 @@ def run_look_note(
                 raise CommandStopped(
                     f"the story already has {MAX_LOOK_NOTES} look notes (the most it keeps); remove one"
                 )
+            warning = photoreal_look_warning(text)
+            if warning:
+                print(warning, file=out)
+                _note(desk, state.episode_ordinal, f"look-note {warning}")
             run.post(f"/v1/spines/{state.spine_id}/look-notes", {**body, "text": text})
         else:
             wanted = str(remove)

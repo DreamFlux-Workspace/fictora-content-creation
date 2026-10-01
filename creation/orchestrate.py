@@ -17,7 +17,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import httpx
 
@@ -99,6 +99,7 @@ from creation.spine_view import (
     spoken_lines,
 )
 from creation.stranded_voice import explain_film_refusal, stranded_preflight
+from creation.stylised_only import BriefNoticePause
 
 
 #: Phases whose ``step`` pays for drawings (cast plates, boards): held while a drawn look frame awaits its yes.
@@ -884,11 +885,31 @@ def step_retry_prefix(state: ProductionState) -> str | None:
     return f"{state.idempotency_prefix}-{unit}-r{count}"
 
 
-def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
+def run_step(
+    desk: Path, *, confirm_spend: bool = False, accept_notices: Sequence[str] = ()
+) -> StepResult:
     """Run the next automated API step for the current phase.
 
     Before a paid plate or board drawing it refuses, with nothing sent, when the
     desk drew a look frame the look yes does not cover (:func:`look_gate_refusal`).
+    The draft pauses, with nothing sent, on a brief that asks for a photoreal look
+    or names a real person until the operator passes ``accept_notices``
+    (:mod:`creation.stylised_only`).
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    confirm_spend
+        After the estimate gate, confirm spend and film the take.
+    accept_notices
+        Brief notice kinds the creator acknowledged (``style_not_available``,
+        ``real_person_not_allowed``); read by the draft step only.
+
+    Returns
+    -------
+    StepResult
+        Phase, message and files.
     """
 
     desk = desk.expanduser().resolve()
@@ -924,7 +945,13 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
                     spoken_language=cfg.spoken_language,
                     locale=cfg.locale,
                     deadline_seconds=cfg.poll_plan_deadline_seconds,
+                    accept_notices=accept_notices,
+                    desk=str(desk),
                 )
+            except BriefNoticePause as exc:
+                _note(ep_dir, str(exc))
+                # Not a failure: the desk stays at `new` until the creator chooses.
+                raise RuntimeError(str(exc)) from exc
             except SystemExit as exc:
                 pause = locked_lines_pause(str(exc.code), desk=desk)
                 if pause is None:

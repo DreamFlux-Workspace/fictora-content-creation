@@ -22,6 +22,7 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 ## Before the look is approved
 
 - [ ] Our own frame, drawn with `look-frame --description` from a written description (never a third-party image), shown to the human
+- [ ] The look-frame words stay stylised (anime/manhwa; no photoreal, live-action or real-film look) and name no real person
 - [ ] The human was told, in these words: takes film on Turbo, which redraws a look far from anime (pastel, watercolour, painterly, cartoon) in H3's own anime finish; `finish` colour-matches colour and light, not the drawing style
 - [ ] Only after the yes: `fictora-produce approve --desk D --gate look` recorded it and pinned the frame (the newest look frame unless `--path`/`--url` named another). `step`, `redraw-plate` and `redraw-board` refuse until then, and again for a look frame drawn after the yes
 

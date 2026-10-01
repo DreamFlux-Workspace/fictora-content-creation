@@ -177,6 +177,35 @@ class DramaApiRunSession:
             ),
         )
 
+    def post_optional(
+        self, path: str, body: dict[str, Any], *, idempotency_key: str | None = None
+    ) -> tuple[int, Any]:
+        """POST JSON without raising on an error status, for a caller that answers a refusal itself.
+
+        Parameters
+        ----------
+        path
+            Drama API path.
+        body
+            JSON object.
+        idempotency_key
+            Optional ``Idempotency-Key``.
+
+        Returns
+        -------
+        tuple[int, Any]
+            HTTP status and the parsed JSON body (text when it is not JSON).
+        """
+
+        response = self.client.post(
+            self.url(path), headers=self.headers(idempotency_key), json=body
+        )
+        try:
+            answer: Any = response.json()
+        except ValueError:
+            answer = response.text
+        return response.status_code, answer
+
     def put(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         """PUT JSON to a drama API path.
 

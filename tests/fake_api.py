@@ -219,6 +219,15 @@ class FakeApi:
         """POST."""
         return self._answer("POST", path, body, idempotency_key)
 
+    def post_optional(
+        self, path: str, body: dict[str, Any], *, idempotency_key: str | None = None
+    ) -> tuple[int, Any]:
+        """POST without raising; a route may answer ``(status, body)`` for a refusal."""
+        answer = self._answer("POST", path, body, idempotency_key)
+        if isinstance(answer, tuple):
+            return answer
+        return 202, answer
+
     def patch(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         """PATCH."""
         return self._answer("PATCH", path, body)

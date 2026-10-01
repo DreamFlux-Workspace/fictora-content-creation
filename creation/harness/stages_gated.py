@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
-from creation.harness.http_util import HOSTED_POST_OFF_HINT, describe_job_error
+from creation.harness.http_util import (
+    HOSTED_POST_OFF_HINT,
+    api_error_text,
+    describe_job_error,
+)
+from creation import stylised_only
 from creation.harness.video_enrol_errors import server_refused_episode_ordinal_field
 from creation.desk_media_urls import drawn_cast_rows
 from creation.harness.session import DramaApiRunSession
@@ -128,8 +133,18 @@ def start_draft(
     spoken_language: str | None = None,
     locale: str = "en-US",
     deadline_seconds: float = 1800.0,
+    accept_notices: Sequence[str] = (),
+    desk: str = "<desk>",
 ) -> tuple[str, dict[str, Any]]:
     """Draft episode 1 alone (arc picked at episode 2) and poll the plan job.
+
+    Founder rules of 1 Oct 2026 (:mod:`creation.stylised_only`): a brief that asks
+    for a photoreal or live-action look, or names a real person, pauses before
+    anything is sent unless the operator acknowledged that notice. The first post
+    never carries ``acknowledged_notices`` (an older server answers 422 to the
+    unknown field); a ``409 brief_needs_creator_choice`` is answered by resending
+    the same body and key with the acknowledged kinds, or pauses with the
+    server's own words when one is not acknowledged.
 
     A retryable ``authoring_stalled`` is re-drafted (up to three tries), but only
     after the original plan job is read again: one that completed after all is
@@ -146,13 +161,30 @@ def start_draft(
         As :func:`draft_request_body`.
     deadline_seconds
         Plan poll cap.
+    accept_notices
+        Notice kinds the operator acknowledged with the creator
+        (``style_not_available``, ``real_person_not_allowed``).
+    desk
+        Series desk, for the commands a pause prints.
 
     Returns
     -------
     tuple[str, dict[str, Any]]
         ``(spine_id, terminal plan job)``.
+
+    Raises
+    ------
+    stylised_only.BriefNoticePause
+        When the brief needs a choice the operator has not acknowledged.
     """
 
+    owed = stylised_only.unacknowledged(
+        stylised_only.brief_notices(prompt), accept_notices
+    )
+    if owed:
+        raise stylised_only.BriefNoticePause(
+            stylised_only.pause_text(owed, desk=desk, preset_id=preset_id)
+        )
     body = draft_request_body(
         prompt=prompt,
         preset_id=preset_id,
@@ -169,10 +201,12 @@ def start_draft(
     draft: dict[str, Any] = {}
     for attempt in range(3):
         suffix = f"-a{attempt}" if attempt else ""
-        draft = run.post(
-            "/v1/prompt-video-authoring-drafts",
+        draft = _post_draft(
+            run,
             body,
             idempotency_key=f"{run.prefix}-draft{suffix}",
+            accept_notices=accept_notices,
+            desk=desk,
         )
         run.save(f"01_draft_accepted{suffix}.json", draft)
         plan = run.poll_job(
@@ -212,6 +246,46 @@ def start_draft(
             continue
         break
     raise SystemExit(f"plan {describe_job_error(last_plan)}")
+
+
+_DRAFT_ROUTE = "/v1/prompt-video-authoring-drafts"
+
+
+def _post_draft(
+    run: DramaApiRunSession,
+    body: dict[str, Any],
+    *,
+    idempotency_key: str,
+    accept_notices: Sequence[str],
+    desk: str,
+) -> dict[str, Any]:
+    """POST the draft; answer a ``409 brief_needs_creator_choice`` once, or pause."""
+
+    status, answer = run.post_optional(
+        _DRAFT_ROUTE, body, idempotency_key=idempotency_key
+    )
+    notices = stylised_only.server_notices(answer) if status == 409 else None
+    if notices is not None:
+        owed = stylised_only.unacknowledged(notices, accept_notices)
+        if owed or not notices:
+            raise stylised_only.BriefNoticePause(
+                stylised_only.pause_text(
+                    owed or notices,
+                    desk=desk,
+                    preset_id=str(body.get("art_style_preset_id")),
+                )
+            )
+        run.save("01_draft_notices.json", notices)
+        acknowledged = {
+            **body,
+            "acknowledged_notices": sorted({str(n.get("kind")) for n in notices}),
+        }
+        status, answer = run.post_optional(
+            _DRAFT_ROUTE, acknowledged, idempotency_key=idempotency_key
+        )
+    if 200 <= status < 300 and isinstance(answer, dict):
+        return answer
+    raise SystemExit(f"HTTP {status} POST {_DRAFT_ROUTE}: {api_error_text(answer)}")
 
 
 def _retryable_stall(plan: Mapping[str, Any]) -> bool:
