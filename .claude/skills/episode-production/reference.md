@@ -17,7 +17,7 @@ Three layers, later wins:
 | `draft_episode_count` | 1 | Ignored. The draft writes episode 1 alone (`outline_mode=arc_at_episode_two`); later episodes are written with `author --episode N` |
 | `clip_duration_seconds` | 15 | 4–15. 16 is rejected |
 | `cut_tempo` | unset (server default `punchy`) | Pick per scene (Shot plan, below). Set it at `start` (`--cut-tempo`): it goes on the draft, so board and take agree |
-| `caption_style` | `house` | Local burn-in recipe ([local-captions.md](../../../docs/content-ops/local-captions.md)) |
+| `caption_style` | `house` | Local captions `finish` and `caption` burn: `house` (yellow Arial Bold 64 on 1920, scaled), `plain` (white whole lines) or `none`. `--caption-style` on either command overrides it. Sent to the server only with `--api-captions`, which refuses `plain` / `none` ([local-captions.md](../../../docs/content-ops/local-captions.md)) |
 | `api_captions` | `false` | Keep false. The take step stops at the raw clip; captions run on the laptop |
 | `locale` | `en-US` | Draft locale |
 | `spoken_language` | unset (English) | `--language ja` / `ko` at `start`: the cast speaks it; captions stay English |
@@ -127,7 +127,7 @@ The writers pick an anime expression (`reaction_kind`) for every emotional momen
 
 - Faces, eyes, mouths and key props never sit in a zone. Bodies, hands, floor and set may run through. Off-centre and two-shots are fine; do not centre faces by default.
 - There is no face detector: look at every cell of the board. The boards `step` warns (`!!`) when a frame's written placement puts a face or prop in a zone; it reads text only. A face or key prop in a zone: fix the frame's placement (`edit --frame … --set …`), then `redraw-board`.
-- Captions: the block stays in 55–70% of the height. `finish` and `caption` put the text bottom at 62% and never wrap (a too-wide caption is set smaller).
+- Captions: the block stays in 55–70% of the height. `finish` and `caption` put the text bottom at 62% and wrap a too-wide caption onto two balanced lines (only one too long for two is set smaller).
 - The Sokii mark: top left, just under the top strip, `23:121` on 768×1344 (x = 3% of width, y = 9% of height), 0.6 opacity. Never top right.
 
 ## Board checks, in full
@@ -202,7 +202,7 @@ A raw take is never a deliverable. With `api_captions: false`:
 uv run fictora-produce finish --desk D [--episode N] [--take tK] [--take-file F] [--duck-db N] \
   [--sfx-adjust "door=-6" | "hum=drop" | "shot:3=+4"] [--bed-db -16.5] [--music "..."] \
   [--line-start S ...] [--line-end S ...] [--no-deboard] [--no-colour-match] [--colour-strength 0..1] [--watermark-y Y] [--json] \
-  [--mute A-B ...] [--voice FILE@S[@DB] ...] [--cue FILE@S[@DB] ...] [--thumbnail | --no-thumbnail]
+  [--mute A-B ...] [--voice FILE@S[@DB] ...] [--cue FILE@S[@DB] ...] [--caption-style house|plain|none] [--thumbnail | --no-thumbnail]
 ```
 
 | Step | What it does | Writes |

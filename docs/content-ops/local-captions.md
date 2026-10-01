@@ -14,6 +14,7 @@ uv run fictora-produce caption --desk <desk>
 | `--take <path>` | A specific raw MP4 (default: newest `take-epNN-t1-raw-v*.mp4`) |
 | `--line-start S` | Seconds where a line starts; once per line, in order. Overrides speech detection and word timing |
 | `--line-end S` | Seconds where a line's caption goes off; once per line, in order. Exact: no hold, no reading minimum. Works with or without `--line-start` |
+| `--caption-style S` | `house` (default), `plain` (white whole lines) or `none` (nothing burned). Default: `caption_style` in the desk's `production.config.json`. Same flag on `finish` |
 | `--words-json J` | A transcript of the take (`/v1/transcripts` words) to time whole English lines on. Default: the newest `takes/take-epNN-t1-*words-vN.json` when captioning the raw take |
 | `--no-open` | Do not open the result |
 
@@ -27,19 +28,31 @@ Writes, never overwriting:
 
 ## House look
 
-Matches the content team's reference captions (Closing Shift, Sauce Left Over, The Elevator cuts).
+The house style the content team delivers (runbook rule 1): **Arial Bold 64 on a 1080×1920 canvas, yellow, outline 5, one face for every line.** It is the kit's default, so a take never needs a re-burn at house size. Every number is scaled to the take by frame height: 64 on 1920 is **45 on the 1344-high H3 take** (typing 64 into a 1344 take's header makes it 42% too big).
 
 | Property | Value |
 | --- | --- |
 | Text colour | Yellow `#FFE500` |
-| Font | Poppins Bold, bundled in `assets/fonts/` (SIL OFL) so every laptop renders the same |
-| Size | 50 px on a 1344 px-tall frame (3.7% of height), scaled to the take |
-| Edge | Black outline 3, soft 50% black shadow 1, no box |
-| Placement | Centred; bottom of text at 62% of frame height (margin 511 px on 1344), block inside 55–70% (social safe zones). Never wraps: a caption too wide for one line is set smaller |
+| Font | Arial Bold. A system font (macOS ships it; it cannot be bundled): `setup-check` warns (⚠) when it is missing, and a render that falls back prints `WARNING FONT: …` and notes it in the run notes |
+| Size | 64 on a 1920 px-tall frame (3.3% of height), scaled to the take: 45 on 1344, 43 on 1280 |
+| Edge | Black outline 5 (4 on 1344), soft 50% black shadow 2 (1 on 1344), no box |
+| Placement | Centred, side margins 60 px on a 1080-wide frame (43 on 768); bottom of text at 62% of frame height (margin 511 px on 1344, 730 on 1920), block inside 55–70% (social safe zones), two lines included |
+| Long lines | A caption too wide for one line wraps onto **two balanced lines** (the break that makes the two lines closest in width; the kit breaks it, `WrapStyle: 2`, so libass adds no breaks of its own). Only a caption that does not fit on two lines is set smaller |
+| CJK | Arial has no Japanese, Chinese or Korean glyphs, so a cue with them is set in a CJK face for that line only (`\fn`: Hiragino Sans, or Apple SD Gothic Neo for Hangul, on macOS; Noto Sans CJK JP / KR elsewhere). Captions stay English (Not English, below), so this only reaches a hand-made cue |
 | Reveal | Flicker: words build up to three on screen, then reset; each line resets |
 | Timing | On screen only while the line is spoken; last word holds 0.15 s (0.25 s after a transcript's last word), never into the next line. A whole English line (show not spoken in English) stays up at least max(1.2 s, 0.3 s a word), extended forward only, never into the next line |
-| Heard, not seen | A line marked `off_screen`, or any line of a cast member the server flags `voice_only`, is set in Georgia italic (ASS style `Italic`, not bold): same drawn size, colour, edge and place. libass sizes a face by its full line height, so the `Italic` Fontsize is scaled (32 against Poppins' 50 on 1344 px) to draw at the same em. Georgia is a system font (macOS ships it), not bundled; `setup-check` warns (⚠) when Georgia Italic is missing, and a render that falls back prints `WARNING FONT: …` and notes it in the run notes |
+| Heard, not seen | A line marked `off_screen`, or any line of a cast member the server flags `voice_only`, is set in Georgia italic (ASS style `Italic`, not bold): same drawn size, colour, edge and place. libass sizes a face by its full line height, so the `Italic` Fontsize is scaled (46 against Arial Bold's 45 on 1344 px) to draw at the same em. Georgia is a system font (macOS ships it), not bundled; `setup-check` warns (⚠) when Georgia Italic is missing, and a render that falls back prints `WARNING FONT: …` and notes it in the run notes |
 | Not English | Captions are English only. A line whose caption (`subtitle_text`, else `text`) has kana, CJK, Hangul, any other non-Latin letter, or CJK/fullwidth punctuation is timed (it keeps its speech span, so later lines stay put) but not drawn. `caption` and `finish` print ``NOT ENGLISH: <line id> "…" — add an English subtitle with `edit`/`line --subtitle` `` and write it to `run-notes.md` |
+
+## Caption styles
+
+| Style | What is burned |
+| --- | --- |
+| `house` (default) | The house look above: yellow; word flicker on a show spoken in English, whole lines on a show spoken in another language |
+| `plain` | White whole-line captions on any show: same face, size, edge, wrapping and safe band; heard-not-seen lines still in Georgia italic (white) |
+| `none` | No captions. `finish` still mixes and marks the take, which is complete; its sound line reads `captions off (--caption-style none)` |
+
+Set it per run with `--caption-style` on `finish` or `caption`, or for the desk with `fictora-produce start --caption-style …` (`caption_style` in `production.config.json`). It is the same setting as before: `caption_style` was already the desk's local caption recipe, and the server only sees it with `--api-captions`, so `--api-captions` with `plain` or `none` is refused (the server does not burn those). A desk whose `caption_style` is a server recipe name (e.g. `viral_karaoke`) is captioned `house` locally, with a note.
 
 ## How timing works
 
@@ -67,10 +80,11 @@ Hanakaze ep02 t1 with its transcript: line 1 `0.03–3.30 s` (was 0.03–1.63), 
 
 ## Requirements
 
+- **Arial Bold** (house face) and **Georgia Italic** (heard-not-seen face) as system fonts; `setup-check` warns when either is missing.
 - **ffmpeg + ffprobe with libass** (`ffmpeg -filters` lists `ass`). macOS: `brew install ffmpeg`; use `ffmpeg-full` only if your build lacks `ass`. `fictora-produce start` warns when it is missing.
 
 ## Low-level
 
-`scripts/burn_house_captions.sh <raw.mp4> <captions.ass> <out.mp4>` burns an existing ASS with the bundled font. Prefer the command above, which builds the ASS too.
+`scripts/burn_house_captions.sh <raw.mp4> <captions.ass> <out.mp4>` burns an existing ASS (the bundled fonts dir is passed to libass; Arial and Georgia come from the system). Prefer the command above, which builds the ASS too.
 
 Do not ask the video model for on-screen text; captions are always post.

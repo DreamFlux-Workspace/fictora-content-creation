@@ -126,7 +126,13 @@ from typing import Any, TextIO
 import httpx
 
 from creation import inner_voice as thoughts
-from creation.captions import CaptionLine, Span, caption_take, captions_whole_lines
+from creation.captions import (
+    CaptionLine,
+    Span,
+    caption_take,
+    captions_whole_lines,
+    resolve_caption_style,
+)
 from creation.harness.raw_video import fetch_take_facts
 from creation.ops.floor import record_spend
 from creation.ops.folder import next_versioned_path
@@ -304,7 +310,11 @@ class FinishResult:
             marks[1] += f" (!! {len(self.cues_not_laid)} planned cue(s) not laid)"
         if self.locked_voices:
             marks.append(f"room tone {'✗' if 'room tone' in missing else '✓'}")
-        marks.append(f"captions {'✓' if self._ran('captions') else '✗'}")
+        captions = next((s for s in self.steps if s.step == "captions"), None)
+        if captions is not None and captions.detail.startswith(CAPTIONS_OFF):
+            marks.append("captions off (--caption-style none)")
+        else:
+            marks.append(f"captions {'✓' if self._ran('captions') else '✗'}")
         marks += [
             f"{'inner voice' if name == INNER_VOICE_STEP else f'hand {name}'} "
             f"{'✗' if name in missing else '✓'}"
@@ -348,6 +358,9 @@ class FinishResult:
             ],
         }  # fmt: skip
 
+
+#: The captions step's detail when the caption style is ``none`` (nothing burned, on purpose).
+CAPTIONS_OFF = "caption style none"
 
 INCOMPLETE_FIX = (
     "Music: pin a bed (`fictora-produce set-bed --desk D --path <file>`, or let finish make one on the server). "
@@ -575,6 +588,7 @@ def run_finish(
     voice_audio: AudioService | None = None,
     text_ocr: OcrRunner | None = None,
     over_locked_voices: bool = False,
+    caption_style: str | None = None,
     stream: TextIO | None = None,
 ) -> FinishResult:
     """Run the whole local post chain on one accepted take.
@@ -642,6 +656,10 @@ def run_finish(
     over_locked_voices
         ``--over-locked-voices``: allow ``--mute``, ``--voice`` or a revoice /
         voice-fx file on a take whose sound is the locked voices (warned, not refused).
+    caption_style
+        ``--caption-style``: ``house`` (yellow flicker), ``plain`` (white whole
+        lines) or ``none`` (no captions; the take is still complete). ``None``
+        reads the desk's ``production.config.json`` (default ``house``).
     stream
         Progress output (stderr by default).
 
@@ -663,6 +681,7 @@ def run_finish(
     out = stream or sys.stderr
     desk = desk.expanduser().resolve()
     check_duck_db(duck_db)
+    style, style_note = resolve_caption_style(desk, caption_style)
     run_dir = desk / f"ep{episode:02d}"
     source = (
         take_file.expanduser().resolve()
@@ -1272,6 +1291,13 @@ def run_finish(
         return made, f"transcript made on the server: `{made.name}`{via}"
 
     def do_captions(take: Path) -> StepReport:
+        if style == "none":
+            append_run_note(
+                run_dir, f"Finish · captions: {CAPTIONS_OFF}, nothing burned"
+            )
+            return StepReport(
+                "captions", "skipped", f"{CAPTIONS_OFF}: no captions burned"
+            )
         words_json, words_note = caption_words()
         if words_note:
             append_run_note(run_dir, f"Finish · captions: {words_note}")
@@ -1303,6 +1329,7 @@ def run_finish(
                     if locked and not treated_voice(source)
                     else None
                 ),
+                style=style,
             )
         except ValueError as exc:
             if "no dialogue lines" in str(exc):
@@ -1314,6 +1341,8 @@ def run_finish(
             raise
         timing = "; ".join(captioned.timing_lines())
         treatment = "whole English lines" if captioned.whole_lines else "word flicker"
+        if style != "house":
+            treatment = f"{style}, {treatment}"
         if words_note:
             treatment += f", {words_note}"
         # A line that is not English is left uncaptioned, and an italic line may miss
@@ -1324,6 +1353,7 @@ def run_finish(
                 *captioned.not_english,
                 captioned.font_warning,
                 captioned.take_lines_warning,
+                style_note,
             )
             if w
         )
@@ -1452,7 +1482,13 @@ def run_finish(
     else:
         step("colour", "Matching the look to the approved board", do_colour)
         step("mix", "Mixing the bed under the voice at a measured level", do_mix)
-        step("captions", "Burning house captions", do_captions)
+        step(
+            "captions",
+            "Skipping captions (--caption-style none)"
+            if style == "none"
+            else f"Burning {style} captions",
+            do_captions,
+        )
         step("watermark", "Putting the Sokii mark on", do_watermark)
     if result.complete:
         step(

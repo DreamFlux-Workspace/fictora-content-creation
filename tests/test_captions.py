@@ -22,13 +22,13 @@ from creation.captions import (
     captions_whole_lines,
     episode_caption_lines,
     episode_lines,
-    fitted_size,
     flicker_cues,
     is_english,
     italic_size,
     parse_silencedetect,
     speech_spans,
     time_words,
+    wrap_caption,
 )
 from creation.cli_produce import main as produce_main
 from creation.post.finish import run_finish
@@ -194,15 +194,16 @@ def test_whole_lines_follow_the_spoken_language(
 
 def test_ass_uses_house_style_scaled_to_frame() -> None:
     ass = build_ass([Cue(1.0, 1.5, "Hi")], width=768, height=1344)
+    # Arial Bold 64 on 1920 is 45 on the 1344-high H3 take; outline 5 -> 4.
     assert (
-        "Style: House,Poppins,50,&H0000E5FF,&H0000E5FF,&H00000000,&H80000000,-1," in ass
+        "Style: House,Arial,45,&H0000E5FF,&H0000E5FF,&H00000000,&H80000000,-1," in ass
     )
     assert (
-        ass.split("Style: House,")[1].split("\n")[0].endswith(",2,10,10,511,1")
+        ass.split("Style: House,")[1].split("\n")[0].endswith(",4,1,2,43,43,511,1")
     )  # bottom edge at 62% (social safe zones)
     assert "Dialogue: 0,0:00:01.00,0:00:01.50,House,,0,0,0,,Hi" in ass
     half = build_ass([], width=384, height=672)
-    assert "Style: House,Poppins,25," in half
+    assert "Style: House,Arial,22," in half
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not installed")
@@ -385,21 +386,24 @@ def test_ass_sets_italic_cues_in_georgia_italic_and_the_rest_in_house() -> None:
     assert (italic[6], italic[7]) == ("0", "-1")
     assert (house[6], house[7]) == ("-1", "0")
     # libass sizes a face by winAscent + winDescent: Georgia's Fontsize is scaled so both draw at the same em.
-    assert (house[1], italic[1]) == ("50", "32") and italic[1] == str(italic_size(50))
+    assert (house[1], italic[1]) == ("45", "46") and italic[1] == str(italic_size(45))
     assert italic[2:6] == house[2:6] and italic[8:] == house[8:]
     assert "Dialogue: 0,0:00:01.00,0:00:01.50,House,,0,0,0,,Hi" in ass
     assert "Dialogue: 0,0:00:02.00,0:00:02.50,Italic,,0,0,0,,Behind" in ass
 
 
-def test_a_long_italic_cue_is_fitted_at_the_italic_scale() -> None:
-    long = "Close the door behind you before the lights go out tonight"
-    fit = fitted_size(long, 50, 768)
-    assert fit < 50
+def test_a_caption_too_long_for_two_lines_is_set_smaller_at_the_italic_scale() -> None:
+    long = (
+        "Close the door behind you before the lights go out tonight and do not "
+        "open it again for anyone at all"
+    )
+    lines, fit = wrap_caption(long, 45, 768)
+    assert len(lines) == 2 and fit < 45
     ass = build_ass(
         [Cue(0.0, 1.0, long, italic=True), Cue(1.0, 2.0, long)], width=768, height=1344
     )
-    assert f"Italic,,0,0,0,,{{\\fs{italic_size(fit)}}}{long}" in ass
-    assert f"House,,0,0,0,,{{\\fs{fit}}}{long}" in ass
+    assert f"Italic,,0,0,0,,{{\\fs{italic_size(fit)}}}{lines[0]}\\N{lines[1]}" in ass
+    assert f"House,,0,0,0,,{{\\fs{fit}}}{lines[0]}\\N{lines[1]}" in ass
 
 
 def test_build_cues_italic_and_skip_per_line() -> None:

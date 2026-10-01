@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from creation import setup_check as sc
-from creation.captions import ItalicFont
+from creation.captions import HouseFont, ItalicFont
 
 TOKEN = "tok-secret-value-123"
 ALL_FILTERS = "\n".join(
@@ -38,6 +38,7 @@ def tools(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     listing = {"filters": ALL_FILTERS}
     monkeypatch.setattr(sc, "find_ffmpeg", lambda: ("/x/ffmpeg", "/x/ffprobe"))
     monkeypatch.setattr(sc, "find_italic_font", lambda: GEORGIA_PRESENT)
+    monkeypatch.setattr(sc, "find_house_font", lambda: ARIAL_PRESENT)
 
     def run(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
         out = listing["filters"] if "-filters" in cmd else "uv 0.6.12"
@@ -47,6 +48,7 @@ def tools(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     return listing
 
 
+ARIAL_PRESENT = HouseFont(Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"))
 GEORGIA_PRESENT = ItalicFont(
     Path("/System/Library/Fonts/Supplemental/Georgia Italic.ttf"),
     Path("/System/Library/Fonts/Supplemental/Georgia.ttf"),
@@ -80,7 +82,7 @@ def test_everything_present_and_accepted_prints_ticks_and_exits_0(
     ]  # one authenticated read
     assert (
         "✗" not in printed
-        and printed.count("✓") == 9
+        and printed.count("✓") == 10
         and printed.rstrip().endswith("Ready.")
     )
     assert "✓ API token accepted" in printed and "✓ libass (captions)" in printed

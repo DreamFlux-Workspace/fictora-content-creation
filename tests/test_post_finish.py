@@ -510,3 +510,26 @@ def test_finish_names_every_planned_cue_it_does_not_lay_with_the_reason(
         f"- skipped: {gasp}" in notes
         and "- left out: a fridge hum (dropped by --sfx-adjust)" in notes
     )
+
+
+@needs_ffmpeg
+def test_finish_with_caption_style_none_burns_no_captions_and_is_still_done(
+    post_desk: Path,
+) -> None:
+    """L-20260930-11: a no-captions finish; the take is complete and says captions are off."""
+
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+        json.dumps(FACTS)
+    )
+    out = io.StringIO()
+    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+                        facts_fetcher=lambda *a: None, thumbnail=False,
+                        caption_style="none", stream=out)  # fmt: skip
+    assert result.complete, out.getvalue()
+    captions = next(s for s in result.steps if s.step == "captions")
+    assert captions.status == "skipped" and captions.detail.startswith(
+        "caption style none"
+    )
+    assert not list((post_desk / "ep01" / "takes").glob("*-cap-*"))
+    assert "captions off (--caption-style none)" in result.sound_line()
