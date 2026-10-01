@@ -547,8 +547,35 @@ def anchor_lines(lines: Sequence[str], spans: Sequence[Span]) -> list[Span]:
 
     Each line starts on the next unused span (silence-end onset) and absorbs
     following spans only while the pause is short and the line still needs
-    time. Spans left over after the last line (ambience, a door, music) are
-    ignored.
+    time. Spans left over after the last line (ambience, a door, music, or
+    speech that is not in the script) are not captioned:
+    :func:`anchor_lines_and_unused` returns them, and :func:`time_lines`
+    warns about them (``EXTRA SPEECH``).
+
+    Raises
+    ------
+    ValueError
+        When there are fewer speech spans than lines.
+    """
+
+    return anchor_lines_and_unused(lines, spans)[0]
+
+
+def anchor_lines_and_unused(
+    lines: Sequence[str], spans: Sequence[Span]
+) -> tuple[list[Span], list[Span]]:
+    """:func:`anchor_lines`, and the speech spans no line took.
+
+    Lines take spans strictly in order, so a stray stretch of speech before a
+    line (a mumble, a line the take invented) is taken by that line and every
+    later line moves one stretch on; the real last line's speech is then left
+    over. Leftover spans are the only sign of that on a take with no
+    transcript.
+
+    Returns
+    -------
+    tuple[list[Span], list[Span]]
+        One anchor per line, and the unused spans in order.
 
     Raises
     ------
@@ -576,7 +603,77 @@ def anchor_lines(lines: Sequence[str], spans: Sequence[Span]) -> list[Span]:
             end = spans[index].end
             index += 1
         anchored.append(Span(start, end))
-    return anchored
+    return anchored, list(spans[index:])
+
+
+#: Unused speech stretches named in an ``EXTRA SPEECH`` warning (the rest are counted).
+EXTRA_SPEECH_LISTED = 5
+
+
+def extra_speech_warning(
+    *, line_count: int, span_count: int, unused: Sequence[Span]
+) -> str:
+    """The ``EXTRA SPEECH`` warning: more speech stretches on the take than its lines took.
+
+    Parameters
+    ----------
+    line_count
+        Lines timed on the take.
+    span_count
+        Speech stretches found on it (silencedetect).
+    unused
+        The stretches no line took (:func:`anchor_lines_and_unused`).
+
+    Returns
+    -------
+    str
+        The warning, or ``""`` when every stretch was taken.
+    """
+
+    if not unused:
+        return ""
+    listed = ", ".join(
+        f"{span.start:.2f}-{span.end:.2f}s" for span in unused[:EXTRA_SPEECH_LISTED]
+    )
+    more = len(unused) - EXTRA_SPEECH_LISTED
+    if more > 0:
+        listed += f" and {more} more"
+    return (
+        f"EXTRA SPEECH: {span_count} speech stretch(es) for {line_count} line(s); not captioned: "
+        f"{listed}. Lines are placed on speech stretches in order, so if any stretch before one of "
+        "these is speech that is not in the script (a mumble, a line the take made up), every later "
+        "caption is on the wrong words. Watch the captions. Fix: a transcript of the take "
+        "(`review --transcribe`; captions then follow the words), `finish --mute A-B` for stray "
+        "speech, or --line-start / --line-end per line"
+    )
+
+
+def without_windows(
+    spans: Sequence[Span], windows: Sequence[tuple[float, float]]
+) -> list[Span]:
+    """Speech spans with the given windows cut out (lines laid by hand are not script speech).
+
+    A piece left beside a window shorter than :data:`SILENCE_MIN_SECONDS` is
+    dropped: silencedetect cannot see a silence that short, so such a piece is
+    as likely the quiet just before or after the laid line as speech.
+    """
+
+    kept: list[Span] = []
+    for span in spans:
+        pieces = [span]
+        for a, b in windows:
+            cut: list[Span] = []
+            for piece in pieces:
+                if b <= piece.start or a >= piece.end:
+                    cut.append(piece)
+                    continue
+                if a - piece.start >= SILENCE_MIN_SECONDS:
+                    cut.append(Span(piece.start, a))
+                if piece.end - b >= SILENCE_MIN_SECONDS:
+                    cut.append(Span(b, piece.end))
+            pieces = cut
+        kept += pieces
+    return kept
 
 
 class HeardWord(Protocol):
@@ -752,6 +849,8 @@ class LineTiming:
     methods: tuple[str, ...]
     holds: tuple[float, ...]
     fixed_ends: tuple[bool, ...]
+    #: ``EXTRA SPEECH: …`` when a line was timed on speech stretches and some stretch was left over.
+    warnings: tuple[str, ...] = ()
 
 
 def time_lines(
@@ -775,8 +874,7 @@ def time_lines(
     line_starts, line_ends
         Hand times, one per line in order (``--line-start`` / ``--line-end``).
     words
-        Transcript words of the take; only given on a show captioned with whole
-        English lines (see :func:`caption_take`).
+        Transcript words of the take, on any show (see :func:`caption_take`).
     spans
         Speech spans of the take, asked for only when a line needs them (no
         hand start and no transcript match, or a first word Whisper stretched
@@ -813,10 +911,18 @@ def time_lines(
     )
     by_words = [k if k is not None else w for k, w in zip(by_known, by_words)]
     by_speech: list[Span | None] = [None] * n
+    warnings: list[str] = []
     if not line_starts and any(span is None for span in by_words):
         if spans is None:
             raise ValueError("no speech spans to time the lines; pass --line-start")
-        by_speech = list(anchor_lines(texts, spans()))
+        found = spans()
+        anchored, unused = anchor_lines_and_unused(texts, found)
+        by_speech = list(anchored)
+        warning = extra_speech_warning(
+            line_count=n, span_count=len(found), unused=unused
+        )
+        if warning:
+            warnings.append(warning)
     anchors: list[Span] = []
     methods: list[str] = []
     holds: list[float] = []
@@ -855,7 +961,9 @@ def time_lines(
             WORD_HOLD_SECONDS if end_how == "words" else LAST_WORD_HOLD_SECONDS
         )
         fixed.append(end_how == "manual")
-    return LineTiming(tuple(anchors), tuple(methods), tuple(holds), tuple(fixed))
+    return LineTiming(
+        tuple(anchors), tuple(methods), tuple(holds), tuple(fixed), tuple(warnings)
+    )
 
 
 def time_words(text: str, span: Span) -> list[Cue]:
@@ -1718,6 +1826,9 @@ class CaptionResult:
     #: ``TAKE LINES: …`` when a take was captioned with every line of the episode
     #: because its beats could not be told apart (also printed on stderr), else "".
     take_lines_warning: str = ""
+    #: ``EXTRA SPEECH: …`` when lines were timed on speech stretches and some were left over
+    #: (also printed on stderr), else "".
+    timing_warning: str = ""
 
     def timing_lines(self) -> list[str]:
         """One ``on screen a-b s 'line' (method)`` entry per line, for the report and run notes."""
@@ -1731,6 +1842,81 @@ class CaptionResult:
         return rows
 
 
+#: ``(desk, episode) -> the spine as the server holds it now`` (saved on the desk), or None.
+SpineFetcher = Callable[[Path, int], "dict[str, Any] | None"]
+
+
+def api_spine_fetcher(desk: Path, episode: int) -> dict[str, Any] | None:
+    """Read the spine from the server and save it on the desk (``api/spine.json``, ``epNN/api/spine.json``).
+
+    A free read (``GET /v1/spines/{id}``). ``None`` when the desk has no spine id yet.
+    """
+
+    from creation.post.desk import open_api, refresh_spine, spine_id
+
+    try:
+        spine_id(desk)
+    except ValueError:
+        return None
+    run = open_api(desk, episode)
+    try:
+        return refresh_spine(run, desk, episode)
+    finally:
+        run.client.close()
+
+
+def current_spine(
+    desk: Path, episode: int, *, fetch: SpineFetcher | None = None
+) -> tuple[dict[str, Any] | None, str]:
+    """The spine to caption from: the server's, else the desk's copy with a loud note.
+
+    Captions come from the lines the story has now (L-20261001-8: a line
+    deleted before filming was burned from a stale desk copy). The desk copy
+    is used only when the server cannot be read, and the note says so.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    episode
+        Episode ordinal.
+    fetch
+        Server read (default :func:`api_spine_fetcher`); tests pass a fake.
+
+    Returns
+    -------
+    tuple[dict | None, str]
+        The spine (``None``: let :func:`caption_take` read the desk), and
+        ``""`` or a ``!! captions from the desk's copy …`` note.
+    """
+
+    import httpx
+
+    from creation.post.desk import saved_spine
+
+    desk = desk.expanduser().resolve()
+    try:
+        fresh = (fetch or api_spine_fetcher)(desk, episode)
+    except (
+        OSError, RuntimeError, ValueError, KeyError, SystemExit, httpx.HTTPError,
+    ) as exc:  # fmt: skip
+        detail = str(exc.code) if isinstance(exc, SystemExit) else str(exc)
+        found = saved_spine(desk, episode)
+        where = f"`{found[1].name}`" if found else "on the desk"
+        return (found[0] if found else None), (
+            f"!! captions from the desk's copy {where}: the current spine could not be read "
+            f"({type(exc).__name__}: {detail[:160]}); a line changed or deleted since that copy "
+            "was saved is captioned as it was. Run `spine --refresh` and finish again"
+        )
+    return (dict(fresh) if fresh else None), ""
+
+
+def _plain_words(text: str) -> str:
+    """Lower-case words only: ``Not tonight!`` and ``not tonight.`` are the same line."""
+
+    return " ".join(re.findall(r"[\w']+", text.casefold()))
+
+
 def caption_take(
     desk: Path,
     *,
@@ -1741,11 +1927,12 @@ def caption_take(
     words_json: Path | None = None,
     timing_source: Path | None = None,
     stem: str | None = None,
-    words_on_english: bool = False,
     fixed_lines: Sequence[tuple[CaptionLine, Span]] = (),
     take_index: int | None = None,
     line_spans: Mapping[str, Span] | None = None,
     style: str = DEFAULT_CAPTION_STYLE,
+    spine: Mapping[str, Any] | None = None,
+    laid_lines: Sequence[tuple[CaptionLine, Span]] = (),
 ) -> CaptionResult:
     """Caption the newest raw take on a desk episode.
 
@@ -1762,21 +1949,18 @@ def caption_take(
     line_ends
         Manual end time per line (the caption goes off exactly there).
     words_json
-        A saved transcript of this take (``/v1/transcripts`` words). Used only
-        on a show captioned with whole English lines (spoken language not
-        English): each line is timed on its matched words, a line not matched
-        falls back to its speech span. An English show keeps speech-span word
-        flicker and ignores it.
+        A saved transcript of this take (``/v1/transcripts`` words), on any
+        show: each line is timed on its matched words, a line not matched
+        falls back to its speech span. An English show still flickers word by
+        word, inside the span its words were heard in (L-20260930-6: speech
+        spans alone put every line after a stray stretch of speech on the
+        wrong words).
     timing_source
         File whose speech is detected (default ``take``). ``finish`` passes the
         take before the music bed, since silence cannot be found under music.
     stem
         Output name stem (``take-ep01-t1-cap`` writes ``take-ep01-t1-cap-vN.mp4``
         and ``.ass``); default ``<take>-house`` / ``<take>-captioned``.
-    words_on_english
-        Time an English show's lines on ``words_json`` too (word flicker inside
-        each matched line). ``finish`` sets it for a revoiced or voice-fx take,
-        whose treated speech moves speech spans off the lines.
     fixed_lines
         Lines placed where they were laid, not found on the take: ``finish``'s
         inner-voice lines (a character's thoughts), each with the span its dry
@@ -1798,6 +1982,18 @@ def caption_take(
         ``house`` (yellow; word flicker on a show spoken in English) or
         ``plain`` (white whole lines on any show). ``none`` is the caller's to
         skip: it is refused here.
+    spine
+        The spine to caption from (``finish`` passes the current one, read from
+        the server). ``None`` reads the newest snapshot on the desk that has
+        the episode's lines.
+    laid_lines
+        Lines laid by hand (``finish --voice FILE@S``), each with the span it
+        plays. One whose words are one of the take's script lines is that
+        line (a replacement read): it is captioned once, as the script line,
+        timed on the take. Any other (narration, a line not in the script) is
+        captioned where it is laid, like ``fixed_lines``, in Georgia italic
+        when ``italic``, and its window is left out of the take's speech
+        stretches so the script lines stay on their own speech.
 
     Returns
     -------
@@ -1830,28 +2026,48 @@ def caption_take(
         if take_index is not None
         else None
     )
-    for spine_path in sorted(
-        api.glob("*spine*.json"), key=lambda p: p.name, reverse=True
-    ):
-        spine = json.loads(spine_path.read_text(encoding="utf-8"))
-        if not isinstance(spine, dict) or not episode_caption_lines(
-            spine, episode_ordinal
+    candidates: list[dict[str, Any]] = (
+        [dict(spine)]
+        if spine is not None
+        else [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(
+                api.glob("*spine*.json"), key=lambda p: p.name, reverse=True
+            )
+        ]
+    )
+    for body in candidates:
+        if not isinstance(body, dict) or not episode_caption_lines(
+            body, episode_ordinal
         ):
             continue
         # Newest snapshot with the episode's lines; a take gets only its own beats' lines.
         # ``plain`` is whole lines on any show; ``house`` flickers word by word on an English one.
-        whole_lines = style == "plain" or captions_whole_lines(spine)
+        whole_lines = style == "plain" or captions_whole_lines(body)
         if take_index is None:
-            caption_lines = episode_caption_lines(spine, episode_ordinal)
+            caption_lines = episode_caption_lines(body, episode_ordinal)
         else:
             caption_lines, take_lines_warning = take_caption_lines(
-                spine, episode_ordinal, take_index=take_index, take_count=take_count
+                body, episode_ordinal, take_index=take_index, take_count=take_count
             )
             if take_lines_warning:
                 print(f"WARNING {take_lines_warning}", file=sys.stderr)
         break
     lines = [line.text for line in caption_lines]
-    fixed = sorted(fixed_lines, key=lambda item: item[1].start)
+    # A hand-laid line that reads one of the take's script lines is that line; any other is laid like a thought.
+    script_words = {
+        _plain_words(text)
+        for line in caption_lines
+        for text in (line.text, line.performed, *line.spellings)
+        if text
+    }
+    extra_laid = [
+        (line, span)
+        for line, span in laid_lines
+        if _plain_words(line.text) not in script_words
+    ]
+    quiet = [(span.start, span.end) for _, span in extra_laid]
+    fixed = sorted([*fixed_lines, *extra_laid], key=lambda item: item[1].start)
     if not lines and not fixed:
         scope = (
             f"t{take_index} of episode {episode_ordinal}"
@@ -1868,11 +2084,7 @@ def caption_take(
     # Word timing is for whole English lines over other-language speech; English flicker keeps speech spans.
     from creation.post.whisper import load_words
 
-    words = (
-        load_words(words_json)
-        if words_json is not None and (whole_lines or words_on_english)
-        else None
-    )
+    words = load_words(words_json) if words_json is not None else None
     timing = (
         time_lines(
             caption_lines,
@@ -1880,8 +2092,9 @@ def caption_take(
             line_starts=line_starts,
             line_ends=line_ends,
             words=words,
-            spans=lambda: speech_spans(
-                detect_silences(ffmpeg, source, duration), duration
+            spans=lambda: without_windows(
+                speech_spans(detect_silences(ffmpeg, source, duration), duration),
+                quiet,
             ),
             known=[(line_spans or {}).get(line.line_id) for line in caption_lines]
             if line_spans
@@ -1891,6 +2104,9 @@ def caption_take(
         else LineTiming((), (), (), ())
     )
     anchors = list(timing.anchors)
+    timing_warning = "; ".join(timing.warnings)
+    if timing_warning:
+        print(f"WARNING {timing_warning}", file=sys.stderr)
 
     italic = tuple(line.italic for line in caption_lines)
     skip = [not line.english for line in caption_lines]
@@ -1951,4 +2167,5 @@ def caption_take(
         ),
         words_json if words is not None else None,
         take_lines_warning,
+        timing_warning,
     )

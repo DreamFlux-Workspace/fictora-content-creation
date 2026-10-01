@@ -129,8 +129,10 @@ from creation import inner_voice as thoughts
 from creation.captions import (
     CaptionLine,
     Span,
+    SpineFetcher,
     caption_take,
     captions_whole_lines,
+    current_spine,
     resolve_caption_style,
 )
 from creation.harness.raw_video import fetch_take_facts
@@ -589,6 +591,7 @@ def run_finish(
     text_ocr: OcrRunner | None = None,
     over_locked_voices: bool = False,
     caption_style: str | None = None,
+    spine_fetcher: SpineFetcher | None = None,
     stream: TextIO | None = None,
 ) -> FinishResult:
     """Run the whole local post chain on one accepted take.
@@ -660,6 +663,10 @@ def run_finish(
         ``--caption-style``: ``house`` (yellow flicker), ``plain`` (white whole
         lines) or ``none`` (no captions; the take is still complete). ``None``
         reads the desk's ``production.config.json`` (default ``house``).
+    spine_fetcher
+        Reads the current spine for the captions (default: the server, saved on
+        the desk; :func:`creation.captions.current_spine`). The desk's copy is
+        used, with a ``!!`` note, only when it cannot be read.
     stream
         Progress output (stderr by default).
 
@@ -1216,6 +1223,13 @@ def run_finish(
     def caption_words() -> tuple[Path | None, str]:
         """The transcript to time the lines on, and a note saying which (or why none).
 
+        Any show is timed on a saved transcript of the raw take when one is on
+        the desk (L-20260930-6: speech spans put every English line after a
+        stray stretch of speech on the wrong words). A show not spoken in
+        English asks the server for one when none is saved; an English take
+        never does (it is timed on speech spans, with an ``EXTRA SPEECH``
+        warning when stretches are left over).
+
         A revoiced or voice-fx take is timed on the transcript its revoice
         read (``take-epNN-tK-revoice-words-vN.json``, the raw take's words: the
         new lines are laid where the old ones were), with hand ``--voice``
@@ -1252,9 +1266,8 @@ def run_finish(
                     f"transcript `{words.name}` with the hand lines (`{merged.name}`)",
                 )
             return words, f"transcript `{words.name}`"
-        if not captions_whole_lines(spine):
-            return None, ""
-        if voice_state["path"] is not None:
+        english = not captions_whole_lines(spine)
+        if voice_state["path"] is not None and not english:
             return (
                 None,
                 "no transcript timing: the hand voice step changed the take's speech",
@@ -1282,13 +1295,46 @@ def run_finish(
                 return None, f"no transcript timing: {lineage.reason}"
             via = f" (raw take's words; `{source.name}` keeps its sound timeline: {lineage.chain_text()})"
         saved = saved_words(desk, episode, take_id)
+        if saved is not None and english and (hand.voices or hand.mutes):
+            # The hand lines are laid where the transcript cannot have heard them: add them, take the mutes out.
+            merged = with_hand_lines(
+                saved, hand, next_versioned_path(takes, f"{base}-cap-timing", ".json")
+            )
+            return (
+                merged,
+                f"transcript `{saved.name}` with the hand lines (`{merged.name}`){via}",
+            )
         if saved is not None:
             return saved, f"transcript `{saved.name}`{via}"
+        if english:
+            # An English take is never sent for a transcript: without a saved one it is timed on speech.
+            return None, ""
         try:
             made = (transcriber or server_transcript)(desk, episode, take_id)
         except (ValueError, RuntimeError, OSError, KeyError, httpx.HTTPError) as exc:
             return None, f"no transcript ({type(exc).__name__}: {exc})"[:300]
         return made, f"transcript made on the server: `{made.name}`{via}"
+
+    def laid_voice_lines() -> tuple[list[tuple[CaptionLine, Span]], list[str]]:
+        """Each ``--voice`` line with its words and where it plays, and a ``!!`` note per one with no words."""
+
+        laid: list[tuple[CaptionLine, Span]] = []
+        notes: list[str] = []
+        for line, seconds in hand.voices:
+            words = voice_line_text(line.path)
+            if not words:
+                notes.append(
+                    f"!! --voice {line.path.name} not captioned: no words saved with it "
+                    f"(`{line.path.with_suffix('.json').name}`); make it with `voice-line`, which saves them"
+                )
+                continue
+            laid.append(
+                (
+                    CaptionLine(f"voice {line.path.name}", words, True, words),
+                    Span(line.start, line.start + seconds),
+                )
+            )
+        return laid, notes
 
     def do_captions(take: Path) -> StepReport:
         if style == "none":
@@ -1298,9 +1344,11 @@ def run_finish(
             return StepReport(
                 "captions", "skipped", f"{CAPTIONS_OFF}: no captions burned"
             )
+        caption_spine, spine_note = current_spine(desk, episode, fetch=spine_fetcher)
         words_json, words_note = caption_words()
         if words_note:
             append_run_note(run_dir, f"Finish · captions: {words_note}")
+        laid, laid_notes = laid_voice_lines() if voice_state["path"] else ([], [])
         try:
             captioned = caption_take(
                 desk,
@@ -1311,7 +1359,8 @@ def run_finish(
                 words_json=words_json,
                 timing_source=voice_state["path"] or source,
                 stem=f"{base}-cap",
-                words_on_english=words_json is not None and treated_voice(source),
+                spine=caption_spine,
+                laid_lines=laid,
                 fixed_lines=[
                     (
                         CaptionLine(cue.cue_id, cue.line, True, cue.line),
@@ -1354,6 +1403,9 @@ def run_finish(
                 captioned.font_warning,
                 captioned.take_lines_warning,
                 style_note,
+                captioned.timing_warning,
+                spine_note,
+                *laid_notes,
             )
             if w
         )

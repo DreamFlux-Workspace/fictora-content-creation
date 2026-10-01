@@ -22,6 +22,8 @@ Closed 2026-10-01 by founder decision (story-writing rules; server PRs fictora-d
 
 Closed 2026-10-01 in the kit (L-20260928-4, L-20260930-11): kit captions are the house style by default (Arial Bold 64 on a 1080×1920 canvas, yellow, outline 5, scaled to the take by height: 45 on 1344), long lines wrap onto two balanced lines instead of shrinking, and `finish` / `caption` take `--caption-style plain` (white whole lines) or `none` (the desk default is `caption_style` in `production.config.json`). No re-burn at 64 any more.
 
+Closed 2026-10-01 in the kit (L-20260930-6, L-20261001-8): English captions are timed on a saved transcript when there is one, and a take timed on speech stretches warns `EXTRA SPEECH` (naming the stretches no line took) instead of silently shifting every later line. `finish` and `caption` caption from the current spine read from the server (a line deleted before filming is no longer burned from a stale desk copy), and a line laid with `finish --voice` that is not a script line (narration) is captioned in Georgia italic where it is laid, its window kept out of the speech stretches.
+
 Closed 2026-09-28 by founder decision: a finished cut shorter than its 15 / 30 / 60 s band (e.g. 14.2 s after trimming a bad half-second) is allowed and is not a deviation. Takes still film at the normal clip length (`clip_duration_seconds` 4–15); a finished episode longer than its band is still a deviation.
 
 | Stage | Gap | Why it costs money or time | Source |

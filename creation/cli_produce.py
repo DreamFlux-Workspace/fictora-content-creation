@@ -198,7 +198,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--words-json",
         type=Path,
         default=None,
-        help="Transcript of the take to time whole English lines on (a show not spoken in English); "
+        help="Transcript of the take to time the lines on (any show); "
         "default: the newest take-epNN-t1-*words-vN.json when captioning the raw take.",
     )
     add_caption_style_arg(cap)
@@ -286,7 +286,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(result.message)
             return 0
         if args.command == "caption":
-            from creation.captions import resolve_caption_style
+            from creation.captions import current_spine, resolve_caption_style
             from creation.post.review import saved_words
 
             style, style_note = resolve_caption_style(
@@ -297,6 +297,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             if style == "none":
                 print("caption style none: nothing burned.")
                 return 0
+
+            # The lines the story has now, not a desk copy saved before a line was changed (L-20261001-8).
+            spine, spine_note = current_spine(args.desk, args.episode)
+            if spine_note:
+                print(spine_note)
 
             words_json = args.words_json or (
                 saved_words(args.desk.expanduser().resolve(), args.episode, "t1")
@@ -313,6 +318,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 # A take file gets only its own beats' lines; a joined episode file gets them all.
                 take_index=take_index_from_name(args.take) if args.take else None,
                 style=style,
+                spine=spine,
             )
             ep_dir = args.desk.expanduser().resolve() / f"ep{args.episode:02d}"
             timing = "; ".join(result.timing_lines())
@@ -322,6 +328,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     *result.not_english,
                     result.font_warning,
                     result.take_lines_warning,
+                    result.timing_warning,
+                    spine_note,
                 )
                 if w
             )
@@ -339,8 +347,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 mark = "  (italic: heard, not seen)" if slanted else ""
                 span = seen or span
                 print(f"  {span.start:6.2f}-{span.end:6.2f}s  {line}{mark}  [{how}]")
-            for warning in result.not_english:
-                print(warning)
+            for warning in (*result.not_english, result.timing_warning):
+                if warning:
+                    print(warning)
             print(f"  file: {result.ass}")
             print(f"  file: {result.video}")
             print(

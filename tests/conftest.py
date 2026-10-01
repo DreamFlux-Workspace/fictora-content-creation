@@ -279,6 +279,18 @@ def real_ocr() -> str:
 
 
 @pytest.fixture(autouse=True)
+def _no_spine_read_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """finish and caption read the current spine from the server; tests stay offline and use the desk's copy.
+
+    A test that checks the read passes ``spine_fetcher`` itself.
+    """
+
+    from creation import captions
+
+    monkeypatch.setattr(captions, "api_spine_fetcher", lambda desk, episode: None)
+
+
+@pytest.fixture(autouse=True)
 def _no_ocr_by_default(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
