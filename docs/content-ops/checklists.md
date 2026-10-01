@@ -12,6 +12,9 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] Each line said TO someone; a silent comic beat costs a line in 15 s, and the human chose
 - [ ] Source material: licence and credit named (SCP is CC BY-SA 3.0, credit the author); no unlicensed look copied
 - [ ] Japanese/Korean: register fits who speaks to whom; a dialect has a native speaker's yes, or standard language
+- [ ] Japanese/Korean-voiced: `start --language ja|ko` (it cannot be changed later)
+- [ ] A creature inspired by a reference is written as a new original design; no stock character names ("Mara Voss")
+- [ ] Music bed described by instruments and mood; no composer or studio named
 
 ## After the draft, before the look
 
@@ -30,7 +33,9 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 
 - [ ] `plates/` contains the actual images, not a description
 - [ ] Each speaking character has full-length + bust
-- [ ] Two characters in one frame are separated by build and colour
+- [ ] Two characters in one frame are separated by build and colour; every named character has a clearly different outfit and silhouette
+- [ ] Jackets and uniforms: plain back, no lettering or logos
+- [ ] A child in a coat or dress has leggings or shorts under it
 - [ ] Ages are written as real ages; nobody under 18 is in a romance
 - [ ] A voice-only (off-screen) cast member got no plate (every line off screen, in no frame)
 - [ ] The preset's world did not leak in (settings, props; expected only in plates drawn before a look frame was pinned); look notes set if it did
@@ -68,7 +73,10 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] Both men (or both figures) appear once per frame unless the brief says otherwise
 - [ ] No readable text or digits in frame
 - [ ] Frame 0 is mid-motion on a face, not a wide or a still
-- [ ] Visible cause: every action row follows a visible face reacting to its cause, or shares its frame
+- [ ] Visible cause: every action row follows a visible face reacting to its cause, or shares its frame; a death or a break names who or what causes it
+- [ ] A child: camera at or above their eye level; a fall or landing feet-first or seated, legs together
+- [ ] Every frame on the board shares one location string; no line moved between beats
+- [ ] A repurposed episode: title and summary updated before the redraw
 - [ ] Each row opens on the emotion the row before it ended on
 - [ ] A move the beat states is drawn nearer in the next row that shows it; a horror threat has its own insert or POV row
 - [ ] Each spoken line sits on a row with its speaker in frame, medium or closer; no off-screen speaker drawn
@@ -85,8 +93,10 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] The human named the intended run; `--episodes N` passed on `arc --list` and `arc --pick`
 - [ ] `arc --list` printed three arcs from the server (not arcs you wrote); each can carry N episodes; an arc that closes within a few episodes refused
 - [ ] The three were pasted to the human; the human picked one or rewrote it; `arc --pick K` kept it (it can change until episode 2 is written, then `409 series_arc_not_open`)
+- [ ] The previous episode's last ~5 s as filmed and delivered was watched; the idea follows from that, not from its script
 - [ ] Episode 2's idea is a direction the brief printed (`author --direction K`) or the human's own words (`author --line`), never series memory
 - [ ] The printed script carries the human's idea
+- [ ] The printed script was read closely before the yes: an authored episode cannot be authored again (`invalid_extension_ordinal`); later changes go through `edit` / `line`
 - [ ] `approve --gate script` for episode 2 alone (the desk points at it after `author`)
 
 ## Before the take is enrolled
@@ -112,6 +122,8 @@ Run `fictora-produce review --desk D --episode N --take tK` on the raw take and 
 - [ ] Loudness (dialogue take about −15 to −20 LUFS; below −30 needs cues)
 - [ ] Brightness vs the board
 - [ ] Beat-by-beat read against the board
+- [ ] A child in the take (not just the board): camera at or above eye level, falls feet-first or seated with legs together, legs covered under coats and dresses; checked before captioning
+- [ ] The end of the take watched for invented text (lettering on backs, signs)
 - [ ] Every fault written down, including faults you will not fix
 
 Then watch the file in `takes/`. A take that will be re-filmed gets no `finish`, no cues and no voice lines.
@@ -122,13 +134,16 @@ Then watch the file in `takes/`. A take that will be re-filmed gets no `finish`,
 - [ ] `review` run again on the finished file: loudness in band, safe zones clear, zone sheet looked at for faces
 - [ ] Ducking under the voice about 8–9 dB (`review` reads it from the mix buses `finish` saves, band 6–12 dB; `--duck-db 9` when a line must sit clearly over the bed)
 - [ ] No loudnorm anywhere; per-take gain and one limiter
-- [ ] Stray speech muted (`--mute`); every hand cue answers a visible action, inside its own take, and audible
+- [ ] Wrong take dialogue (stray or garbled speech, a wrong line): take audio dropped and rebuilt (voices, effects, ambience, bed), no muted ranges; every hand cue answers a visible action, inside its own take, and audible
 - [ ] Captions are English, in the 55–70% band, on screen only while the line is spoken; no `NOT ENGLISH` in the finish summary
 - [ ] Off-screen and voice-only lines are in Georgia italic; every on-screen line is upright
-- [ ] Any `trim` / `tempo` done after `finish`, on the finished file; first frame after a cut checked; new length stated (shorter than the band is fine)
+- [ ] Any `trim` / `tempo` done after `finish`, on the finished file, with the producer's yes; what was cut shown; first frame after a cut checked; new length stated (shorter than the band is fine). `deboard` holds board frames and never cuts
+- [ ] No post overlay covers the key reveal (test frames of the key shots looked at)
+- [ ] Previews, rough cuts and "just combine" files carry the house captions too
 - [ ] Join: one bed across it, 24 fps, seam steps under 5 dB
 - [ ] Un-marked master kept (`…-cap-vN.mp4`); the marked `…-sokii-vN.mp4` is the delivered copy
 - [ ] Job ids are in `run-notes.md`; no compiled prompt was fetched or saved
+- [ ] The delivered file copied (not moved) into `<Series> - finished episodes`; the desk folder not moved or renamed
 
 ## Re-film
 

@@ -91,7 +91,7 @@ This is the order `fictora-produce` runs them in.
                                                                       5 Board
 ```
 
-1. **Brief.** One line of premise, the cast, the set, the hook, the lines. If the story needs a fact the picture cannot show, that fact must be spoken in a line. Decide now. Episode 1 is made on its own: no series arc yet (see Series arc). Source material: name its licence and credit (SCP is CC BY-SA 3.0: credit the article's author); never copy the look of an image that is not under that licence.
+1. **Brief.** One line of premise, the cast, the set, the hook, the lines. If the story needs a fact the picture cannot show, that fact must be spoken in a line. Decide now. Episode 1 is made on its own: no series arc yet (see Series arc). Source material: name its licence and credit (SCP is CC BY-SA 3.0: credit the article's author); never copy the look of an image that is not under that licence. A creature inspired by a reference (a film monster, an SCP, a game boss) is written as a new original design: its own shape, skin and colouring, described in our words, never the reference's.
 2. **Draft.** The first `step` writes the story on the API. Compare its lines with the brief before the script gate. The draft writes episode 1 alone (`outline_mode=arc_at_episode_two`, `episode_count: 1`); later episodes are written with `author --episode N`.
 3. **Cast plates.** One full-length figure plus a bust per character, plus object plates for any prop that must stay consistent, plus a location sheet for a set that recurs. Gate: show the plates, get a yes.
 4. **Script.** Beats and lines per take, three lines maximum. Gate: the lines, in the original language, with the translation, and every line the writers changed from the brief.
@@ -99,11 +99,13 @@ This is the order `fictora-produce` runs them in.
 6. **Estimate.** Price the batch before enrolling it. The line always names the lane and its $/s. If it starts with `!! SERVER ESTIMATE FAILED`, the server gave no dollars and the kit priced from its own table; `!! SERVER ESTIMATE DOES NOT ADD UP` means the server's own parts (rate x seconds, video + stills) disagree with its total and the higher is shown. Tell the human either before they say yes. The server prices on `priced_on`, fal's billing day (San Francisco time), and the kit trusts it: on a rate-change day the morning in India is still the old rate.
 7. **Take.** The only expensive call. Everything above exists to make this call succeed once.
 8. **Read the take.** Measure first: transcript, cut count, loudness, exposure. Then compare against the board. Write down every fault, including the ones you will not fix.
-9. **Finish.** Local, on the laptop: `fictora-produce finish` (sound effects from the take facts, the show's music bed, colour match to the board, mix near −18 LUFS, captions, the mark; on a locked-voice take also the location's ambience, one cue per episode at about -28 dB between the lines and continuous across the takes' seam (room tone only when no cue can be made), the bed and the ambience ducked in each line window and under every laid voice line or thought, and captions from the line windows), then the join. A take is not done until the finish ran. A raw take is never a deliverable.
+9. **Finish.** Local, on the laptop: `fictora-produce finish` (sound effects from the take facts, the show's music bed, colour match to the board, mix near −18 LUFS, captions, the mark; on a locked-voice take also the location's ambience, one cue per episode at about -28 dB between the lines and continuous across the takes' seam (room tone only when no cue can be made), the bed and the ambience ducked in each line window and under every laid voice line or thought, and captions from the line windows), then the join. A take is not done until the finish ran. A raw take is never a deliverable. That holds for everything the human is shown, not only the delivery: a preview, a rough cut or a "just combine these" file is made from finished takes and carries the house captions.
 
 The gates at 3, 4, and 5 are not optional and are not batchable. A wrong face at the plate stage costs $0.30. The same face after the take costs a re-board and a re-take ($0.60 through 30 Sep 2026: $0.30 board + $0.30 Turbo take; $0.90 from 1 Oct). On Turbo the board is the only picture the take gets, so a wrong face on the board is a wrong face in the take.
 
 ## How the loop runs
+
+Run the kit from bash (or zsh), never PowerShell: PowerShell breaks the quoting in `--set '…'`, `--note "…"` and JSON arguments, and the server gets something else.
 
 The agent stops after every step and waits. It does not chain two stages. It does not decide a step was good enough.
 
@@ -149,6 +151,8 @@ Budgets are **warnings, never a hard stop**: first 15 s episode of a new series 
 - Check each arc can carry the run. For a long run prefer an engine (a situation that repeats with a new problem) plus a slow question. Refuse an arc that closes within a few episodes (a 25–30 episode run was once offered a one-week mystery).
 - Each later episode is steered by its **direction**: the human picks one of the offered directions or says their own, and it reaches the writer in their words. Confirm the idea is in the printed script. Series-wide memory is for standing rules ("keep every episode punchy"), never for one episode's idea.
 - Each episode's script is approved on its own. Never pre-stage scripts for later episodes.
+- Write episode N+1 from the last ~5 s actually filmed and delivered (watch the delivered file), not from episode N's script: a take that drifted from its script hands off what was filmed.
+- An authored episode cannot be authored again: a second `author` for it is refused `invalid_extension_ordinal`. Read the printed script closely before the script yes; after that, change it only with `edit` and `line`.
 - Commands: `fictora-produce arc --desk D --list [--episodes N]`, `arc --pick K`, `brief --desk D --episode N` (3 on), `author --desk D --episode N --direction K | --line "…"`, then `approve --gate script` and the usual loop. The run length is a soft default; the season continues past it.
 - The kept arc can be changed (`arc --pick` again) until episode 2 is written. After that the route answers `409 series_arc_not_open`: the arc is fixed, steer later episodes by their direction instead.
 - Episodes are found by ordinal, never by a typed id. The server names every new episode `episode_NN`; a story made before 2026-09-28 keeps `ep_02` and on for its later episodes. Every kit command resolves both, and the server's spine routes accept either form.
@@ -193,7 +197,7 @@ The writers pick an anime expression (`reaction_kind`) for every emotional momen
 Check before the board gate:
 
 - The rows follow the declared shot plan.
-- **Visible cause.** Every action row is preceded by a visible face reacting to its cause, or shares the frame with it. "Jealousy → breaks the sign" did not read when the face was hidden and the insert showed only hands.
+- **Visible cause.** Every action row is preceded by a visible face reacting to its cause, or shares the frame with it. "Jealousy → breaks the sign" did not read when the face was hidden and the insert showed only hands. When a direction ends on something dying or breaking, write who or what causes it ("the falling beam crushes the lamp", "the cold kills the bird"); left unsaid, the board pins it on the nearest hand.
 - **Each row opens on the emotion the row before it ended on.** A calm smile right after the sign broke read wrong.
 - **The picture shows the rule.** A change the viewer must see as a jump goes in its own row. H3 blends the cells of one row into one move. A move the beat states (closer, at arm's length) is drawn nearer in the next row that shows it; on a `punchy` horror take the threat gets its own insert or point-of-view row.
 - **Speakers.** The speaker is in the frame of the row their line plays on, at a medium shot or closer, or the line plays over someone else's face. No off-screen speaker is drawn: not as a sleeve, a hand, a cane or a shadow. The board shot list prints the line and speaker on each row and warns when the speaker is not drawn there.
@@ -203,11 +207,17 @@ Check before the board gate:
 
 To change a board, say what is wrong: `redraw-board --desk D --episode N --take tK --note "medium two-shot walking down the hallway, waist-up, no map"`. The note is at most 500 characters; a longer one is refused on the desk with its length, and nothing is sent or booked. The note goes through the director (the app's path) and becomes edits to the take's beats; the kit prints them per row, then redraws, and the server re-authors the take's frames from them. A note that changes no shot stops before paying. When the server takes the note itself it may draw nothing (the note needs detail, changed nothing, failed or could not be saved): the kit prints `!!` with the reason and "nothing was charged", books nothing and keeps the old board. For `note_needs_detail` it prints the server's question: ask the human, then `redraw-board --take tK --note "<answer>"`. A note that changed a beat's shot plan is said, and the desk's spine copy is saved again. Or change what it is drawn from yourself (`edit --frame N --set …`, `edit --beat N …`, `look-note`), then `redraw-board … --cause "…"`. The cause is a label only. With nothing changed since the board was drawn (frame briefs, the take's beats, look notes, plates) `redraw-board` stops unpaid with `!!`; `--same-shots` only for a random bad draw with the right frames. A board showing another episode's content is a server bug: report it with the job id. The full procedure is "Fixing a board" in the skill. To change who is in a shot, edit the frame's staging: `edit --frame N --set 'subject_blocking=[…]'` with one entry per person (`cast_id`, `frame_position`, `pose`, `gaze`, `interaction`); the kit sends the whole brief and `cast_refs` to match, then `redraw-board`. To only take someone out, `edit --frame N --set 'cast_refs=["Hana"]'` (the server keeps the others' staging, fictora-drama #498). The server names a refused cast change: `frame_cast_needs_staging` (someone added without an entry), `frame_cast_mismatch`, `off_screen_cast_on_frame` (only heard in this take), `voice_only_cast_on_screen`. On a deploy older than #498 a `cast_refs`-only removal is refused (`subject blocking must match cast_refs`): edit `subject_blocking` instead.
 
+Two server rules no error names yet: every frame on one board shares one location string, and a line cannot move from one beat to another. Write the brief and the edits to fit both.
+
+Repurposing an episode (a new idea on an episode already authored): update its title and summary first, then redraw (the kit has no command for them yet: ask engineering; backlog). A redraw re-authors the frames from the beats and the summary, so an old summary pulls the old story back into the board.
+
 ### Characters and age
 
 - Characters may be any age. Write the real age ("10, primary-school kid", "sixteen") and the plate draws that age. Some presets still describe adult proportions, so a child may be drawn older; Meadow Hour (`slice-of-life`) is the natural fit for kids.
 - A plate or board with a child may be refused by image moderation more often. Report the refusal to the human with the job id; do not retry blind.
 - The one hard line: never romantic, sexual, suggestive or fan-service framing of any character under 18, and never a romance arc for them (no love interest, crush, dating, or someone else's romance aimed at them). The server rejects a breach as `minor_in_romance_arc`. PG staging (no kissing, embracing or face contact) applies to everyone. Asked for a minor in a romance, say no and offer the character at 18+ or the relationship as non-romantic.
+- Children on camera (P0; a 6-year-old's fall was filmed legs-up): the camera is at or above the child's eye level, never below. Falls and landings are feet-first or seated with legs together. Leggings or shorts under coats and dresses, written into the plate and the frames. Check the take itself for all three, not just the board, before captioning: a take that breaks one is not captioned or shown; stop and tell the human.
+- Trial, not a rule (one run; the cause is a guess): if an unclothed creature's plate is refused as sexual, redraw it described as "sexless, smooth like a store mannequin, no anatomical detail", and write in the learnings whether it held.
 
 ### Off-screen voices
 
@@ -218,6 +228,7 @@ To change a board, say what is wrong: `redraw-board --desk D --episode N --take 
 
 - A Japanese or Korean line must sound like a native speaker in that situation. The situation picks the set phrase (staff to customer: 申し訳ございません / 정말 죄송합니다, not ごめんなさい). No English quip carried word for word. No notice-board noun stack in speech (「逆襲中止！」 "counterattack cancelled!") unless the character really is announcing.
 - A dialect (Kansai-ben, Busan satoori) needs a native speaker's yes before the script gate. With no one to check it, write the standard language.
+- A Japanese- or Korean-voiced show starts with `start --language ja` (or `ko`), so `spoken_language` is right from the draft. It cannot be changed later.
 - Pin the exact performed line so localization never rewrites it. Compare every draft line with the brief and show the human any line that changed.
 
 ### Look and medium
@@ -227,6 +238,7 @@ To change a board, say what is wrong: `redraw-board --desk D --episode N --take 
 - A pinned look frame wins over the preset: the preset keeps only its shot composition, and its world, palette, finish and reference images leave every drawing. Pin it before the plates; anything drawn earlier still carries the preset's world (meadows, baskets, a white cat). Without a look frame, steer that world with look notes (`look-note --desk D --add "indoors, an arcade; no meadows"`, at most five) before the plates are drawn.
 - Say what you want. Never name what you don't. "No mirrors" puts mirrors in the frame.
 - Every unnamed extra (a new crew, guards) gets a written look of their own in the brief or the redraw note: a different face, hair and build, their own stencil or name. Left unwritten, the board draws one shared face (episode 2 drew the dead lead's face and stencil on the new crew) and the video may show the same person twice. Describe extras by look in a note, not by designation ("D-7", "guard 2"): naming them only works once the server's unnamed-figures field ships.
+- Give every named character a clearly different outfit and silhouette, so no two read alike at a glance. Avoid stock names the writers reach for ("Mara Voss"); pick a name of your own.
 - Extreme close-ups of eyes or skin drift photo-real on a drawn look unless the row's note names the show's style ("flat anime, clean ink lines, no photographic texture").
 - Redraw notes (`redraw-plate --note`, `look-note`, a frame edit) describe shapes, never judgements: "short, round and fat, two clumsy pleats", not "crooked".
 - Faces come from crops of references, never from the reference wholesale, and never from a real person's likeness.
@@ -256,7 +268,7 @@ To change a board, say what is wrong: `redraw-board --desk D --episode N --take 
 - A coloured detail named in a second place becomes a second object.
 - Duplicates are compositional, never numeric. "Only one person" does not help.
 - When a prop keeps detaching, change the pose so the contact does not exist. Forbidding it in words fails twice.
-- No digits and no readable text anywhere.
+- No digits and no readable text anywhere. Jackets and uniforms say "plain back, no lettering or logos". Watch the end of every take for invented text: it shows up most in the last seconds.
 
 ### Dialogue
 
@@ -266,7 +278,7 @@ To change a board, say what is wrong: `redraw-board --desk D --episode N --take 
 - A line needs its own cell with no competing business.
 - Never write a character speaking with a full mouth.
 - Direct volume as clear and audible. "Barely audible" renders at −50 dB.
-- A gap between spoken lines can render as garbled fake speech. Mute that window in the mix. Do not re-film.
+- A gap between spoken lines can render as garbled fake speech, or a line comes out wrong. Do not re-film and do not mute the range: a muted range leaves a hole in the background (the take's own room sound drops out). Drop the take's audio and rebuild it: the voices as dry lines, the effects, an ambience cue and the bed (skill, "Hand sound"). A locked-voice take needs none of this: its audio is only the locked lines, and `finish` lays the ambience and bed.
 - A character's first speaking episode needs its own voice audition on their own real lines.
 
 ### Light and sound
@@ -277,6 +289,7 @@ To change a board, say what is wrong: `redraw-board --desk D --episode N --take 
 - Music and effects are compressed under the voice, not simply turned down.
 - Check that a generated sound effect actually contains a sound.
 - A generated music bed is about 30 seconds. Loop it for anything longer.
+- Describe a music bed by its instruments and mood ("slow piano and soft strings, wistful"). Never name a composer or a studio: the bed is refused `content_policy_violation`.
 
 ### Hosted post is off
 
@@ -302,7 +315,7 @@ Measure first, then watch. `fictora-produce review --desk D --episode N --take t
 
 | Check | What good looks like | If it's wrong |
 | --- | --- | --- |
-| Transcript | Every line heard, exactly as written, with timing | A missing line is the one real re-film. A stray mumble is muted in the mix. |
+| Transcript | Every line heard, exactly as written, with timing | A missing line is the one real re-film. A stray mumble or wrong words: drop the take audio and rebuild it (Dialogue), never mute a range. |
 | Cut count | Matches the declared shot plan (0 for `one_shot`, one per planned shot change for coverage) | Forced cuts at line boundaries are expected. Soften in post. |
 | Loudness | About −15 to −20 for a dialogue take | Below −30 is effectively silent. Build cues. |
 | Brightness | Roughly in the band the board was in | Dim sections get lifted afterwards. |
@@ -317,7 +330,9 @@ Faults accepted without a re-film (calibration): a door frame in the opening sec
 
 ## Finishing order
 
+- The only automatic edit to footage is the board-frame trim (`deboard`): it holds the first real frame over the storyboard frames a take opens on, and never cuts. Any other trim or cut of footage needs the producer's yes first, and the reply shows what was cut (the times and the frames either side).
 - `finish` the raw take first: its effects, hand cues and hand lines are placed at the times as filmed. Then `trim` or `tempo` the finished file, never the raw take. After a trim, check the first frame after the cut at full size (a 0.04 s miss once flashed the removed shot) and say the new length; shorter than the band is fine.
+- An overlay added in post (a title, a sticker, a blur, a hand caption) never covers the key reveal. Render test frames of the key shots with the overlay on and look at them before the full render.
 - Keep the un-marked master. `finish` writes every step to its own file; the captioned file before the mark (`…-cap-vN.mp4`) is the master, the marked file (`…-sokii-vN.mp4`) is what goes out. Never delete the master to save space.
 - The join (`fictora-produce join --desk D --episode N`, or `--episodes 1 2 3` for a series cut): one bed across every take, 24 fps, and the level step at each seam under 5 dB (a 5 dB step is audible; over it the join says `NOT DONE` and exits 5). Place cues on each take before the join, never on the joined file. Never join the marked `-sokii` files by hand: that stitches two beds and two marks.
 - The reel cut (`fictora-produce reel --desk D --episode N`, after the episode is accepted): a separate IG / TikTok edit cut from the footage already rendered. Local, $0, no new video and no server route. It opens on the strongest frame as a short flash-forward and ends on the new fact; it trims the calm setup and keeps one pivot; captions are the accepted ones re-timed through the cut; no line to the viewer and no end-card question (the call to action goes in the suggested post text). It writes only under `reels/` and never overwrites. Detail: reference.md, Reel cut.
@@ -360,7 +375,9 @@ Money warnings:
 
 Ask where the folder should go before anything is made. Default: `~/Downloads/documents/YYYY-MM-DD-<series>/`.
 
-If a desk already exists for that date and slug, `start` and `init-series` refuse it. Never delete, rename or overwrite it, and never pick another parent folder to get round it: ask the human whether to continue that desk (`fictora-produce status --desk D`) or name the series differently.
+If a desk already exists for that date and slug, `start` and `init-series` refuse it. Never delete, rename or overwrite it, and never pick another parent folder to get round it: ask the human whether to continue that desk (`fictora-produce status --desk D`) or name the series differently. Never move or rename a desk folder after it is made either.
+
+Every delivered episode is also copied (never moved) into the series' `<Series> - finished episodes` folder, so the human has one place for what went out.
 
 ```
 run-notes.md

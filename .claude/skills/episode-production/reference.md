@@ -20,7 +20,7 @@ Three layers, later wins:
 | `caption_style` | `house` | Local captions `finish` and `caption` burn: `house` (yellow Arial Bold 64 on 1920, scaled), `plain` (white whole lines) or `none`. `--caption-style` on either command overrides it. Sent to the server only with `--api-captions`, which refuses `plain` / `none` ([local-captions.md](../../../docs/content-ops/local-captions.md)) |
 | `api_captions` | `false` | Keep false. The take step stops at the raw clip; captions run on the laptop |
 | `locale` | `en-US` | Draft locale |
-| `spoken_language` | unset (English) | `--language ja` / `ko` at `start`: the cast speaks it; captions stay English |
+| `spoken_language` | unset (English) | `--language ja` / `ko` at `start`: the cast speaks it; captions stay English. Set it at `start` for every Japanese- or Korean-voiced show: it cannot be changed later |
 | `fallback_estimate_usd` | unset | Per-take dollars used only when the server's lane has no verified price in `creation/prices.py`; unset prices it at the Turbo rate. Older desks may carry `1.20` here: it is only read for such an unpriced lane |
 | `poll_*_deadline_seconds` | 1800–7200 | Poll caps (below) |
 
@@ -73,6 +73,8 @@ Always a deviation: a finished episode longer than its 15 / 30 / 60 s band; any 
 Characters may be any age: children, teenagers, adults, the elderly. Write the real age ("10, primary-school kid", "sixteen", "late twenties") and the plate draws it.
 
 The hard line: never romantic, sexual, suggestive or fan-service framing of anyone under 18. Their age and body are never sexualised, and they are never in a romance arc (no love interest, crush, dating, or someone else's romance aimed at them). A romance lead is 18+. The server rejects a breach as `minor_in_romance_arc`. PG staging (no kissing, embracing or face contact) applies to everyone. Asked for a minor in a romance: say no and offer the character at 18+ or the relationship as non-romantic.
+
+Children on camera (P0): camera at or above the child's eye level, falls feet-first or seated with legs together, leggings or shorts under coats and dresses; checked on the take before captioning (runbook, Characters and age).
 
 ## Off-screen voices
 
@@ -177,7 +179,7 @@ Measure, then watch: every approved line heard, exactly; cut count (compare cons
 - A line the take was never asked to say is a server fault: `fictora-produce check-lines --desk D --episode N [--take tK]` names it from the take facts (never the prompt). Report it with the take job id; do not re-film blind.
 - `check-lines` also prints, for every line the take was asked to say, the shot and board row it fell in. A `!!` line means an on-screen line landed on a row whose frames do not draw its speaker (off-screen lines are fine). That is a board fault, not a take fault: fix the frame or the line and redraw the board before re-filming. When the take has a different number of shots than the board has rows, the rows are not matched and the frame check is skipped.
 - **Duplicate people (Turbo).** The video model films from the board picture alone, so a person drawn in several panels can appear twice in one shot (the kneeling pose from one row and the standing pose from the next, at once), and look-alike extras can merge into one face. Count the people in each shot against the take facts (`review`'s People section, the lines after filming, `take-facts`: `shot N (a-bs): On screen: …`), and watch every cut where a character changes pose. Found one: re-film that take with `--cause "same person rendered twice at shot N"`. Post cannot remove a person.
-- Stray mumble between lines is a mute in the mix, not a re-film: `finish --mute A-B` (Hand sound, below).
+- Stray mumble, garbled fake speech or a wrong line is not a re-film and not a muted range (that leaves a hole in the background): drop the take's audio and rebuild it (SKILL.md, Hand sound).
 
 ## Review: the numbers
 
@@ -231,7 +233,7 @@ uv run fictora-produce finish --desk D --episode N --take tK --mute 6.9-8.3 --vo
 ```
 
 - **Times** are seconds on the take as filmed (the raw take), for all three flags. `deboard` replaces the board frames without cutting, so nothing moves; never subtract the board frames. The server now does the same when it stores a Turbo take (take facts `board_frames`; `deboard` then finds 0). A take stored on 1 Oct 2026 while the server cut them (fictora-drama #543) is shorter than filmed: `finish` measures it against its dialogue track and writes the next take-facts version with every time moved (`take_facts_shifted_s`); a native take from then gets a `!!` instead. Place cues on the take, never on a joined episode.
-- **`--mute A-B`**: the take's own audio is silent inside A-B, with 30 ms fades just outside it. It runs before the effects, so a take-facts cue in that window still plays. A mute past the take's end is clamped; one that starts past it is refused.
+- **`--mute A-B`**: the take's own audio is silent inside A-B, with 30 ms fades just outside it. A range shorter than the take leaves a hole in the background: for wrong dialogue mute the whole take (`0-<take length>`) and rebuild voices, ambience, effects and bed (SKILL.md, Hand sound). It runs before the effects, so a take-facts cue in that window still plays. A mute past the take's end is clamped; one that starts past it is refused.
 - **`voice-line`**: `POST /v1/spines/{id}/cast/{cast_id}/voice-lines` in the cast's locked voice (none locked: refused, nothing sent), the server reads it back (a misread is flagged: listen first). Saved to `epNN/voices/voice-epNN-<cast>-vN.mp3` with a JSON sidecar; the same line in the same voice sends the same idempotency key as `revoice`, so it is never paid twice. `--voice FILE@S[@DB]` lays it at S, levelled to −18 LUFS unless `@DB`, 90 Hz–8.5 kHz. A line that runs past the take is refused (never cut mid-word). It is not captioned from its sidecar: captions still come from the script lines, timed on the take with the line in it.
 - **`cue`**: `POST /v1/spines/{id}/sfx-cues` from the description (0.5–22 s, default 1.5 s). Saved to `epNN/sfx/cue-<words>-vN.mp3` with a sidecar; prints RMS per half second and the shape check. The same description and length answer the same file (free): to try again, change the words.
 - **`--cue FILE@S[@DB]`**: −8 dB under the take by default; `@DB` sets the level (−40 to +30). 10 dB lower while someone speaks (speaking shots from the take facts, and hand lines): do not hand-duck cues around lines. Clamped to end 0.15 s before the take; a cue that starts outside the take, or has under 0.25 s of room, is refused.
