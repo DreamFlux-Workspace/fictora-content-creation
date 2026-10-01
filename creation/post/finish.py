@@ -24,7 +24,11 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    past the take: ``!! NOT LAID`` on the step and on the sound line; left out
    by ``--sfx-adjust`` or a sound note: listed). None is dropped silently.
 2. ``bed``       - the show's music bed (desk pin, else the spine's pinned bed,
-   else made once on the server and pinned on the desk).
+   else made once on the server and pinned on the desk), and its level in the
+   mix: ``--bed-db``, else the desk's ``series.json`` ``bed_db``, else measured
+   from the bed file so the bed lands at about -27 LUFS, about 9 dB under the
+   dialogue (:func:`creation.post.bed.bed_level`). The step prints the level and
+   why, and a ``!!`` line when it puts the bed outside the band.
 3. ``colour``    - match the take to the board the human approved.
 4. ``mix``       - bed under the take, ducked under the voice, gain measured
    so the mix lands near -18 LUFS; ``--duck-db N`` for an exact duck depth.
@@ -136,6 +140,7 @@ from creation.captions import (
     caption_take,
     captions_whole_lines,
     current_spine,
+    is_english,
     resolve_caption_style,
 )
 from creation.harness.raw_video import fetch_take_facts
@@ -153,7 +158,13 @@ from creation.post.ambience import (
 from creation.post.ambience import Maker as AmbienceMaker
 from creation.post.ambience import service_maker as ambience_service_maker
 from creation.post.audio_service import AudioService, AudioServiceError, DramaApiAudio
-from creation.post.bed import DEFAULT_BED_DB, Maker, resolve_bed, service_music_maker
+from creation.post.bed import (
+    DEFAULT_BED_DB,
+    Maker,
+    bed_level,
+    resolve_bed,
+    service_music_maker,
+)
 from creation.post.colour import colour_match
 from creation.post.deboard import deboard as deboard_take
 from creation.post.edit import measure_cuts
@@ -569,14 +580,28 @@ def take_inner_voice(
     take_id: str,
     source: Path,
 ) -> thoughts.TakeCuePlan:
-    """The episode's inner-voice cues that fall in this take (:func:`creation.inner_voice.take_cues`)."""
+    """The episode's inner-voice cues that fall in this take (:func:`creation.inner_voice.take_cues`).
+
+    Each carries the words its voice says when they were kept apart from the
+    caption (``inner-voice --spoken-text``, :func:`creation.inner_voice.spoken_for`).
+    """
 
     cues = thoughts.episode_cues(spine, episode=episode) if spine else []
     if not cues:
         return thoughts.TakeCuePlan()
     lengths, last = take_lengths(desk, episode, take_id, source=source)
-    return thoughts.take_cues(
+    plan = thoughts.take_cues(
         cues, take=thoughts.take_number(take_id), lengths=lengths, last_filmed=last
+    )
+    spoken = thoughts.load_spoken(desk, episode)
+    if not spoken:
+        return plan
+    return replace(
+        plan,
+        cues=tuple(
+            replace(cue, spoken_text=thoughts.spoken_for(spoken, cue.cue_id, cue.line))
+            for cue in plan.cues
+        ),
     )
 
 
@@ -589,7 +614,7 @@ def run_finish(
     deboard: bool = True,
     colour: bool = True,
     colour_strength: float = 1.0,
-    bed_db: float = DEFAULT_BED_DB,
+    bed_db: float | None = None,
     music: str | None = None,
     duck_db: float | None = None,
     sfx_adjust: tuple[Adjustment, ...] = (),
@@ -647,7 +672,9 @@ def run_finish(
     colour_strength
         0..1.
     bed_db
-        Bed level in the mix.
+        ``--bed-db``: the bed's level in the mix. ``None`` reads the desk's
+        ``series.json`` ``bed_db``, else measures the bed and lands it about 9 dB
+        under the dialogue (:func:`creation.post.bed.bed_level`).
     music
         Description for a bed that has to be made (forces a new bed).
     duck_db
@@ -788,7 +815,14 @@ def run_finish(
     # A locked-voice take ducks exactly inside its line windows unless --duck-db says otherwise.
     mix_duck_db = duck_db if duck_db is not None or not locked else TARGET_AUDIO_DUCK_DB
     current = source
-    bed_state: dict[str, Any] = {"path": None, "cues": (), "speech": None}
+    bed_state: dict[str, Any] = {
+        "path": None,
+        "cues": (),
+        "speech": None,
+        # The bed's level in the mix (:func:`creation.post.bed.bed_level`), resolved once the bed is known.
+        "db": bed_db if bed_db is not None else DEFAULT_BED_DB,
+        "db_source": "flag" if bed_db is not None else "default",
+    }
     voice_state: dict[str, Path | None] = {"path": None}
     # The inner-voice step's output (what the mix ducks under) and each laid thought: (cue, placed, seconds).
     thought_state: dict[str, Any] = {"path": None, "laid": []}
@@ -889,6 +923,14 @@ def run_finish(
             for _cue, placed, seconds in thought_state["laid"]
         ]
 
+    def laid_voice_windows() -> list[tuple[float, float]]:
+        """Every dry line laid on the take (``--voice`` lines, inner-voice cues): ducked like a line."""
+
+        return [
+            *(hand.voice_windows if voice_state["path"] is not None else ()),
+            *thought_windows(),
+        ]
+
     def do_inner_voice(take: Path) -> StepReport:
         from creation.post.handmade import make_voice_line
 
@@ -912,11 +954,17 @@ def run_finish(
                     f"{cue.cue_id} ({who}): not in the cast on the saved spine"
                 )
                 continue
+            if not cue.spoken_text and not is_english(cue.line):
+                # Voiced as written, but its caption will be left off (NOT ENGLISH): say how to split them.
+                flags.append(
+                    f"!! {cue.cue_id}: the thought is not English, so it plays uncaptioned; add it again with "
+                    '`inner-voice --text "<English caption>" --spoken-text "<the words said>"`'
+                )
             try:
                 made = make_voice_line(
                     desk, spine=spine or {}, card=card, text=cue.line, episode=episode,
-                    audio=service, out=out, take_id=take_id, reuse=True,
-                    extra={"cue_id": cue.cue_id, "inner_voice": True},
+                    spoken_text=cue.spoken_text or None, audio=service, out=out, take_id=take_id,
+                    reuse=True, extra={"cue_id": cue.cue_id, "inner_voice": True},
                 )  # fmt: skip
             except (
                 ValueError,
@@ -946,6 +994,11 @@ def run_finish(
             checked.append((cue, line, seconds))
         parts = [
             f"{cue.cue_id} {line.path.name} @{line.start:.2f}s ({seconds:.2f}s)"
+            + (
+                f", says {cue.spoken_text!r} under the caption {cue.line!r}"
+                if cue.spoken_text
+                else ""
+            )
             for cue, line, seconds in checked
         ]
         tail = "".join(
@@ -1075,9 +1128,9 @@ def run_finish(
             # The dialogue track is the take's sound: its line windows are exact and do not move with the cuts.
             plan = replace(plan, speech=line_windows(soundtrack))
             filmed_note += f"; effects duck under the {len(plan.speech)} line window(s) of the dialogue track"
-        if thought_state["laid"]:
-            # The effects duck under a laid thought like under any line.
-            plan = replace(plan, speech=(*plan.speech, *thought_windows()))
+        if laid_voice_windows():
+            # The effects duck under a laid thought or --voice line like under any line.
+            plan = replace(plan, speech=(*plan.speech, *laid_voice_windows()))
         bed_state["speech"] = plan.speech
         append_run_note(run_dir, f"Finish · sfx: {filmed_note}")
         dropped = (
@@ -1221,7 +1274,7 @@ def run_finish(
                 take,
                 found.path,
                 target,
-                windows=sorted([*line_windows(soundtrack), *thought_windows()]),
+                windows=sorted([*line_windows(soundtrack), *laid_voice_windows()]),
                 level_db=AMBIENCE_GAP_DB - take_gain,
                 offset=offset,
                 fade_in=offset == 0.0,
@@ -1235,7 +1288,7 @@ def run_finish(
         else:
             laid = lay_ambience(
                 take, found.path, target,
-                windows=sorted([*line_windows(soundtrack), *thought_windows()]),
+                windows=sorted([*line_windows(soundtrack), *laid_voice_windows()]),
                 level_db=AMBIENCE_GAP_DB - take_gain, offset=offset,
                 fade_in=offset == 0.0, fade_out=last,
             )  # fmt: skip
@@ -1245,7 +1298,13 @@ def run_finish(
         detail = (
             f'ambience: "{found.description}", {AMBIENCE_GAP_DB:.0f} dB between the lines in the mix '
             f"({laid.laid_db:+.1f} dB before the mix's {take_gain:+.1f} dB take gain), ducked "
-            f"{AMBIENCE_DUCK_DB:.0f} dB under {len(soundtrack.lines)} line window(s); "
+            f"{AMBIENCE_DUCK_DB:.0f} dB under {len(soundtrack.lines)} line window(s)"
+            + (
+                f" and {len(laid_voice_windows())} laid voice window(s)"
+                if laid_voice_windows()
+                else ""
+            )
+            + "; "
             f"cue `{found.path.name}` ({where}), from {offset:.2f}s of the episode's ambience{seam}"
         )
         append_run_note(
@@ -1276,7 +1335,7 @@ def run_finish(
         if words is not None and treated_voice(source):
             words, skipped = None, "the voices were treated after filming"
         problems = (
-            misplaced_lines(soundtrack, words, spine_line_texts())
+            misplaced_lines(soundtrack, words, spine_line_texts(), take=source)
             if words is not None
             else []
         )
@@ -1299,9 +1358,13 @@ def run_finish(
         bed_state["path"] = bed.path
         if bed.cost_usd:
             book(desk, episode=episode, usd=bed.cost_usd, stream=out, unit="bed")
-        append_run_note(run_dir, f"Bed: {bed.one_line()} at {bed_db:+.1f} dB")
+        level = bed_level(desk, bed.path, flag=bed_db)
+        bed_state["db"], bed_state["db_source"] = level.db, level.source
+        if level.warning:
+            print(f"[bed] {level.warning}", file=out, flush=True)
+        append_run_note(run_dir, f"Bed: {bed.one_line()} at {level.one_line()}")
         return StepReport(
-            "bed", "ran", f"{bed.one_line()} at {bed_db:+.1f} dB", None, bed.cost_usd
+            "bed", "ran", f"{bed.one_line()} at {level.one_line()}", None, bed.cost_usd
         )
 
     def do_colour(take: Path) -> StepReport:
@@ -1329,15 +1392,13 @@ def run_finish(
             take,
             next_versioned_path(takes, f"{base}-mix", ".mp4"),
             bed=bed_state["path"],
-            bed_db=bed_db,
+            bed_db=bed_state["db"],
             duck_db=mix_duck_db,
             voice_source=thought_state["path"] or voice_state["path"] or source,
             cues=bed_state["cues"],
             buses=True,
             duck_windows=(
-                sorted(
-                    [*line_windows(soundtrack), *hand.voice_windows, *thought_windows()]
-                )
+                sorted([*line_windows(soundtrack), *laid_voice_windows()])
                 if locked
                 else None
             ),
@@ -1495,7 +1556,9 @@ def run_finish(
                 laid_lines=laid,
                 fixed_lines=[
                     (
-                        CaptionLine(cue.cue_id, cue.line, True, cue.line),
+                        CaptionLine(
+                            cue.cue_id, cue.line, True, cue.spoken_text or cue.line
+                        ),
                         Span(line.start, line.start + seconds),
                     )
                     for cue, line, seconds in thought_state["laid"]
@@ -1712,7 +1775,8 @@ def run_finish(
         master=record_state["master"] or current,
         final=current,
         bed=bed_state["path"],
-        bed_db=bed_db,
+        bed_db=bed_state["db"],
+        bed_db_source=bed_state["db_source"],
         duck_db=mix_duck_db,
         hand_voices=[
             {"file": line.path.name, "start": line.start, "seconds": round(seconds, 3),
@@ -1721,7 +1785,8 @@ def run_finish(
         ] if result._ran("voice") else [],
         inner_voice=[
             {"cue_id": cue.cue_id, "file": line.path.name, "start": line.start, "seconds": round(seconds, 3),
-             "episode_start": cue.episode_start, "speaker_cast_id": cue.speaker_cast_id, "line": cue.line}
+             "episode_start": cue.episode_start, "speaker_cast_id": cue.speaker_cast_id, "line": cue.line,
+             **({"spoken_text": cue.spoken_text} if cue.spoken_text else {})}
             for cue, line, seconds in thought_state["laid"]
         ],
     )  # fmt: skip

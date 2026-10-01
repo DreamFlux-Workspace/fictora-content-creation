@@ -21,12 +21,24 @@ take. Take ``tN`` starts at the sum of the raw lengths of ``t1`` .. ``tN-1``
 take whose window holds its start. A cue that runs past its take's end
 (straddles a seam) stays on the take where it starts and is flagged. A cue
 that starts after the last filmed take ends belongs to no take and is named.
+
+Spoken words and caption, apart (a Japanese thought under an English caption).
+The contract's cue has one ``line`` and no other field, so the server holds the
+CAPTION (``--text``) and the words the voice says (``--spoken-text``) are kept
+on the desk, in ``epNN/inner-voice-spoken.json`` (:func:`save_spoken`), keyed by
+cue id and the caption they go with: ``finish`` sends them to the voice as
+``voice-line --text/--spoken-text`` does, and captions the ``line``. A cue whose
+caption changed (removed and added again) never picks up stale words
+(:func:`spoken_for`). Server gap: ``DramaInnerVoiceCue`` has no
+``spoken_text``; see ``docs/content-ops/backlog.md``.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from creation.spine_view import episode_id_for
@@ -78,16 +90,97 @@ def episode_cues(spine: Mapping[str, Any], *, episode: int) -> list[dict[str, An
 
 
 def cue_listing(
-    cues: Sequence[Mapping[str, Any]], names: Mapping[str, str]
+    cues: Sequence[Mapping[str, Any]],
+    names: Mapping[str, str],
+    spoken: Mapping[str, Mapping[str, str]] | None = None,
 ) -> list[str]:
-    """One printable row per cue: number, id, time, speaker, words."""
+    """One printable row per cue: number, id, time, speaker, words (and the words said, when apart)."""
 
-    return [
-        f"  {number}. {cue.get('cue_id')}  {int(cue.get('start_ms') or 0) / 1000:.2f}-"
-        f"{int(cue.get('end_ms') or 0) / 1000:.2f}s  "
-        f"{names.get(str(cue.get('speaker_cast_id')), cue.get('speaker_cast_id'))} (thinks): {cue.get('line')}"
-        for number, cue in enumerate(cues, start=1)
-    ]
+    rows = []
+    for number, cue in enumerate(cues, start=1):
+        said = spoken_for(
+            spoken or {}, str(cue.get("cue_id")), str(cue.get("line") or "")
+        )
+        rows.append(
+            f"  {number}. {cue.get('cue_id')}  {int(cue.get('start_ms') or 0) / 1000:.2f}-"
+            f"{int(cue.get('end_ms') or 0) / 1000:.2f}s  "
+            f"{names.get(str(cue.get('speaker_cast_id')), cue.get('speaker_cast_id'))} (thinks): {cue.get('line')}"
+            + (f"  [says: {said}]" if said else "")
+        )
+    return rows
+
+
+#: Beside the episode's run notes: ``{"cues": {cue_id: {"line": caption, "spoken_text": words said}}}``.
+SPOKEN_FILE = "inner-voice-spoken.json"
+
+
+def spoken_path(desk: Path, episode: int) -> Path:
+    """``<desk>/epNN/inner-voice-spoken.json``."""
+
+    return desk / f"ep{episode:02d}" / SPOKEN_FILE
+
+
+def load_spoken(desk: Path, episode: int) -> dict[str, dict[str, str]]:
+    """The episode's spoken words per cue id (empty when none are saved)."""
+
+    path = spoken_path(desk, episode)
+    if not path.is_file():
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    cues = raw.get("cues") if isinstance(raw, Mapping) else None
+    return {
+        str(cue_id): {
+            "line": str(entry.get("line") or ""),
+            "spoken_text": str(entry.get("spoken_text") or ""),
+        }
+        for cue_id, entry in (cues or {}).items()
+        if isinstance(entry, Mapping)
+    }
+
+
+def _write_spoken(
+    desk: Path, episode: int, cues: Mapping[str, Mapping[str, str]]
+) -> None:
+    path = spoken_path(desk, episode)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = {"cues": {cue_id: dict(entry) for cue_id, entry in sorted(cues.items())}}
+    path.write_text(
+        json.dumps(body, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def save_spoken(
+    desk: Path, episode: int, *, cue_id: str, line: str, spoken_text: str
+) -> Path:
+    """Keep the words a cue's voice says (``--spoken-text``) beside the caption the server holds."""
+
+    cues = load_spoken(desk, episode)
+    cues[cue_id] = {
+        "line": " ".join(line.split()),
+        "spoken_text": " ".join(spoken_text.split()),
+    }
+    _write_spoken(desk, episode, cues)
+    return spoken_path(desk, episode)
+
+
+def drop_spoken(desk: Path, episode: int, cue_ids: Sequence[str]) -> None:
+    """Forget the spoken words of removed cues."""
+
+    cues = load_spoken(desk, episode)
+    kept = {
+        cue_id: entry for cue_id, entry in cues.items() if cue_id not in set(cue_ids)
+    }
+    if kept != cues:
+        _write_spoken(desk, episode, kept)
+
+
+def spoken_for(spoken: Mapping[str, Mapping[str, str]], cue_id: str, line: str) -> str:
+    """The words a cue's voice says, when saved for this very caption; ``""`` otherwise (say the ``line``)."""
+
+    entry = spoken.get(cue_id)
+    if not entry or entry.get("line") != " ".join(line.split()):
+        return ""
+    return str(entry.get("spoken_text") or "")
 
 
 def default_seconds(text: str) -> float:
@@ -203,7 +296,7 @@ class TakeCue:
     Parameters
     ----------
     cue_id, speaker_cast_id, line
-        As the server holds the cue.
+        As the server holds the cue (``line`` is the caption).
     start, end
         Seconds on the take (the episode's times less where the take starts).
     episode_start
@@ -219,6 +312,8 @@ class TakeCue:
     end: float
     episode_start: float
     seam: str = ""
+    #: The words the voice says when they differ from the caption (:func:`spoken_for`); ``""``: say ``line``.
+    spoken_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -367,12 +462,17 @@ __all__ = [
     "add_cue",
     "cue_listing",
     "default_seconds",
+    "drop_spoken",
     "episode_cues",
+    "load_spoken",
     "new_cue_id",
     "overlaps",
     "refusal_words",
     "remove_cue",
     "request_body",
+    "save_spoken",
+    "spoken_for",
+    "spoken_path",
     "take_cues",
     "take_number",
 ]

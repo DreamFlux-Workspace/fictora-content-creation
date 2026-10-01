@@ -370,14 +370,39 @@ def heard_summary(
     )
 
 
+def voice_onset(
+    levels: Sequence[float], start: float, end: float, *, window: float = 0.1
+) -> float | None:
+    """The first 0.1 s in ``start``-``end`` whose level reads voice (:data:`LINE_HEARD_DB`), or ``None``."""
+
+    first = max(0, int(start / window))
+    last = int(end / window)
+    for index in range(first, min(last + 1, len(levels))):
+        if levels[index] >= LINE_HEARD_DB:
+            return round(index * window, 3)
+    return None
+
+
 def misplaced_lines(
     soundtrack: Soundtrack,
     words_json: Path,
     texts: Mapping[str, str],
     *,
     slack: float = 0.5,
+    take: Path | None = None,
+    measure: Meter = measure_rms_windows,
 ) -> list[str]:
     """Lines a saved transcript of the take heard outside their window (or not at all).
+
+    The transcript says WHETHER a line was heard; on a locked-voice take the
+    dialogue track itself says WHERE. Whisper can stretch a line's first word
+    back over the silence before it (Hanakaze ep 7: ``line_episode_07_02`` "heard
+    at 4.35s", seconds before its window). With ``take`` (the take as filmed: its
+    sound is the dialogue track, digital silence between lines), a line whose
+    transcript span reaches into its window and whose window has voice in it is
+    heard where that voice starts, never at the stretched word's start. A line
+    the transcript heard wholly outside its window, or whose window is silent,
+    is still named.
 
     Parameters
     ----------
@@ -389,6 +414,11 @@ def misplaced_lines(
         ``line_id`` to the words heard (``spoken_text`` or ``text``).
     slack
         Seconds a heard line may start outside its window.
+    take
+        The locked-voice take as filmed: where each line starts is read from its
+        own speech (0.1 s levels) inside the line's window.
+    measure
+        Level meter (tests).
 
     Returns
     -------
@@ -405,13 +435,24 @@ def misplaced_lines(
     heard = heard_windows(
         load_words(words_json), tuple(texts[line.line_id] for line in lines)
     )
+    levels = measure(take, window_seconds=0.1) if take is not None else None
     problems: list[str] = []
     for line, found in zip(lines, heard, strict=True):
         if found.start is None:
             problems.append(f"{line.line_id}: not heard in `{words_json.name}`")
-        elif not line.start - slack <= found.start <= line.end:
+            continue
+        start = found.start
+        if levels is not None and start < line.start - slack:
+            # The words reach into the window: the line starts where the track's own voice starts there.
+            reaches = (
+                found.end if found.end is not None else start
+            ) >= line.start - slack
+            onset = voice_onset(levels, line.start - slack, line.end)
+            if reaches and onset is not None:
+                start = onset
+        if not line.start - slack <= start <= line.end:
             problems.append(
-                f"{line.line_id}: heard at {found.start:.2f}s, its window is {line.start:.2f}-{line.end:.2f}s"
+                f"{line.line_id}: heard at {start:.2f}s, its window is {line.start:.2f}-{line.end:.2f}s"
             )
     return problems
 
@@ -432,6 +473,7 @@ __all__ = [
     "locked_voice_refusal",
     "misplaced_lines",
     "saved_soundtrack",
+    "voice_onset",
     "soundtrack_from",
     "soundtrack_lines",
     "unheard_lines",

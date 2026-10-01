@@ -224,7 +224,11 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--colour-strength", type=float, default=1.0, help="0..1 toward the board."
     )
     fin.add_argument(
-        "--bed-db", type=float, default=-16.5, help="Music bed level in the mix."
+        "--bed-db",
+        type=float,
+        default=None,
+        help="Music bed level in the mix (dB on the bed file). Default: the desk's series.json bed_db, else "
+        "measured from the bed so it sits about 9 dB under the dialogue (printed with why).",
     )
     fin.add_argument(
         "--music",
@@ -346,7 +350,8 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--bed-db",
         type=float,
         default=None,
-        help="Default: the level the takes were finished at.",
+        help="Default: the desk's series.json bed_db, else the level the takes were finished at when one "
+        "was chosen, else measured from the bed (about 9 dB under the dialogue).",
     )
     join.add_argument(
         "--duck-db",

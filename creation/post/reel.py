@@ -624,7 +624,7 @@ def render_reel(
         When a segment names a take with no source, or the sources differ in size.
     """
 
-    from creation.post.bed import DEFAULT_BED_DB, pinned_bed
+    from creation.post.bed import bed_level, chosen_record_level, pinned_bed
     from creation.post.join import decode_stereo, loop_bed, write_wav
     from creation.post.mix import mix_take
     from creation.post.watermark import watermark
@@ -649,7 +649,15 @@ def render_reel(
     bed = (
         record.resolve(desk, "bed") if record and record.bed else None
     ) or pinned_bed(desk)
-    bed_db = record.bed_db if record else DEFAULT_BED_DB
+    level = bed_level(
+        desk,
+        bed,
+        flag=None,
+        recorded=chosen_record_level([(record.bed_db, record.bed_db_source)])
+        if record
+        else None,
+    )
+    bed_db = level.db
     duck_db = record.duck_db if record else None
     with tempfile.TemporaryDirectory() as tmp:
         scratch = Path(tmp)
@@ -682,7 +690,7 @@ def render_reel(
             looped = loop_bed(bed, total + 1.0, scratch / "bed-looped.wav")
             mix = mix_take(bedless, mixed, bed=looped, bed_db=bed_db, duck_db=duck_db)
             report.append(
-                f"bed `{bed.name}` once under the whole reel at {bed_db:g} dB; {mix.one_line()}"
+                f"bed `{bed.name}` once under the whole reel at {level.one_line()}; {mix.one_line()}"
             )
         else:
             mix = mix_take(bedless, mixed, bed=None, bed_db=bed_db, duck_db=duck_db)

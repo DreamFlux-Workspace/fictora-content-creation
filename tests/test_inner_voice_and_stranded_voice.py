@@ -473,3 +473,78 @@ def test_the_cli_takes_inner_voice(desk: Path, api: FakeApi) -> None:
 
     assert code == 0
     assert _sent(api, "PUT")[0]["cues"][0]["end_ms"] == 3500
+
+
+# --- a Japanese thought under an English caption (Hanakaze ep 7) ------------------------------------
+
+
+def test_a_thought_can_say_japanese_under_an_english_caption(
+    desk: Path, api: FakeApi
+) -> None:
+    """The cue holds one ``line``: the caption goes to the server, the words said stay on the desk."""
+
+    from creation.inner_voice import load_spoken, spoken_path
+
+    _inner_route(api)
+    out = io.StringIO()
+
+    run_inner_voice(
+        desk,
+        episode=1,
+        cast="hana",
+        text="Don't look at him.",
+        spoken_text="見ないで。",
+        at=3.2,
+        out=out,
+    )
+
+    (body,) = _sent(api, "PUT")
+    assert body["cues"] == [
+        {"cue_id": "iv_ep01_01", "start_ms": 3200, "end_ms": 4800, "speaker_cast_id": "cast_hana",
+         "line": "Don't look at him."}
+    ], "the contract cue is unchanged: the caption, no other field"  # fmt: skip
+    assert load_spoken(desk, 1) == {
+        "iv_ep01_01": {"line": "Don't look at him.", "spoken_text": "見ないで。"}
+    }
+    text = out.getvalue()
+    assert "Hana (thinks): Don't look at him.  [says: 見ないで。]" in text
+    assert "NOT ENGLISH" not in text
+
+    listing = io.StringIO()
+    run_inner_voice(desk, episode=1, out=listing)
+    assert "[says: 見ないで。]" in listing.getvalue()
+
+    run_inner_voice(desk, episode=1, remove="iv_ep01_01", out=io.StringIO())
+    assert load_spoken(desk, 1) == {}, "a removed cue's words go with it"
+    assert spoken_path(desk, 1).is_file()
+
+
+def test_spoken_text_needs_a_new_thought_and_a_japanese_caption_is_named(
+    desk: Path, api: FakeApi
+) -> None:
+    _inner_route(api)
+    with pytest.raises(CommandStopped, match="--spoken-text goes with a new thought"):
+        run_inner_voice(desk, episode=1, spoken_text="見ないで。")
+    with pytest.raises(CommandStopped, match="--spoken-text is empty"):
+        run_inner_voice(
+            desk, episode=1, cast="Hana", text="Hm.", at=1.0, spoken_text="  "
+        )
+    assert _sent(api, "PUT") == []
+
+    out = io.StringIO()
+    run_inner_voice(desk, episode=1, cast="Hana", text="見ないで。", at=1.0, out=out)
+    assert (
+        "the caption is not English, so finish leaves it uncaptioned (NOT ENGLISH)"
+        in out.getvalue()
+    )
+    assert '--spoken-text "<the words said>"' in out.getvalue()
+
+
+def test_stale_spoken_words_never_ride_a_changed_caption() -> None:
+    from creation.inner_voice import spoken_for
+
+    saved = {"iv_ep01_01": {"line": "Don't look at him.", "spoken_text": "見ないで。"}}
+
+    assert spoken_for(saved, "iv_ep01_01", "Don't  look at him.") == "見ないで。"
+    assert spoken_for(saved, "iv_ep01_01", "Look at him.") == ""
+    assert spoken_for(saved, "iv_ep01_02", "Don't look at him.") == ""

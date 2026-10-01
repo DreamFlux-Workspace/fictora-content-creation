@@ -48,6 +48,9 @@ class FinishRecord:
     #: Dry lines ``finish --voice`` laid into the take: ``{file, start, seconds, line}`` (``line``: the
     #: ``voice-line`` text, empty when unknown). ``review`` counts them as on the take.
     hand_voices: tuple[dict[str, Any], ...] = ()
+    #: Where ``bed_db`` came from: ``flag``, ``desk``, ``takes``, ``measured`` or ``default``
+    #: (:func:`creation.post.bed.bed_level`); ``None`` on a record from before it was resolved.
+    bed_db_source: str | None = None
 
     def resolve(self, desk: Path, name: str) -> Path | None:
         """Absolute path of one stored file (``pre_bed``, ``master``, ``final``, ``bed``)."""
@@ -84,6 +87,7 @@ def write_finish_record(
     edits: Sequence[Mapping[str, Any]] = (),
     hand_voices: Sequence[Mapping[str, Any]] = (),
     inner_voice: Sequence[Mapping[str, Any]] = (),
+    bed_db_source: str | None = None,
 ) -> Path:
     """Write ``takes/take-epNN-tK-finish-vN.json`` (a new version; never overwrites).
 
@@ -103,6 +107,8 @@ def write_finish_record(
         The finished file.
     bed, bed_db, duck_db
         The bed and how it was mixed.
+    bed_db_source
+        Where ``bed_db`` came from (``join`` carries only a chosen one).
     edits
         Edits made after ``finish`` that the three files carry, oldest first.
     hand_voices
@@ -129,6 +135,7 @@ def write_finish_record(
         "final": _stored(desk, final),
         "bed": _stored(desk, bed),
         "bed_db": bed_db,
+        "bed_db_source": bed_db_source,
         "duck_db": duck_db,
         "edits": [dict(edit) for edit in edits],
         "hand_voices": [dict(voice) for voice in hand_voices],
@@ -242,6 +249,7 @@ def carry_finish_record(
         final=final,
         bed=record.resolve(desk, "bed"),
         bed_db=record.bed_db,
+        bed_db_source=record.bed_db_source,
         duck_db=record.duck_db,
         edits=[*record.edits, step],
         hand_voices=record.hand_voices,

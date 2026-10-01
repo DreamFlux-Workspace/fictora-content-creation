@@ -430,3 +430,63 @@ def test_the_servers_voice_only_flag_still_skips_a_voice() -> None:
     )
 
     assert _ids(spine) == ["cast_hana"]
+
+
+# --- a Japanese thought under an English caption (Hanakaze ep 7) ------------------------------------
+
+
+@needs_ffmpeg
+def test_a_thought_says_its_spoken_words_and_is_captioned_in_english_italic(
+    post_desk: Path, downloads: list[str]
+) -> None:
+    from creation.inner_voice import save_spoken
+
+    takes = post_desk / "ep01" / "takes"
+    make_take(takes / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    _desk_with_cues(post_desk, [_cue("iv_ep01_01", 4.3, 4.9)])
+    save_spoken(
+        post_desk, 1, cue_id="iv_ep01_01", line=THOUGHT, spoken_text="振り返らない。"
+    )
+    audio = FakeAudio()
+
+    result, text = _finish(post_desk, audio)
+
+    assert result.complete, text
+    ((call,),) = [audio.calls]
+    assert call["text"] == THOUGHT and call["spoken_text"] == "振り返らない。", (
+        "the voice says the spoken words, as voice-line --text/--spoken-text sends them"
+    )
+    step = _step(result, INNER_VOICE_STEP)
+    assert (
+        "says '振り返らない。' under the caption 'He never looks back.'" in step.detail
+    )
+    ass = sorted(takes.glob("take-ep01-t1-cap-v*.ass"))[-1].read_text()
+    thought = [
+        row
+        for row in ass.splitlines()
+        if row.startswith("Dialogue:") and ",Italic," in row
+    ]
+    assert thought and thought[0].split(",")[1] == "0:00:04.30"
+    assert "He" in thought[0] and "振" not in ass, (
+        "captioned in English, heard-not-seen italic"
+    )
+    assert "NOT ENGLISH" not in _step(result, "captions").detail
+    record = json.loads(
+        sorted(takes.glob("take-ep01-t1-finish-v*.json"))[-1].read_text()
+    )
+    assert record["inner_voice"][0]["spoken_text"] == "振り返らない。"
+
+
+@needs_ffmpeg
+def test_a_thought_written_in_japanese_with_no_caption_is_named(
+    post_desk: Path, downloads: list[str]
+) -> None:
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    _desk_with_cues(post_desk, [_cue("iv_ep01_01", 4.3, 4.9, line="振り返らない。")])
+
+    result, _text = _finish(post_desk, FakeAudio())
+
+    assert (
+        "!! iv_ep01_01: the thought is not English, so it plays uncaptioned"
+        in _step(result, INNER_VOICE_STEP).detail
+    )

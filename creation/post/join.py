@@ -66,7 +66,7 @@ import numpy as np
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
 from creation.ops.state import episode_by_ordinal, load_series
-from creation.post.bed import DEFAULT_BED_DB, pinned_bed
+from creation.post.bed import bed_level, chosen_record_level, pinned_bed
 from creation.post.finish_record import (
     FinishRecord,
     latest_finish_record,
@@ -210,6 +210,8 @@ class JoinResult:
     seam_levels: list[SeamLevel] = field(default_factory=list)
     #: ``{"by": ..., "why": ..., "seams": [...]}`` when a human accepted loud seams with ``--accept-seam``.
     accepted: dict[str, Any] | None = None
+    #: The bed's level across the join (:func:`creation.post.bed.bed_level`).
+    bed_db: float | None = None
 
     @property
     def loud_seams(self) -> list[tuple[float, float]]:
@@ -277,6 +279,7 @@ class JoinResult:
                                                            strict=True))],
             "fps": self.fps,
             "loudness": self.loudness,
+            "bed_db": self.bed_db,
             "accepted": self.accepted,
         }  # fmt: skip
 
@@ -972,8 +975,12 @@ def run_join(
         Seconds at every seam; default a cut between takes, 0.25 s between episodes.
     bed
         Bed file; default the bed pinned on the desk, else the one the takes were finished with.
-    bed_db, duck_db
-        Bed level and exact duck depth; default what the takes were finished with.
+    bed_db
+        ``--bed-db``. Default: the desk's ``series.json`` ``bed_db``, else the level
+        every take was finished at when one was chosen, else measured from the bed
+        (:func:`creation.post.bed.bed_level`).
+    duck_db
+        Exact duck depth; default what the takes were finished with.
     gain_match
         Gain every part to the parts' median loudness first.
     watermark_y
@@ -1029,11 +1036,6 @@ def run_join(
         duck_db if duck_db is not None else _agreed([r.duck_db for r in records], None)
     )
     check_duck_db(duck_db)
-    bed_db = (
-        bed_db
-        if bed_db is not None
-        else _agreed([r.bed_db for r in records], DEFAULT_BED_DB)
-    )
     recorded_bed = _agreed([r.bed for r in records], None)
     bed = (bed.expanduser().resolve() if bed else None) or pinned_bed(desk)
     if bed is None and recorded_bed:
@@ -1043,6 +1045,13 @@ def run_join(
             "no bed to lay across the join: pin the show's bed (`fictora-produce set-bed --desk D --path F`) "
             "or pass --bed F. join never makes one (it is free)."
         )
+    level = bed_level(
+        desk,
+        bed,
+        flag=bed_db,
+        recorded=chosen_record_level([(r.bed_db, r.bed_db_source) for r in records]),
+    )
+    bed_db = level.db
 
     episode_set = sorted({part.episode for part in parts})
     if len(episode_set) == 1:
@@ -1068,6 +1077,7 @@ def run_join(
         file=out,
         flush=True,
     )
+    print(f"Bed level: {level.one_line()}", file=out, flush=True)
     gains = match_gains(parts) if gain_match else [0.0] * len(parts)
     total = sum(lengths) - sum(dissolves)
     master = next_versioned_path(folder, stem, ".mp4")
@@ -1091,7 +1101,9 @@ def run_join(
         parts=parts, master=master, marked=None, bed=bed, gains_db=gains, dissolves=dissolves, seams=seams,
         seam_steps_db=[level.step_db for level in levels], fps=round(fps, 3),
         loudness=f"{mixed.mix_lufs:.1f} LUFS", mix_line=mixed.one_line(), seam_levels=levels,
+        bed_db=bed_db,
     )  # fmt: skip
+    result.notes.append(f"bed level {level.one_line()}")
     result.notes += [f"SUBSTITUTED: {p.stands_in}" for p in parts if p.stands_in]
     result.notes += speech_notes
     if result.loud_seams and accept_seam:

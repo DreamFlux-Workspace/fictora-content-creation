@@ -376,3 +376,47 @@ def test_native_takes_get_no_ambience(post_desk: Path) -> None:
 
 def test_facts_fixture_is_unchanged() -> None:
     assert FACTS["take_facts"]["sfx_cues"][0]["kind"] == "event"
+
+
+# --- laid voices (Hanakaze ep 7) ---------------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_the_ambience_and_the_bed_duck_under_a_laid_voice_line_too(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A narration line laid with ``finish --voice`` sat over full ambience (about -28 dB, 10 dB under it)."""
+
+    from conftest import make_tone
+
+    from creation.post import finish as finish_module
+    from creation.post.hand import Placed
+
+    _desk(post_desk, locked_facts(), spine_with_place())
+    voice = make_tone(
+        post_desk / "ep01" / "voices" / "voice-ep01-aya-v1.wav", seconds=0.5, volume=0.5
+    )
+    seen: dict[str, list] = {}
+    real_lay, real_mix = finish_module.lay_ambience, finish_module.mix_take
+
+    def spy_lay(*args, **kwargs):
+        seen["ambience"] = list(kwargs["windows"])
+        return real_lay(*args, **kwargs)
+
+    def spy_mix(*args, **kwargs):
+        seen["bed"] = list(kwargs["duck_windows"])
+        return real_mix(*args, **kwargs)
+
+    monkeypatch.setattr(finish_module, "lay_ambience", spy_lay)
+    monkeypatch.setattr(finish_module, "mix_take", spy_mix)
+    result = run_finish(
+        post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+        cut_meter=lambda _take: (3.9,), colour=False, ambience_maker=fake_maker([]),
+        voices=(Placed(voice, 2.4),), over_locked_voices=True, stream=io.StringIO(),
+    )  # fmt: skip
+
+    laid = (2.4, pytest.approx(2.9, abs=0.05))
+    assert any(w == laid for w in seen["ambience"]), seen["ambience"]
+    assert any(w == laid for w in seen["bed"]), seen["bed"]
+    ambience = _step(result, AMBIENCE_STEP)
+    assert "and 1 laid voice window(s)" in ambience.detail
