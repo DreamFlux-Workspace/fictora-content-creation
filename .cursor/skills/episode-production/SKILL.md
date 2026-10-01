@@ -258,6 +258,22 @@ uv run fictora-produce join --desk D --take-file T1-sokii --take-file T2-recap -
 - A take finished before `join` existed has no record: run `finish` on it again before the join.
 - A copy of a finished take with only the picture changed (re-captioned) has no record either. Pass `--from-record <the -cap master it was made from>` after its `--take-file` (the Nth `--from-record` goes with the Nth unrecorded `--take-file`). `join` checks it has the same size, frame count and sound as that master, joins its picture over the record's sound before the bed, and writes `SUBSTITUTED: … stands in for …` in the run notes. A copy of the marked `-sokii` final is refused (it would be marked twice): make the copy from the `-cap` master.
 
+## Reel cut: a social edit from the rendered footage
+
+Free, on this laptop, no new video and no server call. Offer it once an episode is accepted and finished: a separate IG / TikTok edit cut from footage the desk already has.
+
+```bash
+uv run fictora-produce reel --desk D --episode N [--seconds 15] --plan-only     # the plan only: read it with the human
+uv run fictora-produce reel --desk D --episode N --plan reels/reel-plan-epNN-vN.json   # render a (hand-edited) plan
+uv run fictora-produce reel --desk D --episode N [--seconds 15]                 # plan and render in one go
+uv run fictora-produce review --desk D --episode N --take-file reels/reel-epNN-vN.mp4
+```
+
+- **Shape.** Opens on the episode's strongest frame as a 1-2 s flash-forward, then plays how we got there, and ends on the new fact (the last beat, half a second after its last caption or effect), never a calm cool-down after it. To fit `--seconds` (6-30, default 15) it trims the calm setup (stretches with no line and the lowest motion), drops escalation beats, keeps one pivot (the beat before the new fact). A ⚠ (never a stop) when it cannot end on the new fact or runs past `--seconds`; read every ⚠ to the human.
+- **Never on screen:** a line said to the viewer, or an end-card question. The call to action goes in the suggested post text (`reels/post-epNN-vN.txt`: plain, no other apps, no prices, no model names).
+- **Sources.** The take's picture before captions (the finish record's `pre_bed`) and the accepted cut's caption cues (the record master's `.ass`), re-timed through the cut and burned again in the house style, exactly as `finish` does (English word flicker; other spoken languages whole English lines). One bed under the whole reel, short crossfades at every cut, about −18 LUFS, the Sokii mark top left. An accepted cut made by hand after finish (a voice-over re-caption, a sign blur) is named with `--source tK=F` / `--captions tK=F.ass`, and a blur box goes in the plan's `patches` (the plan says when a `*blur*` variant exists).
+- **Never overwrites.** Writes only `reels/reel-epNN-vN.mp4` (+ `.ass`), `reels/reel-plan-epNN-vN.json` and `reels/post-epNN-vN.txt`, one N for all four; no run note, nothing else on the desk changes. `review` on a reel saves its block beside it (`…-review-vN.txt`) instead of appending to `run-notes.md`.
+
 ## Change a character's voice (never regenerate)
 
 "The voice feels off" is a voice change, not a new story and not a new video. Never re-draft or re-film everything for it.

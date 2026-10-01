@@ -89,7 +89,19 @@ def dispatch_review(args: argparse.Namespace, *, stream: TextIO | None = None) -
         transcribe=args.transcribe,
     )
     run_dir = desk / f"ep{args.episode:02d}"
-    if (run_dir / "run-notes.md").is_file():
+    reels = (desk / "reels").resolve()
+    if result.take.is_relative_to(reels):
+        # A reel never touches an existing desk file: its review goes in a new file beside it.
+        from creation.ops.folder import next_versioned_path
+
+        note = next_versioned_path(reels, f"{result.take.stem}-review", ".txt")
+        with note.open("x", encoding="utf-8") as handle:
+            handle.write(result.block() + "\n")
+        print(
+            f"(review saved to {note}; run-notes.md is not touched for a reel)",
+            file=out,
+        )
+    elif (run_dir / "run-notes.md").is_file():
         append_run_note(run_dir, result.block())
     if args.json:
         print(json.dumps(result.as_json(), indent=2, ensure_ascii=False), file=out)

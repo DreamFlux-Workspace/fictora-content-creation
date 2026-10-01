@@ -121,7 +121,7 @@ FREEZE_THRESHOLD = 0.002
 FREEZE_MIN_SECONDS = 0.6
 
 #: File steps that come after the mix: such a file is a finished take (``final``/``captions``: adopted desks).
-FINISHED_STEPS = ("mix", "cap", "sokii", "trim", "tempo", "final", "captions")
+FINISHED_STEPS = ("mix", "cap", "sokii", "trim", "tempo", "final", "captions", "reel")
 #: File steps after which the head board frames should be gone.
 DEBOARDED_STEPS = (
     "deboard",
@@ -134,7 +134,8 @@ DEBOARDED_STEPS = (
     *FINISHED_STEPS,
 )
 #: Steps that move times: the take facts' shot times no longer hold.
-RETIMED_STEPS = ("trim", "tempo")
+#: A reel (``fictora-produce reel``) is cut and reordered: its times are not the take facts'.
+RETIMED_STEPS = ("trim", "tempo", "reel")
 
 OK, WARN, NONE = "✓", "⚠", "–"
 
@@ -494,6 +495,7 @@ def cuts_section(
     head_board_frames: int,
     facts: Mapping[str, Any] | None,
     retimed: bool,
+    retimed_by: str | None = None,
 ) -> Section:
     """Hard cuts from the ``tblend`` trace, against the take facts' shot changes."""
 
@@ -525,7 +527,7 @@ def cuts_section(
         )
     data["planned"] = list(planned)
     if retimed:
-        why = "a trim or tempo moved the times off the take facts"
+        why = retimed_by or "a trim or tempo moved the times off the take facts"
         return Section(
             "Cuts", OK, f"{found}; not compared ({why})", threshold, data=data
         )
@@ -822,6 +824,15 @@ def text_section(
     )
 
     threshold = f"OCR on {SAMPLE_FPS:g} frames/s ({LINE_SAMPLE_FPS:g} in spoken-line windows), raw take"
+    if "reel" in _steps(take):
+        # The reel is cut from the finished take: its raw take's text was read on the take's own review
+        # (and a reel never adds files to the episode's takes/).
+        return Section(
+            "Text",
+            NONE,
+            "not measured on a reel: read on the take's own review",
+            threshold,
+        )
     read = take
     if kind == "finished":
         try:
@@ -1417,7 +1428,14 @@ def review_take(
     facts_path = saved_take_facts(desk, episode, take_id)
     facts = json.loads(facts_path.read_text(encoding="utf-8")) if facts_path else None
     words_note = None
-    if words_json is None:
+    if "reel" in steps:
+        # A transcript of the take does not say what the reel plays: its plan lists the lines it keeps.
+        words_json, transcribe = None, False
+        words_note = (
+            "the reel is cut and reordered from the take: lines heard are checked on the take's own review; "
+            "the reel plan (reels/reel-plan-epNN-vN.json) lists which lines it keeps"
+        )
+    elif words_json is None:
         words_json = saved_words(desk, episode, take_id)
         if words_json is None and transcribe:
             words_json = (transcriber or server_transcript)(desk, episode, take_id)
@@ -1431,6 +1449,7 @@ def review_take(
         head_board_frames=head,
         facts=facts,
         retimed=bool(steps & set(RETIMED_STEPS)),
+        retimed_by="the reel cut and reordered the take" if "reel" in steps else None,
     )
     frames = frames_section(take, steps=steps)
     text = text_section(

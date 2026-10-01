@@ -282,6 +282,22 @@ Captions are the ones `finish` burned on each take (timed on that take's voice b
 
 Outputs, never overwritten: `epNN/takes/episode-epNN-join-vN.mp4` (un-marked master) and `episode-epNN-join-sokii-vN.mp4`; a cut across episodes goes to `shared/cuts/series-epNN-epMM-join[-sokii]-vN.mp4`. The report and a run note in every episode joined list the parts and their gains, the bed, each seam (cut or dissolve, step in dB), frames / seconds and loudness.
 
+## Reel cut
+
+`fictora-produce reel --desk D --episode N [--seconds 15] [--plan-only] [--plan FILE] [--take-file [tK=]F] [--source [tK=]F] [--captions [tK=]F.ass] [--caption-style house|plain|none] [--watermark-y Y]`. Local, $0, no server route. Writes only under `<desk>/reels/`.
+
+| Step | What it does | Thresholds |
+| --- | --- | --- |
+| Sources | Per take: the newest finish record (or the one naming `--take-file`): its `pre_bed` (picture before captions, sound before the bed) and its master's `.ass` (the accepted caption cues). `--source` / `--captions` name a cut made by hand after finish. A `blur` edit on the record rides along; a `*blur*` file no record names gets a ⚠ to add it to the plan's `patches` | a take with no pre-caption file: refused, nothing written |
+| Beats | Each beat owns the board rows from its frame's row to the row before the next beat's; each row is the take facts' shot as filmed (planned changes moved to the measured cuts). Roles by position: first `plant`, last `new_fact`, the one before it `pivot`, the rest `escalation` | — |
+| Strongest frame | Every 8 fps sample: `story × (0.5 + 0.5 × picture)`. Story: new fact 1.0, pivot 0.7, escalation 0.5, plant 0.35, +0.15 on a payoff beat (`satisfaction_type`), +0.1 when the take facts put a named character in the shot (no face detector: the head count stands in), at most 1. Picture: 0.7 × motion (frame-to-frame RMSE at 96×168, samples within 0.2 s of a hard cut left out) + 0.3 × contrast (luma spread), each scaled to the take's 95th percentile. The cold open is the window between two cut points with the best mean | 1-2 s, nearest 1.5 s; not in the take's first or last 0.3 s |
+| Fit | The new fact ends 0.5 s after its last caption or sound event. Over `--seconds`: the flash-forward shortens (to 1 s), escalations go (lowest score first), then calm stretches (no caption within 0.12 s, no sound event, lowest raw motion; plant and escalations first, the pivot last and never below 1.5 s, never the new fact, never the episode's first second), then the calm before a piece's first line; lines go only when still more than 0.5 s over and it brings the reel nearer the length (⚠ names them) | a trim edge within 0.3 s of a hard cut moves onto it (no flash of the old shot) |
+| Cut points | On a hard cut, between lines, at a caption's end, or at a word's onset (a flicker cue's start); a cut inside a word is a ⚠ | moves at most 0.5 s |
+| Viewer lines | A caption or script line said to the viewer (a call to action, "what would you do?", "comment below") is cut out of every segment, with a ⚠ | — |
+| Render | Picture runs cut on the frame grid (contiguous pieces of one take are one run); the sound before the bed cut with 40 ms equal-power crossfades centred on each cut (length kept); blur patches first; the bed looped once under the whole reel and mixed like `join` (duck under the voice, measured gain to about −18 LUFS, one limiter); captions re-timed through the segment map (a cue kept when 60% or 0.8 s of it plays; a flicker cue shows only words that play) and burned in the house style; the Sokii mark as `finish` puts it | 9:16 at the source's size (1080×1920 when the source is) |
+
+The plan file (`reel-plan-epNN-vN.json`) lists `takes` (source, captions, accepted, record), `strongest`, `segments` (`take`, `start_s`, `end_s`, `role` ∈ cold_open, plant, escalation, pivot, new_fact, `why`), `patches` (`{take, op: "blur", boxes: ["x,y,w,h"], from, to, strength, feather}` on the source's timeline), `notes` and `warnings`. Edit it by hand and render it with `--plan FILE`: the render writes the next N of all four files (the edited plan is copied, never changed). `review --take-file reels/reel-epNN-vN.mp4` reads a reel as finished, does not compare its cuts or lines with the take facts (the reel reordered them), skips the drawn-text OCR (read on the take's own review) and saves its block beside the reel.
+
 ## Change a character's voice
 
 The voice is a lock on the cast card, not part of the story or the picture. Never re-draft the story or re-film every take to change it.
