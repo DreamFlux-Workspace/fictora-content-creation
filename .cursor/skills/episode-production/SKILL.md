@@ -232,6 +232,7 @@ Free, on this laptop. When an episode has a second take, offer the join as soon 
 uv run fictora-produce join --desk D --episode N                  # every take of N, newest finish each, in take order
 uv run fictora-produce join --desk D --episodes 1 2 3             # series cut -> shared/cuts/
 uv run fictora-produce join --desk D --take-file F1 --take-file F2   # these finished takes, in this order
+uv run fictora-produce join --desk D --take-file T1-sokii --take-file T2-recap --from-record T2-cap   # a re-captioned copy stands in for its recorded master
 ```
 
 - It reads the record `finish` leaves (`take-epNN-tK-finish-vN.json`): each take's sound before the bed and its un-marked captioned picture. So there is **one music bed across the whole join** (the pinned show bed, looped seamlessly), never each take's bed stitched; captions ride on their picture; the mark goes on **once**, on the joined file. The un-marked master stays beside it.
@@ -241,6 +242,7 @@ uv run fictora-produce join --desk D --take-file F1 --take-file F2   # these fin
 - Each seam's room-level step is printed. Over 5 dB: `NOT DONE`, exit **5**, the master is kept to listen to and nothing is marked; do not hand it over.
 - `trim` / `tempo` (and `freeze` / `soften` / `blur`) on a finished file apply the same edit to the take before the bed and the un-marked master and write a new finish record (the edit chain in `edits`), so the edited take joins at its new length; the newest record wins, so `--episode N` joins the edited take. A file no record names (edited from a raw take, or while a record file was gone: the edit says `No finish record`) is refused: finish again, then edit. Never join the -sokii files by hand (that stitches two beds and two marks).
 - A take finished before `join` existed has no record: run `finish` on it again before the join.
+- A copy of a finished take with only the picture changed (re-captioned) has no record either. Pass `--from-record <the -cap master it was made from>` after its `--take-file` (the Nth `--from-record` goes with the Nth unrecorded `--take-file`). `join` checks it has the same size, frame count and sound as that master, joins its picture over the record's sound before the bed, and writes `SUBSTITUTED: … stands in for …` in the run notes. A copy of the marked `-sokii` final is refused (it would be marked twice): make the copy from the `-cap` master.
 
 ## Change a character's voice (never regenerate)
 
