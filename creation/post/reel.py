@@ -5,7 +5,10 @@ files the desk already has. The plan (what to cut, and why) comes from
 :mod:`creation.post.reel_plan`; this module gathers its inputs from the desk,
 writes the plan, and renders it.
 
-Sources, per take (the newest finish record, or the one naming ``--take-file``):
+Sources, per take (the newest finish record, or the one naming ``--take-file``;
+a take no record names, on a desk finished before the kit wrote records, is
+worked out from its accepted file by :mod:`creation.post.reel_sources`, every
+inferred step printed with a ⚠):
 
 - **Picture and sound before the bed**: the record's ``pre_bed`` (colour-matched,
   uncaptioned, unmarked; voice, effects and hand cues), or ``--source``. Cutting
@@ -73,6 +76,12 @@ from creation.post.reel_plan import (
     segments_from_json,
     strongest_from_json,
 )
+from creation.post.reel_sources import (
+    Inferred,
+    accepted_from_notes,
+    infer_take_source,
+    takes_in_notes,
+)
 
 #: The reel's folder on the desk.
 REELS_DIR = "reels"
@@ -101,6 +110,10 @@ class TakeSource:
     record: FinishRecord | None
     accepted: Path | None
     patches: list[dict[str, Any]] = field(default_factory=list)
+    #: Caption cues rebuilt for a take with no ``.ass`` (on the source's timeline); ``None``: read ``captions``.
+    cues: tuple[Cue, ...] | None = None
+    #: How the source was worked out when no finish record names the take (``None``: a record or ``--source``).
+    inferred: Inferred | None = None
 
     def as_json(self, desk: Path) -> dict[str, Any]:
         def rel(p: Path | None) -> str | None:
@@ -111,14 +124,17 @@ class TakeSource:
             except ValueError:
                 return str(p)
 
-        return {
-            "source": rel(self.source),
+        body: dict[str, Any] = {
+            "source": rel(self.inferred.source if self.inferred else self.source),
             "captions": rel(self.captions),
             "accepted": rel(self.accepted),
             "record": rel(self.record.path)
             if self.record and self.record.path
             else None,
         }
+        if self.inferred is not None:
+            body["inferred"] = self.inferred.as_json(desk)
+        return body
 
 
 def parse_ass_cues(text: str) -> list[Cue]:
@@ -196,6 +212,9 @@ def take_sources(
     take_files: Sequence[str] = (),
     sources: Sequence[str] = (),
     captions: Sequence[str] = (),
+    spine: Mapping[str, Any] | None = None,
+    scratch: Path | None = None,
+    stream: TextIO | None = None,
 ) -> list[TakeSource]:
     """Each finished take's pre-caption source and caption cues, in take order.
 
@@ -211,11 +230,18 @@ def take_sources(
         ``tK=FILE`` overrides for the pre-caption source.
     captions
         ``tK=FILE.ass`` overrides for the accepted captions.
+    spine, scratch
+        The saved spine and a temporary folder: with both, a take no finish
+        record names (an accepted ``--take-file`` without one, or on a desk with
+        no records the newest ``-sokii`` file the run notes name) is worked out
+        from its accepted file (:func:`creation.post.reel_sources.infer_take_source`).
+    stream
+        Where the inferred steps are printed.
 
     Returns
     -------
     list[TakeSource]
-        One per take with a finish record (or a ``--source``).
+        One per take with a finish record, an inferred source or a ``--source``.
 
     Raises
     ------
@@ -229,17 +255,50 @@ def take_sources(
     records: dict[str, FinishRecord] = {}
     for record in finish_records(desk, episode):
         records[record.take_id] = record  # newest version wins
+    unrecorded: dict[str, Path] = {}
     for take, file in accepted.items():
         record = record_for_file(desk, file)
         if record is not None:
             records[take] = record
-    take_ids = sorted(set(records) | set(given), key=lambda t: int(t[1:]))
+        elif take not in given:
+            unrecorded[take] = file
+    out_stream = stream or sys.stdout
+    can_infer = spine is not None and scratch is not None
+    if can_infer and not records and not given and not unrecorded:
+        # A desk finished before the kit wrote records: the run notes name each take's final.
+        for take in takes_in_notes(desk, episode):
+            found = accepted_from_notes(desk, episode, take)
+            if found is not None:
+                unrecorded[take] = found
+                print(
+                    f"⚠ {take}: no --take-file and no finish record: the accepted file is taken to be "
+                    f"`{found.name}`, the newest -sokii file the run notes name (Final: / Trim ->); "
+                    f"pass --take-file {take}=FILE if another cut was accepted",
+                    file=out_stream,
+                )
+    take_ids = sorted(
+        set(records) | set(given) | (set(unrecorded) if can_infer else set()),
+        key=lambda t: int(t[1:]),
+    )
     if not take_ids:
         raise ValueError(
-            f"ep{episode:02d} has no finished take (no take-ep{episode:02d}-tK-finish-vN.json): run finish first"
+            f"ep{episode:02d} has no finished take (no take-ep{episode:02d}-tK-finish-vN.json, and the run notes "
+            "name no -sokii final): run finish first, or pass --take-file tK=FILE (the accepted cut)"
         )
     out: list[TakeSource] = []
     for take in take_ids:
+        if can_infer and take in unrecorded:
+            assert spine is not None and scratch is not None
+            cut, how = infer_take_source(
+                desk, episode, take, unrecorded[take], spine=spine, scratch=scratch
+            )
+            for line in how.notes:
+                print(line, file=out_stream, flush=True)
+            out.append(
+                TakeSource(take, cut, cue_files.get(take), None, unrecorded[take],
+                           cues=None if take in cue_files else how.cues, inferred=how)
+            )  # fmt: skip
+            continue
         record = records.get(take)
         source = given.get(take) or (
             record.resolve(desk, "pre_bed") if record else None
@@ -340,11 +399,12 @@ def measure_take(desk: Path, episode: int, source: TakeSource) -> TakeInput:
                     continue
                 a, b = filmed.windows[index]
                 events.append(a + (t - plan.start) / (plan.end - plan.start) * (b - a))
-    cues = (
-        tuple(parse_ass_cues(source.captions.read_text(encoding="utf-8")))
-        if source.captions is not None
-        else ()
-    )
+    if source.cues is not None:
+        cues: tuple[Cue, ...] = source.cues
+    elif source.captions is not None:
+        cues = tuple(parse_ass_cues(source.captions.read_text(encoding="utf-8")))
+    else:
+        cues = ()
     return TakeInput(
         take_id=source.take_id, duration=info.duration_seconds, fps=info.fps or 24.0,
         shots=shots, cuts=tuple(cuts), cues=cues, sample_seconds=samples,
@@ -646,18 +706,23 @@ def render_reel(
     runs = _runs(plan.segments, fps)
     report: list[str] = []
     record = next((s.record for s in sources if s.record is not None), None)
-    bed = (
-        record.resolve(desk, "bed") if record and record.bed else None
-    ) or pinned_bed(desk)
-    level = bed_level(
-        desk,
-        bed,
-        flag=None,
-        recorded=chosen_record_level([(record.bed_db, record.bed_db_source)])
-        if record
-        else None,
-    )
-    bed_db = level.db
+    # A source that already carries its take's bed (an older desk's mix) gets no second bed.
+    baked = [s.take_id for s in sources if s.inferred and s.inferred.bed_in_source]
+    bed: Path | None = None
+    bed_db = -16.5  # mix_take's default; unused when no bed goes under
+    if not baked:
+        bed = (
+            record.resolve(desk, "bed") if record and record.bed else None
+        ) or pinned_bed(desk)
+        level = bed_level(
+            desk,
+            bed,
+            flag=None,
+            recorded=chosen_record_level([(record.bed_db, record.bed_db_source)])
+            if record
+            else None,
+        )
+        bed_db = level.db
     duck_db = record.duck_db if record else None
     with tempfile.TemporaryDirectory() as tmp:
         scratch = Path(tmp)
@@ -686,7 +751,13 @@ def render_reel(
         )  # fmt: skip
         mixed = scratch / "reel-mix.mp4"
         total = reel_seconds(plan.segments, fps)
-        if bed is not None and bed.is_file():
+        if baked:
+            mix = mix_take(bedless, mixed, bed=None, bed_db=bed_db, duck_db=duck_db)
+            report.append(
+                f"⚠ no bed laid: {', '.join(baked)} cut from a file with its own bed in, so the music cuts with "
+                f"the picture (40 ms crossfades); {mix.one_line()}"
+            )
+        elif bed is not None and bed.is_file():
             looped = loop_bed(bed, total + 1.0, scratch / "bed-looped.wav")
             mix = mix_take(bedless, mixed, bed=looped, bed_db=bed_db, duck_db=duck_db)
             report.append(
@@ -717,10 +788,20 @@ def render_reel(
             captions_line = (
                 f"{len(cues)} caption cue(s), {grain}, re-timed through the segment map"
             )
-        watermark(captioned, paths["video"], y=watermark_y)
+        burned = [s.take_id for s in sources if s.inferred and s.inferred.burned]
+        if burned:
+            # Cut from the accepted (marked) file itself: its mark is already on the picture.
+            run_ffmpeg(["-i", str(captioned), "-c", "copy", str(paths["video"])])
+            mark_line = (
+                f"⚠ no second mark: {', '.join(burned)} cut from the accepted file, its own mark and burned "
+                "captions kept as they are"
+            )
+        else:
+            watermark(captioned, paths["video"], y=watermark_y)
+            mark_line = "Sokii mark top left (as finish applies it)"
     seconds = probe_video(paths["video"]).duration_seconds
     report.append(f"captions: {captions_line}")
-    report.append("Sokii mark top left (as finish applies it)")
+    report.append(mark_line)
     return seconds, loudness, captions_line, report
 
 
@@ -770,6 +851,30 @@ def run_reel(
         The plan and what was written.
     """
 
+    # Edited copies of an inferred source live in a scratch folder for the whole run, never on the desk.
+    with tempfile.TemporaryDirectory(prefix="fictora-reel-") as tmp:
+        return _run_reel(
+            desk, episode=episode, seconds=seconds, plan_only=plan_only, plan_file=plan_file,
+            take_files=take_files, sources=sources, captions=captions, caption_style=caption_style,
+            watermark_y=watermark_y, stream=stream, scratch=Path(tmp),
+        )  # fmt: skip
+
+
+def _run_reel(
+    desk: Path,
+    *,
+    episode: int,
+    seconds: float,
+    plan_only: bool,
+    plan_file: Path | None,
+    take_files: Sequence[str],
+    sources: Sequence[str],
+    captions: Sequence[str],
+    caption_style: str | None,
+    watermark_y: int | None,
+    stream: TextIO | None,
+    scratch: Path,
+) -> ReelResult:
     from creation.post.desk import saved_spine
     from creation.spine_view import episode_summary
 
@@ -784,25 +889,49 @@ def run_reel(
     body: dict[str, Any] | None = None
     if plan_file is not None:
         body = json.loads(plan_file.expanduser().read_text(encoding="utf-8"))
+        planned = body.get("takes") or {}
+        # A take the plan inferred (no finish record) is inferred again from its accepted file.
+        given_accepted = [
+            f"{t}={desk / v['accepted']}"
+            for t, v in planned.items()
+            if v.get("inferred") and v.get("accepted")
+        ]
         given_sources = [
             f"{t}={desk / v['source']}"
-            for t, v in (body.get("takes") or {}).items()
-            if v.get("source")
+            for t, v in planned.items()
+            if v.get("source") and not v.get("inferred")
         ]
         given_captions = [
             f"{t}={desk / v['captions']}"
-            for t, v in (body.get("takes") or {}).items()
+            for t, v in planned.items()
             if v.get("captions")
         ]
+        take_files = [*given_accepted, *take_files]
         sources = [*given_sources, *sources]
         captions = [*given_captions, *captions]
     srcs = take_sources(
-        desk, episode, take_files=take_files, sources=sources, captions=captions
-    )
+        desk, episode, take_files=take_files, sources=sources, captions=captions,
+        spine=spine, scratch=scratch, stream=out,
+    )  # fmt: skip
     print(
         "Reel from rendered footage (local, $0, no server call): "
         + "; ".join(
-            f"{s.take_id} {s.source.name} + captions {s.captions.name if s.captions else 'none'}"
+            f"{s.take_id} {(s.inferred.source if s.inferred else s.source).name}"
+            + (
+                f" + {' + '.join(e.op for e in s.inferred.edits)} again"
+                if s.inferred and s.inferred.edits
+                else ""
+            )
+            + " + captions "
+            + (
+                s.captions.name
+                if s.captions
+                else "rebuilt"
+                if s.cues is not None
+                else "burned in (kept)"
+                if s.inferred and s.inferred.burned
+                else "none"
+            )
             for s in srcs
         ),
         file=out,
@@ -830,11 +959,13 @@ def run_reel(
                 f"{s.take_id}: its finish record `{s.record.path.name if s.record.path else '?'}` is not complete "
                 "(a sound part was missing at finish): check the accepted cut is this one"
             )
-        if s.captions is None:
+        if s.inferred is not None:
+            plan.warnings += [note.removeprefix("⚠ ") for note in s.inferred.notes]
+        elif s.captions is None:
             plan.warnings.append(
                 f"{s.take_id}: no accepted caption cues (.ass); the reel is uncaptioned there"
             )
-        takes_dir = s.source.parent
+        takes_dir = desk / f"ep{episode:02d}" / "takes"
         for variant in sorted(
             takes_dir.glob(f"take-ep{episode:02d}-{s.take_id}-*blur*.mp4")
         ):
