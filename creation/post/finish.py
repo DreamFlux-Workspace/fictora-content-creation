@@ -182,6 +182,7 @@ from creation.post.desk import (
 from creation.post.media import MediaToolError, measure_loudness, probe_video
 from creation.post.mix import CueLevel, check_duck_db, mix_take, pick_gain
 from creation.post.take_facts import save_take_facts, stale_facts_reason
+from creation.post.take_timeline import align_take_facts
 from creation.post.soundtrack import (
     TARGET_AUDIO_CUT_WINDOW_SECONDS,
     TARGET_AUDIO_DUCK_DB,
@@ -765,6 +766,23 @@ def run_finish(
             facts_state["path"] = facts_fetcher(desk, episode, take_id)
         except STEP_ERRORS as exc:
             facts_state["error"] = exc  # the sfx step reports it, as before
+    timeline_note = ""
+    if facts_state["path"] is not None:
+        # The facts' times must be the clip's: the server holds board frames (no shift), but a take
+        # stored while it cut them (fictora-drama #543) is measured against its track and re-timed.
+        try:
+            checked = align_take_facts(
+                desk,
+                episode=episode,
+                take_id=take_id,
+                take=source,
+                facts_path=facts_state["path"],
+            )
+        except STEP_ERRORS as exc:
+            timeline_note = f"!! take timeline not checked: {exc}"
+        else:
+            facts_state["path"] = checked.facts
+            timeline_note = checked.note
     soundtrack = (
         soundtrack_from(json.loads(facts_state["path"].read_text(encoding="utf-8")))
         if facts_state["path"] is not None
@@ -834,6 +852,9 @@ def run_finish(
     )
     if facts_state["path"] is not None:
         print(soundtrack.one_line(), file=out)
+    if timeline_note:
+        print(timeline_note, file=out)
+        append_run_note(run_dir, f"Finish · {timeline_note}")
     append_run_note(
         run_dir,
         f"Finish chain on `{source.name}` (board: `{board.name if board else 'none'}`)"
