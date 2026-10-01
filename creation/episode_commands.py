@@ -43,6 +43,7 @@ import copy
 import hashlib
 import json
 import re
+import shlex
 import sys
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -2501,6 +2502,7 @@ def run_line(
     narrator_heard_only: Sequence[str] = (),
     narrator_on_screen: Sequence[str] = (),
     ask: Callable[[str], str] | None = None,
+    look: str | None = None,
     out: Any = None,
 ) -> Path | None:
     """Change, add or remove a line on the server and on the desk in one step; with no change, list the lines.
@@ -2533,6 +2535,9 @@ def run_line(
     narrator_heard_only, narrator_on_screen, ask
         For a ``new_voice`` named like a narrator: the operator's answer to
         "heard only, never seen?" (:func:`new_voice_narrator_answer`).
+    look
+        With ``new_voice``: their look, sent once the voice is added
+        (:func:`creation.cast_commands.run_cast_look`).
     out
         Text stream.
 
@@ -2543,6 +2548,13 @@ def run_line(
     """
 
     out = out or sys.stdout
+    from creation import cast_commands
+
+    if look is not None and new_voice is None:
+        raise CommandStopped(
+            "--look goes with --new-voice. To give someone in the cast a look: "
+            "`fictora-produce cast --desk D --name NAME --look @look.txt`"
+        )
     adding = add or remove is not None or new_voice is not None
     narrator = (
         new_voice_narrator_answer(
@@ -2560,6 +2572,15 @@ def run_line(
             raise CommandStopped(
                 "--line changes a line; --add/--remove add or drop one: run them as two commands"
             )
+        if look is not None and new_voice is not None:
+            _, state, run = _desk_session(desk)
+            try:
+                before = run.spine(state.spine_id or "")
+            finally:
+                run.client.close()
+            # The look is checked before the voice is sent, and sent once it is added.
+            card = {"cast_id": voice_cast_id(new_voice), "name": new_voice}
+            cast_commands.look_patch(before, card, look)
 
         sent: dict[str, Any] = {}
 
@@ -2633,7 +2654,30 @@ def run_line(
             print(new_voice_pick_warning(desk, new_voice, picked=picked), file=out)
         if narrator is not None and not preview_only:
             save_answer(desk.expanduser().resolve(), narrator)
-        for row in edit_verdict(change_items(changed), preview=preview_only):
+        items = change_items(changed)
+        if look is not None and new_voice is not None:
+            if preview_only:
+                print(
+                    f"(--look: {new_voice}'s look is sent once the voice is added)",
+                    file=out,
+                )
+            else:
+                try:
+                    cast_commands.run_cast_look(
+                        desk,
+                        name=voice_cast_id(new_voice),
+                        look=look,
+                        select_regen=select_regen,
+                        out=out,
+                    )
+                except CommandStopped as exc:
+                    raise EditRefused(
+                        f"{exc}\n{new_voice} was added as a voice; the look was not sent. Send it with: "
+                        f'fictora-produce cast --desk {desk} --name "{new_voice}" --look {shlex.quote(look)}',
+                        items=[f"look for {new_voice}"],
+                    ) from None
+                items.append(f"look for {new_voice}")
+        for row in edit_verdict(items, preview=preview_only):
             print(row, file=out)
         return path
     if beat is not None or speaker_moves:
@@ -3083,8 +3127,11 @@ def _run_cascade(
     select_regen: bool,
     preview_only: bool,
     out: Any,
+    edit: Mapping[str, Any] | None = None,
 ) -> list[str]:
     """Preview one edit's cascade, print it (and the warnings it introduces), then execute it unless preview only.
+
+    ``edit`` replaces the episode story edit built from ``patch`` (the ``cast_card`` edit of ``cast --look``).
 
     Returns
     -------
@@ -3093,7 +3140,7 @@ def _run_cascade(
     """
 
     spine_id = str(spine.get("spine_id") or load_production(desk).spine_id or "")
-    edit = {
+    edit = edit or {
         "scope": "section",
         "target_type": "episode",
         "target_id": episode_id_for(spine, episode),
@@ -6040,6 +6087,7 @@ EPISODE_COMMANDS = frozenset(
         "edit",
         "expressions",
         "line",
+        "cast",
         "look-frame",
         "look",
         "look-note",
@@ -6066,6 +6114,8 @@ def add_episode_parsers(
     sub
         Argparse subparser set.
     """
+
+    from creation.cast_commands import LOOK_HELP
 
     arc = sub.add_parser(
         "arc",
@@ -6334,7 +6384,32 @@ def add_episode_parsers(
         help="Remove (or give away) the last line of someone who is only heard anyway. Without it the kit stops: "
         "they would stay in the cast with no look, and the server may refuse to film until its fix is live.",
     )
+    line.add_argument(
+        "--look",
+        default=None,
+        help="With --new-voice: how they look, for someone who may be drawn later. "
+        + LOOK_HELP,
+    )
     add_narrator_answer_args(line)
+
+    cast = sub.add_parser(
+        "cast",
+        help="Give a cast member a look (visual description + brief) on the server, e.g. a voice an episode "
+        "later put in a frame. Shows the change; PATCH before the script gate, the cast cascade after it.",
+    )
+    cast.add_argument("--desk", type=Path, required=True)
+    cast.add_argument("--name", required=True, help="The character's name or cast id.")
+    cast.add_argument("--look", required=True, help=LOOK_HELP)
+    cast.add_argument(
+        "--select-regen",
+        action="store_true",
+        help="After the gate: also run paid regeneration items (the plate; or draw it with redraw-plate).",
+    )
+    cast.add_argument(
+        "--preview",
+        action="store_true",
+        help="Print the change (after the gate, the cascade too) and send nothing.",
+    )
 
     frame = sub.add_parser(
         "look-frame",
@@ -6640,7 +6715,16 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 narrator_heard_only=args.narrator_heard_only,
                 narrator_on_screen=args.narrator_on_screen,
                 ask=interactive_ask(),
+                look=args.look,
             )
+            return 0
+        if args.command == "cast":
+            from creation.cast_commands import run_cast_look
+
+            run_cast_look(
+                args.desk, name=args.name, look=args.look, select_regen=args.select_regen,
+                preview_only=args.preview,
+            )  # fmt: skip
             return 0
         if args.command == "look-frame":
             run_look_frame(args.desk, description=args.description, size=args.size)
