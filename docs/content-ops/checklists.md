@@ -80,7 +80,7 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] Each row opens on the emotion the row before it ended on
 - [ ] A move the beat states is drawn nearer in the next row that shows it; a horror threat has its own insert or POV row
 - [ ] Each spoken line sits on a row with its speaker in frame, medium or closer; no off-screen speaker drawn
-- [ ] No `!! ... names X but lists Y` in the shot list: each cell lists the character its words describe
+- [ ] No `!! ... names X but lists Y` in the shot list: each cell lists the character its words describe (the kit also checks this before the boards are drawn and before a redraw, and stops the paid draw)
 - [ ] No `!! ... hides the mouth` in the shot list: nothing over or at a speaker's mouth on a speaking row
 - [ ] No `!! N insert cells in a row`: at most one insert per take with a line, never two in a row
 - [ ] No `!! rows A→B: ... expression jumps` / `mood bounces` in the shot list: a face keeps its mood from row to row unless the beat puts a cause on screen (fix with `edit --frame N`, free, before the take)

@@ -1044,13 +1044,32 @@ def _name_patterns(cast_names: Mapping[str, str]) -> dict[str, list[re.Pattern[s
     return patterns
 
 
-def named_cast_mismatch_lines(
+@dataclass(frozen=True)
+class NamedCastMismatch:
+    """One frame whose words name ``missing`` but whose cast list draws ``unnamed`` instead."""
+
+    frame: Mapping[str, Any]
+    missing: tuple[str, ...]
+    unnamed: tuple[str, ...]
+
+    def line(self, cast_names: Mapping[str, str]) -> str:
+        """The shot list's ``!!`` line."""
+
+        return (
+            f"  !! {self.frame.get('frame_id')} (row {_row_number(self.frame)}) names "
+            f"{', '.join(cast_names.get(c, c) for c in self.missing)} but lists "
+            f"{', '.join(cast_names.get(c, c) for c in self.unnamed)}: the board draws whom the cast list names. "
+            "Edit that frame's cast to the character it describes, then redraw (warning only)."
+        )
+
+
+def named_cast_mismatches(
     frames: Sequence[Mapping[str, Any]],
     take_beats: Sequence[Mapping[str, Any]] = (),
     *,
     cast_names: Mapping[str, str],
-) -> list[str]:
-    """Warn when a frame's words name one cast member but its cast list has another it never names.
+) -> list[NamedCastMismatch]:
+    """Frames whose words name one cast member but whose cast list has another it never names.
 
     Hanakaze Sweets ep 4: frames 4, 6 and 8 said "Catches Ren lowering his
     phone" and "Ren and pastry counter background right" but listed Genzō, and
@@ -1058,7 +1077,7 @@ def named_cast_mismatch_lines(
     list names. Read from ``beat_label``, ``beat_prompt``, ``story_moment`` and
     ``depth_order``; ``forbidden_elements`` ("no visible Genzō") never count.
     Someone with a line on a beat anchored to the frame belongs on its list
-    whether or not its words name them. Warning only.
+    whether or not its words name them.
 
     Parameters
     ----------
@@ -1071,8 +1090,8 @@ def named_cast_mismatch_lines(
 
     Returns
     -------
-    list[str]
-        ``!!`` lines, empty when every frame lists whom it names.
+    list[NamedCastMismatch]
+        One per frame that lists someone other than whom it names; empty when none.
     """
 
     patterns = _name_patterns(cast_names)
@@ -1083,7 +1102,7 @@ def named_cast_mismatch_lines(
             for line in beat.get("dialogue_lines") or []
             if isinstance(line, Mapping)
         )
-    out: list[str] = []
+    out: list[NamedCastMismatch] = []
     for frame in frames:
         brief = frame.get("visual_brief") or {}
         text = _plain_text(
@@ -1108,13 +1127,195 @@ def named_cast_mismatch_lines(
         speaking = speakers.get(str(frame.get("frame_id") or ""), set())
         unnamed = [c for c in cast_names if c in drawn - named - speaking]
         if missing and unnamed:
-            out.append(
-                f"  !! {frame.get('frame_id')} (row {_row_number(frame)}) names "
-                f"{', '.join(cast_names.get(c, c) for c in missing)} but lists "
-                f"{', '.join(cast_names.get(c, c) for c in unnamed)}: the board draws whom the cast list names. "
-                "Edit that frame's cast to the character it describes, then redraw (warning only)."
-            )
+            out.append(NamedCastMismatch(frame, tuple(missing), tuple(unnamed)))
     return out
+
+
+def named_cast_mismatch_lines(
+    frames: Sequence[Mapping[str, Any]],
+    take_beats: Sequence[Mapping[str, Any]] = (),
+    *,
+    cast_names: Mapping[str, str],
+) -> list[str]:
+    """Warn when a frame's words name one cast member but its cast list has another it never names.
+
+    The shot list's lines for :func:`named_cast_mismatches` (the board gate).
+    Before a board is drawn the same check stops the paid draw
+    (:func:`named_cast_stop`).
+
+    Parameters
+    ----------
+    frames
+        One board's frames.
+    take_beats
+        That take's beats.
+    cast_names
+        ``cast_id`` to display name.
+
+    Returns
+    -------
+    list[str]
+        ``!!`` lines, empty when every frame lists whom it names.
+    """
+
+    return [
+        found.line(cast_names)
+        for found in named_cast_mismatches(frames, take_beats, cast_names=cast_names)
+    ]
+
+
+def spine_cast_names(spine: Mapping[str, Any]) -> dict[str, str]:
+    """``cast_id`` to display name from the spine's cast cards."""
+
+    return {
+        str(card.get("cast_id")): str(card.get("name") or card.get("cast_id"))
+        for card in spine.get("cast") or []
+        if isinstance(card, Mapping) and card.get("cast_id")
+    }
+
+
+def episode_named_cast_mismatches(
+    spine: Mapping[str, Any], *, episode: int, sets: Sequence[int] | None = None
+) -> dict[int, list[NamedCastMismatch]]:
+    """:func:`named_cast_mismatches` for every board of an episode (or only ``sets``), as the shot list reads them.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+    sets
+        Only these boards (default every board on the episode).
+
+    Returns
+    -------
+    dict[int, list[NamedCastMismatch]]
+        Board index to its mismatches; boards with none are left out.
+    """
+
+    cast_names = spine_cast_names(spine)
+    boards = frames_by_set(spine, episode=episode)
+    planned = beats_by_take(spine, episode=episode, take_count=max(boards, default=1))
+    found: dict[int, list[NamedCastMismatch]] = {}
+    for set_index, frames in sorted(boards.items()):
+        if sets is not None and set_index not in sets:
+            continue
+        take_beats = planned[set_index - 1] if set_index <= len(planned) else []
+        hits = named_cast_mismatches(frames, take_beats, cast_names=cast_names)
+        if hits:
+            found[set_index] = hits
+    return found
+
+
+def _named_cast_fix(
+    found: NamedCastMismatch,
+    *,
+    desk: str,
+    episode: int,
+    cast_names: Mapping[str, str],
+) -> list[str]:
+    """The commands that fix one mismatch: swap who is staged, or (when the list is right) fix the words."""
+
+    frame_id = str(found.frame.get("frame_id"))
+    where = f"fictora-produce edit --desk {desk} --episode {episode} --frame {frame_id}"
+    raw = found.frame.get("visual_brief")
+    brief: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
+    blocking = [
+        str(entry.get("cast_id")) if isinstance(entry, Mapping) else ""
+        for entry in brief.get("subject_blocking") or []
+    ]
+    lines: list[str] = []
+    if (
+        len(found.missing) == 1
+        and len(found.unnamed) == 1
+        and found.unnamed[0] in blocking
+    ):
+        index = blocking.index(found.unnamed[0])
+        lines.append(
+            f"    {where} --set subject_blocking.{index}.cast_id={found.missing[0]}   "
+            f"(stage {cast_names.get(found.missing[0], found.missing[0])} where "
+            f"{cast_names.get(found.unnamed[0], found.unnamed[0])} stands; cast_refs follows)"
+        )
+    else:
+        lines.append(
+            f'    {where} --set \'subject_blocking=[{{"cast_id": "…", "frame_position": "…", "pose": "…", '
+            '"gaze": "…", "interaction": "…"}, …]\'   (every person in the shot, one entry each)'
+        )
+    lines.append(
+        f'    or, when the listed cast is right: {where} --set story_moment="…"   (words that name whom it draws)'
+    )
+    return lines
+
+
+def named_cast_stop(
+    spine: Mapping[str, Any],
+    *,
+    episode: int,
+    desk: str,
+    sets: Sequence[int] | None = None,
+    action: str = "drawing the boards",
+    heads_up: bool = False,
+) -> str | None:
+    """The stop before a paid board draw when a frame names one character but lists another; ``None`` when clean.
+
+    The same check the shot list prints after the draw
+    (:func:`named_cast_mismatches`), run on the frames before any board is
+    paid for: a leftover name otherwise costs a redraw.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON (the frames as they stand).
+    episode
+        Episode ordinal.
+    desk
+        The desk, named in the commands.
+    sets
+        Only these boards (default every board on the episode).
+    action
+        What was stopped, for the first line.
+    heads_up
+        Said ahead of the paid step (after the draft, at the script yes): nothing is stopped yet.
+
+    Returns
+    -------
+    str | None
+        The message naming each take, frame, row and name with the command to fix it.
+    """
+
+    found = episode_named_cast_mismatches(spine, episode=episode, sets=sets)
+    if not found:
+        return None
+    cast_names = spine_cast_names(spine)
+    why = (
+        "A frame's words name one character but its cast list has another, and the board draws whom the "
+        "list names (a redraw costs $0.30 per board)."
+    )
+    lines = [
+        f"!! Before the boards: {why} `step` stops before drawing them until each frame is fixed (free edits):"
+        if heads_up
+        else f"!! Stopped before {action}: nothing was sent or paid. {why} Fix each frame, then run the "
+        "same command again:"
+    ]
+    for set_index, hits in found.items():
+        for hit in hits:
+            frame = hit.frame
+            beat = (
+                f', beat "{frame.get("beat_label")}"' if frame.get("beat_label") else ""
+            )
+            lines.append(
+                f"  !! ep{episode:02d} t{set_index} {frame.get('frame_id')} (row {_row_number(frame)}{beat}) names "
+                f"{', '.join(cast_names.get(c, c) for c in hit.missing)} but lists "
+                f"{', '.join(cast_names.get(c, c) for c in hit.unnamed)}"
+            )
+            lines += _named_cast_fix(
+                hit, desk=desk, episode=episode, cast_names=cast_names
+            )
+    lines.append(
+        "  After the script gate, run each edit with --preview first and show the human the before/after."
+    )
+    return "\n".join(lines)
 
 
 _WHOSE = r"(?:(?:his|her|their|its|the|one's|my|your|a)\s+)?(?:own\s+)?"
@@ -1523,11 +1724,7 @@ def shot_list_lines(
     """
 
     lines: list[str] = []
-    cast_names = {
-        str(card.get("cast_id")): str(card.get("name") or card.get("cast_id"))
-        for card in spine.get("cast") or []
-        if isinstance(card, Mapping) and card.get("cast_id")
-    }
+    cast_names = spine_cast_names(spine)
     boards = frames_by_set(spine, episode=episode)
     planned = beats_by_take(spine, episode=episode, take_count=max(boards, default=1))
     for set_index, frames in sorted(boards.items()):
@@ -1599,7 +1796,12 @@ __all__ = [
     "heard_not_seen",
     "insert_run_lines",
     "missing_expression_lines",
+    "NamedCastMismatch",
+    "episode_named_cast_mismatches",
     "named_cast_mismatch_lines",
+    "named_cast_mismatches",
+    "named_cast_stop",
+    "spine_cast_names",
     "off_screen_speaker_lines",
     "pose_change_at_cut_lines",
     "pose_posture",

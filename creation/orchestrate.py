@@ -97,6 +97,7 @@ from creation.spine_view import (
     board_inputs,
     episode_id_for,
     frames_by_set,
+    named_cast_stop,
     frames_digest,
     script_lines,
     shot_list_lines,
@@ -1293,6 +1294,10 @@ def run_step(
             if notes:
                 _note(ep_dir, notes)
                 gate += "\n" + notes
+            names = named_cast_stop(spine, episode=ep, desk=str(desk), heads_up=True)
+            if names:
+                _note(ep_dir, names)
+                gate += "\n" + names
             return StepResult(
                 state.phase,
                 f"Draft done. spine_id={spine_id}. {sum(counts.values())} lines on the desk.\n{gate}\n"
@@ -1374,6 +1379,13 @@ def run_step(
             )
 
         if state.phase == "ready_boards_enrol":
+            # The board gate's name check, before paying for the boards (a leftover name costs a redraw).
+            stop = named_cast_stop(
+                run.spine(state.spine_id or ""), episode=ep, desk=str(desk)
+            )
+            if stop:
+                _note(ep_dir, stop)
+                raise RuntimeError(stop)
             stages.enrol_boards(
                 run,
                 spine_id=state.spine_id or "",
@@ -2284,6 +2296,10 @@ def approve_gate(
                 if record.note and record.note.startswith("WARNING")
                 else ""
             )
+            names = named_cast_stop(spine, episode=ep, desk=str(desk), heads_up=True)
+            if names:
+                _note(_episode_dir(desk, ep), names)
+                warning += f"\n{names}"
             return StepResult(
                 state.phase,
                 f"Episode {ep} script approved on the API. Next: fictora-produce step (boards).{warning}",

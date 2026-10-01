@@ -204,6 +204,7 @@ from creation.spine_view import (
     episode_summary,
     frame_cast,
     frames_by_set,
+    named_cast_stop,
     heard_line_ids,
     shot_rows,
 )
@@ -4819,6 +4820,27 @@ def run_redraw_board(
         reauthors = (note is not None and not resuming) or BOARD_INPUT_NAMES[
             "beats"
         ] in (changed or [])
+        names = (
+            None
+            if resuming
+            else named_cast_stop(
+                spine,
+                episode=episode,
+                desk=str(desk),
+                sets=[set_index],
+                action=f"redrawing {take_id}",
+            )
+        )
+        if names and not reauthors:
+            # The board gate's name check, before the paid redraw: the frames are drawn as written.
+            raise CommandStopped(names)
+        if names:
+            print(
+                f"note: the server re-authors {take_id}'s frames on this redraw; these frames name one "
+                "character but list another as they stand, so check the names on the redrawn board:\n"
+                + "\n".join(line for line in names.splitlines()[1:] if "!!" in line),
+                file=out,
+            )
         if reauthors:
             for line in restaging_warning(
                 desk, drawn_before, episode=episode, take_id=take_id
