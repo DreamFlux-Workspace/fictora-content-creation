@@ -539,3 +539,141 @@ def test_a_freeze_on_the_finished_take_keeps_the_sound_before_the_bed(
     assert record["master"] == "ep01/takes/take-ep01-t2-freeze-v1.mp4"
     assert record["final"] == "ep01/takes/take-ep01-t2-freeze-final-v1.mp4"
     assert run_join(join_desk, episodes=(1,), stream=io.StringIO()).complete
+
+
+# --- seams: speech left out, both sides printed, a human override (L-20260930-9) -----------------
+
+
+def _levels(monkeypatch: pytest.MonkeyPatch, levels: list[float]) -> None:
+    monkeypatch.setattr(
+        join_module, "measure_rms_windows", lambda *_a, **_k: tuple(levels)
+    )
+
+
+def _room(before: float, after: float, *, speech: tuple[float, float] | None = None,
+          speech_db: float = -20.0, seconds: float = 12.0, seam: float = 5.0) -> list[float]:  # fmt: skip
+    """0.1 s levels: ``before`` up to the seam, ``after`` from it, with one line at ``speech_db``."""
+
+    levels = []
+    for index in range(int(seconds / 0.1)):
+        t = index * 0.1 + 0.05
+        level = before if t < seam else after
+        if speech and speech[0] <= t < speech[1]:
+            level = speech_db
+        levels.append(level)
+    return levels
+
+
+def test_a_line_starting_right_after_the_cut_is_not_a_seam_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    line = (5.05, 6.8)
+    _levels(monkeypatch, _room(-45.0, -45.0, speech=line))
+
+    unaware = join_module.seam_levels(Path("x.mp4"), [5.0])[0]
+    assert unaware.step_db > 5, "the false seam: the line reads as a room jump"
+    level = join_module.seam_levels(Path("x.mp4"), [5.0], speech=[line])[0]
+    assert abs(level.step_db) < 1, level
+    assert level.after_speech_out and level.after_db == -45.0
+    assert "after -45.0 dB speech left out" in level.text()
+
+
+def test_a_quiet_tail_against_speech_is_still_caught(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    line = (5.05, 6.8)
+    _levels(monkeypatch, _room(-60.0, -30.0, speech=line))
+
+    level = join_module.seam_levels(Path("x.mp4"), [5.0], speech=[line])[0]
+    assert level.step_db > 25, "the room under take 2 is 30 dB up on take 1's dead tail"
+    assert (level.before_db, level.after_db) == (-60.0, -30.0)
+
+
+def test_a_side_that_is_speech_end_to_end_is_measured_as_it_is(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    line = (5.0, 12.0)
+    _levels(monkeypatch, _room(-60.0, -30.0, speech=line))
+
+    level = join_module.seam_levels(Path("x.mp4"), [5.0], speech=[line])[0]
+    assert level.after_all and level.step_db > 30
+    assert "all speech, measured as is" in level.text()
+
+
+def test_part_speech_reads_saved_words_then_take_facts_and_skips_moved_timelines(
+    join_desk: Path,
+) -> None:
+    from creation.post.finish_record import FinishRecord
+
+    def part(take_id: str, edits: tuple[dict, ...] = ()) -> join_module.JoinPart:
+        record = FinishRecord(episode=1, take_id=take_id, complete=True, pre_bed="a", master="b",
+                              final="c", bed=None, bed_db=-16.5, duck_db=None, edits=edits)  # fmt: skip
+        return join_module.JoinPart(1, take_id, Path("p.mp4"), Path("q.mp4"), record)
+
+    takes = join_desk / "ep01" / "takes"
+    takes.mkdir(parents=True, exist_ok=True)
+    (takes / "take-ep01-t1-words-v1.json").write_text(
+        json.dumps(
+            {
+                "words": [
+                    {"word": "hi", "start": 0.2, "end": 0.6},
+                    {"word": "late", "start": 9.0, "end": 9.5},
+                ]
+            }
+        )
+    )
+    api = join_desk / "ep01" / "api"
+    api.mkdir(parents=True, exist_ok=True)
+    (api / "take-facts-ep01-t2-v1.json").write_text(
+        json.dumps({"lines": [{"start_seconds": 1.0, "end_seconds": 2.5}]})
+    )
+
+    windows, note = join_module.part_speech(join_desk, part("t1"), 5.0)
+    assert windows == [(0.2, 0.6)] and "words `take-ep01-t1-words-v1.json`" in note
+    windows, note = join_module.part_speech(join_desk, part("t2"), 5.0)
+    assert windows == [(1.0, 2.5)] and "line windows" in note
+    windows, note = join_module.part_speech(
+        join_desk, part("t1", ({"op": "trim"},)), 5.0
+    )
+    assert windows == [] and "edited after finish: trim" in note
+    windows, _ = join_module.part_speech(
+        join_desk, part("t1", ({"op": "soften"},)), 5.0
+    )
+    assert windows == [(0.2, 0.6)], "soften keeps the sound timeline"
+
+
+@needs_ffmpeg
+def test_accept_seam_marks_the_join_and_records_who_and_why(
+    join_desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    finished_take(join_desk, 1, "t1", tone=0.01)
+    finished_take(join_desk, 1, "t2", tone=0.5)
+    noise_bed(join_desk)
+    monkeypatch.setattr(
+        cli_post, "run_join", functools.partial(run_join, stream=io.StringIO())
+    )
+    base = ["join", "--desk", str(join_desk), "--episode", "1", "--no-gain-match"]
+
+    assert main([*base, "--accept-seam", "the line starts on the cut"]) == 2
+    assert "--accept-seam needs --accepted-by NAME" in capsys.readouterr().err
+    code = main(
+        [
+            *base,
+            "--accept-seam",
+            "the line starts on the cut",
+            "--accepted-by",
+            "Tejas",
+            "--json",
+        ]
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert code == 0 and report["complete"] is True and report["marked"]
+    assert report["accepted"]["by"] == "Tejas"
+    assert abs(report["accepted"]["seams"][0]["step_db"]) > 5
+    seam = report["seams"][0]
+    assert {"before_db", "after_db"} <= set(seam), "both sides' levels are reported"
+    notes = (join_desk / "ep01" / "run-notes.md").read_text()
+    assert "Seam accepted by Tejas: the line starts on the cut" in notes
+    assert "ACCEPTED: seam at 2.50s" in notes
+    assert "before " in notes and "after " in notes

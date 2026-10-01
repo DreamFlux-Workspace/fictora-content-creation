@@ -342,6 +342,19 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Mark top offset (never into the top 8%%).",
     )
     join.add_argument(
+        "--accept-seam",
+        default=None,
+        metavar="WHY",
+        help="A human listened through the master and accepts every seam over 5 dB (say why); the join "
+        "is marked anyway and who and why go in the run notes. Needs --accepted-by.",
+    )
+    join.add_argument(
+        "--accepted-by",
+        default=None,
+        metavar="NAME",
+        help="Who accepted the seam (with --accept-seam).",
+    )
+    join.add_argument(
         "--json", action="store_true", help="Print the report as JSON on stdout."
     )
 
@@ -483,6 +496,8 @@ def dispatch_post(args: argparse.Namespace) -> int:
             duck_db=args.duck_db,
             gain_match=not args.no_gain_match,
             watermark_y=args.watermark_y,
+            accept_seam=args.accept_seam,
+            accepted_by=args.accepted_by,
         )
         if args.json:
             print(json.dumps(joined.as_json(), indent=2))

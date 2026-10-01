@@ -32,8 +32,13 @@ What ``join`` does, in order:
    timeline by construction (a caption inside a dissolve fades with it).
 6. **Measure.** Frames / seconds of the joined file must be 24; the room level
    either side of each seam (median of 0.1 s RMS over 2 s) must step under
-   5 dB. A bigger step stops the join: the un-marked master is kept to listen
-   to, nothing is marked, and the CLI exits 5.
+   5 dB. Known speech (the take's saved words, else its take-facts line
+   windows) is left out of both sides, so a line starting on the cut is not a
+   room jump; a side that is speech end to end is measured as it is. Both
+   sides' levels are printed. A bigger step stops the join: the un-marked
+   master is kept to listen to, nothing is marked, and the CLI exits 5, unless
+   a human passes ``--accept-seam "why" --accepted-by NAME`` (recorded in the
+   run notes).
 7. **Mark once** on the joined master (the parts are un-marked); the master
    stays beside the marked file.
 
@@ -94,6 +99,15 @@ EPISODE_DISSOLVE_SECONDS = 0.25
 SEAM_STEP_DB = 5.0
 #: Seconds measured either side of a seam.
 SEAM_WINDOW_SECONDS = 2.0
+#: Speech is left out of the room level with this much margin either side (word times are rough,
+#: and the bed's duck ramps back up after a line).
+SPEECH_PAD_SECONDS = 0.3
+#: A side needs at least this many 0.1 s windows without speech to be measured on them alone;
+#: the search reaches out this far for them before falling back to every window.
+SEAM_QUIET_WINDOWS = 5
+SEAM_SEARCH_SECONDS = 6.0
+#: Edits after finish that keep the take's sound timeline (its words and lines still line up).
+TIMELINE_KEEPING_EDITS = frozenset({"soften", "blur"})
 #: Loop points in the bed are crossfaded over this long (at most a quarter of the bed).
 BED_LOOP_CROSSFADE_SECONDS = 1.0
 #: A bed's head and tail quieter than this are cut before it is looped.
@@ -120,6 +134,57 @@ class JoinPart:
         return f"ep{self.episode:02d} {self.take_id}"
 
 
+@dataclass(frozen=True)
+class SeamLevel:
+    """The room level either side of one seam (median of 0.1 s RMS, dB).
+
+    ``*_speech_out`` is true when known speech (the take's words or line
+    windows) was left out of that side; ``*_all`` is true when that side is
+    speech end to end, so every window was measured (a quiet tail against
+    wall-to-wall speech still reads as the jump it is).
+    """
+
+    before_db: float
+    after_db: float
+    before_speech_out: bool = False
+    after_speech_out: bool = False
+    before_all: bool = False
+    after_all: bool = False
+
+    @property
+    def step_db(self) -> float:
+        """After minus before."""
+
+        return round(self.after_db - self.before_db, 1)
+
+    def text(self) -> str:
+        """``before -42.0 dB, after -31.5 dB (speech left out)``."""
+
+        def side(name: str, level: float, out: bool, every: bool) -> str:
+            how = (
+                " speech left out"
+                if out
+                else (" all speech, measured as is" if every else "")
+            )
+            return f"{name} {level:.1f} dB{how}"
+
+        return (
+            side("before", self.before_db, self.before_speech_out, self.before_all)
+            + ", "
+            + side("after", self.after_db, self.after_speech_out, self.after_all)
+        )
+
+    def as_json(self) -> dict[str, Any]:
+        """Both sides' levels for the JSON report."""
+
+        return {
+            "before_db": self.before_db,
+            "after_db": self.after_db,
+            "before_speech_left_out": self.before_speech_out,
+            "after_speech_left_out": self.after_speech_out,
+        }
+
+
 @dataclass
 class JoinResult:
     """What the join wrote and measured."""
@@ -136,6 +201,10 @@ class JoinResult:
     loudness: str
     mix_line: str
     notes: list[str] = field(default_factory=list)
+    #: Each seam's room level either side, and how it was measured (default: unknown).
+    seam_levels: list[SeamLevel] = field(default_factory=list)
+    #: ``{"by": ..., "why": ..., "seams": [...]}`` when a human accepted loud seams with ``--accept-seam``.
+    accepted: dict[str, Any] | None = None
 
     @property
     def loud_seams(self) -> list[tuple[float, float]]:
@@ -149,17 +218,21 @@ class JoinResult:
 
     @property
     def complete(self) -> bool:
-        """Marked, and every seam steps under 5 dB."""
+        """Marked, and every seam steps under 5 dB (or a human accepted the loud ones)."""
 
-        return self.marked is not None and not self.loud_seams
+        return self.marked is not None and (
+            not self.loud_seams or self.accepted is not None
+        )
 
     def summary_lines(self) -> list[str]:
         """Operator lines."""
 
+        levels = self.seam_levels or [None] * len(self.seams)
         seams = ", ".join(
             f"{s:.2f}s {'cut' if d == 0 else f'{d:.2f}s dissolve'} {step:+.1f} dB"
-            for s, d, step in zip(
-                self.seams, self.dissolves, self.seam_steps_db, strict=True
+            + (f" ({level.text()})" if level is not None else "")
+            for s, d, step, level in zip(
+                self.seams, self.dissolves, self.seam_steps_db, levels, strict=True
             )
         )
         lines = [
@@ -174,12 +247,18 @@ class JoinResult:
             f"Seams: {seams}",
             f"Frames / seconds: {self.fps:.2f}; loudness {self.loudness}",
         ]
+        if self.accepted is not None:
+            lines.append(
+                f"Seam accepted by {self.accepted['by']}: {self.accepted['why']} "
+                f"(seams {', '.join(f'{at:.2f}s {step:+.1f} dB' for at, step in self.loud_seams)})"
+            )
         lines += [f"- {note}" for note in self.notes]
         return lines
 
     def as_json(self) -> dict[str, Any]:
         """JSON report."""
 
+        levels = self.seam_levels
         return {
             "master": str(self.master),
             "marked": str(self.marked) if self.marked else None,
@@ -187,10 +266,13 @@ class JoinResult:
             "parts": [{"episode": p.episode, "take_id": p.take_id, "picture": str(p.picture),
                        "pre_bed": str(p.pre_bed)} for p in self.parts],
             "gains_db": self.gains_db,
-            "seams": [{"at": s, "dissolve": d, "step_db": step}
-                      for s, d, step in zip(self.seams, self.dissolves, self.seam_steps_db, strict=True)],
+            "seams": [{"at": s, "dissolve": d, "step_db": step,
+                       **(levels[i].as_json() if i < len(levels) else {})}
+                      for i, (s, d, step) in enumerate(zip(self.seams, self.dissolves, self.seam_steps_db,
+                                                           strict=True))],
             "fps": self.fps,
             "loudness": self.loudness,
+            "accepted": self.accepted,
         }  # fmt: skip
 
 
@@ -494,32 +576,167 @@ def loop_bed(
     return out
 
 
-def seam_loudness_steps(
-    video: Path, seams: list[float], *, window: float = SEAM_WINDOW_SECONDS
-) -> list[float]:
-    """Room-level step (after minus before) across each seam.
+def _in_speech(t: float, speech: list[tuple[float, float]]) -> bool:
+    return any(a - SPEECH_PAD_SECONDS <= t < b + SPEECH_PAD_SECONDS for a, b in speech)
+
+
+def _side(
+    levels: np.ndarray,
+    indices: range,
+    reach: range,
+    speech: list[tuple[float, float]],
+) -> tuple[float, bool, bool] | None:
+    """Median level over ``indices`` with speech left out (``(level, speech_out, all_speech)``).
+
+    When fewer than :data:`SEAM_QUIET_WINDOWS` windows of ``indices`` are free
+    of speech, the search walks on through ``reach`` (further from the seam)
+    for more; when there are still too few, every window of ``indices`` is
+    measured as it is.
+    """
+
+    every = [i for i in indices if 0 <= i < len(levels)]
+    if not every:
+        return None
+    if not speech:
+        return float(np.median(levels[every])), False, False
+    quiet = [i for i in every if not _in_speech(i * 0.1 + 0.05, speech)]
+    for i in reach:
+        if len(quiet) >= SEAM_QUIET_WINDOWS:
+            break
+        if 0 <= i < len(levels) and not _in_speech(i * 0.1 + 0.05, speech):
+            quiet.append(i)
+    if len(quiet) >= SEAM_QUIET_WINDOWS:
+        return float(np.median(levels[quiet])), set(quiet) != set(every), False
+    return float(np.median(levels[every])), False, True
+
+
+def seam_levels(
+    video: Path,
+    seams: list[float],
+    *,
+    speech: list[tuple[float, float]] | None = None,
+    window: float = SEAM_WINDOW_SECONDS,
+) -> list[SeamLevel]:
+    """Room level either side of each seam, speech left out.
 
     The level either side is the median of 0.1 s RMS windows over ``window``
-    seconds, so a line starting right after the seam does not read as a jump;
-    the bed and the room do. The bed's fade in (first 1 s) and fade out (last
-    1.5 s) are left out.
+    seconds. Known speech (``speech``, joined-timeline seconds from the takes'
+    words or line windows) is left out of both sides, so a line that starts
+    right after the cut does not read as a room jump (L-20260930-9). When a
+    side is speech end to end, the search reaches up to
+    :data:`SEAM_SEARCH_SECONDS` from the seam for pauses; failing that, the
+    whole side is measured as it is, so a dead-quiet tail against speech is
+    still caught. The bed's fade in (first 1 s) and fade out (last 1.5 s) are
+    left out.
     """
 
     levels = np.array(measure_rms_windows(video, window_seconds=0.1))
     span = int(round(window / 0.1))
+    reach = int(round(SEAM_SEARCH_SECONDS / 0.1))
     # The bed's own fade in and fade out are not a seam: leave them out of both sides.
     first = int(math.ceil(BED_FADE_IN_SECONDS / 0.1))
     last = len(levels) - int(math.ceil(BED_FADE_OUT_SECONDS / 0.1))
-    steps: list[float] = []
+    spoken = sorted(speech or [])
+    found: list[SeamLevel] = []
     for seam in seams:
         index = int(seam / 0.1)
-        before = levels[max(first, index - span) : index]
-        after = levels[index : min(last, index + span)]
-        if before.size == 0 or after.size == 0:
-            steps.append(0.0)
+        before = _side(
+            levels,
+            range(max(first, index - span), index),
+            range(index - span - 1, max(first, index - reach) - 1, -1),
+            spoken,
+        )
+        after = _side(
+            levels,
+            range(index, min(last, index + span)),
+            range(index + span, min(last, index + reach)),
+            spoken,
+        )
+        if before is None or after is None:
+            found.append(SeamLevel(0.0, 0.0))
             continue
-        steps.append(round(float(np.median(after)) - float(np.median(before)), 1))
-    return steps
+        found.append(
+            SeamLevel(
+                before_db=round(before[0], 1),
+                after_db=round(after[0], 1),
+                before_speech_out=before[1],
+                after_speech_out=after[1],
+                before_all=before[2],
+                after_all=after[2],
+            )  # fmt: skip
+        )
+    return found
+
+
+def seam_loudness_steps(
+    video: Path,
+    seams: list[float],
+    *,
+    speech: list[tuple[float, float]] | None = None,
+    window: float = SEAM_WINDOW_SECONDS,
+) -> list[float]:
+    """Room-level step (after minus before) across each seam; see :func:`seam_levels`."""
+
+    return [
+        level.step_db
+        for level in seam_levels(video, seams, speech=speech, window=window)
+    ]
+
+
+def part_speech(
+    desk: Path, part: JoinPart, seconds: float
+) -> tuple[list[tuple[float, float]], str]:
+    """Where this take speaks on its own timeline, from the kit's saved words or the take's line windows.
+
+    Returns
+    -------
+    tuple[list[tuple[float, float]], str]
+        Speech windows (seconds into the part) and where they came from, or
+        ``[]`` and why none (no transcript or facts saved, or an edit after
+        finish moved the sound timeline).
+    """
+
+    moved = [
+        str(edit.get("op"))
+        for edit in part.record.edits
+        if edit.get("op") not in TIMELINE_KEEPING_EDITS
+    ]
+    if moved:
+        return (
+            [],
+            f"{part.label}: speech not left out (edited after finish: {', '.join(moved)})",
+        )
+    from creation.post.review import saved_words
+    from creation.post.sfx import saved_take_facts
+    from creation.post.take_text import line_windows
+    from creation.post.whisper import load_words
+
+    windows: list[tuple[float, float]] = []
+    source = ""
+    words = saved_words(desk, part.episode, part.take_id)
+    if words is not None:
+        try:
+            windows = [
+                (w.start, max(w.end, w.start + 0.1))
+                for w in load_words(words)
+                if w.text
+            ]
+            source = f"words `{words.name}`"
+        except (ValueError, KeyError, TypeError, OSError, json.JSONDecodeError):
+            windows = []
+    if not windows:
+        facts = saved_take_facts(desk, part.episode, part.take_id)
+        if facts is not None:
+            try:
+                payload = json.loads(facts.read_text(encoding="utf-8"))
+            except (ValueError, OSError):
+                payload = None
+            windows = line_windows(payload if isinstance(payload, dict) else None)
+            source = f"line windows `{facts.name}`"
+    windows = [(a, min(b, seconds)) for a, b in windows if 0 <= a < seconds]
+    if not windows:
+        return [], f"{part.label}: speech not left out (no saved words or take facts)"
+    return windows, f"{part.label}: speech from {source}"
 
 
 def join_sound(
@@ -621,6 +838,8 @@ def run_join(
     duck_db: float | None = None,
     gain_match: bool = True,
     watermark_y: int | None = None,
+    accept_seam: str | None = None,
+    accepted_by: str | None = None,
     stream: TextIO | None = None,
 ) -> JoinResult:
     """Join finished takes with one bed across them, and mark the joined file once.
@@ -643,6 +862,11 @@ def run_join(
         Gain every part to the parts' median loudness first.
     watermark_y
         Mark top offset override.
+    accept_seam
+        Why a human accepts every seam that steps over 5 dB (``--accept-seam``):
+        the join is marked anyway, and who and why go in the run notes.
+    accepted_by
+        Who accepted (required with ``accept_seam``).
     stream
         Progress output (stderr by default).
 
@@ -663,6 +887,14 @@ def run_join(
 
     out = stream or sys.stderr
     desk = desk.expanduser().resolve()
+    accept_seam = (accept_seam or "").strip() or None
+    accepted_by = (accepted_by or "").strip() or None
+    if accept_seam and not accepted_by:
+        raise ValueError(
+            "--accept-seam needs --accepted-by NAME: the run notes record who accepted the seam and why"
+        )
+    if accepted_by and not accept_seam:
+        raise ValueError('--accepted-by goes with --accept-seam "why"')
     if bool(episodes) == bool(take_files):
         raise ValueError(
             "join needs --episode / --episodes, or --take-file (one of them)"
@@ -707,6 +939,11 @@ def run_join(
         for n in episode_set
         if (desk / f"ep{n:02d}" / "run-notes.md").is_file()
     ]
+    if accept_seam and not run_dirs:
+        raise ValueError(
+            "--accept-seam is recorded in the episode's run-notes.md, and none is on the desk; "
+            "init the episode desk first"
+        )
 
     print(
         f"Joining {len(parts)} take(s): {', '.join(p.label for p in parts)} (one bed, free)",
@@ -722,13 +959,38 @@ def run_join(
         looped = loop_bed(bed, total + 1.0, Path(scratch) / "bed-looped.wav")
         mixed = mix_take(bedless, master, bed=looped, bed_db=bed_db, duck_db=duck_db)
     fps = assert_house_fps(master)
-    steps = seam_loudness_steps(master, seams)
+    speech: list[tuple[float, float]] = []
+    speech_notes: list[str] = []
+    start = 0.0
+    for index, (part, seconds) in enumerate(zip(parts, lengths, strict=True)):
+        if index:
+            start += lengths[index - 1] - dissolves[index - 1]
+        windows, note = part_speech(desk, part, seconds)
+        speech += [(start + a, start + b) for a, b in windows]
+        speech_notes.append(note)
+    levels = seam_levels(master, seams, speech=speech)
     result = JoinResult(
         parts=parts, master=master, marked=None, bed=bed, gains_db=gains, dissolves=dissolves, seams=seams,
-        seam_steps_db=steps, fps=round(fps, 3), loudness=f"{mixed.mix_lufs:.1f} LUFS",
-        mix_line=mixed.one_line(),
+        seam_steps_db=[level.step_db for level in levels], fps=round(fps, 3),
+        loudness=f"{mixed.mix_lufs:.1f} LUFS", mix_line=mixed.one_line(), seam_levels=levels,
     )  # fmt: skip
-    if result.loud_seams:
+    result.notes += speech_notes
+    if result.loud_seams and accept_seam:
+        result.accepted = {
+            "by": accepted_by,
+            "why": accept_seam,
+            "seams": [{"at": at, "step_db": step} for at, step in result.loud_seams],
+        }
+        for seam, step in result.loud_seams:
+            result.notes.append(
+                f"ACCEPTED: seam at {seam:.2f}s steps {step:+.1f} dB (over {SEAM_STEP_DB:.0f}); "
+                f"accepted by {accepted_by}: {accept_seam}"
+            )
+    elif accept_seam:
+        result.notes.append(
+            f"--accept-seam not needed: every seam steps under {SEAM_STEP_DB:.0f} dB"
+        )
+    if result.loud_seams and not result.accepted:
         for seam, step in result.loud_seams:
             result.notes.append(
                 f"STOPPED: seam at {seam:.2f}s steps {step:+.1f} dB (over {SEAM_STEP_DB:.0f}, audible)"
@@ -746,7 +1008,9 @@ def run_join(
     if not result.complete:
         print(
             "Stopped: NOT DONE: a seam steps more than 5 dB. Nothing was marked; listen to the master. "
-            "Fix: join again with gain matching on (the default), or re-finish the loud take with a lower level.",
+            "Fix: join again with gain matching on (the default), or re-finish the loud take with a lower level. "
+            "If the master sounds right through the seam (the step is a line starting on the cut, not the "
+            'room), join again with --accept-seam "why" --accepted-by NAME; both go in the run notes.',
             file=out,
         )
         return result
