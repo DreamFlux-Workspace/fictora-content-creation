@@ -1,4 +1,4 @@
-"""Give a cast member a look.
+"""Give a cast member a look, and put a new character on screen in one step.
 
 Production learnings, 22 Sep to 1 Oct 2026:
 
@@ -13,6 +13,18 @@ Production learnings, 22 Sep to 1 Oct 2026:
   has (``DramaCastVisualBrief``); the drawing style (medium, surface, palette,
   reference light and background) is the show's, read from a cast card that
   already has a look.
+- **A new character on screen in one command** (L-20261001-19). The server
+  only creates a cast card through ``add_voice_only_cast``, and a frame may not
+  stage someone the spine *before* the patch only hears
+  (``spine_frame_cast_edits``: "put one of their lines on screen in another
+  patch first"). So ``line --add --new-character`` runs four edits in order,
+  each through the same PATCH-or-cascade path as ``line``: add the voice with
+  its line (off screen), give them a look, put the line on screen with them as
+  the beat's motion subject, then stage them on the beat's frame
+  (``subject_blocking`` and ``cast_refs`` together). Everything the kit can
+  check is checked before the first edit. Each step is skipped when the story
+  already has it, so a run stopped half way is finished by running the same
+  command again; the stop names what was done and how to undo it.
 """
 
 from __future__ import annotations
@@ -105,6 +117,11 @@ LOOK_HELP = (
     "expression, gaze, posture, palette, never; lists split on ';'; any other line is the description) or a "
     "JSON cast visual brief. The drawing style is taken from a cast member who has a look. Text, or @FILE."
 )
+STAGING_HELP = (
+    "With --new-character on a drawn beat: how they stand in the beat's frame, as JSON or `key=value; …` "
+    "(frame_position, pose, gaze, interaction)."
+)
+STAGING_FIELDS = ("frame_position", "pose", "gaze", "interaction")
 
 
 # --- The look ----------------------------------------------------------------------------------
@@ -471,14 +488,407 @@ def run_cast_look(
     return path
 
 
+# --- A new character on screen -----------------------------------------------------------------
+
+
+def parse_staging(raw: str) -> dict[str, str]:
+    """Read ``--staging``: a JSON object or ``key=value; …`` with frame_position, pose, gaze, interaction."""
+
+    text = raw.strip()
+    if text.startswith("{"):
+        try:
+            data = json.loads(text)
+        except ValueError as exc:
+            raise ec.CommandStopped(f"--staging: not valid JSON ({exc})") from None
+        if not isinstance(data, dict):
+            raise ec.CommandStopped("--staging: the JSON must be an object")
+    else:
+        data = {}
+        for part in text.split(";"):
+            key, sep, value = part.partition("=")
+            if not sep:
+                raise ec.CommandStopped(f"--staging: {part.strip()!r} is not key=value")
+            data[key.strip()] = value
+    allowed = {*STAGING_FIELDS, "wardrobe_variant"}
+    unknown = sorted(set(data) - allowed)
+    if unknown:
+        raise ec.CommandStopped(
+            f"--staging: unknown field(s) {', '.join(unknown)}; it takes {', '.join(STAGING_FIELDS)}"
+        )
+    entry = {key: _one_line(value) for key, value in data.items() if _one_line(value)}
+    missing = [key for key in STAGING_FIELDS if key not in entry]
+    if missing:
+        raise ec.CommandStopped(
+            f"--staging needs {', '.join(missing)} (how they stand in the frame); nothing was sent"
+        )
+    return entry
+
+
+def _beat_line(
+    spine: Mapping[str, Any], beat_id: str, cast_id: str
+) -> Mapping[str, Any] | None:
+    for beat in spine.get("beats") or []:
+        if isinstance(beat, Mapping) and beat.get("beat_id") == beat_id:
+            for line in beat.get("dialogue_lines") or []:
+                if isinstance(line, Mapping) and line.get("cast_id") == cast_id:
+                    return line
+    return None
+
+
+def _beat(spine: Mapping[str, Any], beat_id: str) -> Mapping[str, Any]:
+    return next(
+        b
+        for b in spine.get("beats") or []
+        if isinstance(b, Mapping) and b.get("beat_id") == beat_id
+    )
+
+
+def _frame(spine: Mapping[str, Any], frame_id: str) -> Mapping[str, Any] | None:
+    return next(
+        (
+            f
+            for f in spine.get("frames") or []
+            if isinstance(f, Mapping) and f.get("frame_id") == frame_id
+        ),
+        None,
+    )
+
+
+def _staged(frame: Mapping[str, Any], cast_id: str) -> bool:
+    blocking = (frame.get("visual_brief") or {}).get("subject_blocking") or []
+    return cast_id in (frame.get("cast_refs") or []) or any(
+        isinstance(b, Mapping) and b.get("cast_id") == cast_id for b in blocking
+    )
+
+
+def run_new_character(
+    desk: Path,
+    *,
+    episode: int,
+    beat: str | None,
+    text: str | None,
+    name: str,
+    role: str | None,
+    voice_description: str | None,
+    provider_voice: str | None = None,
+    look: str | None,
+    staging: str | None = None,
+    spoken: str | None = None,
+    subtitle: str | None = None,
+    select_regen: bool = False,
+    preview_only: bool = False,
+    out: Any = None,
+) -> Path | None:
+    """Add a character who is seen: their card, look, on-screen line and place in the beat's frame.
+
+    The server makes a new card only through ``add_voice_only_cast`` and lets
+    no frame stage someone the stored spine only hears, so four edits run in
+    order, each a ``PATCH`` before the script gate or a cascade after it:
+
+    1. ``add_voice_only_cast`` + ``add_dialogue_lines`` (the line off screen);
+    2. the look (:func:`run_cast_look`'s cast card patch);
+    3. ``dialogue_lines[].off_screen: false`` with the beat's
+       ``motion_direction.subject_cast_id`` set to them (a speaking beat moves
+       its speaker);
+    4. on a beat with a frame, ``frames[]`` with the whole brief, a
+       ``subject_blocking`` entry for them and ``cast_refs`` to match.
+
+    The look, the staging and the beat are checked before the first edit. A
+    step the story already has is skipped, so the same command finishes a run
+    that stopped; a stop names what was done and the undo.
+
+    Parameters
+    ----------
+    desk
+        Series desk with a story.
+    episode
+        Episode ordinal.
+    beat, text, spoken, subtitle
+        The silent beat that gets their line, and the line.
+    name, role, voice_description, provider_voice
+        The new character, as ``--new-voice``.
+    look
+        Their look (:func:`parse_look`); required.
+    staging
+        How they stand in the beat's frame (:func:`parse_staging`); required when the beat has a frame.
+    select_regen, preview_only
+        As ``line``. A preview prints the plan and sends nothing.
+    out
+        Text stream.
+
+    Returns
+    -------
+    Path | None
+        The refreshed ``api/spine.json``; ``None`` on a preview.
+    """
+
+    out = out or sys.stdout
+    desk = desk.expanduser().resolve()
+    if look is None:
+        raise ec.CommandStopped(
+            "--new-character needs --look (how they look; they are drawn). Nothing was sent. "
+            "For someone only heard, use --new-voice."
+        )
+    if beat is None or text is None:
+        raise ec.CommandStopped('--new-character needs --add --beat N and --text "..."')
+    if role is None or voice_description is None:
+        raise ec.CommandStopped(
+            '--new-character needs --role "..." and --voice-description "..." (how they sound)'
+        )
+    _, state, run = ec._desk_session(desk)
+    try:
+        spine = run.spine(state.spine_id or "")
+    finally:
+        run.client.close()
+    found = ec._find(
+        spine, spine.get("beats") or [], "beat_id", beat, episode=episode, kind="beat"
+    )
+    beat_id = str(found["beat_id"])
+    cast_id = ec.voice_cast_id(name)
+    existing = next(
+        (c for c in spine.get("cast") or []
+         if isinstance(c, Mapping) and str(c.get("name") or "").strip().casefold() == name.strip().casefold()),
+        None,
+    )  # fmt: skip
+    if existing is not None:
+        cast_id = str(existing["cast_id"])
+        if _beat_line(spine, beat_id, cast_id) is None:
+            raise ec.CommandStopped(
+                f"{name!r} is already in the cast ({cast_id}): give them the line with --speaker"
+            )
+    else:
+        others = [
+            ln for ln in found.get("dialogue_lines") or [] if isinstance(ln, Mapping)
+        ]
+        if others:
+            raise ec.CommandStopped(
+                f"beat {found.get('ordinal')} already speaks ({', '.join(str(ln.get('line_id')) for ln in others)}): "
+                "a beat holds one line. Remove it first (`line --remove N`) or pick a silent beat. Nothing was sent."
+            )
+    card = existing or {"cast_id": cast_id, "name": name}
+    look_patch(spine, card, look)  # checked now, sent at step 2
+    frame_id = str(found.get("frame_id") or "")
+    frame = _frame(spine, frame_id) if frame_id else None
+    entry: dict[str, str] | None = None
+    if frame is not None:
+        if staging is None:
+            raise ec.CommandStopped(
+                f"beat {found.get('ordinal')} is drawn on {frame_id}: say how {name} stands in it with --staging "
+                '\'{"frame_position": "…", "pose": "…", "gaze": "…", "interaction": "…"}\'. Nothing was sent.'
+            )
+        entry = {"cast_id": cast_id, **parse_staging(staging)}
+    elif staging is not None:
+        print(
+            f"(beat {found.get('ordinal')} has no frame yet: --staging is not used; the frames author stages {name})",
+            file=out,
+        )
+    plan = [
+        f"add {name} ({cast_id}) with the line on beat {found.get('ordinal')} ({beat_id}), off screen for now",
+        f"give {name} a look",
+        f"put the line on screen and make {name} the beat's motion subject",
+    ]
+    if entry is not None:
+        plan.append(
+            f"stage {name} in {frame_id} ({entry['frame_position']}; {entry['pose']})"
+        )
+    print(f"ep{episode:02d} new character {name}, in {len(plan)} edits:", file=out)
+    for number, step in enumerate(plan, start=1):
+        print(f"  {number}. {step}", file=out)
+    if preview_only:
+        print(
+            "(preview only: nothing was sent; each edit after the script gate prints its own cascade when run)",
+            file=out,
+        )
+        return None
+
+    done: list[str] = []
+    line_id = ""
+    cascade = False
+
+    def stopped(exc: ec.CommandStopped, step: int) -> ec.CommandStopped:
+        rows = [
+            f"{exc}",
+            "",
+            f"line --new-character stopped at edit {step} of {len(plan)}.",
+        ]
+        if done:
+            rows += [f"  done: {done[0]}", *(f"        {item}" for item in done[1:])]
+        rows += [
+            f"  not done: {step}. {plan[step - 1]}",
+            *(
+                f"            {n}. {plan[n - 1]}"
+                for n in range(step + 1, len(plan) + 1)
+            ),
+        ]
+        rows.append(
+            "  To finish: run the same command again (edits already on the story are skipped)."
+        )
+        if line_id:
+            rows.append(
+                f"  To undo: fictora-produce line --desk {desk} --episode {episode} --remove {line_id} "
+                f"({name}'s card stays; with no line and no frame they are not drawn)."
+            )
+        return ec.CommandStopped("\n".join(rows))
+
+    # 1. the card and the line, heard.
+    current = spine
+    if _beat_line(current, beat_id, cast_id) is None:
+
+        def add(spine_now: Mapping[str, Any]) -> tuple[dict[str, Any], list[str], str]:
+            patch, changed = ec.build_line_add_remove_patch(
+                spine_now, episode=episode, add=True, beat=beat_id, text=text, spoken=spoken, subtitle=subtitle,
+                new_voice=name, role=role, voice_description=voice_description, provider_voice=provider_voice,
+            )  # fmt: skip
+            return (
+                patch,
+                changed,
+                f"new character {name} (1/{len(plan)}: card and line)",
+            )
+
+        _, _, current, cascade, _, _ = ec._send_story_edit(
+            desk,
+            episode=episode,
+            build=add,
+            select_regen=select_regen,
+            preview_only=False,
+            out=out,
+        )
+    line = _beat_line(current, beat_id, cast_id)
+    line_id = str((line or {}).get("line_id") or "")
+    done.append(f"1. added {name} ({cast_id}) with the line {line_id or '?'}")
+
+    # 2. the look.
+    try:
+        card_now = find_card(current, cast_id)
+        patch, changed = look_patch(current, card_now, look)
+        if changed:
+            print(f"look for {name} ({cast_id}) (2/{len(plan)}):", file=out)
+            for row in changed:
+                print(row, file=out)
+            fresh, ran = _send_look(
+                desk,
+                patch,
+                episode=episode,
+                select_regen=select_regen,
+                preview_only=False,
+                out=out,
+            )
+            current, cascade = fresh or current, cascade or ran
+    except ec.CommandStopped as exc:
+        raise stopped(exc, 2) from None
+    done.append(f"2. gave {name} a look")
+
+    # 3. on screen, moving.
+    try:
+        motion = _beat(current, beat_id).get("motion_direction") or {}
+        line = _beat_line(current, beat_id, cast_id) or {}
+        if (
+            line.get("off_screen") is not False
+            or motion.get("subject_cast_id") != cast_id
+        ):
+
+            def on_screen(
+                spine_now: Mapping[str, Any],
+            ) -> tuple[dict[str, Any], list[str], str]:
+                direction = copy.deepcopy(
+                    dict(_beat(spine_now, beat_id).get("motion_direction") or {})
+                )
+                before = direction.get("subject_cast_id")
+                direction["subject_cast_id"] = cast_id
+                names = ec._cast_names(spine_now)
+                return (
+                    {
+                        "dialogue_lines": [{"line_id": line_id, "off_screen": False}],
+                        "beats": [{"beat_id": beat_id, "motion_direction": direction}],
+                    },
+                    [
+                        f"  {line_id}: off screen  ->  on screen",
+                        f"  motion subject of {beat_id}: {names.get(str(before), before or 'none')}  ->  {name}",
+                    ],
+                    f"new character {name} (3/{len(plan)}: on screen)",
+                )
+
+            _, _, current, ran, _, _ = ec._send_story_edit(
+                desk,
+                episode=episode,
+                build=on_screen,
+                select_regen=select_regen,
+                preview_only=False,
+                out=out,
+            )
+            cascade = cascade or ran
+    except ec.CommandStopped as exc:
+        raise stopped(exc, 3) from None
+    done.append(f"3. put {line_id} on screen with {name} moving")
+
+    # 4. in the frame.
+    if entry is not None:
+        try:
+            frame_now = _frame(current, frame_id)
+            if frame_now is not None and not _staged(frame_now, cast_id):
+
+                def stage(
+                    spine_now: Mapping[str, Any],
+                ) -> tuple[dict[str, Any], list[str], str]:
+                    target = _frame(spine_now, frame_id) or {}
+                    blocking = list(
+                        (target.get("visual_brief") or {}).get("subject_blocking") or []
+                    )
+                    patch, changed = ec._frame_patch(
+                        spine_now, target, [("subject_blocking", [*blocking, entry])]
+                    )
+                    return (
+                        patch,
+                        changed,
+                        f"new character {name} (4/{len(plan)}: staged in {frame_id})",
+                    )
+
+                _, _, current, ran, _, _ = ec._send_story_edit(
+                    desk,
+                    episode=episode,
+                    build=stage,
+                    select_regen=select_regen,
+                    preview_only=False,
+                    out=out,
+                )
+                cascade = cascade or ran
+        except ec.CommandStopped as exc:
+            raise stopped(exc, 4) from None
+
+    where = f", staged in {frame_id}" if entry is not None else ""
+    print(
+        f"{name} is on screen: {line_id} on beat {found.get('ordinal')}{where}.",
+        file=out,
+    )
+    ec._after_line_edit(
+        desk, current, episode=episode, line_id=line_id, after_gate=cascade, relocalized=False, new_line=True,
+        out=out,
+    )  # fmt: skip
+    ec._note(
+        desk, episode, f"line: new character {name} ({cast_id}): " + "; ".join(plan)
+    )
+    if provider_voice is None:
+        print(
+            ec.new_voice_pick_warning(
+                desk, name, picked=ec._card_voice(current, cast_id)
+            ),
+            file=out,
+        )
+    print(plate_next_step(desk, current, find_card(current, cast_id)), file=out)
+    return desk / "api" / "spine.json"
+
+
 __all__ = [
     "DEFAULT_EXPRESSION",
     "DEFAULT_GAZE",
     "DEFAULT_POSTURE",
     "LOOK_HELP",
+    "STAGING_HELP",
     "find_card",
     "look_patch",
     "parse_look",
+    "parse_staging",
     "plate_next_step",
     "run_cast_look",
+    "run_new_character",
 ]

@@ -2503,6 +2503,8 @@ def run_line(
     narrator_on_screen: Sequence[str] = (),
     ask: Callable[[str], str] | None = None,
     look: str | None = None,
+    new_character: str | None = None,
+    staging: str | None = None,
     out: Any = None,
 ) -> Path | None:
     """Change, add or remove a line on the server and on the desk in one step; with no change, list the lines.
@@ -2537,7 +2539,9 @@ def run_line(
         "heard only, never seen?" (:func:`new_voice_narrator_answer`).
     look
         With ``new_voice``: their look, sent once the voice is added
-        (:func:`creation.cast_commands.run_cast_look`).
+        (:func:`creation.cast_commands.run_cast_look`). With ``new_character``: required.
+    new_character, staging
+        A new character who is seen (:func:`creation.cast_commands.run_new_character`).
     out
         Text stream.
 
@@ -2550,9 +2554,25 @@ def run_line(
     out = out or sys.stdout
     from creation import cast_commands
 
+    if new_character is not None:
+        stray = {"--new-voice": new_voice, "--speaker": speaker, "--remove": remove, "--line": line,
+                 "--off-screen/--on-screen": off_screen, "--speaker-moves": speaker_moves or None}  # fmt: skip
+        named = [key for key, value in stray.items() if value is not None]
+        if named or not add:
+            raise CommandStopped(
+                '--new-character comes with its line on a silent beat: --add --beat N --text "..." '
+                f"--new-character NAME --role ... --voice-description ... --look ...; drop {', '.join(named) or '-'}"
+            )
+        return cast_commands.run_new_character(
+            desk, episode=episode, beat=beat, text=text, name=new_character, role=role,
+            voice_description=voice_description, provider_voice=provider_voice, look=look, staging=staging,
+            spoken=spoken, subtitle=subtitle, select_regen=select_regen, preview_only=preview_only, out=out,
+        )  # fmt: skip
+    if staging is not None:
+        raise CommandStopped("--staging goes with --new-character")
     if look is not None and new_voice is None:
         raise CommandStopped(
-            "--look goes with --new-voice. To give someone in the cast a look: "
+            "--look goes with --new-voice or --new-character. To give someone in the cast a look: "
             "`fictora-produce cast --desk D --name NAME --look @look.txt`"
         )
     adding = add or remove is not None or new_voice is not None
@@ -6115,7 +6135,7 @@ def add_episode_parsers(
         Argparse subparser set.
     """
 
-    from creation.cast_commands import LOOK_HELP
+    from creation.cast_commands import LOOK_HELP, STAGING_HELP
 
     arc = sub.add_parser(
         "arc",
@@ -6387,9 +6407,18 @@ def add_episode_parsers(
     line.add_argument(
         "--look",
         default=None,
-        help="With --new-voice: how they look, for someone who may be drawn later. "
-        + LOOK_HELP,
+        help="With --new-voice (optional, for someone who may be drawn later) or --new-character (required): "
+        "how they look. " + LOOK_HELP,
     )
+    line.add_argument(
+        "--new-character",
+        default=None,
+        help="With --add on a silent beat: a new character who is SEEN speaking the line. Needs --role, "
+        "--voice-description and --look; on a drawn beat also --staging. Runs the four edits the server needs "
+        "(voice + line, look, line on screen, staged in the frame); re-run the same command to finish one "
+        "that stopped.",
+    )
+    line.add_argument("--staging", default=None, help=STAGING_HELP)
     add_narrator_answer_args(line)
 
     cast = sub.add_parser(
@@ -6716,6 +6745,8 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 narrator_on_screen=args.narrator_on_screen,
                 ask=interactive_ask(),
                 look=args.look,
+                new_character=args.new_character,
+                staging=args.staging,
             )
             return 0
         if args.command == "cast":
