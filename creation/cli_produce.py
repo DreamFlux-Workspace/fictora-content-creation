@@ -26,6 +26,7 @@ from creation.episode_commands import (
     dispatch_episode,
     run_approve_look,
 )
+from creation.narrator_cast import add_narrator_answer_args, interactive_ask
 from creation.ops.floor import init_series_desk
 from creation.ops.folder import DEFAULT_RUN_PARENT, run_folder_name
 from creation.ops.notes import append_run_note
@@ -135,6 +136,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "(style_not_available after picking a stylised preset; real_person_not_allowed to let the "
         "writer make an original character). Repeat for both.",
     )
+    add_narrator_answer_args(step)
 
     ap = sub.add_parser(
         "approve",
@@ -354,6 +356,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.desk,
                 confirm_spend=args.confirm_spend,
                 accept_notices=args.accept_notice,
+                narrator_heard_only=args.narrator_heard_only,
+                narrator_on_screen=args.narrator_on_screen,
+                ask=interactive_ask(),
             )
             print(result.message)
             for path in result.paths:
