@@ -314,3 +314,47 @@ def test_setup_check_lists_the_house_font(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(sc, "find_house_font", found)
     assert sc.check_house_font().name == "Arial Bold (house captions)"
     assert called == ["arial"]
+
+
+def test_arial_bold_found_in_the_windows_fonts_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """L-20261001-42: Windows keeps Arial Bold as C:/Windows/Fonts/arialbd.ttf."""
+
+    fonts = tmp_path / "Windows" / "Fonts"
+    fonts.mkdir(parents=True)
+    (fonts / "arialbd.ttf").write_bytes(b"")
+    monkeypatch.setenv("WINDIR", str(tmp_path / "Windows"))
+    monkeypatch.setattr(cap, "FONTS_DIR", tmp_path / "bundled")
+
+    font = find_house_font(platform="win32", match=lambda _: None)
+
+    assert font.ok and font.path == fonts / "arialbd.ttf", font
+
+
+def test_arial_bold_installed_for_one_windows_user_is_found(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fonts = tmp_path / "Local" / "Microsoft" / "Windows" / "Fonts"
+    fonts.mkdir(parents=True)
+    (fonts / "arialbd.ttf").write_bytes(b"")
+    monkeypatch.setenv("WINDIR", str(tmp_path / "nowhere"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local"))
+    monkeypatch.setattr(cap, "FONTS_DIR", tmp_path / "bundled")
+
+    font = find_house_font(platform="win32", match=lambda _: None)
+
+    assert font.path == fonts / "arialbd.ttf", font
+
+
+def test_missing_arial_hint_covers_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("WINDIR", str(tmp_path / "nowhere"))
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.setattr(cap, "FONTS_DIR", tmp_path / "bundled")
+
+    warning = find_house_font(platform="win32", match=lambda _: None).warning() or ""
+
+    assert "Arial Bold not found" in warning
+    assert "Windows:" in warning and "arialbd.ttf" in warning, warning
