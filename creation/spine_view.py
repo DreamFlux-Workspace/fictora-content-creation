@@ -590,9 +590,10 @@ _ZONE_WHAT = {
     "right rail": "the right 12% of the lower two thirds (like, comment, share)",
 }
 SAFE_ZONE_BOARD_CHECK = (
-    "safe zones: TikTok, Reels and Shorts cover the top 8%, the bottom 20% and the right 12% of the lower two "
-    "thirds of every cell. This reads the placement text only (no face detector): look at the board and "
-    "check no face, eyes, mouth or key prop sits there."
+    "safe zones (text-only check): TikTok, Reels and Shorts cover the top 8%, the bottom 20% and the right 12% "
+    "of the lower two thirds of every cell. The kit read the written placements only, not measured on the "
+    "board image (it has no face detector): look at the board and check no face, eyes, mouth or key prop "
+    "sits there."
 )
 
 
@@ -626,6 +627,10 @@ def safe_zone_lines(
     frames: Sequence[Mapping[str, Any]], *, cast_names: Mapping[str, str] | None = None
 ) -> list[str]:
     """Warn (never block) on faces and props whose written placement falls in a covered zone.
+
+    A text-only check, and every line says so: the placement words are read, the drawn
+    board is not measured (the kit has no face detector), so a line is a prompt to look at
+    that cell, and a false alarm when the drawing keeps the face clear.
 
     Parameters
     ----------
@@ -670,8 +675,10 @@ def safe_zone_lines(
         if zone:
             found.append(("the safe-zone note", note, zone))
         lines += [
-            f'  !! {cell}: {what} is placed "{text}", in {_ZONE_WHAT[zone]}; the platform covers it. '
-            "Edit the frame (edit --frame ...) and redraw (warning only)"
+            f'  !! text-only check, {cell}: {what} is placed "{text}", which would put it in {_ZONE_WHAT[zone]}, '
+            f"where the platform covers it. The words were read; the drawing was not measured: look at {cell} "
+            "on the board. If it sits there, edit the frame (edit --frame ...) and redraw; it is a false alarm "
+            "when the drawing keeps it clear (warning only)"
             for what, text, zone in found
         ]
     lines.append(f"  {SAFE_ZONE_BOARD_CHECK}")

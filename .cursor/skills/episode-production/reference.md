@@ -126,7 +126,7 @@ The writers pick an anime expression (`reaction_kind`) for every emotional momen
 | Right rail | right 12% of the width, lower two thirds | like, comment, share |
 
 - Faces, eyes, mouths and key props never sit in a zone. Bodies, hands, floor and set may run through. Off-centre and two-shots are fine; do not centre faces by default.
-- There is no face detector: look at every cell of the board. The boards `step` warns (`!!`) when a frame's written placement puts a face or prop in a zone; it reads text only. A face or key prop in a zone: fix the frame's placement (`edit --frame … --set …`), then `redraw-board`.
+- There is no face detector: look at every cell of the board. The boards `step` warns (`!! text-only check, row R cell C: …`) when a frame's written placement puts a face or prop in a zone. It reads the words only, never the drawing, so it is a prompt to look at that cell: a false alarm when the drawn cell keeps the face clear (seen 3 times), and it misses a face drawn into a zone with clean words. A face or key prop in a zone: fix the frame's placement (`edit --frame … --set …`), then `redraw-board`.
 - Captions: the block stays in 55–70% of the height. `finish` and `caption` put the text bottom at 62% and wrap a too-wide caption onto two balanced lines (only one too long for two is set smaller).
 - The Sokii mark: top left, just under the top strip, `23:121` on 768×1344 (x = 3% of width, y = 9% of height), 0.6 opacity. Never top right.
 
