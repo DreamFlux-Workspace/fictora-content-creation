@@ -275,6 +275,115 @@ class CommandStopped(RuntimeError):
     """A command stopped and says why; the CLI prints it and exits 2."""
 
 
+class EditRefused(CommandStopped):
+    """An ``edit`` / ``line`` change the server did not take, after its changes were printed.
+
+    Parameters
+    ----------
+    message
+        The refusal, as the CLI prints it after ``Stopped:``.
+    items
+        The changes that were printed (:func:`change_items`), each named again as refused.
+    """
+
+    def __init__(self, message: str, *, items: Sequence[str] = ()) -> None:
+        super().__init__(message)
+        self.items = list(items)
+
+
+#: Commands that print a change before sending it, so they end on a verdict line (L-20261001-25).
+EDIT_VERDICT_COMMANDS = frozenset({"edit", "line"})
+
+
+def change_items(changed: Sequence[str]) -> list[str]:
+    """Name each change an edit printed (``intent``, ``speaker``, ``+ beat 2 (b2)  Hana`` ...).
+
+    Only the top-level change rows count: a shot plan's ``was`` / ``now`` rows
+    and a ``!!`` warning are part of the row above them, not changes of their own.
+
+    Parameters
+    ----------
+    changed
+        The change rows :func:`build_patch` / :func:`build_line_add_remove_patch` printed.
+
+    Returns
+    -------
+    list[str]
+        One short name per change.
+    """
+
+    items: list[str] = []
+    for row in changed:
+        if not row.startswith("  ") or row.startswith("   ") or row.startswith("  !!"):
+            continue
+        text = row.strip()
+        items.append(_short(text.split(":", 1)[0].strip() if ":" in text else text, 60))
+    return items
+
+
+def refusal_reason(message: str) -> str:
+    """The first line of a refusal, short enough for the verdict line."""
+
+    first = next((ln.strip() for ln in str(message).splitlines() if ln.strip()), "")
+    return _short(first or "the command stopped", 200)
+
+
+def edit_verdict(
+    items: Sequence[str],
+    *,
+    refused: str | None = None,
+    not_kept: Sequence[str] = (),
+    preview: bool = False,
+) -> list[str]:
+    """The lines an edit ends on, so a change that did not land is never missed (L-20261001-25).
+
+    The change rows are printed before anything is sent and a refusal used to
+    come last, easy to read past. Now the very last line says it: ``Applied``
+    or ``Refused: <reason>``; with more than one change each is named first.
+
+    Parameters
+    ----------
+    items
+        The changes (:func:`change_items`).
+    refused
+        Why the server (or the kit, before sending) refused; ``None`` when it took the edit.
+    not_kept
+        Changes the server answered for but did not hold (a field an older deploy drops).
+    preview
+        ``--preview``: the cascade was shown and nothing was sent.
+
+    Returns
+    -------
+    list[str]
+        Per-change rows when there are several, then the final verdict line.
+    """
+
+    many = len(items) > 1
+    if preview:
+        rows = [f"  Not sent: {item}" for item in items] if many else []
+        return rows + ["Not applied: --preview showed the cascade; nothing was sent"]
+    if refused is not None:
+        rows = [f"  Refused: {item}" for item in items] if many else []
+        tally = f" ({len(items)} changes, none made)" if many else ""
+        return rows + [f"Refused: {refusal_reason(refused)}{tally}"]
+    dropped = [item for item in items if item in set(not_kept)] or list(not_kept)
+    if dropped:
+        rows = (
+            [
+                f"  {'Refused' if item in dropped else 'Applied'}: {item}"
+                for item in items
+            ]
+            if many
+            else []
+        )
+        return rows + [
+            f"Refused: the server answered but did not keep {', '.join(dropped)} "
+            f"(likely an older deploy); {len(items) - len(dropped)} of {len(items)} applied"
+        ]
+    rows = [f"  Applied: {item}" for item in items] if many else []
+    return rows + [f"Applied: all {len(items)} changes" if many else "Applied"]
+
+
 # --- Plumbing ------------------------------------------------------------------------------------
 
 
@@ -2165,10 +2274,17 @@ def _send_story_edit(
                 )
         except CommandStopped as exc:
             fields = _explain_field_refusal(run, str(exc), patch, changed)
-            raise CommandStopped(
+            raise EditRefused(
                 f"{exc}\n{fields}"
                 if fields
-                else explain_refusal(str(exc), spine, episode=episode)
+                else explain_refusal(str(exc), spine, episode=episode),
+                items=change_items(changed),
+            ) from None
+        except SystemExit as exc:
+            code = exc.code
+            raise EditRefused(
+                code if isinstance(code, str) else api_error_text(code),
+                items=change_items(changed),
             ) from None
         fresh = run.spine(state.spine_id or "")
     finally:
@@ -2517,6 +2633,8 @@ def run_line(
             print(new_voice_pick_warning(desk, new_voice, picked=picked), file=out)
         if narrator is not None and not preview_only:
             save_answer(desk.expanduser().resolve(), narrator)
+        for row in edit_verdict(change_items(changed), preview=preview_only):
+            print(row, file=out)
         return path
     if beat is not None or speaker_moves:
         raise CommandStopped("--beat and --speaker-moves go with --add")
@@ -2748,20 +2866,26 @@ def run_edit(
         )
     except CommandStopped as exc:
         if planning and "HTTP 422" in str(exc):
-            raise CommandStopped(
-                f"the server refused the shot plan: {exc}\n  {OLDER_SERVER_HINT}"
+            raise EditRefused(
+                f"the server refused the shot plan: {exc}\n  {OLDER_SERVER_HINT}",
+                items=getattr(exc, "items", ()),
             ) from None
         raise
+    not_kept: list[str] = []
     if planning and not preview_only:
-        _report_shot_plan(
+        if not _report_shot_plan(
             fresh,
             episode=episode,
             beat=str(beat),
             wanted=None if clear_shot_plan else shot_plan,
             out=out,
-        )
+        ):
+            not_kept.append("shot_plan")
     if setting_expression and not preview_only:
-        _report_expression(fresh, episode=episode, beat=str(beat), wanted=kind, out=out)
+        if not _report_expression(
+            fresh, episode=episode, beat=str(beat), wanted=kind, out=out
+        ):
+            not_kept.append("expression")
     if line_id is not None and not preview_only:
         relocalized = (
             text is not None and spoken is None and _spoken_language(fresh) != "en-US"
@@ -2781,6 +2905,10 @@ def run_edit(
             episode,
             f"edit {what}: " + "; ".join(line.strip() for line in changed),
         )
+    for row in edit_verdict(
+        change_items(changed), not_kept=not_kept, preview=preview_only
+    ):
+        print(row, file=out)
     return path
 
 
@@ -2791,8 +2919,11 @@ def _report_shot_plan(
     beat: str,
     wanted: list[dict[str, str]] | None,
     out: Any,
-) -> None:
-    """Print the beat's plan as the server now holds it, and say so when it did not keep what was sent."""
+) -> bool:
+    """Print the beat's plan as the server now holds it, and say so when it did not keep what was sent.
+
+    Returns ``True`` when the server holds the plan that was sent.
+    """
 
     found = _find(
         spine, spine.get("beats") or [], "beat_id", beat, episode=episode, kind="beat"
@@ -2810,6 +2941,8 @@ def _report_shot_plan(
             "plans (fictora-drama #464) and dropped the field. Nothing on the board will follow it.",
             file=out,
         )
+        return False
+    return True
 
 
 def deploy_expressions(run: DramaApiRunSession) -> list[dict[str, Any]]:
@@ -2866,8 +2999,11 @@ def _report_expression(
     beat: str,
     wanted: str | None,
     out: Any,
-) -> None:
-    """Print the beat's expression as the server now holds it, and say so when it did not keep what was sent."""
+) -> bool:
+    """Print the beat's expression as the server now holds it, and say so when it did not keep what was sent.
+
+    Returns ``True`` when the server holds the expression that was sent.
+    """
 
     found = _find(
         spine, spine.get("beats") or [], "beat_id", beat, episode=episode, kind="beat"
@@ -2884,6 +3020,8 @@ def _report_expression(
             "expressions (fictora-drama #482) and dropped the field. Nothing on the board will follow it.",
             file=out,
         )
+        return False
+    return True
 
 
 def run_expressions(
@@ -6581,20 +6719,32 @@ def dispatch_episode(args: argparse.Namespace) -> int:
             )
     except CommandStopped as exc:
         print(f"Stopped: {exc}", file=sys.stderr)
+        _print_refused(args.command, str(exc), getattr(exc, "items", ()))
         return 2
     except SystemExit as exc:
-        print(
-            f"Stopped: {api_error_text(exc.code) if not isinstance(exc.code, str) else exc.code}",
-            file=sys.stderr,
-        )
+        text = api_error_text(exc.code) if not isinstance(exc.code, str) else exc.code
+        print(f"Stopped: {text}", file=sys.stderr)
+        _print_refused(args.command, text, ())
         return 2
     raise ValueError(f"unknown episode command {args.command}")
+
+
+def _print_refused(command: str, message: str, items: Sequence[str]) -> None:
+    """End an ``edit`` / ``line`` refusal on ``Refused: <reason>`` (after ``Stopped:``), per change first."""
+
+    if command not in EDIT_VERDICT_COMMANDS:
+        return
+    for row in edit_verdict(items, refused=message):
+        print(row, file=sys.stderr)
 
 
 __all__ = [
     "EPISODE_COMMANDS",
     "CommandStopped",
+    "EditRefused",
     "add_episode_parsers",
+    "change_items",
+    "edit_verdict",
     "admitted_job_id",
     "author_direction",
     "build_line_add_remove_patch",
