@@ -330,7 +330,7 @@ Faults accepted without a re-film (calibration): a door frame in the opening sec
 
 ## Finishing order
 
-- The only automatic edit to footage is the board-frame trim (`deboard`): it holds the first real frame over the storyboard frames a take opens on, and never cuts. Any other trim or cut of footage needs the producer's yes first, and the reply shows what was cut (the times and the frames either side).
+- The only automatic edits to footage are the board frames: `deboard` holds the first real frame over the storyboard frames a take opens on (never cuts, and never where the server left them as filmed: then it asks), and `finish` cuts at the server's automatic trim handles, just past the board frames the server held (fictora-drama #563; the server's own join cuts there too). Any other trim or cut of footage, including `trim --start/--end` handles, needs the producer's yes first, and the reply shows what was cut (the times and the frames either side).
 - `finish` the raw take first: its effects, hand cues and hand lines are placed at the times as filmed. Then `trim` or `tempo` the finished file, never the raw take. After a trim, check the first frame after the cut at full size (a 0.04 s miss once flashed the removed shot) and say the new length; shorter than the band is fine.
 - An overlay added in post (a title, a sticker, a blur, a hand caption) never covers the key reveal. Render test frames of the key shots with the overlay on and look at them before the full render.
 - Keep the un-marked master. `finish` writes every step to its own file; the captioned file before the mark (`…-cap-vN.mp4`) is the master, the marked file (`…-sokii-vN.mp4`) is what goes out. Never delete the master to save space.

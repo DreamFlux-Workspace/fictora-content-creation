@@ -232,7 +232,8 @@ Free, on this laptop (ffmpeg + numpy). Each writes a new `take-epNN-tK-<step>-vN
 - **Order.** raw → `deboard` → `soften` / `freeze` → `finish --take-file <that file>` → `trim` / `tempo` on the finished file → watch.
 - `soften` always after `deboard` (the board-to-motion jump reads as a cut). No `--cut` detects hard cuts itself; say which cuts it found.
 - `freeze --at S --hold S` keeps the length: the held frame covers the picture, the sound plays on.
-- `trim` only on the finished file (`--take-file` is required), and only after the producer's yes: no trim or cut of footage without it. Show what was cut (the times and the frames either side). Check the first frame after the cut at full size. A finished cut shorter than its band (e.g. 14.2 s from a 15 s episode) is allowed: say the new length; it is not a deviation.
+- **Trim handles** (fictora-drama #563; the server's, not a file cut): `trim --desk D --episode N --take tK --start S --end E` sets where the take starts and ends when it plays (seconds on the take as filmed, the take-facts times; at least 1 s; snapped to a frame, said when it snaps); `--reset` puts back the automatic handles (just past the board frames the server held); `--preview` shows the change and sends nothing. It prints the handles now and new, what each end loses, and a `!!` for every line or effect the window cuts, then ends on `Applied` or `Refused: <reason>` (a named server code gets its fix). Nothing is billed and no file is cut; it saves the take facts again. Needs the producer's yes like any trim. `finish` then lays everything on the take as filmed and cuts at the handles LAST (the take before the bed, the master, the marked file, the captions' `.ass`; a new finish record with a `handles` edit), so `join` joins the take at its handles like the server; `join`, `review` and `reel` read take-facts times on such a file minus `start_s`. A trim made in the app reaches `finish` after `take-facts --refresh`. Handles that are the whole take cut nothing; an older server sends no handles and nothing is cut.
+- `trim --cut` only on the finished file (`--take-file` is required), and only after the producer's yes: no trim or cut of footage without it. Show what was cut (the times and the frames either side). Check the first frame after the cut at full size. A finished cut shorter than its band (e.g. 14.2 s from a 15 s episode) is allowed: say the new length; it is not a deviation.
 - `tempo --factor 0.9` only for a show cut slow, and only on the finished file: `finish` lays effects at the filmed times.
 - Keep the un-marked master (`…-cap-vN.mp4`); the marked `…-sokii-vN.mp4` goes out. Previews, rough cuts and "just combine" files are made from finished takes and carry the house captions too.
 - An overlay added in post (a `blur` box, a title) never covers the key reveal: render test frames of the key shots first and look at them.
@@ -243,6 +244,7 @@ uv run fictora-produce deboard --desk D [--episode N] [--take tK] [--take-file F
 uv run fictora-produce soften  --desk D [--take-file F] [--cut S ...]
 uv run fictora-produce freeze  --desk D [--take-file F] --at 6.2 --hold 0.6
 uv run fictora-produce trim    --desk D --take-file FINAL --cut 10.17-12.15 [--cues-json J]
+uv run fictora-produce trim    --desk D --episode N --take tK --start 0.5 --end 10 [--preview] | --reset
 uv run fictora-produce tempo   --desk D --take-file FINAL [--factor 0.9]
 uv run fictora-produce blur    --desk D --take-file FINAL --box 0,208,178,234 [--box ...] --from 2.38 --to 6.62 [--strength 20] [--feather 0]
 ```

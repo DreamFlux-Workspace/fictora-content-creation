@@ -232,9 +232,11 @@ class FakeApi:
         """PATCH."""
         return self._answer("PATCH", path, body)
 
-    def put(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+    def put(
+        self, path: str, body: dict[str, Any], *, idempotency_key: str | None = None
+    ) -> dict[str, Any]:
         """PUT."""
-        return self._answer("PUT", path, body)
+        return self._answer("PUT", path, body, idempotency_key)
 
     def delete(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         """DELETE."""

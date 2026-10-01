@@ -316,7 +316,13 @@ def measure_track_lag(take: Path, track: Path) -> float | None:
     return best_lag / _RATE
 
 
-def shift_take_facts(payload: Mapping[str, Any], seconds: float) -> dict[str, Any]:
+def shift_take_facts(
+    payload: Mapping[str, Any],
+    seconds: float,
+    *,
+    until: float | None = None,
+    record_as: str = SHIFTED_KEY,
+) -> dict[str, Any]:
     """Move every time in the take facts ``seconds`` earlier, clamped at 0.
 
     Shot windows, ``soundtrack.lines``, line windows and SFX cues (played and
@@ -329,11 +335,20 @@ def shift_take_facts(payload: Mapping[str, Any], seconds: float) -> dict[str, An
         Saved take facts (``{"take_facts": {...}}`` or the facts alone).
     seconds
         How far the clip's timeline is ahead of the facts' (the cut head).
+    until
+        The clip's length after the move, when its end was cut too (a take
+        cut to its trim handles, :mod:`creation.post.take_handles`): a window
+        or cue starting at or after it is dropped, an end past it is clipped,
+        and a cue that started before the cut head is dropped (it is not on
+        the clip) instead of moved to 0.
+    record_as
+        The key the shift is recorded under (:data:`SHIFTED_KEY` for a take
+        the server cut; the handles keep theirs apart).
 
     Returns
     -------
     dict[str, Any]
-        A new payload in the same shape, with :data:`SHIFTED_KEY` recorded.
+        A new payload in the same shape, with the shift recorded under ``record_as``.
     """
 
     def move(value: Any) -> Any:
@@ -352,11 +367,19 @@ def shift_take_facts(payload: Mapping[str, Any], seconds: float) -> dict[str, An
                 kept.append(item)
                 continue
             moved = dict(item)
+            began = item.get(start)
+            if until is not None and isinstance(began, (int, float)):
+                if float(began) - seconds >= until:
+                    continue  # after the cut tail
+                if end is None and float(began) < seconds:
+                    continue  # a cue in the cut head is not on the clip
             if end is not None and isinstance(item.get(end), (int, float)):
                 if float(item[end]) - seconds <= 0:
                     continue
                 moved[end] = move(item[end])
-            moved[start] = move(item.get(start))
+                if until is not None:
+                    moved[end] = round(min(float(moved[end]), until), 3)
+            moved[start] = move(began)
             kept.append(moved)
         return kept
 
@@ -375,7 +398,7 @@ def shift_take_facts(payload: Mapping[str, Any], seconds: float) -> dict[str, An
             **soundtrack,
             "lines": windows(soundtrack.get("lines"), "start_s", "end_s"),
         }
-    facts[SHIFTED_KEY] = round(seconds, 3)
+    facts[record_as] = round(seconds, 3)
     if nested:
         return {**payload, "take_facts": facts}
     return facts
@@ -513,7 +536,9 @@ class OriginalCopy:
     def lines(self) -> list[str]:
         """What ``review --original`` prints."""
 
-        rows = [f"original: `{self.path.name}` (sha256 and length match the server's record)"]
+        rows = [
+            f"original: `{self.path.name}` (sha256 and length match the server's record)"
+        ]
         if self.compare is not None:
             rows.append(
                 f"compare: `{self.compare.name}` (left the held take, right the original, at each held end)"
@@ -529,7 +554,9 @@ def _held_ends_graph(record: ServerBoardFrames, seconds: float) -> str:
     if record.head_frames:
         parts.append(f"lt(t\\,{record.head_frames / rate + 0.25:.3f})")
     if record.tail_frames:
-        parts.append(f"gte(t\\,{max(0.0, seconds - record.tail_frames / rate - 0.25):.3f})")
+        parts.append(
+            f"gte(t\\,{max(0.0, seconds - record.tail_frames / rate - 0.25):.3f})"
+        )
     return "+".join(parts) or "lt(t\\,0.5)"
 
 

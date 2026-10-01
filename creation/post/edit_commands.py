@@ -219,16 +219,34 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     trim = sub.add_parser(
         "trim",
-        help="Cut A-B seconds out of a FINISHED take on the real shot change (each edge snapped within 0.1 s), "
-        "frame-accurate; prints how far later cues, lines and captions move.",
+        help="Two kinds. --start S --end E (or --reset): set where the take starts and ends when it plays "
+        "(the server's trim handles, fictora-drama #563; no file is cut, nothing billed; finish and join cut "
+        "there). --cut A-B: cut A-B seconds out of a FINISHED take on the real shot change (each edge snapped "
+        "within 0.1 s), frame-accurate; prints how far later cues, lines and captions move.",
     )
     _take_args(
         trim,
-        take_file_help="The finished take to cut (required: finish the raw take first).",
+        take_file_help="--cut only: the finished take to cut (required: finish the raw take first).",
     )
     trim.add_argument(
-        "--cut", required=True, help="A-B seconds on the take, e.g. 10.17-12.15."
+        "--cut", default=None, help="A-B seconds on the take, e.g. 10.17-12.15."
     )
+    trim.add_argument(
+        "--start", type=float, default=None,
+        help="Handles: where the take starts playing, seconds on the take as filmed (take-facts times).",
+    )  # fmt: skip
+    trim.add_argument(
+        "--end", type=float, default=None,
+        help="Handles: where it stops playing, seconds on the take as filmed (at least 1 s after --start).",
+    )  # fmt: skip
+    trim.add_argument(
+        "--reset", action="store_true",
+        help="Handles: back to the automatic handles (just past the board frames the server held).",
+    )  # fmt: skip
+    trim.add_argument(
+        "--preview", action="store_true",
+        help="Handles: print what would change; send nothing.",
+    )  # fmt: skip
     trim.add_argument(
         "--cues-json", type=Path, action="append", default=[],
         help="A cues or captions JSON list [{start, end?, ...}] to shift: writes <stem>-trim-vN.json (repeat).",
@@ -399,7 +417,7 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
     Returns
     -------
     int
-        ``0``.
+        ``0``; ``2`` when ``trim --start/--end/--reset`` was refused.
 
     Raises
     ------
@@ -415,6 +433,32 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
     run_dir = desk / f"ep{args.episode:02d}"
     takes = run_dir / "takes"
     base = f"take-ep{args.episode:02d}-{args.take_id}"
+    handles = args.command == "trim" and (
+        args.start is not None or args.end is not None or args.reset
+    )
+    if handles:
+        if args.cut is not None or args.take_file is not None:
+            raise ValueError(
+                "trim --start/--end/--reset sets the take's handles on the server; --cut and --take-file "
+                "cut a finished file on this laptop: use one or the other"
+            )
+        from creation.post.take_handles import run_take_trim
+
+        return run_take_trim(
+            desk,
+            episode=args.episode,
+            take_id=args.take_id,
+            start_s=args.start,
+            end_s=args.end,
+            reset=args.reset,
+            preview=args.preview,
+            out=out,
+        )
+    if args.command == "trim" and args.cut is None:
+        raise ValueError(
+            "trim needs --start S --end E (or --reset) for the take's handles, or --cut A-B with --take-file "
+            "to cut a finished file"
+        )
     if args.command == "trim" and args.take_file is None:
         raise ValueError(
             "trim needs --take-file: finish the raw take first, then trim the finished file"

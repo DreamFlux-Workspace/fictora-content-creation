@@ -124,7 +124,17 @@ FREEZE_THRESHOLD = 0.002
 FREEZE_MIN_SECONDS = 0.6
 
 #: File steps that come after the mix: such a file is a finished take (``final``/``captions``: adopted desks).
-FINISHED_STEPS = ("mix", "cap", "sokii", "trim", "tempo", "final", "captions", "reel")
+FINISHED_STEPS = (
+    "mix",
+    "cap",
+    "sokii",
+    "trim",
+    "tempo",
+    "final",
+    "captions",
+    "reel",
+    "handles",
+)
 #: File steps after which the head board frames should be gone.
 DEBOARDED_STEPS = (
     "deboard",
@@ -1440,6 +1450,12 @@ def review_take(
     )
     facts_path = saved_take_facts(desk, episode, take_id)
     facts = json.loads(facts_path.read_text(encoding="utf-8")) if facts_path else None
+    handled_record = record_for_file(desk, take)
+    if handled_record is not None:
+        from creation.post.take_handles import facts_on_handled_file
+
+        # A file finish cut to its trim handles: the facts' times minus start_s (fictora-drama #563).
+        facts = facts_on_handled_file(facts, handled_record.edits)  # type: ignore[assignment]
     words_note = None
     if "reel" in steps:
         # A transcript of the take does not say what the reel plays: its plan lists the lines it keeps.

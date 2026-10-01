@@ -812,10 +812,13 @@ def part_speech(
         finish moved the sound timeline).
     """
 
+    from creation.post.take_handles import HANDLES_OP, windows_on_handled_file
+
+    # A take cut to its trim handles (finish, fictora-drama #563) keeps its times minus start_s: moved below.
     moved = [
         str(edit.get("op"))
         for edit in part.record.edits
-        if edit.get("op") not in TIMELINE_KEEPING_EDITS
+        if edit.get("op") not in TIMELINE_KEEPING_EDITS and edit.get("op") != HANDLES_OP
     ]
     if moved:
         return (
@@ -849,7 +852,10 @@ def part_speech(
                 payload = None
             windows = line_windows(payload if isinstance(payload, dict) else None)
             source = f"line windows `{facts.name}`"
-    windows = [(a, min(b, seconds)) for a, b in windows if 0 <= a < seconds]
+    handled = windows_on_handled_file(windows, part.record.edits)
+    if handled != windows:
+        source += " moved to the trim handles"
+    windows = [(a, min(b, seconds)) for a, b in handled if 0 <= a < seconds]
     if not windows:
         return [], f"{part.label}: speech not left out (no saved words or take facts)"
     return windows, f"{part.label}: speech from {source}"

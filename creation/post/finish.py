@@ -182,7 +182,12 @@ from creation.post.desk import (
 from creation.post.media import MediaToolError, measure_loudness, probe_video
 from creation.post.mix import CueLevel, check_duck_db, mix_take, pick_gain
 from creation.post.take_facts import save_take_facts, stale_facts_reason
-from creation.post.take_timeline import align_take_facts, unsure_head
+from creation.post.take_handles import apply_take_handles, handles_from_facts
+from creation.post.take_timeline import (
+    align_take_facts,
+    server_board_frames,
+    unsure_head,
+)
 from creation.post.soundtrack import (
     TARGET_AUDIO_CUT_WINDOW_SECONDS,
     TARGET_AUDIO_DUCK_DB,
@@ -1840,7 +1845,35 @@ def run_finish(
             for cue, line, seconds in thought_state["laid"]
         ],
     )  # fmt: skip
+    handles_note = ""
+    if result.complete and facts_state["path"] is not None:
+        # Cut at the take's trim handles LAST (fictora-drama #563): every effect, duck and caption above was
+        # laid on the take as filmed, so nothing is offset; the cut moves them all with the picture.
+        facts_payload = json.loads(facts_state["path"].read_text(encoding="utf-8"))
+        handles = handles_from_facts(facts_payload)
+        if handles is not None:
+            held = server_board_frames(facts_payload)
+            try:
+                cut = apply_take_handles(
+                    desk,
+                    record_path=record,
+                    handles=handles,
+                    held_head_s=held.head_frames / held.frame_rate if held else None,
+                    kept_original=bool(held and held.original),
+                )
+            except STEP_ERRORS as exc:
+                handles_note = f"!! trim handles not applied ({type(exc).__name__}: {str(exc)[:200]}): the take plays whole"
+            else:
+                handles_note = cut.note
+                if cut.final is not None and cut.record is not None:
+                    result.final, record = cut.final, cut.record
+                    summary = [
+                        f"Final: {result.final}" if row.startswith("Final: ") else row
+                        for row in summary
+                    ]
     summary.insert(1, f"Record: {record.name} (what `join` reads)")
+    if handles_note:
+        summary.insert(2, handles_note)
     append_run_note(
         run_dir,
         "Finish summary\n"
