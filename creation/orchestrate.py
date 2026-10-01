@@ -15,7 +15,7 @@ import re
 import shlex
 import sys
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
