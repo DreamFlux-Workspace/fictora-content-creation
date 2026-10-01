@@ -57,8 +57,11 @@ A locked-voice take (take facts ``soundtrack.mode == "target_audio"``: the
 server sent the lines in the locked voices to the video model as its audio, and
 the take's sound is exactly that dialogue track, digital silence between lines)
 finishes by default with the sound it lacks (:mod:`creation.post.soundtrack`):
-``room-tone`` after the effects (and a free check that each line is heard in its
-window), the bed ducked ``TARGET_AUDIO_DUCK_DB`` exactly in each line window,
+``ambience`` after the effects (the location's own sound, made once per episode
+from the take's sound plan and laid at about -28 dB between the lines, ducked
+under each line: :mod:`creation.post.ambience`), then ``room-tone`` (room tone
+only when no ambience could be made, and a free check that each line is heard
+in its window), the bed ducked ``TARGET_AUDIO_DUCK_DB`` exactly in each line window,
 the effects snapped to cuts measured up to 2 s from the plan (each measured cut
 printed) and ducked under the line windows, captions timed on the line windows
 (no transcript). Its voices are never muted or replaced without
@@ -139,6 +142,16 @@ from creation.harness.raw_video import fetch_take_facts
 from creation.ops.floor import record_spend
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
+from creation.post.ambience import (
+    AMBIENCE_DUCK_DB,
+    AMBIENCE_GAP_DB,
+    ambience_brief,
+    episode_ambience,
+    episode_offset,
+    lay_ambience,
+)
+from creation.post.ambience import Maker as AmbienceMaker
+from creation.post.ambience import service_maker as ambience_service_maker
 from creation.post.audio_service import AudioService, AudioServiceError, DramaApiAudio
 from creation.post.bed import DEFAULT_BED_DB, Maker, resolve_bed, service_music_maker
 from creation.post.colour import colour_match
@@ -156,7 +169,7 @@ from creation.post.desk import (
     take_job_id,
 )
 from creation.post.media import MediaToolError, measure_loudness, probe_video
-from creation.post.mix import CueLevel, check_duck_db, mix_take
+from creation.post.mix import CueLevel, check_duck_db, mix_take, pick_gain
 from creation.post.take_facts import save_take_facts, stale_facts_reason
 from creation.post.soundtrack import (
     TARGET_AUDIO_CUT_WINDOW_SECONDS,
@@ -193,6 +206,9 @@ INNER_VOICE_STEP = "inner-voice"
 
 #: The finish step that lays room tone under a locked-voice take (soundtrack ``target_audio``).
 ROOM_TONE_STEP = "room-tone"
+
+#: The finish step that lays the location's ambience under a locked-voice take (before ``room-tone``).
+AMBIENCE_STEP = "ambience"
 
 #: ``finish`` exit code: files were written but music, SFX or the mix did not go on.
 FINISH_INCOMPLETE = 5
@@ -310,7 +326,9 @@ class FinishResult:
         ]
         if self.cues_not_laid and "SFX" not in missing:
             marks[1] += f" (!! {len(self.cues_not_laid)} planned cue(s) not laid)"
-        if self.locked_voices:
+        if self.locked_voices and self._ran(AMBIENCE_STEP):
+            marks.append("ambience ✓")
+        elif self.locked_voices:
             marks.append(f"room tone {'✗' if 'room tone' in missing else '✓'}")
         captions = next((s for s in self.steps if s.step == "captions"), None)
         if captions is not None and captions.detail.startswith(CAPTIONS_OFF):
@@ -585,6 +603,7 @@ def run_finish(
     facts_fetcher: FactsFetcher = api_facts_fetcher,
     transcriber: Transcriber | None = None,
     cut_meter: Cuts | None = None,
+    ambience_maker: AmbienceMaker | None = None,
     thumbnail: bool = True,
     draw_thumbnail: bool = False,
     voice_audio: AudioService | None = None,
@@ -598,8 +617,10 @@ def run_finish(
 
     A take whose facts say its sound is the show's locked voices
     (``soundtrack.mode == "target_audio"``, :mod:`creation.post.soundtrack`)
-    finishes the same way with four differences: room tone is laid under the
-    whole take (``room-tone``, after the effects), the bed ducks exactly
+    finishes the same way with four differences: the location's ambience is laid
+    under the whole take (``ambience``, after the effects; one cue per episode,
+    cached on the desk; room tone in ``room-tone`` only when no cue can be made),
+    the bed ducks exactly
     ``TARGET_AUDIO_DUCK_DB`` inside each line window, the effects follow cuts
     measured up to 2 s off the plan (every measured cut is printed), and the
     captions are timed on the line windows. With no bed or no room tone the
@@ -644,8 +665,9 @@ def run_finish(
         ``--voice`` dry lines laid into the take's own audio (take seconds as filmed).
     cues
         ``--cue`` hand cues laid after the SFX step (take seconds as filmed).
-    sfx_render, bed_maker, facts_fetcher, transcriber, cut_meter, voice_audio
+    sfx_render, bed_maker, facts_fetcher, transcriber, cut_meter, voice_audio, ambience_maker
         Injected for tests (``transcriber`` makes a transcript of the take on the server;
+        ``ambience_maker`` makes a locked-voice take's location ambience on the server;
         ``cut_meter`` measures the take's hard cuts, :func:`creation.post.edit.measure_cuts`;
         ``voice_audio`` makes the inner-voice dry lines, the Drama API by default;
         ``text_ocr`` reads frames for the drawn-text check, the ``tesseract`` command by default).
@@ -1141,14 +1163,112 @@ def run_finish(
             if isinstance(line, dict) and line.get("line_id")
         }
 
+    def do_ambience(take: Path) -> StepReport:
+        """The location's ambience under the whole locked-voice take: one cue per episode, cached on the desk."""
+
+        payload = json.loads(facts_state["path"].read_text(encoding="utf-8"))
+        brief = ambience_brief(payload, spine, episode=episode)
+        if brief is None:
+            return StepReport(
+                AMBIENCE_STEP,
+                "skipped",
+                "no ambience cue: the spine names no location for this take's frames and the take facts "
+                "plan no sustained sound; room tone is laid instead",
+            )
+        lengths, last = take_lengths(desk, episode, take_id, source=source)
+        offset = episode_offset(lengths)
+        seam = ""
+        if offset is None:
+            offset = 0.0
+            seam = "; !! an earlier take's raw file is not on the desk: laid from the ambience's start, so the seam into this take may change ambience"
+        # The cue covers the whole episode as filmed so far (later takes too), up to the route's 22 s.
+        known = sum(length for length in lengths if length is not None)
+        later = len(lengths) + 1
+        while True:
+            try:
+                known += probe_video(
+                    latest_raw_take(desk, episode, f"t{later}")
+                ).duration_seconds
+            except FileNotFoundError:
+                break
+            later += 1
+        maker = ambience_maker or ambience_service_maker(audio, spine_id(desk))
+        try:
+            found, note = episode_ambience(
+                desk, episode, brief, episode_seconds=known, make=maker
+            )
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"the ambience cue could not be fetched: {exc}") from exc
+        if found.cost_usd:
+            book(
+                desk,
+                episode=episode,
+                usd=found.cost_usd,
+                take_id=take_id,
+                stream=out,
+                unit="ambience",
+            )
+        if note:
+            offset, seam = 0.0, f"; !! {note}"
+        # The mix measures the take WITH its ambience (a steady floor lowers the gated loudness, so the
+        # mix then raises the take): lay, read the gain the mix will pick, and re-lay until the gaps land
+        # at AMBIENCE_GAP_DB in the mix (Hanakaze live check: one pass landed 4 dB loud).
+        target = next_versioned_path(takes, f"{base}-ambience", ".mp4")
+        take_gain = pick_gain(measure_loudness(take))
+        for _attempt in range(3):
+            laid = lay_ambience(
+                take,
+                found.path,
+                target,
+                windows=sorted([*line_windows(soundtrack), *thought_windows()]),
+                level_db=AMBIENCE_GAP_DB - take_gain,
+                offset=offset,
+                fade_in=offset == 0.0,
+                fade_out=last,
+            )
+            mix_gain = pick_gain(measure_loudness(laid.output))
+            if abs(laid.laid_db + mix_gain - AMBIENCE_GAP_DB) <= 1.0:
+                break
+            take_gain = mix_gain
+            laid.output.unlink()  # this run's own file, re-laid at the corrected level
+        else:
+            laid = lay_ambience(
+                take, found.path, target,
+                windows=sorted([*line_windows(soundtrack), *thought_windows()]),
+                level_db=AMBIENCE_GAP_DB - take_gain, offset=offset,
+                fade_in=offset == 0.0, fade_out=last,
+            )  # fmt: skip
+            mix_gain = pick_gain(measure_loudness(laid.output))
+        take_gain = mix_gain
+        where = "made now" if found.made else "on the desk, free"
+        detail = (
+            f'ambience: "{found.description}", {AMBIENCE_GAP_DB:.0f} dB between the lines in the mix '
+            f"({laid.laid_db:+.1f} dB before the mix's {take_gain:+.1f} dB take gain), ducked "
+            f"{AMBIENCE_DUCK_DB:.0f} dB under {len(soundtrack.lines)} line window(s); "
+            f"cue `{found.path.name}` ({where}), from {offset:.2f}s of the episode's ambience{seam}"
+        )
+        append_run_note(
+            run_dir,
+            f"Finish · ambience -> `{laid.output.name}`: {detail}"
+            + (f"; ${found.cost_usd:.3f}" if found.cost_usd else ""),
+        )
+        return StepReport(AMBIENCE_STEP, "ran", detail, laid.output, found.cost_usd)
+
     def do_room_tone(take: Path) -> StepReport:
         """Room tone under the whole locked-voice take, then a free check that each line is heard in its window."""
 
         from creation.post.review import saved_words
 
-        toned = lay_room_tone(
-            take, next_versioned_path(takes, f"{base}-room-tone", ".mp4")
-        )
+        if result._ran(AMBIENCE_STEP):
+            # The location's ambience fills the gaps: room tone is only the fallback.
+            toned, air = None, "no room tone: the location ambience fills the gaps"
+        else:
+            toned, air = (
+                lay_room_tone(
+                    take, next_versioned_path(takes, f"{base}-room-tone", ".mp4")
+                ),
+                "room tone under the whole take (fallback: no location ambience, see the ambience step)",
+            )
         checks = [f"!! {line}" for line in unheard_lines(source, soundtrack)]
         words = saved_words(desk, episode, take_id)
         heard = f"{len(soundtrack.lines) - len(checks)} of {len(soundtrack.lines)} line(s) heard in their window"
@@ -1156,10 +1276,11 @@ def run_finish(
             problems = misplaced_lines(soundtrack, words, spine_line_texts())
             checks += [f"!! {problem}" for problem in problems]
             heard += f"; transcript `{words.name}`: {'checked' if not problems else 'see !!'}"
-        detail = f"room tone under the whole take; {heard}" + "".join(
-            f"; {c}" for c in checks
+        detail = f"{air}; {heard}" + "".join(f"; {c}" for c in checks)
+        append_run_note(
+            run_dir,
+            f"Finish · room tone -> `{toned.name if toned else 'nothing laid'}`: {detail}",
         )
-        append_run_note(run_dir, f"Finish · room tone -> `{toned.name}`: {detail}")
         return StepReport(ROOM_TONE_STEP, "ran", detail, toned)
 
     def do_bed(_take: Path) -> StepReport:
@@ -1516,6 +1637,18 @@ def run_finish(
     if "cues" in hand_steps:
         step("cues", "Laying the hand cues", do_cues)
     if locked:
+        step(
+            AMBIENCE_STEP,
+            "Laying the location's ambience under the locked voices",
+            do_ambience,
+        )
+        if not result._ran(AMBIENCE_STEP):
+            print(
+                f"[{AMBIENCE_STEP}] !! no location ambience on this take: room tone is laid instead "
+                "(the take will sound drier than a native take)",
+                file=out,
+                flush=True,
+            )
         step(ROOM_TONE_STEP, "Laying room tone under the locked voices", do_room_tone)
     step("bed", "Finding the show's music bed", do_bed)
     if locked and not (result._ran("bed") and result._ran(ROOM_TONE_STEP)):

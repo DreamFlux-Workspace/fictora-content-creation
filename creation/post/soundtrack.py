@@ -10,8 +10,9 @@ whole room:
 
 - the voices are already right: ``revoice``, ``finish --mute`` and
   ``finish --voice`` would only damage them, and need ``--over-locked-voices``;
-- ``finish`` lays room tone under the whole take (:func:`lay_room_tone`), so the
-  gaps between lines are never digital silence;
+- ``finish`` lays the location's ambience under the whole take
+  (:mod:`creation.post.ambience`), or room tone (:func:`lay_room_tone`) when no
+  ambience cue can be made, so the gaps between lines are never digital silence;
 - the bed is ducked exactly inside each line's window (:func:`line_windows`);
 - the planned effects follow the cuts measured on the filmed take, with a wider
   snap window (:data:`TARGET_AUDIO_CUT_WINDOW_SECONDS`): cuts can land more than
@@ -109,7 +110,7 @@ class Soundtrack:
         if self.target_audio:
             return (
                 f"Soundtrack: locked voices, {len(self.lines)} line(s) (no native ambience); "
-                "room tone, bed + effects will be laid"
+                "location ambience (room tone if none can be made), bed + effects will be laid"
             )
         if not self.sent:
             return "Soundtrack: native (the server sent no soundtrack: an older server)"
