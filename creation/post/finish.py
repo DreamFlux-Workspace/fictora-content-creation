@@ -182,7 +182,7 @@ from creation.post.desk import (
 from creation.post.media import MediaToolError, measure_loudness, probe_video
 from creation.post.mix import CueLevel, check_duck_db, mix_take, pick_gain
 from creation.post.take_facts import save_take_facts, stale_facts_reason
-from creation.post.take_timeline import align_take_facts
+from creation.post.take_timeline import align_take_facts, unsure_head
 from creation.post.soundtrack import (
     TARGET_AUDIO_CUT_WINDOW_SECONDS,
     TARGET_AUDIO_DUCK_DB,
@@ -913,6 +913,20 @@ def run_finish(
             return StepReport(
                 "deboard", "skipped", "no approved board on the desk to measure against"
             )
+        doubt = unsure_head(
+            json.loads(facts_state["path"].read_text(encoding="utf-8"))
+            if facts_state["path"] is not None
+            else None
+        )
+        if doubt is not None:
+            # The server would not hold this start; holding it here would bring the guess back. Ask instead.
+            ask = (
+                f"!! the server left {doubt.frames} possible board frame(s) at the start as filmed "
+                f"({doubt.reason}); not held. Look at the start: if it is the board, run "
+                f"`deboard --episode {episode} --take {take_id} --hold-unsure` and finish --take-file the result"
+            )
+            append_run_note(run_dir, f"Finish · deboard: {ask}")
+            return StepReport("deboard", "skipped", ask)
         trimmed = deboard_take(
             take, board, next_versioned_path(takes, f"{base}-deboard", ".mp4")
         )

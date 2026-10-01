@@ -23,6 +23,7 @@ lays one bed across the edited take and marks once. ``freeze``, ``soften`` and
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from collections.abc import Callable
@@ -57,6 +58,7 @@ from creation.post.finish_record import (
 )
 from creation.post.lineage import record_edit
 from creation.post.media import probe_video, video_streams
+from creation.post.take_timeline import UnsureRun, unsure_head
 
 EDIT_COMMANDS = frozenset({"deboard", "trim", "freeze", "tempo", "soften", "blur"})
 #: Edits that carry a finish record onto their output.
@@ -209,6 +211,11 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Default: the take's approved board on the desk.",
     )
     deb.add_argument("--max-frames", type=int, default=BOARD_LEAK_MAX_FRAMES)
+    deb.add_argument(
+        "--hold-unsure", action="store_true",
+        help="Hold the start even though the server left possible board frames there as filmed "
+        "(take facts board_frames.unsure, fictora-drama #559). Only after a person looked and saw the board.",
+    )  # fmt: skip
 
     trim = sub.add_parser(
         "trim",
@@ -300,6 +307,45 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--feather", type=int, default=0,
         help="Pixels of soft edge OUTSIDE each box (default 0, a hard edge). The box itself stays fully blurred.",
     )  # fmt: skip
+
+
+def _saved_facts(desk: Path, episode: int, take_id: str) -> dict[str, Any] | None:
+    from creation.post.sfx import saved_take_facts
+
+    path = saved_take_facts(desk, episode, take_id)
+    if path is None:
+        return None
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    return loaded if isinstance(loaded, dict) else None
+
+
+def unsure_refusal(doubt: UnsureRun, episode: int, take_id: str) -> str:
+    """Why ``deboard`` will not hold a start the server left as filmed, and what the producer decides.
+
+    Parameters
+    ----------
+    doubt
+        The server's unsure run at the head.
+    episode, take_id
+        The take.
+
+    Returns
+    -------
+    str
+        The question for the producer, ending on ``Refused: ...``.
+    """
+
+    return "\n".join(
+        [
+            f"The server found {doubt.frames} possible board frame(s) at the start of ep{episode:02d} {take_id} "
+            f"and left them as filmed: {doubt.reason}.",
+            "It was not sure they are the board, so the kit does not hold them on its own either. "
+            "Look at the start of the take (`review --original` writes the original beside it), then decide:",
+            "  - they are the board: run deboard again with --hold-unsure",
+            "  - they are real footage: leave them; finish keeps them",
+            "Refused: deboard holds no end the server left as filmed without --hold-unsure",
+        ]
+    )
 
 
 _TAKE_IN_NAME = re.compile(r"^take-ep(\d+)-(t\d+)(?:-|\.|$)")
@@ -398,10 +444,18 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
             raise FileNotFoundError(
                 f"no board for {args.take_id} on the desk; pass --board"
             )
+        doubt = unsure_head(_saved_facts(desk, args.episode, args.take_id))
+        if doubt is not None and not args.hold_unsure:
+            raise ValueError(unsure_refusal(doubt, args.episode, args.take_id))
         result = deboard(source, board, target("deboard"), max_frames=args.max_frames)
         if result.output is not None:
             record_edit(desk, op="deboard", source=source, output=result.output)
         lines = [f"Deboard `{source.name}` against `{board.name}`: {result.one_line()}"]
+        if doubt is not None:
+            lines.append(
+                f"- held although the server left {doubt.frames} possible board frame(s) at the start as filmed "
+                f"({doubt.reason}): --hold-unsure"
+            )
     elif args.command == "trim":
         first, after, fps, before = plan_trim(source, parse_cut(args.cut))
 
