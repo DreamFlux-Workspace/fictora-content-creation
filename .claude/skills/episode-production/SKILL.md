@@ -70,7 +70,7 @@ Optional after the draft, before the plates, our own style frame: write the look
 
 ## Brief
 
-Pick the nearest `--preset-id` at `start`, even for our own look (Cold Gate `modern-dark-fantasy` is the closest to horror; the Dead Light horror preset cannot be picked yet). Without a pinned look frame its world leaks into plates, so pin the look frame or steer it with `look-note` before the plates are drawn.
+Pick the nearest `--preset-id` at `start` (`fictora-produce presets` lists the published ids; `start` checks the id before it makes the desk and a wrong one names the valid ids), even for our own look (Cold Gate `modern-dark-fantasy` is the closest to horror; the Dead Light horror preset cannot be picked yet). Without a pinned look frame its world leaks into plates, so pin the look frame or steer it with `look-note` before the plates are drawn.
 
 Write it with the human (`docs/content-ops/templates/brief.md`) and check before the draft:
 

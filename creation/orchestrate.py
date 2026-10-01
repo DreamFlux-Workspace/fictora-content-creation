@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 import uuid
 from dataclasses import dataclass, field
@@ -85,6 +86,7 @@ from creation.production_state import (
     api_dir_for_episode,
     ensure_production,
     load_production,
+    production_path,
     save_production,
 )
 from creation.spine_view import (
@@ -127,18 +129,147 @@ def _note(ep_dir: Path, body: str) -> None:
         append_run_note(ep_dir, body)
 
 
-def _resolve_preset(run: DramaApiRunSession, preset_id: str) -> tuple[str, str]:
-    presets = run.get("/v1/art-style-presets").get("presets") or []
-    matches = [row for row in presets if row.get("preset_id") == preset_id]
-    if not matches:
-        raise RuntimeError(f"preset not published: {preset_id!r}")
-    preset = max(
-        matches,
-        key=lambda row: tuple(
-            int(x) for x in str(row.get("version") or "0").split(".")
-        ),
+PRESETS_PATH = "/v1/art-style-presets"
+"""Published Art Style Preset catalog (``{"presets": [{preset_id, version, label, scope, status}]}``)."""
+
+
+def fetch_preset_rows() -> list[dict[str, Any]]:
+    """Read the preset catalog from the API. One authenticated GET; spends nothing.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        Raw ``presets`` rows: every version, tenant rows still uploading included.
+    """
+
+    base, token = load_drama_api_credentials(_repo_root())
+    probe = DramaApiRunSession(base_url=base, token=token, out_dir=_repo_root())
+    try:
+        return list(probe.get(PRESETS_PATH).get("presets") or [])
+    finally:
+        probe.client.close()
+
+
+def _version_key(row: dict[str, Any]) -> tuple[int, ...]:
+    parts = []
+    for piece in str(row.get("version") or "0").split("."):
+        try:
+            parts.append(int(piece))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts)
+
+
+def _ready(row: dict[str, Any]) -> bool:
+    """Global rows carry no status; a tenant row is usable only once ``published``."""
+
+    return row.get("status") in (None, "", "published")
+
+
+def preset_catalog(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split catalog rows into usable presets and tenant presets not ready yet, newest version each.
+
+    Parameters
+    ----------
+    rows
+        ``GET /v1/art-style-presets`` ``presets`` rows.
+
+    Returns
+    -------
+    tuple[list[dict[str, Any]], list[dict[str, Any]]]
+        ``(ready, not_ready)``, each one row per ``preset_id`` sorted by id.
+    """
+
+    newest: dict[tuple[bool, str], dict[str, Any]] = {}
+    for row in rows:
+        pid = str(row.get("preset_id") or "")
+        if not pid:
+            continue
+        key = (_ready(row), pid)
+        if key not in newest or _version_key(row) > _version_key(newest[key]):
+            newest[key] = row
+    ready = [newest[k] for k in sorted(newest) if k[0]]
+    ready_ids = {str(r["preset_id"]) for r in ready}
+    waiting = [newest[k] for k in sorted(newest) if not k[0] and k[1] not in ready_ids]
+    return ready, waiting
+
+
+def published_preset_lines() -> list[str]:
+    """Read the catalog and format it for ``fictora-produce presets``."""
+
+    return preset_lines(fetch_preset_rows())
+
+
+def preset_lines(rows: list[dict[str, Any]]) -> list[str]:
+    """Format the catalog for ``fictora-produce presets``: one line per preset.
+
+    Parameters
+    ----------
+    rows
+        ``GET /v1/art-style-presets`` ``presets`` rows.
+
+    Returns
+    -------
+    list[str]
+        ``id  version  label``; tenant presets not ready yet are marked.
+    """
+
+    ready, waiting = preset_catalog(rows)
+    if not ready and not waiting:
+        return ["No presets are published."]
+    width = max(len(str(r["preset_id"])) for r in (*ready, *waiting))
+    out = [
+        f"{str(r['preset_id']):<{width}}  {r.get('version') or '?':<8}  {r.get('label') or ''}".rstrip()
+        for r in ready
+    ]
+    out += [
+        f"{str(r['preset_id']):<{width}}  {r.get('version') or '?':<8}  {r.get('label') or ''}"
+        f"  (not ready: {r.get('status')})"
+        for r in waiting
+    ]
+    return out
+
+
+def _pick_preset(rows: list[dict[str, Any]], preset_id: str) -> tuple[str, str]:
+    ready, waiting = preset_catalog(rows)
+    for row in ready:
+        if row["preset_id"] == preset_id:
+            return str(row["preset_id"]), str(row["version"])
+    valid = ", ".join(str(r["preset_id"]) for r in ready) or "none"
+    for row in waiting:
+        if row["preset_id"] == preset_id:
+            raise RuntimeError(
+                f"preset {preset_id!r} is not ready yet (status {row.get('status')}). "
+                f"Published presets: {valid}. List them with: uv run fictora-produce presets"
+            )
+    raise RuntimeError(
+        f"preset not published: {preset_id!r}. Published presets: {valid}. "
+        "List them with: uv run fictora-produce presets"
     )
-    return str(preset["preset_id"]), str(preset["version"])
+
+
+def resolve_preset(preset_id: str) -> tuple[str, str]:
+    """Check a preset id against the published catalog and pin its newest version.
+
+    Parameters
+    ----------
+    preset_id
+        Operator's ``--preset-id``.
+
+    Returns
+    -------
+    tuple[str, str]
+        ``(preset_id, version)``.
+
+    Raises
+    ------
+    RuntimeError
+        When the id is not published (the message lists the published ids).
+    """
+
+    return _pick_preset(fetch_preset_rows(), preset_id)
 
 
 def save_spine_snapshot(desk: Path, episode: int, spine: dict[str, Any]) -> Path:
@@ -568,19 +699,36 @@ def bind_desk(
     preset_id: str,
     video_lane: str = "minimax-h3",
     episode_ordinal: int = 1,
+    preset: tuple[str, str] | None = None,
 ) -> ProductionState:
-    """Attach API orchestration to an existing series desk."""
+    """Attach API orchestration to an existing series desk.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    prompt
+        The premise.
+    preset_id
+        Operator's ``--preset-id``; checked against the published catalog.
+    video_lane
+        Video lane pinned on the draft.
+    episode_ordinal
+        Episode the binding is for.
+    preset
+        ``(preset_id, version)`` already resolved by :func:`resolve_preset`; skips a second catalog read.
+
+    Returns
+    -------
+    ProductionState
+        The saved binding.
+    """
 
     desk = desk.expanduser().resolve()
     series = load_series(desk)
-    base, token = load_drama_api_credentials(_repo_root())
+    pid, version = preset or resolve_preset(preset_id)
     api_dir = api_dir_for_episode(desk, episode_ordinal)
     api_dir.mkdir(parents=True, exist_ok=True)
-    probe = DramaApiRunSession(base_url=base, token=token, out_dir=api_dir)
-    try:
-        pid, version = _resolve_preset(probe, preset_id)
-    finally:
-        probe.client.close()
     state = ensure_production(
         desk,
         prompt=ensure_plan_prompt(prompt),
@@ -595,6 +743,60 @@ def bind_desk(
     )
     save_production(desk, state)
     return state
+
+
+def unbound_desk_recovery(
+    desk: Path, *, prompt_arg: str, preset_id: str, just_made: bool = False
+) -> str:
+    """Say how to carry on when ``start`` finds its dated desk already on disk (L-20260930-13).
+
+    Parameters
+    ----------
+    desk
+        The desk ``start`` would have made.
+    prompt_arg
+        The operator's ``--prompt`` exactly as typed (``@file`` stays ``@file``).
+    preset_id
+        The preset ``start`` was asked for.
+    just_made
+        True when this very ``start`` made the desk and then failed to bind it.
+
+    Returns
+    -------
+    str
+        The exact ``bind`` command for a desk an earlier ``start`` left unbound, or the
+        ``step`` command for a desk that is already bound.
+    """
+
+    if production_path(desk).is_file():
+        state = load_production(desk)
+        return (
+            f"series desk already exists and is already bound (session {state.session_id}, "
+            f"phase {state.phase}): {desk}\n"
+            f"Carry on with: uv run fictora-produce step --desk {shlex.quote(str(desk))}\n"
+            "Or give the series another name to start a new desk."
+        )
+    prompt = (
+        shlex.quote(prompt_arg)
+        if len(prompt_arg) <= 120
+        else "@<the same premise file>"
+    )
+    command = (
+        f"uv run fictora-produce bind --desk {shlex.quote(str(desk))} --prompt {prompt} "
+        f"--preset-id {shlex.quote(preset_id)}"
+    )
+    why = (
+        "the desk was made but not bound"
+        if just_made
+        else "series desk already exists but was never bound (an earlier start stopped "
+        "before binding, e.g. on a wrong preset id)"
+    )
+    return (
+        f"{why}: {desk}\n"
+        f"Finish it with: {command}\n"
+        "(add any production flags you gave start, such as --cut-tempo or --language)\n"
+        "Or delete that folder and run start again."
+    )
 
 
 def _open_run(desk: Path, state: ProductionState) -> DramaApiRunSession:

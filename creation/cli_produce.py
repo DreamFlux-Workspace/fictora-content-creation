@@ -7,6 +7,7 @@ import json
 import subprocess
 import sys
 from dataclasses import asdict
+from datetime import date
 from pathlib import Path
 from typing import Sequence
 
@@ -26,9 +27,17 @@ from creation.episode_commands import (
     run_approve_look,
 )
 from creation.ops.floor import init_series_desk
-from creation.ops.folder import DEFAULT_RUN_PARENT
+from creation.ops.folder import DEFAULT_RUN_PARENT, run_folder_name
 from creation.ops.notes import append_run_note
-from creation.orchestrate import approve_gate, bind_desk, run_step, status_message
+from creation.orchestrate import (
+    approve_gate,
+    bind_desk,
+    published_preset_lines,
+    resolve_preset,
+    run_step,
+    status_message,
+    unbound_desk_recovery,
+)
 from creation.production_config import load_production_config, save_production_config
 from creation.recover import (
     RETRYABLE_STEPS,
@@ -72,17 +81,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Desk episode slots (API draft plans 4 for cadence).",
     )
     start.add_argument("--parent", type=Path, default=DEFAULT_RUN_PARENT)
-    start.add_argument("--preset-id", default="modern-dark-fantasy")
+    start.add_argument(
+        "--preset-id",
+        default="modern-dark-fantasy",
+        help="Published art-style preset (list them: fictora-produce presets). "
+        "Checked before the desk is made.",
+    )
     start.add_argument("--video-lane", default="minimax-h3")
     add_production_config_args(start)
 
     bind = sub.add_parser("bind", help="Bind API orchestration to an existing desk.")
     bind.add_argument("--desk", type=Path, required=True)
     bind.add_argument("--prompt", required=True, help=f"The premise. {HELP_SUFFIX}")
-    bind.add_argument("--preset-id", default="modern-dark-fantasy")
+    bind.add_argument(
+        "--preset-id",
+        default="modern-dark-fantasy",
+        help="Published art-style preset (list them: fictora-produce presets).",
+    )
     bind.add_argument("--video-lane", default="minimax-h3")
     bind.add_argument("--episode", type=int, default=1)
     add_production_config_args(bind)
+
+    sub.add_parser(
+        "presets",
+        help="List the published art-style presets (id, version, name) for --preset-id. Spends nothing.",
+    )
 
     cfg_show = sub.add_parser(
         "config", help="Print merged production.config.json for a desk."
@@ -244,17 +267,53 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command in POST_COMMANDS:
             return dispatch_post(args)
+        if args.command == "presets":
+            for line in published_preset_lines():
+                print(line)
+            print("Use one with: fictora-produce start … --preset-id ID")
+            return 0
         if args.command == "start":
             config = config_from_args(args)  # refused before the desk is made
-            desk = init_series_desk(
-                args.parent, args.series, band=args.band, episode_count=args.episodes
-            )
-            state = bind_desk(
-                desk,
-                prompt=text_or_file(args.prompt, flag="--prompt"),
-                preset_id=args.preset_id,
-                video_lane=args.video_lane,
-            )
+            prompt = text_or_file(args.prompt, flag="--prompt")
+            # Check the preset before anything lands on disk: a wrong id used to leave a
+            # half-made desk that the next start refused (L-20260930-13).
+            preset = resolve_preset(args.preset_id)
+            try:
+                desk = init_series_desk(
+                    args.parent,
+                    args.series,
+                    band=args.band,
+                    episode_count=args.episodes,
+                )
+            except FileExistsError:
+                desk = (
+                    args.parent.expanduser()
+                    / run_folder_name(args.series, date.today())
+                ).resolve()
+                raise FileExistsError(
+                    unbound_desk_recovery(
+                        desk, prompt_arg=args.prompt, preset_id=preset[0]
+                    )
+                ) from None
+            try:
+                state = bind_desk(
+                    desk,
+                    prompt=prompt,
+                    preset_id=args.preset_id,
+                    video_lane=args.video_lane,
+                    preset=preset,
+                )
+            except (RuntimeError, ValueError, OSError):
+                print(
+                    unbound_desk_recovery(
+                        desk,
+                        prompt_arg=args.prompt,
+                        preset_id=preset[0],
+                        just_made=True,
+                    ),
+                    file=sys.stderr,
+                )
+                raise
             save_production_config(desk, config)
             print(desk)
             _warn_if_no_local_ffmpeg()

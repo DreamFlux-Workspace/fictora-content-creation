@@ -37,6 +37,8 @@ Open the repo in **Cursor**. A new chat fast-forwards `main`. You do not run `gi
 
 ### Start a series desk
 
+`uv run fictora-produce presets` lists the published preset ids (spends nothing). `start` checks `--preset-id` before it makes the desk, so a wrong id leaves nothing behind.
+
 ```bash
 uv run fictora-produce start \
   --series "My Show" \
