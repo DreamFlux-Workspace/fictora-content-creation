@@ -4477,6 +4477,89 @@ def plate_contact_sheet(
     return out
 
 
+def _plateless_cast(spine: Mapping[str, Any]) -> list[str]:
+    """Name every drawn cast member with no current plate on the story (as the plates step checks).
+
+    Parameters
+    ----------
+    spine
+        ``GET /v1/spines/{id}`` body.
+
+    Returns
+    -------
+    list[str]
+        Names (or ``cast_id``) in spine order; empty when every drawn plate is current.
+    """
+
+    current = {
+        str(a.get("relation_id"))
+        for a in spine.get("media_assets") or []
+        if isinstance(a, Mapping)
+        and a.get("relation_type") == "cast_card"
+        and not a.get("stale")
+        and a.get("url")
+    }
+    return [
+        str(row.get("name") or row["cast_id"])
+        for row in drawn_cast_rows(dict(spine))
+        if str(row["cast_id"]) not in current
+        and not any(
+            row.get(key)
+            for key in ("image_url", "portrait_url", "full_body_url", "url")
+        )
+    ]
+
+
+def _settle_failed_plates_step(
+    desk: Path, spine: Mapping[str, Any], *, out: Any
+) -> None:
+    """Put a failed plates step at its gate once redraws have drawn every plate (L-20261001-6).
+
+    The plates step (``ready_cast_enrol``) can fail on one character (a safety
+    flag) while ``redraw-plate`` later draws them fine. Without this the desk
+    stays ``failed``: ``approve --gate plates`` refuses and the only way on is to
+    re-run the step and pay for every plate again. When every drawn cast member
+    has a current plate on the story, the desk moves to ``wait_plates`` (the
+    human's first yes); otherwise it says who is still missing.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    spine
+        The story just after the redraw.
+    out
+        Text stream.
+    """
+
+    state = load_production(desk)
+    if state.phase != "failed" or state.failed_phase != "ready_cast_enrol":
+        return
+    missing = _plateless_cast(spine)
+    if missing:
+        print(
+            f"!! the plates step is still failed: no current plate for {', '.join(missing)}. "
+            f'Redraw each (`fictora-produce redraw-plate --desk {desk} --cast NAME --note "..."`); '
+            "the plates gate opens once every plate is drawn.",
+            file=out,
+        )
+        return
+    state.phase = "wait_plates"
+    state.failed_phase = None
+    state.last_error = None
+    save_production(desk, state)
+    _note(
+        desk,
+        state.episode_ordinal,
+        "plates step was failed; every plate is now drawn by redraw-plate -> wait_plates (nothing re-run, $0).",
+    )
+    print(
+        "Every plate is drawn now: the failed plates step is back at its gate (wait_plates); "
+        "nothing is re-run or paid again.",
+        file=out,
+    )
+
+
 def run_redraw_plate_with_note(
     desk: Path, *, cast: str, note: str, out: Any = None
 ) -> Path:
@@ -4635,6 +4718,7 @@ def run_redraw_plate_with_note(
         f"{name} redrawn alone (${float(STILL_USD):.2f}); nobody else was drawn or paid.",
         file=out,
     )
+    _settle_failed_plates_step(desk, spine, out=out)
     if load_production(desk).phase == "wait_plates":
         print(
             f"Show {sheet.name} to the human; their yes: fictora-produce approve --desk {desk} --gate plates",
