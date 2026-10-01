@@ -20,6 +20,7 @@ that are known to be strict (``cell_role``, ``reaction_kind``,
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 from collections.abc import Mapping, Sequence
@@ -33,6 +34,20 @@ BEAT_DIRECTION_SCHEMA = "DramaMotionDirection"
 
 #: Values a frame's ``cell_role`` takes when the schema cannot be read (fictora-drama ``DramaFrameCellRole``).
 CELL_ROLES = ("anchor", "reaction", "action", "insert", "cover")
+
+#: How a speaker plays a beat's line (``DramaMotionDirection.delivery``) when the deploy's schema cannot be
+#: read (fictora-drama ``DramaLineDelivery``). ``null`` is a plain delivery.
+LINE_DELIVERIES = (
+    "laughing",
+    "excited",
+    "whispered",
+    "shouted",
+    "through_tears",
+    "deadpan",
+    "trailing_off",
+    "breathless",
+    "cold",
+)
 
 #: Fields the server holds to a rule the edit can break, and the rule in the operator's words.
 STRICT_FIELDS: dict[str, str] = {
@@ -53,6 +68,9 @@ STRICT_FIELDS: dict[str, str] = {
     "chain": "a list of one to six steps, none blank",
     "camera_move": "a camera move token the deploy lists (see its /openapi.json)",
     "camera": "an object {move, intensity, end_framing} on a beat's motion direction",
+    "delivery": "one of "
+    + ", ".join(LINE_DELIVERIES)
+    + ", or null for a plain delivery (a beat field)",
     "duration_seconds": "fixed by the server; it cannot be changed",
     "single_take": "fixed by the server; it cannot be changed",
 }
@@ -178,6 +196,56 @@ def allowed_values(openapi: Any, root: str, path: str) -> list[str] | None:
     return None
 
 
+def delivery_values(openapi: Any) -> tuple[list[str], str]:
+    """The ``delivery`` values a beat takes: the deploy's own list when its schema says, else the kit's.
+
+    Parameters
+    ----------
+    openapi
+        ``/openapi.json`` as read from the deploy (anything else reads as unknown).
+
+    Returns
+    -------
+    tuple[list[str], str]
+        The values, and where they came from (said in the refusal).
+    """
+
+    read = allowed_values(openapi, BEAT_DIRECTION_SCHEMA, "delivery")
+    if read:
+        return read, "this deploy's /openapi.json"
+    return list(LINE_DELIVERIES), "the kit's list"
+
+
+def delivery_refusal(value: Any, values: Sequence[str], source: str) -> str | None:
+    """Say why a ``delivery`` value would be refused, or ``None`` when the server takes it.
+
+    Parameters
+    ----------
+    value
+        What ``--set delivery=…`` asked for (``None`` clears it and is always taken).
+    values
+        :func:`delivery_values`.
+    source
+        Where ``values`` came from.
+
+    Returns
+    -------
+    str | None
+        The refusal, naming every value and the nearest one.
+    """
+
+    if value is None or str(value) in values:
+        return None
+    near = difflib.get_close_matches(
+        str(value).strip().lower().replace(" ", "_"), list(values), n=1, cutoff=0.5
+    )
+    hint = f" (did you mean {near[0]!r}?)" if near else ""
+    return (
+        f"delivery {value!r} is not one the server takes{hint}. It takes: {', '.join(values)}; "
+        f"or null for a plain delivery (from {source}). Nothing was sent."
+    )
+
+
 def _value_at(target: Any, path: str) -> Any:
     for part in path.split("."):
         if isinstance(target, list) and part.isdigit() and int(part) < len(target):
@@ -264,6 +332,8 @@ def explain_invalid_patch(
         allowed = allowed_values(openapi, root, path)
         if allowed is None and leaf == "cell_role":
             allowed = list(CELL_ROLES)
+        if allowed is None and leaf == "delivery":
+            allowed = list(LINE_DELIVERIES)
         if allowed is not None and value is not None and str(value) not in allowed:
             suspects.append(
                 f"    {path} = {value!r} is not a value the server takes: {', '.join(allowed)}"
