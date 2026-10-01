@@ -293,7 +293,7 @@ class EditRefused(CommandStopped):
 
 
 #: Commands that print a change before sending it, so they end on a verdict line (L-20261001-25).
-EDIT_VERDICT_COMMANDS = frozenset({"edit", "line"})
+EDIT_VERDICT_COMMANDS = frozenset({"edit", "line", "cast"})
 
 
 def change_items(changed: Sequence[str]) -> list[str]:
@@ -2704,6 +2704,7 @@ def run_line(
                         name=voice_cast_id(new_voice),
                         look=look,
                         select_regen=select_regen,
+                        verdict=False,
                         out=out,
                     )
                 except CommandStopped as exc:

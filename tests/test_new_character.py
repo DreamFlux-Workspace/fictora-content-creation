@@ -217,3 +217,36 @@ def test_running_the_same_command_again_finishes_a_stopped_run_without_repeating
     resumed = _patches(api)[sent_before:]
     assert [sorted(p) for p in resumed] == [["beats", "dialogue_lines"], ["frames"]]
     assert sum("add_voice_only_cast" in p for p in _patches(api)) == 1
+
+
+def test_new_character_ends_on_applied_and_a_stop_on_refused_for_the_edits_not_made(
+    desk: Path, api: FakeApi, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _before_gate(api, _story(approved=False))
+    argv = [
+        "line", "--desk", str(desk), "--episode", "1", "--add", "--beat", "2", "--text", "Last train's gone.",
+        "--new-character", "Sam", "--role", "station guard", "--voice-description", "gravelly",
+        "--provider-voice", "Bill", "--look", _look_file(tmp_path), "--staging", STAGING,
+    ]  # fmt: skip
+
+    assert produce_main([*argv, "--preview"]) == 0
+    assert capsys.readouterr().out.rstrip().splitlines()[-1].startswith("Not applied")
+
+    apply = _server(api)
+
+    def patch(_m: str, _p: str, body: dict[str, Any] | None) -> dict[str, Any]:
+        sent = (body or {})["patch"]
+        if "dialogue_lines" in sent:
+            raise _refusal("invalid_patch", "The story spine patch is invalid.", {})
+        apply(sent)
+        return {}
+
+    api.routes[("PATCH", "/v1/spines/sp1")] = patch
+    assert produce_main(argv) == 2
+    err = capsys.readouterr().err.rstrip().splitlines()
+    assert err[-1].startswith("Refused: ") and "(2 changes, none made)" in err[-1]
+    assert "  Refused: line on screen" in err
+
+    _before_gate(api, api.spine_doc)
+    assert produce_main(argv) == 0
+    assert capsys.readouterr().out.rstrip().splitlines()[-1] == "Applied: all 4 changes"

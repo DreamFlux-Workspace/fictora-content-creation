@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -14,12 +15,14 @@ from cast_story import (
     _before_gate,
     _look_file,
     _patches,
+    _refusal,
     _story,
     _with_sam,
     _writes,
 )
 from creation import cast_commands as cc
 from creation import episode_commands as ec
+from creation.cli_produce import main as produce_main
 from fake_api import FakeApi
 
 
@@ -129,3 +132,70 @@ def test_line_new_voice_with_a_look_adds_the_voice_then_gives_it_the_look(
     assert patches[1]["cast"][0]["cast_id"] == "cast_sam"
     assert patches[1]["cast"][0]["visual_brief"] == SAM_BRIEF
     assert "Sam is heard only for now: no plate is drawn" in out.getvalue()
+
+
+def test_cast_look_ends_on_the_verdict_line(
+    desk: Path, api: FakeApi, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _before_gate(api, _with_sam(_story(approved=False), in_frame=True))
+
+    assert (
+        produce_main(
+            [
+                "cast",
+                "--desk",
+                str(desk),
+                "--name",
+                "Sam",
+                "--look",
+                _look_file(tmp_path),
+            ]
+        )
+        == 0
+    )
+    last = [row for row in capsys.readouterr().out.splitlines() if row.strip()][-1]
+    assert last.startswith("Applied: all ") and last.endswith(" changes")
+
+
+def test_a_refused_cast_look_ends_on_refused(
+    desk: Path, api: FakeApi, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _before_gate(api, _with_sam(_story(approved=False)))
+
+    def refuse(*_: Any) -> Any:
+        raise _refusal("invalid_patch", "The story spine patch is invalid.", {})
+
+    api.routes[("PATCH", "/v1/spines/sp1")] = refuse
+
+    assert (
+        produce_main(
+            [
+                "cast",
+                "--desk",
+                str(desk),
+                "--name",
+                "Sam",
+                "--look",
+                _look_file(tmp_path),
+            ]
+        )
+        == 2
+    )
+    last = [row for row in capsys.readouterr().err.splitlines() if row.strip()][-1]
+    assert last.startswith("Refused: ")
+
+
+def test_line_new_voice_with_a_look_ends_on_one_verdict_line(
+    desk: Path, api: FakeApi, tmp_path: Path
+) -> None:
+    _before_gate(api, _story(approved=False))
+    out = io.StringIO()
+
+    ec.run_line(
+        desk, episode=1, add=True, beat="2", text="Last train's gone.", new_voice="Sam", role="station guard",
+        voice_description="gravelly older man", provider_voice="Bill", look=_look_file(tmp_path), out=out,
+    )  # fmt: skip
+
+    rows = [row for row in out.getvalue().splitlines() if row.strip()]
+    assert rows[-1] == "Applied: all 3 changes"  # the voice, its line, the look
+    assert sum(row.startswith("Applied") for row in rows) == 1

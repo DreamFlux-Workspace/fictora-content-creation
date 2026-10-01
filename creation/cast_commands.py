@@ -437,6 +437,7 @@ def run_cast_look(
     select_regen: bool = False,
     preview_only: bool = False,
     next_step: bool = True,
+    verdict: bool = True,
     out: Any = None,
 ) -> Path | None:
     """Give one cast member a look (``visual_description`` + ``visual_brief``) on the server.
@@ -458,6 +459,9 @@ def run_cast_look(
         As ``edit``.
     next_step
         Print the next step (their plate).
+    verdict
+        End on the ``Applied`` / ``Not applied`` line ``edit`` and ``line`` end on (L-20261001-25); off when a
+        caller prints its own.
     out
         Text stream.
 
@@ -492,7 +496,11 @@ def run_cast_look(
         preview_only=preview_only,
         out=out,
     )
+    items = ec.change_items(changed)
     if fresh is None:
+        if verdict:
+            for row in ec.edit_verdict(items, preview=True):
+                print(row, file=out)
         return None
     path = save_spine_snapshot(desk, episode, fresh)
     ec._note(
@@ -506,6 +514,9 @@ def run_cast_look(
             plate_next_step(desk, fresh, find_card(fresh, str(card["cast_id"]))),
             file=out,
         )
+    if verdict:
+        for row in ec.edit_verdict(items):
+            print(row, file=out)
     return path
 
 
@@ -712,6 +723,9 @@ def run_new_character(
         plan.append(
             f"stage {name} in {frame_id} ({entry['frame_position']}; {entry['pose']})"
         )
+    steps = ["voice and line", "look", "line on screen", f"staged in {frame_id}"][
+        : len(plan)
+    ]
     print(f"ep{episode:02d} new character {name}, in {len(plan)} edits:", file=out)
     for number, step in enumerate(plan, start=1):
         print(f"  {number}. {step}", file=out)
@@ -720,6 +734,8 @@ def run_new_character(
             "(preview only: nothing was sent; each edit after the script gate prints its own cascade when run)",
             file=out,
         )
+        for row in ec.edit_verdict(steps, preview=True):
+            print(row, file=out)
         return None
 
     done: list[str] = []
@@ -749,7 +765,7 @@ def run_new_character(
                 f"  To undo: fictora-produce line --desk {desk} --episode {episode} --remove {line_id} "
                 f"({name}'s card stays; with no line and no frame they are not drawn)."
             )
-        return ec.CommandStopped("\n".join(rows))
+        return ec.EditRefused("\n".join(rows), items=steps[step - 1 :])
 
     # 1. the card and the line, heard.
     current = spine
@@ -896,6 +912,8 @@ def run_new_character(
             file=out,
         )
     print(plate_next_step(desk, current, find_card(current, cast_id)), file=out)
+    for row in ec.edit_verdict(steps):
+        print(row, file=out)
     return desk / "api" / "spine.json"
 
 
