@@ -118,7 +118,9 @@ def test_yes_puts_them_on_the_voice_only_route_and_is_kept(
         "line_ep_02_02",
     }
     assert all(entry["off_screen"] is True for entry in patch["dialogue_lines"])
-    assert patch["cast"] == [{"cast_id": "cast_ren", "visual_brief": None}]
+    assert patch["cast"] == [
+        {"cast_id": "cast_ren", "visual_brief": None, "heard_only": True}
+    ]
     assert _answers(desk)["cast_ren"]["heard_only"] is True
 
     # Asked once: the next run asks nothing and sends nothing.
@@ -198,9 +200,11 @@ def test_a_flag_for_nobody_or_both_ways_is_refused(desk: Path, api: FakeApi) -> 
     assert _patches(api) == []
 
 
-def test_heard_only_with_no_line_yet_keeps_the_brief_and_warns(
+def test_heard_only_with_no_line_yet_is_saved_on_the_card(
     desk: Path, api: FakeApi
 ) -> None:
+    # The server keeps the answer (heard_only) before any line, so no plate is
+    # drawn for them.
     _narrated(api, lines=False)
     out = io.StringIO()
 
@@ -208,9 +212,67 @@ def test_heard_only_with_no_line_yet_keeps_the_brief_and_warns(
         desk, api, api.spine_doc, ask=lambda _p: "y", rerun="step", out=out
     )
 
-    assert _patches(api) == []
+    (patch,) = _patches(api)
+    assert "dialogue_lines" not in patch
+    assert patch["cast"] == [
+        {"cast_id": "cast_ren", "visual_brief": None, "heard_only": True}
+    ]
+    assert _answers(desk)["cast_ren"]["heard_only"] is True
+
+
+def test_an_older_server_without_heard_only_gets_the_lines_and_a_warning(
+    desk: Path, api: FakeApi
+) -> None:
+    _narrated(api)
+
+    def refuse_heard_only(_m: str, _p: str, body: dict[str, Any] | None) -> Any:
+        if any("heard_only" in c for c in (body or {})["patch"].get("cast") or []):
+            raise SystemExit(
+                "HTTP 400 PATCH: invalid_patch: patch.cast.0.heard_only: Extra inputs are not permitted"
+            )
+        return {}
+
+    api.routes[("PATCH", "/v1/spines/sp1")] = refuse_heard_only
+    out = io.StringIO()
+
+    nc.settle_narrators(
+        desk, api, api.spine_doc, ask=lambda _p: "y", rerun="step", out=out
+    )
+
+    first, second = _patches(api)
+    assert first["cast"][0]["heard_only"] is True
+    assert "heard_only" not in second["cast"][0]
+    assert {e["line_id"] for e in second["dialogue_lines"]} == {
+        "line_episode_01_02",
+        "line_ep_02_02",
+    }
+    assert _answers(desk)["cast_ren"]["heard_only"] is True
+
+
+def test_an_older_server_and_no_line_yet_warns(desk: Path, api: FakeApi) -> None:
+    _narrated(api, lines=False)
+    api.routes[("PATCH", "/v1/spines/sp1")] = SystemExit(
+        "HTTP 400 PATCH: invalid_patch: patch.cast.0.heard_only: Extra inputs are not permitted"
+    )
+    out = io.StringIO()
+
+    nc.settle_narrators(
+        desk, api, api.spine_doc, ask=lambda _p: "y", rerun="step", out=out
+    )
+
     assert "no line yet" in out.getvalue()
     assert _answers(desk)["cast_ren"]["heard_only"] is True
+
+
+def test_a_card_the_server_says_is_heard_only_is_not_asked(
+    desk: Path, api: FakeApi
+) -> None:
+    _narrated(api)
+    for card in api.spine_doc["cast"]:
+        if card["cast_id"] == "cast_ren":
+            card["heard_only"] = True
+
+    assert nc.open_questions(api.spine_doc, {}) == []
 
 
 def test_after_the_script_gate_heard_only_names_the_line_edits(

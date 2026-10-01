@@ -12,11 +12,12 @@ plates or the boards, or with ``line --add --new-voice``) it asks the operator
 and saves the answer on the desk (``narrator-answers.json``), so it is asked
 once per character.
 
-* **Yes** puts them on the server's existing voice-only route: every line of
-  theirs is marked ``off_screen`` and their card's ``visual_brief`` is cleared
-  in one ``PATCH`` (the server then draws no plate and stages them on no
-  frame). A character with no line yet keeps their brief: the server draws
-  any character with no line, so the kit warns instead.
+* **Yes** puts them on the server's voice-only route in one ``PATCH``: every
+  line of theirs is marked ``off_screen``, their card's ``visual_brief`` is
+  cleared and ``heard_only`` is saved on the card, which holds even before
+  they have a line, so no plate is ever drawn. Against a server without
+  ``heard_only`` the lines are sent alone and a character with no line yet
+  keeps their brief, with a warning.
 * **No** keeps them an ordinary drawn character. Nothing is sent.
 
 A run with nobody to ask (no terminal, or ``CI`` set) does not guess. It stops
@@ -223,6 +224,7 @@ def open_questions(
         if named_like_narrator(str(card.get("name") or ""))
         and str(card.get("cast_id")) not in answers
         and card.get("voice_only") is not True
+        and card.get("heard_only") is not True
     ]
 
 
@@ -294,8 +296,10 @@ def _lines_of(spine: Mapping[str, Any], cast_id: str) -> list[Mapping[str, Any]]
     ]
 
 
-def heard_only_patch(spine: Mapping[str, Any], cast_id: str) -> dict[str, Any] | None:
-    """Return the story patch that puts one character on the voice-only route, or ``None``.
+def heard_only_patch(
+    spine: Mapping[str, Any], cast_id: str, *, saved_on_card: bool = True
+) -> dict[str, Any] | None:
+    """Return the story patch that puts one character on the voice-only route.
 
     Parameters
     ----------
@@ -303,31 +307,39 @@ def heard_only_patch(spine: Mapping[str, Any], cast_id: str) -> dict[str, Any] |
         The story.
     cast_id
         The character the operator said is heard only.
+    saved_on_card
+        Send ``heard_only: true`` on the card (fictora-drama founder decision
+        5 follow-up): the server then never draws them, even before they have
+        a line. ``False`` for a server without the field.
 
     Returns
     -------
     dict[str, Any] | None
-        ``dialogue_lines`` marking every line of theirs ``off_screen`` and a
-        ``cast`` entry clearing their ``visual_brief``; ``None`` when they
-        have no line yet (the server draws a character with no line, so the
-        brief is kept) .
+        ``dialogue_lines`` marking every line of theirs ``off_screen`` that is
+        not yet, and a ``cast`` entry clearing their ``visual_brief`` and saving
+        ``heard_only``; ``None`` when there is nothing to send.
     """
 
-    lines = _lines_of(spine, cast_id)
-    if not lines:
-        return None
-    patch: dict[str, Any] = {
-        "dialogue_lines": [
-            {"line_id": str(line["line_id"]), "off_screen": True}
-            for line in lines
-            if line.get("off_screen") is not True
+    lines = [
+        line for line in _lines_of(spine, cast_id) if line.get("off_screen") is not True
+    ]
+    patch: dict[str, Any] = {}
+    if lines:
+        patch["dialogue_lines"] = [
+            {"line_id": str(line["line_id"]), "off_screen": True} for line in lines
         ]
-    }
     card = next((c for c in _cards(spine) if c.get("cast_id") == cast_id), {})
-    if card.get("visual_brief") is not None:
-        patch["cast"] = [{"cast_id": cast_id, "visual_brief": None}]
-    if not patch["dialogue_lines"]:
-        patch.pop("dialogue_lines")
+    entry: dict[str, Any] = {"cast_id": cast_id}
+    if card.get("visual_brief") is not None and (
+        saved_on_card or _lines_of(spine, cast_id)
+    ):
+        # Without the saved answer, a character with no line is still drawn,
+        # so their brief is kept for that drawing.
+        entry["visual_brief"] = None
+    if saved_on_card and card.get("heard_only") is not True:
+        entry["heard_only"] = True
+    if len(entry) > 1:
+        patch["cast"] = [entry]
     return patch or None
 
 
@@ -420,43 +432,59 @@ def settle_narrators(
     return given
 
 
+def _send(run: Any, spine: Mapping[str, Any], patch: dict[str, Any]) -> None:
+    run.patch(
+        f"/v1/spines/{spine['spine_id']}",
+        {"spine_version": spine["spine_version"], "patch": patch},
+    )
+
+
 def _put_on_voice_only_route(
     run: Any, spine: Mapping[str, Any], answer: NarratorAnswer, *, out: Any
 ) -> None:
     patch = heard_only_patch(spine, answer.cast_id)
-    if patch is None:
-        if not _lines_of(spine, answer.cast_id):
-            print(
-                f"!! {answer.name}: heard only, saved. They have no line yet, so the server still draws them "
-                "until one of their lines is marked off screen (`line --line ID --off-screen`).",
-                file=out,
-            )
-        else:
-            print(
-                f"[cast] {answer.name}: heard only, never seen (already voice-only on the server).",
-                file=out,
-            )
-        return
+    saved = True
     try:
-        run.patch(
-            f"/v1/spines/{spine['spine_id']}",
-            {"spine_version": spine["spine_version"], "patch": patch},
-        )
+        if patch is not None:
+            try:
+                _send(run, spine, patch)
+            except SystemExit as exc:
+                if "heard_only" not in str(exc.code) or "cascade_required" in str(
+                    exc.code
+                ):
+                    raise
+                # A server before founder decision 5's follow-up: no
+                # ``heard_only`` field. Send the lines alone, as before.
+                saved = False
+                patch = heard_only_patch(spine, answer.cast_id, saved_on_card=False)
+                if patch is not None:
+                    _send(run, spine, patch)
     except SystemExit as exc:
         if "cascade_required" not in str(exc.code):
             raise
-        line_ids = [entry["line_id"] for entry in patch.get("dialogue_lines") or []]
-        steps = "; ".join(
-            f"`line --line {line_id} --off-screen`" for line_id in line_ids
+        line_ids = [
+            entry["line_id"] for entry in (patch or {}).get("dialogue_lines") or []
+        ]
+        steps = (
+            "; ".join(f"`line --line {line_id} --off-screen`" for line_id in line_ids)
+            or "none"
         )
         raise NarratorQuestionOpen(
             f"{answer.name}: heard only, but the script is already approved, so the server needs the cascade "
             f"for it. Mark their lines off screen with the kit's line edit: {steps}. Then run this again."
         ) from exc
-    count = len(patch.get("dialogue_lines") or [])
+    if not saved and not _lines_of(spine, answer.cast_id):
+        print(
+            f"!! {answer.name}: heard only, saved on the desk. This server does not keep the answer on the card "
+            "and they have no line yet, so it still draws them until one of their lines is marked off screen "
+            "(`line --line ID --off-screen`).",
+            file=out,
+        )
+        return
+    count = len((patch or {}).get("dialogue_lines") or [])
     print(
         f"[cast] {answer.name}: heard only, never seen. {count} line(s) marked off screen"
-        + ("; visual brief cleared" if patch.get("cast") else "")
+        + ("; kept on their card" if saved else "")
         + ". No plate is drawn. Saved; not asked again.",
         file=out,
     )
