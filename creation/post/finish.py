@@ -53,6 +53,19 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    printed first and booked as ``thumbnail``. Without it, finish says what a
    cover would cost and spends nothing.
 
+A locked-voice take (take facts ``soundtrack.mode == "target_audio"``: the
+server sent the lines in the locked voices to the video model as its audio, and
+the take's sound is exactly that dialogue track, digital silence between lines)
+finishes by default with the sound it lacks (:mod:`creation.post.soundtrack`):
+``room-tone`` after the effects (and a free check that each line is heard in its
+window), the bed ducked ``TARGET_AUDIO_DUCK_DB`` exactly in each line window,
+the effects snapped to cuts measured up to 2 s from the plan (each measured cut
+printed) and ducked under the line windows, captions timed on the line windows
+(no transcript). Its voices are never muted or replaced without
+``--over-locked-voices``. With no bed or no room tone the chain STOPS before
+the mix (``!! STOPPED``, exit 5): a voice-only take is never made deliverable.
+Facts without ``soundtrack`` (an older server) and native takes finish as before.
+
 Every step writes a new versioned file (``take-epNN-tK-<step>-vN.mp4``); nothing
 is overwritten. A failing step is reported and skipped and the chain carries
 on from the last good file. But a take is not done until music, SFX and the
@@ -137,6 +150,17 @@ from creation.post.desk import (
 from creation.post.media import MediaToolError, measure_loudness, probe_video
 from creation.post.mix import CueLevel, check_duck_db, mix_take
 from creation.post.take_facts import save_take_facts, stale_facts_reason
+from creation.post.soundtrack import (
+    TARGET_AUDIO_CUT_WINDOW_SECONDS,
+    TARGET_AUDIO_DUCK_DB,
+    Soundtrack,
+    lay_room_tone,
+    line_windows,
+    locked_voice_refusal,
+    misplaced_lines,
+    soundtrack_from,
+    unheard_lines,
+)
 from creation.post.voice_fx import PRESETS as VOICE_FX_PRESETS
 from creation.post.sfx import (
     Adjustment,
@@ -158,6 +182,9 @@ from creation.post.watermark import watermark
 
 #: The finish step that lays and captions the episode's inner-voice cues on this take.
 INNER_VOICE_STEP = "inner-voice"
+
+#: The finish step that lays room tone under a locked-voice take (soundtrack ``target_audio``).
+ROOM_TONE_STEP = "room-tone"
 
 #: ``finish`` exit code: files were written but music, SFX or the mix did not go on.
 FINISH_INCOMPLETE = 5
@@ -202,6 +229,12 @@ class FinishResult:
     hand_steps: tuple[str, ...] = ()
     #: Loud lines from the drawn-text check on the raw take (empty when it found none).
     text_warnings: list[str] = field(default_factory=list)
+    #: ``Soundtrack: …`` (:meth:`creation.post.soundtrack.Soundtrack.one_line`).
+    soundtrack: str = ""
+    #: The take's sound is the show's locked voices: room tone is required too.
+    locked_voices: bool = False
+    #: Why the chain stopped before a deliverable (a locked-voice take with no bed or room tone).
+    stopped: str = ""
 
     def _ran(self, name: str) -> bool:
         return any(step.step == name and step.status == "ran" for step in self.steps)
@@ -224,6 +257,8 @@ class FinishResult:
             missing.append("SFX")
         if not self._ran("mix"):
             missing.append("mix")
+        if self.locked_voices and not self._ran(ROOM_TONE_STEP):
+            missing.append("room tone")
         missing += [
             name
             for name in self.hand_steps
@@ -267,6 +302,8 @@ class FinishResult:
         ]
         if self.cues_not_laid and "SFX" not in missing:
             marks[1] += f" (!! {len(self.cues_not_laid)} planned cue(s) not laid)"
+        if self.locked_voices:
+            marks.append(f"room tone {'✗' if 'room tone' in missing else '✓'}")
         marks.append(f"captions {'✓' if self._ran('captions') else '✗'}")
         marks += [
             f"{'inner voice' if name == INNER_VOICE_STEP else f'hand {name}'} "
@@ -279,6 +316,10 @@ class FinishResult:
         """Final file, loudness, each step, then the sound line (cost stays in run notes only)."""
 
         lines = [f"Final: {self.final}", f"Loudness: {self.loudness or 'not measured'}"]
+        if self.soundtrack:
+            lines.append(self.soundtrack)
+        if self.stopped:
+            lines.append(f"!! STOPPED: {self.stopped}")
         lines += [
             f"- {step.step}: {step.status} — {step.detail}" for step in self.steps
         ]
@@ -293,6 +334,8 @@ class FinishResult:
             "source": str(self.source),
             "final": str(self.final),
             "loudness": self.loudness,
+            "soundtrack": self.soundtrack,
+            "stopped": self.stopped or None,
             "complete": self.complete,
             "missing": list(self.sound_missing),
             "cues_not_laid": list(self.cues_not_laid),
@@ -531,9 +574,22 @@ def run_finish(
     draw_thumbnail: bool = False,
     voice_audio: AudioService | None = None,
     text_ocr: OcrRunner | None = None,
+    over_locked_voices: bool = False,
     stream: TextIO | None = None,
 ) -> FinishResult:
     """Run the whole local post chain on one accepted take.
+
+    A take whose facts say its sound is the show's locked voices
+    (``soundtrack.mode == "target_audio"``, :mod:`creation.post.soundtrack`)
+    finishes the same way with four differences: room tone is laid under the
+    whole take (``room-tone``, after the effects), the bed ducks exactly
+    ``TARGET_AUDIO_DUCK_DB`` inside each line window, the effects follow cuts
+    measured up to 2 s off the plan (every measured cut is printed), and the
+    captions are timed on the line windows. With no bed or no room tone the
+    chain STOPS before the mix: a voice-only take is never made deliverable.
+    The voices are never muted or replaced on such a take without
+    ``over_locked_voices``. Facts with no ``soundtrack`` (an older server)
+    finish exactly as before.
 
     Parameters
     ----------
@@ -583,6 +639,9 @@ def run_finish(
         ``--thumbnail``: when no cover is on the desk, draw one on the server
         (:data:`creation.post.thumbnail.THUMBNAIL_USD`, printed first). Off by
         default: finish never spends on a cover without the opt-in.
+    over_locked_voices
+        ``--over-locked-voices``: allow ``--mute``, ``--voice`` or a revoice /
+        voice-fx file on a take whose sound is the locked voices (warned, not refused).
     stream
         Progress output (stderr by default).
 
@@ -597,7 +656,8 @@ def run_finish(
         When there is no take to finish.
     ValueError
         When ``duck_db`` is out of range, or a mute, voice or cue cannot go on the
-        take (outside it, silent); checked before any step runs.
+        take (outside it, silent), or the voices of a locked-voice take would be
+        changed without ``over_locked_voices``; checked before any step runs.
     """
 
     out = stream or sys.stderr
@@ -619,6 +679,42 @@ def run_finish(
         )
     takes = run_dir / "takes"
     base = f"take-ep{episode:02d}-{take_id}"
+    # The take facts, read (or fetched) once: they say whose voices the take's sound is.
+    facts_state: dict[str, Any] = {
+        "path": saved_take_facts(desk, episode, take_id),
+        "error": None,
+    }
+    if facts_state["path"] is None:
+        try:
+            facts_state["path"] = facts_fetcher(desk, episode, take_id)
+        except STEP_ERRORS as exc:
+            facts_state["error"] = exc  # the sfx step reports it, as before
+    soundtrack = (
+        soundtrack_from(json.loads(facts_state["path"].read_text(encoding="utf-8")))
+        if facts_state["path"] is not None
+        else Soundtrack()
+    )
+    locked = soundtrack.target_audio
+    if locked:
+        changes = [
+            what
+            for what, asked in (
+                ("finish --mute", bool(mutes)),
+                ("finish --voice", bool(voices)),
+                (
+                    f"finishing the revoice / voice-fx file `{source.name}`",
+                    treated_voice(source),
+                ),
+            )
+            if asked
+        ]
+        for what in changes:
+            if not over_locked_voices:
+                raise ValueError(locked_voice_refusal(soundtrack, what))
+            print(
+                locked_voice_refusal(soundtrack, what) + " (given: carrying on)",
+                file=out,
+            )
     found_spine = saved_spine(desk, episode)
     spine = found_spine[0] if found_spine else None
     board = approved_board(desk, episode, take_id)
@@ -633,7 +729,15 @@ def run_finish(
         + ((INNER_VOICE_STEP,) if thought_plan.any else ())
         + (("cues",) if hand.cues else ())
     )
-    result = FinishResult(source=source, final=source, hand_steps=hand_steps)
+    result = FinishResult(
+        source=source,
+        final=source,
+        hand_steps=hand_steps,
+        soundtrack=soundtrack.one_line() if facts_state["path"] is not None else "",
+        locked_voices=locked,
+    )
+    # A locked-voice take ducks exactly inside its line windows unless --duck-db says otherwise.
+    mix_duck_db = duck_db if duck_db is not None or not locked else TARGET_AUDIO_DUCK_DB
     current = source
     bed_state: dict[str, Any] = {"path": None, "cues": (), "speech": None}
     voice_state: dict[str, Path | None] = {"path": None}
@@ -645,9 +749,12 @@ def run_finish(
         f"Finishing {source.name}: board frames, sound effects, music, look, mix, captions, mark (2-4 minutes)",
         file=out,
     )
+    if facts_state["path"] is not None:
+        print(soundtrack.one_line(), file=out)
     append_run_note(
         run_dir,
-        f"Finish chain on `{source.name}` (board: `{board.name if board else 'none'}`)",
+        f"Finish chain on `{source.name}` (board: `{board.name if board else 'none'}`)"
+        + (f"; {soundtrack.one_line()}" if locked else ""),
     )
     print("[text] Looking for words the video drew into the take", file=out, flush=True)
     try:
@@ -866,7 +973,7 @@ def run_finish(
         """Move the planned cues onto the shots as filmed (fictora-drama #487's placement, done here)."""
 
         shots = planned_shots(payload)
-        if len(shots) < 2:
+        if len(shots) < 2 and not locked:
             return plan, "cues as planned (the take facts plan one shot)"
         # Cuts are measured on the raw take when the finished file keeps its picture timeline: a freeze
         # hold ends in a jump that would read as a cut, and soften fades the real ones.
@@ -879,15 +986,23 @@ def run_finish(
             duration = probe_video(take).duration_seconds
         except (RuntimeError, OSError, MediaToolError) as exc:
             return plan, f"cues on the planned shots (cuts not measured: {exc})"[:300]
-        filmed = filmed_shot_windows(shots, cuts, duration=duration)
+        if locked:
+            # A locked-voice take: cuts land up to ~1 s+ off the plan (L-20261001-10), so the snap is wider
+            # and every measured cut is printed.
+            filmed = filmed_shot_windows(
+                shots, cuts, duration=duration,
+                window=TARGET_AUDIO_CUT_WINDOW_SECONDS, show_measured=True,
+            )  # fmt: skip
+        else:
+            filmed = filmed_shot_windows(shots, cuts, duration=duration)
         return follow_filmed_cuts(plan, filmed), (
             f"cues follow the filmed cuts measured on `{measured.name}`: {filmed.one_line()}"
         )
 
     def do_sfx(take: Path) -> StepReport:
-        facts = saved_take_facts(desk, episode, take_id) or facts_fetcher(
-            desk, episode, take_id
-        )
+        if facts_state["error"] is not None:
+            raise facts_state["error"]
+        facts = facts_state["path"]
         if facts is None:
             return StepReport(
                 "sfx",
@@ -907,6 +1022,10 @@ def run_finish(
             print(f"[sfx] {warning}", file=out, flush=True)
             append_run_note(run_dir, f"Finish · sfx: {warning}")
         plan, filmed_note = on_filmed_cuts(plan_from_take_facts(payload), payload, take)
+        if locked:
+            # The dialogue track is the take's sound: its line windows are exact and do not move with the cuts.
+            plan = replace(plan, speech=line_windows(soundtrack))
+            filmed_note += f"; effects duck under the {len(plan.speech)} line window(s) of the dialogue track"
         if thought_state["laid"]:
             # The effects duck under a laid thought like under any line.
             plan = replace(plan, speech=(*plan.speech, *thought_windows()))
@@ -978,6 +1097,45 @@ def run_finish(
             not_laid=sfx.skipped,
         )
 
+    def spine_line_texts() -> dict[str, str]:
+        """``line_id`` to the words heard (``spoken_text``, else ``text``) for this episode's lines."""
+
+        from creation.spine_view import episode_id_for
+
+        if spine is None:
+            return {}
+        episode_id = episode_id_for(spine, episode)
+        return {
+            str(line.get("line_id")): str(
+                line.get("spoken_text") or line.get("text") or ""
+            )
+            for beat in spine.get("beats") or []
+            if isinstance(beat, dict) and beat.get("episode_id") == episode_id
+            for line in beat.get("dialogue_lines") or []
+            if isinstance(line, dict) and line.get("line_id")
+        }
+
+    def do_room_tone(take: Path) -> StepReport:
+        """Room tone under the whole locked-voice take, then a free check that each line is heard in its window."""
+
+        from creation.post.review import saved_words
+
+        toned = lay_room_tone(
+            take, next_versioned_path(takes, f"{base}-room-tone", ".mp4")
+        )
+        checks = [f"!! {line}" for line in unheard_lines(source, soundtrack)]
+        words = saved_words(desk, episode, take_id)
+        heard = f"{len(soundtrack.lines) - len(checks)} of {len(soundtrack.lines)} line(s) heard in their window"
+        if words is not None and not treated_voice(source):
+            problems = misplaced_lines(soundtrack, words, spine_line_texts())
+            checks += [f"!! {problem}" for problem in problems]
+            heard += f"; transcript `{words.name}`: {'checked' if not problems else 'see !!'}"
+        detail = f"room tone under the whole take; {heard}" + "".join(
+            f"; {c}" for c in checks
+        )
+        append_run_note(run_dir, f"Finish · room tone -> `{toned.name}`: {detail}")
+        return StepReport(ROOM_TONE_STEP, "ran", detail, toned)
+
     def do_bed(_take: Path) -> StepReport:
         bed = resolve_bed(desk, spine=spine, music=music, maker=bed_maker)
         bed_state["path"] = bed.path
@@ -1014,10 +1172,17 @@ def run_finish(
             next_versioned_path(takes, f"{base}-mix", ".mp4"),
             bed=bed_state["path"],
             bed_db=bed_db,
-            duck_db=duck_db,
+            duck_db=mix_duck_db,
             voice_source=thought_state["path"] or voice_state["path"] or source,
             cues=bed_state["cues"],
             buses=True,
+            duck_windows=(
+                sorted(
+                    [*line_windows(soundtrack), *hand.voice_windows, *thought_windows()]
+                )
+                if locked
+                else None
+            ),
         )
         buses = (
             f" (buses for review: {', '.join(f'`{b.name}`' for b in mixed.buses)})"
@@ -1043,6 +1208,11 @@ def run_finish(
 
         if spine is None:
             return None, ""
+        if locked and not treated_voice(source):
+            return (
+                None,
+                "timed on the take facts' line windows (the locked-voice dialogue track; no transcript)",
+            )
         if treated_voice(source):
             words = newest_versioned(takes, f"{base}-revoice-words") or saved_words(
                 desk, episode, take_id
@@ -1125,6 +1295,14 @@ def run_finish(
                 ],
                 # Only this take's beats' lines: t2 is never captioned with t1's.
                 take_index=thoughts.take_number(take_id),
+                line_spans=(
+                    {
+                        line.line_id: Span(line.start, line.end)
+                        for line in soundtrack.lines
+                    }
+                    if locked and not treated_voice(source)
+                    else None
+                ),
             )
         except ValueError as exc:
             if "no dialogue lines" in str(exc):
@@ -1255,11 +1433,27 @@ def run_finish(
     step("sfx", "Laying the take's sound effects", do_sfx)
     if "cues" in hand_steps:
         step("cues", "Laying the hand cues", do_cues)
+    if locked:
+        step(ROOM_TONE_STEP, "Laying room tone under the locked voices", do_room_tone)
     step("bed", "Finding the show's music bed", do_bed)
-    step("colour", "Matching the look to the approved board", do_colour)
-    step("mix", "Mixing the bed under the voice at a measured level", do_mix)
-    step("captions", "Burning house captions", do_captions)
-    step("watermark", "Putting the Sokii mark on", do_watermark)
+    if locked and not (result._ran("bed") and result._ran(ROOM_TONE_STEP)):
+        lacking = " and ".join(
+            name
+            for name, step_name in (("music bed", "bed"), ("room tone", ROOM_TONE_STEP))
+            if not result._ran(step_name)
+        )
+        result.stopped = (
+            f"this take's sound is only the locked voices (digital silence between lines) and it has no "
+            f"{lacking}. Nothing deliverable was made: no mix, captions or mark. Fix the step named above "
+            "(a bed: `set-bed --path <file>`, or let finish make one) and finish again"
+        )
+        print(f"!! STOPPED: {result.stopped}", file=out, flush=True)
+        append_run_note(run_dir, f"Finish · STOPPED: {result.stopped}")
+    else:
+        step("colour", "Matching the look to the approved board", do_colour)
+        step("mix", "Mixing the bed under the voice at a measured level", do_mix)
+        step("captions", "Burning house captions", do_captions)
+        step("watermark", "Putting the Sokii mark on", do_watermark)
     if result.complete:
         step(
             "thumbnail",
@@ -1287,7 +1481,7 @@ def run_finish(
         final=current,
         bed=bed_state["path"],
         bed_db=bed_db,
-        duck_db=duck_db,
+        duck_db=mix_duck_db,
         hand_voices=[
             {"file": line.path.name, "start": line.start, "seconds": round(seconds, 3),
              "line": voice_line_text(line.path)}

@@ -594,8 +594,13 @@ def run_revoice(
     voice_db: float = 0.0,
     audio: AudioService | None = None,
     out: TextIO | None = None,
+    over_locked_voices: bool = False,
 ) -> Path:
     """Re-voice one character's lines on a filmed take in their locked voice.
+
+    A take whose facts say its sound is already the show's locked voices
+    (``soundtrack.mode == "target_audio"``) is refused before anything is spent,
+    unless ``over_locked_voices`` (then it is warned about and revoiced).
 
     Parameters
     ----------
@@ -617,6 +622,8 @@ def run_revoice(
         Generated-audio service for the dry lines and the transcript (the Drama API by default).
     out
         Where results print.
+    over_locked_voices
+        ``--over-locked-voices``: revoice a locked-voice take anyway (a voice picked after it was filmed).
 
     Returns
     -------
@@ -626,11 +633,22 @@ def run_revoice(
     Raises
     ------
     ValueError
-        No locked voice, no line for the character, or none of their lines heard.
+        No locked voice, no line for the character, none of their lines heard, or
+        the take's sound is already the locked voices (without ``over_locked_voices``).
     """
+
+    from creation.post.soundtrack import locked_voice_refusal, saved_soundtrack
 
     out = out or sys.stdout
     desk = desk.expanduser().resolve()
+    soundtrack = saved_soundtrack(desk, episode, take_id)
+    if soundtrack.target_audio:
+        warning = locked_voice_refusal(
+            soundtrack, f"revoice of ep{episode:02d} {take_id}"
+        )
+        if not over_locked_voices:
+            raise ValueError(warning)
+        print(f"{warning} (given: revoicing anyway)", file=out)
     source = (
         take_file.expanduser().resolve()
         if take_file

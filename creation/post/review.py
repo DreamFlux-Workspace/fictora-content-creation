@@ -1170,6 +1170,51 @@ def people_section(
     )
 
 
+# --- Soundtrack (whose voices the take's sound is) ------------------------------------------------------------
+
+
+def soundtrack_section(
+    facts: Mapping[str, Any] | None, cast_names: Mapping[str, str]
+) -> Section:
+    """Whose voices the take's sound is (``soundtrack`` in the take facts), and what finish lays for it.
+
+    Parameters
+    ----------
+    facts
+        The saved take facts (or ``None``).
+    cast_names
+        ``cast_id`` to display name.
+
+    Returns
+    -------
+    Section
+        Always ``–`` (nothing measured here; finish checks each line is heard in its window).
+    """
+
+    from creation.post.soundtrack import soundtrack_from, soundtrack_lines
+
+    threshold = "from the take facts"
+    if facts is None:
+        return Section("Soundtrack", NONE, "no take facts on the desk", threshold)
+    soundtrack = soundtrack_from(facts)
+    head, *rows = soundtrack_lines(facts, cast_names)
+    details = [row.strip() for row in rows]
+    if soundtrack.target_audio:
+        details.append(
+            "The voices are already the locked voices: do not revoice. finish lays room tone, the bed "
+            "(ducked in each line window) and the effects on the measured cuts, and stops if it cannot."
+        )
+    return Section(
+        "Soundtrack",
+        NONE,
+        head.removeprefix("Soundtrack: "),
+        threshold,
+        details,
+        {"soundtrack": {"mode": soundtrack.mode, "sent": soundtrack.sent, "reason": soundtrack.reason,
+                        "lines": len(soundtrack.lines)}},
+    )  # fmt: skip
+
+
 # --- The review ---------------------------------------------------------------------------------------------
 
 
@@ -1342,6 +1387,10 @@ def review_take(
     found = saved_spine(desk, episode)
     people = people_section(facts, cast_names_from(found[0] if found else None))
     sections = [loud, cuts, frames, board_sec, text, lines, people]
+    if facts is not None and "soundtrack" in facts.get("take_facts", facts):
+        sections.append(
+            soundtrack_section(facts, cast_names_from(found[0] if found else None))
+        )
     if kind == "finished":
         sections.append(safe_zones_section(take))
     return TakeReview(

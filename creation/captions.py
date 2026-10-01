@@ -53,7 +53,7 @@ import shutil
 import subprocess
 import sys
 import unicodedata
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -690,8 +690,9 @@ def time_lines(
     line_ends: Sequence[float] | None = None,
     words: Sequence[HeardWord] | None = None,
     spans: Callable[[], Sequence[Span]] | None = None,
+    known: Sequence[Span | None] | None = None,
 ) -> LineTiming:
-    """Place every line: transcript words first, then speech spans, hand times on top.
+    """Place every line: known windows first, then transcript words, then speech spans, hand times on top.
 
     Parameters
     ----------
@@ -708,6 +709,11 @@ def time_lines(
         Speech spans of the take, asked for only when a line needs them (no
         hand start and no transcript match, or a first word Whisper stretched
         back over silence: :func:`speech_onset_in`). Asked at most once.
+    known
+        Per line (same order), the window the line plays in when it is known
+        exactly (a locked-voice take's dialogue track, from the take facts'
+        ``soundtrack.lines``), else ``None``. A known window is used as heard:
+        method ``lines``, nothing transcribed or detected for it.
 
     Returns
     -------
@@ -727,9 +733,13 @@ def time_lines(
             raise ValueError(f"{flag} given {len(given)} time(s) for {n} line(s)")
     if spans is not None:
         spans = functools.cache(spans)  # silencedetect runs once, whoever asks first
+    by_known: list[Span | None] = [
+        known[i] if known and i < len(known) else None for i in range(n)
+    ]
     by_words: list[Span | None] = (
         word_anchors(lines, words, spans) if words else [None] * n
     )
+    by_words = [k if k is not None else w for k, w in zip(by_known, by_words)]
     by_speech: list[Span | None] = [None] * n
     if not line_starts and any(span is None for span in by_words):
         if spans is None:
@@ -741,7 +751,7 @@ def time_lines(
     fixed: list[bool] = []
     for i, text in enumerate(texts):
         auto, auto_how = (
-            (by_words[i], "words")
+            (by_words[i], "lines" if by_known[i] is not None else "words")
             if by_words[i] is not None
             else (by_speech[i], "speech")
         )
@@ -1413,6 +1423,7 @@ def caption_take(
     words_on_english: bool = False,
     fixed_lines: Sequence[tuple[CaptionLine, Span]] = (),
     take_index: int | None = None,
+    line_spans: Mapping[str, Span] | None = None,
 ) -> CaptionResult:
     """Caption the newest raw take on a desk episode.
 
@@ -1457,6 +1468,10 @@ def caption_take(
         splits them). ``None`` with ``take`` given captions every line of the
         episode (a joined episode file); with no ``take`` the newest ``t1`` raw
         file is captioned as take 1.
+    line_spans
+        ``line_id`` to the window the line plays in, when known exactly (a
+        locked-voice take's ``soundtrack.lines``): those lines are timed on it
+        (method ``lines``); any other line is timed as usual.
 
     Returns
     -------
@@ -1536,6 +1551,9 @@ def caption_take(
             spans=lambda: speech_spans(
                 detect_silences(ffmpeg, source, duration), duration
             ),
+            known=[(line_spans or {}).get(line.line_id) for line in caption_lines]
+            if line_spans
+            else None,
         )
         if caption_lines
         else LineTiming((), (), (), ())

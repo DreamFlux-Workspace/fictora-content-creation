@@ -1214,6 +1214,7 @@ def collect_takes(
                 )
                 priced = take_facts_usd(facts, on=today)
                 on_screen += on_screen_lines(take_id, facts, cast_names)
+                on_screen += take_soundtrack_lines(take_id, facts)
                 state.remember_server_lane(
                     server_lane(facts)
                 )  # the caller saves the state
@@ -1282,6 +1283,30 @@ def on_screen_lines(
     return [f"{take_id} on screen, per shot (take facts):"] + [
         f"  {line}" for line in shots
     ]
+
+
+def take_soundtrack_lines(take_id: str, facts: dict[str, Any] | None) -> list[str]:
+    """``tK Soundtrack: …`` when the server said whose voices the take's sound is; empty from an older server.
+
+    Parameters
+    ----------
+    take_id
+        ``t1`` ...
+    facts
+        The take facts (or ``None``).
+
+    Returns
+    -------
+    list[str]
+        One printable line, or none.
+    """
+
+    from creation.post.soundtrack import soundtrack_from
+
+    soundtrack = soundtrack_from(facts)
+    if not soundtrack.sent:
+        return []
+    return [f"{take_id} {soundtrack.one_line()}"]
 
 
 def foreign_warning(foreign: list[str]) -> str:
