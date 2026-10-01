@@ -89,8 +89,15 @@ Write it with the human (`docs/content-ops/templates/brief.md`) and check before
 ## Hook: the first three seconds
 
 - Frame 0 is mid-motion on a face (a hand already moving, a head already turning). It is the cover. Never an establishing wide, never a still.
-- The first line lands by about 0.5 s.
-- The reveal (what the episode is about) is on screen or said by about 3 s. When it must land by 3 s, keep the first line to about 2 s: a 4-second first line pushes the reveal to 4 s.
+- The first line lands by about 0.5 s. A silent opening is allowed when the picture carries the hook (power shown, an emotional close-up, an impossible image).
+- First line 10 words or fewer; no backstory in it.
+- The reveal (what the episode is about) is on screen or said by about 3 s, after the commitment, never before it. When it must land by 3 s, keep the first line to about 2 s: a 4-second first line pushes the reveal to 4 s.
+- Lines 10 words or fewer; a take about 22 spoken words or fewer.
+- The last beat lands one new fact, never a fade. A quiet genre may close softly.
+- Never a line addressed to the viewer.
+- At most one spectacle beat per take; none is fine.
+
+The server writer already follows these. The word counts come back as nudges (fictora-drama #538), printed after the draft, `author`, `line` / `edit` and a cascade preview as `note: beat 3 line runs 14 words (10 recommended) — …` under `authoring notes (nudges: nothing was blocked or changed)`, and added to `run-notes.md`. They never block, never exit non-zero, and nothing is shortened: tell the human, and the creator decides. An older server sends none.
 
 A board that opens on a wide or a pause is redrawn with that as the shape note, before any take. A weak open is never fixed by re-filming.
 

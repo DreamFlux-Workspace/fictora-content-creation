@@ -7,7 +7,7 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] A new desk, never an existing one overwritten: if the date and slug already exist, the human chose (continue it, or a new name)
 - [ ] `fictora-produce start` carries `--cut-tempo` chosen from the scene (shot plan) and the nearest `--preset-id`; a look frame to pin, or look notes planned for the preset's world
 - [ ] No arc asked for and no later episode outlined (episode 1 alone)
-- [ ] Hook: frame 0 mid-motion on a face, first line by ~0.5 s, the reveal by ~3 s
+- [ ] Hook: frame 0 mid-motion on a face, first line by ~0.5 s (or a silent open the picture carries), the reveal by ~3 s
 - [ ] Real ages written; nobody under 18 in any romance; voice-only characters marked in the cast table
 - [ ] Each line said TO someone; a silent comic beat costs a line in 15 s, and the human chose
 - [ ] Source material: licence and credit named (SCP is CC BY-SA 3.0, credit the author); no unlicensed look copied
@@ -47,7 +47,8 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] Every line is said TO someone in the room, or to an off-screen voice with a source
 - [ ] Every brief line the writers changed or dropped is shown beside the spine line; a "keep exactly" line that was dropped, moved to another speaker or translated is fixed
 - [ ] Japanese / Korean lines sound native for who speaks to whom; a dialect has a native speaker's yes
-- [ ] First beat carries the hook: mid-motion on a face, a line by ~0.5 s, the reveal by ~3 s
+- [ ] First beat carries the hook: mid-motion on a face, a line by ~0.5 s (or a silent open the picture carries), the reveal by ~3 s
+- [ ] Authoring notes (`note: … words (10 recommended)`) shown to the human; they are nudges, the creator decides, nothing was blocked
 - [ ] Human said yes to the lines
 
 ## Before the board is approved

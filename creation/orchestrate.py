@@ -21,6 +21,7 @@ from typing import Any
 
 import httpx
 
+from creation.authoring_warnings import authoring_warnings, for_episode, warning_lines
 from creation.brief_lines import brief_vs_spine_lines
 from creation.new_cast import cast_owing_pictures
 from creation.desk_media_urls import (
@@ -915,6 +916,20 @@ def run_step(desk: Path, *, confirm_spend: bool = False) -> StepResult:
             if versus:
                 _note(ep_dir, versus)
                 gate += "\n" + versus
+            # Nudges only (fictora-drama #538): the job's own list, else the spine's for this episode.
+            notes = "\n".join(
+                warning_lines(
+                    for_episode(
+                        authoring_warnings(plan) or authoring_warnings(spine),
+                        episode_id_for(spine, ep),
+                        spine,
+                    ),
+                    spine,
+                )
+            )
+            if notes:
+                _note(ep_dir, notes)
+                gate += "\n" + notes
             return StepResult(
                 state.phase,
                 f"Draft done. spine_id={spine_id}. {sum(counts.values())} lines on the desk.\n{gate}\n"
