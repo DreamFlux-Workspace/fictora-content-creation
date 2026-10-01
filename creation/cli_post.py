@@ -324,6 +324,12 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="A finished take (the -sokii final or its -cap file), in order (repeat).",
     )  # fmt: skip
     join.add_argument(
+        "--from-record", type=Path, action="append", default=None, metavar="RECORDED_FILE",
+        help="A --take-file no finish record names (a re-captioned copy) joins as the recorded file it was "
+        "made from: same size, frames and sound are checked, and the stand-in goes in the run notes. "
+        "The Nth --from-record goes with the Nth such --take-file. Use the un-marked -cap master, not the final.",
+    )  # fmt: skip
+    join.add_argument(
         "--dissolve",
         type=float,
         default=None,
@@ -506,6 +512,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
                 args.episodes or ([args.episode] if args.episode is not None else [])
             ),
             take_files=tuple(args.take_file or ()),
+            from_records=tuple(args.from_record or ()),
             dissolve=args.dissolve,
             bed=args.bed,
             bed_db=args.bed_db,

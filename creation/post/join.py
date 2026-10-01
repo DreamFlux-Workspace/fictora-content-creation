@@ -13,7 +13,10 @@ What ``join`` does, in order:
    ``freeze``, ``soften`` on a file the record names) has its own record, whose
    pre-bed take and master were edited the same way, so it joins like any
    finished take (the newest record is the edited one). A file no record names
-   is refused.
+   is refused, unless ``--from-record R`` says which recorded file it was made
+   from (a re-captioned copy): it then joins as that take, with its own
+   picture and the record's sound before the bed, once it has R's size, frame
+   count and sound (L-20261001-9). The stand-in is said in the run notes.
 2. **Checks, before anything is written.** Every picture 24 fps and the same
    size; the pre-bed take the same length as its picture (one frame of slack).
 3. **One bed.** Each take's pre-bed sound (voice, effects, hand cues) is joined
@@ -126,6 +129,8 @@ class JoinPart:
     picture: Path
     pre_bed: Path
     record: FinishRecord
+    #: Set when the picture is a copy made from a recorded file (``--from-record``): what it stands in for.
+    stands_in: str | None = None
 
     @property
     def label(self) -> str:
@@ -341,30 +346,138 @@ def episode_parts(desk: Path, episode: int) -> list[JoinPart]:
     return parts
 
 
-def file_parts(desk: Path, files: tuple[Path, ...]) -> list[JoinPart]:
+#: A copy's sound may differ from the recorded file's by this much (median over 0.1 s windows) and
+#: still be the same sound: a stream copy is 0 dB, an AAC re-encode a fraction of a dB.
+COPY_SOUND_MEDIAN_DB = 1.0
+#: ... and by this much in its worst tenth of windows.
+COPY_SOUND_P90_DB = 3.0
+#: Windows quieter than this on both files are silence and not compared.
+COPY_SOUND_FLOOR_DB = -60.0
+
+
+def _sound_matches(copy: Path, source: Path) -> tuple[bool, str]:
+    a = list(measure_rms_windows(copy, window_seconds=0.1))
+    b = list(measure_rms_windows(source, window_seconds=0.1))
+    if abs(len(a) - len(b)) > 1:
+        return False, f"{len(a) / 10:.1f}s of sound against {len(b) / 10:.1f}s"
+    pairs = [abs(x - y) for x, y in zip(a, b) if max(x, y) > COPY_SOUND_FLOOR_DB]
+    if not pairs:
+        return True, "both silent"
+    median = statistics.median(pairs)
+    p90 = sorted(pairs)[int(0.9 * (len(pairs) - 1))]
+    words = (
+        f"level differs by {median:.1f} dB median, {p90:.1f} dB at the 90th percentile"
+    )
+    return median <= COPY_SOUND_MEDIAN_DB and p90 <= COPY_SOUND_P90_DB, words
+
+
+def _stand_in(desk: Path, file: Path, source: Path) -> JoinPart:
+    """A copy of a recorded file (``--from-record``) as that take's part, once it is the same take."""
+
+    asked = file.expanduser().resolve()
+    source = source.expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"--from-record: not found: {source}")
+    record = record_for_file(desk, source)
+    if record is None:
+        raise ValueError(
+            f"--from-record {source.name}: no finish record names that file either. Name the finished "
+            "file the copy was made from (the take's -cap master)."
+        )
+    which = next(
+        name
+        for name in ("final", "master", "pre_bed")
+        if (p := record.resolve(desk, name)) is not None and p.resolve() == source
+    )
+    if which == "final":
+        raise ValueError(
+            f"--from-record {source.name} is the marked final: a copy of it carries the mark, and join "
+            f"marks the joined file once. Make the copy from the un-marked master "
+            f"`{Path(record.master).name}` and pass that with --from-record."
+        )
+    base = _part(desk, record, asked=asked)
+    copy_info, source_info = probe_video(asked), probe_video(source)
+    problems = []
+    if (copy_info.width, copy_info.height) != (source_info.width, source_info.height):
+        problems.append(
+            f"it is {copy_info.width}x{copy_info.height}, the recorded file {source_info.width}x{source_info.height}"
+        )
+    frames, source_frames = count_frames(asked), count_frames(source)
+    if abs(frames - source_frames) > 1:
+        problems.append(
+            f"not the same length: {frames} frames against the recorded file's {source_frames}"
+        )
+    if not copy_info.has_audio:
+        problems.append("it has no sound")
+    else:
+        same, words = _sound_matches(asked, source)
+        if not same:
+            problems.append(f"its sound is not the recorded file's ({words})")
+    if problems:
+        raise ValueError(
+            f"{asked.name} cannot stand in for {source.name}: {'; '.join(problems)}. --from-record takes "
+            "a copy of a recorded file with only the picture changed (re-captioned): same size, same "
+            "frames, same sound."
+        )
+    _ok, words = _sound_matches(asked, source)
+    note = (
+        f"{asked.name} stands in for {source.name} (ep{record.episode:02d} {record.take_id}, "
+        f"record {record.path.name if record.path else '?'}): same size, {frames} frames, sound {words}; "
+        "its picture is joined, with the record's sound before the bed"
+    )
+    return JoinPart(
+        record.episode, record.take_id, asked, base.pre_bed, record, stands_in=note
+    )
+
+
+def file_parts(
+    desk: Path, files: tuple[Path, ...], from_records: tuple[Path, ...] = ()
+) -> list[JoinPart]:
     """Parts for explicit finished files, in the order given.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    files
+        ``--take-file`` paths in order.
+    from_records
+        ``--from-record`` paths: the Nth names the recorded file the Nth ``--take-file`` that no
+        record names was copied from (a re-captioned copy).
 
     Raises
     ------
     ValueError
-        When a file has no finish record naming it.
+        When a file has no finish record naming it and no ``--from-record`` for it, or a copy is
+        not the same take as the recorded file it names.
     """
 
+    pending = list(from_records)
     parts = []
     for file in files:
         if not file.expanduser().is_file():
             raise FileNotFoundError(f"take not found: {file}")
         record = record_for_file(desk, file)
+        if record is None and pending:
+            parts.append(_stand_in(desk, file, pending.pop(0)))
+            continue
         if record is None:
             raise ValueError(
                 f"{file.name}: no finish record names this file, so its sound before the bed is unknown and "
                 "one bed cannot go across the join. Pass a file `finish` made (the -sokii final or the "
                 "un-marked -cap file), or the output of trim / tempo / freeze / soften run on one of them "
-                "(those carry the record). A file edited from a file no record names (a raw take, a file "
-                "edited by hand), or edited while a file its record names was gone, has none: run finish "
-                "on the take again, then edit the new finished file."
+                "(those carry the record). A copy of a recorded file with only the picture changed (a "
+                "re-caption) joins with --from-record <the recorded file it was made from>. A file edited "
+                "from a file no record names (a raw take, a file edited by hand), or edited while a file "
+                "its record names was gone, has none: run finish on the take again, then edit the new "
+                "finished file."
             )
         parts.append(_part(desk, record, asked=file))
+    if pending:
+        raise ValueError(
+            f"--from-record {', '.join(p.name for p in pending)}: every --take-file is already one a finish "
+            "record names, so there is nothing for it to stand in for"
+        )
     return parts
 
 
@@ -832,6 +945,7 @@ def run_join(
     *,
     episodes: tuple[int, ...] = (),
     take_files: tuple[Path, ...] = (),
+    from_records: tuple[Path, ...] = (),
     dissolve: float | None = None,
     bed: Path | None = None,
     bed_db: float | None = None,
@@ -852,6 +966,8 @@ def run_join(
         One episode (its takes in order) or several (a series cut).
     take_files
         Finished takes in order, instead of ``episodes``.
+    from_records
+        With ``take_files``: the recorded file each unrecorded take file was copied from (:func:`file_parts`).
     dissolve
         Seconds at every seam; default a cut between takes, 0.25 s between episodes.
     bed
@@ -899,8 +1015,10 @@ def run_join(
         raise ValueError(
             "join needs --episode / --episodes, or --take-file (one of them)"
         )
+    if from_records and not take_files:
+        raise ValueError("--from-record goes with --take-file")
     parts = (
-        file_parts(desk, take_files)
+        file_parts(desk, take_files, from_records)
         if take_files
         else [p for n in episodes for p in episode_parts(desk, n)]
     )
@@ -974,6 +1092,7 @@ def run_join(
         seam_steps_db=[level.step_db for level in levels], fps=round(fps, 3),
         loudness=f"{mixed.mix_lufs:.1f} LUFS", mix_line=mixed.one_line(), seam_levels=levels,
     )  # fmt: skip
+    result.notes += [f"SUBSTITUTED: {p.stands_in}" for p in parts if p.stands_in]
     result.notes += speech_notes
     if result.loud_seams and accept_seam:
         result.accepted = {
