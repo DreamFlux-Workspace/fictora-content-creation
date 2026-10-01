@@ -51,6 +51,9 @@ class FinishRecord:
     #: Where ``bed_db`` came from: ``flag``, ``desk``, ``takes``, ``measured`` or ``default``
     #: (:func:`creation.post.bed.bed_level`); ``None`` on a record from before it was resolved.
     bed_db_source: str | None = None
+    #: The harness's music was already in the take's soundtrack (take facts ``music.laid``), so ``finish``
+    #: laid no bed and ``pre_bed`` carries the music: ``join`` and ``reel`` lay no bed over it.
+    music_in_take: bool = False
 
     def resolve(self, desk: Path, name: str) -> Path | None:
         """Absolute path of one stored file (``pre_bed``, ``master``, ``final``, ``bed``)."""
@@ -88,6 +91,7 @@ def write_finish_record(
     hand_voices: Sequence[Mapping[str, Any]] = (),
     inner_voice: Sequence[Mapping[str, Any]] = (),
     bed_db_source: str | None = None,
+    music_in_take: bool = False,
 ) -> Path:
     """Write ``takes/take-epNN-tK-finish-vN.json`` (a new version; never overwrites).
 
@@ -109,6 +113,8 @@ def write_finish_record(
         The bed and how it was mixed.
     bed_db_source
         Where ``bed_db`` came from (``join`` carries only a chosen one).
+    music_in_take
+        The harness's music is in the take's own soundtrack (no bed was laid).
     edits
         Edits made after ``finish`` that the three files carry, oldest first.
     hand_voices
@@ -137,6 +143,7 @@ def write_finish_record(
         "bed_db": bed_db,
         "bed_db_source": bed_db_source,
         "duck_db": duck_db,
+        "music_in_take": music_in_take,
         "edits": [dict(edit) for edit in edits],
         "hand_voices": [dict(voice) for voice in hand_voices],
         "inner_voice": [dict(cue) for cue in inner_voice],
@@ -157,11 +164,17 @@ def _load(path: Path) -> FinishRecord | None:
     body = {
         f.name: raw.get(f.name)
         for f in fields(FinishRecord)
-        if f.name not in ("path", "edits", "hand_voices")
+        if f.name not in ("path", "edits", "hand_voices", "music_in_take")
     }
     edits = tuple(e for e in raw.get("edits") or () if isinstance(e, dict))
     voices = tuple(v for v in raw.get("hand_voices") or () if isinstance(v, dict))
-    return FinishRecord(**body, path=path, edits=edits, hand_voices=voices)
+    return FinishRecord(
+        **body,
+        path=path,
+        edits=edits,
+        hand_voices=voices,
+        music_in_take=raw.get("music_in_take") is True,
+    )
 
 
 def finish_records(desk: Path, episode: int) -> list[FinishRecord]:
@@ -253,4 +266,5 @@ def carry_finish_record(
         duck_db=record.duck_db,
         edits=[*record.edits, step],
         hand_voices=record.hand_voices,
+        music_in_take=record.music_in_take,
     )

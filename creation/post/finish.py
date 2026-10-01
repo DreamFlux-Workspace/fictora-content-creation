@@ -23,12 +23,19 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    is not laid is named with its reason (render failed, wrong shape, starts
    past the take: ``!! NOT LAID`` on the step and on the sound line; left out
    by ``--sfx-adjust`` or a sound note: listed). None is dropped silently.
-2. ``bed``       - the show's music bed (desk pin, else the spine's pinned bed,
-   else made once on the server and pinned on the desk), and its level in the
-   mix: ``--bed-db``, else the desk's ``series.json`` ``bed_db``, else measured
-   from the bed file so the bed lands at about -27 LUFS, about 9 dB under the
-   dialogue (:func:`creation.post.bed.bed_level`). The step prints the level and
-   why, and a ``!!`` line when it puts the bed outside the band.
+2. ``bed``       - the show's music bed, always the harness's (the harness bed
+   pinned on the desk, else the spine's pinned bed, else made once on the
+   server and pinned on the desk; a file pinned by hand is ignored:
+   :mod:`creation.post.bed`), and its level in the mix: ``--bed-db``, else the
+   desk's ``series.json`` ``bed_db``, else measured from the bed file so the
+   bed lands at about -27 LUFS, about 9 dB under the dialogue
+   (:func:`creation.post.bed.bed_level`). The step prints the level and why,
+   and a ``!!`` line when it puts the bed outside the band. When the take
+   facts say the harness's music is already in the take's soundtrack
+   (``soundtrack.music.laid``) no bed is laid: the step says so and the take
+   counts as having music. ``--music "…"`` never makes or picks music: it is
+   saved as a music change note for the harness (:func:`creation.post.bed.record_music_note`),
+   and every finish prints the notes waiting for the next re-run.
 3. ``colour``    - match the take to the board the human approved.
 4. ``mix``       - bed under the take, ducked under the voice, gain measured
    so the mix lands near -18 LUFS; ``--duck-db N`` for an exact duck depth.
@@ -63,7 +70,8 @@ the take's sound is exactly that dialogue track, digital silence between lines)
 finishes by default with the sound it lacks (:mod:`creation.post.soundtrack`):
 ``ambience`` after the effects (the location's own sound, made once per episode
 from the take's sound plan and laid at about -28 dB between the lines, ducked
-under each line: :mod:`creation.post.ambience`), then ``room-tone`` (room tone
+under each line: :mod:`creation.post.ambience`; skipped when the server already
+laid it under the voices, ``soundtrack.ambience.laid``), then ``room-tone`` (room tone
 only when no ambience could be made, and a free check that each line is heard
 in its window), the bed ducked ``TARGET_AUDIO_DUCK_DB`` exactly in each line window,
 the effects snapped to cuts measured up to 2 s from the plan (each measured cut
@@ -162,6 +170,8 @@ from creation.post.bed import (
     DEFAULT_BED_DB,
     Maker,
     bed_level,
+    music_notes,
+    record_music_note,
     resolve_bed,
     service_music_maker,
 )
@@ -273,6 +283,12 @@ class FinishResult:
     locked_voices: bool = False
     #: Why the chain stopped before a deliverable (a locked-voice take with no bed or room tone).
     stopped: str = ""
+    #: The harness's music is already in the take's soundtrack (take facts ``soundtrack.music.laid``): no bed.
+    music_in_take: bool = False
+    #: The server laid the location's ambience under the voices (``soundtrack.ambience.laid``).
+    ambience_in_take: bool = False
+    #: Music change notes saved on the desk for the harness (they go with the next re-run).
+    music_notes: tuple[str, ...] = ()
 
     def _ran(self, name: str) -> bool:
         return any(step.step == name and step.status == "ran" for step in self.steps)
@@ -289,7 +305,9 @@ class FinishResult:
 
         missing: list[str] = []
         mix = next((step for step in self.steps if step.step == "mix"), None)
-        if not self._ran("bed") or (mix is not None and "NO MUSIC BED" in mix.detail):
+        if not self.music_in_take and (
+            not self._ran("bed") or (mix is not None and "NO MUSIC BED" in mix.detail)
+        ):
             missing.append("music")
         if not self._ran("sfx"):
             missing.append("SFX")
@@ -340,7 +358,11 @@ class FinishResult:
         ]
         if self.cues_not_laid and "SFX" not in missing:
             marks[1] += f" (!! {len(self.cues_not_laid)} planned cue(s) not laid)"
-        if self.locked_voices and self._ran(AMBIENCE_STEP):
+        if self.music_in_take and "music" not in missing:
+            marks[0] += " (in the take, from the harness)"
+        if self.locked_voices and self.ambience_in_take:
+            marks.append("ambience ✓ (laid by the server)")
+        elif self.locked_voices and self._ran(AMBIENCE_STEP):
             marks.append("ambience ✓")
         elif self.locked_voices:
             marks.append(f"room tone {'✗' if 'room tone' in missing else '✓'}")
@@ -368,6 +390,11 @@ class FinishResult:
             f"- {step.step}: {step.status} — {step.detail}" for step in self.steps
         ]
         lines += self.text_warnings
+        if self.music_notes:
+            lines.append(
+                "Music change notes for the harness (they go with the next re-run; nothing was changed here): "
+                + "; ".join(self.music_notes)
+            )
         lines.append(self.sound_line())
         return lines
 
@@ -385,6 +412,7 @@ class FinishResult:
             "cues_not_laid": list(self.cues_not_laid),
             "inner_voice_not_laid": list(self.inner_voice_not_laid),
             "text_warnings": list(self.text_warnings),
+            "music_notes": list(self.music_notes),
             "steps": [
                 {"step": s.step, "status": s.status, "detail": s.detail,
                  "output": str(s.output) if s.output else None}
@@ -397,7 +425,8 @@ class FinishResult:
 CAPTIONS_OFF = "caption style none"
 
 INCOMPLETE_FIX = (
-    "Music: pin a bed (`fictora-produce set-bed --desk D --path <file>`, or let finish make one on the server). "
+    "Music: the bed step's error says why the harness bed could not be found or made (the spine is "
+    "saved on the desk, the server's audio route answered); the kit never lays music you choose. "
     "SFX: finish needs the take's facts (GET /v1/jobs/{take_job}/take-facts; it fetches them when "
     "a clip record in api/ (17_raw_scene_clips.json or film-*-raw-scene-clips.json) names the take job) and the server's audio endpoints. "
     "Mix, or a hand voice / cues step you asked for: read that step's error above. "
@@ -678,7 +707,9 @@ def run_finish(
         ``series.json`` ``bed_db``, else measures the bed and lands it about 9 dB
         under the dialogue (:func:`creation.post.bed.bed_level`).
     music
-        Description for a bed that has to be made (forces a new bed).
+        ``--music``: a music change note for the harness ("calmer"). Saved on
+        the desk (:func:`creation.post.bed.record_music_note`); no music is
+        made or picked from it.
     duck_db
         Exact duck depth under the voice (1-30 dB); ``None`` uses the compressor.
     sfx_adjust
@@ -696,7 +727,8 @@ def run_finish(
     cues
         ``--cue`` hand cues laid after the SFX step (take seconds as filmed).
     sfx_render, bed_maker, facts_fetcher, transcriber, cut_meter, voice_audio, ambience_maker
-        Injected for tests (``transcriber`` makes a transcript of the take on the server;
+        Injected for tests (``bed_maker`` makes the harness bed on the server;
+        ``transcriber`` makes a transcript of the take on the server;
         ``ambience_maker`` makes a locked-voice take's location ambience on the server;
         ``cut_meter`` measures the take's hard cuts, :func:`creation.post.edit.measure_cuts`;
         ``voice_audio`` makes the inner-voice dry lines, the Drama API by default;
@@ -740,6 +772,16 @@ def run_finish(
     out = stream or sys.stderr
     desk = desk.expanduser().resolve()
     check_duck_db(duck_db)
+    if music is not None:
+        # The operator says what should change; the harness picks the music on the next re-run.
+        record_music_note(
+            desk, music, episode=episode, take_id=take_id, via="finish --music"
+        )
+        print(
+            f"[music] saved as a change note for the harness, nothing made here: {music}",
+            file=out,
+            flush=True,
+        )
     style, style_note = resolve_caption_style(desk, caption_style)
     run_dir = desk / f"ep{episode:02d}"
     source = (
@@ -830,6 +872,9 @@ def run_finish(
         hand_steps=hand_steps,
         soundtrack=soundtrack.one_line() if facts_state["path"] is not None else "",
         locked_voices=locked,
+        music_in_take=soundtrack.music_laid,
+        ambience_in_take=locked and soundtrack.ambience_laid,
+        music_notes=tuple(music_notes(desk, episode=episode, take_id=take_id)),
     )
     # A locked-voice take ducks exactly inside its line windows unless --duck-db says otherwise.
     mix_duck_db = duck_db if duck_db is not None or not locked else TARGET_AUDIO_DUCK_DB
@@ -1256,6 +1301,13 @@ def run_finish(
     def do_ambience(take: Path) -> StepReport:
         """The location's ambience under the whole locked-voice take: one cue per episode, cached on the desk."""
 
+        if soundtrack.ambience_laid:
+            return StepReport(
+                AMBIENCE_STEP,
+                "skipped",
+                "the server laid the location's ambience under the voices (take facts ambience.laid): "
+                "no kit ambience and no room tone",
+            )
         payload = json.loads(facts_state["path"].read_text(encoding="utf-8"))
         brief = ambience_brief(payload, spine, episode=episode)
         if brief is None:
@@ -1355,7 +1407,12 @@ def run_finish(
 
         from creation.post.review import take_words
 
-        if result._ran(AMBIENCE_STEP):
+        if soundtrack.ambience_laid:
+            toned, air = (
+                None,
+                "no room tone: the server's location ambience fills the gaps",
+            )
+        elif result._ran(AMBIENCE_STEP):
             # The location's ambience fills the gaps: room tone is only the fallback.
             toned, air = None, "no room tone: the location ambience fills the gaps"
         else:
@@ -1390,7 +1447,18 @@ def run_finish(
         return StepReport(ROOM_TONE_STEP, "ran", detail, toned)
 
     def do_bed(_take: Path) -> StepReport:
-        bed = resolve_bed(desk, spine=spine, music=music, maker=bed_maker)
+        if soundtrack.music_laid:
+            # The harness's music is already in the take: a bed under it would double the music.
+            append_run_note(
+                run_dir,
+                "Bed: none, the harness's music is in the take's soundtrack (music.laid)",
+            )
+            return StepReport(
+                "bed",
+                "skipped",
+                "the harness's music is already in the take's soundtrack (take facts music.laid)",
+            )
+        bed = resolve_bed(desk, spine=spine, maker=bed_maker)
         bed_state["path"] = bed.path
         if bed.cost_usd:
             book(desk, episode=episode, usd=bed.cost_usd, stream=out, unit="bed")
@@ -1429,7 +1497,9 @@ def run_finish(
             next_versioned_path(takes, f"{base}-mix", ".mp4"),
             bed=bed_state["path"],
             bed_db=bed_state["db"],
-            duck_db=mix_duck_db,
+            # Nothing to duck without a bed (the harness's music is in the take).
+            duck_db=mix_duck_db if bed_state["path"] is not None else None,
+            music_in_take=soundtrack.music_laid,
             voice_source=thought_state["path"] or voice_state["path"] or source,
             cues=bed_state["cues"],
             buses=True,
@@ -1752,7 +1822,7 @@ def run_finish(
             "Laying the location's ambience under the locked voices",
             do_ambience,
         )
-        if not result._ran(AMBIENCE_STEP):
+        if not result._ran(AMBIENCE_STEP) and not soundtrack.ambience_laid:
             print(
                 f"[{AMBIENCE_STEP}] !! no location ambience on this take: room tone is laid instead "
                 "(the take will sound drier than a native take)",
@@ -1760,17 +1830,21 @@ def run_finish(
                 flush=True,
             )
         step(ROOM_TONE_STEP, "Laying room tone under the locked voices", do_room_tone)
-    step("bed", "Finding the show's music bed", do_bed)
-    if locked and not (result._ran("bed") and result._ran(ROOM_TONE_STEP)):
+    step("bed", "Finding the show's music bed (the harness's)", do_bed)
+    has_music = soundtrack.music_laid or result._ran("bed")
+    if locked and not (has_music and result._ran(ROOM_TONE_STEP)):
         lacking = " and ".join(
             name
-            for name, step_name in (("music bed", "bed"), ("room tone", ROOM_TONE_STEP))
-            if not result._ran(step_name)
+            for name, present in (
+                ("music bed", has_music),
+                ("room tone", result._ran(ROOM_TONE_STEP)),
+            )
+            if not present
         )
         result.stopped = (
             f"this take's sound is only the locked voices (digital silence between lines) and it has no "
             f"{lacking}. Nothing deliverable was made: no mix, captions or mark. Fix the step named above "
-            "(a bed: `set-bed --path <file>`, or let finish make one) and finish again"
+            "(the harness bed: the spine saved on the desk and the server's audio route answering) and finish again"
         )
         print(f"!! STOPPED: {result.stopped}", file=out, flush=True)
         append_run_note(run_dir, f"Finish · STOPPED: {result.stopped}")
@@ -1808,6 +1882,7 @@ def run_finish(
         take_id=take_id,
         complete=result.complete,
         pre_bed=record_state["pre_bed"] if result._ran("mix") else None,
+        music_in_take=soundtrack.music_laid,
         master=record_state["master"] or current,
         final=current,
         bed=bed_state["path"],

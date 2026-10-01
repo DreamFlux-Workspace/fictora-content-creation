@@ -22,12 +22,20 @@ whole room:
 Take facts from an older server have no ``soundtrack`` key: :func:`soundtrack_from`
 reads them as ``native`` and every command behaves as before.
 
+A newer server bakes more of the room into the dialogue track itself and says
+so: ``ambience.laid`` (the location's ambience is under the voices,
+fictora-drama #564) and ``music.laid`` (the harness's music is in the track).
+``finish`` then lays neither again (no kit ambience or room tone, no bed). An
+absent or unreadable block reads as not laid.
+
 Server contract (``GET /v1/jobs/{id}/take-facts``)::
 
     soundtrack: {"mode": "target_audio" | "native", "reason": str | null,
                  "track_url": str | null,
                  "lines": [{"line_id", "cast_id", "start_s", "end_s", "off_screen"}],
-                 "native_foley": bool}
+                 "native_foley": bool,
+                 "ambience": {"laid": bool, "reason": str | null} | null,
+                 "music": {"laid": bool, ...} | null}
 """
 
 from __future__ import annotations
@@ -89,6 +97,10 @@ class Soundtrack:
         False when the facts had no usable ``soundtrack`` (an older server): read as native.
     track_url
         The dialogue track the server sent to the video model.
+    ambience_laid
+        The server laid the location's ambience under the voices (``ambience.laid``).
+    music_laid
+        The harness's music is already in the take's soundtrack (``music.laid``).
     """
 
     mode: str = NATIVE
@@ -97,6 +109,8 @@ class Soundtrack:
     native_foley: bool = True
     sent: bool = False
     track_url: str | None = None
+    ambience_laid: bool = False
+    music_laid: bool = False
 
     @property
     def target_audio(self) -> bool:
@@ -108,9 +122,24 @@ class Soundtrack:
         """``Soundtrack: locked voices (...)`` or ``Soundtrack: native (reason: ...)``."""
 
         if self.target_audio:
+            room = (
+                "the server's location ambience is under the voices"
+                if self.ambience_laid
+                else "no native ambience"
+            )
+            laid = [
+                *(
+                    ()
+                    if self.ambience_laid
+                    else ("location ambience (room tone if none can be made)",)
+                ),
+                *(() if self.music_laid else ("bed",)),
+                "effects",
+            ]
+            music = "; the harness's music is in the track" if self.music_laid else ""
             return (
-                f"Soundtrack: locked voices, {len(self.lines)} line(s) (no native ambience); "
-                "location ambience (room tone if none can be made), bed + effects will be laid"
+                f"Soundtrack: locked voices, {len(self.lines)} line(s) ({room}{music}); "
+                f"{', '.join(laid)} will be laid"
             )
         if not self.sent:
             return "Soundtrack: native (the server sent no soundtrack: an older server)"
@@ -174,7 +203,15 @@ def soundtrack_from(facts: Mapping[str, Any] | None) -> Soundtrack:
         native_foley=bool(raw.get("native_foley", mode == NATIVE)),
         sent=True,
         track_url=str(raw["track_url"]) if raw.get("track_url") else None,
+        ambience_laid=_laid(raw.get("ambience")),
+        music_laid=_laid(raw.get("music")),
     )
+
+
+def _laid(block: Any) -> bool:
+    """``{"laid": true, ...}`` is laid; anything else (absent, null, unreadable) is not."""
+
+    return isinstance(block, Mapping) and block.get("laid") is True
 
 
 def saved_soundtrack(desk: Path, episode: int, take_id: str) -> Soundtrack:

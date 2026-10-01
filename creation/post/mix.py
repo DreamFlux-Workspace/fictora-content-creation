@@ -218,6 +218,8 @@ class MixResult:
     warnings: tuple[str, ...] = ()
     #: The raw, ducked and key bus WAVs beside the mix (``buses=True`` with a bed), else empty.
     buses: tuple[Path, ...] = ()
+    #: No bed on purpose: the harness's music is already in the take's own sound.
+    music_in_take: bool = False
 
     def one_line(self) -> str:
         """Operator line."""
@@ -227,7 +229,13 @@ class MixResult:
             if LUFS_BAND[0] <= self.mix_lufs <= LUFS_BAND[1]
             else "OUT OF BAND"
         )
-        bed = "" if self.bed else "; NO MUSIC BED"
+        bed = (
+            ""
+            if self.bed
+            else "; no bed: the harness's music is in the take"
+            if self.music_in_take
+            else "; NO MUSIC BED"
+        )
         return (
             f"auto take gain {self.gain_db:+.1f} dB (take {self.take_lufs:.1f} LUFS) -> mix {self.mix_lufs:.1f} LUFS "
             f"({band}, target {TARGET_LUFS:.0f}), {self.passes} pass(es); ducking {self.ducking}{bed}"
@@ -316,6 +324,7 @@ def mix_take(
     cues: Sequence[CueLevel] = (),
     buses: bool = False,
     duck_windows: Sequence[tuple[float, float]] | None = None,
+    music_in_take: bool = False,
 ) -> MixResult:
     """Mix ``take`` with ``bed`` into ``out`` at a measured take gain.
 
@@ -326,7 +335,7 @@ def mix_take(
     out
         New file; must not exist.
     bed
-        Show bed, or ``None`` (the take is then NOT DONE).
+        Show bed, or ``None`` (the take is then NOT DONE, unless ``music_in_take``).
     bed_db
         Bed level.
     duck_db
@@ -341,6 +350,9 @@ def mix_take(
     duck_windows
         With ``duck_db``: the exact voice windows to duck in (a locked-voice take's
         line windows), instead of finding them by level in ``voice_source``.
+    music_in_take
+        ``bed`` is ``None`` because the harness's music is already in ``take``
+        (said in the mix line instead of ``NO MUSIC BED``).
 
     Returns
     -------
@@ -418,4 +430,5 @@ def mix_take(
         bed,
         tuple(warnings),
         written or (),
+        music_in_take=bed is None and music_in_take,
     )

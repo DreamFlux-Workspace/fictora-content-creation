@@ -1,4 +1,4 @@
-"""``fictora-produce`` local post commands: voice, voice-fx, revoice, voice-line, cue, set-bed, finish, join, review, and the edits."""
+"""``fictora-produce`` local post commands: voice, voice-fx, revoice, voice-line, cue, music-note, finish, join, review, and the edits."""
 
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ POST_COMMANDS = (
             "voice-line",
             "cue",
             "set-bed",
+            "music-note",
             "finish",
             "join",
             "reel",
@@ -188,19 +189,30 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
 
     bed = sub.add_parser(
-        "set-bed", help="Pin the show's music bed on the desk (a file you chose)."
+        "set-bed",
+        help="Gone: the music is the harness's, never a file you pin. Says how to ask for a change (music-note).",
     )
-    bed.add_argument("--desk", type=Path, required=True)
-    bed.add_argument(
-        "--path",
-        type=Path,
-        required=True,
-        help="Audio file (licensed or made for the show).",
+    bed.add_argument("--desk", type=Path, default=None)
+    bed.add_argument("--path", type=Path, default=None, help=argparse.SUPPRESS)
+
+    note = sub.add_parser(
+        "music-note",
+        help='Say what should change about the show\'s music ("calmer", "quieter under the lines"). Saved on '
+        "the desk (shared/music-notes.jsonl) and printed with every finish so it goes to the harness with the "
+        "next re-run; the kit never picks or makes music itself.",
     )
+    note.add_argument("--desk", type=Path, required=True)
+    note.add_argument(
+        "--episode", type=int, default=None, help="Default: the whole show."
+    )
+    note.add_argument(
+        "--take", dest="take_id", default=None, help="With --episode: one take (tK)."
+    )
+    note.add_argument("note", help=f"The change, in your words. {HELP_SUFFIX}")
 
     fin = sub.add_parser(
         "finish",
-        help="Finish an accepted take on this laptop: board frames out, SFX, music bed, colour match to the board, mix, captions, "
+        help="Finish an accepted take on this laptop: board frames out, SFX, the harness's music bed, colour match to the board, mix, captions, "
         f"Sokii mark. Exits {FINISH_INCOMPLETE} (NOT DONE) when music, SFX or the mix did not go on.",
     )
     fin.add_argument("--desk", type=Path, required=True)
@@ -233,7 +245,8 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     fin.add_argument(
         "--music",
         default=None,
-        help=f"Describe a new bed to make (replaces the pinned one). {HELP_SUFFIX}",
+        help='A music change note for the harness ("calmer"): saved like `music-note`, never used to make or '
+        f"pick music here. {HELP_SUFFIX}",
     )
     fin.add_argument(
         "--duck-db",
@@ -305,7 +318,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     join = sub.add_parser(
         "join",
-        help="Join finished takes into one file (free): one bed across the join, a cut between takes and a "
+        help="Join finished takes into one file (free): one harness bed across the join, a cut between takes and a "
         f"0.25 s dissolve between episodes, 24 fps asserted, seam steps under 5 dB, marked once. Exits "
         f"{JOIN_NOT_DONE} (NOT DONE, nothing marked) when a seam steps more than 5 dB.",
     )
@@ -339,12 +352,6 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         type=float,
         default=None,
         help="Seconds at every seam (0 = straight cut).",
-    )
-    join.add_argument(
-        "--bed",
-        type=Path,
-        default=None,
-        help="Default: the show's bed pinned on the desk.",
     )
     join.add_argument(
         "--bed-db",
@@ -451,7 +458,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
     if args.command in REVIEW_COMMANDS:
         return dispatch_review(args)
 
-    from creation.post.bed import pin_bed
+    from creation.post.bed import MUSIC_IS_HARNESS, record_music_note
     from creation.post.handmade import run_cue, run_voice_line
     from creation.post.voice import run_revoice, run_voice_audition, run_voice_pick
 
@@ -516,8 +523,19 @@ def dispatch_post(args: argparse.Namespace) -> int:
         )
         return 0
     if args.command == "set-bed":
+        print(f"set-bed is gone. {MUSIC_IS_HARNESS}")
+        return 2
+    if args.command == "music-note":
+        if args.take_id and args.episode is None:
+            raise ValueError("--take goes with --episode")
+        path = record_music_note(
+            args.desk.expanduser().resolve(),
+            text_or_file(args.note, flag="music-note"),
+            episode=args.episode,
+            take_id=args.take_id,
+        )
         print(
-            f"pinned show bed: {pin_bed(args.desk.expanduser().resolve(), args.path)}"
+            f"music change note saved for the harness: {path} (it goes with the next re-run)"
         )
         return 0
     if args.command == "finish":
@@ -574,7 +592,6 @@ def dispatch_post(args: argparse.Namespace) -> int:
             take_files=tuple(args.take_file or ()),
             from_records=tuple(args.from_record or ()),
             dissolve=args.dissolve,
-            bed=args.bed,
             bed_db=args.bed_db,
             duck_db=args.duck_db,
             gain_match=not args.no_gain_match,
