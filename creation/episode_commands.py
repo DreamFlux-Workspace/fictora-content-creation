@@ -90,6 +90,7 @@ from creation.ops.state import GateRecord, episode_by_ordinal, load_series, save
 from creation.patch_refusal import (
     FRAME_CAST_FIXES,
     INVALID_PATCH,
+    STRICT_FIELDS,
     explain_invalid_patch,
     refusal_code,
     server_named_rules,
@@ -1921,6 +1922,42 @@ REFUSAL_FIXES: dict[str, str] = {
 }
 
 
+def _invalid_patch_fix(message: str) -> str:
+    """The fix for an ``invalid_patch``: what the server named (fictora-drama #498), not one fixed guess.
+
+    The id hint is given only when the server names an id it does not know, and as one possible cause
+    when an older deploy names nothing.
+    """
+
+    details = _refusal_details(message)
+    unknown = details.get("unknown_frame_cast_ids") or details.get("unknown_ids")
+    named = server_named_rules(message)
+    if unknown:
+        return f"{REFUSAL_FIXES[INVALID_PATCH]} (not on the story: {unknown})"
+    if named is None:
+        return (
+            "the server named no field (a deploy older than fictora-drama #498). One common cause: "
+            + REFUSAL_FIXES[INVALID_PATCH]
+        )
+    hints = []
+    for field, rule in STRICT_FIELDS.items():
+        if any(re.search(rf"\b{re.escape(field)}\b", row) for row in named):
+            hints.append(f"{field}: {rule}")
+    rows = "; ".join(named)
+    return f"the server named: {rows}" + "".join(f"\n  rule: {hint}" for hint in hints)
+
+
+def _refusal_details(message: str) -> dict[str, Any]:
+    raw = re.search(r"\(details (\{.*\})\)", message)
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw.group(1))
+    except ValueError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def explain_refusal(message: str, spine: Mapping[str, Any], *, episode: int) -> str:
     """Add the fix a named line-edit refusal implies to the server's message.
 
@@ -1944,6 +1981,8 @@ def explain_refusal(message: str, spine: Mapping[str, Any], *, episode: int) -> 
     template = REFUSAL_FIXES.get(code)
     if template is None:
         return message
+    if code == INVALID_PATCH:
+        return f"the server refused the edit ({code}): {message}\n  fix: {_invalid_patch_fix(message)}"
     details: dict[str, Any] = {}
     raw = re.search(r"\(details (\{.*\})\)", message)
     if raw:
