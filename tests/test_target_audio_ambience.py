@@ -260,7 +260,7 @@ def test_finish_makes_the_location_ambience_and_lays_it_instead_of_room_tone(
     assert tone.output is None and tone.detail.startswith(
         "no room tone: the location ambience fills the gaps"
     )
-    assert "2 of 2 line(s) heard in their window" in tone.detail, (
+    assert "2 of 2 line(s) have voice in their window" in tone.detail, (
         "the heard-check still runs"
     )
     assert not list((post_desk / "ep01" / "takes").glob("*-room-tone-*.mp4"))

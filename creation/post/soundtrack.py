@@ -33,7 +33,7 @@ Server contract (``GET /v1/jobs/{id}/take-facts``)::
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -322,6 +322,54 @@ def unheard_lines(
     return silent
 
 
+def heard_summary(
+    lines: Sequence[SoundLine],
+    *,
+    silent: Sequence[str],
+    problems: Sequence[str],
+    words: Path | None,
+    skipped: str,
+) -> str:
+    """One count of the lines heard, never two that disagree.
+
+    A line counts as heard only when its window holds voice (:func:`unheard_lines`) and,
+    when a transcript of this take was read, the transcript heard it there
+    (:func:`misplaced_lines`). Without a transcript of this take the count says it is
+    levels only and why the transcript check was skipped.
+
+    Parameters
+    ----------
+    lines
+        The dialogue track's lines.
+    silent, problems
+        :func:`unheard_lines` and :func:`misplaced_lines` rows (each starts with the line id).
+    words
+        The transcript read, or ``None``.
+    skipped
+        Why no transcript was read (with ``words`` ``None``).
+
+    Returns
+    -------
+    str
+        The summary (the ``!!`` rows are printed by the caller).
+    """
+
+    def ids(rows: Sequence[str]) -> set[str]:
+        return {row.split(":", 1)[0].split(" ", 1)[0] for row in rows}
+
+    bad = ids(silent) | ids(problems)
+    good = sum(1 for line in lines if (line.line_id or "?") not in bad)
+    if words is None:
+        return (
+            f"{good} of {len(lines)} line(s) have voice in their window (levels only); "
+            f"transcript check skipped: {skipped}"
+        )
+    return (
+        f"{good} of {len(lines)} line(s) heard in their window "
+        f"(voice level, and transcript `{words.name}` of this take)"
+    )
+
+
 def misplaced_lines(
     soundtrack: Soundtrack,
     words_json: Path,
@@ -378,6 +426,7 @@ __all__ = [
     "TARGET_AUDIO_DUCK_DB",
     "SoundLine",
     "Soundtrack",
+    "heard_summary",
     "lay_room_tone",
     "line_windows",
     "locked_voice_refusal",

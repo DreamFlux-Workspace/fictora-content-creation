@@ -1069,6 +1069,67 @@ def saved_words(desk: Path, episode: int, take_id: str) -> Path | None:
     return max(found, key=lambda p: p.stat().st_mtime) if found else None
 
 
+_WORDS_VERSION = re.compile(r"-(?:raw-)?v(\d+)-.*words")
+_RAW_VERSION = re.compile(r"^take-ep\d+-t\d+-raw-v(\d+)\.mp4$")
+
+
+def take_words(
+    desk: Path, episode: int, take_id: str, take: Path
+) -> tuple[Path | None, str]:
+    """The newest saved transcript of exactly this take file, or why there is none.
+
+    A transcript belongs to the raw take behind ``take`` (an edit is walked back with
+    :func:`creation.post.lineage.raw_take_behind`) when its name carries that take's version
+    (``take-ep01-t1-v3-words-…``, ``…-raw-v3-words-…``), or, carrying no version
+    (``…-review-words-vN.json``), when it was saved after that raw take. A transcript of an
+    earlier version of the take (re-filmed since) is never used: its words are another take's.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    episode, take_id
+        Which take.
+    take
+        The file being finished or checked.
+
+    Returns
+    -------
+    tuple[Path | None, str]
+        The transcript, or ``None`` and a one-line reason.
+    """
+
+    from creation.post.lineage import raw_take_behind
+
+    raw = take if _RAW_VERSION.match(take.name) else raw_take_behind(desk, take).raw
+    if raw is None:
+        return None, f"no record of the raw take behind `{take.name}`"
+    version = int(_RAW_VERSION.match(raw.name).group(1))  # type: ignore[union-attr]
+    takes = desk / f"ep{episode:02d}" / "takes"
+    mine: list[Path] = []
+    others: list[Path] = []
+    for words in takes.glob(f"take-ep{episode:02d}-{take_id}-*words*-v*.json"):
+        if not words.is_file():
+            continue
+        named = _WORDS_VERSION.search(words.name)
+        if named is not None:
+            (mine if int(named.group(1)) == version else others).append(words)
+        elif words.stat().st_mtime >= raw.stat().st_mtime:
+            mine.append(words)
+        else:
+            others.append(words)
+    if mine:
+        return max(mine, key=lambda p: p.stat().st_mtime), ""
+    if others:
+        newest = max(others, key=lambda p: p.stat().st_mtime)
+        named = _WORDS_VERSION.search(newest.name)
+        whose = f"take v{named.group(1)}" if named else "a take saved before it"
+        return None, (
+            f"the only transcript, `{newest.name}`, is of {whose}, not `{raw.name}` (re-filmed since)"
+        )
+    return None, f"no transcript of `{raw.name}`"
+
+
 # --- 6. Safe zones (finished takes) -----------------------------------------------------------------------
 
 

@@ -175,6 +175,7 @@ from creation.post.soundtrack import (
     TARGET_AUDIO_CUT_WINDOW_SECONDS,
     TARGET_AUDIO_DUCK_DB,
     Soundtrack,
+    heard_summary,
     lay_room_tone,
     line_windows,
     locked_voice_refusal,
@@ -1257,7 +1258,7 @@ def run_finish(
     def do_room_tone(take: Path) -> StepReport:
         """Room tone under the whole locked-voice take, then a free check that each line is heard in its window."""
 
-        from creation.post.review import saved_words
+        from creation.post.review import take_words
 
         if result._ran(AMBIENCE_STEP):
             # The location's ambience fills the gaps: room tone is only the fallback.
@@ -1269,14 +1270,24 @@ def run_finish(
                 ),
                 "room tone under the whole take (fallback: no location ambience, see the ambience step)",
             )
-        checks = [f"!! {line}" for line in unheard_lines(source, soundtrack)]
-        words = saved_words(desk, episode, take_id)
-        heard = f"{len(soundtrack.lines) - len(checks)} of {len(soundtrack.lines)} line(s) heard in their window"
-        if words is not None and not treated_voice(source):
-            problems = misplaced_lines(soundtrack, words, spine_line_texts())
-            checks += [f"!! {problem}" for problem in problems]
-            heard += f"; transcript `{words.name}`: {'checked' if not problems else 'see !!'}"
-        detail = f"{air}; {heard}" + "".join(f"; {c}" for c in checks)
+        silent = unheard_lines(source, soundtrack)
+        # Only a transcript of this very take: one of the take it replaced reads other words.
+        words, skipped = take_words(desk, episode, take_id, source)
+        if words is not None and treated_voice(source):
+            words, skipped = None, "the voices were treated after filming"
+        problems = (
+            misplaced_lines(soundtrack, words, spine_line_texts())
+            if words is not None
+            else []
+        )
+        heard = heard_summary(
+            soundtrack.lines,
+            silent=silent,
+            problems=problems,
+            words=words,
+            skipped=skipped,
+        )
+        detail = f"{air}; {heard}" + "".join(f"; !! {c}" for c in (*silent, *problems))
         append_run_note(
             run_dir,
             f"Finish · room tone -> `{toned.name if toned else 'nothing laid'}`: {detail}",
