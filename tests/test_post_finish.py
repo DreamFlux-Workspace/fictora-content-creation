@@ -554,3 +554,35 @@ def test_finish_with_caption_style_none_burns_no_captions_and_is_still_done(
     )
     assert not list((post_desk / "ep01" / "takes").glob("*-cap-*"))
     assert "captions off (--caption-style none)" in result.sound_line()
+
+
+@needs_ffmpeg
+def test_dropping_every_planned_cue_lays_no_effect_and_the_take_is_still_done(
+    post_desk: Path,
+) -> None:
+    """L-20260930-8: ``--sfx-adjust`` dropping every cue is a choice, not a failed step."""
+
+    from creation.post.sfx import parse_adjustment
+
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+        json.dumps(FACTS)
+    )
+    _board(post_desk)
+    calls: list[str] = []
+    out = io.StringIO()
+    result = run_finish(post_desk, sfx_render=fake_sfx(calls), bed_maker=fake_bed,
+                        facts_fetcher=lambda *a: None,
+                        sfx_adjust=(parse_adjustment("door=drop"),), stream=out)  # fmt: skip
+
+    sfx = next(s for s in result.steps if s.step == "sfx")
+    assert sfx.status == "ran", sfx.detail
+    assert calls == [] and sfx.output is None and sfx.cost_usd == 0
+    assert "0 cue(s)" in sfx.detail, sfx.detail
+    assert "left out on purpose: a door slams (dropped by --sfx-adjust)" in sfx.detail
+    assert result.cues_not_laid == ()
+    assert result.complete, out.getvalue()
+    record = json.loads(
+        next((post_desk / "ep01").rglob("take-ep01-t1-finish-v*.json")).read_text()
+    )
+    assert record["complete"] is True
