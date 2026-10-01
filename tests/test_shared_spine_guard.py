@@ -1,0 +1,85 @@
+"""A desk whose story another desk also points at refuses story-changing and paid commands (copy-desk report)."""
+
+from __future__ import annotations
+
+import json
+import shutil
+from pathlib import Path
+
+import pytest
+
+from creation.cli_produce import main as produce_main
+from creation.shared_spine import desks_sharing_spine
+from fake_api import FakeApi
+
+
+def _copy(desk: Path, name: str = "2026-10-01-closing-time-copy") -> Path:
+    copy = desk.parent / name
+    shutil.copytree(desk, copy)
+    return copy
+
+
+def _edit(desk: Path, *extra: str) -> int:
+    return produce_main(
+        [
+            "edit",
+            "--desk",
+            str(desk),
+            "--episode",
+            "1",
+            "--beat",
+            "1",
+            "--intent",
+            "She looks up.",
+            *extra,
+        ]
+    )
+
+
+def test_a_copy_desk_is_found_by_its_spine_id(desk: Path) -> None:
+    copy = _copy(desk)
+
+    assert desks_sharing_spine(desk) == [copy]
+    assert desks_sharing_spine(copy) == [desk]
+
+
+def test_a_desk_with_its_own_story_shares_nothing(desk: Path) -> None:
+    copy = _copy(desk)
+    state = json.loads((copy / "production.json").read_text())
+    state["spine_id"] = "sp_other"
+    (copy / "production.json").write_text(json.dumps(state))
+
+    assert desks_sharing_spine(desk) == []
+
+
+def test_an_edit_on_a_shared_story_is_refused_and_names_the_other_desk(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    copy = _copy(desk)
+
+    assert _edit(desk) == 2
+
+    err = capsys.readouterr().err
+    assert "sp1" in err and str(copy) in err
+    assert "--shared-spine-ok" in err and "Nothing was sent" in err
+    assert [c for c in api.calls if c[0] in ("POST", "PATCH", "PUT", "DELETE")] == []
+
+
+def test_shared_spine_ok_lets_it_through(desk: Path, api: FakeApi) -> None:
+    _copy(desk)
+    api.routes[("POST", "/v1/spines/sp1/cascade/preview")] = SystemExit(
+        "HTTP 409: test_stop: stop here"
+    )
+
+    _edit(desk, "--shared-spine-ok")
+
+    assert any(c[0] in ("POST", "PATCH") for c in api.calls), "the edit was sent"
+
+
+def test_a_read_only_command_is_never_refused(
+    desk: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _copy(desk)
+
+    assert produce_main(["status", "--desk", str(desk)]) == 0
+    assert "shares" not in capsys.readouterr().err
