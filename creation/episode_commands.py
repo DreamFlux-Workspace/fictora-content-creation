@@ -53,6 +53,7 @@ from urllib.parse import quote
 import httpx
 
 from creation import inner_voice
+from creation.captions import is_english
 from creation.authoring_warnings import (
     authoring_warnings,
     for_episode,
@@ -3521,6 +3522,7 @@ def run_inner_voice(
     until: float | None = None,
     remove: str | None = None,
     clear: bool = False,
+    spoken_text: str | None = None,
     out: Any = None,
 ) -> list[dict[str, Any]]:
     """Add, remove, clear or list an episode's inner-voice cues (a character's own thoughts). Spends nothing.
@@ -3541,9 +3543,13 @@ def run_inner_voice(
     cast
         Who thinks it: a cast name or id (with ``text`` and ``at``).
     text
-        The thought.
+        The thought as captioned (the cue's ``line`` on the server).
     at, until
         Seconds on the episode as filmed (take 1 starts at 0); ``until`` defaults from the word count.
+    spoken_text
+        With ``text``: the words the voice says when they differ from the caption
+        (a Japanese thought under an English caption). Kept on the desk
+        (:func:`creation.inner_voice.save_spoken`): the server's cue has no field for it.
     remove
         A cue id, or its number in the listing.
     clear
@@ -3563,6 +3569,16 @@ def run_inner_voice(
     """
 
     adding = any(value is not None for value in (cast, text, at, until))
+    spoken = " ".join((spoken_text or "").split()) or None
+    if spoken_text is not None and not adding:
+        raise CommandStopped(
+            "--spoken-text goes with a new thought (--cast, --text, --at): the words the voice says, "
+            "with --text as the caption"
+        )
+    if spoken_text is not None and not spoken:
+        raise CommandStopped(
+            '--spoken-text is empty: --spoken-text "..." (the words the voice says)'
+        )
     if sum((adding, remove is not None, clear)) > 1:
         raise CommandStopped(
             "pass one of: a thought (--cast, --text, --at), --remove, or --clear"
@@ -3579,6 +3595,7 @@ def run_inner_voice(
         cues = inner_voice.episode_cues(spine, episode=episode)
         added: dict[str, Any] | None = None
         what = ""
+        dropped: list[str] = []
         if adding:
             wanted = str(cast).strip().lower()
             speaker = next(
@@ -3606,13 +3623,17 @@ def run_inner_voice(
                 )
             except inner_voice.InnerVoiceError as exc:
                 raise CommandStopped(str(exc)) from None
-            what = f"added {added['cue_id']} ({names.get(speaker, speaker)} thinks: {_short(added['line'])})"
+            what = (
+                f"added {added['cue_id']} ({names.get(speaker, speaker)} thinks: {_short(added['line'])})"
+                + (f", says {_short(spoken)}" if spoken else "")
+            )
         elif remove is not None:
             try:
                 new, gone = inner_voice.remove_cue(cues, str(remove))
             except inner_voice.InnerVoiceError as exc:
                 raise CommandStopped(str(exc)) from None
             what = f"removed {gone['cue_id']} ({_short(gone.get('line') or '')})"
+            dropped = [str(gone["cue_id"])]
         elif clear:
             if not cues:
                 raise CommandStopped(
@@ -3620,12 +3641,16 @@ def run_inner_voice(
                 )
             new = []
             what = f"cleared {len(cues)} cue(s)"
+            dropped = [str(cue.get("cue_id")) for cue in cues]
         else:
             print(
                 f"ep{episode:02d} inner voice (a character's own thoughts; --remove takes the number or id):",
                 file=out,
             )
-            for row in inner_voice.cue_listing(cues, names) or ["  (none)"]:
+            spoken_saved = inner_voice.load_spoken(desk, episode)
+            for row in inner_voice.cue_listing(cues, names, spoken_saved) or [
+                "  (none)"
+            ]:
                 print(row, file=out)
             return cues
         approved_before = spine.get("approval_state") == "approved"
@@ -3644,10 +3669,32 @@ def run_inner_voice(
         run.client.close()
     save_spine_snapshot(desk, episode, fresh)
     kept = inner_voice.episode_cues(fresh, episode=episode)
+    if dropped:
+        inner_voice.drop_spoken(desk, episode, dropped)
+    if added is not None and spoken:
+        saved_at = inner_voice.save_spoken(
+            desk,
+            episode,
+            cue_id=str(added["cue_id"]),
+            line=str(added["line"]),
+            spoken_text=spoken,
+        )
+        print(
+            f"  spoken words kept on the desk (`{saved_at.relative_to(desk)}`): the voice says them, "
+            "the caption is --text",
+            file=out,
+        )
     fresh_names = _cast_names(fresh)
     print(f"ep{episode:02d} inner voice: {what}", file=out)
-    for row in inner_voice.cue_listing(kept, fresh_names) or ["  (none)"]:
+    spoken_saved = inner_voice.load_spoken(desk, episode)
+    for row in inner_voice.cue_listing(kept, fresh_names, spoken_saved) or ["  (none)"]:
         print(row, file=out)
+    if added is not None and not is_english(str(added["line"])):
+        print(
+            f"!! {added['cue_id']}: the caption is not English, so finish leaves it uncaptioned (NOT ENGLISH). "
+            f'Remove it and add it again with --text "<English caption>" --spoken-text "<the words said>".',
+            file=out,
+        )
     if added is not None and not any(c.get("cue_id") == added["cue_id"] for c in kept):
         print(
             f"!! the server answered but its story does not list {added['cue_id']}: it may not be saved. "
@@ -6087,8 +6134,9 @@ def add_episode_parsers(
             "--clear, or list them. On the character who thinks it; no cast place. Spends nothing."
         ),
         description=(
-            'Add a thought: --cast NAME --text "..." --at S [--until S] (seconds on the episode as filmed; take 1 '
-            "starts at 0). For someone heard and never seen (an intercom, a phone, a narrator) use `line --add "
+            'Add a thought: --cast NAME --text "..." [--spoken-text "..."] --at S [--until S] (seconds on the '
+            "episode as filmed; take 1 starts at 0; --text is the caption, --spoken-text the words said when "
+            "they differ). For someone heard and never seen (an intercom, a phone, a narrator) use `line --add "
             "--new-voice` instead. `finish` makes each cue dry in the thinker's locked voice on the take it falls "
             "in, lays it and captions it in Georgia italic."
         ),
@@ -6100,7 +6148,18 @@ def add_episode_parsers(
         default=None,
         help="Who thinks it: someone already in the cast (name or cast id).",
     )
-    thought.add_argument("--text", default=None, help="The thought, in words.")
+    thought.add_argument(
+        "--text",
+        default=None,
+        help="The thought as captioned (English). Also what the voice says unless --spoken-text is given.",
+    )
+    thought.add_argument(
+        "--spoken-text",
+        default=None,
+        help="The words the voice says when they differ from the caption (a Japanese thought under an "
+        "English --text), as `voice-line --text/--spoken-text` and `line --spoken/--subtitle` do. Kept on "
+        "the desk (epNN/inner-voice-spoken.json).",
+    )
     thought.add_argument(
         "--at",
         type=float,
@@ -6339,6 +6398,7 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 until=args.until,
                 remove=args.remove,
                 clear=args.clear,
+                spoken_text=args.spoken_text,
             )
             return 0
         if args.command == "take-facts":
