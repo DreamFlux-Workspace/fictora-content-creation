@@ -198,6 +198,46 @@ def describe_shot(shot: Mapping[str, Any]) -> str:
     return ", ".join([text, *extras])
 
 
+def _canonical(plan: Any) -> list[tuple[tuple[str, str], ...]]:
+    shots: list[tuple[tuple[str, str], ...]] = []
+    for shot in (
+        plan if isinstance(plan, Sequence) and not isinstance(plan, str) else ()
+    ):
+        if not isinstance(shot, Mapping):
+            continue
+        fields = []
+        for key in SHOT_FIELDS:
+            value = shot.get(key)
+            if isinstance(value, str) and value.strip():
+                fields.append((key, " ".join(value.split()).casefold()))
+        if fields:
+            shots.append(tuple(fields))
+    return shots
+
+
+def same_plan(held: Any, sent: Any) -> bool:
+    """Whether the server holds the plan that was sent, compared normalised.
+
+    Key order, unset or empty optional fields (``None``, ``""``, missing), extra
+    keys the server adds, spacing and letter case do not count; a missing,
+    added or reworded shot does. ``None`` and ``[]`` are both no plan.
+
+    Parameters
+    ----------
+    held
+        ``beats[].shot_plan`` as the server returned it.
+    sent
+        The plan the kit sent (``None`` when clearing it).
+
+    Returns
+    -------
+    bool
+        ``True`` when they name the same shots.
+    """
+
+    return _canonical(held) == _canonical(sent)
+
+
 def plan_lines(plan: Any, *, indent: str = "    ") -> list[str]:
     """A beat's plan as printable lines, one per shot; nothing when the beat has no plan.
 

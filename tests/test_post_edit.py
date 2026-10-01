@@ -255,6 +255,32 @@ def test_trim_snaps_the_cut_to_the_shot_change_and_prints_the_shift(
     assert shifted == [{"start": 0.5, "end": 1.0}, {"start": 1.75, "end": 1.9}]
 
 
+@needs_ffmpeg
+def test_trimming_take_two_writes_a_take_two_file(post_desk: Path) -> None:
+    """--take defaulted to t1, so a trimmed take 2 was written as take-ep01-t1-trim."""
+
+    takes = post_desk / "ep01" / "takes"
+    finished = _cut_take(takes / "take-ep01-t2-sokii-v1.mp4")
+
+    assert (
+        main(
+            [
+                "trim",
+                "--desk",
+                str(post_desk),
+                "--take-file",
+                str(finished),
+                "--cut",
+                "1.46-2.5",
+            ]
+        )
+        == 0
+    )
+
+    assert (takes / "take-ep01-t2-trim-v1.mp4").is_file()
+    assert not list(takes.glob("take-ep01-t1-trim-*.mp4"))
+
+
 def test_snap_keeps_the_nearest_frame_when_no_shot_change_is_near() -> None:
     diffs = np.array([0.0] + [2.0] * 40 + [100.0] + [2.0] * 30)
     assert snap_to_shot_change(1.0, fps=24.0, diffs=diffs).frame == 24

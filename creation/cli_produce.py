@@ -13,7 +13,7 @@ from typing import Sequence
 from creation.captions import caption_take, find_ffmpeg, take_index_from_name
 from creation.cli_config import add_production_config_args, config_from_args
 from creation.cli_post import POST_COMMANDS, add_post_parsers, dispatch_post
-from creation.cli_text import HELP_SUFFIX, text_or_file
+from creation.cli_text import HELP_SUFFIX, force_utf8_output, text_or_file
 from creation.episode_commands import (
     EPISODE_COMMANDS,
     add_episode_parsers,
@@ -45,6 +45,8 @@ def _warn_if_no_local_ffmpeg() -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Dispatch fictora-produce commands."""
+
+    force_utf8_output()
 
     parser = argparse.ArgumentParser(
         description="Orchestrate Drama API production on a content desk."

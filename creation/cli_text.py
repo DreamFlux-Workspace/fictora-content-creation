@@ -11,8 +11,9 @@ takes one accepts both forms, the same way:
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 #: Longer values are never tried as a path (a real premise is not a filename).
 _MAX_PATH_CHARS = 1024
@@ -96,3 +97,32 @@ def json_or_file(value: str, *, flag: str) -> Any:
 
 
 __all__ = ["HELP_SUFFIX", "TextArgError", "json_or_file", "text_or_file"]
+
+
+def force_utf8_output(*streams: TextIO | None) -> None:
+    """Print UTF-8 whatever the console's code page is (default: stdout and stderr).
+
+    A Windows console is often cp1252 / cp949, and printing a Korean or Japanese
+    line there raised ``UnicodeEncodeError`` mid-step (``step`` crashed). A
+    stream that cannot be reconfigured (a test's ``StringIO``) is left as it is.
+
+    Parameters
+    ----------
+    streams
+        Streams to switch; default ``sys.stdout`` and ``sys.stderr``.
+    """
+
+    for stream in streams or (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        encoding = str(getattr(stream, "encoding", "") or "").lower().replace("-", "")
+        if encoding == "utf8":
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (
+            ValueError,
+            OSError,
+        ) as exc:  # a detached or closed stream keeps its encoding
+            print(f"WARNING: could not switch output to UTF-8: {exc}", file=sys.stderr)

@@ -162,6 +162,7 @@ from creation.shot_plan import (
     plan_from_json,
     plan_from_shots,
     plan_lines,
+    same_plan,
 )
 from creation.spine_view import (
     BOARD_INPUT_NAMES,
@@ -2516,7 +2517,7 @@ def _report_shot_plan(
     print(f"{found.get('beat_id')} shot plan on the server now:", file=out)
     for line in shown:
         print(line, file=out)
-    if held != wanted:
+    if not same_plan(held, wanted):
         print(
             "  !! the server answered but does not hold the plan that was sent: it is likely older than beat shot "
             "plans (fictora-drama #464) and dropped the field. Nothing on the board will follow it.",

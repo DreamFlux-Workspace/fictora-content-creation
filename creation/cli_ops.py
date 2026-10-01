@@ -9,7 +9,7 @@ from datetime import date
 from pathlib import Path
 from typing import Sequence
 
-from creation.cli_text import json_or_file
+from creation.cli_text import force_utf8_output, json_or_file
 from creation.ops.adopt import AdoptRefused, adopt_desk
 from creation.ops.floor import (
     add_episode,
@@ -43,6 +43,8 @@ PREFLIGHT_WARNINGS = 4
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Dispatch one content-ops command."""
+
+    force_utf8_output()
 
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
