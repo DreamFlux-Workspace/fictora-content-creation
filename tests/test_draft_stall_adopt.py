@@ -58,6 +58,14 @@ def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(stages_gated.time, "sleep", lambda _s: None)
 
 
+#: The key the draft of brief "p" is sent under: the run prefix, the brief's hash, ``-draft``.
+KEY = "run-b{}-draft".format(
+    stages_gated.draft_brief_hash(
+        stages_gated.draft_request_body(prompt="p", preset_id="x", preset_version="1")
+    )
+)
+
+
 def _draft(run: _Run) -> tuple[str, dict[str, Any]]:
     return stages_gated.start_draft(run, prompt="p", preset_id="x", preset_version="1")  # type: ignore[arg-type]
 
@@ -68,7 +76,7 @@ def test_a_stalled_plan_that_completed_after_all_is_adopted_not_paid_twice() -> 
     spine_id, plan = _draft(run)
 
     assert spine_id == "spine_1" and plan["status"] == "completed"
-    assert run.posts == ["run-draft"], "no second draft was enrolled"
+    assert run.posts == [KEY], "no second draft was enrolled"
     assert "plan_adopted" in run.events and "plan_retry" not in run.events
     assert run.saved["03_spine.json"] == {"spine_id": "spine_1"}
 
@@ -81,7 +89,7 @@ def test_a_stalled_plan_still_failed_on_the_second_read_is_re_drafted_once() -> 
     assert run.polled[:2] == ["job_plan_1", "job_plan_1"], (
         "the original job was read again first"
     )
-    assert run.posts == ["run-draft", "run-draft-a1"]
+    assert run.posts == [KEY, f"{KEY}-a1"]
     assert spine_id == "spine_2"
 
 
@@ -94,4 +102,4 @@ def test_another_failure_on_the_second_read_stops_without_a_re_draft() -> None:
 
     with pytest.raises(SystemExit, match="rule_failed"):
         _draft(run)
-    assert run.posts == ["run-draft"]
+    assert run.posts == [KEY]

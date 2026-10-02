@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from typing import Any, Callable, Mapping, Sequence
 
@@ -170,15 +172,22 @@ def start_draft(
     desk
         Series desk, for the commands a pause prints.
     key_prefix
-        Prefix of the draft's ``Idempotency-Key`` (``<prefix>-draft``, then
-        ``-a1``/``-a2`` for stall re-drafts). The step passes one built from the
-        desk, so a re-run after a dead session sends the same key and the
-        server hands back the same draft (L-20260926-4). ``run.prefix`` when omitted.
+        Prefix of the draft's ``Idempotency-Key``. The key is
+        ``<prefix>-b<brief hash>-draft``, then ``-a1``/``-a2`` for stall
+        re-drafts; the brief hash is :func:`draft_brief_hash` of the request
+        body, so the same brief re-run after a dead session sends the same key
+        and the server hands back the same draft (L-20260926-4), while a
+        changed brief (or language, band, preset, cut tempo, lane) is a new
+        key and a new draft (L-20261002). ``run.prefix`` when omitted.
     resume
-        A draft this desk already had accepted under ``key_prefix``
-        (``{"attempt", "key", "plan_job_id", "spine_id"}``, as given to
-        ``on_accepted``): its plan job is read again and nothing is posted,
-        the same way a stalled plan is adopted (L-20260922-2).
+        A draft this desk already had accepted (``{"attempt", "key",
+        "plan_job_id", "spine_id", "brief_hash"}``, as given to
+        ``on_accepted``, plus ``paused`` when that draft paused for the
+        creator): when it was for this very brief its plan job is read again
+        and nothing is posted, the same way a stalled plan is adopted
+        (L-20260922-2); a paused one shows its pause again. A record for
+        another brief is dropped (logged as ``draft_dropped``) and the brief
+        is drafted anew.
     on_accepted
         Called with that record right after the server accepts a draft, so the
         desk can save it before the (long) plan poll.
@@ -215,8 +224,22 @@ def start_draft(
 
     last_plan: dict[str, Any] = {}
     draft: dict[str, Any] = {}
-    base = key_prefix or run.prefix
-    adopted = adoptable_draft(resume, key_prefix=base)
+    brief = draft_brief_hash(body)
+    base = f"{key_prefix or run.prefix}-b{brief}"
+    adopted = adoptable_draft(resume, key_prefix=base, brief_hash=brief)
+    if resume and adopted is None:
+        # A draft saved for another brief (the creator edited it after a pause) or an
+        # attempt retry-step moved past: never replay it; this brief drafts under its own key.
+        run.emit(
+            "draft_dropped",
+            key=resume.get("key"),
+            job_id=resume.get("plan_job_id"),
+            note=(
+                "the saved draft was for another brief; drafting this brief anew"
+                if resume.get("brief_hash") != brief
+                else "the saved draft was for an earlier attempt; drafting anew"
+            ),
+        )
     first = int(adopted["attempt"]) if adopted else 0
     for attempt in range(first, 3):
         suffix = f"-a{attempt}" if attempt else ""
@@ -228,12 +251,19 @@ def start_draft(
                 "plan_job_id": adopted["plan_job_id"],
                 "spine_id": adopted["spine_id"],
             }
+            paused = adopted.get("paused")
             run.emit(
-                "draft_adopted",
+                "draft_paused_again" if paused else "draft_adopted",
                 job_id=draft["plan_job_id"],
                 spine_id=draft["spine_id"],
                 key=key,
-                note="an earlier step's draft was accepted; reading its plan job, no new draft",
+                note=(
+                    f"this same brief paused for the creator ({paused}); reading that plan job "
+                    "to show the pause again, no new draft (edit the brief to draft again)"
+                    if paused
+                    else "an earlier step's draft of this same brief was accepted; reading its "
+                    "plan job, no new draft"
+                ),
             )
         else:
             draft = _post_draft(
@@ -248,6 +278,7 @@ def start_draft(
                 on_accepted(
                     {
                         "key_prefix": base,
+                        "brief_hash": brief,
                         "key": key,
                         "attempt": attempt,
                         "plan_job_id": draft.get("plan_job_id"),
@@ -296,13 +327,40 @@ def start_draft(
 _DRAFT_ROUTE = "/v1/prompt-video-authoring-drafts"
 
 
+def draft_brief_hash(body: Mapping[str, Any]) -> str:
+    """Return a short hash of everything a draft is asked for: the brief's exact words and settings.
+
+    The draft request body carries the prompt as sent, the language, band,
+    preset pin, cut tempo and video lane, so any change the creator makes to
+    one of them is a different hash, and the same brief always hashes the same.
+
+    Parameters
+    ----------
+    body
+        The draft request body (:func:`draft_request_body`).
+
+    Returns
+    -------
+    str
+        Ten lowercase hex characters.
+    """
+
+    canon = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:10]
+
+
 def adoptable_draft(
-    record: Mapping[str, Any] | None, *, key_prefix: str
+    record: Mapping[str, Any] | None,
+    *,
+    key_prefix: str,
+    brief_hash: str | None = None,
 ) -> dict[str, Any] | None:
-    """Return a saved accepted draft that belongs to ``key_prefix``, else ``None``.
+    """Return a saved accepted draft that belongs to ``key_prefix`` and this brief, else ``None``.
 
     A record saved under another prefix (an earlier attempt that ``retry-step``
-    moved past) is never adopted: that stage asked for a fresh draft.
+    moved past) is never adopted: that stage asked for a fresh draft. Nor is one
+    saved for another brief (``brief_hash``), or one saved before the kit kept
+    the brief's hash: the creator may have edited the brief since (L-20261002).
 
     Parameters
     ----------
@@ -310,6 +368,8 @@ def adoptable_draft(
         What ``start_draft`` gave ``on_accepted`` on an earlier run.
     key_prefix
         The prefix this run would send the draft under.
+    brief_hash
+        :func:`draft_brief_hash` of this run's draft body; ``None`` skips the check.
 
     Returns
     -------
@@ -318,6 +378,8 @@ def adoptable_draft(
     """
 
     if not record or record.get("key_prefix") != key_prefix:
+        return None
+    if brief_hash is not None and record.get("brief_hash") != brief_hash:
         return None
     if not record.get("plan_job_id") or not record.get("spine_id"):
         return None

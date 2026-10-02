@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from pathlib import Path
 
@@ -106,7 +107,7 @@ def test_a_session_that_died_before_the_answer_resends_under_the_same_key(
         "the server sees one key and hands back the draft it already took"
     )
     prefix = load_production(desk).idempotency_prefix
-    assert keys[0] == f"{prefix}-ep01-draft"
+    assert re.fullmatch(rf"{re.escape(prefix)}-ep01-b[0-9a-f]{{10}}-draft", keys[0])
 
 
 def test_a_deliberate_re_draft_after_retry_step_gets_a_new_key(
@@ -126,4 +127,4 @@ def test_a_deliberate_re_draft_after_retry_step_gets_a_new_key(
 
     first, second = _draft_keys(api)
     assert first != second
-    assert second.endswith("-step-retry-ep01-new-r1-draft")
+    assert re.search(r"-step-retry-ep01-new-r1-b[0-9a-f]{10}-draft$", second)
