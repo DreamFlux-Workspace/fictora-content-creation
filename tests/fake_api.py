@@ -213,6 +213,9 @@ class FakeApi:
             and ("GET", path) not in self.routes
         ):
             return 404, {"error": {"code": "not_found"}}
+        if path == "/v1/capabilities" and ("GET", path) not in self.routes:
+            # A deploy whose capabilities the test did not set: read as an older server.
+            return 404, {"detail": "Not Found"}
         try:
             return 200, self._answer("GET", path, None)
         except SystemExit as exc:
@@ -242,6 +245,15 @@ class FakeApi:
     ) -> dict[str, Any]:
         """PUT."""
         return self._answer("PUT", path, body, idempotency_key)
+
+    def put_optional(
+        self, path: str, body: dict[str, Any], *, idempotency_key: str | None = None
+    ) -> tuple[int, Any]:
+        """PUT without raising; a route may answer ``(status, body)`` for a refusal."""
+        answer = self._answer("PUT", path, body, idempotency_key)
+        if isinstance(answer, tuple):
+            return answer
+        return 200, answer
 
     def delete(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         """DELETE."""

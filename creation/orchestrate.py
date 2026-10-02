@@ -60,7 +60,7 @@ from creation.ops.floor import approve_script as record_script_gate
 from creation.ops.luma import measure_board_luma
 from creation.ops.notes import append_run_note
 from creation.ops.state import episode_by_ordinal, load_series
-from creation.plan_prompt import ensure_plan_prompt
+from creation.plan_prompt import ensure_plan_prompt, narrator_warning, server_cast_floor
 from creation.post.take_facts import (
     cast_names_from,
     save_take_facts,
@@ -1235,9 +1235,17 @@ def run_step(
                 on_screen=narrator_on_screen, ask=ask, rerun=rerun, out=sys.stderr,
             )  # fmt: skip
         if state.phase == "new":
-            effective_prompt = ensure_plan_prompt(state.prompt)
+            # A server whose season bible holds one person (fictora-drama #582)
+            # is asked for exactly the people the story needs; an older one for two.
+            effective_prompt = ensure_plan_prompt(
+                state.prompt, cast_floor=server_cast_floor(run)
+            )
             if effective_prompt != state.prompt:
                 state.prompt = effective_prompt
+            narration = narrator_warning(effective_prompt, desk=desk)
+            if narration:
+                print(narration, file=sys.stderr)
+                _note(ep_dir, narration.splitlines()[0].lstrip("! "))
             # Saved before anything is sent, so a desk that never stored its
             # prefix keeps this one and a re-run sends the same draft key.
             save_production(desk, state)

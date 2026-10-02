@@ -36,7 +36,8 @@ def test_spoken_with_a_language_override_on_an_english_show_is_recorded_on_the_d
 
     message = str(stopped.value)
     assert "recorded on the desk" in message
-    assert "en-US" in message and "backlog" in message
+    assert "en-US" in message
+    assert "fictora-produce language --desk" in message and "--spoken ja" in message
     assert _writes(api) == []
     record = json.loads(
         (desk / "shared" / "spoken-language.json").read_text(encoding="utf-8")
