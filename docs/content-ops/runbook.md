@@ -274,7 +274,7 @@ Repurposing an episode (a new idea on an episode already authored): update its t
 
 - Three lines maximum per fifteen seconds. A 15 s take is three beats, so a silent comic beat (a pause, a stare, a freeze) costs a line. Say so at the brief.
 - Ask who each line is said TO. A line said to nobody is exposition; give it a listener in the room or an off-screen voice.
-- To lock lines word for word, write "Keep these lines exactly as written." in the brief's Lines section, with each line's beat and take filled. The server puts back a locked line the writers trimmed or reworded; a dropped, moved or translated one is still caught at the script gate.
+- To lock lines word for word, write "Keep these lines exactly as written." in the brief's Lines section, with each line's beat and take filled. The server puts back a locked line the writers trimmed or reworded; a dropped, moved or translated one is still caught at the script gate. A locked line that cannot fit pauses the draft for the creator (nothing drafted): edit the brief together, `bind --prompt` the edited brief (or `brief --edit` it) and `step`. The edited brief is always a new draft; `step` on the unchanged brief only shows the pause again and pays nothing.
 - A line needs its own cell with no competing business.
 - Never write a character speaking with a full mouth.
 - Direct volume as clear and audible. "Barely audible" renders at −50 dB.

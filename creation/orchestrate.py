@@ -60,7 +60,12 @@ from creation.ops.floor import approve_script as record_script_gate
 from creation.ops.luma import measure_board_luma
 from creation.ops.notes import append_run_note
 from creation.ops.state import episode_by_ordinal, load_series
-from creation.plan_prompt import ensure_plan_prompt, narrator_warning, server_cast_floor
+from creation.plan_prompt import (
+    _without_kit_directive,
+    ensure_plan_prompt,
+    narrator_warning,
+    server_cast_floor,
+)
 from creation.post.take_facts import (
     cast_names_from,
     save_take_facts,
@@ -755,12 +760,14 @@ def bind_desk(
     Returns
     -------
     ProductionState
-        The saved binding.
+        The saved binding. A desk still at ``new`` whose brief changed prints one
+        line to stderr: the next ``step`` drafts the new brief.
     """
 
     desk = desk.expanduser().resolve()
     series = load_series(desk)
     pid, version = preset or resolve_preset(preset_id)
+    before = load_production(desk) if production_path(desk).is_file() else None
     api_dir = api_dir_for_episode(desk, episode_ordinal)
     api_dir.mkdir(parents=True, exist_ok=True)
     state = ensure_production(
@@ -776,6 +783,18 @@ def bind_desk(
         api_dir, session_id=state.session_id, preset_id=pid, preset_version=version
     )
     save_production(desk, state)
+    if (
+        before is not None
+        and state.phase == "new"
+        and _without_kit_directive(before.prompt.strip())
+        != _without_kit_directive(state.prompt.strip())
+    ):
+        # A re-brief after a pause: say plainly that the next step sends these words (L-20261002).
+        print(
+            f"The brief changed: the next `fictora-produce step --desk {desk}` drafts the new brief "
+            "(a new draft; the earlier one is not reused).",
+            file=sys.stderr,
+        )
     return state
 
 
@@ -1144,7 +1163,8 @@ def draft_key_prefix(state: ProductionState) -> str:
     answers with the draft it already accepted instead of authoring (and
     charging) a second one (L-20260926-4). ``retry-step`` bumps the stage's
     retry count, which gives a deliberate re-draft a new key
-    (:func:`step_retry_prefix`).
+    (:func:`step_retry_prefix`). ``start_draft`` adds the brief's hash
+    (``-b<hash>``), so an edited brief is a new key too (L-20261002).
 
     Parameters
     ----------
@@ -1282,7 +1302,13 @@ def run_step(
                 if pause is None:
                     raise
                 _note(ep_dir, pause)
-                # Not a failure: the desk stays at `new` so the edited brief drafts next.
+                # Not a failure: the desk stays at `new` so the edited brief drafts next (under
+                # its own key). The record stays, marked, so the same brief re-run shows this
+                # pause again from its plan job instead of paying for a second draft.
+                record = state.pending.get(unit)
+                if record is not None:
+                    record["paused"] = LOCKED_LINES_OUT_OF_BOUNDS
+                    save_production(desk, state)
                 raise RuntimeError(pause) from exc
             state.spine_id = spine_id
             state.phase = "ready_cast_enrol"
@@ -2062,7 +2088,8 @@ def locked_lines_pause(message: str, *, desk: Path | str = "<desk>") -> str | No
         "so nothing was drafted (the server never shortens, splits, merges or drops a locked line)."
         f"{listed}\n"
         "Ask the creator to edit the brief's Lines (shorten a line, or move it to the next episode), then "
-        f"`fictora-produce bind --desk {desk} --prompt <edited brief> ...` and `fictora-produce step` again."
+        f"`fictora-produce bind --desk {desk} --prompt <edited brief> ...` and `fictora-produce step` again: "
+        "the edited brief is a new draft. `step` with the brief unchanged shows this pause again and drafts nothing."
     )
 
 
