@@ -40,6 +40,8 @@ Server contract (``GET /v1/jobs/{id}/take-facts``)::
 
 from __future__ import annotations
 
+import re
+
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -101,6 +103,9 @@ class Soundtrack:
         The server laid the location's ambience under the voices (``ambience.laid``).
     music_laid
         The harness's music is already in the take's soundtrack (``music.laid``).
+    sfx_laid
+        Sound lines whose effect the server already laid in the track
+        (``sfx.cues[].laid``), normalised by :func:`sfx_sound_key`.
     """
 
     mode: str = NATIVE
@@ -111,6 +116,7 @@ class Soundtrack:
     track_url: str | None = None
     ambience_laid: bool = False
     music_laid: bool = False
+    sfx_laid: frozenset[str] = frozenset()
 
     @property
     def target_audio(self) -> bool:
@@ -134,12 +140,18 @@ class Soundtrack:
                     else ("location ambience (room tone if none can be made)",)
                 ),
                 *(() if self.music_laid else ("bed",)),
-                "effects",
+                *(() if self.sfx_laid else ("effects",)),
             ]
             music = "; the harness's music is in the track" if self.music_laid else ""
+            effects = (
+                f"; {len(self.sfx_laid)} effect(s) are in the track"
+                if self.sfx_laid
+                else ""
+            )
+            todo = f"{', '.join(laid)} will be laid" if laid else "nothing more is laid"
             return (
-                f"Soundtrack: locked voices, {len(self.lines)} line(s) ({room}{music}); "
-                f"{', '.join(laid)} will be laid"
+                f"Soundtrack: locked voices, {len(self.lines)} line(s) ({room}{music}{effects}); "
+                f"{todo}"
             )
         if not self.sent:
             return "Soundtrack: native (the server sent no soundtrack: an older server)"
@@ -205,6 +217,7 @@ def soundtrack_from(facts: Mapping[str, Any] | None) -> Soundtrack:
         track_url=str(raw["track_url"]) if raw.get("track_url") else None,
         ambience_laid=_laid(raw.get("ambience")),
         music_laid=_laid(raw.get("music")),
+        sfx_laid=_sfx_laid(raw.get("sfx")),
     )
 
 
@@ -222,6 +235,27 @@ def model_scored(facts: Mapping[str, Any] | None) -> bool:
         return False
     body = facts.get("take_facts", facts)
     return isinstance(body, Mapping) and body.get("model_music") is True
+
+
+def sfx_sound_key(sound: str) -> str:
+    """A Sound line compared loosely: lower case, words only."""
+
+    return " ".join(re.findall(r"[\w']+", sound.casefold()))
+
+
+def _sfx_laid(block: Any) -> frozenset[str]:
+    """The Sound lines the server laid in the track (``sfx.cues[]`` with ``laid: true``)."""
+
+    if not isinstance(block, Mapping):
+        return frozenset()
+    cues = block.get("cues")
+    if not isinstance(cues, list):
+        return frozenset()
+    return frozenset(
+        sfx_sound_key(str(cue["sound"]))
+        for cue in cues
+        if isinstance(cue, Mapping) and cue.get("laid") is True and cue.get("sound")
+    )
 
 
 def _laid(block: Any) -> bool:
