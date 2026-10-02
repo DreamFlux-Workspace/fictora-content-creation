@@ -130,12 +130,17 @@ _CUE_FILLER = frozenset(
 )  # fmt: skip
 
 
-def _cue_words(text: str) -> list[str]:
-    return [
-        w
-        for w in re.findall(r"[a-z]+", text.casefold())
-        if len(w) > 2 and w not in _CUE_FILLER
-    ]
+def _cue_words(text: str) -> set[str]:
+    """Content words of a cue, with a trailing ``s`` folded so ``slam`` matches ``slams``."""
+
+    words: set[str] = set()
+    for word in re.findall(r"[a-z]+", text.casefold()):
+        if len(word) <= 2 or word in _CUE_FILLER:
+            continue
+        if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+            word = word[:-1]
+        words.add(word)
+    return words
 
 
 def duplicate_cue_warnings(
@@ -164,15 +169,24 @@ def duplicate_cue_warnings(
 
     warnings: list[str] = []
     for description, start in hand:
-        words = set(_cue_words(description))
+        words = _cue_words(description)
         for sound, at in laid:
             if abs(at - start) > window:
                 continue
+            laid_words = _cue_words(sound)
+            shorter, longer = (
+                (words, laid_words)
+                if len(words) <= len(laid_words)
+                else (laid_words, words)
+            )
+            # One shared word ("ceramic", "wet") is not the same event.
+            if not shorter or not shorter <= longer:
+                continue
             probe = SfxCue(0, sound, "event", at, 0.0)
             shared = [
-                w
-                for w in _cue_words(sound)
-                if w in words and _applies(probe, Adjustment(match=w))
+                word
+                for word in sorted(shorter)
+                if _applies(probe, Adjustment(match=word))
             ]
             if not shared:
                 continue

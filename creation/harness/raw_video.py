@@ -14,6 +14,8 @@ from __future__ import annotations
 import re
 import sys
 import time
+
+import httpx
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -22,6 +24,7 @@ from urllib.parse import quote
 from creation.harness.http_util import (
     STALE_JOB_SECONDS,
     _parse_utc,
+    connection_dropped,
     describe_job_error,
     stale_job_warning,
 )
@@ -277,7 +280,10 @@ def wait_for_raw_scene_clips(
     desk = desk_hint() if callable(desk_hint) else None
 
     while time.monotonic() < deadline:
-        parent = _job_record(run.get(f"/v1/jobs/{coordinator_job_id}"))
+        try:
+            parent = _job_record(run.get(f"/v1/jobs/{coordinator_job_id}"))
+        except httpx.HTTPError as exc:
+            raise SystemExit(connection_dropped("the film job", exc)) from exc
         if str(parent.get("status") or "") in _FAILED:
             run.save("17_video_terminal.json", parent)
             raise VideoJobFailed(
@@ -298,7 +304,10 @@ def wait_for_raw_scene_clips(
             pending = False
             clips = []
             for child_id in child_ids:
-                child = _job_record(run.get(f"/v1/jobs/{child_id}"))
+                try:
+                    child = _job_record(run.get(f"/v1/jobs/{child_id}"))
+                except httpx.HTTPError as exc:
+                    raise SystemExit(connection_dropped("the film job", exc)) from exc
                 status = str(child.get("status") or "")
                 if status in {"queued", "running", ""}:
                     pending = True

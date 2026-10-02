@@ -28,7 +28,7 @@ from typing import Any, TextIO
 
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
-from creation.harness_rules import creature_sound_stop
+from creation.harness_rules import creature_sound_stop, mouth_sound_note
 from creation.post.audio_service import AudioService, DramaApiAudio, download
 from creation.post.desk import (
     cast_slug,
@@ -140,6 +140,9 @@ def run_cue(
     creature = creature_sound_stop(sound)
     if creature:
         raise ValueError(creature + " Nothing was sent.")
+    mouth = mouth_sound_note(sound)
+    if mouth:
+        print(mouth, file=out)
     if not SFX_MIN_SECONDS <= seconds <= SFX_MAX_SECONDS:
         raise ValueError(
             f"--seconds must be {SFX_MIN_SECONDS:g}-{SFX_MAX_SECONDS:g}; got {seconds:g}"

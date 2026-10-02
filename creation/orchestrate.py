@@ -104,10 +104,13 @@ from creation.spine_view import (
     spoken_lines,
 )
 from creation.harness_rules import (
+    adult_face_lines,
     film_stop_message,
+    hands_on_sound_lines,
     hook_mouth_stop,
     locked_camera_line,
     near_touch_line,
+    sparkle_adult_line,
     staging_contradiction_lines,
     thin_take_lines,
     young_creature_lines,
@@ -375,10 +378,15 @@ def script_gate_text(desk: Path, spine: dict[str, Any], *, episode: int) -> str:
     notes = [
         *thin_take_lines(spine, episode=episode, take_count=len(slot.takes)),
         *staging_contradiction_lines(spine, episode=episode),
+        *adult_face_lines(spine),
+        *hands_on_sound_lines(spine, episode=episode),
     ]
     near = near_touch_line(spine, episode=episode)
     if near:
         notes.append(near)
+    sparkle = sparkle_adult_line(spine, episode=episode)
+    if sparkle:
+        notes.append(sparkle)
     if notes:
         text += "\n" + "\n".join(notes)
     return text
@@ -1339,6 +1347,8 @@ def run_step(
                 raise RuntimeError(
                     "Stopped before the plates. Nothing was sent.\n" + "\n".join(young)
                 )
+            for line in adult_face_lines(spine_now):
+                _note(ep_dir, line)
             owing: set[str] | None = None
             if ep >= 2:
                 owing = {
@@ -1417,10 +1427,17 @@ def run_step(
                 )
             conflicts = staging_contradiction_lines(spine_now, episode=ep)
             near = near_touch_line(spine_now, episode=ep)
-            if conflicts or near:
+            sparkle = sparkle_adult_line(spine_now, episode=ep)
+            if conflicts or near or sparkle:
                 raise RuntimeError(
                     "Stopped before the boards. Nothing was sent.\n"
-                    + "\n".join([*conflicts, *([near] if near else [])])
+                    + "\n".join(
+                        [
+                            *conflicts,
+                            *([near] if near else []),
+                            *([sparkle] if sparkle else []),
+                        ]
+                    )
                 )
             stages.enrol_boards(
                 run,

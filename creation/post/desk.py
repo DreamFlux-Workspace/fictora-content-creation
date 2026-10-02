@@ -154,8 +154,63 @@ def cast_slug(cast_id: str) -> str:
     return _slug(cast_id.removeprefix("cast_")) or "cast"
 
 
+def _name_keys(name: str) -> set[str]:
+    """Slugs and exact parts of a cast name, including a reading in parentheses.
+
+    ``Koharu (小春)`` matches ``Koharu`` and ``小春``.
+    """
+
+    keys = {name.casefold()}
+    slug = _slug(name)
+    if slug:
+        keys.add(slug)
+    for part in re.split(r"[()（）]", name):
+        part = part.strip()
+        if not part:
+            continue
+        keys.add(part.casefold())
+        part_slug = _slug(part)
+        if part_slug:
+            keys.add(part_slug)
+    return keys
+
+
+def name_matches(card_id: str, card_name: str, wanted: str) -> bool:
+    """True when ``wanted`` is this card's id, name, reading, or slug.
+
+    A reading in parentheses counts: ``Koharu (小春)`` matches ``Koharu`` and ``小春``.
+
+    Parameters
+    ----------
+    card_id
+        ``cast_id``.
+    card_name
+        Display name.
+    wanted
+        What the operator typed.
+
+    Returns
+    -------
+    bool
+        Whether the card is the one they named.
+    """
+
+    key = _slug(wanted.removeprefix("cast_"))
+    names = _name_keys(card_name)
+    return (
+        wanted in {card_id, card_name}
+        or wanted.casefold() in {card_id.casefold(), *names}
+        or key in {cast_slug(card_id), _slug(card_name)}
+        or bool(key)
+        and key in names
+    )
+
+
 def find_cast(spine: Mapping[str, Any], wanted: str) -> dict[str, Any]:
     """One cast card by ``cast_id``, name, or slug of either.
+
+    A reading in parentheses is part of the name: ``Koharu (小春)`` matches
+    ``Koharu`` and ``小春``.
 
     Raises
     ------
@@ -164,10 +219,9 @@ def find_cast(spine: Mapping[str, Any], wanted: str) -> dict[str, Any]:
     """
 
     cards = [card for card in spine.get("cast") or [] if isinstance(card, Mapping)]
-    key = _slug(wanted.removeprefix("cast_"))
     for card in cards:
         cid, name = str(card.get("cast_id") or ""), str(card.get("name") or "")
-        if wanted in {cid, name} or key in {cast_slug(cid), _slug(name)}:
+        if name_matches(cid, name, wanted):
             return dict(card)
     names = (
         ", ".join(f"{c.get('cast_id')} ({c.get('name')})" for c in cards) or "nobody"

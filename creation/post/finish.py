@@ -213,6 +213,7 @@ from creation.post.soundtrack import (
     unheard_lines,
 )
 from creation.post.voice_fx import PRESETS as VOICE_FX_PRESETS
+from creation.harness_rules import opening_sound_line
 from creation.post.sfx import (
     Adjustment,
     Cuts,
@@ -1160,6 +1161,11 @@ def run_finish(
             tuple((cue_description(cue.path), cue.start) for cue, _ in hand.cues),
             tuple((c.sound, c.start) for c in bed_state["cues"]),
         )
+        clashes += [
+            line
+            for cue, _seconds in hand.cues
+            if (line := opening_sound_line(cue_description(cue.path), cue.start))
+        ]
         for warning in clashes:
             print(f"[cues] {warning}", file=out, flush=True)
         append_run_note(
@@ -1287,6 +1293,10 @@ def run_finish(
             + (f" (note {', '.join(c.note_ids)})" if c.note_ids else "")
             for c in sfx.mixed
         )
+        for cue in sfx.mixed:
+            opened = opening_sound_line(cue.sound, cue.start)
+            if opened:
+                print(f"[sfx] {opened}", file=out, flush=True)
         note = f"SFX -> `{sfx.output.name}`: {cues}; rendered {sfx.rendered}, ${sfx.cost_usd:.3f}"
         note += "".join(f"\n- skipped: {s}" for s in sfx.skipped)
         note += "".join(f"\n- dropped by a sound note: {d}" for d in plan.dropped)

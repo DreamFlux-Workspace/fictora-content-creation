@@ -77,6 +77,7 @@ from creation.narrator_cast import question as narrator_question
 from creation.cli_text import TextArgError, text_or_file
 from creation.new_cast import new_cast_notice, newcomers
 from creation.desk_media_urls import drawn_cast_rows
+from creation.post.desk import name_matches
 from creation.harness import stages_gated as stages
 from creation.harness.http_util import api_error_text, describe_job_error
 from creation.harness.minor_scene_refusal import (
@@ -1461,9 +1462,8 @@ def resolve_speaker(spine: Mapping[str, Any], who: str) -> str:
     """
 
     names = _cast_names(spine)
-    wanted = who.strip().lower()
     for cast_id, name in names.items():
-        if wanted in {cast_id.lower(), name.lower()}:
+        if name_matches(cast_id, name, who.strip()):
             return cast_id
     cast = ", ".join(f"{name} ({cast_id})" for cast_id, name in names.items()) or "none"
     raise CommandStopped(
@@ -5383,12 +5383,16 @@ def run_redraw_plate_with_note(
             if isinstance(card, Mapping) and card.get("cast_id")
         ]
         cards = drawn_cast_rows(spine)
-        wanted = cast.strip().casefold()
         named = next(
-            (c for c in everyone
-             if wanted in {str(c["cast_id"]).casefold(), str(c.get("name") or "").casefold()}),
+            (
+                c
+                for c in everyone
+                if name_matches(
+                    str(c["cast_id"]), str(c.get("name") or ""), cast.strip()
+                )
+            ),
             None,
-        )  # fmt: skip
+        )
         if named is None:
             names = ", ".join(f"{c.get('name')} ({c['cast_id']})" for c in everyone)
             raise CommandStopped(
