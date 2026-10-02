@@ -68,6 +68,16 @@ _FORBID_HOLD = re.compile(
     r"\b(?:no|not|never|forbid|forbidden|without|anyone)\b.{0,48}\b(?:hold|holding|grip|gripping|touch|touching)\b",
     re.IGNORECASE,
 )
+_ADULT_AGE = re.compile(r"\b([1-9]\d)\b")
+_ADULT_FACE = re.compile(
+    r"no blush|narrow face|defined jaw|stubble|adult face|crow",
+    re.IGNORECASE,
+)
+_MOUTH_SOUND = re.compile(r"\b(?:slurp|chew|munch|sip|crunch|chomp)\b", re.IGNORECASE)
+_MOUTH_SHOWN = re.compile(r"\bmouth\b|\blips\b", re.IGNORECASE)
+_HANDS_ON = ("pour", "ladle", "slam", "slide", "chop", "fold")
+#: A cue this close to 0 s sits on the opening line.
+_OPENING_CUE_SECONDS = 0.05
 
 #: What ``finish`` prints when the cover route answers an audio error.
 THUMBNAIL_AUDIO_ERROR = (
@@ -822,3 +832,197 @@ def thin_take_lines(
             "and a line or a visible action every 3 to 4 seconds."
         )
     return lines
+
+
+def _card_text(card: Mapping[str, Any]) -> str:
+    blobs: list[str] = []
+    _strings(card, blobs)
+    return " ".join(blobs)
+
+
+def _adult_age(text: str) -> int | None:
+    for raw in _ADULT_AGE.findall(text):
+        age = int(raw)
+        if 18 <= age <= 80:
+            return age
+    return None
+
+
+def adult_face_lines(spine: Mapping[str, Any]) -> list[str]:
+    """Warn when a stated adult age has no adult face words.
+
+    A stated age without adult features is drawn young. The note that holds
+    names the face: narrow face, no blush. A look note does not hold. This
+    does not stop the plates.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+
+    Returns
+    -------
+    list[str]
+        One line per adult card that lacks those face words. Empty when no
+        card states an age.
+    """
+
+    lines: list[str] = []
+    for card in spine.get("cast") or []:
+        if not isinstance(card, Mapping):
+            continue
+        text = _card_text(card)
+        age = _adult_age(text)
+        if age is None or _ADULT_FACE.search(text) is not None:
+            continue
+        name = str(card.get("name") or card.get("cast_id") or "the character")
+        lines.append(
+            f"{name} is {age} and can be drawn young. "
+            "Name adult features in the brief before the plate: narrow face, no blush. "
+            "A look note does not hold."
+        )
+    return lines
+
+
+def sparkle_adult_line(spine: Mapping[str, Any], *, episode: int) -> str | None:
+    """Stop a sparkle expression on a character whose card states an adult age.
+
+    ``sparkle_delight`` draws stars and a rounder, younger face. Use a calm
+    expression before the board is drawn. A card with no stated age is left
+    alone.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+
+    Returns
+    -------
+    str | None
+        The stop line, or ``None`` when no adult beat uses a sparkle expression.
+    """
+
+    cards = {
+        str(card.get("cast_id")): card
+        for card in spine.get("cast") or []
+        if isinstance(card, Mapping) and card.get("cast_id")
+    }
+    for beat in _episode_beats(spine, episode):
+        kind = str(beat.get("reaction_kind") or "").replace(" ", "_").lower()
+        if "sparkle" not in kind:
+            continue
+        speakers: set[str] = set()
+        direction = beat.get("motion_direction") or {}
+        if isinstance(direction, Mapping) and direction.get("subject_cast_id"):
+            speakers.add(str(direction["subject_cast_id"]))
+        for line in beat.get("dialogue_lines") or []:
+            if isinstance(line, Mapping) and line.get("cast_id"):
+                speakers.add(str(line["cast_id"]))
+        for cast_id in speakers:
+            card = cards.get(cast_id)
+            if card is None:
+                continue
+            age = _adult_age(_card_text(card))
+            if age is None:
+                continue
+            name = str(card.get("name") or cast_id)
+            return (
+                f"{_beat_label(beat)}: sparkle_delight on {name} ({age}) draws stars "
+                "and a younger face. Use a calm expression before the board is drawn."
+            )
+    return None
+
+
+def hands_on_sound_lines(spine: Mapping[str, Any], *, episode: int) -> list[str]:
+    """Warn when a hands-on action has no sound note.
+
+    A pour, a slam, or a slide that the plan never names stays silent. Add a
+    sound note for each before finish, and place a missing sound on the frame
+    the action lands.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+
+    Returns
+    -------
+    list[str]
+        One line when any of those actions is missing from the sound notes.
+    """
+
+    notes = " ".join(
+        str(note.get("text") or "")
+        for note in spine.get("sound_notes") or []
+        if isinstance(note, Mapping)
+    ).casefold()
+    text = _episode_text(spine, episode)
+    missing = [
+        word
+        for word in _HANDS_ON
+        if re.search(rf"\b{word}", text, flags=re.IGNORECASE) and word not in notes
+    ]
+    if not missing:
+        return []
+    listed = ", ".join(missing)
+    return [
+        f"Hands-on actions with no sound note: {listed}. "
+        "Add a sound note for each before finish, and place a missing sound "
+        "on the frame the action lands."
+    ]
+
+
+def mouth_sound_note(description: str) -> str | None:
+    """Warn when a mouth sound does not say the mouth is in frame.
+
+    A slurp, chew, or sip only reads in sync on a frame that shows the mouth.
+    The cue is still sent.
+
+    Parameters
+    ----------
+    description
+        The cue description about to be sent.
+
+    Returns
+    -------
+    str | None
+        The warning, or ``None`` when the cue is not a mouth sound or already
+        names the mouth.
+    """
+
+    if _MOUTH_SOUND.search(description) is None or _MOUTH_SHOWN.search(description):
+        return None
+    return (
+        "A mouth sound (slurp, chew, sip) only reads in sync on a frame that shows the mouth. "
+        "Place it on that frame."
+    )
+
+
+def opening_sound_line(sound: str, start: float) -> str | None:
+    """Warn when a cue sits on the opening line.
+
+    A sound at 0 s lands on the first line. Place it on the frame the action lands.
+
+    Parameters
+    ----------
+    sound
+        What the cue is.
+    start
+        Where it is laid, in seconds.
+
+    Returns
+    -------
+    str | None
+        The warning, or ``None`` when the cue starts after the opening.
+    """
+
+    if start > _OPENING_CUE_SECONDS:
+        return None
+    return (
+        f'!! "{sound}" sits at {start:.2f}s, on the opening line. '
+        "Place it on the frame the action lands."
+    )

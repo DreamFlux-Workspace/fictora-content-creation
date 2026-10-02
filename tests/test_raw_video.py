@@ -25,6 +25,7 @@ def test_clip_url_from_job_payload_reads_fictora_media() -> None:
 
 # --- a take counts only when its video job is complete (L-20260925-1) -------------------------------
 
+import httpx  # noqa: E402
 import pytest  # noqa: E402
 
 from creation.harness import raw_video  # noqa: E402
@@ -98,6 +99,17 @@ def test_a_job_that_never_completes_is_not_done_at_the_deadline() -> None:
             run, "job_video_1", deadline_seconds=0.05, interval_seconds=0
         )
     assert run.saved == {}, "no clip record is written for half a take"
+
+
+def test_a_dropped_connection_says_to_run_step_again() -> None:
+    class _Drop(_Run):
+        def get(self, path: str) -> dict:
+            raise httpx.ConnectError("reset")
+
+    with pytest.raises(SystemExit, match="Run `fictora-produce step` again"):
+        raw_video.wait_for_raw_scene_clips(
+            _Drop([], {}), "job_video_1", interval_seconds=0
+        )
 
 
 def test_a_completed_job_with_fewer_clips_than_asked_stops_loud() -> None:

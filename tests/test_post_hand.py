@@ -614,6 +614,14 @@ def test_a_hand_cue_on_an_auto_cue_of_the_same_sound_says_which_to_drop() -> Non
     # Far apart, or a different sound: no warning.
     assert duplicate_cue_warnings((("a heavy door slam", 3.2),), laid) == []
     assert duplicate_cue_warnings((("a glass shatters", 4.9),), laid) == []
+    # One shared word is not the same event. The same words are.
+    pour = (("a ceramic broth pour", 2.0),)
+    slide = (("a ceramic bowl slide", 2.4),)
+    assert duplicate_cue_warnings(pour, slide) == []
+    slurp = duplicate_cue_warnings(
+        (("a noodle slurp", 8.0),), (("a long happy noodle slurp", 8.2),)
+    )
+    assert len(slurp) == 1
 
 
 @needs_ffmpeg

@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 from creation.harness_rules import (
+    adult_face_lines,
     creature_sound_stop,
     film_stops,
     gain_match_note,
+    hands_on_sound_lines,
     hook_mouth_stop,
     late_opening_line,
     locked_camera_line,
+    mouth_sound_note,
     near_touch_line,
+    opening_sound_line,
     short_line_hold,
+    sparkle_adult_line,
     staging_contradiction_lines,
     thin_take_lines,
     seam_fix_line,
@@ -18,6 +23,7 @@ from creation.harness_rules import (
     thumbnail_answered_audio_error,
     young_creature_lines,
 )
+from creation.post.desk import find_cast
 
 
 def _spine() -> dict:
@@ -228,6 +234,54 @@ def test_a_take_with_fewer_than_three_lines_is_named() -> None:
         {"line_id": "l3", "cast_id": "cast_hana", "text": "Look."}
     ]
     assert thin_take_lines(spine, episode=1, take_count=1) == []
+
+
+def test_an_adult_age_without_adult_features_is_named() -> None:
+    spine = _spine()
+    assert adult_face_lines(spine) == []
+    spine["cast"][0]["visual_brief"] = "Koharu, 29, soft smile"
+    lines = adult_face_lines(spine)
+    assert len(lines) == 1 and "narrow face" in lines[0]
+    spine["cast"][0]["visual_brief"] = "Koharu, 29, narrow face, no blush"
+    assert adult_face_lines(spine) == []
+
+
+def test_sparkle_on_an_adult_stops_and_a_card_with_no_age_does_not() -> None:
+    spine = _spine()
+    spine["beats"][0]["reaction_kind"] = "sparkle_delight"
+    assert sparkle_adult_line(spine, episode=1) is None
+    spine["cast"][0]["visual_brief"] = "Hana, 29"
+    stopped = sparkle_adult_line(spine, episode=1)
+    assert stopped is not None and "calm expression" in stopped
+
+
+def test_a_hands_on_action_without_a_sound_note_is_named() -> None:
+    spine = _spine()
+    assert hands_on_sound_lines(spine, episode=1) == []
+    spine["beats"][0]["motion_intent"] = "she pours the broth"
+    lines = hands_on_sound_lines(spine, episode=1)
+    assert len(lines) == 1 and "pour" in lines[0]
+    spine["sound_notes"] = [{"text": "a broth pour"}]
+    assert hands_on_sound_lines(spine, episode=1) == []
+
+
+def test_a_mouth_sound_and_a_cue_at_zero_are_named() -> None:
+    note = mouth_sound_note("a long happy noodle slurp")
+    assert note is not None and "mouth" in note
+    assert mouth_sound_note("a slurp on the open mouth") is None
+    assert mouth_sound_note("a door slam") is None
+    opened = opening_sound_line("a noodle slurp", 0.0)
+    assert opened is not None and "opening line" in opened
+    assert opening_sound_line("a ladle pour", 0.2) is None
+
+
+def test_a_name_with_a_reading_matches_either_part() -> None:
+    spine = {
+        "cast": [{"cast_id": "cast_koharu", "name": "Koharu (小春)"}],
+    }
+    assert find_cast(spine, "Koharu")["cast_id"] == "cast_koharu"
+    assert find_cast(spine, "小春")["cast_id"] == "cast_koharu"
+    assert find_cast(spine, "cast_koharu")["name"] == "Koharu (小春)"
 
 
 def test_a_thumbnail_audio_error_is_recognized() -> None:
