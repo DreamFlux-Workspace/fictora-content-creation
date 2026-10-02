@@ -9,7 +9,7 @@ from pathlib import Path
 from creation.cli_text import HELP_SUFFIX, text_or_file
 from creation.post.edit_commands import EDIT_COMMANDS, add_edit_parsers, dispatch_edit
 from creation.post.finish import FINISH_INCOMPLETE, run_finish
-from creation.post.hand import parse_placed, parse_range
+from creation.post.hand import parse_caption_label, parse_placed, parse_range
 from creation.post.join import JOIN_NOT_DONE, run_join
 from creation.post.handmade import CUE_DEFAULT_SECONDS
 from creation.post.review_command import (
@@ -326,6 +326,18 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Lay a dry line (voice-line): PATH@SECONDS[@DB] on the take as filmed; levelled unless @DB (repeat).",
     )  # fmt: skip
     fin.add_argument(
+        "--sign-overlay",
+        action="store_true",
+        help="Where the text check finds possible garbled lettering in a shot whose take facts carry a story "
+        "sign, draw the sign's exact words in the house font over it for that shot (instead of a blur). "
+        "Without it, finish prints the suggestion.",
+    )
+    fin.add_argument(
+        "--caption-label", action="append", default=[], metavar="TEXT@A-B",
+        help="A caption with no spoken line under it (a short line the take never says clearly): "
+        "TEXT@A-B seconds on the take as filmed, drawn like the other captions (repeat).",
+    )  # fmt: skip
+    fin.add_argument(
         "--cue", action="append", default=[],
         help="Lay a hand cue (cue): PATH@SECONDS[@DB] on the take as filmed; -8 dB unless @DB, clamped (repeat).",
     )  # fmt: skip
@@ -604,6 +616,9 @@ def dispatch_post(args: argparse.Namespace) -> int:
             mutes=tuple(parse_range(raw) for raw in args.mute),
             voices=tuple(parse_placed(raw, flag="--voice") for raw in args.voice),
             cues=tuple(parse_placed(raw, flag="--cue") for raw in args.cue),
+            caption_labels=tuple(
+                parse_caption_label(raw) for raw in args.caption_label
+            ),
             thumbnail=not args.no_thumbnail,
             draw_thumbnail=args.thumbnail,
             over_locked_voices=args.over_locked_voices,

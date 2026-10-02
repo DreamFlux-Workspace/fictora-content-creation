@@ -591,10 +591,10 @@ _ZONE_WHAT = {
     "right rail": "the right 12% of the lower two thirds (like, comment, share)",
 }
 SAFE_ZONE_BOARD_CHECK = (
-    "safe zones (text-only check): TikTok, Reels and Shorts cover the top 8%, the bottom 20% and the right 12% "
-    "of the lower two thirds of every cell. The kit read the written placements only, not measured on the "
-    "board image (it has no face detector): look at the board and check no face, eyes, mouth or key prop "
-    "sits there."
+    "safe zones: TikTok, Reels and Shorts cover the top 8%, the bottom 20% and the right 12% of the lower two "
+    "thirds of every cell. Not measured on the board image (the kit has no face detector): look at the board "
+    "and check no face, eyes, mouth or key prop sits there. Written placements are listed to look at, never "
+    "flagged; `review` measures the finished take's captions."
 )
 
 
@@ -627,11 +627,12 @@ def covered_placement(text: str, *, frame_anchored: bool = False) -> str | None:
 def safe_zone_lines(
     frames: Sequence[Mapping[str, Any]], *, cast_names: Mapping[str, str] | None = None
 ) -> list[str]:
-    """Warn (never block) on faces and props whose written placement falls in a covered zone.
+    """List (never flag) faces and props whose written placement could fall in a covered zone.
 
-    A text-only check, and every line says so: the placement words are read, the drawn
-    board is not measured (the kit has no face detector), so a line is a prompt to look at
-    that cell, and a false alarm when the drawing keeps the face clear.
+    The placement words are read, the drawn board is not measured (the kit has no face
+    detector), so a line is a cell to look at, not a finding: written placements raised
+    three false alarms as ``!!`` lines (Hanakaze #9, SCP-173 Blink #54). ``review``
+    measures the finished take's caption box on its frames and burned caption file.
 
     Parameters
     ----------
@@ -643,7 +644,7 @@ def safe_zone_lines(
     Returns
     -------
     list[str]
-        One ``!!`` line per placement in a covered zone, then the human check line.
+        One ``look at`` line per placement in a covered zone, then the human check line.
     """
 
     names = cast_names or {}
@@ -676,10 +677,9 @@ def safe_zone_lines(
         if zone:
             found.append(("the safe-zone note", note, zone))
         lines += [
-            f'  !! text-only check, {cell}: {what} is placed "{text}", which would put it in {_ZONE_WHAT[zone]}, '
-            f"where the platform covers it. The words were read; the drawing was not measured: look at {cell} "
-            "on the board. If it sits there, edit the frame (edit --frame ...) and redraw; it is a false alarm "
-            "when the drawing keeps it clear (warning only)"
+            f'  look at {cell}: {what} is written "{text}", which could put it in {_ZONE_WHAT[zone]}. '
+            "Written words only, not a finding: if the drawing puts it there, edit the frame "
+            "(edit --frame ...) and redraw"
             for what, text, zone in found
         ]
     lines.append(f"  {SAFE_ZONE_BOARD_CHECK}")

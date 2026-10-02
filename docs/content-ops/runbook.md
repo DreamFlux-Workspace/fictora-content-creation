@@ -119,6 +119,8 @@ When a step fails, the desk says `failed` and names the stage. Fix the cause, th
 
 Slow is not stuck. While a job runs the kit prints its status every poll; when the job's `updated_at` and progress have not moved for 10 minutes it prints a `WARNING: The server has not updated this job for N min (last update HH:MM UTC)` line, and again every 10 minutes (a film's warning starts `video job job_video_…:` and also watches the take jobs and clips; a film stops at once when `/v1/video-generations/{id}` says failed, even while `/v1/jobs` still says `running 0%`). Check `fictora-produce status --desk D`, tell the human, and with their yes stop it with `fictora-produce cancel-job --desk D --job-id <id>`. The kit never cancels or retries on its own. When `cancel-job` says the cancel was requested but the job has not stopped yet, steps already started on the server may keep running for a while (a server fix is in progress): it reads the job once more after 15 s and says where it stands. Do not cancel again and never enrol another take while it runs.
 
+After a `cancel-job`, run the stopped command again: a redraw, `author` or `rewrite` whose saved job was cancelled or failed starts a fresh job under a new key and says so (a redraw re-sends its note). A job still running, or one that completed, is picked up and never sent twice.
+
 Ask for the merged cut whenever an episode has a second take. Joining costs nothing. One music bed across the whole thing. Soften every seam. Assert 24 fps. Check loudness across each seam — a 5 dB step is audible. The merged file is a new file. Individual takes stay on disk.
 
 ## Spend
@@ -180,7 +182,7 @@ Every episode goes to TikTok, Instagram Reels and YouTube Shorts with one layout
 - Faces, eyes, mouths and key props never sit in a covered zone. Bodies, hands, floor and set may run through them. Composition is otherwise free: faces are not forced to the centre (it looked ugly).
 - Captions sit in the band 55–70% of the height.
 - The Sokii mark sits top left, just under the top strip: `23:121` on 768×1344 (x = 3% of the width, y = 9% of the height), 0.6 opacity. Never top right.
-- There is no face detector. The boards `step` warns (`!! text-only check, …`) when a frame's written placement puts a face or prop in a zone. It reads the words, not the drawing: look at the cell it names (it is a false alarm when the drawing keeps the face clear), and look at every other cell anyway. A face or key prop in a zone: fix the frame's placement with `edit --frame`, then `redraw-board`.
+- There is no face detector. The boards `step` lists a frame whose written placement could put a face or prop in a zone (`look at row R cell C: …`, never `!!`: written words are not a finding). Look at that cell and at every other cell. On the finished take `review` measures the caption box (sampled frames and every cue of the burned `.ass`) and gives each finding its times. A face or key prop in a zone: fix the frame's placement with `edit --frame`, then `redraw-board`.
 - On the finished take, `fictora-produce review --desk D --episode N --take tK` measures the caption box on sampled frames against these zones and the 55–70% band, and writes a zone sheet (`<take>-zones-vN.png`, zones shaded red) for the face check. It warns and never blocks; faces are still the human's look.
 
 ### Expression library
@@ -269,6 +271,7 @@ Repurposing an episode (a new idea on an episode already authored): update its t
 - Duplicates are compositional, never numeric. "Only one person" does not help.
 - When a prop keeps detaching, change the pose so the contact does not exist. Forbidding it in words fails twice.
 - No digits and no readable text anywhere. Jackets and uniforms say "plain back, no lettering or logos". Watch the end of every take for invented text: it shows up most in the last seconds.
+- A sign the story needs (its words in the take facts' `story_signs`) that the video garbled: `finish` names it and the shot; with the human's yes, `finish --sign-overlay` draws the exact words over it instead of a blur.
 
 ### Dialogue
 
@@ -303,6 +306,8 @@ Hosted post-production is switched off on the service. Never call `POST /v1/vide
 ### Change a character's voice (never regenerate the story)
 
 A voice that "feels off" is a voice change, not a new story and not a new video. The voice is a lock on the cast card. Audition candidates on the character's real lines (`fictora-produce voice --desk D --cast NAME --audition`), or on new wording in the voices the human names (`--text "…" --voices A,B`: sent to the server as they are; an unknown voice or wording over 300 characters is refused by name before anything is spent), the human picks (`voice --pick N` or the voice's name), re-voice the filmed takes where that character speaks (`revoice --desk D --cast NAME --episode N --take tK`), then finish again (`finish --take-file <revoice file>`). On Turbo (the default) a take whose facts say `Soundtrack: native` (or say nothing: an older server) does not carry the locked voice, because voice references are not sent, so revoice those takes filmed after the pick too; only on R2V, or on a Turbo take filmed with `Soundtrack: locked voices` after the pick, do takes use the new voice as they are. A locked-voice take filmed before the pick is the one locked-voice case that needs `revoice --over-locked-voices`; the kit refuses a revoice, `--mute` or `--voice` on a locked-voice take without it. Only when the dub does not sit (lips visibly wrong, a shouted line), re-film the takes where that character speaks, with a cause and a stated cost. Never the other takes, never the story.
+
+A one-word line the transcript missed ("Blinking!") is revoiced on its planned window from the take facts, and `revoice` says it did: listen before using it. A short line that reads better than it sounds can be a caption only: `finish --caption-label "Blinking!@A-B"`.
 
 ### Prompt policy
 

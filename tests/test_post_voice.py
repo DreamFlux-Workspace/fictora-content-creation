@@ -687,3 +687,80 @@ def test_voice_fx_refuses_ranges_that_overlap(tmp_path: Path) -> None:
             ranges=[(0.5, 2.0), (1.5, 2.5)],
             preset="phone",
         )
+
+
+def _blink_take(post_desk: Path, post_api: FakePostApi) -> FakeAudio:
+    """Kenji's line is one word the transcript missed ("Blinking!", SCP-173 Blink #97)."""
+
+    post_api.spine_body["cast"][0]["voice_brief"] = {"provider_voice": "Aria"}
+    for beat in post_api.spine_body["beats"]:
+        for line in beat.get("dialogue_lines") or []:
+            if line["line_id"] == "l1":
+                line["text"] = "Blinking!"
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", seconds=5.0,
+              tones=((1.0, 2.0, 440), (3.0, 4.0, 880)))  # fmt: skip
+    (post_desk / "ep01" / "api" / "17_raw_scene_clips.json").write_text(json.dumps(
+        {"clips": [{"job_id": "job_scene_1", "url": "https://media.test/t.mp4", "episode_id": "episode_01",
+                    "set_index": 1}]}))  # fmt: skip
+    audio = FakeAudio()
+    audio.words = [
+        {"word": "Not", "start": 3.0, "end": 3.4},
+        {"word": "tonight.", "start": 3.4, "end": 4.0},
+    ]
+    return audio
+
+
+@needs_ffmpeg
+def test_revoice_places_a_short_line_the_transcript_missed_on_its_planned_window(
+    post_desk: Path, post_api: FakePostApi, downloads: list[str]
+) -> None:
+    audio = _blink_take(post_desk, post_api)
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(json.dumps(
+        {"take_facts": {"lines": [{"line_id": "l1", "count": 1, "shot_index": 1,
+                                   "start_seconds": 1.0, "end_seconds": 2.0}]}}))  # fmt: skip
+    printed = io.StringIO()
+
+    out = voice_mod.run_revoice(post_desk, cast="Kenji", audio=audio, out=printed)
+
+    record = json.loads(out.with_suffix(".json").read_text())
+    assert [line["original_window"] for line in record["lines"]] == [[1.0, 2.0]]
+    assert record["not_heard"] == [] and len(record["planned_window"]) == 1
+    assert (
+        "used its planned window 1.00-2.00s (the planned shot timing)"
+        in printed.getvalue()
+    )
+
+
+@needs_ffmpeg
+def test_revoice_without_a_planned_window_still_says_the_short_line_was_not_heard(
+    post_desk: Path, post_api: FakePostApi, downloads: list[str]
+) -> None:
+    audio = _blink_take(post_desk, post_api)
+
+    with pytest.raises(ValueError, match="none of Kenji's lines was heard"):
+        voice_mod.run_revoice(post_desk, cast="Kenji", audio=audio, out=io.StringIO())
+
+
+def test_the_planned_window_prefers_the_soundtrack_then_the_shot_and_only_short_lines() -> (
+    None
+):
+    facts = {"take_facts": {
+        "soundtrack": {"mode": "target_audio", "lines": [{"line_id": "l1", "start_s": 1.2, "end_s": 1.6}]},
+        "lines": [{"line_id": "l1", "start_seconds": 1.0, "end_seconds": 2.0},
+                  {"line_id": "l2", "start_seconds": None, "end_seconds": None}],
+    }}  # fmt: skip
+    assert voice_mod.planned_line_window(facts, "l1") == (
+        1.2,
+        1.6,
+        "the soundtrack's line window",
+    )
+    assert voice_mod.planned_line_window(facts["take_facts"] | {"soundtrack": None}, "l1") == (
+        1.0, 2.0, "the planned shot timing")  # fmt: skip
+    assert voice_mod.planned_line_window(facts, "l2") is None
+    assert voice_mod.planned_line_window(None, "l1") is None
+    assert voice_mod.is_short_line("Blinking!") and voice_mod.is_short_line(
+        "Not tonight."
+    )
+    assert not voice_mod.is_short_line(
+        "Wait for me here."
+    ) and not voice_mod.is_short_line("…")
