@@ -694,9 +694,7 @@ def change_tempo(
     picture, cover = video_streams(take)
     total = info.duration_seconds
     source = f"0:v:{picture}"
-    whole = start is None or (
-        start <= 0.02 and end is not None and end >= total - 0.02
-    )
+    whole = start is None or (start <= 0.02 and end is not None and end >= total - 0.02)
     if not whole:
         assert start is not None and end is not None
         if start < 0 or end <= start or end > total + 0.05:
@@ -714,7 +712,11 @@ def change_tempo(
         vlabels: list[str] = []
         alabels: list[str] = []
         for index, (span_start, span_end, speed) in enumerate(spans):
-            pts = "setpts=PTS-STARTPTS" if speed == 1 else f"setpts=(PTS-STARTPTS)/{speed}"
+            pts = (
+                "setpts=PTS-STARTPTS"
+                if speed == 1
+                else f"setpts=(PTS-STARTPTS)/{speed}"
+            )
             parts.append(
                 f"[{source}]trim=start={span_start:.6f}:end={span_end:.6f},{pts},fps={HOUSE_FPS:g}[v{index}]"
             )

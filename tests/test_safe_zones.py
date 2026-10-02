@@ -13,7 +13,12 @@ from conftest import needs_ffmpeg
 from creation.cli_produce import main
 from PIL import Image, ImageDraw
 
-from creation.post.safe_zones import caption_box, check_safe_zones, run_review, zones_entered
+from creation.post.safe_zones import (
+    caption_box,
+    check_safe_zones,
+    run_review,
+    zones_entered,
+)
 
 W, H = 192, 336
 

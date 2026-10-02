@@ -1330,8 +1330,7 @@ def run_step(
             owing: set[str] | None = None
             if ep >= 2:
                 owing = {
-                    cast_id
-                    for cast_id, _ in cast_owing_pictures(spine_now, episode=ep)
+                    cast_id for cast_id, _ in cast_owing_pictures(spine_now, episode=ep)
                 }
             stages.enrol_cast(
                 run,

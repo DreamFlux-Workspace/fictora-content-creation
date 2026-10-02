@@ -66,7 +66,9 @@ def test_a_clean_episode_can_be_filmed() -> None:
     assert film_stops(_spine(), episode=1) == []
 
 
-def test_inner_voice_words_and_a_split_speaker_and_an_early_extra_shot_stop_the_film() -> None:
+def test_inner_voice_words_and_a_split_speaker_and_an_early_extra_shot_stop_the_film() -> (
+    None
+):
     spine = _spine()
     spine["beats"][0]["motion_intent"] = "Hana (inner voice) counts"
     spine["beats"][1]["dialogue_lines"][0]["cast_id"] = "cast_hana"
@@ -78,7 +80,9 @@ def test_inner_voice_words_and_a_split_speaker_and_an_early_extra_shot_stop_the_
     stops = film_stops(spine, episode=1)
 
     assert any("inner voice" in line and "beat 1" in line for line in stops)
-    assert any("motion subject must match" in line and "beat 2" in line for line in stops)
+    assert any(
+        "motion subject must match" in line and "beat 2" in line for line in stops
+    )
     assert any("last beat" in line and "beat 2" in line for line in stops)
     assert not any("beat 3" in line for line in stops)
 
@@ -171,7 +175,9 @@ def test_a_young_creature_without_proportions_is_named() -> None:
     )
     lines = young_creature_lines(spine)
     assert len(lines) == 1 and "oversized head" in lines[0]
-    spine["cast"][-1]["visual_brief"] = "a newborn, oversized head, large eyes, small body"
+    spine["cast"][-1]["visual_brief"] = (
+        "a newborn, oversized head, large eyes, small body"
+    )
     assert young_creature_lines(spine) == []
 
 

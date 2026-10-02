@@ -1593,7 +1593,12 @@ def build_patch(
     planning = shot_plan is not None or clear_shot_plan
     if shot_plan is not None and beat is not None and len(shot_plan) > 1:
         found_for_plan = _find(
-            spine, spine.get("beats") or [], "beat_id", beat, episode=episode, kind="beat"
+            spine,
+            spine.get("beats") or [],
+            "beat_id",
+            beat,
+            episode=episode,
+            kind="beat",
         )
         extra = early_extra_shots_stop(
             spine, episode=episode, beat=found_for_plan, plan=shot_plan
@@ -1716,16 +1721,15 @@ def _refuse_speaker_after_line_edit(
         if not isinstance(beat, dict) or beat.get("episode_id") != episode_id:
             continue
         lines = [
-            line
-            for line in beat.get("dialogue_lines") or []
-            if isinstance(line, dict)
+            line for line in beat.get("dialogue_lines") or [] if isinstance(line, dict)
         ]
         if not lines or str(lines[0].get("line_id")) != line_id:
             continue
-        updated = {**lines[0], **{key: value for key, value in entry.items() if key != "line_id"}}
-        _refuse_compiled_beat(
-            spine, {**beat, "dialogue_lines": [updated, *lines[1:]]}
-        )
+        updated = {
+            **lines[0],
+            **{key: value for key, value in entry.items() if key != "line_id"},
+        }
+        _refuse_compiled_beat(spine, {**beat, "dialogue_lines": [updated, *lines[1:]]})
         return
 
 

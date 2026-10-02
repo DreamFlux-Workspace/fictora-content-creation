@@ -104,9 +104,7 @@ def on_screen_speaker_stop(
     if not subject:
         return None
     lines = [
-        line
-        for line in beat.get("dialogue_lines") or []
-        if isinstance(line, Mapping)
+        line for line in beat.get("dialogue_lines") or [] if isinstance(line, Mapping)
     ]
     if not lines:
         return None
@@ -321,7 +319,9 @@ def thumbnail_answered_audio_error(message: str) -> bool:
     """
 
     lowered = message.lower()
-    return "operator_audio_failed" in lowered or "the audio could not be made" in lowered
+    return (
+        "operator_audio_failed" in lowered or "the audio could not be made" in lowered
+    )
 
 
 def inner_voice_cues(record_path: Any) -> list[dict[str, Any]]:
@@ -465,7 +465,9 @@ def _hook_mouth_text(beat: Mapping[str, Any]) -> str | None:
     _strings(beat.get("reaction_kind"), blobs)
     _strings(beat.get("shot_plan"), blobs)
     kind = str(beat.get("reaction_kind") or "").replace(" ", "_").lower()
-    if kind != "dramatic_gasp" and not any(_HAND_OVER_MOUTH.search(text) for text in blobs):
+    if kind != "dramatic_gasp" and not any(
+        _HAND_OVER_MOUTH.search(text) for text in blobs
+    ):
         return None
     return (
         f"{_beat_label(beat)}: the hook would draw a hand over the mouth. "
@@ -499,7 +501,9 @@ def hook_mouth_stop(spine: Mapping[str, Any], *, episode: int) -> str | None:
     return _hook_mouth_text(first)
 
 
-def hook_mouth_edit_stop(spine: Mapping[str, Any], beat: Mapping[str, Any]) -> str | None:
+def hook_mouth_edit_stop(
+    spine: Mapping[str, Any], beat: Mapping[str, Any]
+) -> str | None:
     """Refuse an edit that puts a hand over the mouth on the episode's first beat.
 
     Parameters
@@ -555,14 +559,21 @@ def locked_camera_line(spine: Mapping[str, Any], *, episode: int) -> str | None:
         if isinstance(plan, list) and plan:
             for shot in plan:
                 if isinstance(shot, Mapping):
-                    cameras.append(str(shot.get("camera") or shot.get("camera_move") or ""))
+                    cameras.append(
+                        str(shot.get("camera") or shot.get("camera_move") or "")
+                    )
             continue
         direction = beat.get("motion_direction") or {}
         if isinstance(direction, Mapping):
-            cameras.append(str(direction.get("camera_move") or direction.get("camera") or ""))
+            cameras.append(
+                str(direction.get("camera_move") or direction.get("camera") or "")
+            )
     if not cameras:
         return None
-    if any(camera.strip() and _LOCKED_CAMERA.fullmatch(camera.strip()) is None for camera in cameras):
+    if any(
+        camera.strip() and _LOCKED_CAMERA.fullmatch(camera.strip()) is None
+        for camera in cameras
+    ):
         return None
     return (
         "The draft locks the camera. Set a move before the board is drawn: "
@@ -624,7 +635,10 @@ def creature_sound_stop(description: str) -> str | None:
         The stop line, or ``None`` when the cue is not a creature or already names the sound.
     """
 
-    if _CREATURE.search(description) is None or _CREATURE_SOUND_OK.search(description) is not None:
+    if (
+        _CREATURE.search(description) is None
+        or _CREATURE_SOUND_OK.search(description) is not None
+    ):
         return None
     return (
         "A non-human cue comes back as a familiar animal unless the description names the sound. "

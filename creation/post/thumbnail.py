@@ -218,7 +218,11 @@ def attach_episode_thumbnail_to_finish(
             return marked_video, None
         if thumbnail_answered_audio_error(text):
             if stream is not None:
-                print(f"[thumbnail] skipped: {THUMBNAIL_AUDIO_ERROR}", file=stream, flush=True)
+                print(
+                    f"[thumbnail] skipped: {THUMBNAIL_AUDIO_ERROR}",
+                    file=stream,
+                    flush=True,
+                )
             return marked_video, {"skipped": THUMBNAIL_AUDIO_ERROR, "cost_usd": 0.0}
         raise
     finally:

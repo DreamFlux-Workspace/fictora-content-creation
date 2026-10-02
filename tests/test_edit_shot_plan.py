@@ -333,9 +333,7 @@ def test_two_shots_on_an_earlier_beat_are_refused_before_any_call(
     assert _patches(api) == []
 
 
-def test_the_last_beat_of_the_take_can_hold_two_shots(
-    desk: Path, api: FakeApi
-) -> None:
+def test_the_last_beat_of_the_take_can_hold_two_shots(desk: Path, api: FakeApi) -> None:
     _three_beat_take(api)
     _server_keeps_plans(api)
 

@@ -626,7 +626,9 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
         window = (getattr(args, "start", None), getattr(args, "end", None))
 
         def tempo_same(take: Path, out: Path) -> Path:
-            return change_tempo(take, out, factor=args.factor, start=window[0], end=window[1])
+            return change_tempo(
+                take, out, factor=args.factor, start=window[0], end=window[1]
+            )
 
         carry.edit_companions(tempo_same)
         slowed = change_tempo(
