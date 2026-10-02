@@ -310,3 +310,18 @@ def test_a_standing_face_touching_ban_is_not_a_hold_contradiction() -> None:
     assert staging_contradiction_lines(spine, episode=1) == []
     spine["frames"][0]["visual_brief"]["forbidden_elements"] = ["no touching the sign"]
     assert len(staging_contradiction_lines(spine, episode=1)) == 1
+
+
+def test_staging_that_says_without_touching_is_not_a_ban() -> None:
+    spine = _spine()
+    spine["frames"] = [
+        {
+            "frame_id": "frame_1",
+            "episode_id": "episode_01",
+            "visual_brief": {
+                "subject_blocking": "steps closer without touching him; holds his stained cuff",
+                "forbidden_elements": ["no kissing"],
+            },
+        }
+    ]
+    assert staging_contradiction_lines(spine, episode=1) == []
