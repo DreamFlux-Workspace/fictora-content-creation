@@ -262,7 +262,8 @@ MEMORY_LIST_MAX = {
     "decisions": 20,
     "on_screen": 8,
 }
-JOB_ID_KEYS = ("job_id", "extension_job_id")
+#: Where a job-admitting route puts the job id (``author``: ``extension_job_id``; ``rewrite``: ``rewrite_job_id``).
+JOB_ID_KEYS = ("job_id", "extension_job_id", "rewrite_job_id")
 PLATE_DEADLINE_SECONDS = 3600.0
 """Poll cap on one plate redraw (the cast enrol's cap)."""
 """Most routes answer ``job_id``; ``pilot-episodes/{n}/author`` answers ``extension_job_id``."""
@@ -853,7 +854,9 @@ def direction_line_limit(openapi: Any) -> int | None:
     return None
 
 
-def check_direction_length(run: DramaApiRunSession, line: str, *, out: Any) -> int:
+def check_direction_length(
+    run: DramaApiRunSession, line: str, *, out: Any, label: str = "author"
+) -> int:
     """Count an ``author --line`` direction and stop before sending one the server would refuse (HTTP 422).
 
     A line within :data:`DIRECTION_LINE_LIMIT` is sent without a schema read. A
@@ -869,6 +872,8 @@ def check_direction_length(run: DramaApiRunSession, line: str, *, out: Any) -> i
         The direction, whitespace already collapsed (the server collapses it too).
     out
         Where the count is said when the line is long but allowed.
+    label
+        The command saying it (``author``, ``rewrite``).
 
     Returns
     -------
@@ -896,10 +901,10 @@ def check_direction_length(run: DramaApiRunSession, line: str, *, out: Any) -> i
         raise CommandStopped(
             f"--line is {count} characters; the server takes at most {limit} ({source}). Nothing was sent. "
             f"Cut it by {count - limit} characters: keep where the episode goes and what turns, and leave "
-            "staging to the script edit after `author`."
+            f"staging to the script edit after `{label}`."
         )
     print(
-        f"[author] --line is {count} characters (this deploy takes up to {limit}).",
+        f"[{label}] --line is {count} characters (this deploy takes up to {limit}).",
         file=out,
     )
     return limit
@@ -992,6 +997,50 @@ def run_author(
         spine = run.spine(state.spine_id or "")
     finally:
         run.client.close()
+    return _show_authored(
+        desk,
+        state.spine_id or "",
+        before=before,
+        spine=spine,
+        terminal=terminal,
+        episode=episode,
+        steer=f" Direction: {direction.get('line')}" if direction else "",
+        label="author",
+        narrator_heard_only=narrator_heard_only,
+        narrator_on_screen=narrator_on_screen,
+        ask=ask,
+        out=out,
+    )
+
+
+def _show_authored(
+    desk: Path,
+    spine_id: str,
+    *,
+    before: Mapping[str, Any],
+    spine: Mapping[str, Any],
+    terminal: Mapping[str, Any],
+    episode: int,
+    steer: str,
+    label: str,
+    narrator_heard_only: Sequence[str],
+    narrator_on_screen: Sequence[str],
+    ask: Callable[[str], str] | None,
+    out: Any,
+) -> Path:
+    """Save a freshly written episode on the desk and print it for the script gate (``author``, ``rewrite``).
+
+    Saves the spine snapshot, syncs the episode's lines, points the desk at the
+    episode (script gate), prints its title, summary, shots and lines, the
+    newcomers and the authoring nudges, notes it in ``run-notes.md``, and asks
+    the narrator question for a narrator-named newcomer.
+
+    Returns
+    -------
+    Path
+        ``api/spine.json``.
+    """
+
     episode_id = episode_id_for(spine, episode)
     if not any(
         isinstance(b, Mapping) and b.get("episode_id") == episode_id
@@ -1024,7 +1073,6 @@ def run_author(
         spine=spine,
         out=out,
     )
-    steer = f" Direction: {direction.get('line')}" if direction else ""
     if arrived:
         steer += " " + " ".join(arrived)
     if notes:
@@ -1032,10 +1080,10 @@ def run_author(
     _note(
         desk,
         episode,
-        f"author: {episode_id} ({summary.get('title', '')}), {sum(counts.values())} lines synced.{steer}",
+        f"{label}: {episode_id} ({summary.get('title', '')}), {sum(counts.values())} lines synced.{steer}",
     )
     print(
-        f"[author] Done -> {path}. Next: read the lines and shots above; say yes "
+        f"[{label}] Done -> {path}. Next: read the lines and shots above; say yes "
         f"(`fictora-produce approve --gate script`) or edit them.",
         file=sys.stderr,
     )
@@ -1044,12 +1092,206 @@ def run_author(
     _, _, run = _desk_session(desk)
     try:
         settle_narrators(
-            desk, run, run.spine(state.spine_id or ""), heard_only=narrator_heard_only,
+            desk, run, run.spine(spine_id), heard_only=narrator_heard_only,
             on_screen=narrator_on_screen, ask=ask, rerun=f"fictora-produce step --desk {desk}", out=sys.stderr,
         )  # fmt: skip
     finally:
         run.client.close()
     return path
+
+
+def _episode_notes(spine: Mapping[str, Any], episode: int) -> list[Mapping[str, Any]]:
+    """The creator steers on episode ``episode`` (``episode_summaries[].creator_notes``), oldest first."""
+
+    notes = episode_summary(spine, episode).get("creator_notes") or []
+    return [note for note in notes if isinstance(note, Mapping)]
+
+
+def rewrite_note_text(line: str | None, title: str | None = None) -> str:
+    """The episode steer ``rewrite`` sends: the human's words, after their short name when given.
+
+    Parameters
+    ----------
+    line
+        The human's direction for the rewrite.
+    title
+        Optional short name for it.
+
+    Returns
+    -------
+    str
+        One line, whitespace collapsed (the server folds line breaks too).
+
+    Raises
+    ------
+    CommandStopped
+        The line is empty.
+    """
+
+    line = " ".join((line or "").split())
+    title = " ".join((title or "").split())
+    if not line:
+        raise CommandStopped(
+            "--line is empty: say what the rewrite should change, in the human's words"
+        )
+    return f"{title}: {line}" if title else line
+
+
+def run_rewrite(
+    desk: Path,
+    *,
+    episode: int,
+    line: str,
+    title: str | None = None,
+    narrator_heard_only: Sequence[str] = (),
+    narrator_on_screen: Sequence[str] = (),
+    ask: Callable[[str], str] | None = None,
+    out: Any = None,
+) -> Path:
+    """Re-write a drafted, not yet approved episode N (2 on) from the human's direction. Never approves; spends nothing.
+
+    ``author`` refuses an episode that is already drafted (``409
+    prior_episode_not_approved`` / ``invalid_extension_ordinal``). This adds the
+    direction as an episode steer (``POST /v1/spines/{id}/episodes/{episode_id}/notes
+    {spine_version, text}``), first removing the steer the last ``rewrite`` of this
+    episode added (``DELETE …/notes/{note_id}``; the human's other steers stay), then
+    ``POST /v1/spines/{id}/pilot-episodes/{n}/rewrite {spine_version}``, which answers
+    ``rewrite_job_id``, polled on ``GET /v1/jobs/{id}`` like ``author``. The desk is
+    then pointed at the episode and its script printed exactly as ``author`` does.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    episode
+        Episode ordinal, 2 or more, drafted and not approved on the server.
+    line
+        The human's direction (counted against ``author --line``'s limit before sending).
+    title
+        Optional short name for ``line``.
+    narrator_heard_only, narrator_on_screen, ask
+        As :func:`run_author`.
+    out
+        Text stream for the script gate.
+
+    Returns
+    -------
+    Path
+        ``api/spine.json``.
+    """
+
+    if episode < 2:
+        raise CommandStopped(
+            "episode 1 is written by the draft (`step`), not re-written: change its lines with `edit` / `line` "
+            "before the script yes. `rewrite` re-writes a drafted episode 2 on"
+        )
+    text = rewrite_note_text(line, title)
+    out = out or sys.stdout
+    desk, state, run = _desk_session(desk)
+    try:
+        if state.phase == "ready_video":
+            raise CommandStopped(
+                "a take is in flight on this desk; finish it (`step`) before re-writing an episode"
+            )
+        check_direction_length(run, text, out=sys.stderr, label="rewrite")
+        cfg = load_production_config(desk)
+        spine_id = state.spine_id or ""
+        spine = run.spine(spine_id)
+        before = spine
+        summary = episode_summary(spine, episode)
+        authoring_state = summary.get("authoring_state")
+        if authoring_state == "approved":
+            raise CommandStopped(
+                f"episode {episode}'s script is approved; `rewrite` only replaces a draft. Change it with "
+                f"`edit --episode {episode}` / `line` (the cascade after the script gate). Nothing was sent."
+            )
+        if not summary or authoring_state != "drafted":
+            raise CommandStopped(
+                f"episode {episode} is not written yet ({authoring_state or 'not on the story'}); write it with "
+                f"`author --episode {episode}`. Nothing was sent."
+            )
+        episode_id = episode_id_for(spine, episode)
+        unit = f"rewrite-ep{episode:02d}"
+        notes_path = f"/v1/spines/{spine_id}/episodes/{episode_id}/notes"
+        recorded = state.rewrite_notes.get(episode_id) or {}
+        if unit in state.pending:
+            # The last run's steer is already on the server and pinned in its job: resume, add nothing.
+            if recorded.get("text") and recorded.get("text") != text:
+                print(
+                    f"[rewrite] The last rewrite of episode {episode} is still running with its own direction "
+                    f"({recorded['text']!r}); picking it up. Run `rewrite` again after it for this --line.",
+                    file=sys.stderr,
+                )
+        else:
+            listed = {
+                str(note.get("note_id")) for note in _episode_notes(spine, episode)
+            }
+            if recorded.get("note_id") and recorded["note_id"] in listed:
+                spine = run.delete(
+                    f"{notes_path}/{quote(recorded['note_id'], safe='')}",
+                    {"spine_version": spine["spine_version"]},
+                )
+                print(
+                    f"[rewrite] Removed the last rewrite's direction: {recorded.get('text', '')}",
+                    file=sys.stderr,
+                )
+            known = {
+                str(note.get("note_id")) for note in _episode_notes(spine, episode)
+            }
+            spine = run.post(
+                notes_path, {"spine_version": spine["spine_version"], "text": text}
+            )
+            added = [
+                note
+                for note in _episode_notes(spine, episode)
+                if str(note.get("note_id")) not in known
+            ]
+            if not added:
+                raise CommandStopped(
+                    f"{notes_path} answered without the new note; run `spine --refresh` and check episode "
+                    f"{episode}'s notes before rewriting"
+                )
+            state = load_production(desk)
+            state.rewrite_notes[episode_id] = {
+                "note_id": str(added[-1]["note_id"]),
+                "text": text,
+            }
+            save_production(desk, state)
+        while len(load_series(desk).episodes) < episode:
+            opened = add_episode(desk)
+            print(f"[rewrite] Opened desk slot {opened.slug}.", file=sys.stderr)
+        print(
+            f"[rewrite] Re-writing episode {episode} on the server from its notes (beats, lines, shots). "
+            "Usually 1-3 minutes. Free: a draft.",
+            file=sys.stderr,
+        )
+        terminal = run_unit(
+            desk,
+            run,
+            unit=unit,
+            path=f"/v1/spines/{spine_id}/pilot-episodes/{episode}/rewrite",
+            body={"spine_version": spine["spine_version"]},
+            video_route=False,
+            deadline_seconds=cfg.poll_plan_deadline_seconds,
+        )
+        _save_desk_json(desk, f"{unit}-terminal", terminal)
+        spine = run.spine(spine_id)
+    finally:
+        run.client.close()
+    return _show_authored(
+        desk,
+        spine_id,
+        before=before,
+        spine=spine,
+        terminal=terminal,
+        episode=episode,
+        steer=f" Rewrite direction: {text}",
+        label="rewrite",
+        narrator_heard_only=narrator_heard_only,
+        narrator_on_screen=narrator_on_screen,
+        ask=ask,
+        out=out,
+    )
 
 
 # --- Memory ----------------------------------------------------------------------------------------
@@ -6243,6 +6485,7 @@ EPISODE_COMMANDS = frozenset(
         "brief",
         "language",
         "author",
+        "rewrite",
         "memory",
         "edit",
         "expressions",
@@ -6383,6 +6626,26 @@ def add_episode_parsers(
         "--title", default=None, help="With --line: a short name for it."
     )
     add_narrator_answer_args(author)
+
+    rewrite = sub.add_parser(
+        "rewrite",
+        help="Re-write a drafted, not yet approved episode N (2 on) from the human's direction (an episode note), "
+        "sync its lines, point the desk at it. Free; never approves.",
+    )
+    rewrite.add_argument("--desk", type=Path, required=True)
+    rewrite.add_argument(
+        "--episode", type=int, required=True, help="Episode ordinal, 2 or more."
+    )
+    rewrite.add_argument(
+        "--line",
+        required=True,
+        help="What the rewrite should change, in the human's words (same limit as `author --line`; counted "
+        "before sending). Replaces the last `rewrite` direction on this episode.",
+    )
+    rewrite.add_argument(
+        "--title", default=None, help="A short name for the direction."
+    )
+    add_narrator_answer_args(rewrite)
 
     memory = sub.add_parser(
         "memory", help="Add one standing note or open thread to the series memory."
@@ -6902,6 +7165,17 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 ask=interactive_ask(),
             )
             return 0
+        if args.command == "rewrite":
+            run_rewrite(
+                args.desk,
+                episode=args.episode,
+                line=args.line,
+                title=args.title,
+                narrator_heard_only=args.narrator_heard_only,
+                narrator_on_screen=args.narrator_on_screen,
+                ask=interactive_ask(),
+            )
+            return 0
         if args.command == "memory":
             run_memory(args.desk, note=args.note, thread=args.thread)
             return 0
@@ -7093,6 +7367,8 @@ __all__ = [
     "run_arc_list",
     "run_arc_pick",
     "run_author",
+    "run_rewrite",
+    "rewrite_note_text",
     "run_brief",
     "line_row_lines",
     "run_check_lines",

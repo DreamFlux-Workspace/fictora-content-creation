@@ -74,6 +74,9 @@ class ProductionState:
     #: prices the lane pin's default (H3 Max Turbo for ``minimax-h3``).
     video_endpoint_id: str | None = None
     video_resolution: str | None = None
+    #: The episode steer `rewrite` last added, per episode id (``{note_id, text}``): the next
+    #: `rewrite` of that episode removes it first, so the kit's directions do not pile up.
+    rewrite_notes: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def server_lane(self) -> tuple[str, str] | None:
         """Return ``(endpoint, resolution)`` the server last named, or ``None``."""
