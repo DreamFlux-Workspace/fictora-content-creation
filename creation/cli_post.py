@@ -197,9 +197,11 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     note = sub.add_parser(
         "music-note",
-        help='Say what should change about the show\'s music ("calmer", "quieter under the lines"). Saved on '
-        "the desk (shared/music-notes.jsonl) and printed with every finish so it goes to the harness with the "
-        "next re-run; the kit never picks or makes music itself.",
+        help='Say what should change about the show\'s music ("calmer", "quieter under the lines") and send it to '
+        "the harness: the note is saved on the desk (shared/music-notes.jsonl), the harness's plan and price are "
+        "shown (a dry run), and it is applied only with --yes. Takes that can only change by filming again need "
+        "--confirm-refilm too. --revert N puts music version N back; --send-saved sends saved notes not yet "
+        "applied. The kit never picks or makes music itself.",
     )
     note.add_argument("--desk", type=Path, required=True)
     note.add_argument(
@@ -208,7 +210,48 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     note.add_argument(
         "--take", dest="take_id", default=None, help="With --episode: one take (tK)."
     )
-    note.add_argument("note", help=f"The change, in your words. {HELP_SUFFIX}")
+    note.add_argument(
+        "note",
+        nargs="?",
+        default=None,
+        help=f"The change, in your words. {HELP_SUFFIX}",
+    )
+    note.add_argument(
+        "--revert",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Put the show's music version N back (free; plan first, --yes applies).",
+    )
+    note.add_argument(
+        "--send-saved",
+        action="store_true",
+        help="Send every saved note the harness has not applied yet (each planned first; --yes applies).",
+    )
+    note.add_argument(
+        "--save-only",
+        action="store_true",
+        help="Only save the note on the desk; send it later with --send-saved.",
+    )
+    note.add_argument(
+        "--yes",
+        action="store_true",
+        help="Apply after showing the plan (new music is about $0.20; level notes and reverts are free). "
+        "Without it nothing is changed or spent.",
+    )
+    note.add_argument(
+        "--confirm-refilm",
+        action="store_true",
+        help="Also film again the takes whose music the video model made, at their usual take price (the "
+        "total is shown in the plan). Without it those takes keep their old music.",
+    )
+    note.add_argument(
+        "--wait",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="How long to follow the episodes being put together again after applying (default 600; 0 reads once).",
+    )
 
     fin = sub.add_parser(
         "finish",
@@ -458,7 +501,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
     if args.command in REVIEW_COMMANDS:
         return dispatch_review(args)
 
-    from creation.post.bed import MUSIC_IS_HARNESS, record_music_note
+    from creation.post.bed import MUSIC_IS_HARNESS
     from creation.post.handmade import run_cue, run_voice_line
     from creation.post.voice import run_revoice, run_voice_audition, run_voice_pick
 
@@ -526,18 +569,22 @@ def dispatch_post(args: argparse.Namespace) -> int:
         print(f"set-bed is gone. {MUSIC_IS_HARNESS}")
         return 2
     if args.command == "music-note":
-        if args.take_id and args.episode is None:
-            raise ValueError("--take goes with --episode")
-        path = record_music_note(
-            args.desk.expanduser().resolve(),
-            text_or_file(args.note, flag="music-note"),
+        from creation.post.music_send import DEFAULT_WAIT_SECONDS, run_music_note
+
+        return run_music_note(
+            args.desk,
+            note=text_or_file(args.note, flag="music-note")
+            if args.note is not None
+            else None,
             episode=args.episode,
             take_id=args.take_id,
+            revert=args.revert,
+            send_saved=args.send_saved,
+            save_only=args.save_only,
+            yes=args.yes,
+            confirm_refilm=args.confirm_refilm,
+            wait_seconds=DEFAULT_WAIT_SECONDS if args.wait is None else args.wait,
         )
-        print(
-            f"music change note saved for the harness: {path} (it goes with the next re-run)"
-        )
-        return 0
     if args.command == "finish":
         result = run_finish(
             args.desk,

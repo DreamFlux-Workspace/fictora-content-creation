@@ -117,3 +117,17 @@ def test_reel_on_a_shared_story_runs_without_the_flag(
     err = capsys.readouterr().err
     assert "Stopped: this desk's story" not in err
     assert "--shared-spine-ok" not in err
+
+
+def test_music_note_yes_on_a_shared_story_is_refused_but_its_plan_is_not(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A plan (dry run) changes nothing; ``music-note --yes`` changes the one server story's music."""
+
+    copy = _copy(desk)
+
+    assert shared_spine_refusal("music-note", desk) is None
+    assert produce_main(["music-note", "--desk", str(desk), "calmer", "--yes"]) == 2
+    err = capsys.readouterr().err
+    assert "Stopped: this desk's story" in err and str(copy) in err
+    assert not [call for call in api.calls if call[0] == "POST"], "nothing was sent"

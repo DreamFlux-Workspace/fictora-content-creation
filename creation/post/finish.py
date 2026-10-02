@@ -36,7 +36,7 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    for the genre's music, fictora-drama #569) no bed is laid: the step says so
    and the take counts as having music. A missing fact lays the bed as before. ``--music "…"`` never makes or picks music: it is
    saved as a music change note for the harness (:func:`creation.post.bed.record_music_note`),
-   and every finish prints the notes waiting for the next re-run.
+   and every finish prints the saved notes (``music-note --send-saved`` sends them to the harness).
 3. ``colour``    - match the take to the board the human approved.
 4. ``mix``       - bed under the take, ducked under the voice, gain measured
    so the mix lands near -18 LUFS; ``--duck-db N`` for an exact duck depth.
@@ -294,7 +294,7 @@ class FinishResult:
     music_in_take: bool = False
     #: The server laid the location's ambience under the voices (``soundtrack.ambience.laid``).
     ambience_in_take: bool = False
-    #: Music change notes saved on the desk for the harness (they go with the next re-run).
+    #: Music change notes saved on the desk for the harness (`music-note` sends them; applied ones say so).
     music_notes: tuple[str, ...] = ()
 
     def _ran(self, name: str) -> bool:
@@ -399,7 +399,8 @@ class FinishResult:
         lines += self.text_warnings
         if self.music_notes:
             lines.append(
-                "Music change notes for the harness (they go with the next re-run; nothing was changed here): "
+                "Music change notes for the harness (nothing was changed here; send unsent ones with "
+                "`fictora-produce music-note --desk D --send-saved`, a plan first, --yes applies): "
                 + "; ".join(self.music_notes)
             )
         lines.append(self.sound_line())
@@ -780,12 +781,13 @@ def run_finish(
     desk = desk.expanduser().resolve()
     check_duck_db(duck_db)
     if music is not None:
-        # The operator says what should change; the harness picks the music on the next re-run.
+        # The operator says what should change; `music-note` sends it to the harness (plan first, --yes applies).
         record_music_note(
             desk, music, episode=episode, take_id=take_id, via="finish --music"
         )
         print(
-            f"[music] saved as a change note for the harness, nothing made here: {music}",
+            f"[music] saved as a change note for the harness, nothing made here: {music}. Send it with "
+            f"`fictora-produce music-note --desk {desk} --send-saved` (a plan first; --yes applies).",
             file=out,
             flush=True,
         )

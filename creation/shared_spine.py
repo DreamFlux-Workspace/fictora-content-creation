@@ -27,8 +27,9 @@ READ_OR_LOCAL_COMMANDS = frozenset(
         "expressions", "spine", "take-facts", "check-lines", "plates",
         # local post (ffmpeg on this laptop)
         "join", "trim", "tempo", "freeze", "soften", "blur", "deboard", "voice-fx", "review",
-        # local post that writes only on the desk: the reel (under reels/), a music change note
-        # (shared/music-notes.jsonl); set-bed only refuses now (the music is the harness's)
+        # local post that writes only on the desk: the reel (under reels/); a music change note saved or
+        # planned (a dry run) -- `music-note --yes` changes the story's music and is checked (``sends``);
+        # set-bed only refuses now (the music is the harness's)
         "reel", "music-note", "set-bed",
     }
 )  # fmt: skip
@@ -81,7 +82,7 @@ def desks_sharing_spine(
 
 
 def shared_spine_refusal(
-    command: str, desk: Path, *, transcribe: bool = False
+    command: str, desk: Path, *, transcribe: bool = False, sends: bool = False
 ) -> str | None:
     """Why ``command`` must not run on ``desk``, or ``None`` when it may.
 
@@ -93,6 +94,9 @@ def shared_spine_refusal(
         Its ``--desk``.
     transcribe
         ``review --transcribe`` (a paid read).
+    sends
+        This run changes or spends on the server story although its command is
+        otherwise read-or-local (``music-note --yes``).
 
     Returns
     -------
@@ -100,7 +104,7 @@ def shared_spine_refusal(
         The refusal naming the other desks, or ``None``.
     """
 
-    if command in READ_OR_LOCAL_COMMANDS and not transcribe:
+    if command in READ_OR_LOCAL_COMMANDS and not transcribe and not sends:
         return None
     others = desks_sharing_spine(desk)
     if not others:

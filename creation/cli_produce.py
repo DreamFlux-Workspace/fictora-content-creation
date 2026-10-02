@@ -264,7 +264,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     desk_arg = getattr(args, "desk", None)
     if isinstance(desk_arg, Path) and not args.shared_spine_ok:
         refused = shared_spine_refusal(
-            args.command, desk_arg, transcribe=bool(getattr(args, "transcribe", False))
+            args.command,
+            desk_arg,
+            transcribe=bool(getattr(args, "transcribe", False)),
+            sends=args.command == "music-note" and bool(getattr(args, "yes", False)),
         )
         if refused:
             print(refused, file=sys.stderr)
