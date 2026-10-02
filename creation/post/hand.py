@@ -114,6 +114,42 @@ def parse_range(spec: str) -> tuple[float, float]:
     return lo, hi
 
 
+def parse_caption_label(spec: str) -> tuple[str, float, float]:
+    """Read one ``--caption-label`` value: ``TEXT@A-B`` seconds on the take as filmed.
+
+    A caption with no spoken line under it: a one-word line the take never says
+    clearly ("Blinking!"), shown as text only.
+
+    Parameters
+    ----------
+    spec
+        ``Blinking!@6.9-7.6``.
+
+    Returns
+    -------
+    tuple[str, float, float]
+        Text, start and end.
+
+    Raises
+    ------
+    ValueError
+        When there is no text, or the window does not parse.
+    """
+
+    text, sep, window = spec.rpartition("@")
+    if not sep or not text.strip():
+        raise ValueError(
+            f"--caption-label wants TEXT@A-B seconds, e.g. 'Blinking!@6.9-7.6'; got {spec!r}"
+        )
+    try:
+        start, end = parse_range(window)
+    except ValueError:
+        raise ValueError(
+            f"--caption-label wants TEXT@A-B seconds with B after A, e.g. 'Blinking!@6.9-7.6'; got {spec!r}"
+        ) from None
+    return text.strip(), start, end
+
+
 def parse_placed(spec: str, *, flag: str) -> Placed:
     """Read one ``--voice`` or ``--cue`` value: ``PATH@SECONDS[@DB]``.
 

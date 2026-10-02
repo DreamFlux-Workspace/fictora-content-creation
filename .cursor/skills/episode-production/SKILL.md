@@ -173,7 +173,7 @@ The take step stops at the raw clip: the model's sound only, no music, no effect
 
 ```bash
 uv run fictora-produce finish --desk D [--episode N] [--take tK] [--take-file F] [--bed-db N] [--duck-db N] [--sfx-adjust "door=-6"] [--line-start S ...] [--line-end S ...] [--no-colour-match] \
-  [--mute A-B ...] [--voice FILE@S[@DB] ...] [--cue FILE@S[@DB] ...] [--caption-style house|plain|none]
+  [--mute A-B ...] [--voice FILE@S[@DB] ...] [--cue FILE@S[@DB] ...] [--caption-label TEXT@A-B ...] [--caption-style house|plain|none]
 ```
 
 It lays the take's sound effects (from `GET /v1/jobs/{take_job}/take-facts`, never the prompt; placed on the shots as filmed, each planned shot change moved to the take's measured cut), the show's music bed (the harness's: the spine's bed or one the server makes, pinned once per show; never a file or description you choose, see **Music is the harness's** below), matches the look to the approved board, mixes at a measured level near −18 LUFS, burns house captions and puts the Sokii mark top left. Every step writes a new `take-epNN-tK-<step>-vN.mp4`. Needs ffmpeg with libass. Generated audio (effects, the bed, audition clips, dry lines, Whisper timings) is made on the server by the Drama API operator audio routes (`sfx-cues`, `audio-bed/render`, `voice-auditions/render`, `voice-lines`, `/v1/transcripts`); no provider key ever goes on this laptop and no local file is uploaded (transcripts read the take's stored URL). Rate limits and in-progress answers are waited out automatically. If a route refuses (`operator_audio_unavailable`, `budget_cap_exceeded`), `finish` still does the look, mix, captions and mark, reports `NOT DONE` and names the refusal: tell engineering, never add a key. Costs go to `run-notes.md` only; never quote them to anyone else.
@@ -309,7 +309,7 @@ Play the listening reel (`shared/voices/<cast>/audition-vN/reel-vN.m4a`; `reel-v
 
 An off-screen voice (speaker, phone, radio) played over another character's face is heard as that face speaking: give it a source in post with `voice-fx --file F --range A-B [--range C-D ...] --preset intercom|phone|radio` (local ffmpeg, $0, one new file at the same level; repeat `--range` for every line in one call), then `finish --take-file` on it (captions are timed on the revoice words).
 
-`revoice` finds a kana-pinned Japanese line in Whisper's kanji: on the per-word readings the server's transcript carries, or by reading shape on an older server. If a line is still reported "not heard", pass `--words-json` or re-film only that take.
+`revoice` finds a kana-pinned Japanese line in Whisper's kanji: on the per-word readings the server's transcript carries, or by reading shape on an older server. If a line is still reported "not heard", pass `--words-json` or re-film only that take. A short line (three words or fewer, "Blinking!") the transcript missed is placed on its planned window instead (the soundtrack's line window, else the planned shot timing from the take facts) and printed `!! … used its planned window A-B s`: listen to it. A short line better shown than heard: `finish --caption-label "Blinking!@A-B"` captions it with no spoken line.
 
 ## Recovery
 

@@ -654,3 +654,65 @@ def test_finish_warns_when_a_hand_cue_doubles_an_auto_cue(post_desk: Path) -> No
                        colour=False, cues=(Placed(slam, 3.4),), sfx_adjust=(parse_adjustment("door=drop"),),
                        stream=io.StringIO())  # fmt: skip
     assert "!!" not in next(s for s in again.steps if s.step == "cues").detail
+
+
+def test_a_caption_label_parses_and_a_bad_one_says_the_form() -> None:
+    from creation.post.hand import parse_caption_label
+
+    assert parse_caption_label("Blinking!@6.9-7.6") == ("Blinking!", 6.9, 7.6)
+    assert parse_caption_label("a@b@1-2") == ("a@b", 1.0, 2.0)
+    for bad in ("Blinking!", "@1-2", "Blinking!@2-1", "Blinking!@x"):
+        with pytest.raises(ValueError, match="TEXT@A-B"):
+            parse_caption_label(bad)
+
+
+def test_finish_cli_passes_caption_labels(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from creation import cli_post
+
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        cli_post, "run_finish", lambda desk, **kwargs: seen.update(kwargs) or _Done()
+    )
+    code = main(
+        ["finish", "--desk", str(post_desk), "--caption-label", "Blinking!@2.5-3.1"]
+    )
+    assert code == 0 and seen["caption_labels"] == (("Blinking!", 2.5, 3.1),)
+    assert (
+        main(["finish", "--desk", str(post_desk), "--caption-label", "Blinking!"]) == 2
+    )
+    assert "TEXT@A-B" in capsys.readouterr().err
+
+
+@needs_ffmpeg
+def test_finish_burns_a_caption_label_where_asked_with_no_spoken_line(
+    post_desk: Path,
+) -> None:
+    takes = post_desk / "ep01" / "takes"
+    write_frames(
+        takes / "take-ep01-t1-raw-v1.mp4",
+        shot_frames(120, (40, 60, 200)),
+        tones=TWO_LINES,
+    )
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+        json.dumps(FACTS)
+    )
+    out = io.StringIO()
+
+    result = run_finish(
+        post_desk, sfx_render=_fake_sfx, bed_maker=_fake_bed, facts_fetcher=lambda *a: None, colour=False,
+        caption_labels=(("Blinking!", 2.5, 3.1),), stream=out,
+    )  # fmt: skip
+
+    assert result.complete, out.getvalue()
+    ass = sorted(takes.glob("take-ep01-t1-cap-v*.ass"))[-1].read_text()
+    label = [
+        row
+        for row in ass.splitlines()
+        if row.startswith("Dialogue:") and "Blinking" in row
+    ]
+    assert label and label[0].split(",")[1] == "0:00:02.50"
+    assert ",Italic," not in label[0], (
+        "a label is seen text, not a voice heard off screen"
+    )

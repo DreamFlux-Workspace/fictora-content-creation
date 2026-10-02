@@ -67,6 +67,9 @@ ELEVEN_V3_USD_PER_1000_CHARS = 0.10
 MUTE_LEAD_SECONDS = 0.08
 MUTE_TAIL_SECONDS = 0.15
 REEL_GAP_SECONDS = 0.8
+#: A line this many words or fewer ("Blinking!") is short: a transcript often misses it,
+#: so ``revoice`` falls back to its planned window (SCP-173 Blink #97).
+SHORT_LINE_WORDS = 3
 REEL_LOUDNESS_LUFS = -18.0
 
 
@@ -523,6 +526,69 @@ def run_voice_pick(
     return str(chosen["provider_voice"])
 
 
+def is_short_line(text: str) -> bool:
+    """Whether a line is short enough that a transcript may miss it (``SHORT_LINE_WORDS`` words or fewer)."""
+
+    words = [word for word in text.split() if any(ch.isalnum() for ch in word)]
+    return 0 < len(words) <= SHORT_LINE_WORDS
+
+
+def planned_line_window(
+    facts: Mapping[str, Any] | None, line_id: str
+) -> tuple[float, float, str] | None:
+    """Where the take facts plan a line, when the transcript cannot find it.
+
+    The locked-voice track's own window (``soundtrack.lines[].start_s/end_s``) comes
+    first; then the window of the shot the line was written into
+    (``lines[].start_seconds/end_seconds``, the planned shot timing). Seconds are on
+    the take as filmed.
+
+    Parameters
+    ----------
+    facts
+        A saved take-facts file (``{"take_facts": {...}}`` or the facts alone), or ``None``.
+    line_id
+        The spine's ``line_id``.
+
+    Returns
+    -------
+    tuple[float, float, str] | None
+        ``(start, end, where it came from)``, or ``None`` when the facts plan no window for it.
+    """
+
+    if not facts or not line_id:
+        return None
+    body = facts.get("take_facts", facts)
+    if not isinstance(body, Mapping):
+        return None
+    soundtrack = body.get("soundtrack")
+    sources = (
+        (
+            soundtrack.get("lines") if isinstance(soundtrack, Mapping) else None,
+            "start_s",
+            "end_s",
+            "the soundtrack's line window",
+        ),
+        (body.get("lines"), "start_seconds", "end_seconds", "the planned shot timing"),
+    )
+    for items, start_key, end_key, label in sources:
+        for item in items if isinstance(items, list) else ():
+            if (
+                not isinstance(item, Mapping)
+                or str(item.get("line_id") or "") != line_id
+            ):
+                continue
+            start, end = item.get(start_key), item.get(end_key)
+            if (
+                isinstance(start, (int, float))
+                and isinstance(end, (int, float))
+                and not isinstance(start, bool)
+                and 0 <= start < end
+            ):
+                return round(float(start), 3), round(float(end), 3), label
+    return None
+
+
 @dataclass(frozen=True)
 class Replacement:
     """One original line replaced by a dry line."""
@@ -702,14 +768,32 @@ def run_revoice(
     replacements: list[Replacement] = []
     missing: list[str] = []
     unsure: list[str] = []
+    planned: list[str] = []
+    facts: dict[str, Any] | None = None
     paid = 0.0
     for index in theirs:
         window = windows[index]
         line = dialogue[index]
         text = line["performed"]
-        if window.start is None or window.end is None:
-            missing.append(text)
-            continue
+        start, end = window.start, window.end
+        if start is None or end is None:
+            # A one-word line ("Blinking!") is often not in the transcript at all:
+            # place it where the take facts planned it, and say so.
+            if facts is None:
+                facts = _saved_facts(desk, episode, take_id)
+            fallback = (
+                planned_line_window(facts, line["line_id"])
+                if is_short_line(text)
+                else None
+            )
+            if fallback is None:
+                missing.append(text)
+                continue
+            start, end, where = fallback
+            planned.append(
+                f"{text!r}: not in the transcript; used its planned window {start:.2f}-{end:.2f}s "
+                f"({where}). Listen: the dub may sit early or late"
+            )
         key = _unit(
             f"voice-ep{episode:02d}-{slug}",
             {"text": text, "voice": voice, "language": language},
@@ -735,7 +819,7 @@ def run_revoice(
                         "url": url, "reading": reading}, indent=2) + "\n",
             encoding="utf-8",
         )  # fmt: skip
-        replacements.append(Replacement(text, path, window.start, window.end))
+        replacements.append(Replacement(text, path, start, end))
     if not replacements:
         raise ValueError(
             f"none of {name}'s lines was heard in {source.name}; pass --words-json, or re-film only this take"
@@ -755,6 +839,7 @@ def run_revoice(
         "lines": [{"line": r.line, "voice": str(r.voice), "original_window": [r.start, r.end],
                    "muted": list(r.mute(seconds))} for r in replacements],
         "not_heard": missing,
+        "planned_window": planned,
         "cost_usd": round(paid, 4),
     }  # fmt: skip
     dest.with_suffix(".json").write_text(
@@ -774,6 +859,8 @@ def run_revoice(
             f"{item.start:6.2f}-{item.end:6.2f}s  {item.line!r} -> {item.voice.name}",
             file=out,
         )
+    for line in planned:
+        print(f"!! {line}", file=out)
     for line in missing:
         print(f"!! not heard in the take, left as filmed: {line!r}", file=out)
     for line in unsure:
@@ -783,13 +870,26 @@ def run_revoice(
         )
     print(dest, file=out)
     _note(desk, episode, f"revoice: {name} on `{source.name}` -> `{dest.name}`, {len(replacements)} line(s) "
-          f"replaced in {voice}" + (f", {len(missing)} not heard" if missing else "") + f"; cost ${paid:.3f}")  # fmt: skip
+          f"replaced in {voice}" + (f", {len(planned)} on the planned window" if planned else "")
+          + (f", {len(missing)} not heard" if missing else "") + f"; cost ${paid:.3f}")  # fmt: skip
     print(
         f"Next: listen to it, then fictora-produce finish --desk {desk} --episode {episode} --take {take_id} "
         f"--take-file {dest}. If the dub does not sit (lips visibly wrong), re-film only this take, never the story.",
         file=out,
     )
     return dest
+
+
+def _saved_facts(desk: Path, episode: int, take_id: str) -> dict[str, Any]:
+    """The newest saved take facts for the take (empty when none are saved)."""
+
+    from creation.post.sfx import saved_take_facts
+
+    path = saved_take_facts(desk, episode, take_id)
+    if path is None:
+        return {}
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    return loaded if isinstance(loaded, dict) else {}
 
 
 def _note(desk: Path, episode: int, body: str) -> None:

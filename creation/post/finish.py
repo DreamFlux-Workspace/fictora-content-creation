@@ -664,6 +664,7 @@ def run_finish(
     mutes: tuple[tuple[float, float], ...] = (),
     voices: tuple[Placed, ...] = (),
     cues: tuple[Placed, ...] = (),
+    caption_labels: tuple[tuple[str, float, float], ...] = (),
     sfx_render: Renderer | None = None,
     bed_maker: Maker | None = None,
     facts_fetcher: FactsFetcher = api_facts_fetcher,
@@ -735,6 +736,9 @@ def run_finish(
         ``--voice`` dry lines laid into the take's own audio (take seconds as filmed).
     cues
         ``--cue`` hand cues laid after the SFX step (take seconds as filmed).
+    caption_labels
+        ``--caption-label`` ``(text, start, end)``: a caption with no spoken line under it
+        (take seconds as filmed), drawn with the other captions.
     sfx_render, bed_maker, facts_fetcher, transcriber, cut_meter, voice_audio, ambience_maker
         Injected for tests (``bed_maker`` makes the harness bed on the server;
         ``transcriber`` makes a transcript of the take on the server;
@@ -1700,13 +1704,20 @@ def run_finish(
                 spine=caption_spine,
                 laid_lines=laid,
                 fixed_lines=[
-                    (
-                        CaptionLine(
-                            cue.cue_id, cue.line, True, cue.spoken_text or cue.line
-                        ),
-                        Span(line.start, line.start + seconds),
-                    )
-                    for cue, line, seconds in thought_state["laid"]
+                    *(
+                        (
+                            CaptionLine(
+                                cue.cue_id, cue.line, True, cue.spoken_text or cue.line
+                            ),
+                            Span(line.start, line.start + seconds),
+                        )
+                        for cue, line, seconds in thought_state["laid"]
+                    ),
+                    # --caption-label: text with no spoken line under it, shown where asked.
+                    *(
+                        (CaptionLine(f"label {n}", text, False, text), Span(start, end))
+                        for n, (text, start, end) in enumerate(caption_labels, start=1)
+                    ),
                 ],
                 # Only this take's beats' lines: t2 is never captioned with t1's.
                 take_index=thoughts.take_number(take_id),
