@@ -212,6 +212,7 @@ from creation.post.soundtrack import (
     heard_summary,
     lay_room_tone,
     line_windows,
+    sfx_sound_key,
     locked_voice_refusal,
     misplaced_lines,
     model_scored,
@@ -1298,6 +1299,21 @@ def run_finish(
             print(f"[sfx] {warning}", file=out, flush=True)
             append_run_note(run_dir, f"Finish · sfx: {warning}")
         plan, filmed_note = on_filmed_cuts(plan_from_take_facts(payload), payload, take)
+        in_track: list[Any] = []
+        if locked and soundtrack.sfx_laid:
+            # The server already laid these effects in the dialogue track (#575/#583): never twice.
+            in_track = [
+                cue
+                for cue in plan.cues
+                if sfx_sound_key(cue.sound) in soundtrack.sfx_laid
+            ]
+            if in_track:
+                plan = replace(
+                    plan, cues=tuple(cue for cue in plan.cues if cue not in in_track)
+                )
+                filmed_note += (
+                    f"; {len(in_track)} effect(s) already in the track, not laid again"
+                )
         if locked:
             # The dialogue track is the take's sound: its line windows are exact and do not move with the cuts.
             plan = replace(plan, speech=line_windows(soundtrack))
@@ -1312,6 +1328,13 @@ def run_finish(
             if plan.dropped
             else ""
         )
+        if not plan.cues and in_track:
+            return StepReport(
+                "sfx",
+                "ran",
+                f"0 cue(s) laid: {len(in_track)} effect(s) are already in the track "
+                f"(laid by the server), not laid again; `{facts.name}`{dropped}",
+            )
         if not plan.cues:
             return StepReport(
                 "sfx",

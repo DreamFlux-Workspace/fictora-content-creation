@@ -356,3 +356,49 @@ def test_join_never_lays_a_hand_pinned_file(join_desk: Path) -> None:
 
     with pytest.raises(ValueError, match="no harness bed"):
         run_join(join_desk, episodes=(1,), stream=io.StringIO())
+
+
+# --- effects the server laid in the track ---------------------------------------------------------------------
+
+
+def test_effects_the_server_laid_are_read_from_the_take_facts() -> None:
+    sfx = {"cues": [
+        {"sound": "A door SLAMS!", "laid": True},
+        {"sound": "a cup clinks", "laid": False},
+        {"laid": True},
+    ]}  # fmt: skip
+
+    read = soundtrack_from(facts_with({**TARGET, "sfx": sfx}))
+
+    assert read.sfx_laid == frozenset({"a door slams"})
+    assert "1 effect(s) are in the track" in read.one_line()
+    assert soundtrack_from(facts_with(TARGET)).sfx_laid == frozenset()
+
+
+def test_a_locked_take_never_gets_an_effect_the_server_already_laid(
+    post_desk: Path,
+) -> None:
+    _desk_take(
+        post_desk,
+        facts_with(
+            {
+                **TARGET,
+                "ambience": {"laid": True},
+                "music": {"laid": True},
+                "sfx": {"cues": [{"sound": "a door slams", "laid": True}]},
+            }
+        ),  # fmt: skip
+    )
+    rendered: list[str] = []
+    out = io.StringIO()
+
+    result = run_finish(
+        post_desk, sfx_render=fake_sfx(rendered), bed_maker=_never, facts_fetcher=lambda *a: None,
+        ambience_maker=_never, cut_meter=lambda _take: (3.9,), thumbnail=False, stream=out,
+    )  # fmt: skip
+
+    assert rendered == [], (
+        "the server's door slam is in the track; laying it again doubles it"
+    )
+    steps = {s.step: s for s in result.steps}
+    assert "already in the track" in steps["sfx"].detail, out.getvalue()
