@@ -281,6 +281,59 @@ def test_trimming_take_two_writes_a_take_two_file(post_desk: Path) -> None:
     assert not list(takes.glob("take-ep01-t1-trim-*.mp4"))
 
 
+@needs_ffmpeg
+def test_trimming_episode_three_writes_under_episode_three(post_desk: Path) -> None:
+    """--episode defaulted to 1, so a trimmed episode 3 was written into ep01."""
+
+    takes = post_desk / "ep03" / "takes"
+    finished = _cut_take(takes / "take-ep03-t1-sokii-v1.mp4")
+
+    assert (
+        main(
+            [
+                "trim",
+                "--desk",
+                str(post_desk),
+                "--take-file",
+                str(finished),
+                "--cut",
+                "1.46-2.5",
+            ]
+        )
+        == 0
+    )
+
+    assert (takes / "take-ep03-t1-trim-v1.mp4").is_file()
+    assert not list((post_desk / "ep01" / "takes").glob("*trim*"))
+
+
+@needs_ffmpeg
+def test_trim_refuses_an_episode_flag_that_disagrees_with_the_file(
+    post_desk: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    takes = post_desk / "ep03" / "takes"
+    finished = _cut_take(takes / "take-ep03-t1-sokii-v1.mp4")
+
+    code = main(
+        [
+            "trim",
+            "--desk",
+            str(post_desk),
+            "--episode",
+            "1",
+            "--take-file",
+            str(finished),
+            "--cut",
+            "0.2-0.5",
+        ]
+    )
+
+    assert code == 2
+    assert "episode 3" in capsys.readouterr().err
+    assert not (takes / "take-ep03-t1-trim-v1.mp4").exists()
+    assert not list((post_desk / "ep01" / "takes").glob("*trim*"))
+
+
 def test_snap_keeps_the_nearest_frame_when_no_shot_change_is_near() -> None:
     diffs = np.array([0.0] + [2.0] * 40 + [100.0] + [2.0] * 30)
     assert snap_to_shot_change(1.0, fps=24.0, diffs=diffs).frame == 24
@@ -398,6 +451,41 @@ def test_tempo_slows_picture_and_sound_together_with_the_pitch_kept(
     assert abs(count_frames(out) / 24.0 - 3.0 / 0.9) < 0.1, "the picture is slowed"
     assert abs(len(_audio(out)) / 8000 - 3.0 / 0.9) < 0.1, "and the sound with it"
     assert abs(_dominant_hz(out) - 440) < 8, "atempo keeps the pitch"
+
+
+@needs_ffmpeg
+def test_tempo_window_speeds_only_the_middle(
+    post_desk: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """1 s head + 1 s at 2x + 1 s tail of a 3 s take is 2.5 s."""
+
+    takes = post_desk / "ep01" / "takes"
+    take = write_frames(
+        takes / "take-ep01-t1-sokii-v1.mp4", shot_frames(72, BLUE), tone=440
+    )
+
+    assert (
+        main(
+            [
+                "tempo",
+                "--desk",
+                str(post_desk),
+                "--take-file",
+                str(take),
+                "--factor",
+                "2",
+                "--from",
+                "1",
+                "--to",
+                "2",
+            ]
+        )
+        == 0
+    )
+
+    out = takes / "take-ep01-t1-tempo-v1.mp4"
+    assert "from 1s to 2s" in capsys.readouterr().out
+    assert abs(media_duration(out) - 2.5) < 0.15
 
 
 @needs_ffmpeg

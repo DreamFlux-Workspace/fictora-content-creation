@@ -87,6 +87,12 @@ from creation.post.mix import (
     mix_take,
 )
 from creation.post.watermark import watermark
+from creation.harness_rules import (
+    gain_match_note,
+    inner_voice_cues,
+    seam_fix_line,
+    thought_short_of_cut,
+)
 
 HOUSE_FPS = 24.0
 #: How far a file's rate (r_frame_rate, and counted frames / seconds on the join) may be off 24.
@@ -951,6 +957,7 @@ def run_join(
         flush=True,
     )
     gains = match_gains(parts) if gain_match else [0.0] * len(parts)
+    gain_note = gain_match_note(gains) if gain_match else None
     total = sum(lengths) - sum(dissolves)
     master = next_versioned_path(folder, stem, ".mp4")
     with tempfile.TemporaryDirectory() as scratch:
@@ -968,6 +975,16 @@ def run_join(
         windows, note = part_speech(desk, part, seconds)
         speech += [(start + a, start + b) for a, b in windows]
         speech_notes.append(note)
+        short = thought_short_of_cut(
+            inner_voice_cues(part.record.path),
+            duration=seconds,
+            label=part.label,
+            last_take=index == len(parts) - 1,
+        )
+        if short:
+            speech_notes.append(short)
+    if gain_note:
+        speech_notes.append(gain_note)
     levels = seam_levels(master, seams, speech=speech)
     result = JoinResult(
         parts=parts, master=master, marked=None, bed=bed, gains_db=gains, dissolves=dissolves, seams=seams,
@@ -1010,7 +1027,8 @@ def run_join(
             "Stopped: NOT DONE: a seam steps more than 5 dB. Nothing was marked; listen to the master. "
             "Fix: join again with gain matching on (the default), or re-finish the loud take with a lower level. "
             "If the master sounds right through the seam (the step is a line starting on the cut, not the "
-            'room), join again with --accept-seam "why" --accepted-by NAME; both go in the run notes.',
+            'room), join again with --accept-seam "why" --accepted-by NAME; both go in the run notes. '
+            + seam_fix_line(),
             file=out,
         )
         return result

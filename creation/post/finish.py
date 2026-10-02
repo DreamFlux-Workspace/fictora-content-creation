@@ -1462,6 +1462,10 @@ def run_finish(
                 "skipped",
                 "no stored take URL or the server has no episode thumbnail route yet",
             )
+        if answer.get("skipped"):
+            detail = str(answer["skipped"])
+            append_run_note(run_dir, f"Finish · thumbnail: skipped, {detail}")
+            return StepReport("thumbnail", "skipped", detail)
         if answer.get("needs_opt_in"):
             ask = (
                 f"no cover on the desk yet. Drawing one on the server costs ${THUMBNAIL_USD:.2f}; "

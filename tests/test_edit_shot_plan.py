@@ -305,6 +305,82 @@ def test_a_server_that_keeps_the_plan_in_its_own_shape_is_not_flagged(
     assert "does not hold the plan that was sent" not in out.getvalue()
 
 
+def _three_beat_take(api: FakeApi) -> None:
+    """One take of three beats. Extra shots are allowed only on the last."""
+
+    doc = spine_fixture(episodes=1, approved=False)
+    base = doc["beats"][0]
+    beats = []
+    for number in range(1, 4):
+        beat = json.loads(json.dumps(base))
+        beat["beat_id"] = f"beat_episode_01_0{number}"
+        beat["ordinal"] = number
+        beat["dialogue_lines"][0]["line_id"] = f"line_episode_01_0{number}"
+        beats.append(beat)
+    doc["beats"] = beats
+    doc["beats_per_storyboard_set"] = [3]
+    api.spine_doc = doc
+
+
+def test_two_shots_on_an_earlier_beat_are_refused_before_any_call(
+    desk: Path, api: FakeApi
+) -> None:
+    _three_beat_take(api)
+
+    with pytest.raises(ec.CommandStopped, match="last beat of its take"):
+        ec.run_edit(desk, episode=1, beat="1", shot_plan=PLAN, out=io.StringIO())
+
+    assert _patches(api) == []
+
+
+def test_the_last_beat_of_the_take_can_hold_two_shots(
+    desk: Path, api: FakeApi
+) -> None:
+    _three_beat_take(api)
+    _server_keeps_plans(api)
+
+    ec.run_edit(desk, episode=1, beat="3", shot_plan=PLAN, out=io.StringIO())
+
+    assert _patches(api) == [
+        {"beats": [{"beat_id": "beat_episode_01_03", "shot_plan": PLAN}]}
+    ]
+
+
+def test_inner_voice_words_in_a_beat_are_refused_before_any_call(
+    desk: Path, api: FakeApi
+) -> None:
+    api.spine_doc = spine_fixture(approved=False)
+
+    with pytest.raises(ec.CommandStopped, match="inner voice"):
+        ec.run_edit(
+            desk,
+            episode=1,
+            beat="1",
+            intent="Hana (inner voice) counts the cabins",
+            out=io.StringIO(),
+        )
+
+    assert _patches(api) == []
+
+
+def test_a_speaker_who_is_not_the_motion_subject_is_refused_before_any_call(
+    desk: Path, api: FakeApi
+) -> None:
+    api.spine_doc = spine_fixture(approved=False)
+    api.spine_doc["beats"][0]["motion_direction"]["subject_cast_id"] = "cast_hana"
+
+    with pytest.raises(ec.CommandStopped, match="motion subject must match"):
+        ec.run_edit(
+            desk,
+            episode=1,
+            line_id="line_episode_01_01",
+            speaker="Ren",
+            out=io.StringIO(),
+        )
+
+    assert _patches(api) == []
+
+
 def test_same_plan_ignores_shape_but_not_shots() -> None:
     from creation.shot_plan import same_plan
 

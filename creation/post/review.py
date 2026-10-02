@@ -37,6 +37,7 @@ command exits 0 whatever it finds.
    line matched on the server's readings is reported ``(by sound, NN%)``. The
    ``check-lines`` output is folded in as it prints it (each line's shot and
    board row; an ``!!`` on-screen speaker out of frame marks the section ⚠).
+   Take 1's first line starting after 0.5 s is flagged the same way: trim the head.
 6. **People** - the head count the take facts expect per shot (``shots[].people``,
    newer servers) with the names from the story's cast, and the by-eye check
    for one person drawn twice (no face detector: a human counts). ``–`` always;
@@ -89,6 +90,7 @@ from creation.post.media import (
     probe_video,
 )
 from creation.post.mix import LUFS_BAND, TARGET_LUFS
+from creation.harness_rules import late_opening_line
 
 #: Below this a take is effectively silent: it needs cues (internal kit).
 SILENT_BELOW_LUFS = -30.0
@@ -961,6 +963,10 @@ def lines_section(
         missing -= covered
         rows.sort(key=lambda row: "approved lines asked" not in row)
         asked_rows = [f"check-lines: {row.strip()}" for row in rows]
+        late = late_opening_line(asked_rows, take_id=take_id)
+        if late:
+            asked_rows.append(late)
+            faults = True
         if not any("no take facts" in row for row in rows):
             measured = True
             flagged = sum(1 for row in rows if row.lstrip().startswith("!!"))
