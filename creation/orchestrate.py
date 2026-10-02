@@ -103,6 +103,12 @@ from creation.spine_view import (
     shot_list_lines,
     spoken_lines,
 )
+from creation.harness_rules import (
+    film_stop_message,
+    hook_mouth_stop,
+    locked_camera_line,
+    young_creature_lines,
+)
 from creation.stranded_voice import explain_film_refusal, stranded_preflight
 from creation.stylised_only import BriefNoticePause
 
@@ -355,11 +361,15 @@ def script_gate_text(desk: Path, spine: dict[str, Any], *, episode: int) -> str:
     """
 
     slot = episode_by_ordinal(load_series(desk), episode)
-    return "\n".join(
+    text = "\n".join(
         script_lines(
             spine, episode=episode, take_ids=[take.take_id for take in slot.takes]
         )
     )
+    camera = locked_camera_line(spine, episode=episode)
+    if camera:
+        text += "\n" + camera
+    return text
 
 
 def _resume_raw_clips(
@@ -1311,13 +1321,17 @@ def run_step(
             # From episode 2 this gate is for the characters the episode
             # brought in: only their pictures are new (the approved ones are
             # reused), and the enrol carries the episode's own tag.
+            spine_now = run.spine(state.spine_id)
+            young = young_creature_lines(spine_now)
+            if young:
+                raise RuntimeError(
+                    "Stopped before the plates. Nothing was sent.\n" + "\n".join(young)
+                )
             owing: set[str] | None = None
             if ep >= 2:
                 owing = {
                     cast_id
-                    for cast_id, _ in cast_owing_pictures(
-                        run.spine(state.spine_id), episode=ep
-                    )
+                    for cast_id, _ in cast_owing_pictures(spine_now, episode=ep)
                 }
             stages.enrol_cast(
                 run,
@@ -1379,13 +1393,17 @@ def run_step(
             )
 
         if state.phase == "ready_boards_enrol":
-            # The board gate's name check, before paying for the boards (a leftover name costs a redraw).
-            stop = named_cast_stop(
-                run.spine(state.spine_id or ""), episode=ep, desk=str(desk)
-            )
+            # Name check and hook-mouth check, before paying for the boards.
+            spine_now = run.spine(state.spine_id or "")
+            stop = named_cast_stop(spine_now, episode=ep, desk=str(desk))
             if stop:
                 _note(ep_dir, stop)
                 raise RuntimeError(stop)
+            mouth = hook_mouth_stop(spine_now, episode=ep)
+            if mouth:
+                raise RuntimeError(
+                    "Stopped before the boards. " + mouth + " Nothing was sent."
+                )
             stages.enrol_boards(
                 run,
                 spine_id=state.spine_id or "",
@@ -1435,6 +1453,9 @@ def run_step(
             )
             state.remember_server_lane(server_lane(estimate))
             spine = run.spine(state.spine_id or "")
+            stopped = film_stop_message(spine, episode=ep)
+            if stopped:
+                return StepResult(state.phase, stopped, ())
             slot = episode_by_ordinal(load_series(desk), ep)
             cast_count = len(drawn_cast_rows(spine))
             state.estimate_usd, source, warnings = price_estimate(
@@ -1864,6 +1885,9 @@ def _film(
     delivery: dict[str, Any] | None = None
     if raw is None:
         before = run.spine(state.spine_id or "")
+        stopped = film_stop_message(before, episode=ep)
+        if stopped:
+            raise RuntimeError(stopped)
         for warning in stranded_preflight(
             before, unit=f"ep{ep:02d}", desk=desk, episode=ep
         ):
@@ -2300,6 +2324,9 @@ def approve_gate(
             if names:
                 _note(_episode_dir(desk, ep), names)
                 warning += f"\n{names}"
+            camera = locked_camera_line(spine, episode=ep)
+            if camera:
+                warning += "\n" + camera
             return StepResult(
                 state.phase,
                 f"Episode {ep} script approved on the API. Next: fictora-produce step (boards).{warning}",

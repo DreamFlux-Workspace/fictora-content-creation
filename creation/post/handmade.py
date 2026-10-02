@@ -28,6 +28,7 @@ from typing import Any, TextIO
 
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
+from creation.harness_rules import creature_sound_stop
 from creation.post.audio_service import AudioService, DramaApiAudio, download
 from creation.post.desk import (
     cast_slug,
@@ -127,7 +128,8 @@ def run_cue(
     Raises
     ------
     ValueError
-        When the description is empty or the length is out of range.
+        When the description is empty, the length is out of range, or a non-human
+        cue does not name its sound.
     """
 
     out = out or sys.stdout
@@ -135,6 +137,9 @@ def run_cue(
     sound = description.strip()
     if not sound:
         raise ValueError("--description is empty: say what the cue should sound like")
+    creature = creature_sound_stop(sound)
+    if creature:
+        raise ValueError(creature + " Nothing was sent.")
     if not SFX_MIN_SECONDS <= seconds <= SFX_MAX_SECONDS:
         raise ValueError(
             f"--seconds must be {SFX_MIN_SECONDS:g}-{SFX_MAX_SECONDS:g}; got {seconds:g}"

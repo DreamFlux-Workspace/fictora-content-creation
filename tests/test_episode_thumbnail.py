@@ -170,6 +170,28 @@ def test_refinish_reuses_the_saved_cover_without_asking_the_server(
     assert [e.unit for e in load_series(post_desk).spend_log].count("thumbnail") == 1
 
 
+@needs_ffmpeg
+def test_an_audio_error_from_the_cover_route_skips_the_cover_and_keeps_the_take(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _desk_with_take(post_desk, monkeypatch)
+    fake.routes[("POST", ROUTE)] = SystemExit(
+        "HTTP 502 POST https://drama.example/thumbnail: "
+        "operator_audio_failed: The audio could not be made"
+    )
+    out = io.StringIO()
+
+    result = _finish(post_desk, out, draw_thumbnail=True)
+
+    thumb_step = next(s for s in result.steps if s.step == "thumbnail")
+    assert thumb_step.status == "skipped"
+    assert "operator_audio_failed" in thumb_step.detail
+    assert "still from the take" in thumb_step.detail
+    assert result.final.name.startswith("take-ep01-t1-sokii-v")
+    assert all(e.unit != "thumbnail" for e in load_series(post_desk).spend_log)
+    assert "operator_audio_failed" in out.getvalue()
+
+
 def test_a_cover_drawn_from_another_clip_is_not_reused(tmp_path: Path) -> None:
     takes = tmp_path
     Image.new("RGB", (8, 8)).save(takes / "take-ep01-t1-thumb-v1.jpg")

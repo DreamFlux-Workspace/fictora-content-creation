@@ -98,25 +98,69 @@ def caption_mask(pixels: np.ndarray) -> np.ndarray:
     return (r >= 200) & (g >= 170) & (b <= 120) & (r - b >= 120)
 
 
-def caption_box(image: Image.Image) -> Box | None:
-    """The caption's box as ``(left, top, right, bottom)`` fractions, or ``None`` when no caption shows."""
+def _caption_box_in_rows(mask: np.ndarray, row_lo: int, row_hi: int) -> Box | None:
+    """The densest run of caption-yellow rows inside ``[row_lo, row_hi)``.
 
-    pixels = np.asarray(image.convert("RGB"))
-    height, width = pixels.shape[:2]
-    mask = caption_mask(pixels)
-    rows = np.flatnonzero(mask.sum(axis=1) >= max(2, CAPTION_ROW_SHARE * width))
-    if rows.size == 0:
+    A ceiling lamp and pale hair are yellow too. Joining every yellow row into
+    one box stretches the zone from the lamp down to the real caption. One
+    contiguous run is the caption.
+    """
+
+    height, width = mask.shape
+    if row_hi <= row_lo:
         return None
-    cols = np.flatnonzero(mask[rows].any(axis=0))
+    threshold = max(2, CAPTION_ROW_SHARE * width)
+    yellow = np.flatnonzero(mask[row_lo:row_hi].sum(axis=1) >= threshold) + row_lo
+    if yellow.size == 0:
+        return None
+    runs: list[tuple[int, int]] = []
+    start = previous = int(yellow[0])
+    for raw in yellow[1:]:
+        row = int(raw)
+        if row > previous + 1:
+            runs.append((start, previous))
+            start = row
+        previous = row
+    runs.append((start, previous))
+    best_score = -1
+    best: tuple[int, int] | None = None
+    for run_start, run_end in runs:
+        score = int(mask[run_start : run_end + 1].sum())
+        if score > best_score:
+            best_score = score
+            best = (run_start, run_end)
+    assert best is not None
+    run_start, run_end = best
+    cols = np.flatnonzero(mask[run_start : run_end + 1].any(axis=0))
+    if cols.size == 0:
+        return None
     left, right = cols.min() / width, (cols.max() + 1) / width
     if right - left < CAPTION_MIN_WIDTH:
         return None
     return (
         round(float(left), 4),
-        round(rows.min() / height, 4),
+        round(run_start / height, 4),
         round(float(right), 4),
-        round((rows.max() + 1) / height, 4),
+        round((run_end + 1) / height, 4),
     )
+
+
+def caption_box(image: Image.Image) -> Box | None:
+    """The caption's box as ``(left, top, right, bottom)`` fractions, or ``None`` when no caption shows.
+
+    The house band (about 50–78% of the height) is searched first. A yellow
+    lamp or highlight outside that band does not stretch the box. A caption
+    that sits in the covered bottom band is still found, on the whole frame,
+    so the warning still fires.
+    """
+
+    pixels = np.asarray(image.convert("RGB"))
+    height = pixels.shape[0]
+    mask = caption_mask(pixels)
+    band = _caption_box_in_rows(mask, int(0.50 * height), int(0.78 * height))
+    if band is not None:
+        return band
+    return _caption_box_in_rows(mask, 0, height)
 
 
 def zones_entered(box: Box) -> list[str]:

@@ -187,6 +187,13 @@ from creation.stranded_voice import (
     stranded_preflight,
     voices_left_without_lines,
 )
+from creation.harness_rules import (
+    early_extra_shots_stop,
+    film_stop_message,
+    hook_mouth_edit_stop,
+    inner_voice_wording_stop,
+    on_screen_speaker_stop,
+)
 from creation.shot_plan import (
     OLDER_SERVER_HINT,
     ShotPlanError,
@@ -1572,6 +1579,10 @@ def build_patch(
         ]
         if not changed:
             raise CommandStopped(f"nothing to change on {line_id}")
+        if speaker is not None or off_screen is not None:
+            _refuse_speaker_after_line_edit(
+                spine, episode=episode, line_id=line_id, entry=entry
+            )
         return {"dialogue_lines": [entry]}, changed
     if any(
         value is not None for value in (text, spoken, subtitle, speaker, off_screen)
@@ -1580,6 +1591,15 @@ def build_patch(
             "--text/--spoken/--subtitle/--speaker/--off-screen edit a line: pass --line-id"
         )
     planning = shot_plan is not None or clear_shot_plan
+    if shot_plan is not None and beat is not None and len(shot_plan) > 1:
+        found_for_plan = _find(
+            spine, spine.get("beats") or [], "beat_id", beat, episode=episode, kind="beat"
+        )
+        extra = early_extra_shots_stop(
+            spine, episode=episode, beat=found_for_plan, plan=shot_plan
+        )
+        if extra:
+            raise CommandStopped(extra + " Nothing was sent.")
     if planning and beat is None:
         raise CommandStopped(
             "--shot-plan/--shot/--clear-shot-plan belong to a beat: pass --beat N"
@@ -1611,6 +1631,12 @@ def build_patch(
                 only["shot_plan"] = shot_plan
             if set_reaction_kind:
                 only["reaction_kind"] = reaction_kind
+            merged = dict(found)
+            if shot_plan is not None:
+                merged["shot_plan"] = shot_plan
+            if set_reaction_kind:
+                merged["reaction_kind"] = reaction_kind
+            _refuse_compiled_beat(spine, merged)
             return {"beats": [only]}, plan_changed + expression_changed
         direction = copy.deepcopy(found.get("motion_direction") or {})
         new_intent = (
@@ -1637,6 +1663,16 @@ def build_patch(
             changed += expression_changed
         if not changed:
             raise CommandStopped(f"nothing to change on {found.get('beat_id')}")
+        merged = {
+            **found,
+            "motion_intent": new_intent,
+            "motion_direction": direction,
+        }
+        if shot_plan is not None:
+            merged["shot_plan"] = shot_plan
+        if set_reaction_kind:
+            merged["reaction_kind"] = reaction_kind
+        _refuse_compiled_beat(spine, merged)
         return {"beats": [entry]}, changed
     if intent is not None:
         raise CommandStopped(
@@ -1651,6 +1687,46 @@ def build_patch(
         kind="frame",
     )
     return _frame_patch(spine, found, assignments)
+
+
+def _refuse_compiled_beat(spine: Mapping[str, Any], beat: Mapping[str, Any]) -> None:
+    """Stop an edit the take compile would refuse, before anything is sent."""
+
+    names = _cast_names(spine)
+    for stop in (
+        on_screen_speaker_stop(beat, names),
+        inner_voice_wording_stop(beat),
+        hook_mouth_edit_stop(spine, beat),
+    ):
+        if stop:
+            raise CommandStopped(stop + " Nothing was sent.")
+
+
+def _refuse_speaker_after_line_edit(
+    spine: Mapping[str, Any],
+    *,
+    episode: int,
+    line_id: str,
+    entry: Mapping[str, Any],
+) -> None:
+    """Stop a line edit that makes beat line 1's speaker differ from the motion subject."""
+
+    episode_id = episode_id_for(spine, episode)
+    for beat in spine.get("beats") or []:
+        if not isinstance(beat, dict) or beat.get("episode_id") != episode_id:
+            continue
+        lines = [
+            line
+            for line in beat.get("dialogue_lines") or []
+            if isinstance(line, dict)
+        ]
+        if not lines or str(lines[0].get("line_id")) != line_id:
+            continue
+        updated = {**lines[0], **{key: value for key, value in entry.items() if key != "line_id"}}
+        _refuse_compiled_beat(
+            spine, {**beat, "dialogue_lines": [updated, *lines[1:]]}
+        )
+        return
 
 
 def _blocking_ids(brief: Mapping[str, Any]) -> list[str]:
@@ -5903,6 +5979,9 @@ def _run_film(
     seed = seed_attempt_for(desk, episode=episode, take_ids=take_ids)
     unit = f"film-{key}" + (f"-s{seed}" if seed else "")
     spine = run.spine(state.spine_id or "")
+    stopped = film_stop_message(spine, episode=episode)
+    if stopped:
+        raise CommandStopped(stopped)
     for warning in stranded_preflight(spine, unit=key, desk=desk, episode=episode):
         print(warning, file=out)
     body = stages.video_request_body(
@@ -6088,6 +6167,9 @@ def _price_film(
     _save_desk_json(desk, f"film-{key}-estimate", estimate)
     state.remember_server_lane(server_lane(estimate))
     spine = run.spine(state.spine_id or "")
+    stopped = film_stop_message(spine, episode=episode)
+    if stopped:
+        raise CommandStopped(stopped)
     cast_count = len(drawn_cast_rows(spine))
     usd, source, warnings = price_estimate(
         state, cfg, estimate, cast_count=cast_count, takes=len(take_ids)

@@ -178,7 +178,12 @@ class RecordCarry:
 
 def _take_args(parser: argparse.ArgumentParser, *, take_file_help: str) -> None:
     parser.add_argument("--desk", type=Path, required=True)
-    parser.add_argument("--episode", type=int, default=1)
+    parser.add_argument(
+        "--episode",
+        type=int,
+        default=None,
+        help="Episode ordinal. Default: the episode --take-file names, else 1.",
+    )
     parser.add_argument(
         "--take",
         dest="take_id",
@@ -273,8 +278,9 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     tempo = sub.add_parser(
         "tempo",
-        help="Change the speed of picture and sound together, pitch kept (0.9 = 10%% slower). Run it on the "
-        "FINISHED take: finish lays the take's effects at the filmed times.",
+        help="Change the speed of picture and sound together, pitch kept (0.9 = 10%% slower). "
+        "--from and --to speed only that window (the action); lines outside it stay at 1x. "
+        "Run it on the FINISHED take: finish lays the take's effects at the filmed times.",
     )
     _take_args(
         tempo,
@@ -282,6 +288,20 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     tempo.add_argument(
         "--factor", type=float, default=SLOW_TEMPO, help="0.5-2.0; default 0.9."
+    )
+    tempo.add_argument(
+        "--from",
+        dest="start",
+        type=float,
+        default=None,
+        help="Seconds: the sped window starts. Requires --to. Lines inside it speed; put the window on the action.",
+    )
+    tempo.add_argument(
+        "--to",
+        dest="end",
+        type=float,
+        default=None,
+        help="Seconds: the sped window ends. Requires --from.",
     )
 
     soft = sub.add_parser(
@@ -395,6 +415,44 @@ def take_id_for(args: argparse.Namespace) -> str:
     return str(args.take_id)
 
 
+def episode_for(args: argparse.Namespace) -> int:
+    """The episode an edit writes under: the file name, unless ``--episode`` agrees.
+
+    ``--episode`` used to default to 1, so a trim of ``take-ep03-…`` was written
+    into ``ep01/takes``. A second trim then could not find the finish record,
+    which still lived on the episode the file names.
+
+    Parameters
+    ----------
+    args
+        Parsed edit namespace.
+
+    Returns
+    -------
+    int
+        Episode ordinal.
+
+    Raises
+    ------
+    ValueError
+        When ``--episode`` and the file name disagree.
+    """
+
+    named = None
+    if args.take_file is not None:
+        match = _TAKE_IN_NAME.match(Path(args.take_file).name)
+        named = int(match.group(1)) if match else None
+    chosen = getattr(args, "episode", None)
+    if chosen is None:
+        return named if named is not None else 1
+    if named is not None and named != chosen:
+        raise ValueError(
+            f"--episode {chosen} but --take-file `{Path(args.take_file).name}` is episode {named}; "
+            "drop --episode (the file names its episode) or pass the right one"
+        )
+    return int(chosen)
+
+
 def _source(args: argparse.Namespace, desk: Path) -> Path:
     if args.take_file is not None:
         path = args.take_file.expanduser().resolve()
@@ -430,6 +488,7 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
     out = stream or sys.stdout
     desk = args.desk.expanduser().resolve()
     args.take_id = take_id_for(args)
+    args.episode = episode_for(args)
     run_dir = desk / f"ep{args.episode:02d}"
     takes = run_dir / "takes"
     base = f"take-ep{args.episode:02d}-{args.take_id}"
@@ -564,19 +623,39 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
         )
         lines = [f"`{source.name}`: {frozen.one_line()}", *carry.lines(record)]
     elif args.command == "tempo":
+        window = (getattr(args, "start", None), getattr(args, "end", None))
 
         def tempo_same(take: Path, out: Path) -> Path:
-            return change_tempo(take, out, factor=args.factor)
+            return change_tempo(take, out, factor=args.factor, start=window[0], end=window[1])
 
         carry.edit_companions(tempo_same)
-        slowed = change_tempo(source, target("tempo"), factor=args.factor)
-        record_edit(desk, op="tempo", source=source, output=slowed, factor=args.factor)
-        record = carry.write(slowed, {"op": "tempo", "factor": args.factor})
-        lines = [
-            f"Tempo {args.factor:g}x `{source.name}` -> `{slowed.name}`: every time on the old file is now "
-            f"time / {args.factor:g}.",
-            *carry.lines(record),
-        ]
+        slowed = change_tempo(
+            source, target("tempo"), factor=args.factor, start=window[0], end=window[1]
+        )
+        detail: dict[str, Any] = {"op": "tempo", "factor": args.factor}
+        if window[0] is not None:
+            detail["from"] = window[0]
+            detail["to"] = window[1]
+        record_edit(
+            desk,
+            op="tempo",
+            source=source,
+            output=slowed,
+            factor=args.factor,
+            **{key: detail[key] for key in ("from", "to") if key in detail},
+        )
+        record = carry.write(slowed, detail)
+        if window[0] is None:
+            heard = (
+                f"Tempo {args.factor:g}x `{source.name}` -> `{slowed.name}`: every time on the old file is now "
+                f"time / {args.factor:g}."
+            )
+        else:
+            heard = (
+                f"Tempo {args.factor:g}x from {window[0]:g}s to {window[1]:g}s `{source.name}` -> `{slowed.name}`. "
+                "Lines inside that window speed with it; put the window on the action."
+            )
+        lines = [heard, *carry.lines(record)]
     elif args.command == "soften":
         cuts = tuple(args.cut) or measure_cuts(source)
         if not cuts:

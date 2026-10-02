@@ -11,7 +11,8 @@ take is never overwritten.
   that was there: same length, same frame count, sound copied, so lines, cues
   and captions stay where they were.
 - ``tempo``  changes picture and sound speed together (``setpts`` / ``atempo``,
-  pitch kept). The timeline changes by the factor.
+  pitch kept). A ``start``/``end`` window speeds only that span; the rest stays
+  at 1x. Without a window the whole timeline changes by the factor.
 - ``soften`` finds hard cuts with a scaled ``tblend`` difference trace (H3 cell
   seams that ffmpeg scene detect misses) and softens each in place: the last
   pre-cut frame is held over the new shot and faded out over 0.33 s. Same
@@ -643,7 +644,14 @@ def freeze_frame(take: Path, out: Path, *, at: float, hold: float) -> FreezeResu
 # ================================================================================================
 
 
-def change_tempo(take: Path, out: Path, *, factor: float = SLOW_TEMPO) -> Path:
+def change_tempo(
+    take: Path,
+    out: Path,
+    *,
+    factor: float = SLOW_TEMPO,
+    start: float | None = None,
+    end: float | None = None,
+) -> Path:
     """Change picture and sound speed together (``setpts`` / ``atempo``, pitch kept).
 
     Parameters
@@ -654,6 +662,11 @@ def change_tempo(take: Path, out: Path, *, factor: float = SLOW_TEMPO) -> Path:
         New file.
     factor
         Speed factor: 0.9 plays 10% slower (the take gets longer), 1.1 faster.
+    start
+        Seconds where a partial speed-up starts. Requires ``end``. Lines inside
+        the window speed with it, so the window sits on the action.
+    end
+        Seconds where the partial speed-up ends.
 
     Returns
     -------
@@ -663,21 +676,65 @@ def change_tempo(take: Path, out: Path, *, factor: float = SLOW_TEMPO) -> Path:
     Raises
     ------
     ValueError
-        When ``factor`` is outside 0.5-2.0.
+        When ``factor`` is outside 0.5-2.0, only one of ``start`` and ``end`` is
+        set, or the window does not fit the take.
     FileExistsError
         When ``out`` exists.
     """
 
     if not 0.5 <= factor <= 2.0:
         raise ValueError("tempo factor must be within 0.5-2.0")
+    if (start is None) != (end is None):
+        raise ValueError(
+            "tempo --from and --to go together: speed the action; lines outside the window stay at 1x"
+        )
     if out.exists():
         raise FileExistsError(f"{out} exists; tempo never overwrites")
     info = probe_video(take)
     picture, cover = video_streams(take)
-    graph = f"[0:v:{picture}]setpts=PTS/{factor},fps={HOUSE_FPS:g}[v]"
+    total = info.duration_seconds
+    source = f"0:v:{picture}"
+    whole = start is None or (
+        start <= 0.02 and end is not None and end >= total - 0.02
+    )
+    if not whole:
+        assert start is not None and end is not None
+        if start < 0 or end <= start or end > total + 0.05:
+            raise ValueError(
+                f"tempo window {start:g}-{end:g}s does not fit the {total:.2f}s take"
+            )
+        end = min(end, total)
+        spans: list[tuple[float, float, float]] = []
+        if start > 0.02:
+            spans.append((0.0, start, 1.0))
+        spans.append((start, end, factor))
+        if end < total - 0.02:
+            spans.append((end, total, 1.0))
+        parts: list[str] = []
+        vlabels: list[str] = []
+        alabels: list[str] = []
+        for index, (span_start, span_end, speed) in enumerate(spans):
+            pts = "setpts=PTS-STARTPTS" if speed == 1 else f"setpts=(PTS-STARTPTS)/{speed}"
+            parts.append(
+                f"[{source}]trim=start={span_start:.6f}:end={span_end:.6f},{pts},fps={HOUSE_FPS:g}[v{index}]"
+            )
+            vlabels.append(f"[v{index}]")
+            if info.has_audio:
+                tempo = "" if speed == 1 else f",atempo={speed}"
+                parts.append(
+                    f"[0:a]atrim=start={span_start:.6f}:end={span_end:.6f},asetpts=PTS-STARTPTS{tempo}[a{index}]"
+                )
+                alabels.append(f"[a{index}]")
+        parts.append(f"{''.join(vlabels)}concat=n={len(vlabels)}:v=1:a=0[v]")
+        if info.has_audio:
+            parts.append(f"{''.join(alabels)}concat=n={len(alabels)}:v=0:a=1[a]")
+        graph = ";".join(parts)
+    else:
+        graph = f"[{source}]setpts=PTS/{factor},fps={HOUSE_FPS:g}[v]"
+        if info.has_audio:
+            graph += f";[0:a]atempo={factor}[a]"
     maps = ["-map", "[v]"]
     if info.has_audio:
-        graph += f";[0:a]atempo={factor}[a]"
         maps += ["-map", "[a]", "-c:a", "aac", "-b:a", "192k"]
     out.parent.mkdir(parents=True, exist_ok=True)
     run_ffmpeg(["-i", str(take), "-filter_complex", graph, *maps,

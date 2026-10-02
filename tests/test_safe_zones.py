@@ -11,7 +11,9 @@ import pytest
 from conftest import needs_ffmpeg
 
 from creation.cli_produce import main
-from creation.post.safe_zones import check_safe_zones, run_review, zones_entered
+from PIL import Image, ImageDraw
+
+from creation.post.safe_zones import caption_box, check_safe_zones, run_review, zones_entered
 
 W, H = 192, 336
 
@@ -30,6 +32,22 @@ def caption_take(
         check=True,
     )  # fmt: skip
     return path
+
+
+def test_a_yellow_lamp_above_the_caption_does_not_stretch_the_box() -> None:
+    """A yellow lamp above the caption must not stretch the caption box up to the lamp."""
+
+    image = Image.new("RGB", (W, H), (30, 30, 30))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((70, 6, 120, 28), fill=(255, 229, 0))
+    top = round(H * 0.60)
+    draw.rectangle((30, top, 160, top + 16), fill=(255, 229, 0))
+
+    box = caption_box(image)
+
+    assert box is not None
+    assert box[1] == pytest.approx(0.60, abs=0.02)
+    assert zones_entered(box) == []
 
 
 def test_zones_are_the_covered_strips() -> None:
