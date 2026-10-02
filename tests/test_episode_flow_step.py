@@ -198,6 +198,23 @@ def test_episode_two_boards_reach_episode_two_and_print_the_shot_list(
     )
 
 
+def test_boards_already_on_the_server_are_picked_up(desk: Path, api: FakeApi) -> None:
+    set_phase(desk, "ready_boards_enrol")
+    api.routes[("POST", "/v1/spines/sp1/boards/enrol")] = SystemExit(
+        "HTTP 409 POST /v1/spines/sp1/boards/enrol: boards_already_generated"
+    )
+    api.routes[("GET", "/v1/spines/sp1/episodes/1/boards/exposure")] = {
+        "boards": [{"set_index": 1, "mean_percent": 12.0}]
+    }
+
+    result = orchestrate.run_step(desk)
+
+    assert api.polled == []
+    downloads = [payload["url"] for phase, payload in api.events if phase == "download"]
+    assert downloads == ["https://r2.example/episode_01-board.png"]
+    assert result.phase == "wait_board"
+
+
 def test_boards_quote_r2v_with_its_references_once_the_server_has_named_r2v(
     desk: Path, api: FakeApi
 ) -> None:

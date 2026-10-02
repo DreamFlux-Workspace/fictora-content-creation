@@ -82,10 +82,11 @@ def test_everything_present_and_accepted_prints_ticks_and_exits_0(
     ]  # one authenticated read
     assert (
         "✗" not in printed
-        and printed.count("✓") == 10
+        and printed.count("✓") == 11
         and printed.rstrip().endswith("Ready.")
     )
     assert "✓ API token accepted" in printed and "✓ libass (captions)" in printed
+    assert "✓ tesseract (drawn text)" in printed
     assert (
         "✓ Georgia Italic (heard-not-seen captions): "
         "/System/Library/Fonts/Supplemental/Georgia Italic.ttf" in printed
@@ -202,6 +203,26 @@ def test_missing_georgia_is_a_warning_naming_the_fallback_not_a_failure(
     )
     assert "/usr/share/fonts/dejavu/DejaVuSans.ttf" in line  # names the fallback file
     assert "ttf-mscorefonts-installer" in line and "Restore Standard Fonts" in line
+    assert printed.rstrip().endswith("Ready (1 warning(s) above).")
+
+
+def test_missing_tesseract_is_a_warning_not_a_failure(
+    env: Path, tools: dict[str, str]
+) -> None:
+    out = io.StringIO()
+
+    code = sc.run_setup_check(
+        out=out,
+        env_file=env,
+        api_get=api_ok([]),
+        which=lambda name: None if name == "tesseract" else which(name),
+    )
+
+    printed = out.getvalue()
+    assert code == 0, printed
+    assert (
+        "⚠ tesseract (drawn text):" in printed and "brew install tesseract" in printed
+    )
     assert printed.rstrip().endswith("Ready (1 warning(s) above).")
 
 

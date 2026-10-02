@@ -4,7 +4,9 @@ Checks what the kit needs and nothing else: the Drama API token is present and
 accepted (one cheap authenticated read, ``GET /v1/art-style-presets``), ffmpeg
 and ffprobe are installed, ffmpeg has libass (captions) and the filters the
 local finish and edits use, Arial Bold (the house caption face) and Georgia
-Italic (the heard-not-seen caption face) are where libass will look for them, and the Python and uv the repo runs on. Prints
+Italic (the heard-not-seen caption face) are where libass will look for them,
+tesseract (the drawn-text check) is on PATH, and the Python and uv the repo
+runs on. Prints
 one ✓ or ✗ line per item (⚠ for a warning that does not block) and never prints
 the token. Spends nothing.
 """
@@ -178,6 +180,34 @@ def check_tools(which: Callable[[str], str | None] = shutil.which) -> list[Check
     return checks
 
 
+def check_tesseract(which: Callable[[str], str | None] = shutil.which) -> Check:
+    """tesseract is on PATH, so the drawn-text check can read a take (warns, never fails).
+
+    Without it, ``review`` skips drawn text and says so. Captions still burn.
+    A missing binary is a ``⚠``, not a ``✗``.
+
+    Parameters
+    ----------
+    which
+        PATH lookup. Tests pass a fake.
+
+    Returns
+    -------
+    Check
+        A tick when ``tesseract`` is found, else a warning with the install line.
+    """
+
+    path = which("tesseract")
+    if path:
+        return Check("tesseract (drawn text)", True, path)
+    return Check(
+        "tesseract (drawn text)",
+        True,
+        "not on PATH; macOS: brew install tesseract. review skips drawn text without it",
+        warn=True,
+    )
+
+
 def check_house_font(find: Callable[[], HouseFont] | None = None) -> Check:
     """Arial Bold, the house caption face, resolves where libass looks for it (warns, never fails).
 
@@ -308,6 +338,7 @@ def run_setup_check(
         *check_tools(which),
         check_house_font(),
         check_italic_font(),
+        check_tesseract(which),
         check_python(),
         check_uv(which),
     ]
@@ -330,6 +361,7 @@ __all__ = [
     "TOKEN_PROBE_PATH",
     "check_house_font",
     "check_italic_font",
+    "check_tesseract",
     "check_python",
     "check_token",
     "check_tools",

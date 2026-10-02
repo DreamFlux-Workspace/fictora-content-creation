@@ -16,7 +16,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from creation.spine_view import beats_by_take, episode_id_for
+from creation.spine_view import beats_by_take, episode_id_for, spoken_lines
 
 #: Words that make the server refuse the take: inner voice must not be written
 #: into the take as fixture lines.
@@ -49,6 +49,25 @@ _CREATURE_SOUND_OK = re.compile(
     re.IGNORECASE,
 )
 _LINE_START = re.compile(r"\((\d+(?:\.\d+)?)\s*[–-]")
+
+#: A one- or two-word line held longer than this was stretched by the transcript.
+SHORT_LINE_HOLD_SECONDS = 3.0
+
+#: Spoken lines a take should carry so the cut stays punchy.
+LINES_PER_TAKE = 3
+
+_NEAR_TOUCH = re.compile(r"an inch|stops short|almost touch|just short", re.IGNORECASE)
+_CLEAR_GAP = re.compile(
+    r"hand's width|hands width|a clear gap|not touching|no contact", re.IGNORECASE
+)
+_HOLD = re.compile(
+    r"\b(?:hold|holds|holding|grip|grips|gripping|catch|catches|grasp|grasps)\b",
+    re.IGNORECASE,
+)
+_FORBID_HOLD = re.compile(
+    r"\b(?:no|not|never|forbid|forbidden|without|anyone)\b.{0,48}\b(?:hold|holding|grip|gripping|touch|touching)\b",
+    re.IGNORECASE,
+)
 
 #: What ``finish`` prints when the cover route answers an audio error.
 THUMBNAIL_AUDIO_ERROR = (
@@ -410,8 +429,8 @@ def seam_fix_line() -> str:
     """
 
     return (
-        "A louder bed barely changes a seam this size. Put a sound that belongs in the scene on the quiet side "
-        "and trim the dead air, then join again."
+        "A louder bed barely changes a seam this size. Put a steady sound that belongs in the scene "
+        "on the quiet side and trim the dead air, including a silent head, then join again."
     )
 
 
@@ -644,3 +663,162 @@ def creature_sound_stop(description: str) -> str | None:
         "A non-human cue comes back as a familiar animal unless the description names the sound. "
         "Name the sound, say what it is not, and place it on the frame the mouth opens."
     )
+
+
+def short_line_hold(text: str, *, start: float, end: float) -> str | None:
+    """Flag a one- or two-word line whose caption window is too long.
+
+    A short line the transcript misses gets the whole following speech stretch,
+    so the caption stays up for several seconds. Set the window by hand.
+
+    Parameters
+    ----------
+    text
+        The line as timed.
+    start
+        Window start, in seconds.
+    end
+        Window end, in seconds.
+
+    Returns
+    -------
+    str | None
+        The warning, or ``None`` when the line is longer or the window is short.
+    """
+
+    words = re.findall(r"\w+", text, flags=re.UNICODE)
+    if len(words) == 0 or len(words) > 2:
+        return None
+    held = end - start
+    if held <= SHORT_LINE_HOLD_SECONDS:
+        return None
+    return (
+        f"!! a {len(words)}-word line is held {held:.1f}s. "
+        "The transcript stretched it. Set the caption with finish --line-start and --line-end."
+    )
+
+
+def _episode_frames(spine: Mapping[str, Any], episode: int) -> list[Mapping[str, Any]]:
+    episode_id = episode_id_for(spine, episode)
+    return [
+        frame
+        for frame in spine.get("frames") or []
+        if isinstance(frame, Mapping) and frame.get("episode_id") == episode_id
+    ]
+
+
+def _episode_text(spine: Mapping[str, Any], episode: int) -> str:
+    blobs: list[str] = []
+    for beat in _episode_beats(spine, episode):
+        _strings(beat.get("motion_intent"), blobs)
+        _strings(beat.get("shot_plan"), blobs)
+    for frame in _episode_frames(spine, episode):
+        _strings(frame.get("visual_brief"), blobs)
+    return " ".join(blobs)
+
+
+def near_touch_line(spine: Mapping[str, Any], *, episode: int) -> str | None:
+    """Warn when a near-touch will be drawn as contact.
+
+    "An inch away" and "stops short" are drawn as a touch. Say the gap as a
+    hand's width and forbid the contact before the board is drawn.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+
+    Returns
+    -------
+    str | None
+        The warning, or ``None`` when the episode does not ask for a near-touch.
+    """
+
+    text = _episode_text(spine, episode)
+    if _NEAR_TOUCH.search(text) is None or _CLEAR_GAP.search(text) is not None:
+        return None
+    return (
+        "A near-touch ('an inch', 'stops short') is drawn as contact. "
+        "Say a hand's width of gap, and forbid the touch, before the board is drawn."
+    )
+
+
+def staging_contradiction_lines(spine: Mapping[str, Any], *, episode: int) -> list[str]:
+    """Name frames that both stage a hold and forbid that hold.
+
+    Rewriting a beat does not rewrite the frame's stored staging. The redraw
+    keeps the old prop. Edit the frame, then redraw with no note.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+
+    Returns
+    -------
+    list[str]
+        One line per contradictory frame.
+    """
+
+    lines: list[str] = []
+    for frame in _episode_frames(spine, episode):
+        blobs: list[str] = []
+        _strings(frame.get("visual_brief"), blobs)
+        text = " ".join(blobs)
+        if _HOLD.search(text) is None or _FORBID_HOLD.search(text) is None:
+            continue
+        label = frame.get("frame_id") or frame.get("ordinal")
+        lines.append(
+            f"{label}: the frame both stages a hold and forbids it. "
+            "A beat rewrite does not change stored staging. "
+            "Edit the frame (`edit --frame N --set ...`), then redraw with no note."
+        )
+    return lines
+
+
+def thin_take_lines(
+    spine: Mapping[str, Any], *, episode: int, take_count: int
+) -> list[str]:
+    """Warn when a take has fewer than three spoken lines.
+
+    A take with one or two lines, or none, plays slow. A line or a visible
+    action wants to land every few seconds.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+    take_count
+        How many takes the episode is cut into.
+
+    Returns
+    -------
+    list[str]
+        One line per thin take.
+    """
+
+    if take_count < 1:
+        return []
+    lines: list[str] = []
+    for index, group in enumerate(
+        beats_by_take(spine, episode=episode, take_count=take_count), start=1
+    ):
+        count = sum(len(spoken_lines(spine, beat)) for beat in group)
+        if count >= LINES_PER_TAKE:
+            continue
+        if count == 0:
+            lines.append(
+                f"take t{index} has no spoken line. Put a line or a visible action on it."
+            )
+            continue
+        lines.append(
+            f"take t{index} has {count} spoken line(s). A take wants {LINES_PER_TAKE} lines, "
+            "and a line or a visible action every 3 to 4 seconds."
+        )
+    return lines
