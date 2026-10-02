@@ -194,7 +194,11 @@ from creation.post.desk import (
 )
 from creation.post.media import MediaToolError, measure_loudness, probe_video
 from creation.post.mix import CueLevel, check_duck_db, mix_take, pick_gain
-from creation.post.take_facts import save_take_facts, stale_facts_reason
+from creation.post.take_facts import (
+    save_take_facts,
+    stale_facts_reason,
+    take_warning_lines,
+)
 from creation.post.take_handles import apply_take_handles, handles_from_facts
 from creation.post.take_timeline import (
     align_take_facts,
@@ -293,6 +297,8 @@ class FinishResult:
     hand_steps: tuple[str, ...] = ()
     #: Loud lines from the drawn-text check on the raw take (empty when it found none).
     text_warnings: list[str] = field(default_factory=list)
+    #: The take facts' ``warnings`` (fictora-drama #584), one ``!!`` line each (empty when none).
+    take_warnings: list[str] = field(default_factory=list)
     #: ``Soundtrack: …`` (:meth:`creation.post.soundtrack.Soundtrack.one_line`).
     soundtrack: str = ""
     #: The take's sound is the show's locked voices: room tone is required too.
@@ -400,6 +406,7 @@ class FinishResult:
         lines = [f"Final: {self.final}", f"Loudness: {self.loudness or 'not measured'}"]
         if self.soundtrack:
             lines.append(self.soundtrack)
+        lines += self.take_warnings
         if self.stopped:
             lines.append(f"!! STOPPED: {self.stopped}")
         lines += [
@@ -423,6 +430,7 @@ class FinishResult:
             "final": str(self.final),
             "loudness": self.loudness,
             "soundtrack": self.soundtrack,
+            "take_warnings": list(self.take_warnings),
             "stopped": self.stopped or None,
             "complete": self.complete,
             "missing": list(self.sound_missing),
@@ -939,6 +947,13 @@ def run_finish(
     )
     if facts_state["path"] is not None:
         print(soundtrack.one_line(), file=out)
+    result.take_warnings = take_warning_lines(facts_payload)
+    for line in result.take_warnings:
+        print(line, file=out)
+    if result.take_warnings:
+        append_run_note(
+            run_dir, "Finish · take facts warn: " + "; ".join(result.take_warnings[:-1])
+        )
     if timeline_note:
         print(timeline_note, file=out)
         append_run_note(run_dir, f"Finish · {timeline_note}")

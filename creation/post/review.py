@@ -1331,6 +1331,30 @@ def safe_zones_section(take: Path) -> Section:
     )
 
 
+# --- Take-facts warnings (fictora-drama #584) -----------------------------------------------------------
+
+
+def take_warnings_section(
+    facts: Mapping[str, Any] | None, cast_names: Mapping[str, str]
+) -> Section | None:
+    """The server's ``warnings`` on the take facts (``edge_duplicate_risk`` first), or ``None`` when absent."""
+
+    from creation.post.take_facts import take_warning_lines
+
+    lines = take_warning_lines(facts, cast_names)
+    if not lines:
+        return None
+    found = lines[:-1]
+    return Section(
+        "Take warnings",
+        WARN,
+        f"{len(found)} warning(s) from the take facts: check the shot(s) before finishing",
+        "each warning the server sent with the take facts",
+        [line.removeprefix("!! ") for line in found] + [lines[-1].strip()],
+        {"take_warnings": [line.removeprefix("!! ") for line in found]},
+    )
+
+
 # --- People on screen (a human check) ----------------------------------------------------------------------
 
 
@@ -1715,6 +1739,9 @@ def review_take(
     found = saved_spine(desk, episode)
     people = people_section(facts, cast_names_from(found[0] if found else None))
     sections = [loud, cuts, frames, board_sec, text, lines, people]
+    warned = take_warnings_section(facts, cast_names_from(found[0] if found else None))
+    if warned is not None:
+        sections.append(warned)
     if facts is not None and "soundtrack" in facts.get("take_facts", facts):
         sections.append(
             soundtrack_section(facts, cast_names_from(found[0] if found else None))
@@ -1745,6 +1772,7 @@ __all__ = [
     "compare_cuts",
     "default_take",
     "safe_zones_section",
+    "take_warnings_section",
     "measure_duck",
     "measure_frames",
     "measure_true_peak",

@@ -495,7 +495,64 @@ def shot_people_lines(
     return lines
 
 
+def take_warning_lines(
+    facts: Mapping[str, Any] | None, cast_names: Mapping[str, str] | None = None
+) -> list[str]:
+    """The take facts' ``warnings`` (fictora-drama #584), one ``!!`` line each, then what to do.
+
+    Each warning is ``{code, shot_index, who, cast_id?, moves?, message}``; the first code is
+    ``edge_duplicate_risk`` (the same person may show twice, at opposite frame edges).
+
+    Parameters
+    ----------
+    facts
+        A saved facts file, or ``None``.
+    cast_names
+        ``cast_id`` to display name, when ``who`` is missing.
+
+    Returns
+    -------
+    list[str]
+        ``!! shot N (a-b s): message [code, who]`` per warning and one line asking to watch
+        those shots before finishing; empty when the facts carry no warnings (older servers).
+    """
+
+    if not facts:
+        return []
+    body = facts.get("take_facts", facts)
+    raw = body.get("warnings") if isinstance(body, Mapping) else None
+    names = cast_names or {}
+    windows = {
+        shot.get("shot_index"): shot_label(shot, position)
+        for position, shot in enumerate(_shots(facts), start=1)
+    }
+    lines: list[str] = []
+    shots: list[str] = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        index = item.get("shot_index")
+        where = windows.get(index) or (
+            f"shot {index}" if index is not None else "the take"
+        )
+        who = str(
+            item.get("who") or names.get(str(item.get("cast_id") or ""), "") or ""
+        ).strip()
+        tags = ", ".join(t for t in (str(item.get("code") or "").strip(), who) if t)
+        message = str(item.get("message") or "").strip() or "no message"
+        lines.append(f"!! {where}: {message}" + (f" [{tags}]" if tags else ""))
+        if where not in shots:
+            shots.append(where)
+    if lines:
+        lines.append(
+            f"   Check {', '.join(shots)} at full size before finishing (the server flagged "
+            f"{'it' if len(shots) == 1 else 'them'}); re-film the take if it shows what the warning says"
+        )
+    return lines
+
+
 __all__ = [
+    "take_warning_lines",
     "SOUND_NOTES_KEY",
     "TWICE_CAUSE",
     "carried_notes",
