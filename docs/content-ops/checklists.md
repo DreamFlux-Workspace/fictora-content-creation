@@ -97,7 +97,7 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] The previous episode's last ~5 s as filmed and delivered was watched; the idea follows from that, not from its script
 - [ ] Episode 2's idea is a direction the brief printed (`author --direction K`) or the human's own words (`author --line`), never series memory
 - [ ] The printed script carries the human's idea
-- [ ] The printed script was read closely before the yes: an authored episode cannot be authored again (`invalid_extension_ordinal`); later changes go through `edit` / `line`
+- [ ] The printed script was read closely before the yes: an authored episode cannot be authored again (`invalid_extension_ordinal`); before the yes, `rewrite --episode N --line "…"` re-writes a draft (free); after it, changes go through `edit` / `line`
 - [ ] `approve --gate script` for episode 2 alone (the desk points at it after `author`)
 
 ## Before the take is enrolled
