@@ -289,3 +289,24 @@ def test_a_thumbnail_audio_error_is_recognized() -> None:
         "HTTP 502 operator_audio_failed: The audio could not be made"
     )
     assert not thumbnail_answered_audio_error("HTTP 404 thumbnail route")
+
+
+def test_a_standing_face_touching_ban_is_not_a_hold_contradiction() -> None:
+    spine = _spine()
+    spine["frames"] = [
+        {
+            "frame_id": "frame_1",
+            "episode_id": "episode_01",
+            "visual_brief": {
+                "subject_blocking": "her hand locked around his wrist; he catches the falling sign",
+                "forbidden_elements": [
+                    "no kissing",
+                    "no embracing",
+                    "no face-touching",
+                ],
+            },
+        }
+    ]
+    assert staging_contradiction_lines(spine, episode=1) == []
+    spine["frames"][0]["visual_brief"]["forbidden_elements"] = ["no touching the sign"]
+    assert len(staging_contradiction_lines(spine, episode=1)) == 1

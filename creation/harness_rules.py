@@ -65,7 +65,9 @@ _HOLD = re.compile(
     re.IGNORECASE,
 )
 _FORBID_HOLD = re.compile(
-    r"\b(?:no|not|never|forbid|forbidden|without|anyone)\b.{0,48}\b(?:hold|holding|grip|gripping|touch|touching)\b",
+    # A hyphenated compound ("no face-touching") is a standing contact rule,
+    # not a ban on holding the prop the frame stages.
+    r"\b(?:no|not|never|forbid|forbidden|without|anyone)\b.{0,48}(?<!-)\b(?:hold|holding|grip|gripping|touch|touching)\b",
     re.IGNORECASE,
 )
 _ADULT_AGE = re.compile(r"\b([1-9]\d)\b")
