@@ -1303,7 +1303,8 @@ def safe_zones_section(take: Path) -> Section:
     low, high = CAPTION_BAND
     threshold = (
         f"caption box clear of the top 8%, bottom 20% and right rail, inside {low:.0%}-{high:.0%} of the height, "
-        f"on {SAMPLE_FRAMES} sampled frames; faces by eye on the zone sheet"
+        f"on {SAMPLE_FRAMES} sampled frames and every cue of the burned caption file; faces by eye on the "
+        "zone sheet (no face detector)"
     )
     found = [
         w

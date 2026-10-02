@@ -15,20 +15,18 @@ def _frame(position: str) -> dict:
     }
 
 
-def test_a_placement_warning_is_labelled_text_only_and_says_where_to_look() -> None:
+def test_a_placement_is_listed_as_a_cell_to_look_at_not_flagged() -> None:
     lines = safe_zone_lines(
         [_frame("bottom edge, left")], cast_names={"cast_hana": "Hana"}
     )
 
     warning = lines[0]
-    assert warning.startswith("  !! text-only check, row 1 cell 1:")
-    assert 'Hana\'s face is placed "bottom edge, left"' in warning
-    assert "the drawing was not measured" in warning
-    assert "look at row 1 cell 1 on the board" in warning
-    assert "a false alarm when the drawing keeps it clear" in warning
+    assert warning.startswith("  look at row 1 cell 1:")
+    assert 'Hana\'s face is written "bottom edge, left"' in warning
+    assert "Written words only, not a finding" in warning
 
 
 def test_the_closing_line_says_what_the_check_reads() -> None:
     (only,) = safe_zone_lines([_frame("upper third, centre")])
-    assert only.strip().startswith("safe zones (text-only check):")
-    assert "not measured on the board image" in only
+    assert only.strip().startswith("safe zones:")
+    assert "Not measured on the board image" in only and "never flagged" in only

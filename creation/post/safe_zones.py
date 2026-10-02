@@ -10,10 +10,17 @@ What is measured, on frames sampled across the take:
 - **captions**: the house caption is yellow (``#FFE500``), so its box is found
   by colour on each frame and checked against the covered zones and against
   the house caption band (55-70% of the frame height).
+- **caption layout**: when the burned caption file the kit wrote is beside the
+  take (``take-epNN-tK-cap-vN.ass``), every cue's box is laid out from it
+  (frame size, style font size, alignment and margins, ``\\pos``/``\\an``,
+  the cue's lines at the font's measured width) and checked the same way, with
+  the cue's times. That covers each cue, not only the sampled frames, and a
+  white ``plain`` caption the colour search cannot see.
 - **faces**: this kit carries no face detector (its dependencies are numpy
   and Pillow only), so faces are not measured. ``review`` writes a contact
   sheet of the sampled frames with the covered zones shaded, for the human to
-  check that no face, eyes, mouth or key prop sits in them.
+  check that no face, eyes, mouth or key prop sits in them. The board's
+  written placements are no longer flagged: only a measured box is a finding.
 
 Everything is a warning: ``review`` always exits 0 and changes no take.
 """
@@ -21,6 +28,7 @@ Everything is a warning: ``review`` always exits 0 and changes no take.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
@@ -31,7 +39,7 @@ from typing import Any, TextIO
 import numpy as np
 from PIL import Image, ImageDraw
 
-from creation.captions import CAPTION_BAND
+from creation.captions import CAPTION_BAND, text_width
 from creation.ops.folder import next_versioned_path
 from creation.post.media import ffmpeg_bin, probe_video
 
@@ -52,9 +60,12 @@ CAPTION_ROW_SHARE = 0.01
 #: A caption box narrower than this share of the frame is not a caption (a prop, a light).
 CAPTION_MIN_WIDTH = 0.06
 FACE_CHECK = (
-    "faces: not measured (no face detector in this kit). Look at {sheet}: the covered zones are shaded red; "
-    "check no face, eyes, mouth or key prop sits in them."
+    "faces: not measured (no face detector in this kit: numpy and Pillow only). Look at {sheet}: the covered "
+    "zones are shaded red; check no face, eyes, mouth or key prop sits in them."
 )
+#: Line height of a caption line per ASS ``Fontsize`` unit: libass sets a ``Fontsize`` as the
+#: face's winAscent + winDescent (:data:`creation.captions.HOUSE_EM_PER_SIZE`), one line's height.
+LINE_HEIGHT = 1.0
 
 Box = tuple[float, float, float, float]
 
@@ -67,6 +78,24 @@ class FrameCheck:
     caption: Box | None
     zones: list[str] = field(default_factory=list)
     outside_band: bool = False
+    #: ``pixels`` (found by colour) or ``layout`` (the burned caption file's cue at this time).
+    measured_by: str = "pixels"
+
+
+@dataclass(frozen=True)
+class LayoutCue:
+    """One cue of the burned caption file: when it shows, its text and the box it is laid out in."""
+
+    start: float
+    end: float
+    text: str
+    box: Box
+
+    @property
+    def zones(self) -> list[str]:
+        """The covered zones the cue's box enters."""
+
+        return zones_entered(self.box)
 
 
 @dataclass
@@ -77,6 +106,8 @@ class SafeZoneReport:
     frames: list[FrameCheck]
     sheet: Path
     warnings: list[str]
+    layout: Path | None = None
+    cues: list[LayoutCue] = field(default_factory=list)
 
     def as_json(self) -> dict[str, Any]:
         """JSON-ready report."""
@@ -87,6 +118,8 @@ class SafeZoneReport:
             "zones": ZONES,
             "frames": [asdict(f) for f in self.frames],
             "warnings": self.warnings,
+            "caption_layout": str(self.layout) if self.layout else None,
+            "cues": [asdict(cue) | {"zones": cue.zones} for cue in self.cues],
             "faces_measured": False,
         }
 
@@ -174,6 +207,143 @@ def zones_entered(box: Box) -> list[str]:
     ]
 
 
+_POS = re.compile(r"\\pos\(\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\)")
+_AN = re.compile(r"\\an(\d)")
+_FS = re.compile(r"\\fs([\d.]+)")
+_TAGS = re.compile(r"\{[^}]*\}")
+
+
+def _ass_seconds(stamp: str) -> float:
+    hours, minutes, seconds = stamp.strip().split(":")
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+
+def caption_layout(ass: Path, *, width: int, height: int) -> list[LayoutCue]:
+    """Lay out every cue of a burned caption file and return its box on a ``width`` x ``height`` frame.
+
+    Reads what libass places by: ``PlayResX/Y`` (scaled to the frame), each style's
+    ``Fontsize``, ``Alignment`` and margins, a cue's own margins, and ``\\pos``,
+    ``\\an`` and ``\\fs`` overrides; the cue's ``\\N`` lines are measured at the
+    font's width (:func:`creation.captions.text_width`). An estimate to a few pixels,
+    which is what a zone check needs.
+
+    Parameters
+    ----------
+    ass
+        The ``.ass`` the take's captions were burned from.
+    width, height
+        The take's frame size.
+
+    Returns
+    -------
+    list[LayoutCue]
+        One per ``Dialogue`` event with text, in file order.
+    """
+
+    play_x, play_y = float(width), float(height)
+    fields: list[str] = []
+    styles: dict[str, dict[str, str]] = {}
+    events: list[list[str]] = []
+    event_fields: list[str] = []
+    for raw in ass.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        key, _, value = line.partition(":")
+        value = value.strip()
+        if key == "PlayResX":
+            play_x = float(value)
+        elif key == "PlayResY":
+            play_y = float(value)
+        elif key == "Format" and "Fontsize" in value:
+            fields = [name.strip() for name in value.split(",")]
+        elif key == "Format":
+            event_fields = [name.strip() for name in value.split(",")]
+        elif key == "Style" and fields:
+            styles[value.split(",", 1)[0].strip()] = dict(
+                zip(fields, (part.strip() for part in value.split(",")), strict=False)
+            )
+        elif key == "Dialogue" and event_fields:
+            events.append(value.split(",", len(event_fields) - 1))
+    sx, sy = width / play_x, height / play_y
+    cues: list[LayoutCue] = []
+    for parts in events:
+        event = dict(zip(event_fields, parts, strict=False))
+        raw_text = event.get("Text", "")
+        text_lines = [_TAGS.sub("", part) for part in raw_text.split("\\N")]
+        text = " ".join(part for part in text_lines if part.strip())
+        if not text.strip():
+            continue
+        style = styles.get(event.get("Style", "").strip()) or next(
+            iter(styles.values()), {}
+        )
+        size = float(style.get("Fontsize") or 48)
+        if found := _FS.search(raw_text):
+            size = float(found.group(1))
+        align = int(style.get("Alignment") or 2)
+        if found := _AN.search(raw_text):
+            align = int(found.group(1))
+
+        def margin(name: str) -> float:
+            own = (event.get(name) or "0").strip()
+            return float(own) if own not in ("", "0") else float(style.get(name) or 0)
+
+        block_w = max(text_width(part, round(size)) for part in text_lines) * sx
+        block_h = len(text_lines) * size * LINE_HEIGHT * sy
+        if found := _POS.search(raw_text):
+            anchor_x, anchor_y = float(found.group(1)) * sx, float(found.group(2)) * sy
+        else:
+            column = (align - 1) % 3
+            anchor_x = (
+                margin("MarginL") * sx
+                if column == 0
+                else width - margin("MarginR") * sx
+                if column == 2
+                else width / 2
+            )
+            anchor_y = (
+                height - margin("MarginV") * sy
+                if align <= 3
+                else margin("MarginV") * sy
+                if align >= 7
+                else height / 2
+            )
+        column, row = (align - 1) % 3, (align - 1) // 3
+        left = anchor_x - (0.0, block_w / 2, block_w)[column]
+        top = anchor_y - (block_h, block_h / 2, 0.0)[row]
+        box = (
+            round(max(0.0, left / width), 4),
+            round(max(0.0, top / height), 4),
+            round(min(1.0, (left + block_w) / width), 4),
+            round(min(1.0, (top + block_h) / height), 4),
+        )
+        cues.append(
+            LayoutCue(
+                _ass_seconds(event.get("Start", "0:0:0")),
+                _ass_seconds(event.get("End", "0:0:0")),
+                text.strip(),
+                box,
+            )
+        )
+    return cues
+
+
+def burned_caption_file(video: Path) -> Path | None:
+    """The caption file a take's captions were burned from: same stem, else the take's newest ``-cap-vN.ass``."""
+
+    same = video.with_suffix(".ass")
+    if same.is_file():
+        return same
+    match = re.match(r"(take-ep\d+-t\d+)-", video.name)
+    if not match:
+        return None
+    found = list(video.parent.glob(f"{match.group(1)}-cap-v*.ass"))
+
+    def version(path: Path) -> int:
+        number = re.search(r"-v(\d+)$", path.stem)
+        return int(number.group(1)) if number else 0
+
+    return max(found, key=version) if found else None
+
+
 def sample_times(duration: float, count: int = SAMPLE_FRAMES) -> list[float]:
     """``count`` times spread over the take, away from its first and last frame."""
 
@@ -231,7 +401,11 @@ def zone_sheet(
 
 
 def check_safe_zones(
-    video: Path, *, sheet_dir: Path | None = None, count: int = SAMPLE_FRAMES
+    video: Path,
+    *,
+    sheet_dir: Path | None = None,
+    count: int = SAMPLE_FRAMES,
+    layout: Path | None = None,
 ) -> SafeZoneReport:
     """Measure captions against the covered zones on sampled frames; write the zone sheet.
 
@@ -243,6 +417,8 @@ def check_safe_zones(
         Where the contact sheet goes; default next to ``video``.
     count
         Frames sampled.
+    layout
+        The burned caption file (:func:`burned_caption_file` finds it by default).
 
     Returns
     -------
@@ -251,19 +427,32 @@ def check_safe_zones(
     """
 
     info = probe_video(video)
+    layout = layout or burned_caption_file(video)
+    cues = (
+        caption_layout(layout, width=info.width, height=info.height)
+        if layout is not None
+        else []
+    )
     grabbed: list[tuple[float, Image.Image, Box | None]] = []
     checks: list[FrameCheck] = []
+    low, high = CAPTION_BAND
     for seconds in sample_times(info.duration_seconds, count):
         image = grab_frame(video, seconds)
         box = caption_box(image)
+        measured_by = "pixels"
+        if box is None:
+            # A white plain caption has no house yellow: take the burned layout's cue at this time.
+            showing = next((c for c in cues if c.start <= seconds < c.end), None)
+            if showing is not None:
+                box, measured_by = showing.box, "layout"
         grabbed.append((seconds, image, box))
-        low, high = CAPTION_BAND
         checks.append(
             FrameCheck(
                 seconds,
                 box,
                 zones_entered(box) if box else [],
                 bool(box) and not (low - 0.01 <= box[1] and box[3] <= high + 0.01),
+                measured_by,
             )
         )
     folder = sheet_dir or video.parent
@@ -277,6 +466,13 @@ def check_safe_zones(
             warnings.append(
                 f"!! caption in {ZONE_WHAT[name]} at {', '.join(f'{s:.1f}s' for s in hits)}: the platform covers it"
             )
+    for name in ZONES:
+        hits = [cue for cue in cues if name in cue.zones]
+        if hits and layout is not None:
+            warnings.append(
+                f"!! caption cue(s) laid out in {ZONE_WHAT[name]} (measured on `{layout.name}`): "
+                + "; ".join(f"{c.start:.2f}-{c.end:.2f}s {c.text[:40]!r}" for c in hits)
+            )
     off_band = [c.seconds for c in checks if c.outside_band]
     if off_band:
         low, high = CAPTION_BAND
@@ -289,7 +485,7 @@ def check_safe_zones(
             "no house caption seen on the sampled frames (a take before captions, or a silent take)"
         )
     warnings.append(FACE_CHECK.format(sheet=sheet.name))
-    return SafeZoneReport(video, checks, sheet, warnings)
+    return SafeZoneReport(video, checks, sheet, warnings, layout, cues)
 
 
 def newest_finished_take(desk: Path, episode: int, take_id: str) -> Path:
@@ -355,7 +551,8 @@ def run_review(
             if check.caption is None
             else f"caption {check.caption[1]:.0%}-{check.caption[3]:.0%} high: {where}"
         )
-        print(f"  {check.seconds:6.2f}s  {box}", file=out)
+        how = " (from the caption file)" if check.measured_by == "layout" else ""
+        print(f"  {check.seconds:6.2f}s  {box}{how}", file=out)
     for line in report.warnings:
         print(line, file=out)
     print(f"zone sheet: {report.sheet}", file=out)
@@ -364,8 +561,11 @@ def run_review(
 
 __all__ = [
     "ZONES",
+    "LayoutCue",
     "SafeZoneReport",
+    "burned_caption_file",
     "caption_box",
+    "caption_layout",
     "check_safe_zones",
     "newest_finished_take",
     "run_review",

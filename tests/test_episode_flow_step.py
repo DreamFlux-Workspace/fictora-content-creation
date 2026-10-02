@@ -181,7 +181,7 @@ def test_episode_two_boards_reach_episode_two_and_print_the_shot_list(
     assert "brightness 14.2% (server). Information only." in result.message
     assert "row 1: medium · eye level · front · camera dolly_in" in result.message
     assert "rows 1 and 2 share size and angle" in result.message
-    assert 'Hana\'s face is placed "bottom edge, left"' in result.message
+    assert 'Hana\'s face is written "bottom edge, left"' in result.message
     slot = episode_by_ordinal(load_series(desk), 2)
     assert slot.spend_usd == pytest.approx(0.30)
     assert slot.takes[0].estimate_usd == pytest.approx(

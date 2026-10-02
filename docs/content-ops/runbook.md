@@ -182,7 +182,7 @@ Every episode goes to TikTok, Instagram Reels and YouTube Shorts with one layout
 - Faces, eyes, mouths and key props never sit in a covered zone. Bodies, hands, floor and set may run through them. Composition is otherwise free: faces are not forced to the centre (it looked ugly).
 - Captions sit in the band 55–70% of the height.
 - The Sokii mark sits top left, just under the top strip: `23:121` on 768×1344 (x = 3% of the width, y = 9% of the height), 0.6 opacity. Never top right.
-- There is no face detector. The boards `step` warns (`!! text-only check, …`) when a frame's written placement puts a face or prop in a zone. It reads the words, not the drawing: look at the cell it names (it is a false alarm when the drawing keeps the face clear), and look at every other cell anyway. A face or key prop in a zone: fix the frame's placement with `edit --frame`, then `redraw-board`.
+- There is no face detector. The boards `step` lists a frame whose written placement could put a face or prop in a zone (`look at row R cell C: …`, never `!!`: written words are not a finding). Look at that cell and at every other cell. On the finished take `review` measures the caption box (sampled frames and every cue of the burned `.ass`) and gives each finding its times. A face or key prop in a zone: fix the frame's placement with `edit --frame`, then `redraw-board`.
 - On the finished take, `fictora-produce review --desk D --episode N --take tK` measures the caption box on sampled frames against these zones and the 55–70% band, and writes a zone sheet (`<take>-zones-vN.png`, zones shaded red) for the face check. It warns and never blocks; faces are still the human's look.
 
 ### Expression library
