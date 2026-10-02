@@ -342,16 +342,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("Next: uv run fictora-produce step --desk", desk)
             return 0
         if args.command == "bind":
+            prompt = text_or_file(args.prompt, flag="--prompt")
             state = bind_desk(
                 args.desk,
-                prompt=text_or_file(args.prompt, flag="--prompt"),
+                prompt=prompt,
                 preset_id=args.preset_id,
                 video_lane=args.video_lane,
                 episode_ordinal=args.episode,
             )
             save_production_config(args.desk, config_from_args(args))
             print(f"bound session_id={state.session_id} phase={state.phase}")
-            narration = narrator_warning(state.prompt, desk=args.desk)
+            narration = narrator_warning(prompt, desk=args.desk)
             if narration:
                 print(narration, file=sys.stderr)
             return 0
