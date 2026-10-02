@@ -92,7 +92,7 @@ from creation.post.media import (
     probe_video,
 )
 from creation.post.mix import LUFS_BAND, TARGET_LUFS
-from creation.harness_rules import late_opening_line
+from creation.harness_rules import late_opening_line, short_line_hold
 
 #: Below this a take is effectively silent: it needs cues (internal kit).
 SILENT_BELOW_LUFS = -30.0
@@ -1070,6 +1070,7 @@ def _heard_rows(
         f"heard: {len(heard)} of {len(lines)} approved line(s) in `{words_json.name}`"
     ]
     data: list[dict[str, Any]] = []
+    long_hold = False
     for window in windows:
         how = {
             "sound": " (by sound, {:.0%})",
@@ -1092,10 +1093,16 @@ def _heard_rows(
             rows.append(
                 f"  {window.index + 1}. {when}  {window.line!r}  {window.ratio:.0%}{how}"
             )
+            held = short_line_hold(
+                window.line, start=float(window.start), end=float(window.end)
+            )
+            if held:
+                rows.append(f"  {held}")
+                long_hold = True
         data.append({"line": window.index + 1, "text": window.line, "start": window.start, "end": window.end,
                      "ratio": window.ratio, "by": window.by,
                      "check_by_ear": window.start is None and short})  # fmt: skip
-    return rows, data, len(heard) < len(lines)
+    return rows, data, len(heard) < len(lines) or long_hold
 
 
 _WORDS_VERSION = re.compile(r"-(?:raw-)?v(\d+)-.*words")

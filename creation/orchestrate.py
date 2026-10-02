@@ -107,6 +107,9 @@ from creation.harness_rules import (
     film_stop_message,
     hook_mouth_stop,
     locked_camera_line,
+    near_touch_line,
+    staging_contradiction_lines,
+    thin_take_lines,
     young_creature_lines,
 )
 from creation.stranded_voice import explain_film_refusal, stranded_preflight
@@ -369,6 +372,15 @@ def script_gate_text(desk: Path, spine: dict[str, Any], *, episode: int) -> str:
     camera = locked_camera_line(spine, episode=episode)
     if camera:
         text += "\n" + camera
+    notes = [
+        *thin_take_lines(spine, episode=episode, take_count=len(slot.takes)),
+        *staging_contradiction_lines(spine, episode=episode),
+    ]
+    near = near_touch_line(spine, episode=episode)
+    if near:
+        notes.append(near)
+    if notes:
+        text += "\n" + "\n".join(notes)
     return text
 
 
@@ -1402,6 +1414,13 @@ def run_step(
             if mouth:
                 raise RuntimeError(
                     "Stopped before the boards. " + mouth + " Nothing was sent."
+                )
+            conflicts = staging_contradiction_lines(spine_now, episode=ep)
+            near = near_touch_line(spine_now, episode=ep)
+            if conflicts or near:
+                raise RuntimeError(
+                    "Stopped before the boards. Nothing was sent.\n"
+                    + "\n".join([*conflicts, *([near] if near else [])])
                 )
             stages.enrol_boards(
                 run,

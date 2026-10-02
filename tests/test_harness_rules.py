@@ -9,6 +9,10 @@ from creation.harness_rules import (
     hook_mouth_stop,
     late_opening_line,
     locked_camera_line,
+    near_touch_line,
+    short_line_hold,
+    staging_contradiction_lines,
+    thin_take_lines,
     seam_fix_line,
     thought_short_of_cut,
     thumbnail_answered_audio_error,
@@ -186,6 +190,44 @@ def test_a_creature_cue_must_say_it_is_not_a_cat() -> None:
     assert stopped is not None and "names the sound" in stopped
     assert creature_sound_stop("a wolf howl at the gate") is None
     assert creature_sound_stop("a cat meow") is None
+
+
+def test_a_short_line_held_for_seconds_is_named() -> None:
+    assert short_line_hold("A fox.", start=2.8, end=10.4) is not None
+    assert "line-start" in (short_line_hold("여우", start=8.6, end=16.2) or "")
+    assert short_line_hold("여우", start=8.6, end=10.4) is None
+    assert short_line_hold("Holding my hand now?", start=1.0, end=8.0) is None
+
+
+def test_a_near_touch_and_a_hold_that_is_also_forbidden_are_named() -> None:
+    spine = _spine()
+    assert near_touch_line(spine, episode=1) is None
+    spine["beats"][0]["motion_intent"] = "his hand stops an inch away"
+    assert near_touch_line(spine, episode=1) is not None
+    spine["beats"][0]["motion_intent"] = "his hand stops a hand's width above the back"
+    assert near_touch_line(spine, episode=1) is None
+    spine["frames"] = [
+        {
+            "frame_id": "frame_1",
+            "episode_id": "episode_01",
+            "visual_brief": {
+                "subject_blocking": "catches the lamp stem with both hands",
+                "forbidden_elements": ["anyone holding the lamp"],
+            },
+        }
+    ]
+    lines = staging_contradiction_lines(spine, episode=1)
+    assert len(lines) == 1 and "redraw with no note" in lines[0]
+
+
+def test_a_take_with_fewer_than_three_lines_is_named() -> None:
+    spine = _spine()
+    lines = thin_take_lines(spine, episode=1, take_count=1)
+    assert len(lines) == 1 and "2 spoken" in lines[0]
+    spine["beats"][2]["dialogue_lines"] = [
+        {"line_id": "l3", "cast_id": "cast_hana", "text": "Look."}
+    ]
+    assert thin_take_lines(spine, episode=1, take_count=1) == []
 
 
 def test_a_thumbnail_audio_error_is_recognized() -> None:

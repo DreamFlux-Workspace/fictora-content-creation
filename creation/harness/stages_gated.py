@@ -14,7 +14,7 @@ from creation import stylised_only
 from creation.harness.video_enrol_errors import server_refused_episode_ordinal_field
 from creation.desk_media_urls import drawn_cast_rows
 from creation.harness.session import DramaApiRunSession
-from creation.spine_view import episode_id_for
+from creation.spine_view import board_assets, episode_id_for
 from creation.harness.visual_first_ep1 import (
     approve_ep1_boards,
     measure_ep1_board_exposure,
@@ -576,25 +576,36 @@ def enrol_boards(
     booked alone once earlier episodes have boards; episodes written past N are
     never drawn. With 1 the server would only look at episode 1, find its boards
     drawn and refuse episode 2's enrol with 409 ``boards_already_generated``.
+    A dropped connection after this episode's boards exist answers that same
+    409: the boards already on the spine are kept and nothing is sent again.
     """
 
     last_terminal: dict[str, Any] = {}
     for attempt in range(max_attempts):
         spine = run.spine(spine_id)
         suffix = f"-a{attempt}" if attempt else ""
-        job = run.post(
-            f"/v1/spines/{spine_id}/boards/enrol",
-            reuse_generation_body(
-                prompt=scene_prompt(spine, prompt),
-                spine=spine,
-                preset_id=preset_id,
-                preset_version=preset_version,
-                video_lane=video_lane,
-                cut_tempo=cut_tempo,
-                extra={"episode_count": episode},
-            ),
-            idempotency_key=f"{run.prefix}-{tag}-boards-enrol{suffix}",
-        )
+        try:
+            job = run.post(
+                f"/v1/spines/{spine_id}/boards/enrol",
+                reuse_generation_body(
+                    prompt=scene_prompt(spine, prompt),
+                    spine=spine,
+                    preset_id=preset_id,
+                    preset_version=preset_version,
+                    video_lane=video_lane,
+                    cut_tempo=cut_tempo,
+                    extra={"episode_count": episode},
+                ),
+                idempotency_key=f"{run.prefix}-{tag}-boards-enrol{suffix}",
+            )
+        except SystemExit as exc:
+            if "boards_already_generated" not in str(exc):
+                raise
+            ready = run.spine(spine_id)
+            if not board_assets(ready, episode=episode):
+                raise
+            run.emit("boards_resume", code="boards_already_generated", episode=episode)
+            return ready
         run.save(f"08_{tag}_boards_enrol{suffix}.json", job)
         terminal = run.poll_job(
             job["job_id"],
