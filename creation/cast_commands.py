@@ -26,12 +26,13 @@ Production learnings, 22 Sep to 1 Oct 2026:
   already has it, so a run stopped half way is finished by running the same
   command again; the stop names what was done and how to undo it.
 - **A show voiced in Japanese but drafted en-US** (L-20261001-21, -28). The
-  server fixes ``spoken_language`` when the story is created (a re-plan carries
-  it too) and refuses ``spoken_text`` on an en-US show. There is no route to
-  change it, so ``line --spoken`` with ``--language ja|ko`` (or performed words
-  that are not English) records the declared language and the pinned line on
-  the desk (``shared/spoken-language.json``), sends nothing, and says so. The
-  server ask is in ``docs/content-ops/backlog.md``.
+  server refuses ``spoken_text`` on an en-US show. ``language --desk D --spoken
+  ja`` changes the show's language (:mod:`creation.story_setup`, fictora-drama
+  #582); until then ``line --spoken`` with ``--language ja|ko`` (or performed
+  words that are not English) records the declared language and the pinned line
+  on the desk (``shared/spoken-language.json``), sends nothing, and names the
+  ``language`` command. ``language`` prints the recorded lines as the
+  ``line --spoken`` commands that send them.
 """
 
 from __future__ import annotations
@@ -963,9 +964,8 @@ def english_show_pin(
 ) -> None:
     """Handle ``line --spoken`` before anything is sent, when the server holds the show as English.
 
-    The server refuses ``spoken_text`` on an en-US show and has no route that
-    changes a spine's ``spoken_language`` (it is fixed at creation; a re-plan
-    carries it). A show performed in Japanese or Korean but drafted en-US
+    The server refuses ``spoken_text`` on an en-US show; ``language --spoken``
+    changes the show's language first. A show performed in Japanese or Korean but drafted en-US
     (Kuchisake-onna) is told so here: with ``--language ja|ko``, a language
     already declared on the desk, or performed words that are not English, the
     pinned line and the declared language are recorded on the desk and nothing
@@ -990,8 +990,9 @@ def english_show_pin(
     if wanted == "en-US" or (wanted is None and is_english(spoken)):
         raise ec.CommandStopped(
             "--spoken pins the performed line of a Japanese or Korean show, and the server holds this show as "
-            "en-US: use --text. If the show is really performed in another language, pass --language ja (or ko): "
-            "the kit records it on the desk; the server cannot change a show's language yet."
+            "en-US: use --text. If the show is really performed in another language, change it first with "
+            f"`fictora-produce language --desk {desk} --spoken ja` (or ko), then send this line again; "
+            "or pass --language ja (or ko) to record the line on the desk until then."
         )
     code = wanted or ("ko-KR" if any("가" <= ch <= "힣" for ch in spoken) else "ja-JP")
     line_id = (
@@ -1048,11 +1049,10 @@ def english_show_pin(
     raise ec.CommandStopped(
         f"recorded on the desk, NOT sent: {line_id or pin.get('beat_id')} performed {spoken!r}"
         + (f", subtitle {subtitle!r}" if subtitle else "")
-        + f" ({code}; {path}). The server holds this show as {server}: it refuses a pinned performed line on an "
-        "English show and has no route that changes a show's language (it is fixed when the story is created). "
-        "The take will speak the English --text until the server can change it; the ask is in "
-        "docs/content-ops/backlog.md. To make the show in Japanese now, start a new story with "
-        "`fictora-produce start … --language ja`."
+        + f" ({code}; {path}). The server holds this show as {server} and refuses a pinned performed line on an "
+        f"English show. Change the show's language with `fictora-produce language --desk {desk} --spoken "
+        f"{code[:2]}` (it shows what it sets aside first, and prints this line's command to send it again); "
+        "against a server without that route the take speaks the English --text."
     )
 
 

@@ -306,7 +306,7 @@ class EditRefused(CommandStopped):
 
 
 #: Commands that print a change before sending it, so they end on a verdict line (L-20261001-25).
-EDIT_VERDICT_COMMANDS = frozenset({"edit", "line", "cast"})
+EDIT_VERDICT_COMMANDS = frozenset({"edit", "line", "cast", "language"})
 
 
 def change_items(changed: Sequence[str]) -> list[str]:
@@ -6241,6 +6241,7 @@ EPISODE_COMMANDS = frozenset(
     {
         "arc",
         "brief",
+        "language",
         "author",
         "memory",
         "edit",
@@ -6310,12 +6311,51 @@ def add_episode_parsers(
 
     brief = sub.add_parser(
         "brief",
-        help="Read the next-episode brief (directions) for episode N. Spends nothing.",
+        help="Read the next-episode brief (directions) for episode N; or, with --edit / --strip-narration, "
+        "replace the story's stored brief. Spends nothing.",
     )
     brief.add_argument("--desk", type=Path, required=True)
-    brief.add_argument("--episode", type=int, required=True)
+    brief.add_argument(
+        "--episode",
+        type=int,
+        default=None,
+        help="Episode whose next-episode brief to read.",
+    )
     brief.add_argument(
         "--episodes", type=int, default=None, help="Intended run, 7-240 (soft default)."
+    )
+    brief_edit = brief.add_mutually_exclusive_group()
+    brief_edit.add_argument(
+        "--edit",
+        default=None,
+        metavar="@FILE",
+        help="Replace the story's brief with this whole text (@file, a path, or words). Shows the change first.",
+    )
+    brief_edit.add_argument(
+        "--strip-narration",
+        action="store_true",
+        help="Take the narrator / voice-over lines out of the desk's brief and send the rest.",
+    )
+    brief.add_argument(
+        "--preview",
+        action="store_true",
+        help="With --edit / --strip-narration: show the change, send nothing.",
+    )
+
+    language = sub.add_parser(
+        "language",
+        help="Change the language the show is performed in (ja, ko or en). Shows what it sets aside first. "
+        "Spends nothing.",
+    )
+    language.add_argument("--desk", type=Path, required=True)
+    language.add_argument("--spoken", required=True, help="ja, ko or en.")
+    language.add_argument(
+        "--preview", action="store_true", help="Show the change, send nothing."
+    )
+    language.add_argument(
+        "--confirm-filmed",
+        action="store_true",
+        help="Change it although takes were filmed in another language (after the human's yes).",
     )
 
     author = sub.add_parser(
@@ -6814,8 +6854,37 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 )
             return 0
         if args.command == "brief":
+            if args.edit is not None or args.strip_narration:
+                from creation.story_setup import run_brief_edit
+
+                try:
+                    done = run_brief_edit(
+                        args.desk,
+                        edit=args.edit,
+                        strip=args.strip_narration,
+                        preview=args.preview,
+                    )
+                except CommandStopped as exc:
+                    print(f"Stopped: {exc}", file=sys.stderr)
+                    print(f"Refused: {refusal_reason(str(exc))}", file=sys.stderr)
+                    return 2
+                return 0 if done or args.preview else 2
+            if args.episode is None:
+                raise CommandStopped(
+                    "brief: pass --episode N (the next-episode brief), or --edit @FILE / --strip-narration"
+                )
             run_brief(args.desk, episode=args.episode, episodes=args.episodes)
             return 0
+        if args.command == "language":
+            from creation.story_setup import run_language
+
+            done = run_language(
+                args.desk,
+                spoken=args.spoken,
+                preview=args.preview,
+                confirm_filmed=args.confirm_filmed,
+            )
+            return 0 if done or args.preview else 2
         if args.command == "author":
             direction = author_direction(
                 args.desk,

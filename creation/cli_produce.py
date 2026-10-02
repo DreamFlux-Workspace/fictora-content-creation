@@ -27,6 +27,7 @@ from creation.episode_commands import (
     run_approve_look,
 )
 from creation.narrator_cast import add_narrator_answer_args, interactive_ask
+from creation.plan_prompt import narrator_warning
 from creation.ops.floor import init_series_desk
 from creation.ops.folder import DEFAULT_RUN_PARENT, run_folder_name
 from creation.ops.notes import append_run_note
@@ -334,6 +335,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             save_production_config(desk, config)
             print(desk)
             _warn_if_no_local_ffmpeg()
+            narration = narrator_warning(prompt, desk=desk)
+            if narration:
+                print(narration, file=sys.stderr)
             print(f"bound session_id={state.session_id} phase={state.phase}")
             print("Next: uv run fictora-produce step --desk", desk)
             return 0
@@ -347,6 +351,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             save_production_config(args.desk, config_from_args(args))
             print(f"bound session_id={state.session_id} phase={state.phase}")
+            narration = narrator_warning(state.prompt, desk=args.desk)
+            if narration:
+                print(narration, file=sys.stderr)
             return 0
         if args.command == "config":
             print(json.dumps(asdict(load_production_config(args.desk)), indent=2))
