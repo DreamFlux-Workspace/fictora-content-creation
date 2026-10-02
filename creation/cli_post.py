@@ -326,6 +326,13 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Lay a dry line (voice-line): PATH@SECONDS[@DB] on the take as filmed; levelled unless @DB (repeat).",
     )  # fmt: skip
     fin.add_argument(
+        "--sign-overlay",
+        action="store_true",
+        help="Where the text check finds possible garbled lettering in a shot whose take facts carry a story "
+        "sign, draw the sign's exact words in the house font over it for that shot (instead of a blur). "
+        "Without it, finish prints the suggestion.",
+    )
+    fin.add_argument(
         "--caption-label", action="append", default=[], metavar="TEXT@A-B",
         help="A caption with no spoken line under it (a short line the take never says clearly): "
         "TEXT@A-B seconds on the take as filmed, drawn like the other captions (repeat).",

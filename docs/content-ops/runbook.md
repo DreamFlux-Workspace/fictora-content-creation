@@ -271,6 +271,7 @@ Repurposing an episode (a new idea on an episode already authored): update its t
 - Duplicates are compositional, never numeric. "Only one person" does not help.
 - When a prop keeps detaching, change the pose so the contact does not exist. Forbidding it in words fails twice.
 - No digits and no readable text anywhere. Jackets and uniforms say "plain back, no lettering or logos". Watch the end of every take for invented text: it shows up most in the last seconds.
+- A sign the story needs (its words in the take facts' `story_signs`) that the video garbled: `finish` names it and the shot; with the human's yes, `finish --sign-overlay` draws the exact words over it instead of a blur.
 
 ### Dialogue
 

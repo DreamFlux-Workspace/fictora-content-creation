@@ -146,9 +146,11 @@ from creation.captions import (
     CaptionLine,
     Span,
     SpineFetcher,
+    burn_ass,
     caption_take,
     captions_whole_lines,
     current_spine,
+    find_ffmpeg,
     is_english,
     resolve_caption_style,
 )
@@ -228,6 +230,12 @@ from creation.post.sfx import (
     planned_shots,
     saved_take_facts,
     service_renderer,
+)
+from creation.post.story_signs import (
+    overlay_ass,
+    plan_overlays,
+    story_signs,
+    suggestion_lines,
 )
 from creation.post.take_text import OcrRunner, TextCheck, desk_text_check
 from creation.post.thumbnail import THUMBNAIL_USD, attach_episode_thumbnail_to_finish
@@ -665,6 +673,7 @@ def run_finish(
     voices: tuple[Placed, ...] = (),
     cues: tuple[Placed, ...] = (),
     caption_labels: tuple[tuple[str, float, float], ...] = (),
+    sign_overlay: bool = False,
     sfx_render: Renderer | None = None,
     bed_maker: Maker | None = None,
     facts_fetcher: FactsFetcher = api_facts_fetcher,
@@ -739,6 +748,11 @@ def run_finish(
     caption_labels
         ``--caption-label`` ``(text, start, end)``: a caption with no spoken line under it
         (take seconds as filmed), drawn with the other captions.
+    sign_overlay
+        ``--sign-overlay``: where the text check finds possible lettering in a shot whose
+        take facts carry one story sign (``story_signs``), draw the sign's exact words in
+        the house font over the flagged box for that shot (:mod:`creation.post.story_signs`),
+        before the captions. Without it, the overlay is printed as a suggestion.
     sfx_render, bed_maker, facts_fetcher, transcriber, cut_meter, voice_audio, ambience_maker
         Injected for tests (``bed_maker`` makes the harness bed on the server;
         ``transcriber`` makes a transcript of the take on the server;
@@ -946,6 +960,38 @@ def run_finish(
             "looked for; watch the take for drawn text"
         ]
         print(f"[text] {result.text_warnings[0]}", file=out, flush=True)
+
+    overlays, sign_notes = (
+        plan_overlays(facts_payload, text_check.lettering, text_check.size)
+        if text_check is not None and text_check.status != "skipped"
+        else ([], [])
+    )
+    sign_suggestions: list[str] = []
+    for line in sign_notes:
+        print(f"[text] {line}", file=out, flush=True)
+    if overlays and not sign_overlay:
+        sign_suggestions = suggestion_lines(
+            overlays, desk=desk, episode=episode, take_id=take_id
+        )
+        for line in sign_suggestions:
+            print(f"[text] {line}", file=out, flush=True)
+        append_run_note(
+            run_dir,
+            "Finish · story signs: possible garbled lettering on "
+            + "; ".join(item.describe() for item in overlays)
+            + " (not overlaid: --sign-overlay draws the exact words)",
+        )
+    elif sign_overlay and not overlays:
+        print(
+            "[sign-overlay] nothing to overlay: "
+            + (
+                "the take facts carry no story signs"
+                if not story_signs(facts_payload)
+                else "no possible lettering found in a shot with one story sign"
+            ),
+            file=out,
+            flush=True,
+        )
 
     def step(name: str, doing: str, work: Callable[[Path], StepReport]) -> None:
         nonlocal current
@@ -1771,6 +1817,27 @@ def run_finish(
             captioned.video,
         )
 
+    def do_sign_overlay(take: Path) -> StepReport:
+        ffmpeg, _ = find_ffmpeg()
+        info = probe_video(take)
+        ass = next_versioned_path(takes, f"{base}-sign", ".ass")
+        ass.write_text(
+            overlay_ass(overlays, width=info.width, height=info.height),
+            encoding="utf-8",
+        )
+        drawn = next_versioned_path(takes, f"{base}-sign", ".mp4")
+        burn_ass(ffmpeg, take, ass, drawn)
+        detail = "; ".join(item.describe() for item in overlays)
+        append_run_note(
+            run_dir, f"Story sign overlay -> `{drawn.name}` (`{ass.name}`): {detail}"
+        )
+        return StepReport(
+            "sign-overlay",
+            "ran",
+            f"exact words drawn over the garbled sign: {detail}",
+            drawn,
+        )
+
     def do_watermark(take: Path) -> StepReport:
         marked = watermark(
             take, next_versioned_path(takes, f"{base}-sokii", ".mp4"), y=watermark_y
@@ -1905,6 +1972,12 @@ def run_finish(
     else:
         step("colour", "Matching the look to the approved board", do_colour)
         step("mix", "Mixing the bed under the voice at a measured level", do_mix)
+        if sign_overlay and overlays:
+            step(
+                "sign-overlay",
+                "Drawing the story sign's exact words over the garbled lettering",
+                do_sign_overlay,
+            )
         step(
             "captions",
             "Skipping captions (--caption-style none)"
@@ -1925,6 +1998,7 @@ def run_finish(
         result.text_warnings = text_check.warning_lines(
             desk=desk, episode=episode, take_id=take_id, final=current
         )
+        result.text_warnings += sign_suggestions
     try:
         result.loudness = f"{measure_loudness(current):.1f} LUFS"
     except MediaToolError as exc:
