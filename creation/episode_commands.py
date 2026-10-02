@@ -1443,6 +1443,11 @@ def parse_assignment(raw: str) -> tuple[str, Any]:
     return key.strip(), value
 
 
+#: visual_brief fields the server omits from a saved frame while they are empty
+#: (server #583: ``story_signs``); ``edit --frame --set`` may still set them.
+OPTIONAL_VISUAL_BRIEF_FIELDS = frozenset({"story_signs"})
+
+
 def _apply(target: Any, key: str, value: Any, *, label: str) -> None:
     """Set a dotted ``key`` inside ``target``; a numeric part indexes a list (``subject_blocking.0.pose``)."""
 
@@ -1468,6 +1473,14 @@ def _apply(target: Any, key: str, value: Any, *, label: str) -> None:
             f"{label} is not an object or a list, so {key!r} cannot be set"
         )
     if head not in target:
+        if (
+            not rest
+            and label.endswith("visual_brief")
+            and head in OPTIONAL_VISUAL_BRIEF_FIELDS
+        ):
+            # Optional fields the server leaves out of a saved frame when empty.
+            target[head] = value
+            return
         raise CommandStopped(
             f"{label} has no field {head!r}; it has: {', '.join(sorted(target))}"
         )

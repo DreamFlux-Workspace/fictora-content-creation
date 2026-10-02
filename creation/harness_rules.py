@@ -65,7 +65,9 @@ _HOLD = re.compile(
     re.IGNORECASE,
 )
 _FORBID_HOLD = re.compile(
-    r"\b(?:no|not|never|forbid|forbidden|without|anyone)\b.{0,48}\b(?:hold|holding|grip|gripping|touch|touching)\b",
+    # A hyphenated compound ("no face-touching") is a standing contact rule,
+    # not a ban on holding the prop the frame stages.
+    r"\b(?:no|not|never|forbid|forbidden|without|anyone)\b.{0,48}(?<!-)\b(?:hold|holding|grip|gripping|touch|touching)\b",
     re.IGNORECASE,
 )
 _ADULT_AGE = re.compile(r"\b([1-9]\d)\b")
@@ -776,10 +778,21 @@ def staging_contradiction_lines(spine: Mapping[str, Any], *, episode: int) -> li
 
     lines: list[str] = []
     for frame in _episode_frames(spine, episode):
-        blobs: list[str] = []
-        _strings(frame.get("visual_brief"), blobs)
-        text = " ".join(blobs)
-        if _HOLD.search(text) is None or _FORBID_HOLD.search(text) is None:
+        brief = frame.get("visual_brief")
+        brief = brief if isinstance(brief, Mapping) else {}
+        # What the frame stages vs. what it forbids: "steps closer without
+        # touching him" in the staging is a distance, not a ban.
+        staged: list[str] = []
+        _strings(
+            {key: value for key, value in brief.items() if key != "forbidden_elements"},
+            staged,
+        )
+        forbidden: list[str] = []
+        _strings(brief.get("forbidden_elements"), forbidden)
+        if (
+            _HOLD.search(" ".join(staged)) is None
+            or _FORBID_HOLD.search(" ".join(forbidden)) is None
+        ):
             continue
         label = frame.get("frame_id") or frame.get("ordinal")
         lines.append(
