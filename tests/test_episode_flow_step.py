@@ -85,6 +85,34 @@ def test_step_new_drafts_alone_syncs_lines_and_prints_the_script_gate(
     assert load_production(desk).phase == "ready_cast_enrol"
 
 
+def test_a_young_creature_without_proportions_stops_before_the_plates(
+    desk: Path, api: FakeApi
+) -> None:
+    api.spine_doc["cast"].append(
+        {"cast_id": "cast_cinder", "name": "Cinder", "visual_brief": "a newborn dragon"}
+    )
+    set_phase(desk, "ready_cast_enrol")
+    api.routes[("POST", "/v1/spines/sp1/cast/enrol")] = {"job_id": "job_cast"}
+
+    with pytest.raises(RuntimeError, match="oversized head"):
+        orchestrate.run_step(desk)
+
+    assert api.posted("/v1/spines/sp1/cast/enrol") == []
+    assert load_production(desk).phase == "ready_cast_enrol"
+
+
+def test_a_hand_over_the_hook_stops_before_the_boards(desk: Path, api: FakeApi) -> None:
+    api.spine_doc["beats"][0]["reaction_kind"] = "dramatic_gasp"
+    set_phase(desk, "ready_boards_enrol")
+    api.routes[("POST", "/v1/spines/sp1/boards/enrol")] = {"job_id": "job_boards"}
+
+    with pytest.raises(RuntimeError, match="hand over the mouth"):
+        orchestrate.run_step(desk)
+
+    assert api.posted("/v1/spines/sp1/boards/enrol") == []
+    assert load_production(desk).phase == "ready_boards_enrol"
+
+
 def test_a_failed_draft_says_the_rule_that_failed(desk: Path, api: FakeApi) -> None:
     api.routes[("POST", "/v1/prompt-video-authoring-drafts")] = {
         "plan_job_id": "job_plan",

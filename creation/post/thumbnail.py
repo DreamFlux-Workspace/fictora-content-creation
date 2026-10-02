@@ -21,6 +21,7 @@ from creation.harness.thumbnail_api import (
     post_episode_thumbnail,
     server_draws_episode_thumbnail,
 )
+from creation.harness_rules import THUMBNAIL_AUDIO_ERROR, thumbnail_answered_audio_error
 from creation.media_fetch import download_to_versioned
 from creation.ops.folder import next_versioned_path
 from creation.post.desk import open_api, spine_id, take_stored_url
@@ -215,6 +216,14 @@ def attach_episode_thumbnail_to_finish(
                     flush=True,
                 )
             return marked_video, None
+        if thumbnail_answered_audio_error(text):
+            if stream is not None:
+                print(
+                    f"[thumbnail] skipped: {THUMBNAIL_AUDIO_ERROR}",
+                    file=stream,
+                    flush=True,
+                )
+            return marked_video, {"skipped": THUMBNAIL_AUDIO_ERROR, "cost_usd": 0.0}
         raise
     finally:
         run.client.close()
