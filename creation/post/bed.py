@@ -17,8 +17,10 @@ Order ``finish`` uses (first that exists wins):
 An operator never chooses the music. A change they want ("calmer", "quieter
 under the lines") is a music change note (:func:`record_music_note`, the
 ``music-note`` command or ``finish --music``): saved on the desk in
-``shared/music-notes.jsonl`` and printed with every finish, so it goes to the
-harness with the next re-run. Nothing is rendered from it here.
+``shared/music-notes.jsonl`` (one entry per note, with a stable ``id``) and
+sent to the harness by ``music-note`` (:mod:`creation.post.music_send`: a
+plan first, applied only with ``--yes``), which writes back what the harness
+did (``status``, ``version``, ``job_id``). Nothing is rendered from it here.
 
 The bed's level in the mix (:func:`bed_level`, what ``finish``, ``join`` and
 ``reel`` mix it at), first that exists wins:
@@ -44,6 +46,7 @@ import hashlib
 import json
 import math
 import tempfile
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -86,7 +89,7 @@ MUSIC_IS_HARNESS = (
     "Music is the harness's: the kit never lays a file or a description you choose. To change it, "
     'describe the change (e.g. "calmer", "quieter under the lines"): '
     '`fictora-produce music-note --desk D [--episode N] [--take tK] "calmer"`. The note is saved on the '
-    "desk and goes to the harness with the next re-run."
+    "desk and sent to the harness: you see its plan and price first, and it is applied only with --yes."
 )
 Downloader = Callable[[str, Path], Path]
 
@@ -189,6 +192,157 @@ def pinned_bed(desk: Path) -> Path | None:
     return path if path.is_file() and harness_bed(desk, path) else None
 
 
+#: What a sent note's ``status`` can be: ``planned`` (a dry run answered), ``applied`` (the harness ran it),
+#: ``blocked`` (a new bed was needed and provider spend is off), ``refused`` (the server said no).
+SENT_STATUSES = ("planned", "applied", "blocked", "refused")
+
+
+def _scope_of(entry: Mapping[str, Any]) -> tuple[int | None, str | None]:
+    episode = entry.get("episode")
+    take = entry.get("take")
+    return (int(episode) if episode is not None else None, str(take) if take else None)
+
+
+def music_note_entries(desk: Path) -> list[dict[str, Any]]:
+    """Every saved music note entry, oldest first, each with its ``id``.
+
+    Entries written before notes had ids get one derived from their line, so
+    it stays the same until the entry is next written back (with that id).
+    """
+
+    path = desk / MUSIC_NOTES_FILE
+    if not path.is_file():
+        return []
+    found: list[dict[str, Any]] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        try:
+            entry = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        if not entry.get("id"):
+            entry["id"] = "n" + hashlib.sha256(raw.encode()).hexdigest()[:11]
+        found.append(entry)
+    return found
+
+
+def _write_entries(desk: Path, entries: list[dict[str, Any]]) -> Path:
+    path = desk / MUSIC_NOTES_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".jsonl.tmp")
+    tmp.write_text(
+        "".join(json.dumps(entry, sort_keys=True) + "\n" for entry in entries),
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+    return path
+
+
+def update_music_note(desk: Path, note_id: str, **fields: Any) -> dict[str, Any]:
+    """Write fields onto one saved note (what the harness answered); returns the entry.
+
+    Raises
+    ------
+    KeyError
+        When no saved note has that id.
+    """
+
+    entries = music_note_entries(desk)
+    for entry in entries:
+        if entry["id"] == note_id:
+            entry.update(
+                {key: value for key, value in fields.items() if value is not None}
+            )
+            _write_entries(desk, entries)
+            return entry
+    raise KeyError(f"no saved music note {note_id}")
+
+
+def save_music_note(
+    desk: Path,
+    note: str | None = None,
+    *,
+    episode: int | None = None,
+    take_id: str | None = None,
+    via: str = "music-note",
+    revert_to_version: int | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """Save one music change note (or a revert) on the desk; the same unsent note is not saved twice.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    note
+        The change in the operator's words ("calmer"); ``None`` with ``revert_to_version``.
+    episode, take_id
+        Where it applies; ``None`` is the whole show.
+    via
+        The command that took it.
+    revert_to_version
+        Put this earlier music version back instead of a note.
+
+    Returns
+    -------
+    tuple[dict[str, Any], bool]
+        The entry (with its stable ``id``) and whether it is new.
+
+    Raises
+    ------
+    ValueError
+        When the note is empty, or both or neither of a note and a revert are given.
+    """
+
+    if (note is None) == (revert_to_version is None):
+        raise ValueError("a music note or a version to revert to, not both")
+    text = " ".join(note.split()) if note is not None else None
+    if note is not None and not text:
+        raise ValueError(
+            "a music change note needs words: what should change about the music"
+        )
+    if take_id is not None and episode is None:
+        raise ValueError("--take goes with --episode")
+    entries = music_note_entries(desk)
+    for entry in entries:
+        if (
+            entry.get("status") != "applied"
+            and _scope_of(entry) == (episode, take_id)
+            and (
+                (text is not None and entry.get("note") == text)
+                or (
+                    revert_to_version is not None
+                    and entry.get("revert_to_version") == revert_to_version
+                )
+            )
+        ):
+            return entry, False
+    entry: dict[str, Any] = {"id": uuid.uuid4().hex[:12], "via": via}
+    if text is not None:
+        entry["note"] = text
+    else:
+        entry["revert_to_version"] = revert_to_version
+    if episode is not None:
+        entry["episode"] = episode
+    if take_id is not None:
+        entry["take"] = take_id
+    path = desk / MUSIC_NOTES_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+    if (
+        text is not None
+        and episode is not None
+        and (desk / f"ep{episode:02d}" / "run-notes.md").is_file()
+    ):
+        where = f" ({take_id})" if take_id else ""
+        append_run_note(
+            desk / f"ep{episode:02d}",
+            f"Music change note for the harness{where}: {text}",
+        )
+    return entry, True
+
+
 def record_music_note(
     desk: Path,
     note: str,
@@ -221,44 +375,21 @@ def record_music_note(
         When the note is empty.
     """
 
-    text = " ".join(note.split())
-    if not text:
-        raise ValueError(
-            "a music change note needs words: what should change about the music"
-        )
-    path = desk / MUSIC_NOTES_FILE
-    path.parent.mkdir(parents=True, exist_ok=True)
-    entry: dict[str, Any] = {"note": text, "via": via}
-    if episode is not None:
-        entry["episode"] = episode
-    if take_id is not None:
-        entry["take"] = take_id
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry, sort_keys=True) + "\n")
-    if episode is not None and (desk / f"ep{episode:02d}" / "run-notes.md").is_file():
-        where = f" ({take_id})" if take_id else ""
-        append_run_note(
-            desk / f"ep{episode:02d}",
-            f"Music change note for the harness{where}: {text}",
-        )
-    return path
+    save_music_note(desk, note, episode=episode, take_id=take_id, via=via)
+    return desk / MUSIC_NOTES_FILE
 
 
 def music_notes(
     desk: Path, *, episode: int | None = None, take_id: str | None = None
 ) -> list[str]:
-    """The saved music change notes that apply here (show-wide, this episode, this take), oldest first."""
+    """The saved music change notes that apply here (show-wide, this episode, this take), oldest first.
 
-    path = desk / MUSIC_NOTES_FILE
-    if not path.is_file():
-        return []
+    A note the harness already applied says so (``applied v3``); an unsent one is the note and its scope.
+    """
+
     found: list[str] = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        try:
-            entry = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(entry, dict) or not str(entry.get("note") or "").strip():
+    for entry in music_note_entries(desk):
+        if not str(entry.get("note") or "").strip():
             continue
         if (
             entry.get("episode") is not None
@@ -278,6 +409,10 @@ def music_notes(
             if entry.get("episode") is not None
             else "show"
         )
+        if entry.get("status") == "applied":
+            scope += "; applied" + (
+                f" v{entry['version']}" if entry.get("version") else ""
+            )
         found.append(f"{entry['note']} ({scope})")
     return found
 

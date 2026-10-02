@@ -166,6 +166,7 @@ def test_set_bed_is_gone_and_music_note_saves_the_change(
                 "--take",
                 "t1",
                 "calmer",
+                "--save-only",
             ]
         )
         == 0

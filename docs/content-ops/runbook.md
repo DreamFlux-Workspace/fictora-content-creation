@@ -289,7 +289,12 @@ Repurposing an episode (a new idea on an episode already authored): update its t
 - Music and effects are compressed under the voice, not simply turned down.
 - Check that a generated sound effect actually contains a sound.
 - A generated music bed is about 30 seconds. Loop it for anything longer.
-- The music is the harness's: never pin a file or write a music brief. Say what should change ("calmer", "quieter under the lines") with `fictora-produce music-note`; the note goes to the harness with the next re-run. Never name a composer or a studio in a note.
+- The music is the harness's: never pin a file or write a music brief. Say what should change ("calmer", "quieter under the lines") with `fictora-produce music-note --desk D [--episode N] [--take tK] "calmer"`. Never name a composer or a studio in a note.
+- `music-note` sends the note to the harness as a dry run first and prints the plan: what kind of change (level only is free; new music is one new bed, about $0.20), which takes re-mix free and which can only change by filming again, with their price. Read it, then run the same command with `--yes` to apply. Nothing is changed or spent without `--yes`.
+- Takes whose music the video model made change only by filming again. That needs `--confirm-refilm` as well as `--yes`, after you have seen the total. Without it those takes keep their old music.
+- Undo a change with `music-note --desk D --revert N` (then `--yes`). Notes saved with `finish --music` or `--save-only` go with `music-note --desk D --send-saved` (plan first, `--yes` applies).
+- A note that was applied is never sent again; sending it again after a dropped connection is the same request. `blocked` means the harness has provider spend off: nothing changed, send it later.
+- After applying, wait for `the delivered cut changed`, then re-download the episode. The take files on the laptop still have the old music.
 
 ### Hosted post is off
 
