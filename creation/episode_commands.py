@@ -495,6 +495,7 @@ def run_unit(
         When the job ends failed or cancelled (the message names the server's code and rule).
     """
 
+    restart_dead_saved_job(desk, run, unit=unit, video_route=video_route)
     state = load_production(desk)
     pending = state.pending.get(unit)
     if pending is None:
@@ -533,6 +534,60 @@ def run_unit(
     if terminal.get("status") != "completed":
         raise CommandStopped(f"job {job_id} ({unit}) {describe_job_error(terminal)}")
     return terminal
+
+
+def restart_dead_saved_job(
+    desk: Path, run: DramaApiRunSession, *, unit: str, video_route: bool
+) -> str | None:
+    """Clear a saved job that ended cancelled or failed, so the next send uses a fresh key.
+
+    A job saved by an earlier run that stopped watching it (poll deadline, Ctrl-C) and was
+    then cancelled (``cancel-job``) or failed is over without a result. Re-sending its key
+    would only hand that same dead job back, so its record is dropped and the attempt
+    bumped: the next ``run_unit`` sends under the next attempt's key. A running, queued or
+    completed job is left alone (picked up, never re-sent); an unreadable status is too.
+
+    Parameters
+    ----------
+    desk
+        Series desk (``production.json`` holds the saved key and job id).
+    run
+        Session that reads the job.
+    unit
+        Unit name (``boards-ep01-t2-redraw``).
+    video_route
+        Read ``/v1/video-generations/{id}`` instead of ``/v1/jobs/{id}``.
+
+    Returns
+    -------
+    str | None
+        The dead job's status when it was cleared, else ``None``.
+    """
+
+    state = load_production(desk)
+    job_id = (state.pending.get(unit) or {}).get("job_id")
+    if not job_id:
+        return None
+    route = "/v1/video-generations" if video_route else "/v1/jobs"
+    code, payload = run.get_optional(f"{route}/{quote(str(job_id), safe='')}")
+    status = (
+        payload.get("status") if code == 200 and isinstance(payload, Mapping) else None
+    )
+    if status not in RESTARTABLE_JOB_STATUSES:
+        return None
+    state.pending.pop(unit, None)
+    state.attempts[unit] = state.attempts.get(unit, 0) + 1
+    save_production(desk, state)
+    print(
+        f"[{unit}] Job {job_id} from the last run ended {status}; it is not picked up again. "
+        f"Starting a fresh job under a new key (attempt {state.attempts[unit] + 1}).",
+        file=sys.stderr,
+    )
+    return str(status)
+
+
+#: A saved job in one of these states is over without a result; ``run_unit`` starts a fresh one.
+RESTARTABLE_JOB_STATUSES = frozenset({"cancelled", "failed"})
 
 
 # --- Arc and briefs ------------------------------------------------------------------------------
@@ -5068,6 +5123,10 @@ def run_redraw_board(
     if take_id not in {take.take_id for take in slot.takes}:
         raise CommandStopped(f"{take_id} is not a take on ep{episode:02d}")
     unit = f"boards-ep{episode:02d}-{take_id}-redraw"
+    # A redraw cancelled (`cancel-job`) or failed since the last run starts over in full,
+    # note and all; a live one is picked up below without re-sending the note.
+    restart_dead_saved_job(desk, run, unit=unit, video_route=True)
+    state = load_production(desk)
     resuming = bool((state.pending.get(unit) or {}).get("job_id"))
     if note is None:
         print(f"[board] {REDRAW_CAUSE_IS_A_LABEL}.", file=sys.stderr)

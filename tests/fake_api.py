@@ -213,6 +213,9 @@ class FakeApi:
             and ("GET", path) not in self.routes
         ):
             return 404, {"error": {"code": "not_found"}}
+        if path.startswith("/v1/jobs/") and ("GET", path) not in self.routes:
+            # A job status the test did not set (run_unit reads a saved job's status first).
+            return 404, {"error": {"code": "not_found"}}
         if path == "/v1/capabilities" and ("GET", path) not in self.routes:
             # A deploy whose capabilities the test did not set: read as an older server.
             return 404, {"detail": "Not Found"}

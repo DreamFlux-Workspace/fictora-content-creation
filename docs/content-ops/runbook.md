@@ -119,6 +119,8 @@ When a step fails, the desk says `failed` and names the stage. Fix the cause, th
 
 Slow is not stuck. While a job runs the kit prints its status every poll; when the job's `updated_at` and progress have not moved for 10 minutes it prints a `WARNING: The server has not updated this job for N min (last update HH:MM UTC)` line, and again every 10 minutes (a film's warning starts `video job job_video_…:` and also watches the take jobs and clips; a film stops at once when `/v1/video-generations/{id}` says failed, even while `/v1/jobs` still says `running 0%`). Check `fictora-produce status --desk D`, tell the human, and with their yes stop it with `fictora-produce cancel-job --desk D --job-id <id>`. The kit never cancels or retries on its own. When `cancel-job` says the cancel was requested but the job has not stopped yet, steps already started on the server may keep running for a while (a server fix is in progress): it reads the job once more after 15 s and says where it stands. Do not cancel again and never enrol another take while it runs.
 
+After a `cancel-job`, run the stopped command again: a redraw, `author` or `rewrite` whose saved job was cancelled or failed starts a fresh job under a new key and says so (a redraw re-sends its note). A job still running, or one that completed, is picked up and never sent twice.
+
 Ask for the merged cut whenever an episode has a second take. Joining costs nothing. One music bed across the whole thing. Soften every seam. Assert 24 fps. Check loudness across each seam — a 5 dB step is audible. The merged file is a new file. Individual takes stay on disk.
 
 ## Spend
