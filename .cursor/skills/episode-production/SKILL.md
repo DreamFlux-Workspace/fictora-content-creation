@@ -52,14 +52,14 @@ Read when you need the detail, not all on the first turn:
 
 | Stage | Command | Gate |
 | --- | --- | --- |
-| Desk | `fictora-produce start --series "…" --prompt "…" --band 15s --preset-id ID --video-lane minimax-h3 --clip-seconds 15 --cut-tempo T` | Say **aligned** before the first paid step |
+| Desk | `fictora-produce start --series "…" --prompt "…" --band 15s --preset-id ID --video-lane minimax-h3 --clip-seconds 15 --cut-tempo T` (a new show films in locked voices; `--voice-mode model` only when the human asks for the video model's own voices: see "Show voices") | Say **aligned** before the first paid step |
 | Draft | `fictora-produce step --desk D` (prints the brief's lines against the script: kept, rewritten, cut, added) | Show the human every line that is not `kept`; fix it with `line` or accept it |
 | Look (optional) | `look-frame --desk D --description @look.txt` | `approve --desk D --gate look` after a yes: pins the newest look frame and records the yes (`--path` or `--url` for another). While a drawn look frame is not approved, `step`, `redraw-plate` and `redraw-board` refuse (nothing sent); a look frame drawn after the yes needs its own yes |
 | Plates | `fictora-produce step --desk D` | `approve --desk D --gate plates` after a yes; one character wrong: `redraw-plate --desk D --cast NAME --note "…"` (that character alone, $0.30; show the contact sheet). Redrawn after the plates yes: the yes again is `approve --desk D --gate plates --again` (server, $0), never a desk-only `fictora-ops approve`. A plates step that failed (a safety flag) goes back to its gate once `redraw-plate` has drawn every plate: no re-run |
-| Voices | The plates yes (and `step` at the script gate) prints each speaking character's locked voice, the server's words for it and a sample link when it has them; `voice --desk D --list` prints it again (free) | Offer the human an audition of each voice before filming: `voice --desk D --cast NAME --audition` ($0.30 a character, only after their yes), then `--pick N`. They keep a voice as it is with `voice --desk D --cast NAME --keep`, or every one with `voice --desk D --keep-all` (free). Never keep a voice for them. Filming (`step --confirm-spend`, `film --confirm-spend`) is refused, nothing sent, until every character who speaks in the episode has a kept or picked voice; a voice that changed after its yes needs a new one. A desk that filmed takes before this gate is grandfathered (not held; it says so) |
+| Voices (locked-voice shows only) | First line: `Voices for the next take: …` (the show's voice mode). On a `model` show it prints `Voices gate skipped` and nothing is held: go on to the script. On a `locked` show the plates yes (and `step` at the script gate) prints each speaking character's locked voice, the server's words for it and a sample link when it has them; `voice --desk D --list` prints it again (free) | Offer the human an audition of each voice before filming: `voice --desk D --cast NAME --audition` ($0.30 a character, only after their yes), then `--pick N`. They keep a voice as it is with `voice --desk D --cast NAME --keep`, or every one with `voice --desk D --keep-all` (free). Never keep a voice for them. Filming (`step --confirm-spend`, `film --confirm-spend`) is refused, nothing sent, until every character who speaks in the episode has a kept or picked voice; a voice that changed after its yes needs a new one. A desk that filmed takes before this gate is grandfathered (not held; it says so) |
 | Script | (lines from the draft) | `approve --desk D --gate script` after a yes |
 | Board | `fictora-produce step --desk D` (prints the shot list with who speaks on each row, speaker warnings and safe-zone warnings) | `approve --desk D --gate board`; or fix it (see "Fixing a board"): `redraw-board --desk D --episode N --take tK --note "what is wrong"` (the note becomes shot edits, printed per row, then the redraw). A board redrawn after its yes on a desk past the board gate (even `complete`): `approve --desk D --gate board` still sends the yes to the server ($0, phase kept; `--again` does the same); `fictora-ops approve --gate board` records it on the desk only, and film is refused `boards_not_approved_for_generation` without the server's yes |
-| Estimate | `fictora-produce step --desk D` | The human says yes to the number. The line names the lane and its $/s; a `!! SERVER ESTIMATE FAILED` line means the number is the kit's local table, and `!! SERVER ESTIMATE DOES NOT ADD UP` means the server's rate x seconds or video + stills disagree with its total (the higher is shown): say either to the human before the yes |
+| Estimate | `fictora-produce step --desk D` (prints `Voices for the next take: …` above the number: say it to the human with the number) | The human says yes to the number. The line names the lane and its $/s; a `!! SERVER ESTIMATE FAILED` line means the number is the kit's local table, and `!! SERVER ESTIMATE DOES NOT ADD UP` means the server's rate x seconds or video + stills disagree with its total (the higher is shown): say either to the human before the yes |
 | Take | `fictora-produce step --desk D --confirm-spend` | — |
 | Read | watch `takes/`, write every fault | Use it, or Change this + cause |
 | Re-film one take | `film --desk D --episode N --take tK --cause "…"` (prices it), then the same with `--confirm-spend` | The human says yes to the number; nothing else is filmed or booked |
@@ -297,6 +297,36 @@ uv run fictora-produce review --desk D --episode N --take-file reels/reel-epNN-v
 - **Copy desks.** `reel` (and `music-note`) only write on this desk, so a desk that shares its story with another desk runs them without `--shared-spine-ok`.
 - **Never overwrites.** Writes only `reels/reel-epNN-vN.mp4` (+ `.ass`), `reels/reel-plan-epNN-vN.json` and `reels/post-epNN-vN.txt`, one N for all four; no run note, nothing else on the desk changes. `review` on a reel saves its block beside it (`…-review-vN.txt`) instead of appending to `run-notes.md`.
 
+## Show voices: locked or the model's own (one choice per show)
+
+Whose voices a show's takes speak in is the show's choice, kept on the server (founder decision, 5 Oct 2026), so a season never changes voice actor between episodes:
+
+- **locked** (the default for a new show): each line is rendered in the character's locked voice (cast card) and the take films to that track. The Voices gate applies, and `finish` lays no bed when the server baked the show's music into the track.
+- **model**: the video model voices each character from the cast card's voice description, as every take did before 2 Oct. No Voices gate (there is no locked voice to hear), and `finish` lays the show's own theme as on those episodes: the kit films a model-voice show with `music_by_finish`, so the video model is asked for no music.
+
+A show that never chose keeps the voices its filmed episodes used: any episode filmed with the model's own voices keeps the show on `model`. `step`, the estimate and `film` print `Voices for the next take: …` with the reason; `voice-mode --desk D` prints it on its own (free).
+
+**Ask at the start of every new episode on a continuing show.** Before `author` / `brief` for episode 2 on (and when you pick up or bind a desk that already filmed episodes), run `uv run fictora-produce voice-mode --desk D`. When it says the video model's own voices (earlier episodes filmed with them, or set for the show), ask the human, word for word:
+
+> Keep the same voices as earlier episodes (recommended) or switch to locked voices?
+
+- Keep (the default; also when the human does not choose): `uv run fictora-produce voice-mode --desk D --set model`. It stores the choice so it never moves; there is no Voices gate.
+- Switch: only on the human's explicit say-so, `uv run fictora-produce voice-mode --desk D --set locked`. Read them the notice it prints (earlier episodes keep their voices, so the voices change from this episode on), then run the Voices gate before filming.
+
+Never change a show's voice mode yourself, and never to make a gate go away. A show already on locked voices is not asked.
+
+**Re-film an episode in the voices of earlier episodes** (an episode filmed in locked voices on a show whose earlier episodes used the model's own, such as Beach Court After Dark episode 4), each step after the human's yes:
+
+```bash
+uv run fictora-produce voice-mode --desk D                       # free; says which voices the next take uses and why
+uv run fictora-produce voice-mode --desk D --set model           # free; the show's new takes use the model's voices (no Voices gate)
+uv run fictora-produce film --desk D --episode N --cause "re-film in the voices of episodes 1 to N-1"   # prices it; check the Voices line says the video model's own voices
+uv run fictora-produce film --desk D --episode N --cause "re-film in the voices of episodes 1 to N-1" --confirm-spend   # after the human's yes to the number
+uv run fictora-produce finish --desk D --episode N --take tK     # each take; then join for a 30 s / 60 s episode
+```
+
+The takes filmed before keep their voices on the server and stay on the desk (new `-vN` files). One take only: `film --desk D --episode N --take tK --cause "…"`, same voice-mode step first.
+
 ## Change a character's voice (never regenerate)
 
 "The voice feels off" is a voice change, not a new story and not a new video. Never re-draft or re-film everything for it. The same commands run the Voices gate before the first take: audition, pick (the pick is the human's yes), or keep the voice as it is.
@@ -335,7 +365,7 @@ An off-screen voice (speaker, phone, radio) played over another character's face
 
 ## Episode 2 on
 
-Episode 1 approved first. Ask the human how many episodes the run should be. For a long run prefer an arc with an engine (a situation that repeats with a new problem) plus a slow question; refuse an arc that closes within a few episodes. Steer each later episode by its direction in the human's words, not by series-wide notes. Never pre-stage scripts for later episodes. Write episode N+1 from the last ~5 s actually filmed and delivered, not from the script. An authored episode cannot be authored again (`author` answers `409 prior_episode_not_approved` / `invalid_extension_ordinal`). To re-write a drafted episode before its script yes, `rewrite --episode N --line "…" [--title T]` (2 on, free, a draft): the line becomes an episode note (it replaces the last `rewrite` direction on that episode; other notes stay), the server re-writes the episode from its notes, and the script prints as after `author`. After the script yes, change it only with `edit` / `line`. Commands: `arc --list [--episodes N]`, `arc --pick K`, `author --episode N --direction K | --line "…"`, then `approve --gate script` and the same loop (reference.md). The arc can be re-picked until episode 2 is written; after that the server answers `409 series_arc_not_open`. Episodes are found by ordinal: new ones are `episode_NN`, older stories keep `ep_02` on, and every command resolves both.
+Episode 1 approved first. Ask the voices question first (see "Show voices": `voice-mode --desk D`; on a show filmed with the model's own voices, keep them unless the human says switch). Ask the human how many episodes the run should be. For a long run prefer an arc with an engine (a situation that repeats with a new problem) plus a slow question; refuse an arc that closes within a few episodes. Steer each later episode by its direction in the human's words, not by series-wide notes. Never pre-stage scripts for later episodes. Write episode N+1 from the last ~5 s actually filmed and delivered, not from the script. An authored episode cannot be authored again (`author` answers `409 prior_episode_not_approved` / `invalid_extension_ordinal`). To re-write a drafted episode before its script yes, `rewrite --episode N --line "…" [--title T]` (2 on, free, a draft): the line becomes an episode note (it replaces the last `rewrite` direction on that episode; other notes stay), the server re-writes the episode from its notes, and the script prints as after `author`. After the script yes, change it only with `edit` / `line`. Commands: `arc --list [--episodes N]`, `arc --pick K`, `author --episode N --direction K | --line "…"`, then `approve --gate script` and the same loop (reference.md). The arc can be re-picked until episode 2 is written; after that the server answers `409 series_arc_not_open`. Episodes are found by ordinal: new ones are `episode_NN`, older stories keep `ep_02` on, and every command resolves both.
 
 ## Adopting a desk from the old internal kit
 

@@ -625,6 +625,13 @@ def run_voice_gate(
                     f"{card.get('name') or card['cast_id']} speaks no line on the spine; nothing to approve"
                 )
         if not keep:
+            from creation.voice_mode import MODEL_GATE_SKIPPED, show_voices
+
+            voices_now = show_voices(run, spine)
+            if not voices_now.locked:
+                print(voices_now.line(), file=out)
+                print(MODEL_GATE_SKIPPED, file=out)
+                return []
             text = render_gate(desk, spine, approvals, episode=episode)
             print(
                 text or "Nobody speaks a line on the spine: no voice to approve.",

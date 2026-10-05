@@ -42,6 +42,15 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
         "band below (needs a server with fictora-drama #595). Default: portrait.",
     )
     parser.add_argument(
+        "--voice-mode",
+        default=None,
+        choices=("locked", "model"),
+        help="Whose voices the show's takes speak in: locked (each character's locked voice, filmed as a "
+        "dialogue track; the Voices gate applies) or model (the video model's own voices from the cast "
+        "descriptions; no Voices gate). Sent to the server once the story exists. Default: the server's "
+        "(locked for a new show; a show filmed with model voices keeps them).",
+    )
+    parser.add_argument(
         "--caption-style",
         default="house",
         help="Caption style for the desk, read by local finish and caption: house (yellow Arial Bold word "
@@ -99,6 +108,9 @@ def config_from_args(args: argparse.Namespace) -> ProductionConfig:
             str(args.delivery_format)
             if getattr(args, "delivery_format", None)
             else None
+        ),
+        voice_mode=(
+            str(args.voice_mode) if getattr(args, "voice_mode", None) else None
         ),
         caption_style=style,
         api_captions=bool(args.api_captions),

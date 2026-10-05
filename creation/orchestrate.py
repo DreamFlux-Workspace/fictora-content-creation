@@ -130,6 +130,7 @@ from creation.harness_rules import (
 from creation.stranded_voice import explain_film_refusal, stranded_preflight
 from creation.stylised_only import BriefNoticePause
 from creation.voice_gate import film_refusal as voices_film_refusal
+from creation.voice_mode import next_take_voices_line
 from creation.voice_gate import gate_text as voices_gate_text
 from creation.voice_gate import pending_for_film as voices_pending_for_film
 
@@ -1600,6 +1601,7 @@ def run_step(
                 *stranded_preflight(spine, unit=f"ep{ep:02d}", desk=desk, episode=ep),
                 *warnings,
             ]
+            voices_line = next_take_voices_line(desk, run, spine)
             unvoiced = voices_pending_for_film(desk, spine, episode=ep, run=run)
             if unvoiced:
                 who = ", ".join(v.name for v in unvoiced)
@@ -1627,6 +1629,7 @@ def run_step(
             return StepResult(
                 state.phase,
                 "".join(f"{line}\n" for line in warnings)
+                + f"{voices_line}\n"
                 + f"Estimate ${state.estimate_usd:.2f} for {scope} ({source}).\n{budget}\n"
                 "Human yes, then `fictora-produce step --confirm-spend`.",
                 (),
@@ -2036,6 +2039,7 @@ def _film(
             before, unit=f"ep{ep:02d}", desk=desk, episode=ep
         ):
             print(warning, file=sys.stderr)
+        print(f"[film] {next_take_voices_line(desk, run, before)}", file=sys.stderr)
         state.video_enrolled_suffix = state.video_idempotency_suffix
         save_production(desk, state)
         result = stages.enrol_video(

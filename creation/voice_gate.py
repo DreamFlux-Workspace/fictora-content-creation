@@ -1,5 +1,10 @@
 """The voices gate: every speaking character's voice is heard and approved (or kept) before filming.
 
+It applies only to a show whose voice mode is ``locked`` (:mod:`creation.voice_mode`).
+On a ``model`` show the video model voices each character from the cast card's
+voice description: there is no locked voice to hear, so the gate prints that it
+is skipped and filming is not held for it.
+
 The server picks a voice for each character at draft time (the cast card's
 ``voice_brief.provider_voice``) and takes film in it. Nobody heard it first, so
 the gate sits after the plates yes: ``step`` lists each speaking character's
@@ -477,22 +482,43 @@ def render_gate(
 def gate_text(
     desk: Path, spine: Mapping[str, Any], *, episode: int | None = None, run: _Api
 ) -> str:
-    """The Voices gate as ``step`` prints it after the plates: each voice, and what to run.
+    """The Voices gate as ``step`` prints it after the plates: whose voices, each voice, and what to run.
 
-    Desk-only yeses are pushed to the server first (:func:`sync_approvals`).
-    Returns ``""`` when nobody speaks.
+    The show's voice mode comes first (:mod:`creation.voice_mode`; the desk's
+    ``start --voice-mode`` is sent once the story exists). On a ``model`` show
+    there is no locked voice to hear, so the gate says it is skipped. Desk-only
+    yeses are pushed to the server first (:func:`sync_approvals`). Returns
+    ``""`` when nobody speaks.
     """
 
+    from creation.voice_mode import MODEL_GATE_SKIPPED, voices_for_film
+
+    voices = voices_for_film(desk, run, spine)
+    if not speaking_voices(spine, episode=episode):
+        return ""
+    if not voices.locked:
+        return "\n".join([voices.line(), MODEL_GATE_SKIPPED])
     body, approvals = sync_approvals(desk, run, spine)
-    return render_gate(desk, body, approvals, episode=episode)
+    text = render_gate(desk, body, approvals, episode=episode)
+    return "\n".join([voices.line(), text]) if text else ""
+
+
+def _model_voices(desk: Path, spine: Mapping[str, Any], run: _Api) -> bool:
+    """Whether the show films with the video model's own voices (no Voices gate)."""
+
+    from creation.voice_mode import voices_for_film
+
+    return not voices_for_film(desk, run, spine).locked
 
 
 def pending_for_film(
     desk: Path, spine: Mapping[str, Any], *, episode: int, run: _Api
 ) -> list[CastVoice]:
-    """The speaking characters filming episode ``episode`` waits on (none on a grandfathered desk)."""
+    """The speaking characters filming episode ``episode`` waits on (none on a grandfathered desk or a ``model`` show)."""
 
     desk = desk.expanduser().resolve()
+    if _model_voices(desk, spine, run):
+        return []
     if load_approvals(desk)["grandfathered"]:
         return []
     body, approvals = sync_approvals(desk, run, spine)
@@ -506,10 +532,14 @@ def film_refusal(
 
     The yeses are the server's (desk-only ones are pushed first); the desk file
     is read only when the server is too old or cannot be reached. A
-    grandfathered desk is never refused (:func:`load_approvals`).
+    grandfathered desk is never refused (:func:`load_approvals`), nor is a
+    show filmed with the video model's own voices (voice mode ``model``: there
+    is no locked voice to approve).
     """
 
     desk = desk.expanduser().resolve()
+    if _model_voices(desk, spine, run):
+        return None
     if load_approvals(desk)["grandfathered"]:
         return None
     body, approvals = sync_approvals(desk, run, spine)
