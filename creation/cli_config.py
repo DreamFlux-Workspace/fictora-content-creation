@@ -17,7 +17,11 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
         help="Ignored: episode 1 is drafted alone; write later episodes with `author --episode N`.",
     )
     parser.add_argument(
-        "--clip-seconds", type=int, default=15, help="Take length 4–15."
+        "--clip-seconds",
+        type=int,
+        default=None,
+        help="Take length 4–15. Default 15, or 10 with --delivery-format letterbox (the server films "
+        "10-second 4:3 takes).",
     )
     parser.add_argument(
         "--cut-tempo",
@@ -60,6 +64,23 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+#: Take length when ``--clip-seconds`` is not given.
+DEFAULT_CLIP_SECONDS = 15
+#: Take length of a letterbox desk when ``--clip-seconds`` is not given: the
+#: server films 10-second takes on a 4:3 story (fictora-drama #604).
+LETTERBOX_CLIP_SECONDS = 10
+
+
+def default_clip_seconds(args: argparse.Namespace) -> int:
+    """Return the take length: ``--clip-seconds``, else 10 for letterbox, else 15."""
+
+    if getattr(args, "clip_seconds", None) is not None:
+        return int(args.clip_seconds)
+    if getattr(args, "delivery_format", None) == "letterbox":
+        return LETTERBOX_CLIP_SECONDS
+    return DEFAULT_CLIP_SECONDS
+
+
 def config_from_args(args: argparse.Namespace) -> ProductionConfig:
     """Build ``ProductionConfig`` from parsed CLI namespace."""
 
@@ -71,7 +92,7 @@ def config_from_args(args: argparse.Namespace) -> ProductionConfig:
         )
     return ProductionConfig(
         draft_episode_count=int(args.draft_episodes),
-        clip_duration_seconds=int(args.clip_seconds),
+        clip_duration_seconds=default_clip_seconds(args),
         cut_tempo=str(args.cut_tempo) if args.cut_tempo else None,
         spoken_language=str(args.language) if getattr(args, "language", None) else None,
         delivery_format=(
