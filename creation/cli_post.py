@@ -54,6 +54,20 @@ def add_caption_style_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_ending_arg(parser: argparse.ArgumentParser) -> None:
+    """``--ending hard|freeze-black`` on ``reel`` and ``join`` (default ``hard``)."""
+
+    from creation.post.reel_plan import BLACK_SECONDS, ENDING_STYLES, FREEZE_SECONDS
+
+    parser.add_argument(
+        "--ending",
+        choices=ENDING_STYLES,
+        default=None,
+        help=f"hard (the default): end on the last frame, no hold, no fade. freeze-black: hold the last frame "
+        f"{FREEZE_SECONDS:g} s (the sound stops on it), then {BLACK_SECONDS:g} s of black. A style, any genre.",
+    )
+
+
 def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Register the local post subcommands.
 
@@ -443,6 +457,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         metavar="NAME",
         help="Who accepted the seam (with --accept-seam).",
     )
+    add_ending_arg(join)
     join.add_argument(
         "--json", action="store_true", help="Print the report as JSON on stdout."
     )
@@ -484,6 +499,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )  # fmt: skip
     add_caption_style_arg(reel)
     reel.add_argument("--watermark-y", type=int, default=None)
+    add_ending_arg(reel)
 
     add_edit_parsers(sub)
     add_review_parser(sub)
@@ -643,6 +659,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             captions=tuple(args.captions or ()),
             caption_style=args.caption_style,
             watermark_y=args.watermark_y,
+            ending=args.ending,
         )
         return 0
     if args.command == "join":
@@ -660,6 +677,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             watermark_y=args.watermark_y,
             accept_seam=args.accept_seam,
             accepted_by=args.accepted_by,
+            ending=args.ending or "hard",
         )
         if args.json:
             print(json.dumps(joined.as_json(), indent=2))

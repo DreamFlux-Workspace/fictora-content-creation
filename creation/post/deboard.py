@@ -18,6 +18,18 @@ measures them and removes them:
   error.
 
 No board frames measured is a no-op: nothing is written.
+
+The clones keep the timeline, but they are a held still: the viewer's first
+frame would wait up to half a second for the first motion. So ``finish``
+cuts them off LAST, after every effect, duck and caption was laid on the
+take as filmed, the same way it cuts the server's trim handles
+(:func:`creation.post.take_handles.apply_take_handles`): picture and sound
+together, captions moved, the cut recorded as a ``handles`` edit (source
+``kit-deboard``) so ``join``, ``review`` and ``reel`` move the take facts
+with it. :func:`head_cut` decides where: at the first real frame, never past
+the first line's onset (a line that starts under the board frames keeps its
+first word; the cut then stops short and says so). When the server set the
+handles itself, its cut wins and nothing more is cut here.
 """
 
 from __future__ import annotations
@@ -190,6 +202,59 @@ def measure_board_leak(
         psnr_db=tuple(round(value, 2) for value in scores[: max_frames + 1]),
         baseline_db=round(baseline, 2),
         capped=count >= max_frames,
+    )
+
+
+#: A cut at the head stays this far before the first line's onset (a frame at 24 fps).
+SPEECH_GUARD_SECONDS = 0.042
+#: The ``handles`` edit's source for the kit's own head cut.
+HEAD_CUT_SOURCE = "kit-deboard"
+
+
+def head_cut(
+    frames: int, fps: float, *, first_speech: float | None, known: bool
+) -> tuple[float | None, str]:
+    """Where to cut a deboarded take's held head: at the first real frame, short of the first line.
+
+    Parameters
+    ----------
+    frames
+        Board frames the clones replaced.
+    fps
+        The take's frame rate.
+    first_speech
+        The first line's onset on the take as filmed (``None`` when no line plays).
+    known
+        Whether line times are known at all (captions, laid voices).
+
+    Returns
+    -------
+    tuple[float | None, str]
+        The cut (seconds, on a frame; ``None``: no cut) and the line saying why.
+    """
+
+    if frames <= 0:
+        return None, "no board frames: nothing held at the head"
+    want = frames / fps
+    if not known:
+        return None, (
+            f"the {frames} cloned board frame(s) stay at the head ({want:.3f} s held still): no line times "
+            "to check a cut against (no captions, no laid voice)"
+        )
+    if first_speech is None or first_speech - SPEECH_GUARD_SECONDS >= want - 1e-6:
+        return round(want, 4), (
+            f"held head cut: the {frames} cloned board frame(s) ({want:.3f} s) go, so frame 0 is the first real "
+            "frame and the picture moves from the start"
+        )
+    keep = math.floor(max(0.0, first_speech - SPEECH_GUARD_SECONDS) * fps)
+    if keep <= 0:
+        return None, (
+            f"the {frames} cloned board frame(s) stay at the head: the first line starts at {first_speech:.2f} s, "
+            "under them; cutting would clip its first word"
+        )
+    return round(keep / fps, 4), (
+        f"held head cut short: {keep} of {frames} cloned board frame(s) go; the first line starts at "
+        f"{first_speech:.2f} s, under the rest"
     )
 
 

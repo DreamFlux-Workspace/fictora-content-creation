@@ -14,18 +14,26 @@ already has; :mod:`creation.post.reel` measures them and renders the cut.
    the take facts, as filmed (planned changes moved to the measured hard cuts).
 2. **Roles.** The last beat is the ``new_fact``; the beat before it the one
    ``pivot`` the reel keeps; the first beat the ``plant``; any beat between is
-   an ``escalation``. The new fact ends half a second after its last caption
-   or effect (the calm tail after it is cut).
-3. **Strongest frame** (the flash-forward). Every 8 fps sample gets
-   ``story * (0.5 + 0.5 * picture)``. Story is the beat's role (new fact 1.0,
-   pivot 0.7, escalation 0.5, plant 0.35), +0.15 on a payoff beat and +0.1
-   when the take facts put a named character in the shot (there is no face
-   detector: the head count stands in for "a face is there"), at most 1.
-   Picture is ``0.7 * motion + 0.3 * contrast``: motion the frame-to-frame
-   change (the samples at a hard cut left out: a cut is not action), contrast
-   the picture's luma spread, each scaled to the take's 95th percentile. The
-   1-2 s window between two cut points with the best mean (nearest 1.5 s) is
-   the cold open; its best sample is the strongest frame.
+   an ``escalation``. The new fact ends on its peak: a breath
+   (:data:`PAYOFF_HOLD_SECONDS`) after its last caption or effect, or the last
+   frame the action after it still moves (up to :data:`ACTION_REACH_SECONDS`
+   on), never on a settled tail.
+3. **Strongest frame** (the flash-forward, the cold open). Every 8 fps sample
+   gets ``story * (0.5 + 0.5 * picture)``. Story is the beat's role (pivot
+   0.7, escalation 0.5, plant 0.35), +0.15 on a payoff beat, at most 1.
+   Picture weighs four signals by the series' genre family
+   (:data:`PICTURE_WEIGHTS`, one small table; weights, never rules): motion
+   (frame-to-frame change, the samples at a hard cut left out: a cut is not
+   action), contrast (luma spread), face (a close-up reads 1, by the local face
+   detector, else the take facts' head count, :mod:`creation.post.faces`) and
+   stillness (a held frame: no motion either side for a beat, the held
+   tension of a stare). Motion and contrast are scaled to the take's 95th
+   percentile. The 1-2 s window between two cut points with the best mean
+   (nearest 1.5 s) is the cold open; its best sample is the strongest frame.
+   **The cold open never comes from the last beat** (the new fact): a window
+   that touches it is never scored, so the reel cannot open on its own ending.
+   It comes from the pivot or the peak before the reveal; its role, face score
+   and weights go in the plan JSON (``cold_open``).
 4. **Fit ``--seconds``.** Escalation beats go first (lowest score first), then
    the calm stretches between lines (no caption, lowest motion; the plant and
    escalations before the pivot, never the new fact, never the hook's first
@@ -36,6 +44,13 @@ already has; :mod:`creation.post.reel` measures them and renders the cut.
 A line addressed to the viewer (a call to action, "comment below", "what would
 you do?") never goes in: its span is cut out of every segment, with a ⚠. The
 call to action belongs in the post text (:func:`post_text`).
+
+6. **Edges** (:mod:`creation.post.opening`). The reel's first second is read
+   from the measured samples (dark frame 0, static, no face on frame 0 when a
+   caption plays in the cold open) and its last segment for a settled tail
+   after the last line or action; each is a ⚠ and the numbers go in the plan
+   JSON (``opening``, ``tail``). The ending is hard on the last frame; a plan
+   may ask for ``freeze-black`` (a short freeze on the peak, then black).
 
 Nothing here stops: every problem is a ⚠ in the plan's ``warnings``.
 """
@@ -57,8 +72,12 @@ MAX_SECONDS = 30.0
 #: The flash-forward's length (snapped edges keep it inside the range).
 COLD_OPEN_SECONDS = 1.5
 COLD_OPEN_RANGE = (1.0, 2.0)
-#: The new fact holds this long after its last caption or effect, then the reel ends.
-PAYOFF_HOLD_SECONDS = 0.5
+#: The new fact holds this breath after its last caption or effect (a word's release), then the reel ends.
+PAYOFF_HOLD_SECONDS = 0.15
+#: Action still moving after the last line keeps the cut going, this far past the line at most.
+ACTION_REACH_SECONDS = 1.0
+#: Motion over this many times the take's median (and over the static floor) is action, not ambience.
+ACTION_OVER_MEDIAN = 1.5
 #: The episode's hook (its first second) is never trimmed.
 HOOK_SECONDS = 1.0
 #: A calm stretch keeps this much either side of the cut (a breath before and after a line).
@@ -84,18 +103,39 @@ CUE_VISIBLE_FRACTION = 0.6
 MIN_CUE_SECONDS = 0.8
 
 ROLES = ("cold_open", "plant", "escalation", "pivot", "new_fact")
-#: The story weight of each role in the strongest-frame score.
+#: The story weight of each role in the strongest-frame score (the new fact is never the cold open).
 ROLE_WEIGHT = {"new_fact": 1.0, "pivot": 0.7, "escalation": 0.5, "plant": 0.35}
+#: Roles the cold open may come from: never the new fact (the reel would open on its own ending).
+COLD_OPEN_ROLES = ("pivot", "escalation", "plant")
 #: Extra cost of trimming a calm stretch of this role (lower goes first).
 TRIM_PENALTY = {"plant": 0.0, "escalation": 0.0, "pivot": 0.35}
 #: What a piece keeps at least when its calm stretches are trimmed.
 KEEP_SECONDS = {"pivot": 1.5, "plant": 1.0}
-#: The picture part of the strongest-frame score (``story * (0.5 + 0.5 * picture)``).
-PICTURE_WEIGHTS = {"motion": 0.7, "contrast": 0.3}
+#: The picture part of the strongest-frame score (``story * (0.5 + 0.5 * picture)``), by genre family.
+#: Weights, not rules: every signal counts in every genre; each row sums to 1. Tune here.
+PICTURE_WEIGHTS: dict[str, dict[str, float]] = {
+    #                motion  contrast  face   stillness
+    "action":   {"motion": 0.55, "contrast": 0.15, "face": 0.20, "stillness": 0.10},
+    "intimate": {"motion": 0.15, "contrast": 0.15, "face": 0.55, "stillness": 0.15},
+    "horror":   {"motion": 0.15, "contrast": 0.15, "face": 0.35, "stillness": 0.35},
+    "default":  {"motion": 0.35, "contrast": 0.20, "face": 0.30, "stillness": 0.15},
+}  # fmt: skip
+#: Which genre words land in which family (the spine's ``microdrama_genre``, split on ``_`` / spaces).
+#: First match in this order wins; no match is ``default``.
+GENRE_FAMILY_WORDS: dict[str, tuple[str, ...]] = {
+    "horror": ("horror", "scp", "ghost", "haunted", "haunting", "occult", "zombie", "creepypasta"),
+    "action": ("action", "war", "martial", "murim", "wuxia", "fight", "battle", "heist", "revenge"),
+    "intimate": ("romance", "romantic", "bl", "gl", "slice", "cozy", "cosy", "love", "healing"),
+}  # fmt: skip
+#: A held frame: no motion this many samples either side (8 fps: about a third of a second each way).
+STILL_REACH_SAMPLES = 3
 #: Cut points are looked for on this grid (the measurement's rate).
 MEASURE_RATE = 8.0
 PAYOFF_BONUS = 0.15
-PEOPLE_BONUS = 0.1
+#: The optional ending (a creator/operator flag, default ``hard``): freeze on the peak, then black.
+ENDING_STYLES = ("hard", "freeze-black")
+FREEZE_SECONDS = 0.4
+BLACK_SECONDS = 0.3
 
 PLAN_KIND = "fictora-reel-plan"
 PLAN_SCHEMA = 1
@@ -157,6 +197,11 @@ class TakeInput:
         The 8 fps measurement: sample times, frame-to-frame change and luma spread.
     events
         Start times of the take's planned sound events (impacts), as filmed.
+    luma
+        Mean luma (0-1) of each sample (empty: not measured).
+    faces
+        Face close-up score (0-1) of each sample by the local detector (empty:
+        no detector; the shots' head count stands in).
     """
 
     take_id: str
@@ -169,6 +214,16 @@ class TakeInput:
     motion: tuple[float, ...] = ()
     contrast: tuple[float, ...] = ()
     events: tuple[float, ...] = ()
+    luma: tuple[float, ...] = ()
+    faces: tuple[float, ...] = ()
+
+    @property
+    def face_source(self) -> str:
+        """``detector`` (measured faces), ``head_count`` (the take facts' shots) or ``none``."""
+
+        if self.faces:
+            return "detector"
+        return "head_count" if self.shots else "none"
 
 
 @dataclass(frozen=True)
@@ -234,6 +289,9 @@ class Strongest:
     start: float
     end: float
     role: str
+    #: The genre family whose picture weights scored it, and where its face score came from.
+    family: str = "default"
+    face_source: str = "none"
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -243,6 +301,8 @@ class Strongest:
             "parts": {k: round(v, 3) for k, v in self.parts.items()},
             "window": [round(self.start, 3), round(self.end, 3)],
             "beat_role": self.role,
+            "genre_family": self.family,
+            "face_source": self.face_source,
         }
 
 
@@ -256,6 +316,13 @@ class ReelPlan:
     strongest: Strongest | None = None
     warnings: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    #: The last beat (the new fact) on its take: ``(take, start, end)``; the cold open never touches it.
+    last_beat: tuple[str, float, float] | None = None
+    #: ``hard`` (the default) or ``freeze-black`` (:data:`ENDING_STYLES`).
+    ending: str = "hard"
+    #: The reel's first second and its tail as measured (:func:`check_plan` fills them).
+    opening: dict[str, Any] | None = None
+    tail: dict[str, Any] | None = None
 
     @property
     def total(self) -> float:
@@ -275,7 +342,12 @@ class ReelPlan:
             s = self.strongest
             parts = ", ".join(f"{k} {v:.2f}" for k, v in s.parts.items())
             rows.append(
-                f"Strongest frame: {s.take} {s.at:.2f} s (score {s.score:.2f}: {parts}; {s.role.replace('_', ' ')} beat)"
+                f"Strongest frame: {s.take} {s.at:.2f} s (score {s.score:.2f}: {parts}; {s.role.replace('_', ' ')} "
+                f"beat; {s.family} weights; face by {s.face_source.replace('_', ' ')})"
+            )
+        if self.ending != "hard":
+            rows.append(
+                f"Ending: {self.ending} (freeze {FREEZE_SECONDS:g} s on the last frame, then {BLACK_SECONDS:g} s black)"
             )
         clock = 0.0
         for index, seg in enumerate(self.segments, start=1):
@@ -507,7 +579,17 @@ def beats_index(beats: Sequence[BeatInput], ordinal: int) -> int:
 
 
 def payoff_end(span: BeatSpan, take: TakeInput) -> tuple[float, str]:
-    """Where the new fact stops: half a second after its last caption or sound event, inside the beat."""
+    """Where the new fact stops: on its peak, never on a settled tail.
+
+    A breath (:data:`PAYOFF_HOLD_SECONDS`) after its last caption or sound
+    event; when the action after that line still moves (motion over
+    :data:`ACTION_OVER_MEDIAN` times the take's median and over the static
+    floor), the cut runs on to its last moving sample, at most
+    :data:`ACTION_REACH_SECONDS` past the line. Inside the beat, and at least
+    1 s of it.
+    """
+
+    from creation.post.opening import STATIC_MOTION
 
     last_cue = max(
         (c.end for c in take.cues if span.start <= c.start < span.end), default=None
@@ -518,10 +600,24 @@ def payoff_end(span: BeatSpan, take: TakeInput) -> tuple[float, str]:
     marks = [m for m in (last_cue, last_event) if m is not None]
     if not marks:
         return span.end, "no caption or sound event in the beat: plays to its end"
-    end = min(span.end, max(marks) + PAYOFF_HOLD_SECONDS)
+    line = max(marks)
+    end = line + PAYOFF_HOLD_SECONDS
+    motion = _motion_without_cuts(take)
+    if motion:
+        median = sorted(motion)[len(motion) // 2]
+        floor = max(STATIC_MOTION, ACTION_OVER_MEDIAN * median)
+        step = 1.0 / MEASURE_RATE
+        moving = [
+            t
+            for t, m in zip(take.sample_seconds, motion, strict=False)
+            if line < t <= min(span.end, line + ACTION_REACH_SECONDS) and m > floor
+        ]
+        if moving:
+            end = max(end, max(moving) + step)
+    end = min(span.end, end)
     end = max(end, min(span.end, span.start + 1.0))
     if span.end - end >= 0.2:
-        why = f"calm tail {end:.2f}-{span.end:.2f} s cut"
+        why = f"ends on the peak; settled tail {end:.2f}-{span.end:.2f} s cut"
     else:
         why = "plays to the end of the take"
     return end, why
@@ -530,15 +626,71 @@ def payoff_end(span: BeatSpan, take: TakeInput) -> tuple[float, str]:
 # --- strongest frame ---------------------------------------------------------------------------
 
 
+def genre_family(genre: str) -> str:
+    """The picture-weight family of a genre (:data:`GENRE_FAMILY_WORDS`): ``action``, ``intimate``, ``horror`` or ``default``.
+
+    Parameters
+    ----------
+    genre
+        The spine's ``microdrama_genre`` (``slice_of_life``, ``war_god_return`` ...).
+
+    Returns
+    -------
+    str
+        A key of :data:`PICTURE_WEIGHTS`.
+    """
+
+    words = {w for w in re.split(r"[^a-z0-9]+", (genre or "").lower()) if w}
+    for family, keys in GENRE_FAMILY_WORDS.items():
+        if words & set(keys):
+            return family
+    return "default"
+
+
+def _stillness(motion: Sequence[float]) -> list[float]:
+    """A held frame: 1 minus the most motion within :data:`STILL_REACH_SAMPLES` either side (0-1)."""
+
+    k = STILL_REACH_SAMPLES
+    return [
+        max(0.0, 1.0 - max(motion[max(0, i - k) : i + k + 1]))
+        for i in range(len(motion))
+    ]
+
+
+def _face_signal(take: TakeInput) -> list[float]:
+    """Each sample's face score: the detector's, else the shot's head count (:mod:`creation.post.faces`)."""
+
+    from creation.post.faces import HEAD_COUNT_FACE
+
+    if take.faces:
+        return [float(take.faces[i]) if i < len(take.faces) else 0.0
+                for i in range(len(take.sample_seconds))]  # fmt: skip
+    out: list[float] = []
+    for t in take.sample_seconds:
+        shot = next((s for s in take.shots if s.start <= t < s.end), None)
+        out.append(HEAD_COUNT_FACE if shot is not None and shot.named > 0 else 0.0)
+    return out
+
+
+def _span_at(mine: Sequence[BeatSpan], t: float) -> BeatSpan | None:
+    """The beat a sample plays in; past the last beat's end (rounding) the last beat; before any, none."""
+
+    span = next((s for s in mine if s.start <= t < s.end), None)
+    if span is None and mine and t >= max(s.end for s in mine):
+        span = max(mine, key=lambda s: s.end)
+    return span
+
+
 def frame_scores(
-    take: TakeInput, spans: Sequence[BeatSpan]
+    take: TakeInput, spans: Sequence[BeatSpan], *, family: str = "default"
 ) -> list[tuple[float, float, dict[str, float], str]]:
     """Score every sample of a take: ``(time, score, parts, beat role)``.
 
-    ``score = story * (0.5 + 0.5 * picture)``, ``picture = 0.7 * motion + 0.3 *
-    contrast``: the story (the beat's role, a payoff, a named character in the
-    shot) says where the strongest moment is; the picture says which frame of
-    it. Motion alone would crown a camera pan over an empty counter.
+    ``score = story * (0.5 + 0.5 * picture)``; picture weighs motion,
+    contrast, face and stillness by ``family`` (:data:`PICTURE_WEIGHTS`): the
+    story (the beat's role, a payoff) says where the strongest moment is; the
+    picture says which frame of it. Motion alone would crown a camera pan over
+    an empty counter; a face alone would crown every two-shot.
 
     Parameters
     ----------
@@ -546,33 +698,38 @@ def frame_scores(
         The take with its 8 fps measurement.
     spans
         The episode's beats on the takes.
+    family
+        The genre family (:func:`genre_family`).
 
     Returns
     -------
     list
-        One row per sample; empty when the take was not measured.
+        One row per sample; empty when the take was not measured. A sample
+        before every beat (no spine beats there) scores as the plant.
     """
 
+    weights = PICTURE_WEIGHTS.get(family, PICTURE_WEIGHTS["default"])
     motion = _norm(_motion_without_cuts(take))
     contrast = _norm(list(take.contrast))
+    still = _stillness(motion)
+    faces = _face_signal(take)
     mine = [s for s in spans if s.take_id == take.take_id]
     rows: list[tuple[float, float, dict[str, float], str]] = []
     for i, t in enumerate(take.sample_seconds):
-        span = next(
-            (s for s in mine if s.start <= t < s.end), mine[-1] if mine else None
-        )
+        span = _span_at(mine, t)
         role = span.role if span else "plant"
         story = ROLE_WEIGHT.get(role, 0.35)
         if span is not None and span.payoff:
             story += PAYOFF_BONUS
-        shot = next((s for s in take.shots if s.start <= t < s.end), None)
-        if shot is not None and shot.named > 0:
-            story += PEOPLE_BONUS
         story = min(1.0, story)
-        m = motion[i] if i < len(motion) else 0.0
-        c = contrast[i] if i < len(contrast) else 0.0
-        picture = PICTURE_WEIGHTS["motion"] * m + PICTURE_WEIGHTS["contrast"] * c
-        parts = {"motion": m, "contrast": c, "story": story}
+        signals = {
+            "motion": motion[i] if i < len(motion) else 0.0,
+            "contrast": contrast[i] if i < len(contrast) else 0.0,
+            "face": faces[i] if i < len(faces) else 0.0,
+            "stillness": still[i] if i < len(still) else 0.0,
+        }
+        picture = sum(weights.get(k, 0.0) * v for k, v in signals.items())
+        parts = {**signals, "story": story}
         rows.append((t, story * (0.5 + 0.5 * picture), parts, role))
     return rows
 
@@ -600,6 +757,7 @@ def strongest_window(
     *,
     seconds: float = COLD_OPEN_SECONDS,
     banned: Sequence[tuple[str, float, float]] = (),
+    family: str = "default",
 ) -> Strongest | None:
     """The best-scoring window of the episode (the flash-forward), both edges off words.
 
@@ -607,7 +765,8 @@ def strongest_window(
     long and clear of the take's first and last 0.3 s, is scored by the mean
     of its samples (:func:`frame_scores`), less 0.02 per 0.1 s away from
     ``seconds``; the best wins (the earliest on a tie). Its peak sample is the
-    strongest frame.
+    strongest frame. A window touching the new fact (the last beat) is never
+    scored: the cold open may not spoil the ending.
 
     Parameters
     ----------
@@ -619,18 +778,26 @@ def strongest_window(
         The preferred window length.
     banned
         ``(take, start, end)`` stretches that may not be shown (viewer-address lines).
+    family
+        The genre family whose picture weights score the frames.
 
     Returns
     -------
     Strongest | None
-        The window and its peak frame; ``None`` when nothing was measured.
+        The window and its peak frame; ``None`` when nothing was measured, or
+        every window touches the new fact.
     """
 
     lo_len, hi_len = COLD_OPEN_RANGE
     best: Strongest | None = None
     best_value = -math.inf
+    # The ending: the new fact's beat, never shown first.
+    ending = [
+        (s.take_id, s.start, s.end) for s in spans if s.role not in COLD_OPEN_ROLES
+    ]
+    banned = [*banned, *ending]
     for take in takes:
-        rows = frame_scores(take, spans)
+        rows = frame_scores(take, spans, family=family)
         if not rows:
             continue
         points = [
@@ -660,6 +827,7 @@ def strongest_window(
                     best = Strongest(
                         take=take.take_id, at=peak[0], score=peak[1], parts=peak[2],
                         start=frame_snap(start, take.fps), end=frame_snap(end, take.fps), role=peak[3],
+                        family=family, face_source=take.face_source,
                     )  # fmt: skip
     return best
 
@@ -890,9 +1058,13 @@ def _piece_seconds(pieces: Sequence[_Piece]) -> float:
 
 
 def _mean_score(
-    take: TakeInput, spans: Sequence[BeatSpan], a: float, b: float
+    take: TakeInput,
+    spans: Sequence[BeatSpan],
+    a: float,
+    b: float,
+    family: str = "default",
 ) -> float:
-    rows = [r for r in frame_scores(take, spans) if a <= r[0] < b]
+    rows = [r for r in frame_scores(take, spans, family=family) if a <= r[0] < b]
     return sum(r[1] for r in rows) / len(rows) if rows else 0.0
 
 
@@ -913,8 +1085,12 @@ def plan_reel(
     beats: Sequence[BeatInput],
     *,
     seconds: float = DEFAULT_SECONDS,
+    genre: str = "",
+    ending: str = "hard",
 ) -> ReelPlan:
     """Plan the reel: a flash-forward from the strongest frame, then the beats, ending on the new fact.
+
+    Works on any episode: every number comes from that episode's own takes and beats.
 
     Parameters
     ----------
@@ -926,6 +1102,11 @@ def plan_reel(
         The episode's beats in order.
     seconds
         The reel's target length (6-30 s).
+    genre
+        The series' genre (the spine's ``microdrama_genre``): picks the picture
+        weights of the cold-open score (:func:`genre_family`).
+    ending
+        ``hard`` (default: the reel ends on the last frame) or ``freeze-black``.
 
     Returns
     -------
@@ -944,8 +1125,11 @@ def plan_reel(
         )
     if not takes:
         raise ValueError("no finished take to cut the reel from")
+    if ending not in ENDING_STYLES:
+        raise ValueError(f"--ending {ending!r}: one of {', '.join(ENDING_STYLES)}")
     by_id = {take.take_id: take for take in takes}
-    plan = ReelPlan(episode=episode, seconds=seconds, segments=[])
+    family = genre_family(genre)
+    plan = ReelPlan(episode=episode, seconds=seconds, segments=[], ending=ending)
     spans = beat_spans(beats, by_id)
     if not spans:
         last = takes[-1]
@@ -980,7 +1164,10 @@ def plan_reel(
                     f'beat {span.ordinal} line "{line[:60]}" reads as said to the viewer; its caption span is cut'
                 )
 
-    cold = strongest_window(takes, spans, banned=banned)
+    last = next((sp for sp in reversed(spans) if sp.role == "new_fact"), None)
+    if last is not None:
+        plan.last_beat = (last.take_id, last.start, last.end)
+    cold = strongest_window(takes, spans, banned=banned, family=family)
     budget = seconds - (cold.end - cold.start if cold else 0.0)
 
     pieces: list[_Piece] = []
@@ -1023,7 +1210,7 @@ def plan_reel(
     # 1. Escalations go first, lowest score first, while they do not overshoot by much.
     escalations = sorted(
         (p for p in pieces if p.role == "escalation"),
-        key=lambda p: _mean_score(by_id[p.take], spans, p.start, p.end),
+        key=lambda p: _mean_score(by_id[p.take], spans, p.start, p.end, family),
     )
     for piece in escalations:
         over = _piece_seconds(pieces) - budget
@@ -1064,11 +1251,16 @@ def plan_reel(
                 cold.start,
                 cold.end,
                 "cold_open",
-                f"flash-forward: the strongest frame, {cold.take} {cold.at:.2f} s (score {cold.score:.2f}); "
-                "then how we got there",
+                f"flash-forward from the {cold.role.replace('_', ' ')}: the strongest frame before the reveal, "
+                f"{cold.take} {cold.at:.2f} s (score {cold.score:.2f}); then how we got there",
             )  # fmt: skip
         )
         plan.strongest = cold
+    elif any(take.sample_seconds for take in takes):
+        plan.warnings.append(
+            "no 1-2 s window before the new fact to flash forward to (the episode is one beat, or every "
+            "window touches the ending): no flash-forward; the reel opens on the plant"
+        )
     else:
         plan.warnings.append(
             "no frames were measured: no flash-forward; the reel opens on the plant"
@@ -1108,8 +1300,187 @@ def cut_out(
     return out
 
 
+def _overlaps(take: str, a: float, b: float, other: tuple[str, float, float]) -> bool:
+    return take == other[0] and a < other[2] - 1e-6 and other[1] < b - 1e-6
+
+
+def cold_open_spoils(plan: ReelPlan) -> list[str]:
+    """⚠ when the cold open shows the ending: the last beat, or the reel's last segment.
+
+    Parameters
+    ----------
+    plan
+        The plan (made here or edited by hand).
+
+    Returns
+    -------
+    list[str]
+        One warning per spoiler.
+    """
+
+    out: list[str] = []
+    segments = plan.segments
+    colds = [seg for seg in segments if seg.role == "cold_open"]
+    if not colds:
+        return out
+    ending = [seg for seg in segments if seg.role == "new_fact"]
+    if segments and segments[-1].role != "cold_open":
+        ending.append(segments[-1])
+    for cold in colds:
+        if plan.last_beat is not None and _overlaps(
+            cold.take, cold.start, cold.end, plan.last_beat
+        ):
+            take, a, b = plan.last_beat
+            out.append(
+                f"the cold open {cold.take} {cold.start:.2f}-{cold.end:.2f} s is inside the last beat "
+                f"({take} {a:.2f}-{b:.2f} s, the new fact): the reel opens on its own ending. Take the cold open "
+                "from the pivot or the peak before the reveal"
+            )
+            continue
+        for seg in ending:
+            if seg is not cold and _overlaps(
+                cold.take, cold.start, cold.end, (seg.take, seg.start, seg.end)
+            ):
+                out.append(
+                    f"the cold open {cold.take} {cold.start:.2f}-{cold.end:.2f} s overlaps the ending "
+                    f"({seg.role} {seg.take} {seg.start:.2f}-{seg.end:.2f} s): the reel opens on its own ending"
+                )
+                break
+    return out
+
+
+def _reel_samples(
+    segments: Sequence[Segment], by_id: Mapping[str, TakeInput], seconds: float
+) -> list[tuple[TakeInput, int, bool]]:
+    """The take samples the reel plays in its first ``seconds``: ``(take, sample index, first after a cut)``."""
+
+    out: list[tuple[TakeInput, int, bool]] = []
+    clock = 0.0
+    previous: Segment | None = None
+    for seg in segments:
+        take = by_id.get(seg.take)
+        if take is None or clock > seconds:
+            break
+        joined = (
+            previous is not None
+            and previous.take == seg.take
+            and abs(previous.end - seg.start) < 0.03
+        )
+        first = True
+        for i, t in enumerate(take.sample_seconds):
+            if (
+                seg.start - 1e-6 <= t < seg.end
+                and clock + (t - seg.start) < seconds - 1e-6
+            ):
+                out.append((take, i, first and previous is not None and not joined))
+                first = False
+        clock += seg.end - seg.start
+        previous = seg
+    return out
+
+
+def plan_edges(
+    plan: ReelPlan, takes: Sequence[TakeInput]
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[str]]:
+    """The reel's first second and its tail, from the takes' samples (:mod:`creation.post.opening`).
+
+    The opening is silent / visual (no face check) when no caption plays in
+    the reel's first segment. A cut inside the first second counts as motion
+    (the luma step across it, a lower bound of the change).
+
+    Parameters
+    ----------
+    plan
+        The plan.
+    takes
+        The measured takes.
+
+    Returns
+    -------
+    tuple
+        ``(opening, tail, warnings)``: the JSON blocks (``None`` when not
+        measured) and their ⚠ lines.
+    """
+
+    from creation.post.faces import HEAD_COUNT_FACE
+    from creation.post.opening import (
+        OPENING_SECONDS,
+        opening_reading,
+        tail_reading,
+        tail_warning,
+    )
+
+    by_id = {t.take_id: t for t in takes}
+    warnings: list[str] = []
+    opening: dict[str, Any] | None = None
+    tail: dict[str, Any] | None = None
+    if not plan.segments:
+        return None, None, warnings
+    played = _reel_samples(plan.segments, by_id, OPENING_SECONDS)
+    if played and all(take.luma for take, _, _ in played):
+        lumas = [take.luma[i] for take, i, _ in played]
+        moves: list[float] = []
+        for k, (take, i, after_cut) in enumerate(played):
+            move = take.motion[i] if i < len(take.motion) else 0.0
+            if after_cut and k:
+                move = max(move, abs(lumas[k] - lumas[k - 1]))
+            moves.append(move)
+        first_take, first_i, _ = played[0]
+        face: float | None
+        if first_take.faces:
+            face = first_take.faces[first_i] if first_i < len(first_take.faces) else 0.0
+        elif first_take.shots:
+            t0 = first_take.sample_seconds[first_i]
+            shot = next((s for s in first_take.shots if s.start <= t0 < s.end), None)
+            face = HEAD_COUNT_FACE if shot is not None and shot.named > 0 else 0.0
+        else:
+            face = None
+        head = plan.segments[0]
+        silent = (
+            not any(
+                c.start < head.end and head.start < c.end for c in by_id[head.take].cues
+            )
+            if head.take in by_id
+            else True
+        )
+        reading = opening_reading(
+            lumas, moves, face=face, face_source=first_take.face_source,
+            silent_open=silent, where="the reel's first second",
+        )  # fmt: skip
+        opening = {"take": head.take, "role": head.role, **reading.as_json()}
+        warnings += list(reading.warnings)
+    last = plan.segments[-1]
+    take = by_id.get(last.take)
+    if take is not None and take.sample_seconds:
+        marks = [
+            min(c.end, last.end)
+            for c in take.cues
+            if c.start < last.end and last.start < c.end
+        ]
+        marks += [
+            min(t + 0.6, last.end) for t in take.events if last.start <= t < last.end
+        ]
+        motion = _motion_without_cuts(take)
+        reading_t = tail_reading(
+            take.sample_seconds, motion, end=last.end, start=last.start,
+            last_mark=max(marks) if marks else None,
+        )  # fmt: skip
+        tail = {"take": last.take, "role": last.role, **reading_t.as_json()}
+        line = tail_warning(reading_t, what="the reel")
+        if line and plan.ending == "hard":
+            warnings.append(line)
+        elif line:
+            warnings.append(
+                line + f" (the {plan.ending} ending freezes this settled frame)"
+            )
+    return opening, tail, warnings
+
+
 def check_plan(plan: ReelPlan, takes: Sequence[TakeInput]) -> list[str]:
-    """The ⚠ lines for a plan: not ending on the new fact, over length, a cut inside a word, a viewer line.
+    """The ⚠ lines for a plan: not ending on the new fact, over length, a cut inside a word, a viewer line,
+    a cold open that shows the ending, a dark / static / faceless first second, a settled tail.
+
+    Fills ``plan.opening`` and ``plan.tail`` with what it measured.
 
     Parameters
     ----------
@@ -1126,6 +1497,10 @@ def check_plan(plan: ReelPlan, takes: Sequence[TakeInput]) -> list[str]:
 
     warnings: list[str] = []
     by_id = {t.take_id: t for t in takes}
+    warnings += cold_open_spoils(plan)
+    opening, tail, edge_warnings = plan_edges(plan, takes)
+    plan.opening, plan.tail = opening, tail
+    warnings += edge_warnings
     if not plan.ends_on_new_fact():
         warnings.append(
             "the reel does not end on the new fact: end it on the episode's last beat (role new_fact)"
@@ -1300,6 +1675,25 @@ def plan_json(
         "total_s": round(plan.total, 3),
         "takes": {k: dict(v) for k, v in takes.items()},
         "strongest": plan.strongest.as_json() if plan.strongest else None,
+        "cold_open": cold_open_json(plan),
+        "last_beat": (
+            {
+                "take": plan.last_beat[0],
+                "start_s": round(plan.last_beat[1], 3),
+                "end_s": round(plan.last_beat[2], 3),
+            }
+            if plan.last_beat
+            else None
+        ),  # fmt: skip
+        "opening": plan.opening,
+        "tail": plan.tail,
+        "ending": {
+            "style": plan.ending,
+            "freeze_s": FREEZE_SECONDS,
+            "black_s": BLACK_SECONDS,
+        }
+        if plan.ending != "hard"
+        else {"style": "hard"},
         "segments": [segment.as_json() for segment in plan.segments],
         "patches": [],
         "notes": list(plan.notes),
@@ -1307,6 +1701,58 @@ def plan_json(
     }
     body.update(dict(extra or {}))
     return body
+
+
+def cold_open_json(plan: ReelPlan) -> dict[str, Any] | None:
+    """The plan JSON's ``cold_open`` block: the role it came from, its face score and the weights that chose it.
+
+    Parameters
+    ----------
+    plan
+        The plan.
+
+    Returns
+    -------
+    dict | None
+        ``None`` when the reel has no cold open.
+    """
+
+    seg = next((s for s in plan.segments if s.role == "cold_open"), None)
+    if seg is None:
+        return None
+    s = plan.strongest
+    body: dict[str, Any] = {
+        "take": seg.take,
+        "window": [round(seg.start, 3), round(seg.end, 3)],
+        "beat_role": s.role if s else None,
+        "face": round(s.parts.get("face", 0.0), 3) if s else None,
+        "stillness": round(s.parts.get("stillness", 0.0), 3) if s else None,
+        "face_source": s.face_source if s else None,
+        "genre_family": s.family if s else None,
+        "weights": dict(PICTURE_WEIGHTS.get(s.family, PICTURE_WEIGHTS["default"]))
+        if s
+        else None,
+        "spoils_ending": bool(cold_open_spoils(plan)),
+    }
+    return body
+
+
+def last_beat_from_json(raw: Any) -> tuple[str, float, float] | None:
+    """A plan file's ``last_beat`` back as ``(take, start, end)`` (``None`` when absent or unreadable)."""
+
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        return str(raw["take"]), float(raw["start_s"]), float(raw["end_s"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def ending_from_json(raw: Any) -> str:
+    """A plan file's ending style (``hard`` when absent or unknown)."""
+
+    style = raw.get("style") if isinstance(raw, Mapping) else raw
+    return str(style) if style in ENDING_STYLES else "hard"
 
 
 def segments_from_json(body: Mapping[str, Any]) -> list[Segment]:
@@ -1358,9 +1804,38 @@ def strongest_from_json(raw: Any) -> Strongest | None:
             take=str(raw["take"]), at=float(raw["at_s"]), score=float(raw["score"]),
             parts={str(k): float(v) for k, v in (raw.get("parts") or {}).items()},
             start=float(window[0]), end=float(window[1]), role=str(raw.get("beat_role") or ""),
+            family=str(raw.get("genre_family") or "default"), face_source=str(raw.get("face_source") or "none"),
         )  # fmt: skip
     except (KeyError, TypeError, ValueError, IndexError):
         return None
+
+
+def genre_hashtags(genre: str, *, limit: int = 2) -> list[str]:
+    """One hashtag word per genre: ``slice_of_life`` -> ``sliceoflife``, never ``#slice #of``.
+
+    Several genres may be given, split by ``,`` ``/`` ``|`` or ``;``. Each is
+    lowercased and loses everything but letters and digits.
+
+    Parameters
+    ----------
+    genre
+        The spine's ``microdrama_genre`` (``war_god_return``, ``Slice of Life``,
+        ``romance, horror``).
+    limit
+        At most this many.
+
+    Returns
+    -------
+    list[str]
+        Tag words without the ``#``, in order, no repeats.
+    """
+
+    tags: list[str] = []
+    for entry in re.split(r"[,/|;]+", genre or ""):
+        tag = re.sub(r"[^a-z0-9]+", "", entry.lower())
+        if tag and tag not in tags:
+            tags.append(tag)
+    return tags[:limit]
 
 
 def post_text(
@@ -1384,7 +1859,7 @@ def post_text(
     question
         The episode's hook question (asked of the viewer here, in the post, not on screen).
     genre
-        For two plain hashtags.
+        For up to two plain hashtags, one per genre (:func:`genre_hashtags`).
     has_next
         Whether to point at the next episode.
 
@@ -1403,7 +1878,7 @@ def post_text(
         if has_next
         else "Follow for the next one."
     )
-    tags = [t for t in re.split(r"[^a-z0-9]+", genre.lower()) if t][:2]
+    tags = genre_hashtags(genre)
     if tags:
         lines += ["", " ".join(f"#{t}" for t in [*tags, "shortdrama"])]
     kept = [
@@ -1426,7 +1901,16 @@ __all__ = [
     "check_plan",
     "contiguous_runs",
     "cut_out",
+    "ENDING_STYLES",
+    "PICTURE_WEIGHTS",
+    "cold_open_json",
+    "cold_open_spoils",
+    "ending_from_json",
     "frame_scores",
+    "genre_family",
+    "genre_hashtags",
+    "last_beat_from_json",
+    "plan_edges",
     "payoff_end",
     "plan_json",
     "plan_reel",

@@ -8,7 +8,11 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    board, capped at 12; nothing written when there are none. The length,
    frame count and sound are unchanged, so every later step (take-facts cue
    times, caption timing, the voice the mix ducks under) stays on the raw
-   take's timeline. ``--no-deboard`` skips it.
+   take's timeline. ``--no-deboard`` skips it. When the server set no trim
+   handles, the clones (a held still before the first motion) are cut off
+   LAST, after every step below, picture and sound together, never past the
+   first line's onset (:func:`creation.post.deboard.head_cut`), and recorded
+   as a ``handles`` edit (source ``kit-deboard``).
 1. ``sfx``       - the take's cue plan from ``GET /v1/jobs/{take_job}/take-facts?spine_id=``
    (fetched and saved as ``api/take-facts-epNN-tK-vN.json`` when missing),
    rendered on the server (the audio service) and cached in ``epNN/sfx/``.
@@ -134,7 +138,7 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, TextIO
@@ -199,7 +203,11 @@ from creation.post.take_facts import (
     stale_facts_reason,
     take_warning_lines,
 )
-from creation.post.take_handles import apply_take_handles, handles_from_facts
+from creation.post.take_handles import (
+    HandleCut,
+    apply_take_handles,
+    handles_from_facts,
+)
 from creation.post.take_timeline import (
     align_take_facts,
     server_board_frames,
@@ -662,6 +670,94 @@ def take_inner_voice(
     )
 
 
+def _opening_lines(desk: Path, episode: int, take_id: str, final: Path) -> list[str]:
+    """``⚠`` lines for how the finished first take opens (:mod:`creation.post.opening`)."""
+
+    from creation.post.faces import local_detector
+    from creation.post.opening import measure_opening, opening_context
+
+    silent, head_face = opening_context(desk, episode, take_id)
+    try:
+        reading = measure_opening(
+            final, detector=local_detector(), head_count_face=head_face,
+            silent_open=silent, where=f"ep{episode:02d} {take_id}",
+        )  # fmt: skip
+    except MediaToolError as exc:
+        return [f"⚠ opening not measured ({str(exc)[:160]})"]
+    return [f"⚠ {warning}" for warning in reading.warnings]
+
+
+def _cut_held_head(
+    desk: Path,
+    *,
+    record: Path,
+    frames: int,
+    fps: float,
+    hand_starts: Sequence[float] = (),
+) -> HandleCut:
+    """Cut the deboard clones (a held still) off a finished take's head, last, as a ``handles`` edit.
+
+    Only when the server set no handles (its own cut already starts past the
+    board frames). Never past the first line's onset: the master's captions and
+    the laid voices say where it is (:func:`creation.post.deboard.head_cut`).
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    record
+        The finish record just written.
+    frames
+        Board frames deboard replaced with clones.
+    fps
+        The take's frame rate.
+    hand_starts
+        Where ``--voice`` lines were laid (take seconds as filmed).
+
+    Returns
+    -------
+    HandleCut
+        The cut final and record (``None`` when nothing was cut) and the line to print.
+    """
+
+    from creation.post.deboard import HEAD_CUT_SOURCE, head_cut
+    from creation.post.finish_record import _load
+    from creation.post.reel import parse_ass_cues
+    from creation.post.take_handles import TakeHandles
+
+    loaded = _load(record)
+    if loaded is None:
+        return HandleCut(None, None, "")
+    starts = [float(t) for t in hand_starts]
+    known = bool(starts)
+    master = loaded.resolve(desk, "master")
+    if master is not None and master.with_suffix(".ass").is_file():
+        known = True
+        cues = parse_ass_cues(master.with_suffix(".ass").read_text(encoding="utf-8"))
+        starts += [c.start for c in cues]
+    cut, why = head_cut(
+        frames, fps, first_speech=min(starts) if starts else None, known=known
+    )
+    final = loaded.resolve(desk, "final")
+    if cut is None or final is None or not final.is_file():
+        return HandleCut(None, None, why)
+    handles = TakeHandles(
+        start_s=cut,
+        end_s=probe_video(final).duration_seconds,
+        source=HEAD_CUT_SOURCE,
+        frame_rate=fps,
+    )
+    try:
+        done = apply_take_handles(desk, record_path=record, handles=handles)
+    except STEP_ERRORS as exc:
+        return HandleCut(
+            None,
+            None,
+            f"!! held head not cut ({type(exc).__name__}: {str(exc)[:200]}): the take opens on the clones",
+        )
+    return HandleCut(done.final, done.record, f"{why}; {done.note}")
+
+
 def run_finish(
     desk: Path,
     *,
@@ -942,6 +1038,7 @@ def run_finish(
     thought_state: dict[str, Any] = {"path": None, "laid": []}
     # For the finish record `join` reads: what the mix read, and what the mark went on.
     record_state: dict[str, Path | None] = {"pre_bed": None, "master": None}
+    deboard_state: dict[str, float] = {"frames": 0, "fps": 24.0}
     print(
         f"Finishing {source.name}: board frames, sound effects, music, look, mix, captions, mark (2-4 minutes)",
         file=out,
@@ -1073,6 +1170,9 @@ def run_finish(
                 "ran",
                 f"no board frames ({trimmed.leak.one_line()}); nothing written",
             )
+        # The clones hold the timeline for every step below; the held head is cut off last.
+        deboard_state["frames"] = trimmed.removed
+        deboard_state["fps"] = probe_video(trimmed.output).fps or 24.0
         return StepReport("deboard", "ran", trimmed.one_line(), trimmed.output)
 
     def do_voice(take: Path) -> StepReport:
@@ -2068,11 +2168,13 @@ def run_finish(
         ],
     )  # fmt: skip
     handles_note = ""
+    server_handles = None
     if result.complete and facts_state["path"] is not None:
         # Cut at the take's trim handles LAST (fictora-drama #563): every effect, duck and caption above was
         # laid on the take as filmed, so nothing is offset; the cut moves them all with the picture.
         facts_payload = json.loads(facts_state["path"].read_text(encoding="utf-8"))
         handles = handles_from_facts(facts_payload)
+        server_handles = handles
         if handles is not None:
             held = server_board_frames(facts_payload)
             try:
@@ -2093,9 +2195,26 @@ def run_finish(
                         f"Final: {result.final}" if row.startswith("Final: ") else row
                         for row in summary
                     ]
+    if result.complete and server_handles is None and deboard_state["frames"] > 0:
+        # No server handles: cut the deboard clones (a held still) off the head, last, like a handle.
+        head_note = _cut_held_head(
+            desk, record=record, frames=int(deboard_state["frames"]),
+            fps=float(deboard_state["fps"]), hand_starts=[line.start for line, _ in hand.voices],
+        )  # fmt: skip
+        if head_note.record is not None and head_note.final is not None:
+            result.final, record = head_note.final, head_note.record
+            summary = [
+                f"Final: {result.final}" if row.startswith("Final: ") else row
+                for row in summary
+            ]
+        handles_note = "\n".join(n for n in (handles_note, head_note.note) if n)
     summary.insert(1, f"Record: {record.name} (what `join` reads)")
     if handles_note:
         summary.insert(2, handles_note)
+    if result.complete and take_id == "t1":
+        # Every episode's first take opens the episode: its first second, as finished (warnings only).
+        at = 3 if handles_note else 2
+        summary[at:at] = _opening_lines(desk, episode, take_id, result.final)
     append_run_note(
         run_dir,
         "Finish summary\n"

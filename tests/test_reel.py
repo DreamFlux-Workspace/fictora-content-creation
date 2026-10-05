@@ -91,7 +91,7 @@ def test_the_plan_opens_on_a_flash_forward_and_ends_on_the_new_fact() -> None:
     assert roles[0] == "cold_open"
     assert roles[-1] == "new_fact"
     assert plan.ends_on_new_fact()
-    # The new fact stops half a second after its last caption: the calm tail is cut.
+    # The new fact stops on its peak: the action after its last caption runs out at 13.5 s; the tail is cut.
     assert plan.segments[-1].end == pytest.approx(13.5, abs=1 / FPS)
     assert not any(s.role == "new_fact" for s in plan.segments[:-1] if s.end > 13.6)
     assert "ends on the new fact" not in " ".join(plan.warnings)
@@ -103,7 +103,8 @@ def test_the_flash_forward_is_the_highest_scoring_window() -> None:
     plan = plan_reel(2, [measured], beats)
 
     rows = frame_scores(measured, beat_spans(beats, {"t1": measured}))
-    best = max(rows, key=lambda r: r[1])
+    # The new fact is never the cold open: the best frame before it wins.
+    best = max((r for r in rows if r[3] != "new_fact"), key=lambda r: r[1])
     cold = plan.segments[0]
     assert cold.role == "cold_open"
     assert plan.strongest is not None
@@ -116,12 +117,12 @@ def test_the_flash_forward_is_the_highest_scoring_window() -> None:
 
 
 def test_story_outweighs_a_camera_pan_in_the_setup() -> None:
-    """A big pan over the setup must not beat a payoff beat that moves a little."""
+    """A big pan over the setup must not beat the pivot that moves a little (the new fact is never shown first)."""
 
     measured = take(cues=CUES, peak=(3.0, 5.0))
     plan = plan_reel(2, [measured], three_beats(payoff=True))
     assert plan.strongest is not None
-    assert plan.strongest.role == "new_fact"
+    assert plan.strongest.role == "pivot"
 
 
 @pytest.mark.parametrize("seconds", [15.0, 10.0, 8.0])
@@ -466,3 +467,28 @@ def test_review_of_a_reel_never_touches_run_notes_and_does_not_compare_take_cuts
     assert saved.is_file() and "Review ep01 t1" in saved.read_text(encoding="utf-8")
     assert "(finished," in out
     assert "not compared (the reel cut and reordered the take)" in out
+
+
+@needs_ffmpeg
+def test_reel_records_the_cold_open_and_ends_with_the_chosen_style(
+    reel_desk: Path,
+) -> None:
+    result = run_reel(
+        reel_desk, episode=1, seconds=6.0, ending="freeze-black", detector=None
+    )
+
+    body = json.loads(result.plan_path.read_text(encoding="utf-8"))
+    assert body["cold_open"]["beat_role"] in {"pivot", "escalation", "plant"}
+    assert body["cold_open"]["spoils_ending"] is False
+    assert body["cold_open"]["face_source"] == "head_count"
+    last = body["last_beat"]
+    window = body["cold_open"]["window"]
+    assert window[1] <= last["start_s"] + 1e-6, (
+        "the cold open never shows the last beat"
+    )
+    assert set(body["opening"]) >= {"frame0_luma", "first_second_motion", "warnings"}
+    assert body["ending"]["style"] == "freeze-black"
+    assert result.video is not None
+    assert result.seconds == pytest.approx(
+        sum(s.end - s.start for s in result.plan.segments) + 0.7, abs=0.1
+    )
