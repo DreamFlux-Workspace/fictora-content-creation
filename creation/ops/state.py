@@ -19,6 +19,12 @@ GateStatus = Literal["pending", "approved", "rejected"]
 TakeVerdict = Literal["pending", "use", "change"]
 
 TAKES_FOR_BAND: dict[str, int] = {"15s": 1, "30s": 2, "60s": 4}
+#: Takes per band on a letterbox (4:3) story: the server films 10-second takes
+#: there (fictora-drama #604), so 30 s is three takes and 60 s six. 15 s stays
+#: one take: the server films a 15 s letterbox episode portrait.
+LETTERBOX_TAKES_FOR_BAND: dict[str, int] = {"15s": 1, "30s": 3, "60s": 6}
+#: Seconds one letterbox (4:3) take films on the server.
+LETTERBOX_TAKE_SECONDS = 10
 MAX_LINES_PER_TAKE = 3
 #: Preflight warns (never blocks) past this multiple of the envelope.
 ENVELOPE_STOP_MULTIPLIER = 2.0
@@ -310,13 +316,18 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def take_ids_for_band(band: str) -> list[str]:
+def take_ids_for_band(band: str, *, letterbox: bool = False) -> list[str]:
     """Return take ids for a duration band.
 
     Parameters
     ----------
     band
         ``15s``, ``30s``, or ``60s``.
+    letterbox
+        True for a desk started ``--delivery-format letterbox``: 10-second
+        takes (``LETTERBOX_TAKES_FOR_BAND``). The spine has the last word
+        (:func:`sync_take_slots_to_spine`): a server with real 4:3 takes off
+        boards a letterbox show portrait.
 
     Returns
     -------
@@ -329,7 +340,7 @@ def take_ids_for_band(band: str) -> list[str]:
         When ``band`` is not a known duration band.
     """
 
-    count = TAKES_FOR_BAND.get(band)
+    count = (LETTERBOX_TAKES_FOR_BAND if letterbox else TAKES_FOR_BAND).get(band)
     if count is None:
         raise ValueError(f"band must be 15s, 30s, or 60s; got {band!r}")
     return [f"t{index}" for index in range(1, count + 1)]
@@ -368,7 +379,7 @@ def empty_gate() -> GateRecord:
     return GateRecord()
 
 
-def new_episode(ordinal: int, band: str) -> EpisodeState:
+def new_episode(ordinal: int, band: str, *, letterbox: bool = False) -> EpisodeState:
     """Return a blank episode slot for a band.
 
     Parameters
@@ -377,6 +388,8 @@ def new_episode(ordinal: int, band: str) -> EpisodeState:
         1-based episode number.
     band
         Duration band.
+    letterbox
+        True for a letterbox desk (10-second takes; see :func:`take_ids_for_band`).
 
     Returns
     -------
@@ -387,7 +400,10 @@ def new_episode(ordinal: int, band: str) -> EpisodeState:
     return EpisodeState(
         ordinal=ordinal,
         slug=f"ep{ordinal:02d}",
-        takes=[TakeState(take_id=take_id) for take_id in take_ids_for_band(band)],
+        takes=[
+            TakeState(take_id=take_id)
+            for take_id in take_ids_for_band(band, letterbox=letterbox)
+        ],
     )
 
 
@@ -399,6 +415,7 @@ def new_series(
     *,
     episode_count: int,
     continuing: bool = False,
+    letterbox: bool = False,
 ) -> SeriesState:
     """Return a new series desk with ``episode_count`` slots.
 
@@ -416,6 +433,8 @@ def new_series(
         How many episode slots to open.
     continuing
         True when this desk reuses an existing cast.
+    letterbox
+        True for a letterbox desk: 10-second take slots.
 
     Returns
     -------
@@ -440,8 +459,124 @@ def new_series(
         look=empty_gate(),
         plates=empty_gate(),
         spend_usd=0.0,
-        episodes=[new_episode(index, band) for index in range(1, episode_count + 1)],
+        episodes=[
+            new_episode(index, band, letterbox=letterbox)
+            for index in range(1, episode_count + 1)
+        ],
     )
+
+
+def _untouched(take: TakeState) -> bool:
+    """Whether a take slot holds nothing yet: no lines, board, estimate, film or spend."""
+
+    return (
+        not take.lines
+        and take.board.status == "pending"
+        and take.board.path is None
+        and take.estimate_usd is None
+        and take.filmed_count == 0
+        and take.spend_usd == 0.0
+        and not take.overrides
+    )
+
+
+def spine_take_count(spine: dict[str, Any]) -> int | None:
+    """Return how many takes the server's story films per episode.
+
+    Parameters
+    ----------
+    spine
+        ``GET /v1/spines/{id}`` JSON (bare, or ``{"spine": ...}``).
+
+    Returns
+    -------
+    int | None
+        ``len(beats_per_storyboard_set)``; ``None`` when the spine has no pattern.
+    """
+
+    body = spine.get("spine", spine) if isinstance(spine, dict) else {}
+    pattern = body.get("beats_per_storyboard_set") if isinstance(body, dict) else None
+    if not isinstance(pattern, list) or not pattern:
+        return None
+    return len(pattern)
+
+
+def spine_take_seconds(spine: dict[str, Any], band: str) -> int | None:
+    """Return the seconds one take films on a 4:3 (letterbox) story, else ``None``.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    band
+        The desk's band (``30s`` ...).
+
+    Returns
+    -------
+    int | None
+        The band's seconds over the spine's take count on a ``board_aspect``
+        ``4:3`` story (10 for every new letterbox story); ``None`` on portrait,
+        where the desk's own ``--clip-seconds`` stands.
+    """
+
+    body = spine.get("spine", spine) if isinstance(spine, dict) else {}
+    count = spine_take_count(spine)
+    if not isinstance(body, dict) or body.get("board_aspect") != "4:3" or not count:
+        return None
+    try:
+        seconds = int(str(band).rstrip("s"))
+    except ValueError:
+        return None
+    return seconds // count
+
+
+def sync_take_slots_to_spine(series: SeriesState, spine: dict[str, Any]) -> list[str]:
+    """Give every episode as many take slots as the server's story films.
+
+    The desk opens its slots from the band (two at 30 s); a 4:3 letterbox story
+    films 10-second takes, so the server's spine holds three (or six at 60 s).
+    The spine wins: missing slots are added, and trailing slots the story does
+    not film are dropped while they hold nothing. A slot that already holds
+    work is never dropped; it is named in the returned notes instead.
+
+    Parameters
+    ----------
+    series
+        Desk state, changed in place.
+    spine
+        Spine JSON.
+
+    Returns
+    -------
+    list[str]
+        One plain line per change or kept slot; empty when nothing changed.
+    """
+
+    count = spine_take_count(spine)
+    if count is None:
+        return []
+    notes: list[str] = []
+    for episode in series.episodes:
+        have = len(episode.takes)
+        if have < count:
+            for index in range(have + 1, count + 1):
+                episode.takes.append(TakeState(take_id=f"t{index}"))
+            notes.append(
+                f"{episode.slug}: the story films {count} takes; added t{have + 1}–t{count}."
+            )
+        elif have > count:
+            extra = episode.takes[count:]
+            if all(_untouched(take) for take in extra):
+                episode.takes = episode.takes[:count]
+                notes.append(
+                    f"{episode.slug}: the story films {count} takes; dropped empty t{count + 1}–t{have}."
+                )
+            else:
+                notes.append(
+                    f"!! {episode.slug}: the story films {count} takes but the desk holds work on "
+                    f"{', '.join(take.take_id for take in extra if not _untouched(take))}; left as is."
+                )
+    return notes
 
 
 def series_path(desk: Path) -> Path:

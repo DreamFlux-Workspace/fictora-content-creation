@@ -16,7 +16,7 @@ import shlex
 import sys
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
 from typing import Any, Sequence
@@ -59,7 +59,14 @@ from creation.ops.floor import (
 from creation.ops.floor import approve_script as record_script_gate
 from creation.ops.luma import measure_board_luma
 from creation.ops.notes import append_run_note
-from creation.ops.state import episode_by_ordinal, load_series
+from creation.ops.state import (
+    episode_by_ordinal,
+    load_series,
+    save_series,
+    series_path,
+    spine_take_seconds,
+    sync_take_slots_to_spine,
+)
 from creation.plan_prompt import (
     _without_kit_directive,
     ensure_plan_prompt,
@@ -87,7 +94,7 @@ from creation.prices import (
     take_usd,
     video_usd_per_second,
 )
-from creation.production_config import load_production_config
+from creation.production_config import load_production_config, save_production_config
 from creation.production_state import (
     ProductionState,
     api_dir_for_episode,
@@ -318,7 +325,50 @@ def save_spine_snapshot(desk: Path, episode: int, spine: dict[str, Any]) -> Path
     for folder in (desk / "api", api_dir_for_episode(desk, episode)):
         folder.mkdir(parents=True, exist_ok=True)
         (folder / "spine.json").write_text(text, encoding="utf-8")
+    for note in sync_desk_to_spine_takes(desk, spine):
+        print(note)
     return desk / "api" / "spine.json"
+
+
+def sync_desk_to_spine_takes(desk: Path, spine: dict[str, Any]) -> list[str]:
+    """Match the desk's take slots and take length to the story the server films.
+
+    A 4:3 letterbox story films 10-second takes (fictora-drama #604): three a
+    30 s episode, six a 60 s one. The desk opens slots from its band, so the
+    spine's ``beats_per_storyboard_set`` sets the slot count
+    (:func:`creation.ops.state.sync_take_slots_to_spine`), and on a 4:3 story
+    ``clip_duration_seconds`` follows the spine too, so estimates price the
+    take the server films. Portrait desks are left exactly as they were.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    spine
+        ``GET /v1/spines/{id}`` JSON.
+
+    Returns
+    -------
+    list[str]
+        Plain lines saying what changed; empty when nothing did.
+    """
+
+    if not series_path(desk).is_file():
+        return []
+    series = load_series(desk)
+    notes = sync_take_slots_to_spine(series, spine)
+    if notes:
+        save_series(desk, series)
+    seconds = spine_take_seconds(spine, series.band)
+    if seconds is not None:
+        cfg = load_production_config(desk)
+        if cfg.clip_duration_seconds != seconds:
+            notes.append(
+                f"Letterbox story: takes film {seconds} s on the server; production config "
+                f"clip_duration_seconds {cfg.clip_duration_seconds} → {seconds}."
+            )
+            save_production_config(desk, replace(cfg, clip_duration_seconds=seconds))
+    return notes
 
 
 def sync_spine_lines(
@@ -1289,6 +1339,7 @@ def run_step(
                     cut_tempo=cfg.cut_tempo,
                     spoken_language=cfg.spoken_language,
                     locale=cfg.locale,
+                    delivery_format=cfg.delivery_format,
                     deadline_seconds=cfg.poll_plan_deadline_seconds,
                     accept_notices=accept_notices,
                     desk=str(desk),

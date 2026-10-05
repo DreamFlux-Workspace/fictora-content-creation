@@ -34,6 +34,10 @@ class ProductionConfig:
     locale: str = "en-US"
     #: Language the cast speaks when not English: ``ja`` / ``ko`` (or ``ja-JP`` / ``ko-KR``). Captions stay English.
     spoken_language: str | None = None
+    #: ``letterbox`` asks the server, at draft time, for a 4:3 picture in a 9:16 frame with a title
+    #: band above and a caption band below (fictora-drama #595). The server decides the board aspect
+    #: only at admission, so it must be on the draft. ``None`` (or ``portrait``) sends nothing: portrait.
+    delivery_format: str | None = None
     #: Per-take dollars used only when the endpoint the server films on has no verified price in
     #: ``creation.prices``. ``None`` (default) prices such a take at the H3 Max Turbo dated rate.
     fallback_estimate_usd: float | None = None

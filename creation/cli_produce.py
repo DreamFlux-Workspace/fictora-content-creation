@@ -302,6 +302,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.series,
                     band=args.band,
                     episode_count=args.episodes,
+                    letterbox=config.delivery_format == "letterbox",
                 )
             except FileExistsError:
                 desk = (
