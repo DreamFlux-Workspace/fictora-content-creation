@@ -30,6 +30,7 @@ from creation.post.reel import run_reel
 GOLDEN = Path(__file__).parent / "golden" / "portrait-unchanged.json"
 REPO = Path(__file__).resolve().parents[1]
 _TEMP = re.escape(os.path.realpath(tempfile.gettempdir()))
+_MEASURED_GAIN = re.compile(r"volume=[+-]\d+(?:\.\d+)?dB")
 
 
 def _normalised(argv: list[str], roots: list[Path]) -> list[str]:
@@ -42,6 +43,10 @@ def _normalised(argv: list[str], roots: list[Path]) -> list[str]:
         text = re.sub(
             r"/(private/)?(var/folders|tmp)/[^:'\s]*?/T/[^/:'\s]+", "<tmp>", text
         )
+        # A gain measured from the take's own audio (``volume=+12.1dB``) moves by
+        # 0.1 dB between ffmpeg builds (CI vs a laptop). Its presence and place
+        # in the graph are what the guard is about, not the measured number.
+        text = _MEASURED_GAIN.sub("volume=<dB>", text)
         out.append(text)
     return out
 
