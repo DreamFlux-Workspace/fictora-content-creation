@@ -122,6 +122,9 @@ from creation.harness_rules import (
 )
 from creation.stranded_voice import explain_film_refusal, stranded_preflight
 from creation.stylised_only import BriefNoticePause
+from creation.voice_gate import film_refusal as voices_film_refusal
+from creation.voice_gate import gate_text as voices_gate_text
+from creation.voice_gate import pending_voices
 
 
 #: Phases whose ``step`` pays for drawings (cast plates, boards): held while a drawn look frame awaits its yes.
@@ -1438,12 +1441,22 @@ def run_step(
                 "wait_spend": "spend",
             }[state.phase]
             if state.phase == "wait_spend" and confirm_spend:
+                # The voices gate: nothing films until every speaking voice has the human's yes.
+                refused = voices_film_refusal(
+                    desk, run.spine(state.spine_id or ""), episode=ep
+                )
+                if refused:
+                    raise RuntimeError(refused)
                 state.phase = "ready_video"
                 save_production(desk, state)
                 return run_step(desk, confirm_spend=False)
+            voices = ""
+            if state.phase == "wait_script" and state.spine_id:
+                voices = voices_gate_text(desk, run.spine(state.spine_id), episode=ep)
             return StepResult(
                 state.phase,
-                f"Waiting on human gate `{gate}` (episode {ep}). Use fictora-produce approve.",
+                f"Waiting on human gate `{gate}` (episode {ep}). Use fictora-produce approve."
+                + (f"\n{voices}" if voices else ""),
                 (),
             )
 
@@ -1534,6 +1547,12 @@ def run_step(
                 *stranded_preflight(spine, unit=f"ep{ep:02d}", desk=desk, episode=ep),
                 *warnings,
             ]
+            if voices_film_refusal(desk, spine, episode=ep):
+                who = ", ".join(v.name for v in pending_voices(desk, spine, episode=ep))
+                warnings.append(
+                    f"!! VOICES NOT APPROVED: {who}. Filming is refused until the human keeps or picks "
+                    f"each voice (`fictora-produce voice --desk {desk} --list`)."
+                )
             state.phase = "wait_spend"
             save_production(desk, state)
             budget = envelope_line(desk, episode=ep, next_usd=state.estimate_usd)
@@ -1954,7 +1973,9 @@ def _film(
     delivery: dict[str, Any] | None = None
     if raw is None:
         before = run.spine(state.spine_id or "")
-        stopped = film_stop_message(before, episode=ep)
+        stopped = film_stop_message(before, episode=ep) or voices_film_refusal(
+            desk, before, episode=ep
+        )
         if stopped:
             raise RuntimeError(stopped)
         for warning in stranded_preflight(
@@ -2340,6 +2361,9 @@ def approve_gate(
             )
             # A character a later episode brought in is approved after that
             # episode's script yes: go on to its boards.
+            # The voices gate comes after the plates: the human hears each voice before any filming.
+            voices = voices_gate_text(desk, run.spine(state.spine_id or ""), episode=ep)
+            voices = f"\n{voices}" if voices else ""
             if (
                 ep >= 2
                 and episode_by_ordinal(load_series(desk), ep).script.status
@@ -2350,14 +2374,14 @@ def approve_gate(
                 return StepResult(
                     state.phase,
                     f"Plates approved ({record.status}), including episode {ep}'s new character(s). "
-                    "Next: fictora-produce step (boards).",
+                    f"Next: fictora-produce step (boards).{voices}",
                     (),
                 )
             state.phase = "wait_script"
             save_production(desk, state)
             return StepResult(
                 state.phase,
-                f"Plates approved ({record.status}). Human: approve script lines.",
+                f"Plates approved ({record.status}). Human: approve script lines.{voices}",
                 (),
             )
 

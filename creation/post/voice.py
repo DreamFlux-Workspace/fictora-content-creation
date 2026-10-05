@@ -58,6 +58,13 @@ from creation.post.desk import (
 from creation.post.finish import book
 from creation.post.media import media_duration, probe_video, run_ffmpeg
 from creation.post.whisper import line_windows, load_words, transcribe
+from creation.production_state import load_production
+from creation.voice_gate import (
+    CastVoice,
+    gate_text,
+    record_voice,
+    speaking_voices,
+)
 
 AUDITION_SET_USD = 0.30
 """One audition set, as the runbook prices it."""
@@ -509,6 +516,12 @@ def run_voice_pick(
             f"/v1/spines/{spine_id(desk)}/cast/{cast_id}/voice-auditions/pick", body
         )
         refresh_spine(run, desk, 1)
+        # The human picked it: that is their yes on this voice for the voices gate.
+        record_voice(
+            desk,
+            CastVoice(cast_id, name, str(chosen["provider_voice"])),
+            how="picked",
+        )
     finally:
         run.client.close()
     print(
@@ -524,6 +537,77 @@ def run_voice_pick(
         file=out,
     )
     return str(chosen["provider_voice"])
+
+
+def run_voice_gate(
+    desk: Path,
+    *,
+    cast: str | None = None,
+    keep: bool = False,
+    episode: int | None = None,
+    out: TextIO | None = None,
+) -> list[str]:
+    """List the speaking characters' voices, or record the human's yes on them as they are (spends nothing).
+
+    Parameters
+    ----------
+    desk
+        Series desk bound to a spine.
+    cast
+        ``cast_id`` or name: keep (or list) this character alone. ``None``: every speaking character.
+    keep
+        Record the yes (``voice --keep`` / ``--keep-all``); without it the gate is only printed.
+    episode
+        List the speakers of this episode only (``--list``); a keep covers the whole spine.
+    out
+        Text stream.
+
+    Returns
+    -------
+    list[str]
+        The cast ids kept (empty for a listing).
+
+    Raises
+    ------
+    ValueError
+        When ``cast`` speaks no line on the spine.
+    """
+
+    out = out or sys.stdout
+    desk = desk.expanduser().resolve()
+    ledger_episode = episode or load_production(desk).episode_ordinal
+    run = open_api(desk, ledger_episode)
+    try:
+        spine = refresh_spine(run, desk, ledger_episode)
+    finally:
+        run.client.close()
+    voices = speaking_voices(spine, episode=None if keep else episode)
+    if cast is not None:
+        card = find_cast(spine, cast)
+        voices = [v for v in voices if v.cast_id == str(card["cast_id"])]
+        if not voices:
+            raise ValueError(
+                f"{card.get('name') or card['cast_id']} speaks no line on the spine; nothing to approve"
+            )
+    if not keep:
+        text = gate_text(desk, spine, episode=episode)
+        print(
+            text or "Nobody speaks a line on the spine: no voice to approve.", file=out
+        )
+        return []
+    if not voices:
+        print("Nobody speaks a line on the spine: no voice to approve.", file=out)
+        return []
+    for voice in voices:
+        record_voice(desk, voice, how="kept")
+        print(f"{voice.name} keeps {voice.provider_voice or 'no locked voice'} (the human's yes is recorded).",
+              file=out)  # fmt: skip
+    _note(desk, ledger_episode, "voices kept: " + ", ".join(
+        f"{v.name} -> {v.provider_voice or 'none'}" for v in voices))  # fmt: skip
+    rest = gate_text(desk, spine, episode=load_production(desk).episode_ordinal)
+    if rest:
+        print(rest, file=out)
+    return [v.cast_id for v in voices]
 
 
 def is_short_line(text: str) -> bool:

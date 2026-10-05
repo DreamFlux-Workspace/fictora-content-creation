@@ -103,11 +103,15 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     voice = sub.add_parser(
         "voice",
-        help="Change a character's voice (never regenerate): --audition renders 4-10 candidates on their real "
-        "lines ($0.30 a set, rendered on the server); --pick N locks one on the cast card (free).",
+        help="Hear, approve or change a character's voice (never regenerate): --audition renders 4-10 candidates "
+        "on their real lines ($0.30 a set, rendered on the server); --pick N locks one on the cast card (free, "
+        "and is the human's yes); --keep / --keep-all approve the voice as it is (free). Filming waits for a yes "
+        "on every speaking character's voice.",
     )
     voice.add_argument("--desk", type=Path, required=True)
-    voice.add_argument("--cast", required=True, help="cast_id or name.")
+    voice.add_argument(
+        "--cast", default=None, help="cast_id or name (not with --keep-all or --list)."
+    )
     mode = voice.add_mutually_exclusive_group(required=True)
     mode.add_argument(
         "--audition", action="store_true", help="Render a candidate set and list it."
@@ -117,6 +121,21 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         default=None,
         metavar="N|NAME",
         help="Lock candidate N (or that voice) from the newest set.",
+    )
+    mode.add_argument(
+        "--keep",
+        action="store_true",
+        help="The human heard this character's locked voice and keeps it (free; records the yes filming waits for).",
+    )
+    mode.add_argument(
+        "--keep-all",
+        action="store_true",
+        help="The human keeps every speaking character's locked voice as it is (free).",
+    )
+    mode.add_argument(
+        "--list",
+        action="store_true",
+        help="Print each speaking character's voice and whether it has the human's yes (free).",
     )
     voice.add_argument(
         "--episode",
@@ -560,6 +579,25 @@ def dispatch_post(args: argparse.Namespace) -> int:
     from creation.post.voice import run_revoice, run_voice_audition, run_voice_pick
 
     if args.command == "voice":
+        if args.keep_all or args.list:
+            if args.cast:
+                raise ValueError(
+                    "--keep-all and --list cover every character; drop --cast"
+                )
+        elif not args.cast:
+            raise ValueError("--cast NAME is required (or --keep-all / --list)")
+        if (args.keep or args.keep_all or args.list) and (args.text or args.voices):
+            raise ValueError("--text and --voices go with --audition")
+        if args.keep or args.keep_all or args.list:
+            from creation.post.voice import run_voice_gate
+
+            run_voice_gate(
+                args.desk,
+                cast=args.cast,
+                keep=args.keep or args.keep_all,
+                episode=args.episode,
+            )
+            return 0
         if args.audition:
             run_voice_audition(
                 args.desk, cast=args.cast, episode=args.episode, count=args.count, cause=args.cause,

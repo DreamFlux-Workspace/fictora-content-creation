@@ -22,10 +22,12 @@ You never need the private `fictora-drama` repo. Never paste the API token into 
 
 **Two rules above everything else:**
 
-1. **A human says yes before money moves.** Plates, script, board, the spend yes. One gate per yes. Silence is not approval.
+1. **A human says yes before money moves.** Plates, voices, script, board, the spend yes. One gate per yes. Silence is not approval.
 2. **Render once.** A second render of a plate, board or take needs a written cause naming what in the direction went wrong. "Try again" is not a cause.
 
-**Order:** Brief → Draft → Cast plates → Script yes → Board → Estimate → Take → Read → Finish.
+**Order:** Brief → Draft → Cast plates → Voices → Script yes → Board → Estimate → Take → Read → Finish.
+
+**Voices:** after the plates, play each character's voice to the human (offer `voice --cast NAME --audition`, $0.30). They keep it (`voice --cast NAME --keep`, or `voice --keep-all`) or pick another (`voice --pick N`). Filming waits for this.
 
 ---
 
@@ -172,7 +174,7 @@ uv run fictora-produce finish --desk <desk>
 
 The last line reads `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`. **NOT DONE** (exit 5) names what is missing; that file is not a deliverable. Wrong caption timing? Re-run with `--line-start <seconds>` and/or `--line-end <seconds>` once per line. Bed too loud under a line? `--duck-db 12`.
 
-A character's voice feels off? Never regenerate: `voice --audition`, you pick, `voice --pick N`, `revoice` the takes they speak in, then `finish --take-file <revoice file>` (skill: "Change a character's voice").
+A character's voice feels off? Never regenerate: `voice --audition`, you pick, `voice --pick N`, `revoice` the takes already filmed that they speak in, then `finish --take-file <revoice file>` (skill: "Change a character's voice").
 
 ---
 

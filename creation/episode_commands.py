@@ -188,6 +188,7 @@ from creation.stranded_voice import (
     stranded_preflight,
     voices_left_without_lines,
 )
+from creation.voice_gate import film_refusal as voices_film_refusal
 from creation.harness_rules import (
     early_extra_shots_stop,
     film_stop_message,
@@ -6301,7 +6302,9 @@ def _run_film(
     seed = seed_attempt_for(desk, episode=episode, take_ids=take_ids)
     unit = f"film-{key}" + (f"-s{seed}" if seed else "")
     spine = run.spine(state.spine_id or "")
-    stopped = film_stop_message(spine, episode=episode)
+    stopped = film_stop_message(spine, episode=episode) or voices_film_refusal(
+        desk, spine, episode=episode
+    )
     if stopped:
         raise CommandStopped(stopped)
     for warning in stranded_preflight(spine, unit=key, desk=desk, episode=episode):

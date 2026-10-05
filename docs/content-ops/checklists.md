@@ -43,6 +43,11 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] A plate refused by image moderation (more often with a child) reported to the human with its job id, not retried blind
 - [ ] Human has opened the contact sheet and said yes
 
+## Voices (after the plates, before filming)
+
+- [ ] Every speaking character's locked voice was shown to the human (`voice --desk D --list`), with an audition offered (`voice --cast NAME --audition`, $0.30 a character, only after their yes)
+- [ ] Each voice kept (`voice --cast NAME --keep` / `--keep-all`) or picked (`--pick N`) by the human; never kept for them
+
 ## Before the script is approved
 
 - [ ] Three or fewer lines per 15s take
@@ -103,6 +108,7 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 ## Before the take is enrolled
 
 - [ ] Cast approved and on screen
+- [ ] Every speaking voice kept or picked (filming refuses until it is)
 - [ ] Lines approved, three or fewer
 - [ ] Board approved and bright enough
 - [ ] Hand-off in place when there is a predecessor
