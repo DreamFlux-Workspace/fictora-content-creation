@@ -80,6 +80,10 @@ _MOUTH_SHOWN = re.compile(r"\bmouth\b|\blips\b", re.IGNORECASE)
 _HANDS_ON = ("pour", "ladle", "slam", "slide", "chop", "fold")
 #: A cue this close to 0 s sits on the opening line.
 _OPENING_CUE_SECONDS = 0.05
+#: Ends an episode's deliberate opening hook (fictora-drama ``opening_sound``): it belongs at 0 s.
+OPENING_SOUND_MARKER = "on the first frame"
+#: Every episode's first take carries an audible event inside this window (founder decision, 5 Oct 2026).
+OPENING_WINDOW_SECONDS = 0.5
 
 #: What ``finish`` prints when the cover route answers an audio error.
 THUMBNAIL_AUDIO_ERROR = (
@@ -1015,10 +1019,28 @@ def mouth_sound_note(description: str) -> str | None:
     )
 
 
+def is_opening_cue(sound: str) -> bool:
+    """Whether a cue is an episode's deliberate opening hook (its words end "on the first frame").
+
+    Parameters
+    ----------
+    sound
+        The cue's Sound label as the take facts carry it.
+
+    Returns
+    -------
+    bool
+        True for the server's opening hook.
+    """
+
+    return OPENING_SOUND_MARKER in sound.casefold()
+
+
 def opening_sound_line(sound: str, start: float) -> str | None:
-    """Warn when a cue sits on the opening line.
+    """Warn when a cue sits on the opening line by accident.
 
     A sound at 0 s lands on the first line. Place it on the frame the action lands.
+    The episode's opening hook is the one cue that belongs there, so it is never named.
 
     Parameters
     ----------
@@ -1030,12 +1052,42 @@ def opening_sound_line(sound: str, start: float) -> str | None:
     Returns
     -------
     str | None
-        The warning, or ``None`` when the cue starts after the opening.
+        The warning, or ``None`` when the cue starts after the opening or is the opening hook.
     """
 
-    if start > _OPENING_CUE_SECONDS:
+    if start > _OPENING_CUE_SECONDS or is_opening_cue(sound):
         return None
     return (
         f'!! "{sound}" sits at {start:.2f}s, on the opening line. '
         "Place it on the frame the action lands."
+    )
+
+
+def opening_sound_flat(
+    cues: Sequence[tuple[str, float]], *, episode: int
+) -> str | None:
+    """Warn (``opening_sound_flat``) when an episode's first half second has no sound event.
+
+    Every episode opens on a deliberate, audible event tied to its first picture
+    (founder decision, 5 Oct 2026). A nudge, never a block: the finish goes on.
+
+    Parameters
+    ----------
+    cues
+        ``(sound, start)`` of every effect laid on the episode's first take.
+    episode
+        The episode number, for the message.
+
+    Returns
+    -------
+    str | None
+        The warning, or ``None`` when a cue starts inside the opening window.
+    """
+
+    if any(start <= OPENING_WINDOW_SECONDS for _sound, start in cues):
+        return None
+    return (
+        f"!! opening_sound_flat: episode {episode} has no sound in its first {OPENING_WINDOW_SECONDS:g} s. "
+        "Refresh take 1's facts (fictora-produce take-facts --refresh) so the server plans the opening hook: "
+        "one event tied to the first picture (a door, a phone buzz, a breath)."
     )

@@ -29,6 +29,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from creation.harness_rules import is_opening_cue
 from creation.post.audio_service import AudioService, download
 from creation.post.media import LIMITER, measure_rms_windows, probe_video, run_ffmpeg
 
@@ -39,6 +40,10 @@ SFX_MIN_SECONDS = 0.5
 SFX_MAX_SECONDS = 22.0
 SFX_MIN_PLACED_SECONDS = 0.25
 SFX_SPEECH_DUCK_DB = -10.0
+#: The episode's opening hook at 0 s: 4 dB over an ordinary effect and still under the take. The
+#: finish's measured gain (about -18 LUFS here; the server's join levels to -14 LUFS) and its one
+#: limiter (``media.LIMITER``, peaks held at about -1 dBFS) set the delivered level, so it never clips.
+OPENING_SOUND_GAIN_DB = -4.0
 SILENCE_DB = -50.0
 
 Renderer = Callable[["SfxCue", Path], Path]
@@ -245,13 +250,20 @@ def noted_gain_db(cue: dict[str, Any]) -> float:
     Returns
     -------
     float
-        :data:`SFX_GAIN_DB` when the cue carries no offset (an older server, or no level note).
+        :data:`SFX_GAIN_DB` when the cue carries no offset (an older server, or no level note);
+        :data:`OPENING_SOUND_GAIN_DB` for the episode's opening hook.
     """
 
+    # The episode's opening hook plays at its own known level (fictora-drama opening_sound).
+    base = (
+        OPENING_SOUND_GAIN_DB
+        if is_opening_cue(str(cue.get("sound") or ""))
+        else SFX_GAIN_DB
+    )
     offset = cue.get("gain_offset_db")
     if isinstance(offset, bool) or not isinstance(offset, (int, float)):
-        return SFX_GAIN_DB
-    return _clamp_gain(SFX_GAIN_DB + float(offset))
+        return base
+    return _clamp_gain(base + float(offset))
 
 
 def plan_from_take_facts(payload: dict[str, Any]) -> SfxPlan:

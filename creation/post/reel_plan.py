@@ -1846,6 +1846,7 @@ def post_text(
     question: str = "",
     genre: str = "",
     has_next: bool = True,
+    premise_line: str = "",
 ) -> str:
     """The suggested post text: where the call to action goes (never in the reel).
 
@@ -1862,6 +1863,9 @@ def post_text(
         For up to two plain hashtags, one per genre (:func:`genre_hashtags`).
     has_next
         Whether to point at the next episode.
+    premise_line
+        The show's one-sentence premise (``spine.premise_line``). When set it is the post's
+        title, the line people forward, and "Series · Episode N" moves under it.
 
     Returns
     -------
@@ -1870,7 +1874,7 @@ def post_text(
     """
 
     head = f"{series} · Episode {episode}" + (f": {title}" if title else "")
-    lines = [head, ""]
+    lines = [premise_line.strip(), head, ""] if premise_line.strip() else [head, ""]
     if question:
         lines.append(question.strip())
     lines.append(

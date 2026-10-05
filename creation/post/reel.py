@@ -1110,6 +1110,7 @@ def _run_reel(
             title=str(summary.get("title") or ""),
             question=str(summary.get("hook_question") or ""),
             genre=str(spine.get("microdrama_genre") or ""),
+            premise_line=str(spine.get("premise_line") or ""),
         ),  # fmt: skip
     )
     result.video, result.post, result.seconds, result.loudness, result.captions = (
