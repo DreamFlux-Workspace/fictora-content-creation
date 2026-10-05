@@ -228,7 +228,7 @@ from creation.post.soundtrack import (
     unheard_lines,
 )
 from creation.post.voice_fx import PRESETS as VOICE_FX_PRESETS
-from creation.harness_rules import opening_sound_line
+from creation.harness_rules import opening_sound_flat, opening_sound_line
 from creation.post.sfx import (
     Adjustment,
     Cuts,
@@ -1399,6 +1399,14 @@ def run_finish(
             print(f"[sfx] {warning}", file=out, flush=True)
             append_run_note(run_dir, f"Finish · sfx: {warning}")
         plan, filmed_note = on_filmed_cuts(plan_from_take_facts(payload), payload, take)
+        if thoughts.take_number(take_id) == 1 and (
+            flat := opening_sound_flat(
+                tuple((c.sound, c.start) for c in plan.cues), episode=episode
+            )
+        ):
+            # Every episode opens on an audible event (founder decision, 5 Oct 2026): a nudge, never a stop.
+            print(f"[sfx] {flat}", file=out, flush=True)
+            append_run_note(run_dir, f"Finish · sfx: {flat}")
         in_track: list[Any] = []
         if locked and soundtrack.sfx_laid:
             # The server already laid these effects in the dialogue track (#575/#583): never twice.

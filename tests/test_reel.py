@@ -360,6 +360,7 @@ def reel_desk(tmp_path: Path) -> Path:
     )  # fmt: skip
     spine = {
         "title": "Tiny Show",
+        "premise_line": "The door was never locked.",
         "microdrama_genre": "mystery",
         "episode_summaries": [{"episode_id": "episode_01", "ordinal": 1, "title": "The Door"}],
         "frames": [
@@ -418,6 +419,10 @@ def test_reel_plans_then_renders_only_new_files_under_reels(reel_desk: Path) -> 
     assert result.video is not None and result.video.name == "reel-ep01-v2.mp4"
     assert result.post is not None and "Episode 2 is next" in result.post.read_text(
         encoding="utf-8"
+    )
+    # The show's premise line is the post's title (founder decision, 5 Oct 2026).
+    assert result.post.read_text(encoding="utf-8").startswith(
+        "The door was never locked.\nTiny Show"
     )
     assert result.ass is not None
     texts = [c.text for c in parse_ass_cues(result.ass.read_text(encoding="utf-8"))]
