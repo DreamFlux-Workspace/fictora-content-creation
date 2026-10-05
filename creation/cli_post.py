@@ -29,6 +29,7 @@ POST_COMMANDS = (
             "voice-mode",
             "caption-style",
             "hook-line",
+            "music-blend",
             "voice-fx",
             "revoice",
             "voice-line",
@@ -254,6 +255,28 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         default=None,
         choices=("bold", "subtle", "house", "plain", "none"),
         help="Save this style for the show (finish, caption and reel read it).",
+    )
+
+    blend = sub.add_parser(
+        "music-blend",
+        help="Which music families the show's score may play (free): up to three of romance, suspense, mystery, "
+        "comedy, action, drama, horror, slice_of_life. Without --set it prints the show's blend and why. "
+        "Offer --set only when the human says the music feels off or asks for it; it never gates filming. "
+        "Only takes filmed afterwards play a change.",
+    )
+    blend.add_argument("--desk", type=Path, required=True)
+    blend_choice = blend.add_mutually_exclusive_group()
+    blend_choice.add_argument(
+        "--set",
+        dest="set_to",
+        default=None,
+        metavar="A,B",
+        help="Store this blend for the show, e.g. romance,suspense (only on the human's say-so).",
+    )
+    blend_choice.add_argument(
+        "--default",
+        action="store_true",
+        help="Drop the show's own blend: back to its genre's.",
     )
 
     fx = sub.add_parser(
@@ -758,6 +781,11 @@ def dispatch_post(args: argparse.Namespace) -> int:
         from creation.caption_preview import run_caption_style
 
         run_caption_style(args.desk, set_to=args.set_to)
+        return 0
+    if args.command == "music-blend":
+        from creation.music_blend import run_music_blend
+
+        run_music_blend(args.desk, set_to=args.set_to, default=args.default)
         return 0
     if args.command == "voice-fx":
         from creation.ops.notes import append_run_note
