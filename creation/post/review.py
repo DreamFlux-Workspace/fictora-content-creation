@@ -1686,7 +1686,7 @@ def review_take(
     text_ocr
         The text check's OCR, injected for tests (default the ``tesseract`` command).
     face_detector
-        The opening check's face detector: ``"local"`` (OpenCV when installed),
+        The opening check's face detector: ``"local"`` (both OpenCV cascades),
         ``None`` (the take facts' head count), or a test's stand-in.
 
     Returns
@@ -1833,7 +1833,7 @@ def review_take(
         )
     if take_id == "t1" or "reel" in steps:
         # Every episode's first take, and every reel: the first second decides the scroll.
-        from creation.post.faces import local_detector
+        from creation.post.faces import detector_for
         from creation.post.opening import OPENING_SECONDS, opening_context
 
         if "reel" in steps:
@@ -1851,7 +1851,7 @@ def review_take(
                 head_count_face=head_face,
                 detector=face_detector
                 if face_detector != "local"
-                else local_detector(),
+                else detector_for(desk, episode),
             )  # fmt: skip
         )
     if "reel" in steps:

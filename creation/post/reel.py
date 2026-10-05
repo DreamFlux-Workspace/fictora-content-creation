@@ -60,7 +60,7 @@ from creation.captions import (
     find_ffmpeg,
     resolve_caption_style,
 )
-from creation.post.faces import Detector, face_track, local_detector, nearest_scores
+from creation.post.faces import Detector, detector_for, face_track, nearest_scores
 from creation.post.finish_record import FinishRecord, finish_records, record_for_file
 from creation.post.media import decode_frames, probe_video, run_ffmpeg
 from creation.post.reel_plan import (
@@ -389,7 +389,7 @@ def measure_take(
     )
     del frames
     samples = tuple(round(i / MEASURE_FPS, 4) for i in range(len(gray)))
-    # Faces by the local detector when installed (`uv sync --extra faces`), else the shots' head count.
+    # Faces by the local detectors; the shots' head count only when OpenCV failed to load.
     track = face_track(source.source, detector) if detector is not None else None
     faces = nearest_scores(track, samples) if track else ()
     shots: tuple[Shot, ...] = ()
@@ -920,7 +920,8 @@ def run_reel(
     stream
         Progress output (stdout by default).
     detector
-        The face detector: ``"local"`` (default) uses OpenCV when installed,
+        The face detector: ``"local"`` (default) both OpenCV cascades, the anime one
+        first on an anime / manhwa show (:func:`creation.post.faces.detector_for`);
         ``None`` the take facts' head count; tests pass a stand-in.
 
     Returns
@@ -933,7 +934,11 @@ def run_reel(
         from creation.post.ending import check_ending
 
         check_ending(ending)
-    found = local_detector() if detector == "local" else detector
+    found = (
+        detector_for(desk.expanduser().resolve(), episode)
+        if detector == "local"
+        else detector
+    )
     # Edited copies of an inferred source live in a scratch folder for the whole run, never on the desk.
     with tempfile.TemporaryDirectory(prefix="fictora-reel-") as tmp:
         return _run_reel(
@@ -1025,9 +1030,9 @@ def _run_reel(
     )
     takes = [measure_take(desk, episode, s, detector=detector) for s in srcs]
     print(
-        "Faces: by the local face detector (OpenCV)"
+        "Faces: by the local face detectors (OpenCV real + anime faces, unioned)"
         if detector is not None
-        else "Faces: by the take facts' head count (no face detector installed; `uv sync --extra faces` adds one)",
+        else "!! Faces: by the take facts' head count (no face detector: OpenCV did not load; `uv sync`)",
         file=out,
         flush=True,
     )

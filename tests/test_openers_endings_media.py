@@ -256,12 +256,12 @@ def test_the_ending_flag_is_on_reel_and_join() -> None:
 
 
 def test_the_local_detector_finds_no_face_on_a_flat_frame() -> None:
-    from creation.post.faces import local_detector
+    from creation.post.faces import ANIME_CASCADE, _cascade, local_detector
 
-    detector = local_detector()
-    if detector is None:
-        pytest.skip(
-            "opencv-python-headless 4.x is not installed (uv sync --extra faces)"
-        )
-    reading = detector(np.full((480, 270, 3), 128, dtype=np.uint8))
-    assert reading.count == 0 and reading.score == 0.0
+    assert ANIME_CASCADE.is_file(), "the anime cascade is vendored"
+    assert _cascade("human") is not None and _cascade("anime") is not None
+    for anime in (None, True):
+        detector = local_detector(anime=anime)
+        assert detector is not None, "OpenCV is a default dependency"
+        reading = detector(np.full((480, 270, 3), 128, dtype=np.uint8))
+        assert reading.count == 0 and reading.score == 0.0 and reading.boxes == ()

@@ -673,13 +673,13 @@ def take_inner_voice(
 def _opening_lines(desk: Path, episode: int, take_id: str, final: Path) -> list[str]:
     """``⚠`` lines for how the finished first take opens (:mod:`creation.post.opening`)."""
 
-    from creation.post.faces import local_detector
+    from creation.post.faces import detector_for
     from creation.post.opening import measure_opening, opening_context
 
     silent, head_face = opening_context(desk, episode, take_id)
     try:
         reading = measure_opening(
-            final, detector=local_detector(), head_count_face=head_face,
+            final, detector=detector_for(desk, episode), head_count_face=head_face,
             silent_open=silent, where=f"ep{episode:02d} {take_id}",
         )  # fmt: skip
     except MediaToolError as exc:

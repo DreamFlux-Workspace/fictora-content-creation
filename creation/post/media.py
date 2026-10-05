@@ -395,7 +395,12 @@ def decode_frames(
 
 
 def iter_frames(
-    path: Path, *, width: int, height: int, fps: float | None = None
+    path: Path,
+    *,
+    width: int,
+    height: int,
+    fps: float | None = None,
+    start: float | None = None,
 ) -> Iterator[npt.NDArray[np.uint8]]:
     """Stream a video's frames one at a time as RGB ``uint8`` (a whole take never sits in memory).
 
@@ -407,6 +412,8 @@ def iter_frames(
         Frame size.
     fps
         Resample to this rate first; ``None`` keeps every frame.
+    start
+        Seek to this second first (``None``: from the start).
 
     Yields
     ------
@@ -424,8 +431,9 @@ def iter_frames(
         if fps is None
         else f"fps={fps},scale={width}:{height}"
     )
+    seek = ["-ss", f"{start:.3f}"] if start else []
     proc = subprocess.Popen(
-        [ffmpeg_bin(), "-nostdin", "-v", "error", "-i", str(path), "-vf", vf,
+        [ffmpeg_bin(), "-nostdin", "-v", "error", *seek, "-i", str(path), "-vf", vf,
          "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )  # fmt: skip

@@ -40,12 +40,8 @@ source = { editable = "." }
 dependencies = [
     { name = "httpx" },
     { name = "numpy" },
-    { name = "pillow" },
-]
-
-[package.optional-dependencies]
-faces = [
     { name = "opencv-python-headless" },
+    { name = "pillow" },
 ]
 
 [package.dev-dependencies]
@@ -57,10 +53,9 @@ test = [
 requires-dist = [
     { name = "httpx", specifier = ">=0.28" },
     { name = "numpy", specifier = ">=2.0" },
-    { name = "opencv-python-headless", marker = "extra == 'faces'", specifier = ">=4.9,<5" },
+    { name = "opencv-python-headless", specifier = ">=4.9,<5" },
     { name = "pillow", specifier = ">=10.0" },
 ]
-provides-extras = ["faces"]
 
 [package.metadata.requires-dev]
 test = [{ name = "pytest", specifier = ">=8.0" }]

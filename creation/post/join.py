@@ -996,7 +996,7 @@ def edge_notes(
         ``⚠ ...`` lines (empty when nothing is out of line).
     """
 
-    from creation.post.faces import local_detector
+    from creation.post.faces import detector_for
     from creation.post.opening import (
         measure_opening,
         measure_tail,
@@ -1007,7 +1007,7 @@ def edge_notes(
     first = parts[0]
     silent, head_face = opening_context(desk, first.episode, first.take_id)
     reading = measure_opening(
-        master, detector=local_detector(), head_count_face=head_face,
+        master, detector=detector_for(desk, first.episode), head_count_face=head_face,
         silent_open=silent, where=f"ep{first.episode:02d} (joined)",
     )  # fmt: skip
     lines = [f"⚠ {w}" for w in reading.warnings]

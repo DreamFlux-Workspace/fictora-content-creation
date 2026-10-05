@@ -7,17 +7,14 @@ requires-python = ">=3.12,<3.15"
 dependencies = [
   "httpx>=0.28",
   "numpy>=2.0",
+  # Face checks (reel cold open, openings, hook line placement). <5: OpenCV 5 dropped CascadeClassifier.
+  "opencv-python-headless>=4.9,<5",
   "pillow>=10.0",
 ]
 
 [project.scripts]
 fictora-ops = "creation.cli_ops:main"
 fictora-produce = "creation.cli_produce:main"
-
-[project.optional-dependencies]
-faces = [
-    "opencv-python-headless>=4.9,<5",
-]
 
 [build-system]
 requires = ["hatchling"]
