@@ -7,6 +7,7 @@ import math
 import re
 import shutil
 import subprocess
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -342,6 +343,7 @@ def decode_frames(
     height: int,
     fps: float | None = None,
     max_frames: int | None = None,
+    start: float | None = None,
 ) -> npt.NDArray[np.float64]:
     """Decode a video's frames as RGB scaled to ``width`` x ``height``.
 
@@ -355,6 +357,8 @@ def decode_frames(
         Resample to this rate first; ``None`` keeps every frame.
     max_frames
         Stop after this many frames.
+    start
+        Seek to this second first (``None``: from the start).
 
     Returns
     -------
@@ -372,7 +376,10 @@ def decode_frames(
         if fps is None
         else f"fps={fps},scale={width}:{height}"
     )
-    args = [ffmpeg_bin(), "-nostdin", "-v", "error", "-i", str(path)]
+    args = [ffmpeg_bin(), "-nostdin", "-v", "error"]
+    if start:
+        args += ["-ss", f"{start:.3f}"]
+    args += ["-i", str(path)]
     if max_frames is not None:
         args += ["-frames:v", str(max_frames)]
     args += ["-vf", vf, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
@@ -385,3 +392,70 @@ def decode_frames(
     size = width * height * 3
     count = raw.size // size
     return raw[: count * size].reshape(count, height, width, 3).astype(np.float64)
+
+
+def iter_frames(
+    path: Path,
+    *,
+    width: int,
+    height: int,
+    fps: float | None = None,
+    start: float | None = None,
+) -> Iterator[npt.NDArray[np.uint8]]:
+    """Stream a video's frames one at a time as RGB ``uint8`` (a whole take never sits in memory).
+
+    Parameters
+    ----------
+    path
+        Video file.
+    width, height
+        Frame size.
+    fps
+        Resample to this rate first; ``None`` keeps every frame.
+    start
+        Seek to this second first (``None``: from the start).
+
+    Yields
+    ------
+    numpy.ndarray
+        ``(height, width, 3)`` uint8 frames.
+
+    Raises
+    ------
+    MediaToolError
+        When ffmpeg fails.
+    """
+
+    vf = (
+        f"scale={width}:{height}"
+        if fps is None
+        else f"fps={fps},scale={width}:{height}"
+    )
+    seek = ["-ss", f"{start:.3f}"] if start else []
+    proc = subprocess.Popen(
+        [ffmpeg_bin(), "-nostdin", "-v", "error", *seek, "-i", str(path), "-vf", vf,
+         "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )  # fmt: skip
+    size = width * height * 3
+    assert proc.stdout is not None
+    finished = False
+    try:
+        while True:
+            raw = proc.stdout.read(size)
+            if len(raw) < size:
+                finished = True
+                break
+            yield np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
+    finally:
+        proc.stdout.close()
+        if not finished:
+            # The reader stopped early: ffmpeg is still writing, so stop it rather than read the rest.
+            proc.kill()
+            proc.wait()
+        else:
+            err = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
+            if proc.wait() != 0:
+                raise MediaToolError(
+                    f"frame decode failed on {path.name}: {err[-300:]}"
+                )

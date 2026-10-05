@@ -200,8 +200,12 @@ def test_finish_deboards_first_and_later_steps_keep_the_raw_timeline(
         and "1.0" in captions.detail
         and "3.2" in captions.detail
     ), captions.detail
+    # The clones (a held still) are cut off last: frame 0 is the first real frame, the picture moves at once.
+    assert count_frames(result.final) == count_frames(raw) - 2
+    assert "held head cut" in out.getvalue()
     final = _frames(result.final)
-    assert np.abs(final[0] - final[2]).mean() < 3, (
+    board_px = _frames(raw)[0]
+    assert np.abs(final[0] - board_px).mean() > 10, (
         "the finished take no longer opens on the board"
     )
 

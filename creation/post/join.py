@@ -764,7 +764,7 @@ def seam_levels(
     side is speech end to end, the search reaches up to
     :data:`SEAM_SEARCH_SECONDS` from the seam for pauses; failing that, the
     whole side is measured as it is, so a dead-quiet tail against speech is
-    still caught. The bed's fade in (first 1 s) and fade out (last 1.5 s) are
+    still caught. The bed's fade in (first 1 s) and its end click guard are
     left out.
     """
 
@@ -966,6 +966,58 @@ def _join_bedless(
 # --- the command --------------------------------------------------------------------------------
 
 
+def edge_notes(
+    desk: Path,
+    master: Path,
+    parts: list[JoinPart],
+    *,
+    speech: list[tuple[float, float]],
+) -> list[str]:
+    """⚠ lines for how the joined file opens (its first episode's first take) and ends (a settled tail).
+
+    Warnings only (:mod:`creation.post.opening`): a dark, static or faceless
+    first second, and more than 0.3 s settled after the last line or action.
+    The last line is the end of the last known speech on the joined timeline.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    master
+        The joined master.
+    parts
+        The parts in order.
+    speech
+        Speech windows on the joined timeline.
+
+    Returns
+    -------
+    list[str]
+        ``⚠ ...`` lines (empty when nothing is out of line).
+    """
+
+    from creation.post.faces import detector_for
+    from creation.post.opening import (
+        measure_opening,
+        measure_tail,
+        opening_context,
+        tail_warning,
+    )
+
+    first = parts[0]
+    silent, head_face = opening_context(desk, first.episode, first.take_id)
+    reading = measure_opening(
+        master, detector=detector_for(desk, first.episode), head_count_face=head_face,
+        silent_open=silent, where=f"ep{first.episode:02d} (joined)",
+    )  # fmt: skip
+    lines = [f"⚠ {w}" for w in reading.warnings]
+    tail = measure_tail(master, last_mark=max((b for _, b in speech), default=None))
+    line = tail_warning(tail, what="the joined episode")
+    if line:
+        lines.append(f"⚠ {line}")
+    return lines
+
+
 def _agreed(values: list[Any], default: Any) -> Any:
     distinct = {json.dumps(v) for v in values}
     return values[0] if len(distinct) == 1 else default
@@ -984,6 +1036,7 @@ def run_join(
     watermark_y: int | None = None,
     accept_seam: str | None = None,
     accepted_by: str | None = None,
+    ending: str = "hard",
     stream: TextIO | None = None,
 ) -> JoinResult:
     """Join finished takes with one bed across them, and mark the joined file once.
@@ -1015,6 +1068,11 @@ def run_join(
         the join is marked anyway, and who and why go in the run notes.
     accepted_by
         Who accepted (required with ``accept_seam``).
+    ending
+        ``hard`` (default): the episode ends on its last frame, the bed stops
+        with it. ``freeze-black``: the marked file holds its last frame, then
+        cuts to black (:func:`creation.post.ending.apply_ending`); the master
+        stays as joined.
     stream
         Progress output (stderr by default).
 
@@ -1034,6 +1092,9 @@ def run_join(
         When the joined file is not 24 frames a second.
     """
 
+    from creation.post.ending import apply_ending, check_ending
+
+    check_ending(ending)
     out = stream or sys.stderr
     desk = desk.expanduser().resolve()
     accept_seam = (accept_seam or "").strip() or None
@@ -1162,6 +1223,7 @@ def run_join(
             speech_notes.append(short)
     if gain_note:
         speech_notes.append(gain_note)
+    speech_notes += edge_notes(desk, master, parts, speech=speech)
     levels = seam_levels(master, seams, speech=speech)
     result = JoinResult(
         parts=parts, master=master, marked=None, bed=bed, gains_db=gains, dissolves=dissolves, seams=seams,
@@ -1195,9 +1257,17 @@ def run_join(
             )
     else:
         marked_stem = f"{stem}-sokii"
-        result.marked = watermark(
-            master, next_versioned_path(folder, marked_stem, ".mp4"), y=watermark_y
-        )
+        target = next_versioned_path(folder, marked_stem, ".mp4")
+        if ending == "hard":
+            result.marked = watermark(master, target, y=watermark_y)
+        else:
+            with tempfile.TemporaryDirectory() as scratch:
+                marked = watermark(master, Path(scratch) / "marked.mp4", y=watermark_y)
+                result.marked = apply_ending(marked, target, style=ending)
+            result.notes.append(
+                f"ending {ending}: the marked file holds its last frame, then cuts to black "
+                "(the master stays as joined)"
+            )
     summary = result.summary_lines()
     for run_dir in run_dirs:
         append_run_note(run_dir, "Join\n" + "\n".join(summary))

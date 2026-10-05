@@ -46,6 +46,14 @@ command exits 0 whatever it finds.
    (:func:`creation.post.safe_zones.run_review`, unchanged): the caption box on
    sampled frames against the covered zones and the caption band, with the zone
    sheet and its JSON written beside the take for the face check by eye.
+8. **Opening** (take 1 of every episode, and every reel) - the first second
+   (:mod:`creation.post.opening`): a dark frame 0 (and first 0.5 s), a static
+   head (no meaningful motion in the first second), and no face on frame 0
+   (the local face detector when installed, else the take facts' head count
+   for the first shot; not checked when the opening beat has no spoken line,
+   or for a reel when no caption plays in its first second). Warnings only.
+9. **Ending** (reels) - more than 0.3 s settled after the last caption or the
+   last motion: the cut should land on the peak.
 
 With no ``--take-file`` (alias ``--file``) it reads the newest finished file for
 the take, else the newest raw take, and the block's first line says which.
@@ -1570,6 +1578,79 @@ def server_transcript(
     return saved
 
 
+def _beside_cues(take: Path) -> list[Any]:
+    """The caption cues of the ``.ass`` beside ``take`` (a reel's), else none."""
+
+    ass = take.with_suffix(".ass")
+    if not ass.is_file():
+        return []
+    from creation.post.reel import parse_ass_cues
+
+    return parse_ass_cues(ass.read_text(encoding="utf-8"))
+
+
+def opening_section(
+    take: Path,
+    *,
+    where: str,
+    silent_open: bool,
+    head_count_face: float | None,
+    detector: Any = None,
+) -> Section:
+    """The first second (:mod:`creation.post.opening`): a dark frame 0, a static head, no face on frame 0.
+
+    Run on the first take of every episode and on every reel. Warnings only.
+    """
+
+    from creation.post.opening import (
+        DARK_LUMA,
+        OPENING_SECONDS,
+        STATIC_MOTION,
+        measure_opening,
+    )
+
+    reading = measure_opening(
+        take, detector=detector, head_count_face=head_count_face,
+        silent_open=silent_open, where=where,
+    )  # fmt: skip
+    face = (
+        "not checked (a silent / visual opening)"
+        if silent_open
+        else "not checked (no face detector, no head count in the take facts)"
+        if reading.face is None
+        else f"{reading.face:.2f} by {reading.face_source.replace('_', ' ')}"
+    )
+    summary = (
+        f"frame 0 luma {reading.frame0_luma:.3f}, first {OPENING_SECONDS:g} s motion {reading.motion:.4f}, "
+        f"face {face}"
+    )
+    threshold = (
+        f"dark: luma < {DARK_LUMA:g} on frame 0 and the first 0.5 s; static: mean frame-to-frame < "
+        f"{STATIC_MOTION:g} over {OPENING_SECONDS:g} s; face on frame 0 unless the opening beat has no line"
+    )
+    return Section(
+        "Opening", WARN if reading.warnings else OK, summary, threshold,
+        list(reading.warnings), {"opening": reading.as_json()},
+    )  # fmt: skip
+
+
+def ending_section(take: Path, *, last_mark: float | None, what: str) -> Section:
+    """The tail (:mod:`creation.post.opening`): more than 0.3 s settled after the last line or action."""
+
+    from creation.post.opening import TAIL_MAX_SECONDS, measure_tail, tail_warning
+
+    reading = measure_tail(take, last_mark=last_mark)
+    line = tail_warning(reading, what=what)
+    summary = f"{reading.settled_seconds:.2f} s after the last line or action" + (
+        "" if last_mark is not None else " (no caption times: motion only)"
+    )
+    return Section(
+        "Ending", WARN if line else OK, summary,
+        f"settled tail ≤ {TAIL_MAX_SECONDS:g} s; ends hard on the last frame",
+        [line] if line else [], {"tail": reading.as_json()},
+    )  # fmt: skip
+
+
 def review_take(
     desk: Path,
     *,
@@ -1581,6 +1662,7 @@ def review_take(
     transcribe: bool = False,
     transcriber: Transcribe | None = None,
     text_ocr: Any = None,
+    face_detector: Any = "local",
 ) -> TakeReview:
     """Measure one take and return the review. Reads only; writes nothing but an optional transcript.
 
@@ -1603,6 +1685,9 @@ def review_take(
         Injected for tests.
     text_ocr
         The text check's OCR, injected for tests (default the ``tesseract`` command).
+    face_detector
+        The opening check's face detector: ``"local"`` (both OpenCV cascades),
+        ``None`` (the take facts' head count), or a test's stand-in.
 
     Returns
     -------
@@ -1745,6 +1830,38 @@ def review_take(
     if facts is not None and "soundtrack" in facts.get("take_facts", facts):
         sections.append(
             soundtrack_section(facts, cast_names_from(found[0] if found else None))
+        )
+    if take_id == "t1" or "reel" in steps:
+        # Every episode's first take, and every reel: the first second decides the scroll.
+        from creation.post.faces import detector_for
+        from creation.post.opening import OPENING_SECONDS, opening_context
+
+        if "reel" in steps:
+            cues = _beside_cues(take)
+            silent, head_face = not any(c.start < OPENING_SECONDS for c in cues), None
+            where = "the reel's first second"
+        else:
+            silent, head_face = opening_context(desk, episode, take_id)
+            where = f"ep{episode:02d} {take_id}"
+        sections.append(
+            opening_section(
+                take,
+                where=where,
+                silent_open=silent,
+                head_count_face=head_face,
+                detector=face_detector
+                if face_detector != "local"
+                else detector_for(desk, episode),
+            )  # fmt: skip
+        )
+    if "reel" in steps:
+        cues = _beside_cues(take)
+        sections.append(
+            ending_section(
+                take,
+                last_mark=max((c.end for c in cues), default=None),
+                what="the reel",
+            )
         )
     if kind == "finished":
         sections.append(safe_zones_section(take))

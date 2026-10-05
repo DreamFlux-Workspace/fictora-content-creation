@@ -3,7 +3,9 @@
 - The take's own audio (voice, and the SFX layer when it ran) gets one gain,
   measured so the mix lands near -18 LUFS (band -20 to -15): the take is
   measured, mixed, and corrected once when the bed moved it more than 1 LU.
-- The bed loops to cover the picture, fades in over 1 s and out over 1.5 s.
+- The bed loops to cover the picture and fades in over 1 s. It stops hard
+  with the last frame (a 50 ms click guard, not a fade): the take, the reel
+  and the joined episode end on the peak, never on music dying away.
 - Ducking: by default a sidechain compressor keyed on the take's audio; with
   ``duck_db`` the bed drops by exactly that many dB inside the voice windows
   (ramped over 80 ms).
@@ -45,7 +47,8 @@ VOICE_KEY_DB = -30.0
 VOICE_WINDOW_SECONDS = 0.1
 VOICE_MERGE_SECONDS = 0.6
 BED_FADE_IN_SECONDS = 1.0
-BED_FADE_OUT_SECONDS = 1.5
+#: The bed's end ramp: a click guard only. The file ends hard on its last frame (no fade-out).
+BED_FADE_OUT_SECONDS = 0.05
 #: A cue this far under the bed is inaudible (a -31 dB RMS neck crack at +8 dB sat 21 dB under, SCP-173).
 QUIET_CUE_DB = 12.0
 #: Where the warning asks a raised cue to land: this far under the bed at most.

@@ -60,6 +60,7 @@ from creation.captions import (
     find_ffmpeg,
     resolve_caption_style,
 )
+from creation.post.faces import Detector, detector_for, face_track, nearest_scores
 from creation.post.finish_record import FinishRecord, finish_records, record_for_file
 from creation.post.media import decode_frames, probe_video, run_ffmpeg
 from creation.post.reel_plan import (
@@ -70,6 +71,8 @@ from creation.post.reel_plan import (
     Shot,
     TakeInput,
     check_plan,
+    ending_from_json,
+    last_beat_from_json,
     plan_json,
     plan_reel,
     post_text,
@@ -339,8 +342,10 @@ def _named_counts(facts: Mapping[str, Any]) -> dict[int, int]:
     return counts
 
 
-def measure_take(desk: Path, episode: int, source: TakeSource) -> TakeInput:
-    """Measure one take for the planner: cuts, 8 fps motion and contrast, shots as filmed, captions.
+def measure_take(
+    desk: Path, episode: int, source: TakeSource, *, detector: Detector | None = None
+) -> TakeInput:
+    """Measure one take for the planner: cuts, 8 fps motion, contrast and luma, faces, shots as filmed, captions.
 
     Parameters
     ----------
@@ -348,6 +353,9 @@ def measure_take(desk: Path, episode: int, source: TakeSource) -> TakeInput:
         Where the take facts are.
     source
         The take's source files.
+    detector
+        The local face detector (:func:`creation.post.faces.local_detector`);
+        ``None`` leaves faces to the take facts' head count.
 
     Returns
     -------
@@ -374,7 +382,16 @@ def measure_take(desk: Path, episode: int, source: TakeSource) -> TakeInput:
     if len(motion) > 1:
         motion[0] = motion[1]
     contrast = gray.std(axis=(1, 2)).tolist() if len(gray) else []
+    lumas = (
+        (frames @ np.asarray([0.299, 0.587, 0.114])).mean(axis=(1, 2)).tolist()
+        if len(frames)
+        else []
+    )
+    del frames
     samples = tuple(round(i / MEASURE_FPS, 4) for i in range(len(gray)))
+    # Faces by the local detectors; the shots' head count only when OpenCV failed to load.
+    track = face_track(source.source, detector) if detector is not None else None
+    faces = nearest_scores(track, samples) if track else ()
     shots: tuple[Shot, ...] = ()
     events: list[float] = []
     facts_path = saved_take_facts(desk, episode, source.take_id)
@@ -419,6 +436,7 @@ def measure_take(desk: Path, episode: int, source: TakeSource) -> TakeInput:
         take_id=source.take_id, duration=info.duration_seconds, fps=info.fps or 24.0,
         shots=shots, cuts=tuple(cuts), cues=cues, sample_seconds=samples,
         motion=tuple(motion), contrast=tuple(contrast), events=tuple(events),
+        luma=tuple(lumas), faces=tuple(faces),
     )  # fmt: skip
 
 
@@ -683,6 +701,10 @@ def render_reel(
 ) -> tuple[float, str, str, list[str]]:
     """Cut the plan from the sources into ``paths['video']`` (and its ``.ass``).
 
+    The reel ends hard on its last frame (the bed stops with it); a plan whose
+    ``ending`` is ``freeze-black`` holds that frame, then cuts to black
+    (:func:`creation.post.ending.apply_ending`).
+
     Returns
     -------
     tuple[float, str, str, list[str]]
@@ -701,7 +723,9 @@ def render_reel(
         pinned_bed,
     )
     from creation.post.join import decode_stereo, loop_bed, write_wav
+    from creation.post.ending import apply_ending
     from creation.post.mix import mix_take
+    from creation.post.reel_plan import BLACK_SECONDS, FREEZE_SECONDS
     from creation.post.watermark import watermark
 
     by_take = {s.take_id: s for s in sources}
@@ -828,16 +852,24 @@ def render_reel(
                 f"{len(cues)} caption cue(s), {grain}, re-timed through the segment map"
             )
         burned = [s.take_id for s in sources if s.inferred and s.inferred.burned]
+        marked = scratch / "reel-marked.mp4"
         if burned:
             # Cut from the accepted (marked) file itself: its mark is already on the picture.
-            run_ffmpeg(["-i", str(captioned), "-c", "copy", str(paths["video"])])
+            run_ffmpeg(["-i", str(captioned), "-c", "copy", str(marked)])
             mark_line = (
                 f"⚠ no second mark: {', '.join(burned)} cut from the accepted file, its own mark and burned "
                 "captions kept as they are"
             )
         else:
-            watermark(captioned, paths["video"], y=watermark_y)
+            watermark(captioned, marked, y=watermark_y)
             mark_line = "Sokii mark top left (as finish applies it)"
+        apply_ending(marked, paths["video"], style=plan.ending)
+        report.append(
+            "ending: hard on the last frame (no tail hold, no fade; the bed stops with it)"
+            if plan.ending == "hard"
+            else f"ending: {plan.ending} ({FREEZE_SECONDS:g} s freeze on the last frame, sound stops on it, "
+            f"then {BLACK_SECONDS:g} s black)"
+        )
     seconds = probe_video(paths["video"]).duration_seconds
     report.append(f"captions: {captions_line}")
     report.append(mark_line)
@@ -859,7 +891,9 @@ def run_reel(
     captions: Sequence[str] = (),
     caption_style: str | None = None,
     watermark_y: int | None = None,
+    ending: str | None = None,
     stream: TextIO | None = None,
+    detector: Detector | None | str = "local",
 ) -> ReelResult:
     """Plan (and unless ``plan_only``, render) the episode's reel. Writes only under ``<desk>/reels/``.
 
@@ -881,8 +915,14 @@ def run_reel(
         ``house`` / ``plain`` / ``none``; default the desk's.
     watermark_y
         Mark top offset override (never into the top 8%).
+    ending
+        ``hard`` (default) or ``freeze-black``; ``None`` keeps a hand-edited plan's own.
     stream
         Progress output (stdout by default).
+    detector
+        The face detector: ``"local"`` (default) both OpenCV cascades, the anime one
+        first on an anime / manhwa show (:func:`creation.post.faces.detector_for`);
+        ``None`` the take facts' head count; tests pass a stand-in.
 
     Returns
     -------
@@ -890,12 +930,22 @@ def run_reel(
         The plan and what was written.
     """
 
+    if ending is not None:
+        from creation.post.ending import check_ending
+
+        check_ending(ending)
+    found = (
+        detector_for(desk.expanduser().resolve(), episode)
+        if detector == "local"
+        else detector
+    )
     # Edited copies of an inferred source live in a scratch folder for the whole run, never on the desk.
     with tempfile.TemporaryDirectory(prefix="fictora-reel-") as tmp:
         return _run_reel(
             desk, episode=episode, seconds=seconds, plan_only=plan_only, plan_file=plan_file,
             take_files=take_files, sources=sources, captions=captions, caption_style=caption_style,
-            watermark_y=watermark_y, stream=stream, scratch=Path(tmp),
+            watermark_y=watermark_y, ending=ending, stream=stream, scratch=Path(tmp),
+            detector=found if not isinstance(found, str) else None,
         )  # fmt: skip
 
 
@@ -911,8 +961,10 @@ def _run_reel(
     captions: Sequence[str],
     caption_style: str | None,
     watermark_y: int | None,
+    ending: str | None,
     stream: TextIO | None,
     scratch: Path,
+    detector: Detector | None,
 ) -> ReelResult:
     from creation.post.desk import saved_spine
     from creation.spine_view import episode_summary
@@ -976,11 +1028,21 @@ def _run_reel(
         file=out,
         flush=True,
     )
-    takes = [measure_take(desk, episode, s) for s in srcs]
+    takes = [measure_take(desk, episode, s, detector=detector) for s in srcs]
+    print(
+        "Faces: by the local face detectors (OpenCV real + anime faces, unioned)"
+        if detector is not None
+        else "!! Faces: by the take facts' head count (no face detector: OpenCV did not load; `uv sync`)",
+        file=out,
+        flush=True,
+    )
     whole = captions_whole_lines(spine)
     if body is None:
         beats = episode_beats(spine, episode, [s.take_id for s in srcs])
-        plan = plan_reel(episode, takes, beats, seconds=seconds)
+        plan = plan_reel(
+            episode, takes, beats, seconds=seconds,
+            genre=str(spine.get("microdrama_genre") or ""), ending=ending or "hard",
+        )  # fmt: skip
         patches = [p for s in srcs for p in s.patches]
     else:
         plan = ReelPlan(
@@ -989,6 +1051,8 @@ def _run_reel(
             segments=segments_from_json(body),
             notes=[f"hand-edited plan `{plan_file.name}`"],
             strongest=strongest_from_json(body.get("strongest")),
+            last_beat=last_beat_from_json(body.get("last_beat")),
+            ending=ending or ending_from_json(body.get("ending")),
         )
         plan.warnings += check_plan(plan, takes)
         patches = list(body.get("patches") or [])
