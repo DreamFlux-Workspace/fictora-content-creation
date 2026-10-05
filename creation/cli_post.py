@@ -40,6 +40,30 @@ POST_COMMANDS = (
 )
 
 
+def add_hook_line_args(parser: argparse.ArgumentParser) -> None:
+    """``--hook-line`` / ``--no-hook-line`` / ``--hook-line-position`` on ``finish`` and ``reel``."""
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--hook-line",
+        default=None,
+        metavar="TEXT",
+        help="Burn this on-screen hook line over the first ~3 s instead of the one the creator selected.",
+    )
+    group.add_argument(
+        "--no-hook-line",
+        action="store_true",
+        help="No hook line (and no letterbox title bar), whatever the spine says.",
+    )
+    parser.add_argument(
+        "--hook-line-position",
+        choices=("top", "lower"),
+        default=None,
+        help="top: just under the top UI strip (the default); lower: just above the captions "
+        "(the default when a face sits in the upper band).",
+    )
+
+
 def add_caption_style_arg(parser: argparse.ArgumentParser) -> None:
     """``--caption-style house|plain|none`` on ``finish`` and ``caption`` (default: the desk's config)."""
 
@@ -381,6 +405,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="No cover on the deliverable (not even a saved one).",
     )
     add_caption_style_arg(fin)
+    add_hook_line_args(fin)
     fin.add_argument(
         "--json", action="store_true", help="Print the report as JSON on stdout."
     )
@@ -498,6 +523,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="The accepted cut's caption file (default: the record master's .ass).",
     )  # fmt: skip
     add_caption_style_arg(reel)
+    add_hook_line_args(reel)
     reel.add_argument("--watermark-y", type=int, default=None)
     add_ending_arg(reel)
 
@@ -639,6 +665,9 @@ def dispatch_post(args: argparse.Namespace) -> int:
             draw_thumbnail=args.thumbnail,
             over_locked_voices=args.over_locked_voices,
             caption_style=args.caption_style,
+            hook_line=args.hook_line,
+            no_hook_line=args.no_hook_line,
+            hook_line_position=args.hook_line_position,
         )
         if args.json:
             print(json.dumps(result.as_json(), indent=2))
@@ -660,6 +689,9 @@ def dispatch_post(args: argparse.Namespace) -> int:
             caption_style=args.caption_style,
             watermark_y=args.watermark_y,
             ending=args.ending,
+            hook_line=args.hook_line,
+            no_hook_line=args.no_hook_line,
+            hook_line_position=args.hook_line_position,
         )
         return 0
     if args.command == "join":

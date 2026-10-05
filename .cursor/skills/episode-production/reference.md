@@ -206,8 +206,11 @@ A raw take is never a deliverable. With `api_captions: false`:
 uv run fictora-produce finish --desk D [--episode N] [--take tK] [--take-file F] [--duck-db N] \
   [--sfx-adjust "door=-6" | "hum=drop" | "shot:3=+4"] [--bed-db N] [--music "change note"] \
   [--line-start S ...] [--line-end S ...] [--no-deboard] [--no-colour-match] [--colour-strength 0..1] [--watermark-y Y] [--json] \
-  [--mute A-B ...] [--voice FILE@S[@DB] ...] [--cue FILE@S[@DB] ...] [--caption-label TEXT@A-B ...] [--sign-overlay] [--caption-style house|plain|none] [--thumbnail | --no-thumbnail]
+  [--mute A-B ...] [--voice FILE@S[@DB] ...] [--cue FILE@S[@DB] ...] [--caption-label TEXT@A-B ...] [--sign-overlay] [--caption-style house|plain|none] [--thumbnail | --no-thumbnail] \
+  [--hook-line TEXT | --no-hook-line] [--hook-line-position top|lower]
 ```
+
+**Hook line and title bar** (founder decisions, 5 Oct 2026; `creation/post/hook_overlay.py`). Every episode's outline carries three on-screen hook lines; the creator's pick (on by default) is `episode_summaries[].hook_line_selected.text`. `finish` burns it on the episode's first take (`t1`) and `reel` on every reel: large white bold, heavy outline, just under the top 8% strip, out of the right-hand rail, at most two lines, for the first ~3 s (it leaves on the first cut between 2.5 and 4 s, else fades at 3 s). It moves just above the captions when a face sits in the upper band (once the face helper can say where a face is; until then it stays on top). It is skipped, with the reason printed, when it says the same words as the first spoken line, or when it is off. `--hook-line TEXT` replaces it, `--no-hook-line` drops it, `--hook-line-position` forces the place. A show whose `delivery_format` is `letterbox` gets a solid title bar instead (series title + hook line, or the episode's `title_line`) across the top for the whole take or reel, captions untouched; a take that is really 4:3 gets nothing, because the server's letterbox delivery already titles it. With no hook line on a portrait show nothing changes. **Openings:** every episode outlined since 5 Oct 2026 has its own `opening_image` and `first_line` (or a silent opening), chosen by the creator from the writer's options; `preflight` prints it for a new episode.
 
 | Step | What it does | Writes |
 | --- | --- | --- |
@@ -290,7 +293,7 @@ Outputs, never overwritten: `epNN/takes/episode-epNN-join-vN.mp4` (un-marked mas
 
 ## Reel cut
 
-`fictora-produce reel --desk D --episode N [--seconds 15] [--plan-only] [--plan FILE] [--take-file [tK=]F] [--source [tK=]F] [--captions [tK=]F.ass] [--caption-style house|plain|none] [--watermark-y Y] [--ending hard|freeze-black]`. Local, $0, no server route. Writes only under `<desk>/reels/`, so it is never stopped on a desk that shares its story (`--shared-spine-ok` not needed).
+`fictora-produce reel --desk D --episode N [--seconds 15] [--plan-only] [--plan FILE] [--take-file [tK=]F] [--source [tK=]F] [--captions [tK=]F.ass] [--caption-style house|plain|none] [--watermark-y Y] [--ending hard|freeze-black] [--hook-line TEXT | --no-hook-line] [--hook-line-position top|lower]`. The hook line (see Finish) is burned over the reel's first ~3 s and recorded in the plan as `hook_line` (`text`, `mode`, `placement`, `start_s`, `end_s`, or `skipped` with the reason). Local, $0, no server route. Writes only under `<desk>/reels/`, so it is never stopped on a desk that shares its story (`--shared-spine-ok` not needed).
 
 | Step | What it does | Thresholds |
 | --- | --- | --- |
