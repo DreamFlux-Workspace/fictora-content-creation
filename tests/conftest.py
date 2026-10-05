@@ -303,3 +303,26 @@ def _no_ocr_by_default(
     from creation.post import take_text
 
     monkeypatch.setattr(take_text, "tesseract_bin", lambda: None)
+
+
+@pytest.fixture
+def voice_gate() -> None:
+    """Ask for the real voices gate (see ``_voices_gate_off_by_default``)."""
+
+
+@pytest.fixture(autouse=True)
+def _voices_gate_off_by_default(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tests of filming, the estimate and the plates yes predate the voices gate: it is off unless a test
+    asks for ``voice_gate`` (tests/test_voice_gate.py), so their desks need no voice yes and their
+    messages and request logs stay as they were.
+    """
+
+    if "voice_gate" in request.fixturenames:
+        return
+    from creation import episode_commands, orchestrate
+
+    monkeypatch.setattr(orchestrate, "voices_film_refusal", lambda *a, **k: None)
+    monkeypatch.setattr(orchestrate, "voices_gate_text", lambda *a, **k: "")
+    monkeypatch.setattr(episode_commands, "voices_film_refusal", lambda *a, **k: None)

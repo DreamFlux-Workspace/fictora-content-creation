@@ -26,7 +26,7 @@ Read when you need the detail, not all on the first turn:
 
 ## Two rules
 
-1. **A human says yes before money moves.** The look (once you drew a look frame), plates, script, board, the spend yes. One gate per yes. No batched gates. Silence is not consent; a yes from last time does not carry forward.
+1. **A human says yes before money moves.** The look (once you drew a look frame), plates, voices, script, board, the spend yes. One gate per yes. No batched gates. Silence is not consent; a yes from last time does not carry forward.
 2. **Render once.** Every paid unit is rendered once. A second render needs a written cause naming what in the direction produced the fault. "Try again" is not a cause.
 
 ## Never
@@ -47,7 +47,7 @@ Read when you need the detail, not all on the first turn:
 ## Stage order
 
 ```
-1 Brief → 2 Draft → 3 Plates → 4 Script yes → 5 Board → 6 Estimate → 7 Take → 8 Read → 9 Finish
+1 Brief → 2 Draft → 3 Plates → 4 Voices → 5 Script yes → 6 Board → 7 Estimate → 8 Take → 9 Read → 10 Finish
 ```
 
 | Stage | Command | Gate |
@@ -56,6 +56,7 @@ Read when you need the detail, not all on the first turn:
 | Draft | `fictora-produce step --desk D` (prints the brief's lines against the script: kept, rewritten, cut, added) | Show the human every line that is not `kept`; fix it with `line` or accept it |
 | Look (optional) | `look-frame --desk D --description @look.txt` | `approve --desk D --gate look` after a yes: pins the newest look frame and records the yes (`--path` or `--url` for another). While a drawn look frame is not approved, `step`, `redraw-plate` and `redraw-board` refuse (nothing sent); a look frame drawn after the yes needs its own yes |
 | Plates | `fictora-produce step --desk D` | `approve --desk D --gate plates` after a yes; one character wrong: `redraw-plate --desk D --cast NAME --note "…"` (that character alone, $0.30; show the contact sheet). Redrawn after the plates yes: the yes again is `approve --desk D --gate plates --again` (server, $0), never a desk-only `fictora-ops approve`. A plates step that failed (a safety flag) goes back to its gate once `redraw-plate` has drawn every plate: no re-run |
+| Voices | The plates yes (and `step` at the script gate) prints each speaking character's locked voice, the server's words for it and a sample link when it has them; `voice --desk D --list` prints it again (free) | Offer the human an audition of each voice before filming: `voice --desk D --cast NAME --audition` ($0.30 a character, only after their yes), then `--pick N`. They keep a voice as it is with `voice --desk D --cast NAME --keep`, or every one with `voice --desk D --keep-all` (free). Never keep a voice for them. Filming (`step --confirm-spend`, `film --confirm-spend`) is refused, nothing sent, until every character who speaks in the episode has a kept or picked voice; a voice that changed after its yes needs a new one. A desk that filmed takes before this gate is grandfathered (not held; it says so) |
 | Script | (lines from the draft) | `approve --desk D --gate script` after a yes |
 | Board | `fictora-produce step --desk D` (prints the shot list with who speaks on each row, speaker warnings and safe-zone warnings) | `approve --desk D --gate board`; or fix it (see "Fixing a board"): `redraw-board --desk D --episode N --take tK --note "what is wrong"` (the note becomes shot edits, printed per row, then the redraw). A board redrawn after its yes on a desk past the board gate (even `complete`): `approve --desk D --gate board` still sends the yes to the server ($0, phase kept; `--again` does the same); `fictora-ops approve --gate board` records it on the desk only, and film is refused `boards_not_approved_for_generation` without the server's yes |
 | Estimate | `fictora-produce step --desk D` | The human says yes to the number. The line names the lane and its $/s; a `!! SERVER ESTIMATE FAILED` line means the number is the kit's local table, and `!! SERVER ESTIMATE DOES NOT ADD UP` means the server's rate x seconds or video + stills disagree with its total (the higher is shown): say either to the human before the yes |
@@ -298,17 +299,20 @@ uv run fictora-produce review --desk D --episode N --take-file reels/reel-epNN-v
 
 ## Change a character's voice (never regenerate)
 
-"The voice feels off" is a voice change, not a new story and not a new video. Never re-draft or re-film everything for it.
+"The voice feels off" is a voice change, not a new story and not a new video. Never re-draft or re-film everything for it. The same commands run the Voices gate before the first take: audition, pick (the pick is the human's yes), or keep the voice as it is.
 
 ```bash
 uv run fictora-produce voice --desk D --cast NAME --audition [--episode N]   # 4-10 candidates on their real lines, $0.30
 uv run fictora-produce voice --desk D --cast NAME --audition --text "…" --voices Rachel,Aria,Sarah   # any wording (≤300 chars), read by exactly those voices
-uv run fictora-produce voice --desk D --cast NAME --pick N                   # after the human picks (N or the voice's name); free
+uv run fictora-produce voice --desk D --cast NAME --pick N                   # after the human picks (N or the voice's name); free; records their yes
+uv run fictora-produce voice --desk D --cast NAME --keep                     # the human keeps the locked voice; free
+uv run fictora-produce voice --desk D --keep-all                             # the human keeps every speaking voice; free
+uv run fictora-produce voice --desk D --list                                 # each speaking voice and whether it has a yes; free
 uv run fictora-produce revoice --desk D --cast NAME --episode N --take tK   # each filmed take they speak in
 uv run fictora-produce finish --desk D --episode N --take tK --take-file <take-epNN-tK-revoice-vN.mp4>
 ```
 
-Play the listening reel (`shared/voices/<cast>/audition-vN/reel-vN.m4a`; `reel-vN.txt` says where each numbered candidate starts) to the human; a second audition set needs `--cause`. `--text` is any wording up to 300 characters, on the spine or not (on a Japanese or Korean show, written in that language); `--voices` is exactly the Eleven v3 voices the human named, read in that order, one candidate each (`--count` is ignored). Both go to the server as they are; a broken rule comes back as a named refusal before anything is spent (`voice_audition_unknown_voice` lists the catalog; also `_voice_count`, `_text_too_long`, `_text_language`): read it to the human and ask again, never swap a voice yourself. A retired premade (`Bella`) resolves to its catalog stand-in and a repeated name is auditioned once. A set that already holds the wording and the named voices makes a new reel for free. Picking a candidate does not change the script: if the new wording should be said in the episode, `edit --line-id` the line too. On Turbo (the default) a take with `Soundtrack: native` (or none: an older server) does not carry the locked voice, because voice references are not sent: revoice each such filmed take the character speaks in, including takes filmed after the pick. A take with `Soundtrack: locked voices` already speaks in the voice locked when it was filmed: never revoice it for that; only a voice picked after it was filmed needs `revoice --over-locked-voices`, and takes filmed after the pick carry the new voice as they are. Only on R2V do takes not filmed yet use the new voice as they are. Re-film only a take where the dub does not sit (lips visibly wrong, a shouted line), with a cause and a stated cost; never the other takes, never the story.
+After a voice change, `revoice` the takes already filmed that the character speaks in (rules below), then `finish --take-file` on each. Play the listening reel (`shared/voices/<cast>/audition-vN/reel-vN.m4a`; `reel-vN.txt` says where each numbered candidate starts) to the human; a second audition set needs `--cause`. `--text` is any wording up to 300 characters, on the spine or not (on a Japanese or Korean show, written in that language); `--voices` is exactly the Eleven v3 voices the human named, read in that order, one candidate each (`--count` is ignored). Both go to the server as they are; a broken rule comes back as a named refusal before anything is spent (`voice_audition_unknown_voice` lists the catalog; also `_voice_count`, `_text_too_long`, `_text_language`): read it to the human and ask again, never swap a voice yourself. A retired premade (`Bella`) resolves to its catalog stand-in and a repeated name is auditioned once. A set that already holds the wording and the named voices makes a new reel for free. Picking a candidate does not change the script: if the new wording should be said in the episode, `edit --line-id` the line too. On Turbo (the default) a take with `Soundtrack: native` (or none: an older server) does not carry the locked voice, because voice references are not sent: revoice each such filmed take the character speaks in, including takes filmed after the pick. A take with `Soundtrack: locked voices` already speaks in the voice locked when it was filmed: never revoice it for that; only a voice picked after it was filmed needs `revoice --over-locked-voices`, and takes filmed after the pick carry the new voice as they are. Only on R2V do takes not filmed yet use the new voice as they are. Re-film only a take where the dub does not sit (lips visibly wrong, a shouted line), with a cause and a stated cost; never the other takes, never the story.
 
 An off-screen voice (speaker, phone, radio) played over another character's face is heard as that face speaking: give it a source in post with `voice-fx --file F --range A-B [--range C-D ...] --preset intercom|phone|radio` (local ffmpeg, $0, one new file at the same level; repeat `--range` for every line in one call), then `finish --take-file` on it (captions are timed on the revoice words).
 
