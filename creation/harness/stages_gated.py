@@ -77,6 +77,7 @@ def draft_request_body(
     cut_tempo: str | None = None,
     spoken_language: str | None = None,
     locale: str = "en-US",
+    delivery_format: str | None = None,
 ) -> dict[str, Any]:
     """Build the ``POST /v1/prompt-video-authoring-drafts`` body: episode 1 alone, arc at episode 2.
 
@@ -97,6 +98,9 @@ def draft_request_body(
         Language the cast speaks when not English (``ja``, ``ko`` or the contract tag).
     locale
         Draft locale.
+    delivery_format
+        ``letterbox`` is sent as the show's ``delivery_format``. Portrait (``None`` or
+        ``portrait``) sends nothing, so a portrait body and its brief hash are unchanged.
 
     Returns
     -------
@@ -119,6 +123,8 @@ def draft_request_body(
         body["cut_tempo"] = cut_tempo
     if spoken_language:
         body["spoken_language"] = spoken_language_tag(spoken_language)
+    if delivery_format == "letterbox":
+        body["delivery_format"] = "letterbox"
     body["outline_mode"] = EP1_ALONE_OUTLINE_MODE
     return body
 
@@ -134,6 +140,7 @@ def start_draft(
     cut_tempo: str | None = None,
     spoken_language: str | None = None,
     locale: str = "en-US",
+    delivery_format: str | None = None,
     deadline_seconds: float = 1800.0,
     accept_notices: Sequence[str] = (),
     desk: str = "<desk>",
@@ -162,7 +169,7 @@ def start_draft(
     ----------
     run
         Session (its session id owns the new spine).
-    prompt, preset_id, preset_version, band, video_lane, cut_tempo, spoken_language, locale
+    prompt, preset_id, preset_version, band, video_lane, cut_tempo, spoken_language, locale, delivery_format
         As :func:`draft_request_body`.
     deadline_seconds
         Plan poll cap.
@@ -219,6 +226,7 @@ def start_draft(
         cut_tempo=cut_tempo,
         spoken_language=spoken_language,
         locale=locale,
+        delivery_format=delivery_format,
     )
     run.save("01_draft_request.json", body)
 

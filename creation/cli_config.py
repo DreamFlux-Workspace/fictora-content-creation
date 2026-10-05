@@ -31,6 +31,13 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
         help="Spoken language when not English: ja or ko (captions stay English).",
     )
     parser.add_argument(
+        "--delivery-format",
+        default=None,
+        choices=("portrait", "letterbox"),
+        help="Set on the draft: letterbox films a 4:3 picture with a title band above and a caption "
+        "band below (needs a server with fictora-drama #595). Default: portrait.",
+    )
+    parser.add_argument(
         "--caption-style",
         default="house",
         help="Caption style for the desk, read by local finish and caption: house (yellow Arial Bold word "
@@ -67,6 +74,11 @@ def config_from_args(args: argparse.Namespace) -> ProductionConfig:
         clip_duration_seconds=int(args.clip_seconds),
         cut_tempo=str(args.cut_tempo) if args.cut_tempo else None,
         spoken_language=str(args.language) if getattr(args, "language", None) else None,
+        delivery_format=(
+            str(args.delivery_format)
+            if getattr(args, "delivery_format", None)
+            else None
+        ),
         caption_style=style,
         api_captions=bool(args.api_captions),
         fallback_estimate_usd=(

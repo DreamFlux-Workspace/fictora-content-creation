@@ -21,6 +21,7 @@ Three layers, later wins:
 | `api_captions` | `false` | Keep false. The take step stops at the raw clip; captions run on the laptop |
 | `locale` | `en-US` | Draft locale |
 | `spoken_language` | unset (English) | `--language ja` / `ko` at `start`: the cast speaks it; captions stay English. Set it at `start` for every Japanese- or Korean-voiced show; a drafted show is changed with `language --desk D --spoken ja|ko|en` (the server re-localizes every line) |
+| `delivery_format` | unset (portrait) | `--delivery-format letterbox` at `start`: a 4:3 picture in a 9:16 frame, title band above, caption band below. Decided by the server when the story is first drafted, so set it at `start`; it needs a server with fictora-drama #595, and 4:3 takes only while that server's `FICTORA_DRAMA_LETTERBOX_TAKES` is on. Portrait sends nothing |
 | `fallback_estimate_usd` | unset | Per-take dollars used only when the server's lane has no verified price in `creation/prices.py`; unset prices it at the Turbo rate. Older desks may carry `1.20` here: it is only read for such an unpriced lane |
 | `poll_*_deadline_seconds` | 1800–7200 | Poll caps (below) |
 
