@@ -325,4 +325,5 @@ def _voices_gate_off_by_default(
 
     monkeypatch.setattr(orchestrate, "voices_film_refusal", lambda *a, **k: None)
     monkeypatch.setattr(orchestrate, "voices_gate_text", lambda *a, **k: "")
+    monkeypatch.setattr(orchestrate, "voices_pending_for_film", lambda *a, **k: [])
     monkeypatch.setattr(episode_commands, "voices_film_refusal", lambda *a, **k: None)

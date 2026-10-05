@@ -6303,7 +6303,7 @@ def _run_film(
     unit = f"film-{key}" + (f"-s{seed}" if seed else "")
     spine = run.spine(state.spine_id or "")
     stopped = film_stop_message(spine, episode=episode) or voices_film_refusal(
-        desk, spine, episode=episode
+        desk, spine, episode=episode, run=run
     )
     if stopped:
         raise CommandStopped(stopped)

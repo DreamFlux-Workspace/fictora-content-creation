@@ -5,8 +5,10 @@ Every test here asks for ``voice_gate`` so the real gate runs (it is off by defa
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -24,6 +26,7 @@ from test_episode_flow_step import _video_routes
 pytestmark = pytest.mark.usefixtures("voice_gate")
 
 VIDEO = "/v1/video-generations"
+KEEP = "/v1/spines/sp1/voice-approvals"
 
 
 @pytest.fixture
@@ -37,8 +40,48 @@ def voiced(api: FakeApi, monkeypatch: pytest.MonkeyPatch) -> FakeApi:
         "reference_audio_url": "https://media.test/hana-ref.mp3",
     }
     ren["voice_brief"] = {"provider_voice": "Liam"}
+    api.routes[("POST", KEEP)] = lambda _m, _p, body: _server_keep(api, body)
     monkeypatch.setattr(voice_mod, "open_api", lambda _desk, _episode: api)
     return api
+
+
+def _server_approve(api: FakeApi, cast_id: str, how: str) -> None:
+    """What fictora-drama #603 does: record the card's current voice, one record per character."""
+
+    card = next(c for c in api.spine_doc["cast"] if c["cast_id"] == cast_id)
+    voice = (card.get("voice_brief") or {}).get("provider_voice") or None
+    rest = [
+        r for r in api.spine_doc.get("voice_approvals", []) if r["cast_id"] != cast_id
+    ]
+    api.spine_doc["voice_approvals"] = [
+        *rest,
+        {
+            "cast_id": cast_id,
+            "provider_voice": voice,
+            "how": how,
+            "approved_at": "2026-10-05T12:00:00Z",
+        },
+    ]
+    api.spine_doc["spine_version"] += "+"
+
+
+def _server_keep(api: FakeApi, body: dict[str, Any] | None) -> Any:
+    assert body is not None and 1 <= len(body["cast_ids"]) <= 4
+    if body["spine_version"] != api.spine_doc["spine_version"]:
+        return 409, {"error": {"code": "spine_version_conflict"}}
+    for cast_id in body["cast_ids"]:
+        _server_approve(api, cast_id, "kept")
+    return {"spine": copy.deepcopy(api.spine_doc)}
+
+
+def _server_pick(api: FakeApi, cast_id: str, voice: str) -> None:
+    def pick(_m: str, _p: str, _body: dict[str, Any] | None) -> dict[str, Any]:
+        card = next(c for c in api.spine_doc["cast"] if c["cast_id"] == cast_id)
+        card["voice_brief"] = {"provider_voice": voice}
+        _server_approve(api, cast_id, "picked")
+        return {"spine": copy.deepcopy(api.spine_doc)}
+
+    api.routes[("POST", f"/v1/spines/sp1/cast/{cast_id}/voice-auditions/pick")] = pick
 
 
 def _ready_to_film(api: FakeApi) -> None:
@@ -128,10 +171,17 @@ def test_keeping_each_voice_unlocks_filming(desk: Path, voiced: FakeApi) -> None
     orchestrate.run_step(desk, confirm_spend=True)
 
     assert len(voiced.posted(VIDEO)) == 1
+    # Each keep went to the server, which now holds both yeses; the desk mirrors them.
+    assert [b["cast_ids"] for b in voiced.posted(KEEP)] == [["cast_hana"], ["cast_ren"]]
+    assert {
+        (r["cast_id"], r["provider_voice"], r["how"])
+        for r in voiced.spine_doc["voice_approvals"]
+    } == {("cast_hana", "Aria", "kept"), ("cast_ren", "Liam", "kept")}
     record = json.loads((desk / APPROVALS_PATH).read_text(encoding="utf-8"))
     assert record["grandfathered"] is False
     assert record["voices"]["cast_hana"]["provider_voice"] == "Aria"
     assert record["voices"]["cast_ren"]["how"] == "kept"
+    assert record["voices"]["cast_ren"]["on_server"] is True
 
 
 def test_a_desk_already_at_ready_video_is_refused_too(
@@ -192,14 +242,21 @@ def test_a_pick_is_the_humans_yes(desk: Path, voiced: FakeApi) -> None:
         ),  # fmt: skip
         encoding="utf-8",
     )
-    voiced.routes[("POST", "/v1/spines/sp1/cast/cast_ren/voice-auditions/pick")] = {
-        "ok": True
-    }
+    _server_pick(voiced, "cast_ren", "Bill")
 
     voice_mod.run_voice_pick(desk, cast="Ren", pick=1)
 
+    # The server's pick records the yes; the desk only mirrors it (and never re-sends it).
+    assert {r["cast_id"]: r["how"] for r in voiced.spine_doc["voice_approvals"]} == {
+        "cast_ren": "picked"
+    }
     record = load_approvals(desk)["voices"]["cast_ren"]
-    assert (record["provider_voice"], record["how"]) == ("Bill", "picked")
+    assert (record["provider_voice"], record["how"], record["on_server"]) == (
+        "Bill",
+        "picked",
+        True,
+    )
+    assert voiced.posted(KEEP) == []
 
 
 def test_the_estimate_warns_before_the_spend_yes(desk: Path, voiced: FakeApi) -> None:
@@ -309,4 +366,203 @@ def test_list_prints_the_gate_and_records_nothing(
 
     out = capsys.readouterr().out
     assert "Hana (cast_hana): Aria" in out and "--keep-all" in out
-    assert not (desk / APPROVALS_PATH).exists()
+    assert load_approvals(desk)["voices"] == {}
+    assert voiced.posted(KEEP) == []
+    assert "voice_approvals" not in voiced.spine_doc
+
+
+# --- The server holds the yeses (fictora-drama #603) ------------------------------------------------
+
+
+def _local_yes(desk: Path, **voices: str) -> None:
+    """A desk from before this change: yeses only in shared/voices/approvals.json."""
+
+    path = desk / APPROVALS_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "grandfathered": False,
+                "voices": {
+                    cast_id: {
+                        "name": cast_id,
+                        "provider_voice": voice,
+                        "how": "kept",
+                        "at": "2026-10-05T09:00:00+00:00",
+                    }
+                    for cast_id, voice in voices.items()
+                },
+            }
+        ),  # fmt: skip
+        encoding="utf-8",
+    )
+
+
+def test_a_yes_on_the_server_unlocks_filming_with_nothing_on_the_desk(
+    desk: Path, voiced: FakeApi
+) -> None:
+    # The creator kept both voices in the app: the spine carries the yeses, the desk has none.
+    _server_approve(voiced, "cast_hana", "kept")
+    _server_approve(voiced, "cast_ren", "picked")
+    set_phase(desk, "wait_spend", estimate_usd=1.2)
+    _ready_to_film(voiced)
+
+    orchestrate.run_step(desk, confirm_spend=True)
+
+    assert len(voiced.posted(VIDEO)) == 1
+    assert voiced.posted(KEEP) == []
+    assert load_approvals(desk)["voices"] == {}
+
+
+def test_a_server_yes_on_an_older_voice_needs_a_new_one(
+    desk: Path, voiced: FakeApi
+) -> None:
+    _server_approve(voiced, "cast_hana", "kept")
+    _server_approve(voiced, "cast_ren", "kept")  # on Liam
+    voiced.spine_doc["cast"][1]["voice_brief"] = {"provider_voice": "Bill"}
+    set_phase(desk, "wait_spend", estimate_usd=1.2)
+    _ready_to_film(voiced)
+
+    with pytest.raises(RuntimeError, match=r"Ren \(Bill\)") as refused:
+        orchestrate.run_step(desk, confirm_spend=True)
+
+    assert "Hana (Aria)" not in str(refused.value).splitlines()[1]
+    assert voiced.posted(VIDEO) == []
+
+
+def test_a_desk_only_yes_is_pushed_to_the_server_once(
+    desk: Path, voiced: FakeApi
+) -> None:
+    _local_yes(desk, cast_hana="Aria", cast_ren="Liam")
+    set_phase(desk, "wait_spend", estimate_usd=1.2)
+    _ready_to_film(voiced)
+
+    orchestrate.run_step(desk, confirm_spend=True)
+
+    assert len(voiced.posted(VIDEO)) == 1
+    assert [b["cast_ids"] for b in voiced.posted(KEEP)] == [["cast_hana", "cast_ren"]]
+    assert {r["cast_id"] for r in voiced.spine_doc["voice_approvals"]} == {
+        "cast_hana",
+        "cast_ren",
+    }
+    local = load_approvals(desk)["voices"]
+    assert (
+        local["cast_hana"]["on_server"] is True
+        and local["cast_ren"]["on_server"] is True
+    )
+
+    # Once moved, the server is the truth: a yes it no longer holds is not sent again from the desk.
+    voiced.spine_doc["voice_approvals"] = [
+        r for r in voiced.spine_doc["voice_approvals"] if r["cast_id"] != "cast_ren"
+    ]
+    set_phase(desk, "wait_spend", estimate_usd=1.2)
+    with pytest.raises(RuntimeError, match=r"Ren \(Liam\)"):
+        orchestrate.run_step(desk, confirm_spend=True)
+    assert len(voiced.posted(KEEP)) == 1
+
+
+def test_a_desk_yes_on_an_older_voice_is_not_pushed(
+    desk: Path, voiced: FakeApi
+) -> None:
+    # Ren's yes was given to Bill; the card now locks Liam. The keep route would record Liam: never send it.
+    _local_yes(desk, cast_hana="Aria", cast_ren="Bill")
+    set_phase(desk, "wait_spend", estimate_usd=1.2)
+    _ready_to_film(voiced)
+
+    with pytest.raises(RuntimeError, match=r"Ren \(Liam\)"):
+        orchestrate.run_step(desk, confirm_spend=True)
+
+    assert [b["cast_ids"] for b in voiced.posted(KEEP)] == [["cast_hana"]]
+    assert [r["cast_id"] for r in voiced.spine_doc["voice_approvals"]] == ["cast_hana"]
+    assert voiced.posted(VIDEO) == []
+
+
+def test_an_older_server_falls_back_to_the_desk_file_and_says_so(
+    desk: Path, voiced: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    voiced.routes[("POST", KEEP)] = (404, {"detail": "Not Found"})
+    _local_yes(desk, cast_hana="Aria", cast_ren="Liam")
+    set_phase(desk, "wait_spend", estimate_usd=1.2)
+    _ready_to_film(voiced)
+
+    orchestrate.run_step(desk, confirm_spend=True)
+
+    assert len(voiced.posted(VIDEO)) == 1
+    assert "no voice-approvals route yet" in capsys.readouterr().err
+    assert load_approvals(desk)["voices"]["cast_ren"].get("on_server") is not True
+
+
+def test_on_an_older_server_a_keep_stays_on_the_desk_and_still_gates(
+    desk: Path, voiced: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    voiced.routes[("POST", KEEP)] = (404, {"detail": "Not Found"})
+    set_phase(desk, "wait_spend", estimate_usd=1.2)
+    _ready_to_film(voiced)
+
+    assert _keep(desk, "--cast", "Hana", "--keep") == 0
+    out = capsys.readouterr().out
+    assert "on this desk only" in out and "no voice-approvals route yet" in out
+
+    with pytest.raises(RuntimeError, match=r"Ren \(Liam\)") as refused:
+        orchestrate.run_step(desk, confirm_spend=True)
+    assert "no voice-approvals route yet" in str(refused.value)
+    assert voiced.posted(VIDEO) == []
+
+    assert _keep(desk, "--cast", "Ren", "--keep") == 0
+    orchestrate.run_step(desk, confirm_spend=True)
+    assert len(voiced.posted(VIDEO)) == 1
+
+
+def test_a_server_refusal_that_is_not_an_older_deploy_is_not_hidden(
+    desk: Path, voiced: FakeApi
+) -> None:
+    voiced.routes[("POST", KEEP)] = (404, {"error": {"code": "cast_not_found"}})
+    set_phase(desk, "wait_spend", estimate_usd=1.2)
+
+    with pytest.raises(RuntimeError, match="cast_not_found"):
+        voice_mod.run_voice_gate(desk, cast="Hana", keep=True)
+
+    assert load_approvals(desk)["voices"] == {}
+
+
+def test_a_desk_approved_in_the_app_is_not_grandfathered_by_its_own_takes(
+    desk: Path, voiced: FakeApi
+) -> None:
+    _server_approve(voiced, "cast_hana", "kept")
+    _server_approve(voiced, "cast_ren", "kept")
+    set_phase(desk, "wait_spend", estimate_usd=1.2)
+    _ready_to_film(voiced)
+    orchestrate.run_step(
+        desk, confirm_spend=True
+    )  # the gate read the desk before its first take
+    record_filmed(desk, episode=1, take_id="t1")
+    voiced.spine_doc["cast"][1]["voice_brief"] = {"provider_voice": "Bill"}
+    set_phase(desk, "wait_spend", estimate_usd=1.2)
+
+    with pytest.raises(RuntimeError, match=r"Ren \(Bill\)"):
+        orchestrate.run_step(desk, confirm_spend=True)
+    assert load_approvals(desk)["grandfathered"] is False
+
+
+def test_a_keep_that_meets_a_newer_spine_reads_it_and_tries_once_more(
+    desk: Path, voiced: FakeApi
+) -> None:
+    calls: list[str] = []
+
+    def keep(_m: str, _p: str, body: dict[str, Any] | None) -> Any:
+        calls.append(str((body or {}).get("spine_version")))
+        if len(calls) == 1:
+            voiced.spine_doc["spine_version"] = (
+                "v6"  # someone saved the spine in between
+            )
+        return _server_keep(voiced, body)
+
+    voiced.routes[("POST", KEEP)] = keep
+
+    assert voice_mod.run_voice_gate(desk, keep=True) == ["cast_hana", "cast_ren"]
+
+    assert calls == ["v5", "v6"]
+    assert {r["cast_id"] for r in voiced.spine_doc["voice_approvals"]} == {
+        "cast_hana",
+        "cast_ren",
+    }

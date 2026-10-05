@@ -41,6 +41,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
+import httpx
+
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
 from creation.post.audio_service import AudioService, DramaApiAudio, download
@@ -51,6 +53,7 @@ from creation.post.desk import (
     latest_raw_take,
     open_api,
     refresh_spine,
+    saved_spine,
     show_language,
     spine_id,
     take_stored_url,
@@ -60,10 +63,18 @@ from creation.post.media import media_duration, probe_video, run_ffmpeg
 from creation.post.whisper import line_windows, load_words, transcribe
 from creation.production_state import load_production
 from creation.voice_gate import (
+    OLD_SERVER_NOTE,
+    UNREACHABLE_NOTE,
+    Approvals,
     CastVoice,
-    gate_text,
+    keep_on_server,
+    local_approvals,
     record_voice,
+    render_gate,
+    server_approvals,
     speaking_voices,
+    sync_approvals,
+    voice_name,
 )
 
 AUDITION_SET_USD = 0.30
@@ -515,13 +526,22 @@ def run_voice_pick(
         run.post(
             f"/v1/spines/{spine_id(desk)}/cast/{cast_id}/voice-auditions/pick", body
         )
-        refresh_spine(run, desk, 1)
-        # The human picked it: that is their yes on this voice for the voices gate.
-        record_voice(
-            desk,
-            CastVoice(cast_id, name, str(chosen["provider_voice"])),
-            how="picked",
+        after = refresh_spine(run, desk, 1)
+        # The human picked it: that is their yes on this voice for the voices gate. The server's pick
+        # records it (fictora-drama #603); the desk mirrors it, and pushes it later on an older server.
+        # The card's voice after the pick (the server may lock a retired name's stand-in).
+        picked = voice_name(
+            (find_cast(after, cast_id).get("voice_brief") or {}).get("provider_voice")
+            or chosen["provider_voice"]
         )
+        on_server = (server_approvals(after).get(cast_id) or {}).get(
+            "provider_voice"
+        ) == picked
+        record_voice(
+            desk, CastVoice(cast_id, name, picked), how="picked", on_server=on_server
+        )
+        if not on_server:
+            print(OLD_SERVER_NOTE, file=sys.stderr)
     finally:
         run.client.close()
     print(
@@ -548,6 +568,11 @@ def run_voice_gate(
     out: TextIO | None = None,
 ) -> list[str]:
     """List the speaking characters' voices, or record the human's yes on them as they are (spends nothing).
+
+    The yes goes to the server (``POST /v1/spines/{id}/voice-approvals``) and is
+    mirrored on the desk. On a server without the route, or one that can't be
+    reached (the saved spine is read then), it is kept on the desk and pushed
+    when the server can take it; the command says so.
 
     Parameters
     ----------
@@ -576,35 +601,63 @@ def run_voice_gate(
     out = out or sys.stdout
     desk = desk.expanduser().resolve()
     ledger_episode = episode or load_production(desk).episode_ordinal
+    gate_episode = load_production(desk).episode_ordinal
     run = open_api(desk, ledger_episode)
     try:
-        spine = refresh_spine(run, desk, ledger_episode)
+        try:
+            spine = refresh_spine(run, desk, ledger_episode)
+            spine, approvals = sync_approvals(desk, run, spine)
+        except httpx.TransportError as exc:
+            saved = saved_spine(desk, ledger_episode) or saved_spine(desk, gate_episode)
+            if saved is None:
+                raise
+            spine = saved[0]
+            approvals = local_approvals(
+                desk, UNREACHABLE_NOTE.format(error=type(exc).__name__)
+            )
+            print(approvals.note, file=sys.stderr)
+        voices = speaking_voices(spine, episode=None if keep else episode)
+        if cast is not None:
+            card = find_cast(spine, cast)
+            voices = [v for v in voices if v.cast_id == str(card["cast_id"])]
+            if not voices:
+                raise ValueError(
+                    f"{card.get('name') or card['cast_id']} speaks no line on the spine; nothing to approve"
+                )
+        if not keep:
+            text = render_gate(desk, spine, approvals, episode=episode)
+            print(
+                text or "Nobody speaks a line on the spine: no voice to approve.",
+                file=out,
+            )
+            return []
+        if not voices:
+            print("Nobody speaks a line on the spine: no voice to approve.", file=out)
+            return []
+        note = approvals.note
+        if note is None:
+            kept, note = keep_on_server(run, desk, spine, [v.cast_id for v in voices])
+            if kept is not None:
+                from creation.orchestrate import save_spine_snapshot
+
+                spine = kept
+                save_spine_snapshot(desk, ledger_episode, spine)
+        for voice in voices:
+            record_voice(desk, voice, how="kept", on_server=note is None)
+            print(f"{voice.name} keeps {voice.provider_voice or 'no locked voice'} (the human's yes is recorded"
+                  + (" on the server)." if note is None else " on this desk only).") , file=out)  # fmt: skip
+        if note is not None and approvals.note is None:
+            print(note, file=out)
+        approvals = (
+            local_approvals(desk, note)
+            if note is not None
+            else Approvals(approvals.grandfathered, server_approvals(spine), "server")
+        )
     finally:
         run.client.close()
-    voices = speaking_voices(spine, episode=None if keep else episode)
-    if cast is not None:
-        card = find_cast(spine, cast)
-        voices = [v for v in voices if v.cast_id == str(card["cast_id"])]
-        if not voices:
-            raise ValueError(
-                f"{card.get('name') or card['cast_id']} speaks no line on the spine; nothing to approve"
-            )
-    if not keep:
-        text = gate_text(desk, spine, episode=episode)
-        print(
-            text or "Nobody speaks a line on the spine: no voice to approve.", file=out
-        )
-        return []
-    if not voices:
-        print("Nobody speaks a line on the spine: no voice to approve.", file=out)
-        return []
-    for voice in voices:
-        record_voice(desk, voice, how="kept")
-        print(f"{voice.name} keeps {voice.provider_voice or 'no locked voice'} (the human's yes is recorded).",
-              file=out)  # fmt: skip
     _note(desk, ledger_episode, "voices kept: " + ", ".join(
         f"{v.name} -> {v.provider_voice or 'none'}" for v in voices))  # fmt: skip
-    rest = gate_text(desk, spine, episode=load_production(desk).episode_ordinal)
+    rest = render_gate(desk, spine, approvals, episode=gate_episode)
     if rest:
         print(rest, file=out)
     return [v.cast_id for v in voices]
