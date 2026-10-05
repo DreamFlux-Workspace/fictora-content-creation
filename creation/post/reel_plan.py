@@ -1865,7 +1865,7 @@ def post_text(
         Whether to point at the next episode.
     premise_line
         The show's one-sentence premise (``spine.premise_line``). When set it is the post's
-        title, the line people forward, and "Series · Episode N" moves under it.
+        title and "Series · Episode N" moves under it.
 
     Returns
     -------
