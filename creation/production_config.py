@@ -38,6 +38,12 @@ class ProductionConfig:
     #: band above and a caption band below (fictora-drama #595). The server decides the board aspect
     #: only at admission, so it must be on the draft. ``None`` (or ``portrait``) sends nothing: portrait.
     delivery_format: str | None = None
+    #: Whose voices the show's takes speak in, chosen at ``start --voice-mode``: ``locked`` (each
+    #: character's locked voice, filmed as a dialogue track) or ``model`` (the video model's own voices
+    #: from the cast descriptions). Sent to the server once the story exists, and only while the server
+    #: stores no choice for the show (:mod:`creation.voice_mode`); the server's is the truth after that.
+    #: ``None`` sends nothing: a new show gets the server's default (locked on production).
+    voice_mode: str | None = None
     #: Per-take dollars used only when the endpoint the server films on has no verified price in
     #: ``creation.prices``. ``None`` (default) prices such a take at the H3 Max Turbo dated rate.
     fallback_estimate_usd: float | None = None

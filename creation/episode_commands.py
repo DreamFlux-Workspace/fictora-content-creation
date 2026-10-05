@@ -189,6 +189,7 @@ from creation.stranded_voice import (
     voices_left_without_lines,
 )
 from creation.voice_gate import film_refusal as voices_film_refusal
+from creation.voice_mode import VOICE_MODE_WORDS, next_take_voices_line
 from creation.harness_rules import (
     early_extra_shots_stop,
     film_stop_message,
@@ -6309,6 +6310,7 @@ def _run_film(
         raise CommandStopped(stopped)
     for warning in stranded_preflight(spine, unit=key, desk=desk, episode=episode):
         print(warning, file=out)
+    print(next_take_voices_line(desk, run, spine), file=out)
     body = stages.video_request_body(
         run,
         spine=spine,
@@ -6373,6 +6375,11 @@ def _run_film(
         fresh.pending[unit]["job_id"] = job_id
         save_production(desk, fresh)
         _save_desk_json(desk, f"{unit}-enrol", job)
+        if job.get("voice_mode") in VOICE_MODE_WORDS:
+            print(
+                f"[film] The server films these takes in {VOICE_MODE_WORDS[str(job['voice_mode'])]}.",
+                file=sys.stderr,
+            )
     print(
         f"[film] Filming {what} (video job {job_id}). Usually 5-15 minutes.",
         file=sys.stderr,
@@ -6532,6 +6539,7 @@ def _price_film(
     )
     lines = [
         *warnings,
+        next_take_voices_line(desk, run, spine),
         f"Film {scope}: about ${usd:.2f} ({source}){earlier}{others}.",
         envelope_line(desk, episode=episode, next_usd=usd),
     ]

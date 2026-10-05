@@ -24,6 +24,7 @@ POST_COMMANDS = (
     frozenset(
         {
             "voice",
+            "voice-mode",
             "voice-fx",
             "revoice",
             "voice-line",
@@ -159,6 +160,22 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         default=None,
         metavar="A,B,...",
         help="Exactly these Eleven v3 voices, in this order, instead of the default slate (--count ignored).",
+    )
+
+    voice_mode = sub.add_parser(
+        "voice-mode",
+        help="Whose voices the show's takes speak in (free): locked (each character's locked voice, filmed as a "
+        "dialogue track; the Voices gate applies) or model (the video model's own voices from the cast "
+        "descriptions, as before option C; no Voices gate). Without --set it prints the show's mode and why. "
+        "Takes already filmed keep their voices.",
+    )
+    voice_mode.add_argument("--desk", type=Path, required=True)
+    voice_mode.add_argument(
+        "--set",
+        dest="set_to",
+        default=None,
+        choices=("locked", "model"),
+        help="Store this mode for the show (only on the human's say-so).",
     )
 
     fx = sub.add_parser(
@@ -607,6 +624,11 @@ def dispatch_post(args: argparse.Namespace) -> int:
             if args.text or args.voices:
                 raise ValueError("--text and --voices go with --audition")
             run_voice_pick(args.desk, cast=args.cast, pick=args.pick)
+        return 0
+    if args.command == "voice-mode":
+        from creation.voice_mode import run_voice_mode
+
+        run_voice_mode(args.desk, set_to=args.set_to)
         return 0
     if args.command == "voice-fx":
         from creation.ops.notes import append_run_note

@@ -45,6 +45,8 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 
 ## Voices (after the plates, before filming)
 
+- [ ] `voice-mode --desk D` read; on a show whose earlier episodes used the video model's own voices, the human was asked "Keep the same voices as earlier episodes (recommended) or switch to locked voices?" and the answer stored (`--set model` / `--set locked`). On `model` the rest of this list is skipped.
+
 - [ ] Every speaking character's locked voice was shown to the human (`voice --desk D --list`), with an audition offered (`voice --cast NAME --audition`, $0.30 a character, only after their yes)
 - [ ] Each voice kept (`voice --cast NAME --keep` / `--keep-all`) or picked (`--pick N`) by the human; never kept for them
 

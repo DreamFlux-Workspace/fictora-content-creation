@@ -27,7 +27,7 @@ You never need the private `fictora-drama` repo. Never paste the API token into 
 
 **Order:** Brief → Draft → Cast plates → Voices → Script yes → Board → Estimate → Take → Read → Finish.
 
-**Voices:** after the plates, play each character's voice to the human (offer `voice --cast NAME --audition`, $0.30). They keep it (`voice --cast NAME --keep`, or `voice --keep-all`) or pick another (`voice --pick N`). Filming waits for this.
+**Voices:** after the plates, play each character's voice to the human (offer `voice --cast NAME --audition`, $0.30). They keep it (`voice --cast NAME --keep`, or `voice --keep-all`) or pick another (`voice --pick N`). Filming waits for this. Only on a show with locked voices: a show whose earlier episodes used the video model's own voices keeps them unless the human chooses to switch (`voice-mode --desk D`, then `--set locked` or `--set model`); there is then no Voices step.
 
 ---
 
