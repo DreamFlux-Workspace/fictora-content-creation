@@ -124,7 +124,7 @@ from creation.stranded_voice import explain_film_refusal, stranded_preflight
 from creation.stylised_only import BriefNoticePause
 from creation.voice_gate import film_refusal as voices_film_refusal
 from creation.voice_gate import gate_text as voices_gate_text
-from creation.voice_gate import pending_voices
+from creation.voice_gate import pending_for_film as voices_pending_for_film
 
 
 #: Phases whose ``step`` pays for drawings (cast plates, boards): held while a drawn look frame awaits its yes.
@@ -1443,7 +1443,7 @@ def run_step(
             if state.phase == "wait_spend" and confirm_spend:
                 # The voices gate: nothing films until every speaking voice has the human's yes.
                 refused = voices_film_refusal(
-                    desk, run.spine(state.spine_id or ""), episode=ep
+                    desk, run.spine(state.spine_id or ""), episode=ep, run=run
                 )
                 if refused:
                     raise RuntimeError(refused)
@@ -1452,7 +1452,9 @@ def run_step(
                 return run_step(desk, confirm_spend=False)
             voices = ""
             if state.phase == "wait_script" and state.spine_id:
-                voices = voices_gate_text(desk, run.spine(state.spine_id), episode=ep)
+                voices = voices_gate_text(
+                    desk, run.spine(state.spine_id), episode=ep, run=run
+                )
             return StepResult(
                 state.phase,
                 f"Waiting on human gate `{gate}` (episode {ep}). Use fictora-produce approve."
@@ -1547,8 +1549,9 @@ def run_step(
                 *stranded_preflight(spine, unit=f"ep{ep:02d}", desk=desk, episode=ep),
                 *warnings,
             ]
-            if voices_film_refusal(desk, spine, episode=ep):
-                who = ", ".join(v.name for v in pending_voices(desk, spine, episode=ep))
+            unvoiced = voices_pending_for_film(desk, spine, episode=ep, run=run)
+            if unvoiced:
+                who = ", ".join(v.name for v in unvoiced)
                 warnings.append(
                     f"!! VOICES NOT APPROVED: {who}. Filming is refused until the human keeps or picks "
                     f"each voice (`fictora-produce voice --desk {desk} --list`)."
@@ -1974,7 +1977,7 @@ def _film(
     if raw is None:
         before = run.spine(state.spine_id or "")
         stopped = film_stop_message(before, episode=ep) or voices_film_refusal(
-            desk, before, episode=ep
+            desk, before, episode=ep, run=run
         )
         if stopped:
             raise RuntimeError(stopped)
@@ -2362,7 +2365,9 @@ def approve_gate(
             # A character a later episode brought in is approved after that
             # episode's script yes: go on to its boards.
             # The voices gate comes after the plates: the human hears each voice before any filming.
-            voices = voices_gate_text(desk, run.spine(state.spine_id or ""), episode=ep)
+            voices = voices_gate_text(
+                desk, run.spine(state.spine_id or ""), episode=ep, run=run
+            )
             voices = f"\n{voices}" if voices else ""
             if (
                 ep >= 2
