@@ -302,7 +302,7 @@ uv run fictora-produce review --desk D --episode N --take-file reels/reel-epNN-v
 Whose voices a show's takes speak in is the show's choice, kept on the server (founder decision, 5 Oct 2026), so a season never changes voice actor between episodes:
 
 - **locked** (the default for a new show): each line is rendered in the character's locked voice (cast card) and the take films to that track. The Voices gate applies, and `finish` lays no bed when the server baked the show's music into the track.
-- **model**: the video model voices each character from the cast card's voice description, as every take did before 2 Oct. No Voices gate (there is no locked voice to hear), and `finish` lays the show's music as on those episodes (unless the take facts say the video model was asked for the genre's music: then no bed, as before).
+- **model**: the video model voices each character from the cast card's voice description, as every take did before 2 Oct. No Voices gate (there is no locked voice to hear), and `finish` lays the show's own theme as on those episodes: the kit films a model-voice show with `music_by_finish`, so the video model is asked for no music.
 
 A show that never chose keeps the voices its filmed episodes used: any episode filmed with the model's own voices keeps the show on `model`. `step`, the estimate and `film` print `Voices for the next take: …` with the reason; `voice-mode --desk D` prints it on its own (free).
 
