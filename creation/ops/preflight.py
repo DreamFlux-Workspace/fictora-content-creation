@@ -419,6 +419,27 @@ def _handoff(episode: EpisodeState, take: TakeState, desk: Path) -> PreflightChe
     return PreflightCheck(code="handoff", ok=True, detail=str(path))
 
 
+def _planned_opening(desk: Path, ordinal: int) -> str | None:
+    """How the episode is planned to open (its summary's ``opening_image`` / ``first_line``), when the spine says.
+
+    Every episode outlined since 5 Oct 2026 carries an opening (the creator's pick
+    of the writer's options); older ones carry it on episode 1 only.
+    """
+
+    from creation.post.desk import saved_spine
+    from creation.spine_view import episode_summary
+
+    found = saved_spine(desk, ordinal)
+    if found is None:
+        return None
+    summary = episode_summary(found[0], ordinal)
+    image = " ".join(str(summary.get("opening_image") or "").split())
+    if not image:
+        return None
+    line = " ".join(str(summary.get("first_line") or "").split())
+    return f"{image} ({f'first line: “{line}”' if line else 'silent opening'})"
+
+
 def _opening_locations(desk: Path, ordinal: int) -> tuple[str | None, str | None]:
     """Where the previous episode's last frame and this episode's first frame are set, from the saved spine."""
 
@@ -458,18 +479,22 @@ def _opening_locations(desk: Path, ordinal: int) -> tuple[str | None, str | None
 def _new_episode_handoff_info(ordinal: int, desk: Path) -> str:
     """The info line for a new episode's first take with no hand-off frame (never a warning).
 
-    The spine carries no field that says an episode continues straight from the
-    one before (``opening_template`` / ``opening_image`` are set on episode 1
-    only; ``hook_type`` is the ending's shape), so preflight cannot know. It
-    says where the two episodes are set when the saved spine names it.
+    The kit does not read a field that says an episode continues straight from
+    the one before (``hook_type`` is the ending's shape), so preflight cannot
+    know. It says where the two episodes are set when the saved spine names it,
+    and how the episode is planned to open (``opening_image`` / ``first_line``,
+    on every episode outlined since 5 Oct 2026).
     """
 
     before, now = _opening_locations(desk, ordinal)
+    planned = _planned_opening(desk, ordinal)
     setting = ""
     if before and now and before.casefold() != now.casefold():
         setting = f" It opens on a new scene ({now}; episode {ordinal - 1} ended in {before})."
     elif before and now:
         setting = f" It opens where episode {ordinal - 1} ended ({now})."
+    if planned:
+        setting += f" Planned opening: {planned}."
     return (
         f"info: no hand-off frame; the story does not say episode {ordinal} continues straight from "
         f"episode {ordinal - 1}, so none is needed.{setting} If it picks up the same moment, set the last "

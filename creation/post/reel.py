@@ -62,6 +62,15 @@ from creation.captions import (
 )
 from creation.post.faces import Detector, detector_for, face_track, nearest_scores
 from creation.post.finish_record import FinishRecord, finish_records, record_for_file
+from creation.post.hook_overlay import (
+    HookDecision,
+    HookOverlay,
+    burn,
+    decide,
+    default_face_in_upper_band,
+    delivery_format,
+    selected_hook_line,
+)
 from creation.post.media import decode_frames, probe_video, run_ffmpeg
 from creation.post.reel_plan import (
     DEFAULT_SECONDS,
@@ -686,6 +695,54 @@ class ReelResult:
         return f"Reel {self.video.name}: {self.seconds:.2f} s, {self.loudness}, {self.captions}; {order}"
 
 
+def reel_hook(
+    spine: Mapping[str, Any],
+    episode: int,
+    plan: ReelPlan,
+    sources: Sequence[TakeSource],
+    *,
+    override: str | None = None,
+    off: bool = False,
+    position: str | None = None,
+) -> HookDecision:
+    """The reel's hook line (or letterbox title bar): leaves at the reel's first cut after ~3 s.
+
+    A reel cut from an accepted file that already carries burned text gets no
+    second hook line (the episode's own may already be on it).
+    """
+
+    if any(s.inferred and s.inferred.burned for s in sources) and not off:
+        if delivery_format(spine) == "portrait":
+            return HookDecision(
+                None,
+                "cut from an accepted file with its text burned in; no second hook line",
+            )
+    cuts: list[float] = []
+    at = 0.0
+    for seg in plan.segments[:-1]:
+        at += seg.end - seg.start
+        cuts.append(round(at, 3))
+    by_take = {s.take_id: s for s in sources}
+    first = plan.segments[0] if plan.segments else None
+    size: tuple[int, int] | None = None
+    video: Path | None = None
+    if first is not None and first.take in by_take:
+        video = by_take[first.take].source
+        if delivery_format(spine) == "letterbox":
+            info = probe_video(video)
+            size = (info.width, info.height)
+
+    def face(path: Path, start: float, end: float) -> bool | None:
+        offset = first.start if first is not None else 0.0
+        return default_face_in_upper_band(path, offset + start, offset + end)
+
+    return decide(
+        spine, episode, override=override, off=off,
+        position=position if position in ("top", "lower") else None,  # type: ignore[arg-type]
+        cuts=cuts, duration=plan.total, size=size, video=video, face_in_upper_band=face,
+    )  # fmt: skip
+
+
 def render_reel(
     desk: Path,
     *,
@@ -698,12 +755,16 @@ def render_reel(
     caption_style: str,
     whole_lines: bool,
     watermark_y: int | None = None,
+    hook: HookOverlay | None = None,
 ) -> tuple[float, str, str, list[str]]:
     """Cut the plan from the sources into ``paths['video']`` (and its ``.ass``).
 
     The reel ends hard on its last frame (the bed stops with it); a plan whose
     ``ending`` is ``freeze-black`` holds that frame, then cuts to black
     (:func:`creation.post.ending.apply_ending`).
+
+    ``hook`` (:mod:`creation.post.hook_overlay`) is burned over the captions,
+    before the mark; None draws nothing and runs exactly the commands it always ran.
 
     Returns
     -------
@@ -851,6 +912,12 @@ def render_reel(
             captions_line = (
                 f"{len(cues)} caption cue(s), {grain}, re-timed through the segment map"
             )
+        if hook is not None:
+            hooked = scratch / "reel-hook.mp4"
+            hook_ass = paths["video"].with_name(paths["video"].stem + "-hook.ass")
+            burn(hook, captioned, hook_ass, hooked, duration=total)
+            captioned = hooked
+            report.append(hook.describe())
         burned = [s.take_id for s in sources if s.inferred and s.inferred.burned]
         marked = scratch / "reel-marked.mp4"
         if burned:
@@ -892,6 +959,9 @@ def run_reel(
     caption_style: str | None = None,
     watermark_y: int | None = None,
     ending: str | None = None,
+    hook_line: str | None = None,
+    no_hook_line: bool = False,
+    hook_line_position: str | None = None,
     stream: TextIO | None = None,
     detector: Detector | None | str = "local",
 ) -> ReelResult:
@@ -917,6 +987,9 @@ def run_reel(
         Mark top offset override (never into the top 8%).
     ending
         ``hard`` (default) or ``freeze-black``; ``None`` keeps a hand-edited plan's own.
+    hook_line, no_hook_line, hook_line_position
+        ``--hook-line TEXT`` / ``--no-hook-line`` / ``--hook-line-position top|lower``: the
+        operator's override of the episode's on-screen hook line (:mod:`creation.post.hook_overlay`).
     stream
         Progress output (stdout by default).
     detector
@@ -946,6 +1019,7 @@ def run_reel(
             take_files=take_files, sources=sources, captions=captions, caption_style=caption_style,
             watermark_y=watermark_y, ending=ending, stream=stream, scratch=Path(tmp),
             detector=found if not isinstance(found, str) else None,
+            hook_line=hook_line, no_hook_line=no_hook_line, hook_line_position=hook_line_position,
         )  # fmt: skip
 
 
@@ -965,6 +1039,9 @@ def _run_reel(
     stream: TextIO | None,
     scratch: Path,
     detector: Detector | None,
+    hook_line: str | None = None,
+    no_hook_line: bool = False,
+    hook_line_position: str | None = None,
 ) -> ReelResult:
     from creation.post.desk import saved_spine
     from creation.spine_view import episode_summary
@@ -1078,11 +1155,28 @@ def _run_reel(
                     "pre-caption source: add it to the plan's patches (--plan-only, edit, --plan FILE)"
                 )
     paths = reel_paths(desk, episode)
+    hook = reel_hook(
+        spine,
+        episode,
+        plan,
+        srcs,
+        override=hook_line,
+        off=no_hook_line,
+        position=hook_line_position,
+    )
     extra = {
         "language": "ja/ko/other: whole English lines" if whole else "en: word flicker",
         "edited_from": plan_file.name if plan_file else None,
         "patches": patches,
     }
+    if (
+        hook.overlay is not None
+        or hook_line
+        or no_hook_line
+        or selected_hook_line(spine, episode)
+    ):
+        # Recorded only when there is a hook line to speak of, so a plan without one keeps its keys.
+        extra["hook_line"] = hook.as_json()
     payload = plan_json(
         plan, takes={s.take_id: s.as_json(desk) for s in srcs}, extra=extra
     )
@@ -1100,6 +1194,7 @@ def _run_reel(
     secs, loud, cap_line, report = render_reel(
         desk, episode=episode, plan=plan, sources=srcs, takes=takes, patches=patches,
         paths=paths, caption_style=style, whole_lines=whole, watermark_y=watermark_y,
+        hook=hook.overlay,
     )  # fmt: skip
     summary = episode_summary(spine, episode)
     write_new(

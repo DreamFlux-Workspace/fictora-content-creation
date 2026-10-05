@@ -196,6 +196,13 @@ from creation.post.desk import (
     spine_id,
     take_job_id,
 )
+from creation.post.hook_overlay import (
+    HookDecision,
+    burn,
+    decide,
+    delivery_format,
+    selected_hook_line,
+)
 from creation.post.media import MediaToolError, measure_loudness, probe_video
 from creation.post.mix import CueLevel, check_duck_db, mix_take, pick_gain
 from creation.post.take_facts import (
@@ -758,6 +765,43 @@ def _cut_held_head(
     return HandleCut(done.final, done.record, f"{why}; {done.note}")
 
 
+def finish_hook(
+    spine: dict[str, Any] | None,
+    *,
+    episode: int,
+    take_id: str,
+    source: Path,
+    facts_payload: dict[str, Any] | None,
+    override: str | None = None,
+    off: bool = False,
+    position: str | None = None,
+) -> HookDecision:
+    """The overlay ``finish`` draws on this take (:mod:`creation.post.hook_overlay`).
+
+    The hook line goes on the episode's first take (``t1``) only and leaves at its
+    first cut after ~3 s (the take facts' shots); a letterbox show's title bar goes
+    on every take.
+    """
+
+    if off:
+        return HookDecision(None, "turned off (--no-hook-line)")
+    letterbox = delivery_format(spine) == "letterbox"
+    if take_id != "t1" and not letterbox:
+        return HookDecision(
+            None, f"the hook line opens the episode; {take_id} is not its first take"
+        )
+    cuts = [shot.end for shot in planned_shots(facts_payload)] if facts_payload else []
+    size = None
+    if letterbox:
+        info = probe_video(source)
+        size = (info.width, info.height)
+    return decide(
+        spine, episode, override=override, off=off,
+        position=position if position in ("top", "lower") else None,  # type: ignore[arg-type]
+        cuts=cuts, size=size, video=source,
+    )  # fmt: skip
+
+
 def run_finish(
     desk: Path,
     *,
@@ -792,6 +836,9 @@ def run_finish(
     over_locked_voices: bool = False,
     caption_style: str | None = None,
     spine_fetcher: SpineFetcher | None = None,
+    hook_line: str | None = None,
+    no_hook_line: bool = False,
+    hook_line_position: str | None = None,
     stream: TextIO | None = None,
 ) -> FinishResult:
     """Run the whole local post chain on one accepted take.
@@ -883,6 +930,12 @@ def run_finish(
         Reads the current spine for the captions (default: the server, saved on
         the desk; :func:`creation.captions.current_spine`). The desk's copy is
         used, with a ``!!`` note, only when it cannot be read.
+    hook_line, no_hook_line, hook_line_position
+        ``--hook-line TEXT`` / ``--no-hook-line`` / ``--hook-line-position top|lower``. The
+        episode's on-screen hook line (the spine's selected one by default) is burned over
+        the first ~3 s of the episode's first take, ``t1``, after the captions and before the
+        mark; a letterbox show gets its title bar on every take instead
+        (:mod:`creation.post.hook_overlay`). With none, nothing changes.
     stream
         Progress output (stderr by default).
 
@@ -1105,6 +1158,11 @@ def run_finish(
             file=out,
             flush=True,
         )
+
+    hook = finish_hook(
+        spine, episode=episode, take_id=take_id, source=source, facts_payload=facts_payload,
+        override=hook_line, off=no_hook_line, position=hook_line_position,
+    )  # fmt: skip
 
     def step(name: str, doing: str, work: Callable[[Path], StepReport]) -> None:
         nonlocal current
@@ -1984,6 +2042,18 @@ def run_finish(
             drawn,
         )
 
+    def do_hook_line(take: Path) -> StepReport:
+        assert hook.overlay is not None
+        ass = next_versioned_path(takes, f"{base}-hook", ".ass")
+        drawn = burn(
+            hook.overlay, take, ass, next_versioned_path(takes, f"{base}-hook", ".mp4")
+        )
+        append_run_note(
+            run_dir,
+            f"Hook line -> `{drawn.name}` (`{ass.name}`): {hook.overlay.describe()}",
+        )
+        return StepReport("hook-line", "ran", hook.overlay.describe(), drawn)
+
     def do_watermark(take: Path) -> StepReport:
         marked = watermark(
             take, next_versioned_path(takes, f"{base}-sokii", ".mp4"), y=watermark_y
@@ -2131,6 +2201,12 @@ def run_finish(
             else f"Burning {style} captions",
             do_captions,
         )
+        if hook.overlay is not None:
+            step("hook-line", "Burning the on-screen hook line", do_hook_line)
+        elif hook.skipped and (
+            hook_line or no_hook_line or selected_hook_line(spine, episode)
+        ):
+            print(f"[hook-line] {hook.line()}", file=out, flush=True)
         step("watermark", "Putting the Sokii mark on", do_watermark)
     if result.complete:
         step(
