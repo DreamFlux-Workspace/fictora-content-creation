@@ -275,3 +275,22 @@ def test_the_cli_takes_the_hook_line_flags(
                 "--no-hook-line",
             ]
         )
+
+
+def test_the_default_face_check_asks_the_faces_module_for_the_upper_band(
+    monkeypatch,
+) -> None:
+    from creation.post import faces, hook_overlay
+
+    asked: list[tuple[float, float, float, float]] = []
+
+    def fake(source, start_s=0.0, end_s=None, *, top, bottom, **_):
+        asked.append((start_s, end_s, top, bottom))
+        return True
+
+    monkeypatch.setattr(faces, "upper_band_face", fake)
+
+    assert hook_overlay.default_face_in_upper_band(Path("x.mp4"), 0.0, 3.0) is True
+    assert asked == [(0.0, 3.0, hook_overlay.TOP_STRIP, hook_overlay.CAPTION_BAND[0])]
+    monkeypatch.setattr(faces, "upper_band_face", lambda *a, **k: None)
+    assert hook_overlay.default_face_in_upper_band(Path("x.mp4"), 0.0, 3.0) is None

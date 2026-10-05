@@ -241,9 +241,13 @@ def default_face_in_upper_band(
     from creation.post.faces import upper_band_face
 
     try:
-        answer = upper_band_face(video, start_s, end_s, top=TOP_STRIP, bottom=CAPTION_BAND[0])
+        answer = upper_band_face(
+            video, start_s, end_s, top=TOP_STRIP, bottom=CAPTION_BAND[0]
+        )
     except (OSError, ValueError, RuntimeError) as exc:
-        print(f"!! face check failed ({type(exc).__name__}: {exc}); the hook line stays at the top")
+        print(
+            f"!! face check failed ({type(exc).__name__}: {exc}); the hook line stays at the top"
+        )
         return None
     return None if answer is None else bool(answer)
 
