@@ -27,6 +27,7 @@ Three layers, later wins:
 | `lane` | unset | Posting, operator only (never sent to the server, never in the caption): the show's lane on its account (`mystery`, `power-fantasy`): one lane per account. `reel` prints it with the post text and writes it in `reels/metrics.csv` |
 | `account` | unset | The Instagram handle the show posts on (`@handle`) |
 | `posting_slot` | unset | When it posts (`"18:30 IST"`); at least 2 h from the other accounts' slots ([posting.md](../../../docs/content-ops/posting.md)). An `account` without one is a ⚠ on every `reel`, never a stop |
+| `rules_epoch` | stamped `"2026-10-06"` by `start` | Which rules the desk runs under. `"legacy"`, or unset on a desk created before 6 Oct 2026 (`series.json` `day`, else the folder's date): the desk keeps its original behaviour (SKILL "Desks created before 6 Oct 2026"). `rules-epoch --desk D [--set legacy\|2026-10-06]` prints or sets it; `bind` keeps it |
 | `poll_*_deadline_seconds` | 1800–7200 | Poll caps (below) |
 
 ## Phase machine (`fictora-produce`)

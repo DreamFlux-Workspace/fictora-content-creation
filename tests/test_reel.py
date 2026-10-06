@@ -329,6 +329,10 @@ def _run(args: list[str]) -> None:
 def reel_desk(tmp_path: Path) -> Path:
     """One finished 6 s take (4 shots of different greys, a tone), its captions, a bed and a spine."""
 
+    return _make_reel_desk(tmp_path)
+
+
+def _make_reel_desk(tmp_path: Path) -> Path:
     desk = tmp_path / "desk"
     takes = desk / "ep01" / "takes"
     takes.mkdir(parents=True)

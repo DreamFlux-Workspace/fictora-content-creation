@@ -166,7 +166,7 @@ def post_desk(tmp_path: Path) -> Path:
     """Local post tests: a series desk bound to ``spine_test`` with the spine saved under ``ep01/api``."""
 
     made = init_series_desk(
-        tmp_path, "Post Test", band="15s", episode_count=1, day=date(2026, 9, 28)
+        tmp_path, "Post Test", band="15s", episode_count=1, day=date(2026, 10, 6)
     )
     state = ProductionState(
         session_id="content-ops-test",
