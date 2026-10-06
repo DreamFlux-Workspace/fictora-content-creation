@@ -8,15 +8,17 @@ title-bar path in :mod:`creation.post.hook_overlay`), are untouched
 (``tests/test_letterbox_portrait_unchanged.py``).
 
 What ``finish`` and ``join`` make for such a show (positions in
-:mod:`creation.post.delivery_geometry`, the server's numbers):
+:mod:`creation.post.delivery_geometry`: the "Not Home" reference, user decision
+2026-10-06; fictora-drama's letterbox delivery uses the same numbers):
 
 * **Canvas.** 1080x1920, pure black; the 4:3 picture scaled to 1080x810 and
   centred (y 555-1365). ``finish`` puts the picture on the canvas right after
   the mix (:func:`pad_to_canvas`); the 4:3 takes before it stay on the desk.
 * **Captions** in the band under the picture, burned on the canvas by the
-  captions step (``caption_take(layout="letterbox")``): bottom-anchored on the
-  platform chrome (y 1536), centred between x 60 and the right-hand rail
-  (x 950), house size; yellow by default, white with ``--caption-colour``.
+  captions step (``caption_take(layout="letterbox")``): Arial Bold 56, top at
+  y 1435, centred between x 60 and the right-hand rail (x 950), one line
+  preferred (down to 46 px; a two-line chunk moves up to end above y 1536,
+  never above y 1385); yellow by default, white with ``--caption-colour``.
   They build up in phrases (:func:`creation.captions.phrase_cues`), end when
   the voice does on a locked-voice take (:func:`voice_end_spans`), and an
   on-screen speaker's line is upright (:func:`italic_overrides`).
@@ -60,7 +62,6 @@ from creation.post.delivery_geometry import (
     TITLE_SETUP_COLOUR,
     LetterboxLayout,
     layout,
-    title_sizes,
 )
 from creation.post.hook_overlay import delivery_format, is_four_three
 from creation.post.media import probe_video, run_ffmpeg
@@ -298,16 +299,16 @@ class FittedTitle:
 
 
 def fit_title(block: TitleBlock, place: LetterboxLayout) -> FittedTitle:
-    """The largest rung of the server's title ladder at which both parts fit their two lines and the band.
+    """The largest title size (48 px, down 2 px at a time to 40) at which both parts fit two lines each.
 
-    Each part may take two lines inside the title box's width; the block may
-    not rise above the box (under the mark). When even the smallest rung does
-    not fit, the smallest rung is used, each part shrunk to its two lines (the
-    words are never cut), and the note says so.
+    Each part may take two lines inside the title box's width (972 px); the
+    block may not rise above the box (under the mark). When even 40 px does
+    not fit, 40 px is used, each part shrunk to its two lines (the words are
+    never cut), and the note says to use fewer words.
     """
 
     box = place.title
-    sizes = title_sizes(place.canvas.height)
+    sizes = place.title_sizes
     for size in sizes:
         setup = _two_lines(block.setup, size, box.width)
         hook = _two_lines(block.hook, size, box.width)
@@ -345,7 +346,7 @@ def title_ass(
 ) -> tuple[str, FittedTitle]:  # fmt: skip
     """The ASS that draws the title block on the canvas for the whole video, and how it was fitted.
 
-    Arial Bold, upright, no outline (it sits on black, as the server's does),
+    Arial Bold, upright, no outline (it sits on black),
     bottom-centred on the title box's bottom edge so it grows upward: the setup
     line white, the hook line house yellow.
     """

@@ -497,3 +497,40 @@ def test_reel_records_the_cold_open_and_ends_with_the_chosen_style(
     assert result.seconds == pytest.approx(
         sum(s.end - s.start for s in result.plan.segments) + 0.7, abs=0.1
     )
+
+
+@pytest.mark.parametrize(
+    ("brief", "pov"),
+    [
+        ("POV: your ex shows up at your wedding", True),
+        ("# Brief — Wedding\n\n## Premise\n\npov - you open the door", True),
+        ("> **POV —** the landlord is at your door", True),
+        ("POV of Mira: she sees the letter", False),
+        ("A wedding goes wrong.\nPOV: the bride", False),
+        ("", False),
+    ],
+)
+def test_a_pov_episode_is_read_from_how_the_brief_opens(brief: str, pov: bool) -> None:
+    from creation.post.reel_plan import brief_is_pov
+
+    assert brief_is_pov(brief) is pov
+
+
+def test_a_pov_episode_keeps_a_line_said_to_the_camera_but_still_cuts_a_call_to_action() -> (
+    None
+):
+    assert viewer_address("What would you do?", pov=True) is False
+    assert viewer_address("Did you see that?", pov=True) is False
+    assert viewer_address("Comment below if you saw it", pov=True) is True
+    assert viewer_address("Follow for part 2", pov=True) is True
+    said = (*CUES, Cue(13.2, 14.4, "What would you do?"))
+    plan = plan_reel(2, [take(cues=said, peak=(13.0, 14.5))], three_beats(), pov=True)
+    assert not any("said to the viewer" in w for w in plan.warnings)
+    assert any(seg.start < 14.4 and 13.2 < seg.end for seg in plan.segments), (
+        "the line said to the camera stays in the reel"
+    )
+    cta = (*CUES, Cue(13.2, 14.4, "Comment below!"))
+    plan = plan_reel(2, [take(cues=cta, peak=(13.0, 14.5))], three_beats(), pov=True)
+    assert any("said to the viewer" in w for w in plan.warnings)
+    for seg in plan.segments:
+        assert not (seg.start < 14.4 and 13.2 < seg.end), seg

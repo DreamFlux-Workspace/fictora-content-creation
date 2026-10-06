@@ -13,7 +13,15 @@ import pytest
 from conftest import make_take, needs_ffmpeg
 from test_post_finish import FACTS, _board, fake_bed, fake_sfx
 
-from creation.captions import Cue, phrase_groups, time_words, Span
+from creation.captions import (
+    Cue,
+    LetterboxBand,
+    Span,
+    letterbox_caption_place,
+    phrase_groups,
+    text_width,
+    time_words,
+)
 from creation.post.delivery_geometry import layout, title_sizes
 from creation.post.finish import run_finish
 from creation.post.join import run_join
@@ -32,27 +40,56 @@ from creation.production_config import load_production_config, save_production_c
 FOUR_THREE = "256x192"
 
 
-# --- layout (the server's geometry) ---------------------------------------------------------------
+# --- layout (the "Not Home" reference, user decision 2026-10-06) -----------------------------------
 
 
-def test_the_layout_is_the_servers_geometry_on_1080x1920() -> None:
+def test_the_layout_matches_not_home_on_1080x1920() -> None:
     place = layout()
-    assert (
-        place.picture.x,
-        place.picture.y,
-        place.picture.width,
-        place.picture.height,
-    ) == (0, 555, 1080, 810)
-    assert place.title.bottom == 495, "60 px (40/1280) above the picture"
-    assert (place.caption.y, place.caption.bottom) == (1416, 1536), (
-        "51 px under the picture, down to the chrome"
+    picture = place.picture
+    assert (picture.x, picture.y, picture.width, picture.height) == (0, 555, 1080, 810)
+    assert place.title.bottom == 505, "50 px above the picture"
+    assert (place.caption.y, place.caption.bottom) == (1435, 1536), (
+        "70 px under the picture, down to the chrome"
     )
+    assert place.caption_highest_top == 1385
     assert (place.caption.x, place.caption.right) == (60, 950), (
         "clear of the right-hand rail"
     )
+    assert (place.caption_size, place.caption_min_size) == (56, 46)
     assert place.mark == (60, 173), "under the top 8% strip, in the black band"
     assert place.title.y >= place.mark[1] + 63, "the title never runs into the mark"
-    assert title_sizes() == (99, 87, 78, 69, 61, 54), "the server rounds the same way"
+    assert title_sizes() == (48, 46, 44, 42, 40)
+
+
+def _band() -> LetterboxBand:
+    place = layout()
+    return LetterboxBand(place.caption.x, place.caption.right, place.caption.y, place.caption_highest_top,
+                         place.caption.bottom, place.caption_size, place.caption_min_size)  # fmt: skip
+
+
+def test_a_caption_keeps_one_line_by_stepping_down_then_moves_up_when_it_needs_two() -> (
+    None
+):
+    band = _band()
+    assert letterbox_caption_place("Three missed payments", band, 1080) == (
+        ["Three missed payments"], 56, 1435,
+    )  # fmt: skip
+    room = band.right - band.left
+    wide = "She has been missing for two whole years"
+    assert text_width(wide, 56) > room >= text_width(wide, 46), (
+        "the fixture fits one line only smaller"
+    )
+    lines, size, top = letterbox_caption_place(wide, band, 1080)
+    assert len(lines) == 1 and 46 <= size < 56 and top == 1435, (
+        "one line, a smaller size"
+    )
+    long = "Previous owner is my sister. She has been missing for two years"
+    lines, size, top = letterbox_caption_place(long, band, 1080)
+    assert len(lines) == 2 and size == 56
+    assert top + 2 * size <= 1536 and top >= 1385, (
+        "moved up to end above the chrome, never above 1385"
+    )
+    assert top < 1435
 
 
 # --- phrase chunking ------------------------------------------------------------------------------
@@ -154,7 +191,8 @@ def test_the_title_fits_the_servers_ladder_two_lines_each_and_stays_under_the_ma
         place,
     )
     assert fitted.size in title_sizes() and not fitted.note
-    assert len(fitted.setup) == 1 and len(fitted.hook) == 2
+    assert fitted.size == 48, "Not Home's 48 px"
+    assert len(fitted.setup) == 1 and len(fitted.hook) in (1, 2)
     assert (
         len(fitted.setup) + len(fitted.hook)
     ) * fitted.size * 1.04 <= place.title.height
@@ -323,7 +361,8 @@ def test_finish_builds_the_9_16_letterbox_file_with_mark_title_and_band_captions
     )
     assert probe_video(takes / "take-ep01-t1-mix-v1.mp4").width == 256
     ass = master.with_suffix(".ass").read_text(encoding="utf-8")
-    assert ",2,60,130,384,1" in ass, "bottom-centred on the chrome floor, x 60-950"
+    assert "\\an8\\pos(505,1435)" in ass, "top at y 1435, centred on x 60-950"
+    assert "Style: House,Arial,56," in ass
     assert "&H0000E5FF" in ass and "Italic,,0,0,0,,Wait" not in ass, (
         "upright: the take draws Kenji"
     )
@@ -339,7 +378,7 @@ def test_finish_builds_the_9_16_letterbox_file_with_mark_title_and_band_captions
     assert frame[1700:].max() < 30 and frame[300:480, 0:40].max() < 30, (
         "pure black bands"
     )
-    assert _yellow(frame[1416:1540, 60:950]).sum() > 200, (
+    assert _yellow(frame[1385:1540, 60:950]).sum() > 200, (
         "a yellow caption in the band under the picture"
     )
     assert _yellow(pic).sum() < 50, "no caption over the picture"

@@ -57,9 +57,9 @@ and ``none`` (no captions burned).
 
 A letterbox show filmed 4:3 (``layout="letterbox"`` on :func:`caption_take`,
 6 Oct 2026) is captioned on its 9:16 canvas in the band under the picture
-(:mod:`creation.post.delivery_geometry`): bottom-anchored on the platform
-chrome, centred between the left margin and the right-hand rail, yellow by
-default or white. Its words build up in phrases of up to five
+(:mod:`creation.post.delivery_geometry`): Arial Bold 56 from y 1435, centred
+between the left margin and the right-hand rail, one line preferred
+(:func:`letterbox_caption_place`), yellow by default or white. Its words build up in phrases of up to five
 (:func:`phrase_cues`), never leaving one word alone, and a line's italics
 follow ``italic_overrides`` (a speaker the take draws is upright). A portrait
 show is captioned exactly as before.
@@ -1443,6 +1443,62 @@ def _caption_text(
     return prefix + "\\N".join(_ass_escape(line) for line in lines)
 
 
+@dataclass(frozen=True)
+class LetterboxBand:
+    """Where a letterbox show's captions go on its 9:16 canvas (:mod:`creation.post.delivery_geometry`).
+
+    ``top`` is the caption's top edge; a chunk that needs two lines moves up
+    so its bottom stays above ``floor``, never above ``highest_top``. ``size``
+    steps down to ``min_size`` first so a chunk fits one line.
+    """
+
+    left: int
+    right: int
+    top: int
+    highest_top: int
+    floor: int
+    size: int
+    min_size: int
+    #: Size step when a chunk is too wide for one line.
+    step: int = 2
+
+
+def letterbox_caption_place(
+    text: str, band: LetterboxBand, width: int
+) -> tuple[list[str], int, int]:
+    """Lay one letterbox caption out: ``(lines, size, top)``.
+
+    One line at ``band.size`` when it fits between the margins; else the
+    largest size down to ``band.min_size`` (in ``band.step`` px) that fits one
+    line; else two balanced lines (:func:`wrap_caption`, shrunk only when even
+    two lines are too wide), moved up so the block ends above ``band.floor``,
+    never higher than ``band.highest_top``.
+    """
+
+    room = band.right - band.left
+    size = band.size
+    while size >= band.min_size:
+        if text_width(text, size) <= room:
+            return [text], size, band.top
+        size -= band.step
+    lines, fit = wrap_caption(text, band.size, width, room=room)
+    height = len(lines) * fit
+    top = max(band.highest_top, min(band.top, band.floor - height))
+    return lines, fit, top
+
+
+def _letterbox_caption_text(
+    cue: Cue, band: LetterboxBand, width: int, *, platform: str | None
+) -> str:
+    lines, fit, top = letterbox_caption_place(cue.text, band, width)
+    tags = f"\\an8\\pos({(band.left + band.right) // 2},{top})"
+    if fit != band.size:
+        tags += f"\\fs{italic_size(fit) if cue.italic else fit}"
+    if has_cjk(cue.text):
+        tags += f"\\fn{cjk_font_name(cue.text, platform=platform)}"
+    return f"{{{tags}}}" + "\\N".join(_ass_escape(line) for line in lines)
+
+
 def build_ass(
     cues: Sequence[Cue],
     *,
@@ -1450,7 +1506,7 @@ def build_ass(
     height: int,
     style: str = DEFAULT_CAPTION_STYLE,
     platform: str | None = None,
-    placement: tuple[int, int, int] | None = None,
+    band: LetterboxBand | None = None,
     colour: str | None = None,
 ) -> str:
     """Render the caption ASS for a frame of ``width`` x ``height``.
@@ -1478,10 +1534,10 @@ def build_ass(
         ``house`` or ``plain`` (``none`` draws nothing and is never rendered).
     platform
         ``sys.platform`` by default (picks the CJK face); tests pass one.
-    placement
-        ``(margin_left, margin_right, margin_bottom)`` in pixels, bottom-centred
-        between the side margins (a letterbox show's band under the picture);
-        ``None`` is the house band.
+    band
+        A letterbox show's caption band under the picture
+        (:func:`letterbox_caption_place`: its own size, one line preferred,
+        each cue placed with ``\\pos``); ``None`` is the house band.
     colour
         The text colour (``&HAABBGGRR``); ``None`` is the style's own.
 
@@ -1505,10 +1561,8 @@ def build_ass(
     margin_v = caption_margin_v(height)
     margin_x = side_margin(width)
     margin_l, margin_r = margin_x, margin_x
-    room: float | None = None
-    if placement is not None:
-        margin_l, margin_r, margin_v = placement
-        room = width - margin_l - margin_r
+    if band is not None:
+        size = band.size
     outline = max(1, round(HOUSE_OUTLINE * scale))
     shadow = max(1, round(HOUSE_SHADOW * scale))
     colour = colour or (PLAIN_COLOUR if style == "plain" else PRIMARY_COLOUR)
@@ -1535,7 +1589,12 @@ def build_ass(
     )
     events = "".join(
         f"Dialogue: 0,{_ass_time(c.start)},{_ass_time(c.end)},{'Italic' if c.italic else main},,0,0,0,,"
-        f"{_caption_text(c, size, width, platform=platform, room=room)}\n"
+        + (
+            _letterbox_caption_text(c, band, width, platform=platform)
+            if band is not None
+            else _caption_text(c, size, width, platform=platform)
+        )
+        + "\n"
         for c in cues
     )
     return header + events
@@ -2376,10 +2435,14 @@ def caption_take(
         from creation.post.delivery_geometry import caption_colour_code
         from creation.post.delivery_geometry import layout as letterbox_layout
 
-        band = letterbox_layout(width, height).caption
+        place = letterbox_layout(width, height)
         text = build_ass(
             cues, width=width, height=height, style=style,
-            placement=(band.x, width - band.right, height - band.bottom),
+            band=LetterboxBand(
+                place.caption.x, place.caption.right, place.caption.y,
+                place.caption_highest_top, place.caption.bottom,
+                place.caption_size, place.caption_min_size,
+            ),
             colour=caption_colour_code(caption_colour)
             if caption_colour or style != "plain"
             else None,

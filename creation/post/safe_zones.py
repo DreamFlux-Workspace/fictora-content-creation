@@ -24,7 +24,7 @@ What is measured, on frames sampled across the take:
 
 A letterbox show's 9:16 file (its finish record says ``letterbox``) is
 checked against its own band: captions sit under the picture, between the
-picture's bottom edge and the platform chrome (73.75-80% on 1920), and the
+picture's bottom edge and the platform chrome (y 1385-1536, 72-80% on 1920), and the
 yellow hook line above the picture is the title, not a caption.
 
 Everything is a warning: ``review`` always exits 0 and changes no take.
@@ -475,7 +475,8 @@ def check_safe_zones(
 
         place = letterbox_layout(info.width, info.height)
         below = place.picture.bottom / info.height
-        low, high = place.caption.y / info.height, place.caption.bottom / info.height
+        low = place.caption_highest_top / info.height
+        high = place.caption.bottom / info.height
         band_name = "the letterbox band under the picture"
     for seconds in sample_times(info.duration_seconds, count):
         image = grab_frame(video, seconds)
