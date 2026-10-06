@@ -344,6 +344,7 @@ def decode_frames(
     fps: float | None = None,
     max_frames: int | None = None,
     start: float | None = None,
+    crop: tuple[int, int, int, int] | None = None,
 ) -> npt.NDArray[np.float64]:
     """Decode a video's frames as RGB scaled to ``width`` x ``height``.
 
@@ -359,6 +360,9 @@ def decode_frames(
         Stop after this many frames.
     start
         Seek to this second first (``None``: from the start).
+    crop
+        ``(x, y, width, height)`` of the frame to keep before scaling (a
+        letterbox file's picture); ``None`` keeps the whole frame.
 
     Returns
     -------
@@ -376,6 +380,9 @@ def decode_frames(
         if fps is None
         else f"fps={fps},scale={width}:{height}"
     )
+    if crop is not None:
+        x, y, w, h = crop
+        vf = f"crop={w}:{h}:{x}:{y}," + vf
     args = [ffmpeg_bin(), "-nostdin", "-v", "error"]
     if start:
         args += ["-ss", f"{start:.3f}"]

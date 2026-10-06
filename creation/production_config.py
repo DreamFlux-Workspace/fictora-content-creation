@@ -44,6 +44,10 @@ class ProductionConfig:
     #: stores no choice for the show (:mod:`creation.voice_mode`); the server's is the truth after that.
     #: ``None`` sends nothing: a new show gets the server's default (locked on production).
     voice_mode: str | None = None
+    #: A letterbox show's caption colour in its 9:16 file: ``yellow`` (house yellow) or ``white``.
+    #: ``finish --caption-colour`` overrides it; ``None`` reads the spine's ``letterbox_caption_colour``
+    #: (the creator's pick in the app), else yellow. Portrait shows never read it.
+    letterbox_caption_colour: str | None = None
     #: Per-take dollars used only when the endpoint the server films on has no verified price in
     #: ``creation.prices``. ``None`` (default) prices such a take at the H3 Max Turbo dated rate.
     fallback_estimate_usd: float | None = None

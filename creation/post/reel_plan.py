@@ -43,7 +43,11 @@ already has; :mod:`creation.post.reel` measures them and renders the cut.
 
 A line addressed to the viewer (a call to action, "comment below", "what would
 you do?") never goes in: its span is cut out of every segment, with a ⚠. The
-call to action belongs in the post text (:func:`post_text`).
+call to action belongs in the post text (:func:`post_text`). A POV episode
+(the brief opens "POV: …", founder decision 6 Oct 2026; detected like
+fictora-drama's ``pov_episode.scene_prompt_is_pov``) keeps a line said to the
+camera ("what would you do?"): the camera is the viewer standing in the scene.
+A call to action is still cut.
 
 6. **Edges** (:mod:`creation.post.opening`). The reel's first second is read
    from the measured samples (dark frame 0, static, no face on frame 0 when a
@@ -140,16 +144,24 @@ BLACK_SECONDS = 0.3
 PLAN_KIND = "fictora-reel-plan"
 PLAN_SCHEMA = 1
 
-#: A line said to the person watching, not to a character: never in the reel.
-_VIEWER_ADDRESS = re.compile(
+#: A call to action, or a line said to an audience: never in the reel, on any show.
+_CALL_TO_ACTION = re.compile(
     r"\b(comment(s)? (below|down)|drop a comment|in the comments|subscribe|follow (for|me|us|to)|"
     r"like and (share|follow|subscribe)|smash (that|the)|link in (the )?bio|part \d+\b|"
-    r"let me know|tell me (in|below|what)|what would you do|would you (dare|rather|have)|"
-    r"did you (see|catch|notice) (that|it)|can you (guess|spot|find)|guess what happens|"
+    r"let me know|tell me (in|below)|"
     r"stay tuned|don'?t forget to|watch (till|until|to) the end|you guys|y'?all|"
     r"everyone watching|dear viewers?)\b",
     re.IGNORECASE,
 )
+#: A question or remark said to "you", the one watching: cut, except on a POV episode (said to the camera).
+_SAID_TO_YOU = re.compile(
+    r"\b(tell me what|what would you do|would you (dare|rather|have)|"
+    r"did you (see|catch|notice) (that|it)|can you (guess|spot|find)|guess what happens)\b",
+    re.IGNORECASE,
+)
+#: fictora-drama ``pov_episode``: a markdown heading, and "POV:" / "POV -" / "POV —" opening the first prose line.
+_HEADING = re.compile(r"^\s*#")
+_POV_OPENING = re.compile(r"^[\s>*_\-\"'“‘(\[]*pov\s*[:：\-–—]", re.IGNORECASE)
 
 #: Words that never go in the post text: other apps, model and provider names.
 _POST_BANNED = re.compile(
@@ -370,13 +382,32 @@ def frame_snap(seconds: float, fps: float) -> float:
     return round(round(seconds * fps) / fps, 4)
 
 
-def viewer_address(text: str) -> bool:
+def brief_is_pov(brief: str | None) -> bool:
+    """True when a creator's brief opens as a POV episode (fictora-drama ``scene_prompt_is_pov``).
+
+    The first non-blank line that is not a markdown heading starts with
+    ``POV:`` (or ``POV -`` / ``POV —``), in any case. "POV of Mira" or a POV
+    line further down is a camera note, not a POV episode.
+    """
+
+    for line in (brief or "").splitlines():
+        if not line.strip() or _HEADING.match(line):
+            continue
+        return bool(_POV_OPENING.match(line))
+    return False
+
+
+def viewer_address(text: str, *, pov: bool = False) -> bool:
     """True when ``text`` is said to the viewer (a call to action or a question to the audience).
 
     Parameters
     ----------
     text
         A caption or script line.
+    pov
+        The episode is POV (:func:`brief_is_pov`): a line said to "you" is
+        said to the camera, a character in the story, and stays. A call to
+        action is still cut.
 
     Returns
     -------
@@ -384,7 +415,9 @@ def viewer_address(text: str) -> bool:
         Whether the line must stay out of the reel.
     """
 
-    return bool(_VIEWER_ADDRESS.search(text or ""))
+    if _CALL_TO_ACTION.search(text or ""):
+        return True
+    return not pov and bool(_SAID_TO_YOU.search(text or ""))
 
 
 def _inside_cue(t: float, cues: Sequence[Cue], pad: float = 0.02) -> bool:
@@ -1087,6 +1120,7 @@ def plan_reel(
     seconds: float = DEFAULT_SECONDS,
     genre: str = "",
     ending: str = "hard",
+    pov: bool = False,
 ) -> ReelPlan:
     """Plan the reel: a flash-forward from the strongest frame, then the beats, ending on the new fact.
 
@@ -1107,6 +1141,8 @@ def plan_reel(
         weights of the cold-open score (:func:`genre_family`).
     ending
         ``hard`` (default: the reel ends on the last frame) or ``freeze-black``.
+    pov
+        A POV episode (:func:`brief_is_pov`): lines said to the camera stay in.
 
     Returns
     -------
@@ -1150,7 +1186,7 @@ def plan_reel(
         (take.take_id, cue.start - 0.05, cue.end + 0.05)
         for take in takes
         for cue in take.cues
-        if viewer_address(cue.text)
+        if viewer_address(cue.text, pov=pov)
     ]
     for take_id, a, b in banned:
         plan.warnings.append(
@@ -1159,7 +1195,7 @@ def plan_reel(
         )
     for span in spans:
         for line in span.lines:
-            if viewer_address(line):
+            if viewer_address(line, pov=pov):
                 plan.warnings.append(
                     f'beat {span.ordinal} line "{line[:60]}" reads as said to the viewer; its caption span is cut'
                 )
@@ -1276,7 +1312,7 @@ def plan_reel(
             )
     segments = cut_out(segments, banned)
     plan.segments = segments
-    plan.warnings += check_plan(plan, takes)
+    plan.warnings += check_plan(plan, takes, pov=pov)
     return plan
 
 
@@ -1476,7 +1512,9 @@ def plan_edges(
     return opening, tail, warnings
 
 
-def check_plan(plan: ReelPlan, takes: Sequence[TakeInput]) -> list[str]:
+def check_plan(
+    plan: ReelPlan, takes: Sequence[TakeInput], *, pov: bool = False
+) -> list[str]:
     """The ⚠ lines for a plan: not ending on the new fact, over length, a cut inside a word, a viewer line,
     a cold open that shows the ending, a dark / static / faceless first second, a settled tail.
 
@@ -1533,7 +1571,11 @@ def check_plan(plan: ReelPlan, takes: Sequence[TakeInput]) -> list[str]:
                         f"{seg.role} {seg.take} cuts inside a word at {edge:.2f} s"
                     )
         for cue in take.cues:
-            if seg.start < cue.end and cue.start < seg.end and viewer_address(cue.text):
+            if (
+                seg.start < cue.end
+                and cue.start < seg.end
+                and viewer_address(cue.text, pov=pov)
+            ):
                 warnings.append(
                     f'{seg.role} {seg.take} holds a line said to the viewer: "{cue.text[:50]}"'
                 )
@@ -1927,5 +1969,6 @@ __all__ = [
     "speech_runs",
     "strongest_from_json",
     "strongest_window",
+    "brief_is_pov",
     "viewer_address",
 ]

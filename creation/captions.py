@@ -54,6 +54,15 @@ Three caption styles (``--caption-style`` on ``finish`` and ``caption``, or
 ``caption_style`` in the desk's ``production.config.json``): ``house`` (the
 above), ``plain`` (white whole-line captions, same face, size and safe band)
 and ``none`` (no captions burned).
+
+A letterbox show filmed 4:3 (``layout="letterbox"`` on :func:`caption_take`,
+6 Oct 2026) is captioned on its 9:16 canvas in the band under the picture
+(:mod:`creation.post.delivery_geometry`): Arial Bold (ASS 62), ink from y 1417, centred
+on the frame unless that crosses the right-hand rail, one line preferred
+(:func:`letterbox_caption_place`), yellow by default or white. Its words build up in phrases of up to five
+(:func:`phrase_cues`), never leaving one word alone, and a line's italics
+follow ``italic_overrides`` (a speaker the take draws is upright). A portrait
+show is captioned exactly as before.
 """
 
 from __future__ import annotations
@@ -67,7 +76,7 @@ import subprocess
 import sys
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -168,6 +177,32 @@ PLAIN_COLOUR = "&H00FFFFFF"
 OUTLINE_COLOUR = "&H00000000"
 SHADOW_COLOUR = "&H80000000"
 MAX_WORDS_ON_SCREEN = 3
+#: Letterbox captions build up within a phrase of up to this many words (6 Oct 2026).
+MAX_PHRASE_WORDS = 5
+#: A word ending in one of these ends a phrase (a sentence or a clause, a breath).
+_PHRASE_END = (".", "!", "?", "…", ",", ";", ":", "—", "–")
+#: Words a phrase should not end on (an article, a possessive, an auxiliary, a preposition), and words a
+#: phrase should start with (a conjunction or a preposition): fictora-drama ``caption_compile`` break rules.
+_NEVER_END_ON = frozenset(
+    """
+    a an the my your his her its our their this that these those
+    is are was were am be been being do does did have has had
+    will would can could shall should may might must
+    of to in on at for with from by as and or but not no
+    """.split()
+)
+_BREAK_BEFORE = frozenset(
+    """
+    and but or nor so yet because although though while whereas since unless until
+    if when whenever where wherever after before as than that which who whom whose
+    in on at to from with without within into onto over under above below through
+    across against between among during about for of by like near past toward towards
+    """.split()
+)
+#: A pause this long between two timed words is a breath: the phrase ends there.
+PHRASE_BREATH_SECONDS = 0.35
+#: Caption chunking: ``three`` (portrait house flicker) or ``phrase`` (letterbox).
+CHUNKINGS = ("three", "phrase")
 
 #: silencedetect settings (runbook: noise -30 dB, 0.3 s minimum silence).
 SILENCE_NOISE_DB = -30
@@ -1010,6 +1045,122 @@ def flicker_cues(
     return cues
 
 
+def _bare(word: str) -> str:
+    return "".join(ch for ch in word if ch.isalpha() or ch == "'").casefold()
+
+
+def _split_run(run: list[int], words: Sequence[str]) -> list[list[int]]:
+    """Cut one run of words (no punctuation inside) into balanced groups of at most ``MAX_PHRASE_WORDS``.
+
+    Each cut moves by one word when that lands it before a conjunction or a
+    preposition, or keeps it off an article or an auxiliary (the server's
+    caption break rules), as long as no group then runs past the cap.
+    """
+
+    count = -(-len(run) // MAX_PHRASE_WORDS)
+    if count <= 1:
+        return [run]
+    base, extra = divmod(len(run), count)
+    sizes = [base + (1 if i < extra else 0) for i in range(count)]
+    cuts = [sum(sizes[: i + 1]) for i in range(count - 1)]
+
+    def score(cut: int) -> int:
+        before, after = _bare(words[run[cut - 1]]), _bare(words[run[cut]])
+        return (100 if before in _NEVER_END_ON else 0) - (
+            20 if after in _BREAK_BEFORE else 0
+        )
+
+    for index, cut in enumerate(cuts):
+        low = cuts[index - 1] if index else 0
+        high = cuts[index + 1] if index + 1 < len(cuts) else len(run)
+        best = cut
+        for moved in (cut - 1, cut + 1):
+            if (
+                (low + 1 < moved < high - 1 or (low < moved < high and len(run) > 2))
+                and moved - low <= MAX_PHRASE_WORDS
+                and high - moved <= MAX_PHRASE_WORDS
+            ):
+                if score(moved) < score(best):
+                    best = moved
+        cuts[index] = best
+    edges = [0, *cuts, len(run)]
+    return [run[a:b] for a, b in zip(edges, edges[1:]) if b > a]
+
+
+def phrase_groups(words: Sequence[Cue]) -> list[list[int]]:
+    """Group one line's timed words into phrases: the letterbox caption chunks (6 Oct 2026).
+
+    A phrase ends on punctuation (a sentence or a clause) or a breath (a pause
+    of :data:`PHRASE_BREATH_SECONDS` between timed words); a run longer than
+    :data:`MAX_PHRASE_WORDS` is cut into balanced groups at the best joint.
+    One word is never left alone: an orphan joins the phrase before it (the
+    one after it when it opens the line).
+
+    Parameters
+    ----------
+    words
+        One line's words, timed (:func:`time_words`).
+
+    Returns
+    -------
+    list[list[int]]
+        Word indices per phrase, in order.
+    """
+
+    texts = [w.text for w in words]
+    runs: list[list[int]] = []
+    current: list[int] = []
+    for i, word in enumerate(words):
+        current.append(i)
+        breath = (
+            i + 1 < len(words)
+            and words[i + 1].start - word.end >= PHRASE_BREATH_SECONDS
+        )
+        if word.text.rstrip("\"')]”’").endswith(_PHRASE_END) or breath:
+            runs.append(current)
+            current = []
+    if current:
+        runs.append(current)
+    groups = [group for run in runs for group in _split_run(run, texts)]
+    merged: list[list[int]] = []
+    for group in groups:
+        if len(group) == 1 and merged:
+            merged[-1] = merged[-1] + group
+        else:
+            merged.append(group)
+    if len(merged) > 1 and len(merged[0]) == 1:
+        merged[1] = merged[0] + merged[1]
+        merged.pop(0)
+    return merged
+
+
+def phrase_cues(
+    words: Sequence[Cue],
+    *,
+    hold_until: float | None = None,
+    hold: float = LAST_WORD_HOLD_SECONDS,
+) -> list[Cue]:
+    """Build each phrase up word by word (:func:`phrase_groups`), then start the next one fresh.
+
+    Like :func:`flicker_cues`, each event lasts until the next word starts and
+    the line's last word holds ``hold`` seconds, never past ``hold_until``.
+    """
+
+    cues: list[Cue] = []
+    for group in phrase_groups(words):
+        for position, i in enumerate(group):
+            word = words[i]
+            text = " ".join(words[j].text for j in group[: position + 1])
+            if i + 1 < len(words):
+                end = words[i + 1].start
+            else:
+                end = word.end + hold
+                if hold_until is not None:
+                    end = min(end, hold_until)
+            cues.append(Cue(word.start, max(end, word.start + 0.05), text))
+    return cues
+
+
 def readable_seconds(text: str) -> float:
     """Least time a whole English line stays on screen: max(1.2 s, 0.3 s per word)."""
 
@@ -1046,6 +1197,7 @@ def build_line_cues(
     skip: Sequence[bool] = (),
     holds: Sequence[float] = (),
     fixed_ends: Sequence[bool] = (),
+    chunking: str = "three",
 ) -> list[list[Cue]]:
     """Cues for every line on its anchor span, grouped per line (empty for a skipped line).
 
@@ -1059,7 +1211,8 @@ def build_line_cues(
     A whole line stays up at least :func:`readable_seconds`, extended forward
     only, never into the next line.
 
-    English shows flicker word by word (:func:`flicker_cues`). With
+    English shows flicker word by word (:func:`flicker_cues`; with
+    ``chunking="phrase"``, a letterbox show, :func:`phrase_cues`). With
     ``whole_lines`` (a show spoken in Japanese or Korean, captioned with the
     English line) each line is one cue over its speech span: English words
     cannot be timed against Japanese or Korean speech, so spreading them would
@@ -1086,9 +1239,8 @@ def build_line_cues(
                 )
             ]
         else:
-            line_cues = flicker_cues(
-                time_words(text, span), hold_until=next_start, hold=hold
-            )
+            build = phrase_cues if chunking == "phrase" else flicker_cues
+            line_cues = build(time_words(text, span), hold_until=next_start, hold=hold)
         slanted = i < len(italic) and italic[i]
         groups.append(
             [
@@ -1225,7 +1377,9 @@ def text_width(text: str, size: int) -> float:
     return measured * em / _MEASURE_EM + cjk * em
 
 
-def wrap_caption(text: str, size: int, width: int) -> tuple[list[str], int]:
+def wrap_caption(
+    text: str, size: int, width: int, *, room: float | None = None
+) -> tuple[list[str], int]:
     """Lay one caption out on at most two balanced lines inside the side margins.
 
     A caption that fits on one line stays one line. One that does not is
@@ -1242,6 +1396,8 @@ def wrap_caption(text: str, size: int, width: int) -> tuple[list[str], int]:
         ASS ``Fontsize`` (:func:`house_font_size`).
     width
         Frame width in pixels.
+    room
+        Width the text may take; default the frame inside the side margins.
 
     Returns
     -------
@@ -1249,7 +1405,8 @@ def wrap_caption(text: str, size: int, width: int) -> tuple[list[str], int]:
         The lines (one or two) and the size to set them at.
     """
 
-    room = width - 2 * side_margin(width)
+    if room is None:
+        room = width - 2 * side_margin(width)
     if text_width(text, size) <= room:
         return [text], size
     spaced = " " in text.strip()
@@ -1271,10 +1428,12 @@ def wrap_caption(text: str, size: int, width: int) -> tuple[list[str], int]:
     return lines, max(8, int(size * room / widest))
 
 
-def _caption_text(cue: Cue, size: int, width: int, *, platform: str | None) -> str:
+def _caption_text(
+    cue: Cue, size: int, width: int, *, platform: str | None, room: float | None = None
+) -> str:
     """One cue's ASS text: wrapped (``\\N``), with ``\\fs`` only when it had to shrink, CJK face per line."""
 
-    lines, fit = wrap_caption(cue.text, size, width)
+    lines, fit = wrap_caption(cue.text, size, width, room=room)
     tags = ""
     if fit != size:
         tags += f"\\fs{italic_size(fit) if cue.italic else fit}"
@@ -1284,6 +1443,84 @@ def _caption_text(cue: Cue, size: int, width: int, *, platform: str | None) -> s
     return prefix + "\\N".join(_ass_escape(line) for line in lines)
 
 
+@dataclass(frozen=True)
+class LetterboxBand:
+    """Where a letterbox show's captions go on its 9:16 canvas (:mod:`creation.post.delivery_geometry`).
+
+    ``top`` is the caption's top edge; a chunk that needs two lines moves up
+    so its bottom stays above ``floor``, never above ``highest_top``. ``size``
+    steps down to ``min_size`` first so a chunk fits one line.
+    """
+
+    left: int
+    right: int
+    top: int
+    highest_top: int
+    floor: int
+    size: int
+    min_size: int
+    #: Size step when a chunk is too wide for one line.
+    step: int = 2
+
+
+def letterbox_centre(widest: float, band: LetterboxBand, width: int) -> int:
+    """Where a letterbox caption ``widest`` px wide is centred (user decision 2026-10-06).
+
+    On the frame's centre (x 540, like "Not Home") whenever its right edge then
+    stays at or left of ``band.right`` (x 950, clear of the right-hand
+    engagement buttons); else shifted left just enough that its right edge
+    sits on ``band.right``, its left edge never left of ``band.left``.
+    """
+
+    centre = width / 2
+    if centre + widest / 2 > band.right:
+        centre = max(band.left + widest / 2, band.right - widest / 2)
+    return round(centre)
+
+
+def letterbox_caption_place(
+    text: str, band: LetterboxBand, width: int
+) -> tuple[list[str], int, int, int]:
+    """Lay one letterbox caption out: ``(lines, size, top, centre_x)``.
+
+    One line at ``band.size`` when it fits between the margins; else the
+    largest size down to ``band.min_size`` (in ``band.step`` px) that fits one
+    line; else two balanced lines (:func:`wrap_caption`, shrunk only when even
+    two lines are too wide), moved up so the block ends above ``band.floor``,
+    never higher than ``band.highest_top``. Centred by :func:`letterbox_centre`.
+    Widths are Arial Bold's own advances (the server's table,
+    :func:`creation.post.delivery_geometry.arial_bold_width`), so the place is
+    the server's whatever font file this machine has.
+    """
+
+    from creation.post.delivery_geometry import arial_bold_width
+
+    room = band.right - band.left
+    size = band.size
+    while size >= band.min_size:
+        widest = arial_bold_width(text, size)
+        if widest <= room:
+            return [text], size, band.top, letterbox_centre(widest, band, width)
+        size -= band.step
+    lines, fit = wrap_caption(text, band.size, width, room=room)
+    height = len(lines) * fit
+    top = max(band.highest_top, min(band.top, band.floor - height))
+    widest = max(arial_bold_width(line, fit) for line in lines)
+    return lines, fit, top, letterbox_centre(widest, band, width)
+
+
+def _letterbox_caption_text(
+    cue: Cue, band: LetterboxBand, width: int, *, platform: str | None
+) -> str:
+    lines, fit, top, centre = letterbox_caption_place(cue.text, band, width)
+    tags = f"\\an8\\pos({centre},{top})"
+    if fit != band.size:
+        tags += f"\\fs{italic_size(fit) if cue.italic else fit}"
+    if has_cjk(cue.text):
+        tags += f"\\fn{cjk_font_name(cue.text, platform=platform)}"
+    return f"{{{tags}}}" + "\\N".join(_ass_escape(line) for line in lines)
+
+
 def build_ass(
     cues: Sequence[Cue],
     *,
@@ -1291,6 +1528,8 @@ def build_ass(
     height: int,
     style: str = DEFAULT_CAPTION_STYLE,
     platform: str | None = None,
+    band: LetterboxBand | None = None,
+    colour: str | None = None,
 ) -> str:
     """Render the caption ASS for a frame of ``width`` x ``height``.
 
@@ -1317,6 +1556,12 @@ def build_ass(
         ``house`` or ``plain`` (``none`` draws nothing and is never rendered).
     platform
         ``sys.platform`` by default (picks the CJK face); tests pass one.
+    band
+        A letterbox show's caption band under the picture
+        (:func:`letterbox_caption_place`: its own size, one line preferred,
+        each cue placed with ``\\pos``); ``None`` is the house band.
+    colour
+        The text colour (``&HAABBGGRR``); ``None`` is the style's own.
 
     Returns
     -------
@@ -1337,12 +1582,15 @@ def build_ass(
     size = house_font_size(height)
     margin_v = caption_margin_v(height)
     margin_x = side_margin(width)
+    margin_l, margin_r = margin_x, margin_x
+    if band is not None:
+        size = band.size
     outline = max(1, round(HOUSE_OUTLINE * scale))
     shadow = max(1, round(HOUSE_SHADOW * scale))
-    colour = PLAIN_COLOUR if style == "plain" else PRIMARY_COLOUR
+    colour = colour or (PLAIN_COLOUR if style == "plain" else PRIMARY_COLOUR)
     main = "Plain" if style == "plain" else "House"
     tail = f"{OUTLINE_COLOUR},{SHADOW_COLOUR}"
-    place = f"100,100,0,0,1,{outline},{shadow},2,{margin_x},{margin_x},{margin_v},1"
+    place = f"100,100,0,0,1,{outline},{shadow},2,{margin_l},{margin_r},{margin_v},1"
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -1363,7 +1611,12 @@ def build_ass(
     )
     events = "".join(
         f"Dialogue: 0,{_ass_time(c.start)},{_ass_time(c.end)},{'Italic' if c.italic else main},,0,0,0,,"
-        f"{_caption_text(c, size, width, platform=platform)}\n"
+        + (
+            _letterbox_caption_text(c, band, width, platform=platform)
+            if band is not None
+            else _caption_text(c, size, width, platform=platform)
+        )
+        + "\n"
         for c in cues
     )
     return header + events
@@ -1963,6 +2216,9 @@ def caption_take(
     style: str = DEFAULT_CAPTION_STYLE,
     spine: Mapping[str, Any] | None = None,
     laid_lines: Sequence[tuple[CaptionLine, Span]] = (),
+    layout: str = "portrait",
+    caption_colour: str | None = None,
+    italic_overrides: Mapping[str, bool] | None = None,
 ) -> CaptionResult:
     """Caption the newest raw take on a desk episode.
 
@@ -2024,6 +2280,17 @@ def caption_take(
         captioned where it is laid, like ``fixed_lines``, in Georgia italic
         when ``italic``, and its window is left out of the take's speech
         stretches so the script lines stay on their own speech.
+    layout
+        ``portrait`` (the house band, three-word flicker: unchanged) or
+        ``letterbox``: ``take`` is a letterbox show's 9:16 canvas, captioned in
+        the band under the picture (:mod:`creation.post.delivery_geometry`),
+        phrase chunking (:func:`phrase_cues`).
+    caption_colour
+        Letterbox only: ``yellow`` (default) or ``white``.
+    italic_overrides
+        ``line_id`` to italic or not, decided by the caller from what the take
+        draws (a stale ``off_screen`` flag on a speaker the take shows). Lines
+        not named keep the spine's flag.
 
     Returns
     -------
@@ -2037,6 +2304,10 @@ def caption_take(
             f"caption style {style!r} burns no captions; use house or plain "
             f"(choices: {', '.join(CAPTION_STYLES)})"
         )
+    if layout not in ("portrait", "letterbox"):
+        raise ValueError(f"caption layout {layout!r}: use portrait or letterbox")
+    letterbox = layout == "letterbox"
+    chunking = "phrase" if letterbox else "three"
     ep_dir = desk.expanduser().resolve() / f"ep{episode_ordinal:02d}"
     takes = ep_dir / "takes"
     if take is None:
@@ -2138,6 +2409,13 @@ def caption_take(
     if timing_warning:
         print(f"WARNING {timing_warning}", file=sys.stderr)
 
+    if italic_overrides:
+        caption_lines = [
+            replace(line, italic=italic_overrides[line.line_id])
+            if line.line_id in italic_overrides
+            else line
+            for line in caption_lines
+        ]
     italic = tuple(line.italic for line in caption_lines)
     skip = [not line.english for line in caption_lines]
     # Every line keeps its speech span (timing); only English lines are drawn.
@@ -2149,6 +2427,7 @@ def caption_take(
         skip=skip,
         holds=timing.holds,
         fixed_ends=timing.fixed_ends,
+        chunking=chunking,
     )
     methods = tuple(timing.methods)
     if fixed:
@@ -2159,6 +2438,7 @@ def caption_take(
             whole_lines=whole_lines,
             italic=[line.italic for line, _ in fixed],
             skip=[not line.english for line, _ in fixed],
+            chunking=chunking,
         )
         caption_lines = [*caption_lines, *(line for line, _ in fixed)]
         lines = [line.text for line in caption_lines]
@@ -2173,9 +2453,25 @@ def caption_take(
     )
     base = take.stem.replace("-raw", "").rsplit("-v", 1)[0]
     ass = next_versioned_path(takes, stem or f"{base}-house", ".ass")
-    ass.write_text(
-        build_ass(cues, width=width, height=height, style=style), encoding="utf-8"
-    )
+    if letterbox:
+        from creation.post.delivery_geometry import caption_colour_code
+        from creation.post.delivery_geometry import layout as letterbox_layout
+
+        place = letterbox_layout(width, height)
+        text = build_ass(
+            cues, width=width, height=height, style=style,
+            band=LetterboxBand(
+                place.caption.x, place.caption.right, place.caption.y,
+                place.caption_highest_top, place.caption.bottom,
+                place.caption_size, place.caption_min_size,
+            ),
+            colour=caption_colour_code(caption_colour)
+            if caption_colour or style != "plain"
+            else None,
+        )  # fmt: skip
+    else:
+        text = build_ass(cues, width=width, height=height, style=style)
+    ass.write_text(text, encoding="utf-8")
     video = next_versioned_path(takes, stem or f"{base}-captioned", ".mp4")
     font_warning = "; ".join(
         w for w in (house_font_warning(cues), italic_font_warning(cues)) if w

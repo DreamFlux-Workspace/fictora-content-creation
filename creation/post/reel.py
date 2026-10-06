@@ -743,6 +743,26 @@ def reel_hook(
     )  # fmt: skip
 
 
+def episode_is_pov(desk: Path, spine: Mapping[str, Any]) -> bool:
+    """Whether the show is a POV episode: the spine's brief (``scene_prompt_normalized``), else the
+    desk's newest ``shared/brief-vN.md``, opens "POV:" (:func:`creation.post.reel_plan.brief_is_pov`)."""
+
+    from creation.post.reel_plan import brief_is_pov
+
+    stored = spine.get("scene_prompt_normalized")
+    if isinstance(stored, str) and stored.strip():
+        return brief_is_pov(stored)
+    briefs = sorted(
+        (desk / "shared").glob("brief-v*.md"),
+        key=lambda p: (
+            int(p.stem.rsplit("-v", 1)[-1])
+            if p.stem.rsplit("-v", 1)[-1].isdigit()
+            else 0
+        ),
+    )
+    return brief_is_pov(briefs[-1].read_text(encoding="utf-8")) if briefs else False
+
+
 def render_reel(
     desk: Path,
     *,
@@ -1114,11 +1134,20 @@ def _run_reel(
         flush=True,
     )
     whole = captions_whole_lines(spine)
+    pov = episode_is_pov(desk, spine)
+    if pov:
+        print(
+            'POV episode (the brief opens "POV:"): lines said to the camera stay in the reel; '
+            "calls to action are still cut",
+            file=out,
+            flush=True,
+        )
     if body is None:
         beats = episode_beats(spine, episode, [s.take_id for s in srcs])
         plan = plan_reel(
             episode, takes, beats, seconds=seconds,
             genre=str(spine.get("microdrama_genre") or ""), ending=ending or "hard",
+            pov=pov,
         )  # fmt: skip
         patches = [p for s in srcs for p in s.patches]
     else:
@@ -1131,7 +1160,7 @@ def _run_reel(
             last_beat=last_beat_from_json(body.get("last_beat")),
             ending=ending or ending_from_json(body.get("ending")),
         )
-        plan.warnings += check_plan(plan, takes)
+        plan.warnings += check_plan(plan, takes, pov=pov)
         patches = list(body.get("patches") or [])
     for s in srcs:
         if s.record is not None and not s.record.complete:

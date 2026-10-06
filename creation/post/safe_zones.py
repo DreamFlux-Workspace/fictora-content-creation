@@ -22,6 +22,11 @@ What is measured, on frames sampled across the take:
   check that no face, eyes, mouth or key prop sits in them. The board's
   written placements are no longer flagged: only a measured box is a finding.
 
+A letterbox show's 9:16 file (its finish record says ``letterbox``) is
+checked against its own band: captions sit under the picture, between the
+picture's bottom edge and the platform chrome (y 1385-1536, 72-80% on 1920), and the
+yellow hook line above the picture is the title, not a caption.
+
 Everything is a warning: ``review`` always exits 0 and changes no take.
 """
 
@@ -178,7 +183,7 @@ def _caption_box_in_rows(mask: np.ndarray, row_lo: int, row_hi: int) -> Box | No
     )
 
 
-def caption_box(image: Image.Image) -> Box | None:
+def caption_box(image: Image.Image, *, below: float | None = None) -> Box | None:
     """The caption's box as ``(left, top, right, bottom)`` fractions, or ``None`` when no caption shows.
 
     The house band (about 50–78% of the height) is searched first. A yellow
@@ -190,6 +195,9 @@ def caption_box(image: Image.Image) -> Box | None:
     pixels = np.asarray(image.convert("RGB"))
     height = pixels.shape[0]
     mask = caption_mask(pixels)
+    if below is not None:
+        # A letterbox file: its captions are under the picture; the yellow above it is the title.
+        return _caption_box_in_rows(mask, int(below * height), height)
     band = _caption_box_in_rows(mask, int(0.50 * height), int(0.78 * height))
     if band is not None:
         return band
@@ -400,12 +408,33 @@ def zone_sheet(
     return out
 
 
+def letterbox_file(video: Path) -> bool:
+    """True when ``video`` is a letterbox show's 9:16 file: a finish record names it (or, for a joined
+    episode, its takes' records) as ``letterbox``."""
+
+    from creation.post.finish_record import latest_finish_record, record_for_file
+
+    resolved = video.expanduser().resolve()
+    desk = next((p for p in resolved.parents if (p / "series.json").is_file()), None)
+    if desk is None:
+        return False
+    record = record_for_file(desk, resolved)
+    if record is not None:
+        return record.letterbox
+    joined = re.match(r"episode-ep(\d+)-join", resolved.name)
+    if joined:
+        first = latest_finish_record(desk, int(joined.group(1)), "t1")
+        return bool(first and first.letterbox)
+    return False
+
+
 def check_safe_zones(
     video: Path,
     *,
     sheet_dir: Path | None = None,
     count: int = SAMPLE_FRAMES,
     layout: Path | None = None,
+    letterbox: bool | None = None,
 ) -> SafeZoneReport:
     """Measure captions against the covered zones on sampled frames; write the zone sheet.
 
@@ -419,6 +448,9 @@ def check_safe_zones(
         Frames sampled.
     layout
         The burned caption file (:func:`burned_caption_file` finds it by default).
+    letterbox
+        A letterbox show's 9:16 file (default: :func:`letterbox_file`): its
+        captions are checked in the band under the picture.
 
     Returns
     -------
@@ -436,9 +468,21 @@ def check_safe_zones(
     grabbed: list[tuple[float, Image.Image, Box | None]] = []
     checks: list[FrameCheck] = []
     low, high = CAPTION_BAND
+    below: float | None = None
+    band_name = "the house band"
+    if letterbox if letterbox is not None else letterbox_file(video):
+        from creation.post.delivery_geometry import layout as letterbox_layout
+
+        place = letterbox_layout(info.width, info.height)
+        below = place.picture.bottom / info.height
+        low = place.caption_highest_top / info.height
+        high = place.caption.bottom / info.height
+        band_name = "the letterbox band under the picture"
     for seconds in sample_times(info.duration_seconds, count):
         image = grab_frame(video, seconds)
-        box = caption_box(image)
+        box = (
+            caption_box(image, below=below) if below is not None else caption_box(image)
+        )
         measured_by = "pixels"
         if box is None:
             # A white plain caption has no house yellow: take the burned layout's cue at this time.
@@ -475,9 +519,8 @@ def check_safe_zones(
             )
     off_band = [c.seconds for c in checks if c.outside_band]
     if off_band:
-        low, high = CAPTION_BAND
         warnings.append(
-            f"!! caption outside the house band ({low:.0%}-{high:.0%} of the height) at "
+            f"!! caption outside {band_name} ({low:.0%}-{high:.0%} of the height) at "
             f"{', '.join(f'{s:.1f}s' for s in off_band)}"
         )
     if not any(c.caption for c in checks):

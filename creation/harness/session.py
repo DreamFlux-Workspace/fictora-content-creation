@@ -281,6 +281,29 @@ class DramaApiRunSession:
             self.client.patch(self.url(path), headers=self.headers(), json=body)
         )
 
+    def patch_optional(self, path: str, body: dict[str, Any]) -> tuple[int, Any]:
+        """PATCH JSON without raising on an error status, for a caller that answers a refusal itself.
+
+        Parameters
+        ----------
+        path
+            Drama API path.
+        body
+            JSON object.
+
+        Returns
+        -------
+        tuple[int, Any]
+            HTTP status and the parsed JSON body (text when it is not JSON).
+        """
+
+        response = self.client.patch(self.url(path), headers=self.headers(), json=body)
+        try:
+            answer: Any = response.json()
+        except ValueError:
+            answer = response.text
+        return response.status_code, answer
+
     def delete(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         """DELETE a drama API path with a JSON body.
 

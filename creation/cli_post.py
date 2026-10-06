@@ -25,6 +25,7 @@ POST_COMMANDS = (
         {
             "voice",
             "voice-mode",
+            "hook-line",
             "voice-fx",
             "revoice",
             "voice-line",
@@ -76,6 +77,18 @@ def add_caption_style_arg(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="house: yellow Arial Bold word flicker (the default); plain: white whole lines, same size and "
         "safe band; none: no captions. Default: caption_style in the desk's production.config.json.",
+    )
+
+
+def add_caption_colour_arg(parser: argparse.ArgumentParser) -> None:
+    """``--caption-colour yellow|white`` on ``finish`` and ``join`` (a letterbox show's 4:3 takes only)."""
+
+    parser.add_argument(
+        "--caption-colour",
+        choices=("yellow", "white"),
+        default=None,
+        help="Letterbox shows only: the colour of the captions under the picture. Default: "
+        "letterbox_caption_colour in the desk's production.config.json, else the show's setting, else yellow.",
     )
 
 
@@ -160,6 +173,32 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         default=None,
         metavar="A,B,...",
         help="Exactly these Eleven v3 voices, in this order, instead of the default slate (--count ignored).",
+    )
+
+    hook = sub.add_parser(
+        "hook-line",
+        help="List or choose an episode's on-screen hook line (free): --list reads the saved spine (no call); "
+        '--pick K selects the writer\'s option K, --text "..." sets your own, --off shows none, on the route '
+        "the app uses. An older server: the pick is kept on the desk for finish and join.",
+    )
+    hook.add_argument("--desk", type=Path, required=True)
+    hook.add_argument("--episode", type=int, default=1)
+    hook_which = hook.add_mutually_exclusive_group(required=True)
+    hook_which.add_argument(
+        "--list", action="store_true", help="Print the options (free, no call)."
+    )
+    hook_which.add_argument(
+        "--pick",
+        type=int,
+        default=None,
+        metavar="K",
+        help="Option K, as --list numbers them.",
+    )
+    hook_which.add_argument(
+        "--text", default=None, help="Your own hook line, as written."
+    )
+    hook_which.add_argument(
+        "--off", action="store_true", help="No hook line for this episode."
     )
 
     voice_mode = sub.add_parser(
@@ -441,6 +480,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="No cover on the deliverable (not even a saved one).",
     )
     add_caption_style_arg(fin)
+    add_caption_colour_arg(fin)
     add_hook_line_args(fin)
     fin.add_argument(
         "--json", action="store_true", help="Print the report as JSON on stdout."
@@ -526,6 +566,20 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Who accepted the seam (with --accept-seam).",
     )
     add_ending_arg(join)
+    add_caption_colour_arg(join)
+    title = join.add_mutually_exclusive_group()
+    title.add_argument(
+        "--hook-line",
+        default=None,
+        metavar="TEXT",
+        help="Letterbox shows only: the title block's yellow line on the joined file instead of the "
+        "episode's hook line (the desk's pick from `hook-line`, else the spine's).",
+    )
+    title.add_argument(
+        "--no-hook-line",
+        action="store_true",
+        help="Letterbox shows only: no title block on the joined file.",
+    )
     join.add_argument(
         "--json", action="store_true", help="Print the report as JSON on stdout."
     )
@@ -632,6 +686,13 @@ def dispatch_post(args: argparse.Namespace) -> int:
                 raise ValueError("--text and --voices go with --audition")
             run_voice_pick(args.desk, cast=args.cast, pick=args.pick)
         return 0
+    if args.command == "hook-line":
+        from creation.hook_line import run_hook_line
+
+        return run_hook_line(
+            args.desk, episode=args.episode, list_only=args.list, pick=args.pick,
+            text=args.text, off=args.off,
+        )  # fmt: skip
     if args.command == "voice-mode":
         from creation.voice_mode import run_voice_mode
 
@@ -735,6 +796,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             hook_line=args.hook_line,
             no_hook_line=args.no_hook_line,
             hook_line_position=args.hook_line_position,
+            caption_colour=args.caption_colour,
         )
         if args.json:
             print(json.dumps(result.as_json(), indent=2))
@@ -781,6 +843,9 @@ def dispatch_post(args: argparse.Namespace) -> int:
             accept_seam=args.accept_seam,
             accepted_by=args.accepted_by,
             ending=args.ending or "hard",
+            hook_line=args.hook_line,
+            no_hook_line=args.no_hook_line,
+            caption_colour=args.caption_colour,
         )
         if args.json:
             print(json.dumps(joined.as_json(), indent=2))

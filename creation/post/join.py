@@ -50,6 +50,15 @@ What ``join`` does, in order:
 7. **Mark once** on the joined master (the parts are un-marked); the master
    stays beside the marked file.
 
+A letterbox show (every part's finish record says ``letterbox``: its master
+is the 9:16 canvas, captioned in the band under the picture) is joined the
+same way, and step 7 puts the Sokii mark in the top band and the title block
+above the picture (:func:`creation.post.letterbox.mark_and_title`: the setup
+line white, the hook line yellow; ``--hook-line`` / ``--no-hook-line``) on the
+joined file once. The opening and tail checks read the picture only. The
+captions are the ones each take was finished with (``--caption-colour`` on
+``finish``).
+
 Outputs never overwrite: ``epNN/takes/episode-epNN-join-vN.mp4`` (master) and
 ``episode-epNN-join-sokii-vN.mp4``; a series cut goes to ``shared/cuts/``.
 """
@@ -1025,6 +1034,7 @@ def edge_notes(
     parts: list[JoinPart],
     *,
     speech: list[tuple[float, float]],
+    letterbox: bool = False,
 ) -> list[str]:
     """⚠ lines for how the joined file opens (its first episode's first take) and ends (a settled tail).
 
@@ -1042,6 +1052,8 @@ def edge_notes(
         The parts in order.
     speech
         Speech windows on the joined timeline.
+    letterbox
+        The joined file is a letterbox show's 9:16 canvas: only the picture is read.
 
     Returns
     -------
@@ -1057,18 +1069,79 @@ def edge_notes(
         tail_warning,
     )
 
+    crop: tuple[int, int, int, int] | None = None
+    if letterbox:
+        from creation.post.delivery_geometry import layout
+
+        pic = layout().picture
+        crop = (pic.x, pic.y, pic.width, pic.height)
     first = parts[0]
     silent, head_face = opening_context(desk, first.episode, first.take_id)
     reading = measure_opening(
         master, detector=detector_for(desk, first.episode), head_count_face=head_face,
-        silent_open=silent, where=f"ep{first.episode:02d} (joined)",
+        silent_open=silent, where=f"ep{first.episode:02d} (joined)", crop=crop,
     )  # fmt: skip
     lines = [f"⚠ {w}" for w in reading.warnings]
-    tail = measure_tail(master, last_mark=max((b for _, b in speech), default=None))
+    tail = measure_tail(
+        master, last_mark=max((b for _, b in speech), default=None), crop=crop
+    )
     line = tail_warning(tail, what="the joined episode")
     if line:
         lines.append(f"⚠ {line}")
     return lines
+
+
+def letterbox_join(parts: list[JoinPart]) -> bool:
+    """True when every part is a letterbox show's 9:16 take (its finish record says so).
+
+    Raises
+    ------
+    ValueError
+        When letterbox takes are mixed with others (they would not share one layout).
+    """
+
+    flags = [part.record.letterbox for part in parts]
+    if any(flags) and not all(flags):
+        raise ValueError(
+            "join refused: "
+            + ", ".join(p.label for p, f in zip(parts, flags) if f)
+            + " are letterbox 9:16 takes and "
+            + ", ".join(p.label for p, f in zip(parts, flags) if not f)
+            + " are not. Finish every take again so they share one layout."
+        )
+    return bool(flags) and all(flags)
+
+
+def _letterbox_title(
+    desk: Path,
+    parts: list[JoinPart],
+    *,
+    hook_line: str | None,
+    off: bool,
+    caption_colour: str | None,
+) -> tuple[Any, str]:
+    """The joined letterbox file's title block (its first episode's), and a note for the report."""
+
+    from creation.post.desk import saved_spine
+    from creation.post.letterbox import title_block
+
+    episode = parts[0].episode
+    found = saved_spine(desk, episode)
+    title, why = title_block(
+        found[0] if found else None, episode, desk=desk, override=hook_line, off=off
+    )
+    colours = sorted({str(p.record.caption_colour or "yellow") for p in parts})
+    if caption_colour and colours != [caption_colour.strip().casefold()]:
+        raise ValueError(
+            f"--caption-colour {caption_colour}: the takes' captions are burned in {', '.join(colours)} "
+            "under the picture at finish. Run `finish --caption-colour "
+            f"{caption_colour}` on each take, then join again."
+        )
+    episodes = sorted({p.episode for p in parts})
+    note = why
+    if len(episodes) > 1 and title is not None:
+        note = f"letterbox series cut: the title block is ep{episode:02d}'s for the whole cut"
+    return title, note
 
 
 def _agreed(values: list[Any], default: Any) -> Any:
@@ -1090,6 +1163,9 @@ def run_join(
     accept_seam: str | None = None,
     accepted_by: str | None = None,
     ending: str = "hard",
+    hook_line: str | None = None,
+    no_hook_line: bool = False,
+    caption_colour: str | None = None,
     stream: TextIO | None = None,
 ) -> JoinResult:
     """Join finished takes with one bed across them, and mark the joined file once.
@@ -1129,6 +1205,14 @@ def run_join(
         with it. ``freeze-black``: the marked file holds its last frame, then
         cuts to black (:func:`creation.post.ending.apply_ending`); the master
         stays as joined.
+    hook_line, no_hook_line
+        A letterbox join's title block: ``--hook-line TEXT`` for its yellow
+        line, ``--no-hook-line`` for none. Refused on a portrait join (its
+        hook line is the first take's, burned at ``finish``).
+    caption_colour
+        ``--caption-colour``: a letterbox join's captions are the ones each
+        take was finished with; a colour other than theirs is refused with
+        what to run instead (``finish --caption-colour`` on each take).
     stream
         Progress output (stderr by default).
 
@@ -1173,6 +1257,19 @@ def run_join(
         else [p for n in episodes for p in episode_parts(desk, n)]
     )
     lengths = check_parts(parts)
+    letterbox = letterbox_join(parts)
+    title = None
+    title_note = ""
+    if not letterbox and (hook_line or no_hook_line or caption_colour):
+        raise ValueError(
+            "--hook-line, --no-hook-line and --caption-colour on join are for a letterbox show's 9:16 takes; "
+            "a portrait join keeps the hook line and captions each take was finished with"
+        )
+    if letterbox:
+        title, title_note = _letterbox_title(
+            desk, parts, hook_line=hook_line, off=no_hook_line,
+            caption_colour=caption_colour,
+        )  # fmt: skip
     dissolves = seam_dissolves(parts, dissolve)
     records = [part.record for part in parts]
     duck_db = (
@@ -1288,7 +1385,9 @@ def run_join(
             speech_notes.append(short)
     if gain_note:
         speech_notes.append(gain_note)
-    speech_notes += edge_notes(desk, master, parts, speech=speech)
+    speech_notes += edge_notes(desk, master, parts, speech=speech, letterbox=letterbox)
+    if title_note:
+        speech_notes.append(title_note)
     levels = seam_levels(master, seams, speech=speech)
     result = JoinResult(
         parts=parts, master=master, marked=None, bed=bed, gains_db=gains, dissolves=dissolves, seams=seams,
@@ -1323,11 +1422,32 @@ def run_join(
     else:
         marked_stem = f"{stem}-sokii"
         target = next_versioned_path(folder, marked_stem, ".mp4")
+
+        def mark(video: Path, out: Path) -> Path:
+            if not letterbox:
+                return watermark(video, out, y=watermark_y)
+            from creation.post.letterbox import mark_and_title
+
+            done, fitted = mark_and_title(
+                video, out, title=title,
+                ass_path=next_versioned_path(folder, f"{stem}-title", ".ass"),
+            )  # fmt: skip
+            result.notes.append(
+                "letterbox: Sokii mark in the top band; "
+                + (
+                    f"{title.describe()} at {fitted.size} px"
+                    + (f"; {fitted.note}" if fitted.note else "")
+                    if title is not None and fitted is not None
+                    else "no title block"
+                )
+            )
+            return done
+
         if ending == "hard":
-            result.marked = watermark(master, target, y=watermark_y)
+            result.marked = mark(master, target)
         else:
             with tempfile.TemporaryDirectory() as scratch:
-                marked = watermark(master, Path(scratch) / "marked.mp4", y=watermark_y)
+                marked = mark(master, Path(scratch) / "marked.mp4")
                 result.marked = apply_ending(marked, target, style=ending)
             result.notes.append(
                 f"ending {ending}: the marked file holds its last frame, then cuts to black "
