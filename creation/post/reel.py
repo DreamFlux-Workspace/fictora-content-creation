@@ -180,6 +180,10 @@ class TakeSource:
 def parse_ass_cues(text: str) -> list[Cue]:
     """The caption events of an ASS file as cues (style ``Italic`` -> italic; override tags dropped).
 
+    A Bold caption (:mod:`creation.caption_bold`) is read as what it shows:
+    the words not yet said (hidden) are dropped, so its cues build up word by
+    word like the house flicker, and its yellow word is the cue's ``emphasis``.
+
     Parameters
     ----------
     text
@@ -202,9 +206,18 @@ def parse_ass_cues(text: str) -> list[Cue]:
         fields_ = line.split(":", 1)[1].split(",", 9)
         if len(fields_) < 10:
             continue
-        body = re.sub(r"\{[^}]*\}", "", fields_[9])
-        body = body.replace("\\N", " ").replace("\\n", " ").replace("\\h", " ")
-        body = re.sub(r"\s+", " ", body).strip()
+        raw = fields_[9]
+        # A Bold caption lays its whole chunk out and hides the words not yet said: keep what shows.
+        raw = re.split(r"\{[^}]*\\alpha&HFF&[^}]*\}", raw, maxsplit=1)[0]
+        raw = raw.replace("\\N", " ").replace("\\n", " ").replace("\\h", " ")
+        # Bold's yellow word (the house colour switched on inside the line) stays the yellow word.
+        marked = re.sub(r"\{[^}]*\\c&H0000E5FF&[^}]*\}", "\x00", raw)
+        marked = re.sub(r"\{[^}]*\}", "", marked)
+        marked = re.sub(r"\s+", " ", marked).strip()
+        emphasis = next(
+            (i for i, word in enumerate(marked.split()) if word.startswith("\x00")), -1
+        )
+        body = marked.replace("\x00", "")
         if not body:
             continue
         cues.append(
@@ -213,6 +226,7 @@ def parse_ass_cues(text: str) -> list[Cue]:
                 seconds(fields_[2]),
                 body,
                 italic=fields_[3].strip().lower() == "italic",
+                emphasis=emphasis,
             )
         )
     return cues
@@ -1064,6 +1078,8 @@ def render_reel(
             report.append(letterbox.describe())
         cues = retime_cues(plan.segments, {t.take_id: t.cues for t in takes}, fps)
         grain = "whole English lines" if whole_lines else "word flicker"
+        if caption_style == "bold" and band is None:
+            grain = f"bold, {'whole English lines' if whole_lines else 'one short chunk at a time, one yellow word'}"
         if caption_style == "none":
             captioned, captions_line = mixed, "captions none (desk style)"
         elif not cues:

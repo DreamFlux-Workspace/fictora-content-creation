@@ -118,7 +118,8 @@ def test_a_portrait_native_finish_runs_the_commands_it_always_ran(
     _board(post_desk)
     calls = _recording(monkeypatch, [post_desk, REPO])
 
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    # Subtle (today's house captions) must burn exactly what the golden recorded; a new show's Bold is new.
+    result = run_finish(post_desk, caption_style="subtle", sfx_render=fake_sfx([]), bed_maker=fake_bed,
                         facts_fetcher=lambda *a: None, stream=io.StringIO())  # fmt: skip
 
     assert result.complete
@@ -149,7 +150,8 @@ def test_a_portrait_locked_voice_finish_runs_the_commands_it_always_ran(
     _board(post_desk)
     calls = _recording(monkeypatch, [post_desk, REPO])
 
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    # Subtle (today's house captions) must burn exactly what the golden recorded; a new show's Bold is new.
+    result = run_finish(post_desk, caption_style="subtle", sfx_render=fake_sfx([]), bed_maker=fake_bed,
                         facts_fetcher=lambda *a: None, cut_meter=lambda _take: (2.5,),
                         stream=io.StringIO())  # fmt: skip
 

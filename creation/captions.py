@@ -105,27 +105,100 @@ ITALIC_FONT_NAME = "Georgia"
 #: Em per Fontsize unit: Arial Bold 2048 / (1854 + 434); Georgia Italic 2048 / (1878 + 449).
 HOUSE_EM_PER_SIZE = 2048 / (1854 + 434)
 ITALIC_EM_PER_SIZE = 2048 / (1878 + 449)
-#: Caption styles: ``house`` (yellow word flicker), ``plain`` (white whole lines), ``none``.
-CAPTION_STYLES = ("house", "plain", "none")
+#: Caption styles: ``bold`` (one short white line at a time, one yellow word; the default for a new
+#: show, :mod:`creation.caption_bold`), ``subtle`` (yellow word flicker; ``house`` is its older name and
+#: still works), ``plain`` (white whole lines), ``none``.
+CAPTION_STYLES = ("bold", "subtle", "house", "plain", "none")
+#: The style a function draws when it is not told: today's house flicker (``subtle``).
 DEFAULT_CAPTION_STYLE = "house"
+#: A new show's captions (user decision, 6 Oct 2026); a show with finished episodes keeps ``subtle``.
+NEW_SHOW_CAPTION_STYLE = "bold"
+#: The style a show that already has finished episodes keeps unless the operator switches.
+CONTINUING_SHOW_CAPTION_STYLE = "subtle"
+#: Other names a style answers to, and the name the builders use.
+_STYLE_ALIASES = {"subtle": "house"}
+
+
+def canonical_caption_style(style: str) -> str:
+    """The builders' name for a caption style: ``subtle`` is ``house``; the rest are their own."""
+
+    return _STYLE_ALIASES.get(style, style)
+
+
+def caption_style_word(style: str) -> str:
+    """The style as the kit names it to a person: ``house`` is said ``subtle``."""
+
+    return "subtle" if style in ("house", "subtle") else style
+
+
+def desk_has_finished_episodes(desk: Path) -> bool:
+    """True when the show has a finished episode: a ``finish`` record on a take, or a post yes.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+
+    Returns
+    -------
+    bool
+        Whether any ``epNN/takes/take-epNN-tK-finish-vN.json`` exists or any
+        episode's post gate in ``series.json`` is approved.
+    """
+
+    desk = desk.expanduser().resolve()
+    if any(desk.glob("ep*/takes/take-ep*-t*-finish-v*.json")):
+        return True
+    from creation.ops.state import load_series
+
+    try:
+        series = load_series(desk)
+    except (FileNotFoundError, ValueError, KeyError, TypeError):
+        return False
+    return any(ep.post.status == "approved" for ep in series.episodes)
+
+
+def show_caption_style(desk: Path) -> tuple[str, str]:
+    """The desk's caption style and where it came from, before any per-run flag.
+
+    ``caption_style`` in ``production.config.json`` when set; otherwise a show
+    with finished episodes keeps ``subtle`` (the captions it was finished
+    with) and a new show gets ``bold``.
+
+    Returns
+    -------
+    tuple[str, str]
+        The style as configured (``bold``, ``subtle``, ``house`` ...; may be a
+        server recipe), and ``show`` / ``continuing`` / ``new``.
+    """
+
+    from creation.production_config import load_production_config
+
+    configured = str(load_production_config(desk).caption_style or "").strip()
+    if configured:
+        return configured, "show"
+    if desk_has_finished_episodes(desk):
+        return CONTINUING_SHOW_CAPTION_STYLE, "continuing"
+    return NEW_SHOW_CAPTION_STYLE, "new"
 
 
 def resolve_caption_style(desk: Path, given: str | None = None) -> tuple[str, str]:
-    """The caption style to burn: ``given`` (the command's flag), else the desk's config.
+    """The caption style to burn: ``given`` (the command's flag), else the show's (:func:`show_caption_style`).
 
     Parameters
     ----------
     desk
         Series desk (its ``production.config.json`` ``caption_style``).
     given
-        ``--caption-style`` on ``finish`` / ``caption``; ``None`` reads the desk.
+        ``--caption-style`` on ``finish`` / ``caption`` / ``reel``; ``None`` reads the desk.
 
     Returns
     -------
     tuple[str, str]
-        One of :data:`CAPTION_STYLES`, and ``""`` or a note when the desk's
-        value is not a local style (a server recipe set for ``--api-captions``,
-        such as ``viral_karaoke``): those desks are captioned ``house``.
+        The builders' style (``bold``, ``house`` for ``subtle``, ``plain`` or
+        ``none``), and ``""`` or a note when the desk's value is not a local
+        style (a server recipe set for ``--api-captions``, such as
+        ``viral_karaoke``): those desks are captioned as a show with no choice is.
 
     Raises
     ------
@@ -138,15 +211,18 @@ def resolve_caption_style(desk: Path, given: str | None = None) -> tuple[str, st
             raise ValueError(
                 f"--caption-style {given!r}: choose one of {', '.join(CAPTION_STYLES)}"
             )
-        return given, ""
-    from creation.production_config import load_production_config
-
-    configured = str(load_production_config(desk).caption_style or "").strip()
+        return canonical_caption_style(given), ""
+    configured, _source = show_caption_style(desk)
     if configured in CAPTION_STYLES:
-        return configured, ""
-    return DEFAULT_CAPTION_STYLE, (
+        return canonical_caption_style(configured), ""
+    fallback = (
+        CONTINUING_SHOW_CAPTION_STYLE
+        if desk_has_finished_episodes(desk)
+        else NEW_SHOW_CAPTION_STYLE
+    )
+    return canonical_caption_style(fallback), (
         f"the desk's caption_style {configured!r} is not a local caption style "
-        f"({', '.join(CAPTION_STYLES)}); captioned {DEFAULT_CAPTION_STYLE}"
+        f"({', '.join(CAPTION_STYLES)}); captioned {fallback}"
     )
 
 
@@ -202,8 +278,9 @@ _BREAK_BEFORE = frozenset(
 )
 #: A pause this long between two timed words is a breath: the phrase ends there.
 PHRASE_BREATH_SECONDS = 0.35
-#: Caption chunking: ``three`` (portrait house flicker) or ``phrase`` (letterbox).
-CHUNKINGS = ("three", "phrase")
+#: Caption chunking: ``three`` (portrait house flicker), ``phrase`` (letterbox) or ``bold``
+#: (one short chunk at a time, :mod:`creation.caption_bold`).
+CHUNKINGS = ("three", "phrase", "bold")
 
 #: silencedetect settings (runbook: noise -30 dB, 0.3 s minimum silence).
 SILENCE_NOISE_DB = -30
@@ -259,6 +336,12 @@ class Cue:
     text: str
     #: Set in Georgia italic (a voice heard, not seen).
     italic: bool = False
+    #: Bold only (:mod:`creation.caption_bold`): the whole chunk this cue belongs to ("" otherwise) ...
+    chunk: str = ""
+    #: ... the index of its yellow word in the chunk (-1: none) ...
+    emphasis: int = -1
+    #: ... and how many of the chunk's words are said by this cue's start (0: not Bold).
+    shown: int = 0
 
 
 @dataclass(frozen=True)
@@ -283,6 +366,8 @@ class CaptionLine:
     performed: str = ""
     #: Other spellings of what is heard (``text``, ``spoken_text``), for the transcript match.
     spellings: tuple[str, ...] = ()
+    #: The writer-marked emphasis word (the spine's optional ``emphasis``), for Bold's yellow word.
+    emphasis: str | int | None = None
 
     @property
     def english(self) -> bool:
@@ -516,6 +601,8 @@ def _beat_caption_lines(
             )
             spoken = str(line.get("spoken_text") or "").strip()
             written = str(line.get("text") or "").strip()
+            from creation.caption_bold import spine_emphasis
+
             lines.append(
                 CaptionLine(
                     str(line.get("line_id") or f"line {len(lines) + 1}"),
@@ -523,6 +610,7 @@ def _beat_caption_lines(
                     heard_not_seen,
                     spoken or written or text,
                     tuple(dict.fromkeys(t for t in (written, spoken) if t)),
+                    spine_emphasis(line),
                 )
             )
     return lines
@@ -1432,6 +1520,7 @@ def build_line_cues(
     fixed_ends: Sequence[bool] = (),
     chunking: str = "three",
     word_cues: Sequence[Sequence[Cue] | None] = (),
+    emphasis: Sequence[str | int | None] = (),
 ) -> list[list[Cue]]:
     """Cues for every line on its anchor span, grouped per line (empty for a skipped line).
 
@@ -1452,6 +1541,12 @@ def build_line_cues(
     Every cue's text goes through :func:`creation.caption_dashes.caption_text`
     (no em or en dash on the picture; the script and the voice keep theirs).
 
+    With ``chunking="bold"`` (the Bold style) each line shows one short chunk
+    at a time, each word from when it is said, one word yellow
+    (:func:`creation.caption_bold.bold_cues`; ``emphasis[i]`` is line ``i``'s
+    writer-marked word, else a heuristic picks); whole lines are drawn in
+    Bold's look (:func:`creation.caption_bold.bold_whole_line`).
+
     English shows flicker word by word (:func:`flicker_cues`; with
     ``chunking="phrase"``, a letterbox show, :func:`phrase_cues`). With
     ``whole_lines`` (a show spoken in Japanese or Korean, captioned with the
@@ -1469,6 +1564,7 @@ def build_line_cues(
         next_start = anchors[i + 1].start if i + 1 < len(anchors) else None
         fixed = i < len(fixed_ends) and fixed_ends[i]
         hold = 0.0 if fixed else holds[i] if i < len(holds) else LAST_WORD_HOLD_SECONDS
+        marked = emphasis[i] if i < len(emphasis) else None
         if whole_lines:
             line_cues = [
                 whole_line_cue(
@@ -1479,6 +1575,23 @@ def build_line_cues(
                     min_seconds=0.0 if fixed else readable_seconds(text),
                 )
             ]
+            if chunking == "bold":
+                from creation.caption_bold import bold_whole_line, marked_index
+
+                at = marked_index(text.split(), marked)
+                line_cues = [bold_whole_line(line_cues[0], () if at is None else {at})]
+        elif chunking == "bold":
+            from creation.caption_bold import bold_cues, marked_index
+
+            heard = word_cues[i] if i < len(word_cues) else None
+            timed = list(heard) if heard else time_words(text, span)
+            at = marked_index([w.text for w in timed], marked)
+            line_cues = bold_cues(
+                timed,
+                hold_until=next_start,
+                hold=hold,
+                marked=() if at is None else {at},
+            )
         else:
             build = phrase_cues if chunking == "phrase" else flicker_cues
             heard = word_cues[i] if i < len(word_cues) else None
@@ -1489,7 +1602,7 @@ def build_line_cues(
         # are unchanged): "Please—" shows "Please…" (creation.caption_dashes).
         groups.append(
             [
-                Cue(c.start, c.end, no_dash_text(c.text), italic=slanted or c.italic)
+                replace(c, text=no_dash_text(c.text), italic=slanted or c.italic)
                 for c in line_cues
             ]
         )
@@ -1818,7 +1931,10 @@ def build_ass(
     width, height
         The take's frame size.
     style
-        ``house`` or ``plain`` (``none`` draws nothing and is never rendered).
+        ``house`` (``subtle``), ``plain`` or ``bold`` (``none`` draws nothing
+        and is never rendered). ``bold`` is drawn by
+        :func:`creation.caption_bold.build_bold_ass` (its own size, place and
+        colours; ``band`` and ``colour`` do not apply).
     platform
         ``sys.platform`` by default (picks the CJK face); tests pass one.
     band
@@ -1839,9 +1955,16 @@ def build_ass(
         For a style other than ``house`` or ``plain``.
     """
 
+    style = canonical_caption_style(style)
+    if style == "bold" and band is None:
+        from creation.caption_bold import build_bold_ass
+
+        return build_bold_ass(cues, width=width, height=height, platform=platform)
+    if style == "bold":
+        style = "house"  # a letterbox band keeps its own layout
     if style not in ("house", "plain"):
         raise ValueError(
-            f"caption style {style!r} draws no captions; use house or plain"
+            f"caption style {style!r} draws no captions; use bold, subtle (house) or plain"
         )
     # No em or en dash on the picture (6 Oct 2026): every cue, after timing (creation.caption_dashes).
     cues = [replace(c, text=no_dash_text(c.text)) for c in cues]
@@ -2566,15 +2689,19 @@ def caption_take(
         English is timed but not captioned; ``not_english`` says which.
     """
 
-    if style not in ("house", "plain"):
+    style = canonical_caption_style(style)
+    if style not in ("bold", "house", "plain"):
         raise ValueError(
-            f"caption style {style!r} burns no captions; use house or plain "
+            f"caption style {style!r} burns no captions; use bold, subtle (house) or plain "
             f"(choices: {', '.join(CAPTION_STYLES)})"
         )
     if layout not in ("portrait", "letterbox"):
         raise ValueError(f"caption layout {layout!r}: use portrait or letterbox")
     letterbox = layout == "letterbox"
-    chunking = "phrase" if letterbox else "three"
+    if letterbox and style == "bold":
+        # A letterbox show keeps its own caption layout under the picture (6 Oct 2026).
+        style = "house"
+    chunking = "phrase" if letterbox else "bold" if style == "bold" else "three"
     ep_dir = desk.expanduser().resolve() / f"ep{episode_ordinal:02d}"
     takes = ep_dir / "takes"
     if take is None:
@@ -2697,6 +2824,7 @@ def caption_take(
         fixed_ends=timing.fixed_ends,
         chunking=chunking,
         word_cues=timing.word_cues,
+        emphasis=[line.emphasis for line in caption_lines],
     )
     if timing.wording:
         wording = "WORDING: captioned as said, not as written: " + "; ".join(
@@ -2714,6 +2842,7 @@ def caption_take(
             italic=[line.italic for line, _ in fixed],
             skip=[not line.english for line, _ in fixed],
             chunking=chunking,
+            emphasis=[line.emphasis for line, _ in fixed],
         )
         caption_lines = [*caption_lines, *(line for line, _ in fixed)]
         lines = [line.text for line in caption_lines]

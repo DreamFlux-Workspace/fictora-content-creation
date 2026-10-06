@@ -53,10 +53,12 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--caption-style",
-        default="house",
-        help="Caption style for the desk, read by local finish and caption: house (yellow Arial Bold word "
-        "flicker, default), plain (white whole lines) or none (no captions). finish/caption "
-        "--caption-style overrides it per run. Sent to the API as its caption_style only with --api-captions.",
+        default=None,
+        help="Caption style for the show, read by local finish, caption and reel: bold (one short white line "
+        "at a time, one yellow word; a new show's default), subtle (yellow Arial Bold word flicker; house is "
+        "its older name), plain (white whole lines) or none (no captions). Unset: the look approval shows "
+        "both on a still and saves bold unless the human picks subtle. finish/caption/reel --caption-style "
+        "overrides it per run. Sent to the API as its caption_style only with --api-captions.",
     )
     parser.add_argument(
         "--api-captions",
@@ -99,8 +101,10 @@ def default_clip_seconds(args: argparse.Namespace) -> int:
 def config_from_args(args: argparse.Namespace) -> ProductionConfig:
     """Build ``ProductionConfig`` from parsed CLI namespace."""
 
-    style = str(args.caption_style)
-    if args.api_captions and style in ("plain", "none"):
+    style = str(args.caption_style) if args.caption_style else None
+    if args.api_captions and style is None:
+        style = "house"  # the server's own house captions, as before
+    if args.api_captions and style in ("bold", "subtle", "plain", "none"):
         raise ValueError(
             f"--caption-style {style} is a local caption style: the server does not burn it. "
             "Drop --api-captions (captions are burned locally by finish), or name a server caption style"

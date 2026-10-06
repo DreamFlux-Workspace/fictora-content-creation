@@ -27,6 +27,7 @@ POST_COMMANDS = (
         {
             "voice",
             "voice-mode",
+            "caption-style",
             "hook-line",
             "voice-fx",
             "revoice",
@@ -69,7 +70,7 @@ def add_hook_line_args(parser: argparse.ArgumentParser) -> None:
 
 
 def add_caption_style_arg(parser: argparse.ArgumentParser) -> None:
-    """``--caption-style house|plain|none`` on ``finish`` and ``caption`` (default: the desk's config)."""
+    """``--caption-style bold|subtle|house|plain|none`` on ``finish``, ``caption`` and ``reel`` (default: the show's)."""
 
     from creation.captions import CAPTION_STYLES
 
@@ -77,8 +78,10 @@ def add_caption_style_arg(parser: argparse.ArgumentParser) -> None:
         "--caption-style",
         choices=CAPTION_STYLES,
         default=None,
-        help="house: yellow Arial Bold word flicker (the default); plain: white whole lines, same size and "
-        "safe band; none: no captions. Default: caption_style in the desk's production.config.json.",
+        help="bold: one short white line at a time, one yellow word, bigger and lower (a new show's "
+        "default); subtle (or house, its older name): the yellow Arial Bold word flicker (a show with "
+        "finished episodes keeps it); plain: white whole lines; none: no captions. Default: caption_style "
+        "in the desk's production.config.json, else bold for a new show and subtle for a continuing one.",
     )
 
 
@@ -230,6 +233,21 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         default=None,
         choices=("locked", "model"),
         help="Store this mode for the show (only on the human's say-so).",
+    )
+
+    caption_style = sub.add_parser(
+        "caption-style",
+        help="The show's captions (free): bold (one short white line at a time, one yellow word; a new "
+        "show's default) or subtle (the yellow word flicker; a show with finished episodes keeps it), "
+        "plain or none. Without --set it prints the show's style and why.",
+    )
+    caption_style.add_argument("--desk", type=Path, required=True)
+    caption_style.add_argument(
+        "--set",
+        dest="set_to",
+        default=None,
+        choices=("bold", "subtle", "house", "plain", "none"),
+        help="Save this style for the show (finish, caption and reel read it).",
     )
 
     fx = sub.add_parser(
@@ -729,6 +747,11 @@ def dispatch_post(args: argparse.Namespace) -> int:
         from creation.voice_mode import run_voice_mode
 
         run_voice_mode(args.desk, set_to=args.set_to)
+        return 0
+    if args.command == "caption-style":
+        from creation.caption_preview import run_caption_style
+
+        run_caption_style(args.desk, set_to=args.set_to)
         return 0
     if args.command == "voice-fx":
         from creation.ops.notes import append_run_note

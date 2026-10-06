@@ -14,7 +14,7 @@ uv run fictora-produce caption --desk <desk>
 | `--take <path>` | A specific raw MP4 (default: newest `take-epNN-t1-raw-v*.mp4`) |
 | `--line-start S` | Seconds where a line starts; once per line, in order. Overrides speech detection and word timing |
 | `--line-end S` | Seconds where a line's caption goes off; once per line, in order. Exact: no hold, no reading minimum. Works with or without `--line-start` |
-| `--caption-style S` | `house` (default), `plain` (white whole lines) or `none` (nothing burned). Default: `caption_style` in the desk's `production.config.json`. Same flag on `finish` |
+| `--caption-style S` | `bold`, `subtle` (`house` is its older name), `plain` (white whole lines) or `none` (nothing burned). Default: the show's style (`caption_style` in the desk's `production.config.json`, else `bold` for a new show and `subtle` for one with finished episodes). Same flag on `finish` and `reel` |
 | `--words-json J` | A transcript of the take (`/v1/transcripts` words) to time the lines on, on any show. Default: the newest `takes/take-epNN-t1-*words-vN.json` when captioning the raw take |
 | `--no-open` | Do not open the result |
 
@@ -48,11 +48,12 @@ The house style the content team delivers (runbook rule 1): **Arial Bold 64 on a
 
 | Style | What is burned |
 | --- | --- |
-| `house` (default) | The house look above: yellow; word flicker on a show spoken in English, whole lines on a show spoken in another language |
+| `bold` (a new show's default) | One short line at a time (two or three words, split above ~12 characters, never across a clause mark or a breath), Arial Bold 92 on 1920 (1.44x house; 64 on 1344), white with one word in house yellow, outline 7, shadow 3, bottom at 76%. Each word shows when it is said: the chunk is laid out whole and its unsaid words are transparent. The yellow word is the line's spine `emphasis_word` when set, else the chunk's last content word (an ALL-CAPS shout first; a one-word chunk only when it carries meaning). Heard-not-seen lines in Georgia italic at the same size and place. Whole lines (white, one yellow word, up to two lines) on a show spoken in another language. A letterbox show keeps its own band (`creation/caption_bold.py`) |
+| `subtle` / `house` | The house look above: yellow; word flicker on a show spoken in English, whole lines on a show spoken in another language. A show with finished episodes keeps it |
 | `plain` | White whole-line captions on any show: same face, size, edge, wrapping and safe band; heard-not-seen lines still in Georgia italic (white) |
 | `none` | No captions. `finish` still mixes and marks the take, which is complete; its sound line reads `captions off (--caption-style none)` |
 
-Set it per run with `--caption-style` on `finish` or `caption`, or for the desk with `fictora-produce start --caption-style …` (`caption_style` in `production.config.json`). It is the same setting as before: `caption_style` was already the desk's local caption recipe, and the server only sees it with `--api-captions`, so `--api-captions` with `plain` or `none` is refused (the server does not burn those). A desk whose `caption_style` is a server recipe name (e.g. `viral_karaoke`) is captioned `house` locally, with a note.
+Set it per run with `--caption-style` on `finish`, `caption` or `reel`, or for the show with `fictora-produce caption-style --desk D --set bold|subtle|plain|none` (or `start --caption-style …`; `caption_style` in `production.config.json`). Unset, it is chosen once at the look approval: a new show gets a free preview still (`shared/look/caption-preview-vN.png`, Bold left, Subtle right, on the approved look frame with the first dialogue line) and `bold` is saved; a continuing show is saved `subtle` without asking (`creation/caption_preview.py`). It is the same setting as before: `caption_style` was already the desk's local caption recipe, and the server only sees it with `--api-captions`, so `--api-captions` with `plain` or `none` is refused (the server does not burn those). A desk whose `caption_style` is a server recipe name (e.g. `viral_karaoke`) is captioned as an unset show is (Bold new, Subtle continuing) locally, with a note.
 
 ## How timing works
 

@@ -168,6 +168,7 @@ from creation.captions import (
     current_spine,
     find_ffmpeg,
     is_english,
+    caption_style_word,
     resolve_caption_style,
 )
 from creation.harness.raw_video import fetch_take_facts
@@ -1025,9 +1026,13 @@ def run_finish(
         ``--over-locked-voices``: allow ``--mute``, ``--voice`` or a revoice /
         voice-fx file on a take whose sound is the locked voices (warned, not refused).
     caption_style
-        ``--caption-style``: ``house`` (yellow flicker), ``plain`` (white whole
-        lines) or ``none`` (no captions; the take is still complete). ``None``
-        reads the desk's ``production.config.json`` (default ``house``).
+        ``--caption-style``: ``bold`` (one short white line at a time, one
+        yellow word), ``subtle`` / ``house`` (yellow flicker), ``plain`` (white
+        whole lines) or ``none`` (no captions; the take is still complete).
+        ``None`` reads the show's (:func:`creation.captions.resolve_caption_style`:
+        the desk's ``production.config.json``, else ``bold`` for a new show and
+        ``subtle`` for one with finished episodes). A letterbox take keeps its
+        own caption band whichever is chosen.
     spine_fetcher
         Reads the current spine for the captions (default: the server, saved on
         the desk; :func:`creation.captions.current_spine`). The desk's copy is
@@ -2203,11 +2208,18 @@ def run_finish(
             raise
         timing = "; ".join(captioned.timing_lines())
         treatment = "whole English lines" if captioned.whole_lines else "word flicker"
+        if style == "bold" and not letterbox:
+            treatment = (
+                "whole English lines" if captioned.whole_lines
+                else "one short chunk at a time, each word as it is said, one yellow word"
+            )  # fmt: skip
         if letterbox:
             treatment = f"letterbox band under the picture, {colour_name}, " + (
                 "whole lines" if captioned.whole_lines else "phrases of up to 5 words"
             )
-        if style != "house":
+        if style == "bold" and not letterbox:
+            treatment = f"bold, {treatment}"
+        elif style not in ("house", "bold"):
             treatment = f"{style}, {treatment}"
         if words_note:
             treatment += f", {words_note}"
@@ -2452,7 +2464,7 @@ def run_finish(
             "captions",
             "Skipping captions (--caption-style none)"
             if style == "none"
-            else f"Burning {style} captions",
+            else f"Burning {caption_style_word(style)} captions",
             do_captions,
         )
         if hook.overlay is not None:
