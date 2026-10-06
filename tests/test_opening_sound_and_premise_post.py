@@ -135,3 +135,37 @@ def test_finish_lays_the_hook_at_zero_and_says_flat_when_take_one_has_none(
     assert "on the opening line" not in out.getvalue()
     sfx = next(step for step in result.steps if step.step == "sfx")
     assert f"{HOOK} @0.00s {OPENING_SOUND_GAIN_DB:+.0f} dB" in sfx.detail
+
+
+def test_the_flat_opening_warning_does_not_promise_a_refresh_will_fix_it() -> None:
+    flat = opening_sound_flat((), episode=1) or ""
+    assert "cannot add" in flat and "when it is filmed" in flat
+    assert "--cue" in flat and "@0" in flat
+
+
+@needs_ffmpeg
+def test_a_hand_cue_at_zero_is_the_opening_hook_finish_counts(post_desk: Path) -> None:
+    from creation.post.hand import Placed
+
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+        json.dumps(FACTS)
+    )
+    cue = make_tone(
+        post_desk / "ep01" / "sfx" / "cue-a-wok-hisses-on-the-first-frame-v1.wav",
+        seconds=0.6,
+        freq=500,
+        volume=0.5,
+    )
+    out = io.StringIO()
+    run_finish(
+        post_desk,
+        sfx_render=lambda c, target: make_tone(
+            target, seconds=c.seconds, freq=300, volume=0.8
+        ),
+        bed_maker=fake_bed,
+        facts_fetcher=lambda *a: None,
+        cues=(Placed(cue, 0.0),),
+        stream=out,
+    )
+    assert "opening_sound_flat" not in out.getvalue()

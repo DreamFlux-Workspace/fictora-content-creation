@@ -147,18 +147,93 @@ def find_photoreal_request(text: str) -> str | None:
     return found.group(0) if found else None
 
 
-def find_real_people(text: str) -> tuple[str, ...]:
+_CAST_HEADING = re.compile(
+    r"^#{1,6}\s*(?:the\s+)?cast\b.*$", re.IGNORECASE | re.MULTILINE
+)
+_ANY_HEADING = re.compile(r"^#{1,6}\s", re.MULTILINE)
+_TABLE_RULE = re.compile(r"^\|?\s*:?-{2,}")
+_LIST_NAME = re.compile(
+    r"^\s*(?:[-*+]|\d+[.)])\s+(?:\*\*|__)?(?P<name>[A-Z][\w'’-]*(?: [A-Z][\w'’-]*){0,3})(?:\*\*|__)?"
+    r"\s*(?:[:—–(,]|-\s|$)"
+)
+
+
+def brief_cast_names(text: str) -> tuple[str, ...]:
+    """Return the character names a brief's own cast section lists.
+
+    Read from the section headed ``Cast`` (``## Cast``, ``### The cast``):
+    the first column of a Markdown table (header and rule rows skipped), or
+    the name that opens each list item (``- Mina Park — the heir``,
+    ``- **Joon**: her bodyguard``).
+
+    Parameters
+    ----------
+    text
+        The brief.
+
+    Returns
+    -------
+    tuple[str, ...]
+        Names in the order listed, without repeats (empty when the brief has
+        no cast section).
+    """
+
+    names: dict[str, str] = {}
+    for heading in _CAST_HEADING.finditer(text or ""):
+        rest = text[heading.end() :]
+        following = _ANY_HEADING.search(rest)
+        section = rest[: following.start()] if following else rest
+        header_seen = False
+        for row in section.splitlines():
+            stripped = row.strip()
+            if stripped.startswith("|"):
+                if _TABLE_RULE.match(stripped):
+                    continue
+                cell = stripped.strip("|").split("|", 1)[0].strip().strip("*_ ")
+                if not header_seen:
+                    header_seen = True
+                    if cell.casefold() in ("name", "character", "who", "cast"):
+                        continue
+                if cell and cell[0].isupper():
+                    names.setdefault(cell.casefold(), cell)
+                continue
+            found = _LIST_NAME.match(row)
+            if found:
+                name = found.group("name").strip()
+                names.setdefault(name.casefold(), name)
+    return tuple(names.values())
+
+
+def _is_cast_name(name: str, cast: Sequence[str]) -> bool:
+    """True when ``name`` is a cast name, or the first or last name of one (``Dez`` of ``Dez Okoye``)."""
+
+    folded = name.casefold()
+    for full in cast:
+        parts = full.casefold().split()
+        if folded == full.casefold() or (parts and folded in (parts[0], parts[-1])):
+            return True
+    return False
+
+
+def find_real_people(
+    text: str, *, cast_names: Sequence[str] | None = None
+) -> tuple[str, ...]:
     """Return the real people a text names as a character's face, voice or casting.
 
     Only a capitalised name used as a likeness counts ("looks like Park
     Seo-joon", "an idol like Jungkook from BTS", "played by ..."). Pronouns and
     family words are not names, so "looks like her mother" passes, and so does
-    every archetype ("a K-pop idol type").
+    every archetype ("a K-pop idol type"). A name the brief lists in its own
+    cast ("Ends on Dez's face." with Dez Okoye in the cast table) is one of
+    the story's characters, not a real person.
 
     Parameters
     ----------
     text
         A brief or a cast description.
+    cast_names
+        The story's own characters; default the brief's cast section
+        (:func:`brief_cast_names`).
 
     Returns
     -------
@@ -166,11 +241,14 @@ def find_real_people(text: str) -> tuple[str, ...]:
         Names in order of first mention, without repeats.
     """
 
+    cast = brief_cast_names(text) if cast_names is None else tuple(cast_names)
     hits: list[tuple[int, str]] = []
     for pattern in _LIKENESS_RE:
         for match in pattern.finditer(text or ""):
             name = match.group("name").strip(" '’-")
             if not name or name.split()[0] in _NOT_NAMES:
+                continue
+            if _is_cast_name(name, cast):
                 continue
             hits.append((match.start("name"), name))
     seen: dict[str, str] = {}
@@ -399,6 +477,7 @@ __all__ = [
     "brief_notices",
     "closest_preset",
     "find_photoreal_request",
+    "brief_cast_names",
     "find_real_people",
     "pause_text",
     "photoreal_look_warning",

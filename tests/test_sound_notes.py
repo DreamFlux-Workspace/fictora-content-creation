@@ -326,3 +326,44 @@ def test_finish_says_its_facts_are_older_than_the_sound_notes_and_points_to_refr
         "older than the story's sound notes"
         in (post_desk / "ep01" / "run-notes.md").read_text()
     )
+
+
+def test_refresh_says_plainly_it_cannot_add_an_opening_hook_to_a_filmed_take(
+    desk: Path, api: FakeApi
+) -> None:
+    # Three Payments Late t1 (5 Oct 2026): refresh printed "SFX plan unchanged" and the take stayed flat.
+    _raw_clips(desk)
+    (desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+        json.dumps(facts(DOOR))
+    )
+    api.routes[("GET", "/v1/jobs/job_take_1/take-facts")] = {"take_facts": facts(DOOR)}
+    out = io.StringIO()
+
+    ec.run_take_facts(desk, episode=1, take_id="t1", refresh=True, out=out)
+
+    text = out.getvalue()
+    assert "!! opening_sound_flat" in text
+    assert "cannot add" in text and "when it is filmed" in text
+    assert "finish" in text and "--cue" in text and "@0" in text
+    assert "nothing to finish again for sound" not in text
+
+
+def test_refresh_of_a_later_take_says_nothing_about_the_opening(
+    desk: Path, api: FakeApi
+) -> None:
+    _raw_clips(desk)
+    api.routes[("GET", "/v1/jobs/job_take_1/take-facts")] = {"take_facts": facts(DOOR)}
+    out = io.StringIO()
+    ec.run_take_facts(desk, episode=1, take_id="t1", refresh=True, out=out)
+    hooked = facts(
+        {
+            **DOOR,
+            "shot_index": 1,
+            "start_seconds": 0.0,
+            "sound": "a wok hisses, on the first frame",
+        }
+    )
+    api.routes[("GET", "/v1/jobs/job_take_1/take-facts")] = {"take_facts": hooked}
+    out = io.StringIO()
+    ec.run_take_facts(desk, episode=1, take_id="t1", refresh=True, out=out)
+    assert "opening_sound_flat" not in out.getvalue()

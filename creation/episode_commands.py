@@ -4563,6 +4563,22 @@ def _soundtrack_rows(
     return soundtrack_lines(facts, cast_names)
 
 
+def _refreshed_opening_flat(
+    facts: Mapping[str, Any], *, episode: int, take_id: str
+) -> str | None:
+    """``!! opening_sound_flat`` with what to do instead, when refreshed take-1 facts still open flat."""
+
+    from creation.harness_rules import opening_sound_flat
+    from creation.post.sfx import plan_from_take_facts
+
+    if take_number(take_id) != 1:
+        return None
+    plan = plan_from_take_facts({"take_facts": dict(facts)})
+    return opening_sound_flat(
+        tuple((cue.sound, cue.start) for cue in plan.cues), episode=episode
+    )
+
+
 def run_take_facts(
     desk: Path, *, episode: int, take_id: str, refresh: bool = False, out: Any = None
 ) -> Path:
@@ -4684,9 +4700,12 @@ def run_take_facts(
     else:
         cues = len(facts.get("sfx_cues") or [])
         print(
-            f"SFX plan unchanged ({cues} cue(s)); nothing to finish again for sound",
+            f"SFX plan unchanged ({cues} cue(s)): the server plans nothing new for this take",
             file=out,
         )
+    flat = _refreshed_opening_flat(facts, episode=episode, take_id=take_id)
+    if flat:
+        print(flat, file=out)
     _note(
         desk,
         episode,
@@ -5639,6 +5658,10 @@ def _settle_failed_plates_step(
     )
 
 
+#: A draw that read the spine before a change to it (here: redraw-plate's own note) fails with this code.
+STALE_DRAW_CODE = "plan_media_spine_version_stale"
+
+
 def run_redraw_plate_with_note(
     desk: Path, *, cast: str, note: str, out: Any = None
 ) -> Path:
@@ -5652,7 +5675,10 @@ def run_redraw_plate_with_note(
     never pays twice. Refused before anything is sent while a drawn look frame
     awaits its yes (as ``step`` is). Saves the plate next to the old ones as a new version,
     draws a contact sheet of the whole cast with the new plate marked, books
-    the still on the desk ledger, and writes a run note.
+    the still on the desk ledger, and writes a run note. A draw that fails
+    ``plan_media_spine_version_stale`` (the note changed the spine under it) is
+    sent once more on the re-read spine, under a fresh key; the note is never
+    sent twice.
 
     Parameters
     ----------
@@ -5737,23 +5763,39 @@ def run_redraw_plate_with_note(
                 {"spine_version": spine["spine_version"], "text": note},
             )
             spine = run.spine(state.spine_id or "")
-        body = reuse_generation_body(
-            prompt=scene_prompt(spine, state.prompt),
-            spine=spine,
-            preset_id=state.preset_id,
-            preset_version=state.preset_version,
-            video_lane=state.video_lane,
-        )
         digest = hashlib.sha256(_note_key(note).encode()).hexdigest()[:10]
-        terminal = run_unit(
-            desk,
-            run,
-            unit=f"plate-{cast_id}-{digest}",
-            path=f"/v1/spines/{state.spine_id}/cast/{quote(cast_id, safe='')}/regenerate",
-            body=body,
-            video_route=True,
-            deadline_seconds=PLATE_DEADLINE_SECONDS,
-        )
+        terminal: dict[str, Any] = {}
+        for attempt in (1, 2):
+            body = reuse_generation_body(
+                prompt=scene_prompt(spine, state.prompt),
+                spine=spine,
+                preset_id=state.preset_id,
+                preset_version=state.preset_version,
+                video_lane=state.video_lane,
+            )
+            try:
+                terminal = run_unit(
+                    desk,
+                    run,
+                    unit=f"plate-{cast_id}-{digest}",
+                    path=f"/v1/spines/{state.spine_id}/cast/{quote(cast_id, safe='')}/regenerate",
+                    body=body,
+                    video_route=True,
+                    deadline_seconds=PLATE_DEADLINE_SECONDS,
+                )
+            except CommandStopped as exc:
+                if attempt == 2 or STALE_DRAW_CODE not in str(exc):
+                    raise
+                # The note bumped the spine after the draw read it (as `step` does on boards and cast):
+                # read the spine again and draw once more under a fresh key. The note is not sent again.
+                print(
+                    f"[plate] the story changed while {name}'s plate was being drawn ({STALE_DRAW_CODE}); "
+                    "reading it again and drawing once more (the note is already on the card, not sent again).",
+                    file=sys.stderr,
+                )
+                spine = run.spine(state.spine_id or "")
+                continue
+            break
         _save_desk_json(desk, f"plate-redraw-{cast_id}-terminal", terminal)
         spine = run.spine(state.spine_id or "")
         save_spine_snapshot(desk, ep, spine)

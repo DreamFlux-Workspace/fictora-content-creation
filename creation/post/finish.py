@@ -1459,7 +1459,12 @@ def run_finish(
         plan, filmed_note = on_filmed_cuts(plan_from_take_facts(payload), payload, take)
         if thoughts.take_number(take_id) == 1 and (
             flat := opening_sound_flat(
-                tuple((c.sound, c.start) for c in plan.cues), episode=episode
+                (
+                    *((c.sound, c.start) for c in plan.cues),
+                    # A hand cue at 0 s (`--cue FILE@0`) is the opening hook the advice asks for.
+                    *((cue_description(cue.path), cue.start) for cue, _ in hand.cues),
+                ),
+                episode=episode,
             )
         ):
             # Every episode opens on an audible event (founder decision, 5 Oct 2026): a nudge, never a stop.

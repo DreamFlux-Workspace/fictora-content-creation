@@ -807,3 +807,35 @@ def test_a_short_line_not_heard_says_check_by_ear_never_re_film(desk: Path) -> N
     row = next(r for r in text.splitlines() if "CHECK BY EAR" in r)
     assert "re-film" not in row.replace("never re-film", ""), row
     assert lines.data["heard"][0]["check_by_ear"] is True
+
+
+def test_close_cuts_names_two_hard_cuts_within_a_quarter_second() -> None:
+    from creation.post.review import close_cuts
+
+    # Three Payments Late t1 (5 Oct 2026): cuts at 2.67 and 2.75 s went unflagged.
+    assert close_cuts((1.0, 2.67, 2.75, 6.0)) == [(2.67, 2.75)]
+    assert close_cuts((1.0, 1.25 + 0.01, 5.0)) == []
+    assert close_cuts(()) == []
+
+
+def test_the_cuts_section_warns_on_a_flash_cut(monkeypatch: pytest.MonkeyPatch) -> None:
+    import creation.post.review as review_mod
+
+    monkeypatch.setattr(
+        review_mod, "measure_cuts", lambda take, skip_head_frames=0: (2.67, 2.75, 5.0)
+    )
+    facts = {
+        "shots": [
+            {"start_seconds": 0.0},
+            {"start_seconds": 2.7},
+            {"start_seconds": 5.0},
+        ]
+    }
+    for given in (facts, None):
+        section = review_mod.cuts_section(
+            Path("take.mp4"), head_board_frames=0, facts=given, retimed=False
+        )
+        flash = [d for d in section.details if "0.08 s apart" in d]
+        assert flash and flash[0].startswith("!! "), section.details
+        assert section.status == review_mod.WARN
+        assert section.data["close_cuts"] == [[2.67, 2.75]]

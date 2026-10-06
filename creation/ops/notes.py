@@ -6,6 +6,44 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+def ensure_run_notes(run_dir: Path, title: str | None = None) -> tuple[Path, bool]:
+    """Make ``run-notes.md`` in ``run_dir`` when it is missing; an existing file is never touched.
+
+    Parameters
+    ----------
+    run_dir
+        An existing folder (a desk, or one episode's folder).
+    title
+        The heading's name; default the folder's name.
+
+    Returns
+    -------
+    tuple[Path, bool]
+        The notes file, and True when it was created now.
+
+    Raises
+    ------
+    FileNotFoundError
+        When ``run_dir`` is not a folder (nothing is created).
+    """
+
+    if not run_dir.is_dir():
+        raise FileNotFoundError(
+            f"no folder {run_dir}: run-notes.md goes in a desk or episode folder"
+        )
+    notes = run_dir / "run-notes.md"
+    if notes.is_file():
+        return notes, False
+    name = (title or run_dir.name).strip() or run_dir.name
+    notes.write_text(
+        f"# {name} — run notes\n\n"
+        "What happened on this desk, newest last: gates, spend, faults accepted, re-film causes. "
+        "Each episode also keeps its own `epNN/run-notes.md`.\n",
+        encoding="utf-8",
+    )
+    return notes, True
+
+
 def append_run_note(run_dir: Path, body: str) -> Path:
     """Append one timestamped note to ``run-notes.md``. Never overwrite.
 

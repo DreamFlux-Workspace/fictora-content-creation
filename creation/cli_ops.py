@@ -32,7 +32,7 @@ from creation.ops.floor import (
 )
 from creation.ops.folder import DEFAULT_RUN_PARENT, init_run_folder, next_versioned_path
 from creation.ops.luma import measure_board_luma
-from creation.ops.notes import append_run_note
+from creation.ops.notes import append_run_note, ensure_run_notes
 from creation.ops.state import parse_spoken_lines
 
 PREFLIGHT_GATE_OPEN = 3
@@ -226,6 +226,9 @@ def _dispatch(args: argparse.Namespace) -> int:
             print(report.one_line())
         return 0
     if args.command == "note":
+        notes, made = ensure_run_notes(args.run_dir)
+        if made:
+            print(f"created {notes} (it was missing)", file=sys.stderr)
         print(append_run_note(args.run_dir, args.body))
         return 0
     if args.command == "next-path":

@@ -120,3 +120,66 @@ def test_a_voice_only_character_has_no_plate_to_redraw(
     assert api.posted("/v1/spines/sp1/cast/cast_intercom/regenerate") == []
     assert api.posted("/v1/spines/sp1/cast/cast_intercom/notes") == []
     assert load_series(desk).spend_log == []
+
+
+def test_a_stale_spine_after_the_note_retries_the_draw_once_and_never_resends_the_note(
+    desk: Path, api: FakeApi
+) -> None:
+    # Three Payments Late (5 Oct 2026): the note bumped the spine, the draw failed
+    # plan_media_spine_version_stale, and redraw-plate stopped where step would have retried.
+    set_phase(desk, "wait_plates")
+    _serve_redraw(api)
+    jobs = iter(["job_stale", "job_cast_ren_2"])
+    api.jobs["job_stale"] = {
+        "job_id": "job_stale",
+        "status": "failed",
+        "error": {
+            "code": "plan_media_spine_version_stale",
+            "message": "the spine changed",
+        },
+    }
+    drawn = api.routes[("POST", REGENERATE)]
+
+    def redraw(method: str, path: str, body: dict[str, Any] | None) -> dict[str, Any]:
+        job = next(jobs)
+        if job == "job_stale":
+            return {"job_id": job}
+        return drawn(method, path, body)
+
+    api.routes[("POST", REGENERATE)] = redraw
+    plates = desk / "ep01" / "plates"
+    plates.mkdir(parents=True, exist_ok=True)
+    (plates / "plate-ep01-1-v1.png").write_bytes(png_bytes(200))
+
+    ec.run_redraw_plate_with_note(
+        desk, cast="Ren", note="nineteen, tall and lanky", out=io.StringIO()
+    )
+
+    assert len(api.posted(NOTES)) == 1, "the note is sent once"
+    keys = [
+        key
+        for method, path, _b, key in api.calls
+        if method == "POST" and path == REGENERATE
+    ]
+    assert len(keys) == 2 and keys[0] != keys[1], "one retry, under a fresh key"
+    assert [e.unit for e in load_series(desk).spend_log] == [
+        "plate-note-redraw:cast_ren"
+    ]
+
+
+def test_a_second_stale_answer_stops(desk: Path, api: FakeApi) -> None:
+    set_phase(desk, "wait_plates")
+    _serve_redraw(api)
+    api.jobs["job_cast_ren_2"] = {
+        "job_id": "job_cast_ren_2",
+        "status": "failed",
+        "error": {
+            "code": "plan_media_spine_version_stale",
+            "message": "the spine changed",
+        },
+    }
+    with pytest.raises(ec.CommandStopped, match="plan_media_spine_version_stale"):
+        ec.run_redraw_plate_with_note(desk, cast="Ren", note="older", out=io.StringIO())
+    assert len(api.posted(REGENERATE)) == 2
+    assert len(api.posted(NOTES)) == 1
+    assert load_series(desk).spend_log == []
