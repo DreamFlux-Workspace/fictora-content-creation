@@ -41,6 +41,12 @@ from creation.orchestrate import (
     unbound_desk_recovery,
 )
 from creation.production_config import load_production_config, save_production_config
+from creation.rules_epoch import (
+    CURRENT_EPOCH,
+    EPOCH_CHOICES,
+    desk_rules,
+    run_rules_epoch,
+)
 from creation.stylised_only import NOTICE_KINDS
 from creation.recover import (
     RETRYABLE_STEPS,
@@ -114,6 +120,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         "config", help="Print merged production.config.json for a desk."
     )
     cfg_show.add_argument("--desk", type=Path, required=True)
+
+    epoch = sub.add_parser(
+        "rules-epoch",
+        help="Which rules the desk runs under (free): desks created before 6 Oct 2026 keep their original "
+        "behaviour (legacy); new desks get the current rules. Without --set it prints the value and why.",
+    )
+    epoch.add_argument("--desk", type=Path, required=True)
+    epoch.add_argument(
+        "--set",
+        dest="set_to",
+        default=None,
+        choices=EPOCH_CHOICES,
+        help="Store it in production.config.json: legacy (keep the original behaviour) or "
+        f"{CURRENT_EPOCH} (opt the desk in to the current rules). Only on the human's say-so.",
+    )
 
     sub.add_parser("status", help="Show production phase.").add_argument(
         "--desk", type=Path, required=True
@@ -273,8 +294,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         if refused:
             print(refused, file=sys.stderr)
             return 2
+    # Desks created before 6 Oct 2026 keep their original behaviour for the whole command.
+    with desk_rules(desk_arg if isinstance(desk_arg, Path) else None):
+        return _run_command(args)
+
+
+def _run_command(args: argparse.Namespace) -> int:
+    """Run one parsed command (under its desk's rules, :func:`creation.rules_epoch.desk_rules`)."""
+
     if args.command == "setup-check":
         return run_setup_check()
+    if args.command == "rules-epoch":
+        try:
+            run_rules_epoch(args.desk, set_to=args.set_to)
+        except (ValueError, FileNotFoundError) as exc:
+            print(exc, file=sys.stderr)
+            return 2
+        return 0
     if args.command in EPISODE_COMMANDS:
         try:
             return dispatch_episode(args)
@@ -333,6 +369,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 raise
+            # A new desk runs the current rules (creation.rules_epoch); older desks keep theirs.
+            config.rules_epoch = CURRENT_EPOCH
             save_production_config(desk, config)
             print(desk)
             _warn_if_no_local_ffmpeg()
@@ -351,7 +389,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 video_lane=args.video_lane,
                 episode_ordinal=args.episode,
             )
-            save_production_config(args.desk, config_from_args(args))
+            bound = config_from_args(args)
+            # Binding never changes which rules a desk runs under (creation.rules_epoch).
+            bound.rules_epoch = load_production_config(args.desk).rules_epoch
+            save_production_config(args.desk, bound)
             print(f"bound session_id={state.session_id} phase={state.phase}")
             narration = narrator_warning(prompt, desk=args.desk)
             if narration:

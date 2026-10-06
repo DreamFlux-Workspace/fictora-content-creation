@@ -80,7 +80,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
-from creation.caption_dashes import caption_text as no_dash_text
+from creation.caption_dashes import drawn_text as no_dash_text
+from creation.rules_epoch import under_desk_rules
 from creation.ops.folder import next_versioned_path
 
 #: The house style's canvas height: the content team's 1080x1920 deliverable.
@@ -115,6 +116,10 @@ DEFAULT_CAPTION_STYLE = "house"
 NEW_SHOW_CAPTION_STYLE = "bold"
 #: The style a show that already has finished episodes keeps unless the operator switches.
 CONTINUING_SHOW_CAPTION_STYLE = "subtle"
+#: Frozen for desks created before 2026-10-06; do not change: a legacy desk's unset style, and the
+#: style list its notes name (:mod:`creation.rules_epoch`).
+LEGACY_CAPTION_STYLE = "house"
+LEGACY_CAPTION_STYLES = ("house", "plain", "none")
 #: Other names a style answers to, and the name the builders use.
 _STYLE_ALIASES = {"subtle": "house"}
 
@@ -158,6 +163,12 @@ def desk_has_finished_episodes(desk: Path) -> bool:
     return any(ep.post.status == "approved" for ep in series.episodes)
 
 
+def _legacy_desk(desk: Path) -> bool:
+    from creation.rules_epoch import is_legacy
+
+    return is_legacy(desk)
+
+
 def show_caption_style(desk: Path) -> tuple[str, str]:
     """The desk's caption style and where it came from, before any per-run flag.
 
@@ -169,7 +180,9 @@ def show_caption_style(desk: Path) -> tuple[str, str]:
     -------
     tuple[str, str]
         The style as configured (``bold``, ``subtle``, ``house`` ...; may be a
-        server recipe), and ``show`` / ``continuing`` / ``new``.
+        server recipe), and ``show`` / ``continuing`` / ``new``, or ``legacy``
+        (a desk created before 6 Oct 2026 with no style set: ``house``, as it
+        always was; :mod:`creation.rules_epoch`).
     """
 
     from creation.production_config import load_production_config
@@ -177,6 +190,9 @@ def show_caption_style(desk: Path) -> tuple[str, str]:
     configured = str(load_production_config(desk).caption_style or "").strip()
     if configured:
         return configured, "show"
+    if _legacy_desk(desk):
+        # Frozen for desks created before 2026-10-06; do not change: their unset style was house.
+        return LEGACY_CAPTION_STYLE, "legacy"
     if desk_has_finished_episodes(desk):
         return CONTINUING_SHOW_CAPTION_STYLE, "continuing"
     return NEW_SHOW_CAPTION_STYLE, "new"
@@ -212,9 +228,15 @@ def resolve_caption_style(desk: Path, given: str | None = None) -> tuple[str, st
                 f"--caption-style {given!r}: choose one of {', '.join(CAPTION_STYLES)}"
             )
         return canonical_caption_style(given), ""
-    configured, _source = show_caption_style(desk)
+    configured, source = show_caption_style(desk)
     if configured in CAPTION_STYLES:
         return canonical_caption_style(configured), ""
+    if source == "show" and _legacy_desk(desk):
+        # Frozen for desks created before 2026-10-06; do not change (the note as it was then).
+        return LEGACY_CAPTION_STYLE, (
+            f"the desk's caption_style {configured!r} is not a local caption style "
+            f"({', '.join(LEGACY_CAPTION_STYLES)}); captioned {LEGACY_CAPTION_STYLE}"
+        )
     fallback = (
         CONTINUING_SHOW_CAPTION_STYLE
         if desk_has_finished_episodes(desk)
@@ -2590,6 +2612,7 @@ def _plain_words(text: str) -> str:
     return " ".join(re.findall(r"[\w']+", text.casefold()))
 
 
+@under_desk_rules
 def caption_take(
     desk: Path,
     *,
@@ -2794,7 +2817,8 @@ def caption_take(
             known=[(line_spans or {}).get(line.line_id) for line in caption_lines]
             if line_spans
             else None,
-            per_word=not whole_lines,
+            # Each word when it is said (6 Oct 2026); a legacy desk spreads them as before.
+            per_word=not whole_lines and not _legacy_desk(desk),
         )
         if caption_lines
         else LineTiming((), (), (), ())

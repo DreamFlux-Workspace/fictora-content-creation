@@ -68,6 +68,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from creation.captions import Cue
+from creation.rules_epoch import legacy_rules
 
 #: The reel's default length and the range ``--seconds`` accepts.
 DEFAULT_SECONDS = 15.0
@@ -132,6 +133,13 @@ GENRE_FAMILY_WORDS: dict[str, tuple[str, ...]] = {
     "action": ("action", "war", "martial", "murim", "wuxia", "fight", "battle", "heist", "revenge",
                "system", "leveling", "levelling", "regression", "regressor", "apocalypse", "last human",
                "isekai", "cultivation", "hunter", "dungeon", "awakening"),
+    "intimate": ("romance", "romantic", "bl", "gl", "slice", "cozy", "cosy", "love", "healing"),
+}  # fmt: skip
+#: Frozen for desks created before 2026-10-06; do not change: the word lists those desks plan with,
+#: matched as single words (:mod:`creation.rules_epoch`).
+LEGACY_GENRE_FAMILY_WORDS: dict[str, tuple[str, ...]] = {
+    "horror": ("horror", "scp", "ghost", "haunted", "haunting", "occult", "zombie", "creepypasta"),
+    "action": ("action", "war", "martial", "murim", "wuxia", "fight", "battle", "heist", "revenge"),
     "intimate": ("romance", "romantic", "bl", "gl", "slice", "cozy", "cosy", "love", "healing"),
 }  # fmt: skip
 #: A held frame: no motion this many samples either side (8 fps: about a third of a second each way).
@@ -676,6 +684,13 @@ def genre_family(genre: str) -> str:
         A key of :data:`PICTURE_WEIGHTS`.
     """
 
+    if legacy_rules():
+        # Frozen for desks created before 2026-10-06; do not change.
+        found = {w for w in re.split(r"[^a-z0-9]+", (genre or "").lower()) if w}
+        for family, keys in LEGACY_GENRE_FAMILY_WORDS.items():
+            if found & set(keys):
+                return family
+        return "default"
     words = [w for w in re.split(r"[^a-z0-9]+", (genre or "").lower()) if w]
     spaced = f" {' '.join(words)} "
     for family, keys in GENRE_FAMILY_WORDS.items():
@@ -1381,6 +1396,14 @@ def cold_open_spoils(plan: ReelPlan) -> list[str]:
             cold.take, cold.start, cold.end, plan.last_beat
         ):
             take, a, b = plan.last_beat
+            if legacy_rules():
+                # Frozen for desks created before 2026-10-06; do not change (a warning, as it was).
+                out.append(
+                    f"the cold open {cold.take} {cold.start:.2f}-{cold.end:.2f} s is inside the last beat "
+                    f"({take} {a:.2f}-{b:.2f} s, the new fact): the reel opens on its own ending. Take the cold open "
+                    "from the pivot or the peak before the reveal"
+                )
+                continue
             out.append(
                 f"{FLASH_FORWARD_NOTE}: the cold open {cold.take} {cold.start:.2f}-{cold.end:.2f} s is inside "
                 f"the last beat ({take} {a:.2f}-{b:.2f} s). {FLASH_FORWARD_CHECK}"
@@ -1390,6 +1413,13 @@ def cold_open_spoils(plan: ReelPlan) -> list[str]:
             if seg is not cold and _overlaps(
                 cold.take, cold.start, cold.end, (seg.take, seg.start, seg.end)
             ):
+                if legacy_rules():
+                    # Frozen for desks created before 2026-10-06; do not change.
+                    out.append(
+                        f"the cold open {cold.take} {cold.start:.2f}-{cold.end:.2f} s overlaps the ending "
+                        f"({seg.role} {seg.take} {seg.start:.2f}-{seg.end:.2f} s): the reel opens on its own ending"
+                    )
+                    break
                 out.append(
                     f"{FLASH_FORWARD_NOTE}: the cold open {cold.take} {cold.start:.2f}-{cold.end:.2f} s also "
                     f"plays at the end ({seg.role} {seg.take} {seg.start:.2f}-{seg.end:.2f} s). "
@@ -1549,7 +1579,11 @@ def check_plan(
 
     warnings: list[str] = []
     by_id = {t.take_id: t for t in takes}
-    plan.notes += [n for n in cold_open_spoils(plan) if n not in plan.notes]
+    if legacy_rules():
+        # A desk created before 2026-10-06 is warned, as it was (frozen; do not change).
+        warnings += cold_open_spoils(plan)
+    else:
+        plan.notes += [n for n in cold_open_spoils(plan) if n not in plan.notes]
     opening, tail, edge_warnings = plan_edges(plan, takes)
     plan.opening, plan.tail = opening, tail
     warnings += edge_warnings
@@ -1939,13 +1973,26 @@ def post_text(
         screen in the reel (:data:`_CALL_TO_ACTION`), only here and on the cover image.
     """
 
-    head = f"{series} · Part {episode}" + (f": {title}" if title else "")
+    legacy = legacy_rules()
+    # A desk created before 2026-10-06 keeps "Episode N" (frozen; do not change).
+    head = f"{series} · {'Episode' if legacy else 'Part'} {episode}" + (
+        f": {title}" if title else ""
+    )
     lines = [premise_line.strip(), head, ""] if premise_line.strip() else [head, ""]
     if question:
         lines.append(question.strip())
-    lines.append(
-        f"Follow for part {episode + 1}." if has_next else "Follow for the next one."
-    )
+    if legacy:
+        lines.append(
+            f"Episode {episode + 1} is next. Follow so you don't miss it."
+            if has_next
+            else "Follow for the next one."
+        )
+    else:
+        lines.append(
+            f"Follow for part {episode + 1}."
+            if has_next
+            else "Follow for the next one."
+        )
     tags = genre_hashtags(genre)
     if tags:
         lines += ["", " ".join(f"#{t}" for t in [*tags, "shortdrama"])]

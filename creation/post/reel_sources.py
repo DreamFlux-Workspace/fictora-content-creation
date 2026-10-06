@@ -63,9 +63,11 @@ from creation.captions import (
     detect_silences,
     find_ffmpeg,
     heard_word_cues,
+    is_english,
     line_words,
     speech_spans,
     take_caption_lines,
+    time_lines,
     word_span,
 )
 from creation.post.media import media_duration, probe_video
@@ -690,6 +692,15 @@ def rebuild_cues(
     """
 
     from creation.post.whisper import load_words
+    from creation.rules_epoch import legacy_rules
+
+    if legacy_rules():
+        # A desk created before 6 Oct 2026 keeps its captions as they were (frozen; do not change).
+        return legacy_rebuild_cues(
+            spine, desk=desk, episode=episode, take_index=take_index, duration=duration,
+            windows=windows, marks_italic=marks_italic, words_json=words_json, notes=notes,
+            label=label,
+        )  # fmt: skip
 
     lines, warning = take_caption_lines(
         dict(spine),
@@ -833,6 +844,123 @@ def rebuild_cues(
             "⚠ caption timing is ESTIMATED (words spread across the recorded window, not when each is said) "
             f"for {'; '.join(estimated)}: watch those words against the voice"
         )
+    return cues
+
+
+def legacy_rebuild_cues(
+    spine: Mapping[str, Any],
+    *,
+    desk: Path,
+    episode: int,
+    take_index: int,
+    duration: float,
+    windows: Sequence[tuple[float, float, str, bool]] = (),
+    marks_italic: bool = False,
+    words_json: Path | None = None,
+    notes: list[str],
+    label: str,
+) -> tuple[Cue, ...] | None:
+    """The take's captions rebuilt with the kit's builder, on recorded windows or a words json.
+
+    Frozen for desks created before 2026-10-06; do not change (:mod:`creation.rules_epoch`):
+    their reels keep the line-window spreading and the recorded wording they always had.
+
+    Parameters
+    ----------
+    spine
+        The saved spine.
+    desk, episode, take_index
+        The take (its own beats' lines).
+    duration
+        The take's length on the timeline the windows and words are on.
+    windows
+        ``(start, end, text, italic)`` per line, as the run notes recorded the master's
+        captions: the accepted wording and times (the spine may have changed since).
+    marks_italic
+        The run notes mark italic lines (``(italic)``): a window without the mark is upright.
+        Otherwise each line's slant is the spine's.
+    words_json
+        A transcript of the take on the same timeline.
+    notes
+        Report lines (appended).
+    label
+        The file the captions were on (for the report).
+
+    Returns
+    -------
+    tuple[Cue, ...] | None
+        The cues, or ``None`` when they cannot be rebuilt.
+    """
+
+    from creation.post.whisper import load_words
+
+    lines, warning = take_caption_lines(
+        dict(spine),
+        episode,
+        take_index=take_index,
+        take_count=desk_take_count(desk, episode),
+    )
+    if warning:
+        notes.append(f"⚠ {warning}")
+    if not lines:
+        notes.append(
+            f"⚠ no spine lines for t{take_index}: the reel is uncaptioned there"
+        )
+        return None
+    whole = captions_whole_lines(dict(spine))
+    texts = [line.text for line in lines]
+    shown: list[CaptionLine] = list(lines)
+    if windows and len(windows) == len(lines):
+        # The accepted cut's wording and times: what the human approved, even when the spine changed since.
+        differ = [
+            f"accepted {w[2]!r}, spine now {line.text!r}"
+            for w, line in zip(windows, lines)
+            if _plain(w[2]) != _plain(line.text)
+        ]
+        anchors = [Span(w[0], w[1]) for w in windows]
+        italic = [
+            w[3] if marks_italic else line.italic for w, line in zip(windows, shown)
+        ]
+        how = (
+            f"the wording and {len(windows)} window(s) the run notes recorded for `{label}`"
+            f" (slant: {'as recorded' if marks_italic else 'the spine'})"
+        )
+        if differ:
+            how += f"; kept the accepted wording where the spine changed since: {'; '.join(differ)}"
+        groups = build_line_cues(
+            [w[2] for w in windows], anchors, whole_lines=whole, italic=italic,
+            skip=[not is_english(w[2]) for w in windows], fixed_ends=[True] * len(anchors),
+        )  # fmt: skip
+    elif words_json is not None:
+        try:
+            timing = time_lines(
+                lines, duration=duration, words=load_words(words_json), spans=None
+            )
+        except ValueError as exc:
+            notes.append(
+                f"⚠ captions not rebuilt: `{words_json.name}` does not time every line ({exc}); the reel is uncaptioned there"
+            )
+            return None
+        how = f"timed on `{words_json.name}` ({', '.join(timing.methods)})"
+        groups = build_line_cues(
+            texts, list(timing.anchors), whole_lines=whole, italic=[line.italic for line in shown],
+            skip=[not line.english for line in shown], holds=timing.holds, fixed_ends=timing.fixed_ends,
+        )  # fmt: skip
+    else:
+        reason = (
+            f"the run notes recorded {len(windows)} caption window(s) for {len(lines)} line(s)"
+            if windows
+            else "no caption windows in the run notes and no words json of the finish run"
+        )
+        notes.append(
+            f"⚠ captions not rebuilt ({reason}): the reel is uncaptioned there"
+        )
+        return None
+    cues = tuple(sorted((c for g in groups for c in g), key=lambda c: c.start))
+    grain = "whole English lines" if whole else "word flicker"
+    notes.append(
+        f"⚠ captions rebuilt (no .ass for `{label}`): {len(lines)} spine line(s), {grain}, {how}"
+    )
     return cues
 
 
@@ -1051,6 +1179,7 @@ __all__ = [
     "apply_edits",
     "infer_take_source",
     "parse_run_notes",
+    "legacy_rebuild_cues",
     "rebuild_cues",
     "shift_cues",
     "takes_in_notes",

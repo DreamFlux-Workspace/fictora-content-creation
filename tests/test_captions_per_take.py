@@ -129,7 +129,7 @@ def two_take_desk(tmp_path: Path) -> Path:
     """A 30 s desk (t1, t2) with the two-take spine and both raw takes."""
 
     desk = init_series_desk(
-        tmp_path, "Two Takes", band="30s", episode_count=1, day=date(2026, 10, 1)
+        tmp_path, "Two Takes", band="30s", episode_count=1, day=date(2026, 10, 6)
     )
     save_production(
         desk,

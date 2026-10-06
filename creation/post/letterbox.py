@@ -43,7 +43,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from creation.caption_dashes import caption_text as no_dash_text
+from creation.caption_dashes import drawn_text as no_dash_text
 from creation.captions import (
     FONTS_DIR,
     FONT_NAME,
