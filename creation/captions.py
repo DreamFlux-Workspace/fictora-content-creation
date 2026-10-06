@@ -226,6 +226,8 @@ STAMMER_MAX_CHARS = 2
 #: A speech onset this close to a stretched word's end is the next word's, not this one's.
 ONSET_END_MARGIN_SECONDS = 0.05
 #: A whole English line stays up at least max(this, words x READ_SECONDS_PER_WORD) to be read.
+#: A word stamped in silence moves to the speech inside it only when that is at least this much later.
+ONSET_SNAP_SECONDS = 0.1
 MIN_LINE_SECONDS = 1.2
 READ_SECONDS_PER_WORD = 0.3
 
@@ -855,6 +857,21 @@ def word_anchors(
     (a stretched first word starts at its onset in ``speech``).
     """
 
+    return [
+        word_span(matched, speech) if matched else None
+        for matched in line_words(lines, words)
+    ]
+
+
+def line_words(
+    lines: Sequence[CaptionLine], words: Sequence[HeardWord]
+) -> list[list[HeardWord]]:
+    """The transcript words each line was heard as (empty where the line was not matched).
+
+    Lines are matched in order with :func:`creation.post.whisper.line_windows`
+    on what is heard (``performed`` and every spelling).
+    """
+
     from creation.post.whisper import line_windows
 
     heard = tuple(words)
@@ -864,11 +881,200 @@ def word_anchors(
         alternates=tuple(line.spellings for line in lines),
     )
     return [
-        word_span([heard[i] for i in window.words], speech)
+        [heard[i] for i in window.words]
         if window.start is not None and window.words
-        else None
+        else []
         for window in windows
     ]
+
+
+def _speech_share(a: float, b: float, spans: Sequence[Span]) -> float:
+    """Share of ``a``-``b`` that is speech."""
+
+    if b <= a:
+        return 1.0
+    inside = sum(max(0.0, min(b, s.end) - max(a, s.start)) for s in spans)
+    return inside / (b - a)
+
+
+def word_onset(word: HeardWord, speech: Sequence[Span] | None = None) -> float:
+    """When a transcript word starts being said (never before its sound starts).
+
+    Whisper's word times run early: a word after a pause is often stamped
+    from the end of the word before it (SCP-173 Blink ep 1: ``open`` heard
+    8.19 s, said from 8.8 s; ``Please,`` heard 6.29-8.19 s, said from 7.8 s).
+    With the take's speech spans:
+
+    - a word that starts mostly in silence starts where the first speech span
+      inside it starts (the part of the word before it is under half speech,
+      and at least :data:`ONSET_SNAP_SECONDS` long);
+    - a word longer than one word can last (:func:`_word_limit`) starts at
+      its onset after a real pause (:func:`speech_onset_in`), else where it
+      is stamped when that is speech (stretched over the silence after it).
+
+    Without speech spans a stretched word starts where it can last up to its
+    end; any other word starts where it is stamped.
+
+    Parameters
+    ----------
+    word
+        One transcript word.
+    speech
+        The take's speech spans (:func:`speech_spans`), or None.
+
+    Returns
+    -------
+    float
+        The onset in seconds.
+    """
+
+    stretched = word.end - word.start > _word_limit(word)
+    if speech:
+        ordered = sorted(speech, key=lambda s: s.start)
+        if stretched:
+            onset = speech_onset_in(word, ordered)
+            if onset is not None:
+                return onset
+        for span in ordered:
+            if (
+                word.start + ONSET_SNAP_SECONDS
+                <= span.start
+                <= word.end - ONSET_END_MARGIN_SECONDS
+                and _speech_share(word.start, span.start, ordered) < 0.5
+            ):
+                return span.start
+        if not stretched or _speech_share(word.start, word.start + 0.2, ordered) >= 0.5:
+            return word.start
+    if stretched:
+        return max(word.start, word.end - _word_limit(word))
+    return word.start
+
+
+def _token_key(text: str) -> str:
+    """Letters and digits only, case-folded: ``NOT—`` and ``not!`` are the same word."""
+
+    return "".join(
+        ch for ch in unicodedata.normalize("NFKC", text).casefold() if ch.isalnum()
+    )
+
+
+def heard_word_cues(
+    text: str,
+    words: Sequence[HeardWord],
+    *,
+    speech: Sequence[Span] | None = None,
+    not_before: float | None = None,
+) -> tuple[list[Cue], list[str]]:
+    """One cue per word of a line, each starting when that word is said (the transcript's own times).
+
+    The line's words are aligned with the words heard for it. Where they agree
+    (letters and digits, any case or punctuation) the line's spelling is shown
+    (``NOT—`` for a heard ``not!``); where one heard word is a near spelling of
+    one written word (a name, ``Ren`` for ``Wren``) the line's spelling stays.
+    Anywhere else what was heard wins: a written word that was not said is not
+    shown, and a word said that the line does not have is shown as heard. Each
+    such change is reported.
+
+    Every word starts at :func:`word_onset` (never before its sound), at least
+    ``not_before`` and 50 ms after the word before it.
+
+    Parameters
+    ----------
+    text
+        The line as written.
+    words
+        The transcript words the line was heard as (:func:`line_words`).
+    speech
+        The take's speech spans, or None.
+    not_before
+        The line's start (:func:`word_span`): no word starts before it.
+
+    Returns
+    -------
+    tuple[list[Cue], list[str]]
+        The word cues (``end`` is where the word stops) and the wording changes.
+    """
+
+    import difflib
+
+    written = text.split()
+    heard = [w for w in words if w.text.strip()]
+    if not heard:
+        return [], []
+    a = [_token_key(t) for t in written]
+    b = [_token_key(w.text) for w in heard]
+    shown: list[tuple[str, HeardWord]] = []
+    changes: list[str] = []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(
+        None, a, b, autojunk=False
+    ).get_opcodes():
+        if op == "equal":
+            shown += [(written[i1 + k], heard[j1 + k]) for k in range(i2 - i1)]
+            continue
+        if op == "replace" and "".join(a[i1:i2]) == "".join(b[j1:j2]):
+            # One word heard as two (``D-9341.`` heard ``D`` ``-9341.``), or two as one: the line's
+            # spelling, each written word timed on the heard word its first letter falls in.
+            ends, total = [], 0
+            for key in b[j1:j2]:
+                total += len(key)
+                ends.append(total)
+            offset = 0
+            for i in range(i1, i2):
+                at = next(
+                    k
+                    for k, end in enumerate(ends)
+                    if offset < end or k == len(ends) - 1
+                )
+                shown.append((written[i], heard[j1 + at]))
+                offset += len(a[i])
+            continue
+        if (
+            op == "replace"
+            and i2 - i1 == j2 - j1
+            and all(_near_spelling(written[i1 + k], b[j1 + k]) for k in range(i2 - i1))
+        ):
+            shown += [(written[i1 + k], heard[j1 + k]) for k in range(i2 - i1)]
+            continue
+        said_words: list[tuple[str, HeardWord]] = []
+        for w in heard[j1:j2]:
+            said_text = w.text.strip()
+            if said_words and said_text[:1] in "-'’":
+                # Whisper splits ``D-9341.`` into ``D`` + ``-9341.``: one word on screen.
+                said_words[-1] = (said_words[-1][0] + said_text, said_words[-1][1])
+            else:
+                said_words.append((said_text, w))
+        said = " ".join(t for t, _ in said_words)
+        wrote = " ".join(written[i1:i2])
+        if said and wrote:
+            changes.append(f"{wrote!r} was said {said!r}")
+        elif said:
+            changes.append(f"{said!r} was said (not in the line)")
+        else:
+            changes.append(f"{wrote!r} was not said")
+        shown += said_words
+    speech = sorted(speech, key=lambda s: s.start) if speech else None
+    cues: list[Cue] = []
+    floor = not_before if not_before is not None else float("-inf")
+    for shown_text, word in shown:
+        start = max(word_onset(word, speech), floor)
+        if cues:
+            start = max(start, cues[-1].start + 0.05)
+        end = min(word.end, start + _word_limit(word))
+        cues.append(Cue(round(start, 3), round(max(end, start + 0.05), 3), shown_text))
+    return cues, changes
+
+
+def _near_spelling(written: str, heard_key: str) -> bool:
+    """A heard word that is the written one spelt another way: a name by sound, any word of 4+ letters one letter off."""
+
+    from creation.post.whisper import _one_edit_apart, sounds_alike
+
+    key = _token_key(written)
+    if not key or not heard_key:
+        return False
+    if written[:1].isupper() and len(key) >= 3 and sounds_alike(heard_key, key):
+        return True
+    return min(len(key), len(heard_key)) >= 4 and _one_edit_apart(key, heard_key)
 
 
 @dataclass(frozen=True)
@@ -887,6 +1093,11 @@ class LineTiming:
     fixed_ends: tuple[bool, ...]
     #: ``EXTRA SPEECH: …`` when a line was timed on speech stretches and some stretch was left over.
     warnings: tuple[str, ...] = ()
+    #: Per line: one cue per word at the time the transcript heard it (:func:`heard_word_cues`),
+    #: or None where the words are spread over the line's span (no transcript words, or hand times).
+    word_cues: tuple[tuple[Cue, ...] | None, ...] = ()
+    #: ``line N: 'x' was said 'y'`` per place the shown words follow what was said, not the line.
+    wording: tuple[str, ...] = ()
 
 
 def time_lines(
@@ -898,6 +1109,7 @@ def time_lines(
     words: Sequence[HeardWord] | None = None,
     spans: Callable[[], Sequence[Span]] | None = None,
     known: Sequence[Span | None] | None = None,
+    per_word: bool = False,
 ) -> LineTiming:
     """Place every line: known windows first, then transcript words, then speech spans, hand times on top.
 
@@ -920,6 +1132,10 @@ def time_lines(
         exactly (a locked-voice take's dialogue track, from the take facts'
         ``soundtrack.lines``), else ``None``. A known window is used as heard:
         method ``lines``, nothing transcribed or detected for it.
+    per_word
+        Time each word of a line timed on ``words`` when it was said
+        (:func:`heard_word_cues`, on the speech spans), for word flicker:
+        ``word_cues`` and ``wording`` are filled. Off for whole lines.
 
     Returns
     -------
@@ -942,9 +1158,10 @@ def time_lines(
     by_known: list[Span | None] = [
         known[i] if known and i < len(known) else None for i in range(n)
     ]
-    by_words: list[Span | None] = (
-        word_anchors(lines, words, spans) if words else [None] * n
-    )
+    heard: list[list[HeardWord]] = line_words(lines, words) if words else [[]] * n
+    by_words: list[Span | None] = [
+        word_span(matched, spans) if matched else None for matched in heard
+    ]
     by_words = [k if k is not None else w for k, w in zip(by_known, by_words)]
     by_speech: list[Span | None] = [None] * n
     warnings: list[str] = []
@@ -963,6 +1180,8 @@ def time_lines(
     methods: list[str] = []
     holds: list[float] = []
     fixed: list[bool] = []
+    word_cues: list[tuple[Cue, ...] | None] = []
+    wording: list[str] = []
     for i, text in enumerate(texts):
         auto, auto_how = (
             (by_words[i], "lines" if by_known[i] is not None else "words")
@@ -989,6 +1208,18 @@ def time_lines(
             raise ValueError(
                 f"line {i + 1} ends at {end:.2f}s, not after its start {start:.2f}s; check --line-start/--line-end"
             )
+        cues: tuple[Cue, ...] | None = None
+        if per_word and start_how == "words" and end_how == "words" and heard[i]:
+            # Each word when it is said, not spread over the line (6 Oct 2026: spreading put
+            # SCP-173 Blink ep 1's "door!" 0.8 s after it was said).
+            found, changes = heard_word_cues(
+                text, heard[i], speech=spans() if spans is not None else None,
+                not_before=start,
+            )  # fmt: skip
+            if found:
+                cues = tuple(found)
+                wording += [f"line {i + 1}: {change}" for change in changes]
+        word_cues.append(cues)
         anchors.append(Span(start, end))
         methods.append(
             start_how if start_how == end_how else f"{start_how} start, {end_how} end"
@@ -998,8 +1229,9 @@ def time_lines(
         )
         fixed.append(end_how == "manual")
     return LineTiming(
-        tuple(anchors), tuple(methods), tuple(holds), tuple(fixed), tuple(warnings)
-    )
+        tuple(anchors), tuple(methods), tuple(holds), tuple(fixed), tuple(warnings),
+        tuple(word_cues), tuple(wording),
+    )  # fmt: skip
 
 
 def time_words(text: str, span: Span) -> list[Cue]:
@@ -1198,6 +1430,7 @@ def build_line_cues(
     holds: Sequence[float] = (),
     fixed_ends: Sequence[bool] = (),
     chunking: str = "three",
+    word_cues: Sequence[Sequence[Cue] | None] = (),
 ) -> list[list[Cue]]:
     """Cues for every line on its anchor span, grouped per line (empty for a skipped line).
 
@@ -1210,6 +1443,10 @@ def build_line_cues(
 
     A whole line stays up at least :func:`readable_seconds`, extended forward
     only, never into the next line.
+
+    ``word_cues[i]`` (:attr:`LineTiming.word_cues`) times line ``i``'s words
+    as they were heard, and is the text shown; without it the line's words are
+    spread over its span by length (:func:`time_words`: an estimate).
 
     English shows flicker word by word (:func:`flicker_cues`; with
     ``chunking="phrase"``, a letterbox show, :func:`phrase_cues`). With
@@ -1240,7 +1477,9 @@ def build_line_cues(
             ]
         else:
             build = phrase_cues if chunking == "phrase" else flicker_cues
-            line_cues = build(time_words(text, span), hold_until=next_start, hold=hold)
+            heard = word_cues[i] if i < len(word_cues) else None
+            timed = list(heard) if heard else time_words(text, span)
+            line_cues = build(timed, hold_until=next_start, hold=hold)
         slanted = i < len(italic) and italic[i]
         groups.append(
             [
@@ -2400,6 +2639,7 @@ def caption_take(
             known=[(line_spans or {}).get(line.line_id) for line in caption_lines]
             if line_spans
             else None,
+            per_word=not whole_lines,
         )
         if caption_lines
         else LineTiming((), (), (), ())
@@ -2428,7 +2668,14 @@ def caption_take(
         holds=timing.holds,
         fixed_ends=timing.fixed_ends,
         chunking=chunking,
+        word_cues=timing.word_cues,
     )
+    if timing.wording:
+        wording = "WORDING: captioned as said, not as written: " + "; ".join(
+            timing.wording
+        )
+        print(f"WARNING {wording}", file=sys.stderr)
+        timing_warning = f"{timing_warning}; {wording}" if timing_warning else wording
     methods = tuple(timing.methods)
     if fixed:
         # Laid lines (inner voice) sit where their dry line plays; they bound each other's hold, not the script's.
