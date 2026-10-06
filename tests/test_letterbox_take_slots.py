@@ -48,7 +48,7 @@ def _desk(tmp_path: Path, band: str, *, letterbox: bool) -> Path:
     )
 
 
-@pytest.mark.parametrize(("band", "count"), [("15s", 1), ("30s", 3), ("60s", 6)])
+@pytest.mark.parametrize(("band", "count"), [("15s", 2), ("30s", 3), ("60s", 6)])
 def test_a_letterbox_desk_opens_one_slot_per_10_seconds(band: str, count: int) -> None:
     assert take_ids_for_band(band, letterbox=True) == [
         f"t{n}" for n in range(1, count + 1)

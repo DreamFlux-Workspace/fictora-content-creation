@@ -334,7 +334,7 @@ def save_spine_snapshot(desk: Path, episode: int, spine: dict[str, Any]) -> Path
 def sync_desk_to_spine_takes(desk: Path, spine: dict[str, Any]) -> list[str]:
     """Match the desk's take slots and take length to the story the server films.
 
-    A 4:3 letterbox story films 10-second takes (fictora-drama #604): three a
+    A 4:3 letterbox story films 10-second takes (fictora-drama #604; 7-second at 15 s, #617): three a
     30 s episode, six a 60 s one. The desk opens slots from its band, so the
     spine's ``beats_per_storyboard_set`` sets the slot count
     (:func:`creation.ops.state.sync_take_slots_to_spine`), and on a 4:3 story
