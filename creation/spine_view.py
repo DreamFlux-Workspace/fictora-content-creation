@@ -1723,6 +1723,9 @@ def shot_list_lines(
         Printable lines; empty when the spine has no frames for the episode.
     """
 
+    # Imported here: touch_and_side reads frames with this module's helpers.
+    from creation.touch_and_side import spine_cards, unowned_touch_lines
+
     lines: list[str] = []
     cast_names = spine_cast_names(spine)
     boards = frames_by_set(spine, episode=episode)
@@ -1773,6 +1776,9 @@ def shot_list_lines(
         lines += safe_zone_lines(frames, cast_names=cast_names)
         lines += named_cast_mismatch_lines(frames, take_beats, cast_names=cast_names)
         lines += speaking_mouth_hidden_lines(frames, take_beats, cast_names=cast_names)
+        lines += unowned_touch_lines(
+            frames, cast_names=cast_names, cards=spine_cards(spine)
+        )
         lines += missing_expression_lines(frames, take_beats, episode=episode)
         lines += insert_run_lines(frames)
     return lines
