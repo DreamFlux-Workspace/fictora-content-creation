@@ -57,6 +57,9 @@ class FinishRecord:
     #: A letterbox show's take: ``master`` and ``final`` are the 9:16 canvas (the master captioned in the
     #: band, the final with the mark and title block); ``join`` puts the mark and title on the joined file.
     letterbox: bool = False
+    #: What a NOT DONE take lacks (``music``, ``SFX``, ``mix``, ``room tone``, a hand step), as ``finish``
+    #: said; empty on a complete take and on a record from before it was written.
+    missing: tuple[str, ...] = ()
     #: The letterbox captions' colour (``yellow`` / ``white``); ``None`` on a portrait take.
     caption_colour: str | None = None
 
@@ -98,6 +101,7 @@ def write_finish_record(
     bed_db_source: str | None = None,
     music_in_take: bool = False,
     letterbox: Mapping[str, Any] | None = None,
+    missing: Sequence[str] = (),
 ) -> Path:
     """Write ``takes/take-epNN-tK-finish-vN.json`` (a new version; never overwrites).
 
@@ -128,6 +132,9 @@ def write_finish_record(
     inner_voice
         The inner-voice cues laid on this take (``{cue_id, file, start, seconds,
         episode_start, speaker_cast_id, line}``; ``start`` on the take).
+    missing
+        What a NOT DONE take lacks; written only when the take is not complete
+        (a complete take's record is unchanged).
     letterbox
         A letterbox take's ``{"letterbox": True, "caption_colour": ...}``,
         written into the record; ``None`` (every portrait take) writes the
@@ -158,6 +165,7 @@ def write_finish_record(
         "hand_voices": [dict(voice) for voice in hand_voices],
         "inner_voice": [dict(cue) for cue in inner_voice],
         **(dict(letterbox) if letterbox else {}),
+        **({"missing": list(missing)} if missing and not complete else {}),
     }
     path.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
     return path
@@ -175,7 +183,8 @@ def _load(path: Path) -> FinishRecord | None:
     body = {
         f.name: raw.get(f.name)
         for f in fields(FinishRecord)
-        if f.name not in ("path", "edits", "hand_voices", "music_in_take", "letterbox")
+        if f.name
+        not in ("path", "edits", "hand_voices", "music_in_take", "letterbox", "missing")
     }
     edits = tuple(e for e in raw.get("edits") or () if isinstance(e, dict))
     voices = tuple(v for v in raw.get("hand_voices") or () if isinstance(v, dict))
@@ -186,6 +195,7 @@ def _load(path: Path) -> FinishRecord | None:
         hand_voices=voices,
         music_in_take=raw.get("music_in_take") is True,
         letterbox=raw.get("letterbox") is True,
+        missing=tuple(str(m) for m in raw.get("missing") or () if m),
     )
 
 

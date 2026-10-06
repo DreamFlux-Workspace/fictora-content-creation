@@ -89,6 +89,7 @@ from creation.post.bed import (
 )
 from creation.post.finish_record import (
     FinishRecord,
+    finish_records,
     latest_finish_record,
     record_for_file,
 )
@@ -323,12 +324,30 @@ def _take_order(take_id: str) -> int:
     return int(digits) if digits.isdigit() else 0
 
 
+def not_done_reason(record: FinishRecord) -> str:
+    """What a NOT DONE finish record lacks, in the words ``finish`` used.
+
+    The record names it (``missing``); an older record does not, and the reason
+    is then read from what it holds (no take before the bed: the mix never ran),
+    else the operator is pointed at that finish's ``Sound:`` line.
+    """
+
+    if record.missing:
+        return "no " + ", ".join(record.missing)
+    if not record.pre_bed:
+        return "no mix (the finish stopped before it)"
+    return (
+        "the record does not say what is missing (an older finish); read the `Sound:` line of that "
+        "finish in the episode's run-notes.md"
+    )
+
+
 def _part(desk: Path, record: FinishRecord, *, asked: Path | None = None) -> JoinPart:
     name = asked.name if asked else f"ep{record.episode:02d} {record.take_id}"
     if not record.complete or not record.pre_bed:
         raise ValueError(
             f"{name}: its finish record `{record.path.name if record.path else '?'}` is NOT DONE "
-            "(no music, SFX or mix); finish the take before joining it"
+            f"({not_done_reason(record)}); finish the take again before joining it"
         )
     picture = record.resolve(desk, "master")
     pre_bed = record.resolve(desk, "pre_bed")
@@ -369,13 +388,19 @@ def episode_parts(desk: Path, episode: int) -> list[JoinPart]:
     for take_id in sorted(set(desk_takes) | recorded, key=_take_order):
         record = latest_finish_record(desk, episode, take_id)
         if record is None:
-            missing.append(take_id)
+            tried = [r for r in finish_records(desk, episode) if r.take_id == take_id]
+            missing.append(
+                f"{take_id} (its newest finish `{tried[-1].path.name if tried[-1].path else '?'}` is "
+                f"not done: {not_done_reason(tried[-1])})"
+                if tried
+                else f"{take_id} (never finished)"
+            )
             continue
         parts.append(_part(desk, record))
     if missing:
         raise ValueError(
-            f"ep{episode:02d}: no finished {', '.join(missing)} (no complete take-ep{episode:02d}-tK-finish-vN.json); "
-            "run `fictora-produce finish` on every take first, or name the takes with --take-file"
+            f"ep{episode:02d}: no finished {', '.join(missing)}. Fix what is missing and run "
+            "`fictora-produce finish` on that take again, or name the takes with --take-file"
         )
     return parts
 
