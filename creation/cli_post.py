@@ -61,6 +61,12 @@ def add_hook_line_args(parser: argparse.ArgumentParser) -> None:
         help="No hook line (and no letterbox title bar), whatever the spine says.",
     )
     parser.add_argument(
+        "--no-panels",
+        action="store_true",
+        help="Draw none of the writer's system panels (status windows, level ups, quest notices: system "
+        "and game genres only).",
+    )
+    parser.add_argument(
         "--hook-line-position",
         choices=("top", "lower"),
         default=None,
@@ -852,6 +858,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             no_hook_line=args.no_hook_line,
             hook_line_position=args.hook_line_position,
             caption_colour=args.caption_colour,
+            no_panels=args.no_panels,
         )
         if args.json:
             print(json.dumps(result.as_json(), indent=2))
@@ -889,6 +896,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             hook_line_position=args.hook_line_position,
             no_cover=args.no_cover,
             cover_frame=args.cover_frame,
+            no_panels=args.no_panels,
         )
         return 0
     if args.command == "join":

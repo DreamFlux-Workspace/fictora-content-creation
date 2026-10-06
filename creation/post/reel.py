@@ -917,6 +917,7 @@ def render_reel(
     watermark_y: int | None = None,
     hook: HookOverlay | None = None,
     letterbox: LetterboxReel | None = None,
+    panels: Sequence[tuple[int, int, Any]] = (),
 ) -> tuple[float, str, str, list[str]]:
     """Cut the plan from the sources into ``paths['video']`` (and its ``.ass``).
 
@@ -926,6 +927,11 @@ def render_reel(
 
     ``hook`` (:mod:`creation.post.hook_overlay`) is burned over the captions,
     before the mark; None draws nothing and runs exactly the commands it always ran.
+
+    ``panels`` (:func:`creation.post.system_panels.reel_panels`): a system or
+    game genre's panels, on the reel's timeline, burned after the captions and
+    before the hook line; empty draws nothing and runs exactly the commands it
+    always ran.
 
     ``letterbox`` (:func:`reel_letterbox`): a letterbox show's reel goes on
     the 9:16 black canvas after the mix (:func:`creation.post.letterbox.pad_to_canvas`),
@@ -1106,6 +1112,18 @@ def render_reel(
             captions_line = (
                 f"{len(cues)} caption cue(s), {grain}, re-timed through the segment map"
             )
+        if panels:
+            from creation.post.delivery_geometry import layout
+            from creation.post.system_panels import burn_panels
+
+            paneled = scratch / "reel-panels.mp4"
+            pic = layout().picture if letterbox is not None else None
+            burn_panels(
+                panels, captioned, paths["video"].with_name(paths["video"].stem + "-panels.ass"), paneled,
+                picture=(pic.x, pic.y, pic.width, pic.height) if pic is not None else None,
+            )  # fmt: skip
+            captioned = paneled
+            report.append(f"{len(panels)} system panel(s) drawn through the cut")
         if hook is not None:
             hooked = scratch / "reel-hook.mp4"
             hook_ass = paths["video"].with_name(paths["video"].stem + "-hook.ass")
@@ -1177,6 +1195,7 @@ def run_reel(
     no_cover: bool = False,
     cover_frame: float | None = None,
     made_by: str = "reel",
+    no_panels: bool = False,
 ) -> ReelResult:
     """Plan (and unless ``plan_only``, render) the episode's reel. Writes only under ``<desk>/reels/``.
 
@@ -1216,6 +1235,8 @@ def run_reel(
         take's picture before captions), instead of a saved cover or the strongest frame.
     made_by
         What made it, for ``latest.json``: ``reel`` (this command), ``finish`` or an edit's name.
+    no_panels
+        ``--no-panels``: draw none of the writer's system panels (system and game genres only).
 
     Returns
     -------
@@ -1240,7 +1261,7 @@ def run_reel(
             watermark_y=watermark_y, ending=ending, stream=stream, scratch=Path(tmp),
             detector=found if not isinstance(found, str) else None,
             hook_line=hook_line, no_hook_line=no_hook_line, hook_line_position=hook_line_position,
-            no_cover=no_cover, cover_frame=cover_frame,
+            no_cover=no_cover, cover_frame=cover_frame, no_panels=no_panels,
         )  # fmt: skip
     return record_reel(
         desk.expanduser().resolve(), episode, result, made_by=made_by, stream=stream
@@ -1442,6 +1463,7 @@ def make_reel(
     hook_line_position: str | None = None,
     no_cover: bool = False,
     cover_frame: float | None = None,
+    no_panels: bool = False,
 ) -> ReelResult:
     """The renderer: plan the reel and make its files (video, captions, plan, cover, post text).
 
@@ -1653,10 +1675,20 @@ def make_reel(
         )
         return result
     style, style_note = resolve_caption_style(desk, caption_style)
+    panels: list[tuple[int, int, Any]] = []
+    if not no_panels:
+        from creation.post.system_panels import reel_panels
+        from creation.spine_view import episode_id_for
+
+        panels = reel_panels(
+            spine, episode_id_for(spine, episode), [(t.take_id, t.duration) for t in takes], plan.segments,
+            fps=takes[0].fps if takes else 24.0,
+            skip_takes=[s.take_id for s in srcs if s.inferred and s.inferred.burned],
+        )  # fmt: skip
     secs, loud, cap_line, report = render_reel(
         desk, episode=episode, plan=plan, sources=srcs, takes=takes, patches=patches,
         paths=paths, caption_style=style, whole_lines=whole, watermark_y=watermark_y,
-        hook=hook.overlay, letterbox=boxed,
+        hook=hook.overlay, letterbox=boxed, panels=panels,
     )  # fmt: skip
     summary = episode_summary(spine, episode)
     series = str(spine.get("title") or desk.name)
