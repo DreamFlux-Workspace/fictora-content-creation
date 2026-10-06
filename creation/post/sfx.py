@@ -603,6 +603,24 @@ def service_renderer(audio: AudioService, spine_id: str) -> Renderer:
     return render
 
 
+class NothingLaid(RuntimeError):
+    """No planned effect could be laid (each failed to render or had the wrong shape).
+
+    ``skipped`` and ``dropped`` say why for each cue; ``rendered`` and
+    ``cost_usd`` are what the attempts cost, so the caller can still book them.
+    """
+
+    def __init__(
+        self, message: str, *, skipped: tuple[str, ...], dropped: tuple[str, ...],
+        rendered: int, cost_usd: float,
+    ) -> None:  # fmt: skip
+        super().__init__(message)
+        self.skipped = skipped
+        self.dropped = dropped
+        self.rendered = rendered
+        self.cost_usd = cost_usd
+
+
 @dataclass(frozen=True)
 class SfxResult:
     """What the SFX step wrote."""
@@ -722,14 +740,16 @@ def lay_sfx(
         if good is not None:
             kept.append((cue, good))
     if not kept:
-        raise RuntimeError(
+        raise NothingLaid(
             "no sound effect could be laid: "
             + (
                 "; ".join([*skipped, *dropped])
                 if skipped or dropped
                 else "the take facts plan no cue"
-            )
-        )
+            ),
+            skipped=tuple(skipped), dropped=tuple(dropped), rendered=rendered,
+            cost_usd=round(cost, 4),
+        )  # fmt: skip
     inputs: list[str] = ["-i", str(take)]
     parts: list[str] = []
     labels = ["[0:a]"]

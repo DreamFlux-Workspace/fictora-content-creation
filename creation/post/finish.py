@@ -248,7 +248,11 @@ from creation.post.soundtrack import (
     unheard_lines,
 )
 from creation.post.voice_fx import PRESETS as VOICE_FX_PRESETS
-from creation.harness_rules import opening_sound_flat, opening_sound_line
+from creation.harness_rules import (
+    OPENING_WINDOW_SECONDS,
+    opening_sound_flat,
+    opening_sound_line,
+)
 from creation.post.sfx import (
     Adjustment,
     Cuts,
@@ -257,6 +261,7 @@ from creation.post.sfx import (
     filmed_shot_windows,
     follow_filmed_cuts,
     lay_sfx,
+    NothingLaid,
     SfxPlan,
     apply_adjustments,
     plan_from_take_facts,
@@ -1533,7 +1538,12 @@ def run_finish(
         clashes += [
             line
             for cue, _seconds in hand.cues
-            if (line := opening_sound_line(cue_description(cue.path), cue.start))
+            # On take 1 a hand cue in the opening window is the episode's opening sound, not a stray cue.
+            if not (
+                thoughts.take_number(take_id) == 1
+                and cue.start <= OPENING_WINDOW_SECONDS
+            )
+            and (line := opening_sound_line(cue_description(cue.path), cue.start))
         ]
         for warning in clashes:
             print(f"[cues] {warning}", file=out, flush=True)
@@ -1671,14 +1681,55 @@ def run_finish(
                 + (f"; facts older than the sound notes ({stale})" if stale else "")
                 + f"; {filmed_note}",
             )
-        sfx = lay_sfx(
-            take,
-            plan,
-            cache_dir=run_dir / "sfx",
-            output=next_versioned_path(takes, f"{base}-sfx", ".mp4"),
-            adjustments=sfx_adjust,
-            render=sfx_render,
-        )
+        try:
+            sfx = lay_sfx(
+                take,
+                plan,
+                cache_dir=run_dir / "sfx",
+                output=next_versioned_path(takes, f"{base}-sfx", ".mp4"),
+                adjustments=sfx_adjust,
+                render=sfx_render,
+            )
+        except NothingLaid as failed:
+            # Every effect left for the kit failed to render. When the take still has its effects (the
+            # server laid the rest in the track, or a hand cue goes on next) it is not effect-less: the
+            # failed cues are named NOT LAID, as when only some fail, and the take can be done.
+            on_take = [
+                *(
+                    f"{cue.sound} (in the track, laid by the server)"
+                    for cue in in_track
+                ),
+                *(
+                    f"{cue_description(cue.path)} (hand cue @{cue.start:.2f}s)"
+                    for cue, _ in hand.cues
+                ),
+            ]
+            if not on_take:
+                raise
+            if failed.cost_usd:
+                book(
+                    desk,
+                    episode=episode,
+                    usd=failed.cost_usd,
+                    take_id=take_id,
+                    stream=out,
+                    unit="sfx",
+                )
+            planned = len(failed.skipped) + len(failed.dropped)
+            detail = (
+                f"0 cue(s) laid here; !! NOT LAID {len(failed.skipped)} of {planned} planned: "
+                f"{'; '.join(failed.skipped)}"
+                + (
+                    f"; left out on purpose: {'; '.join(failed.dropped)}"
+                    if failed.dropped
+                    else ""
+                )
+                + f"; the take's effects: {'; '.join(on_take)}{dropped}; {filmed_note}"
+            )
+            append_run_note(run_dir, f"SFX: {detail}")
+            return StepReport(
+                "sfx", "ran", detail, None, failed.cost_usd, not_laid=failed.skipped
+            )
         if sfx.cost_usd:
             book(
                 desk,
@@ -2440,6 +2491,7 @@ def run_finish(
         episode=episode,
         take_id=take_id,
         complete=result.complete,
+        missing=result.sound_missing,
         pre_bed=record_state["pre_bed"] if result._ran("mix") else None,
         music_in_take=music_in_take,
         master=record_state["master"] or current,
