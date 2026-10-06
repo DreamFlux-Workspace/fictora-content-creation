@@ -184,3 +184,57 @@ def test_a_failing_read_never_stops_the_estimate(show: FakeApi) -> None:
     show.routes[("GET", ROUTE)] = lambda *_: SystemExit("boom")
 
     assert music_blend_line(show, show.spine_doc).startswith("Music blend: not known")
+
+
+# --- Rules epoch: desks created before 6 Oct 2026 keep their music -------------------------------
+
+
+def _legacy(desk: Path) -> Path:
+    from creation.rules_epoch import run_rules_epoch
+
+    run_rules_epoch(desk, set_to="legacy", out=io.StringIO())
+    return desk
+
+
+def test_a_legacy_desks_estimate_prints_no_blend_line(
+    desk: Path, show: FakeApi
+) -> None:
+    _legacy(desk)
+    set_phase(desk, "ready_estimate")
+    show.routes[("POST", "/v1/spines/sp1/batches/estimate")] = {
+        "cost_estimate": {"total_usd": "1.20", "priced_on": "2026-10-05", "takes": 1}
+    }
+
+    result = orchestrate.run_step(desk)
+
+    assert "Music blend" not in result.message
+    assert result.phase == "wait_spend"
+    # The blend is not even read for a legacy desk.
+    assert [c for c in show.calls if c[1] == ROUTE] == []
+
+
+def test_a_legacy_desk_never_sends_a_blend_change(desk: Path, show: FakeApi) -> None:
+    _legacy(desk)
+    with pytest.raises(ValueError, match="before 6 Oct 2026"):
+        run_music_blend(desk, set_to="romance,suspense", out=io.StringIO())
+    with pytest.raises(ValueError, match="before 6 Oct 2026"):
+        run_music_blend(desk, default=True, out=io.StringIO())
+    assert show.posted(ROUTE) == []
+    # Reading is still free and allowed.
+    assert run_music_blend(desk, out=io.StringIO()).families == ("romance",)
+
+
+def test_a_legacy_story_on_the_server_reads_and_refuses_in_plain_words(
+    show: FakeApi,
+) -> None:
+    read = show.routes[("GET", ROUTE)]
+    show.routes[("GET", ROUTE)] = lambda *a: {**read(*a), "rules_legacy": True}
+    blend = show_music_blend(show, show.spine_doc)
+    assert blend.source == "rules-legacy" and "before 6 Oct 2026" in blend.line()
+
+    show.routes[("POST", ROUTE)] = lambda *_: (
+        409,
+        {"error": {"code": "music_blend_rules_legacy"}},
+    )
+    with pytest.raises(RuntimeError, match="before 6 Oct 2026"):
+        set_music_blend(show, show.spine_doc, ["romance", "suspense"])

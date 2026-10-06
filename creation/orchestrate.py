@@ -133,6 +133,7 @@ from creation.stylised_only import BriefNoticePause
 from creation.voice_gate import film_refusal as voices_film_refusal
 from creation.voice_mode import next_take_voices_line
 from creation.music_blend import music_blend_line
+from creation.rules_epoch import is_legacy
 from creation.voice_gate import gate_text as voices_gate_text
 from creation.voice_gate import pending_for_film as voices_pending_for_film
 
@@ -1614,7 +1615,8 @@ def run_step(
             ]
             voices_line = next_take_voices_line(desk, run, spine)
             # One line, never a gate: the music families the show's score may play.
-            blend_line = music_blend_line(run, spine)
+            # Frozen for desks created before 2026-10-06 (rules epoch): no line.
+            blend_line = None if is_legacy(desk) else music_blend_line(run, spine)
             unvoiced = voices_pending_for_film(desk, spine, episode=ep, run=run)
             if unvoiced:
                 who = ", ".join(v.name for v in unvoiced)
@@ -1643,7 +1645,7 @@ def run_step(
                 state.phase,
                 "".join(f"{line}\n" for line in warnings)
                 + f"{voices_line}\n"
-                + f"{blend_line}\n"
+                + (f"{blend_line}\n" if blend_line else "")
                 + f"Estimate ${state.estimate_usd:.2f} for {scope} ({source}).\n{budget}\n"
                 "Human yes, then `fictora-produce step --confirm-spend`.",
                 (),

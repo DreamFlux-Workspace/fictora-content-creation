@@ -14,6 +14,12 @@ estimate print it on one line. ``music-blend --desk D`` reads it;
 genre's. Offer ``--set`` only when the human says the music feels off or asks
 for it. Only takes filmed afterwards play a change; filmed takes keep their
 music (a music note re-mixes those).
+
+Rules epoch: music intent and the blend are 6 Oct 2026 rules. A desk created
+before that day (``rules_epoch.is_legacy``) keeps its music as it was: ``step``
+prints no blend line and ``music-blend --set`` / ``--default`` are refused
+before anything is sent. The server applies the same rule per story (its read
+answers ``rules_legacy``; a change is ``409 music_blend_rules_legacy``).
 """
 
 from __future__ import annotations
@@ -50,7 +56,13 @@ SOURCE_WORDS: Mapping[str, str] = {
     "genre": "the show's genre",
     "older-server": "this Drama API has no music-blend route yet (an older deploy), so the genre decides",
     "unreachable": "the Drama API could not be reached; read from the saved spine",
+    "rules-legacy": "this story was made before 6 Oct 2026 and keeps the music it was made with; its genre decides",
 }
+#: Said when a legacy desk or story is asked to change its blend.
+LEGACY_REFUSAL = (
+    "This show was made before 6 Oct 2026 and keeps the music it was made with: its music blend "
+    "can't be changed. Nothing was changed. A music-note still re-mixes a filmed take."
+)
 
 
 class _Api(Protocol):
@@ -156,7 +168,9 @@ def show_music_blend(run: _Api, spine: Mapping[str, Any]) -> ShowMusicBlend:
         if isinstance(families, list):
             return ShowMusicBlend(
                 tuple(str(name) for name in families),
-                str(answer.get("source") or "genre"),
+                "rules-legacy"
+                if answer.get("rules_legacy") is True
+                else str(answer.get("source") or "genre"),
             )
     error = answer.get("error") if isinstance(answer, Mapping) else None
     if status in (404, 405) and not (isinstance(error, Mapping) and error.get("code")):
@@ -194,6 +208,8 @@ def set_music_blend(
         if status == 409 and code == "spine_version_conflict" and attempt == 1:
             body = spine_body(run.spine(sid))
             continue
+        if status == 409 and code == "music_blend_rules_legacy":
+            raise RuntimeError(LEGACY_REFUSAL)
         if status in (404, 405) and not code:
             raise RuntimeError(
                 "This Drama API has no music-blend route yet (an older deploy): the show's music follows its "
@@ -241,12 +257,16 @@ def run_music_blend(
     """
 
     from creation.production_state import load_production
+    from creation.rules_epoch import is_legacy
 
     if set_to is not None and default:
         raise ValueError("--set and --default go alone")
     families = parse_blend(set_to) if set_to is not None else None
     out = out or sys.stdout
     desk = desk.expanduser().resolve()
+    if (families is not None or default) and is_legacy(desk):
+        # Frozen for desks created before 2026-10-06 (rules epoch): never sent.
+        raise ValueError(LEGACY_REFUSAL)
     episode = load_production(desk).episode_ordinal
     run = open_api(desk, episode)
     try:
@@ -278,6 +298,7 @@ def run_music_blend(
 
 
 __all__ = [
+    "LEGACY_REFUSAL",
     "MAX_MUSIC_BLEND",
     "MUSIC_BLEND_FAMILIES",
     "MUSIC_BLEND_ROUTE",
