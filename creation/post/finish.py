@@ -1334,7 +1334,8 @@ def run_finish(
     # take's beats, drawn after the captions (fictora-drama ``system_panels``).
     panels: list[tuple[int, int, PlacedPanel]] = []
     panels_note = ""
-    if show_takes_panels(spine):
+    # A desk created before 6 Oct 2026 never draws panels (creation.rules_epoch; frozen, do not change).
+    if show_takes_panels(spine) and not legacy_rules():
         if no_panels:
             panels_note = "turned off (--no-panels)"
         else:

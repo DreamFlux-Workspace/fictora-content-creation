@@ -499,3 +499,71 @@ def test_a_legacy_finish_asks_for_the_paid_cover_in_its_old_words(
         "no cover on the desk yet. Drawing one on the server costs $0.30; "
         "after the human's yes, finish again with --thumbnail"
     )
+
+
+# --- #143: system panels (a legacy desk never draws them) ------------------------------------------
+
+
+@needs_ffmpeg
+def test_a_legacy_finish_never_draws_system_panels(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A system-genre spine with panel cues finishes exactly as it did before #143 (no panel step, no note):
+    the same commands as the same desk with no panel cues."""
+
+    import re
+
+    from test_hook_overlay_portrait_unchanged import REPO, _recording
+    from test_system_panels import _panel_desk, _run
+
+    _legacy(post_desk)
+    _panel_desk(post_desk, "system_leveling")
+    spine_path = post_desk / "ep01" / "api" / "03_spine.json"
+    with_cues = spine_path.read_text(encoding="utf-8")
+    body = json.loads(with_cues)
+    for beat in body.get("beats") or []:
+        beat.pop("system_panels", None)
+    without_cues = json.dumps(body)
+
+    def run(spine: str) -> tuple[list[list[str]], str]:
+        spine_path.write_text(spine, encoding="utf-8")
+        calls = _recording(monkeypatch, [post_desk, REPO])
+        result, text = _run(post_desk)
+        assert result.complete, text
+        assert "system-panels" not in [s.step for s in result.steps]
+        monkeypatch.undo()
+        return [[re.sub(r"-v\d+", "-vN", a) for a in c] for c in calls], text
+
+    run(without_cues)  # warm the desk (effects, bed) so both runs below start alike
+    plain, _ = run(without_cues)
+    cued, text = run(with_cues)
+    assert "system-panels" not in text
+    assert not list((post_desk / "ep01" / "takes").glob("*panels*"))
+    assert cued == plain
+
+
+@needs_ffmpeg
+def test_a_legacy_reel_never_draws_system_panels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A system-genre reel with panel cues runs the commands the pre-#133 golden recorded."""
+
+    from test_hook_overlay_portrait_unchanged import GOLDEN, REPO, _recording
+    from test_reel import _make_reel_desk
+    from test_system_panels import _cue
+
+    from creation.post.reel import run_reel
+
+    desk = _legacy(_make_reel_desk(tmp_path))
+    spine_path = desk / "ep01" / "api" / "spine.json"
+    body = json.loads(spine_path.read_text(encoding="utf-8"))
+    body["microdrama_genre"] = "system_leveling"
+    body["beats"][0]["system_panels"] = [_cue(appear_at_ms=0)]
+    spine_path.write_text(json.dumps(body), encoding="utf-8")
+    calls = _recording(monkeypatch, [desk, REPO])
+    result = run_reel(desk, episode=1, seconds=6.0, stream=io.StringIO())
+    assert result.ass is not None
+    assert not list((desk / "reels").glob("*panels*"))
+    golden = json.loads(GOLDEN.read_text())["reel"]
+    before_133 = json.loads(json.dumps(golden).replace("/reels/ep01/", "/reels/"))
+    assert [*calls, [result.ass.read_text(encoding="utf-8")]] == before_133
