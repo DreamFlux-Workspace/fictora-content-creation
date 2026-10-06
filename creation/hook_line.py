@@ -51,6 +51,8 @@ KNOWN_NOT_FOUND = frozenset(
         "spine_not_found",
     }
 )
+#: The longest hook line the server takes (fictora-drama ``HOOK_LINE_MAX_CHARS``); longer is a 422.
+HOOK_LINE_MAX_CHARS = 120
 #: Stale-version codes: the server's, and the name the kit's plan routes use.
 STALE_CODES = frozenset({"spine_version_conflict", "spine_version_stale"})
 
@@ -271,6 +273,11 @@ def run_hook_line(
         )
     if text is not None and not text.strip():
         raise ValueError("--text needs the words of the hook line")
+    if text is not None and len(" ".join(text.split())) > HOOK_LINE_MAX_CHARS:
+        raise ValueError(
+            f"--text is {len(' '.join(text.split()))} characters; a hook line is at most "
+            f"{HOOK_LINE_MAX_CHARS} (the server refuses longer). Use fewer words."
+        )
     choice: dict[str, Any] = (
         {"kind": "option", "index": pick - 1}
         if pick is not None

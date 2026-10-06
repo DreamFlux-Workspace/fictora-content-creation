@@ -164,3 +164,13 @@ def test_exactly_one_choice_is_asked_for(hook_desk: tuple[Path, dict]) -> None:
     desk, _ = hook_desk
     with pytest.raises(ValueError, match="exactly one"):
         run_hook_line(desk, episode=1, pick=1, text="x", out=io.StringIO())
+
+
+def test_a_hook_line_over_120_characters_is_refused_before_sending(
+    hook_desk: tuple[Path, dict],
+) -> None:
+    desk, spine = hook_desk
+    api = FakeApi(spine, [])
+    with pytest.raises(ValueError, match="at most 120"):
+        run_hook_line(desk, episode=1, text="x" * 121, out=io.StringIO(), api=api)
+    assert api.sent == []

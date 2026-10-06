@@ -15,17 +15,17 @@ What ``finish`` and ``join`` make for such a show (positions in
   centred (y 555-1365). ``finish`` puts the picture on the canvas right after
   the mix (:func:`pad_to_canvas`); the 4:3 takes before it stay on the desk.
 * **Captions** in the band under the picture, burned on the canvas by the
-  captions step (``caption_take(layout="letterbox")``): Arial Bold 56, top at
-  y 1435, centred between x 60 and the right-hand rail (x 950), one line
-  preferred (down to 46 px; a two-line chunk moves up to end above y 1536,
+  captions step (``caption_take(layout="letterbox")``): Arial Bold (ASS 62),
+  ink top y 1417, centred on the frame unless its right edge would cross x 950
+  (then ending on it), one line preferred (down to ASS 52; a two-line chunk moves up to end above y 1536,
   never above y 1385); yellow by default, white with ``--caption-colour``.
   They build up in phrases (:func:`creation.captions.phrase_cues`), end when
   the voice does on a locked-voice take (:func:`voice_end_spans`), and an
   on-screen speaker's line is upright (:func:`italic_overrides`).
 * **Mark and title** go on last, with the mark (:func:`mark_and_title`): the
-  Sokii mark in the top band (x 60, y 173), never on the picture; the title
+  Sokii mark in the top band (ink x 38-97, y 179-228), never on the picture; the title
   block just above the picture: the setup line in white (the episode's
-  ``title_line``, else the series title) and the hook line in house yellow
+  series title, as the server's setup line) and the hook line in house yellow
   (``--hook-line``, else the desk's pick from ``hook-line``, else the spine's
   ``hook_line_selected``), each on at most two lines, for the whole video.
   The master ``join`` reads is the captioned canvas without mark or title:
@@ -58,7 +58,6 @@ from creation.post.delivery_geometry import (
     CAPTION_COLOURS,
     DEFAULT_CAPTION_COLOUR,
     TITLE_HOOK_COLOUR,
-    TITLE_LINE_HEIGHT,
     TITLE_SETUP_COLOUR,
     LetterboxLayout,
     layout,
@@ -232,23 +231,21 @@ def title_block(
 ) -> tuple[TitleBlock | None, str]:
     """The title block for one episode's letterbox file, or ``None`` and why.
 
-    Line 1 (white) is the episode's ``title_line``, else the series ``title``.
+    Line 1 (white) is the series ``title`` (the server's setup line when no run title is given).
     Line 2 (yellow) is ``override`` (``--hook-line``), else the desk's pick
     (``hook-line`` on an older server), else the spine's ``hook_line_selected``
     (nothing when it is ``off``).
     """
 
     from creation.post.hook_overlay import selected_hook_line
-    from creation.spine_view import episode_summary
 
     if off:
         return None, "no title block (--no-hook-line)"
     body = (spine or {}).get("spine", spine) if isinstance(spine, Mapping) else {}
     body = body if isinstance(body, Mapping) else {}
-    summary = episode_summary(body, episode) if body else {}
-    setup = " ".join(str(summary.get("title_line") or "").split()) or " ".join(
-        str(body.get("title") or "").split()
-    )
+    # The server has no episode-level title line: its setup line is the run's title, else the series
+    # title (fictora-drama #612). The kit has no run title, so it is the series title.
+    setup = " ".join(str(body.get("title") or "").split())
     hook, source = "", "spine"
     if override and override.strip():
         hook, source = " ".join(override.split()), "--hook-line"
@@ -298,12 +295,21 @@ class FittedTitle:
     note: str = ""
 
 
+def _block_height(place: LetterboxLayout, size: int, lines: int) -> float:
+    """From the first line's cap top to the last baseline: (lines - 1) pitches and one cap height."""
+
+    from creation.post.delivery_geometry import ink_offset
+
+    cap = size - place.line_descent(size) - ink_offset(size)
+    return (lines - 1) * place.title_pitch(size) + cap
+
+
 def fit_title(block: TitleBlock, place: LetterboxLayout) -> FittedTitle:
-    """The largest title size (48 px, down 2 px at a time to 40) at which both parts fit two lines each.
+    """The largest title size (ASS 62, down 2 at a time to 52) at which both parts fit two lines each.
 
     Each part may take two lines inside the title box's width (972 px); the
-    block may not rise above the box (under the mark). When even 40 px does
-    not fit, 40 px is used, each part shrunk to its two lines (the words are
+    block may not rise above the box (under the mark). When even 52 does not
+    fit, 52 is used, each part shrunk to its two lines (the words are
     never cut), and the note says to use fewer words.
     """
 
@@ -314,7 +320,7 @@ def fit_title(block: TitleBlock, place: LetterboxLayout) -> FittedTitle:
         hook = _two_lines(block.hook, size, box.width)
         if setup is None or hook is None:
             continue
-        if (len(setup) + len(hook)) * size * TITLE_LINE_HEIGHT <= box.height:
+        if _block_height(place, size, len(setup) + len(hook)) <= box.height:
             return FittedTitle(size, tuple(setup), tuple(hook))
     from creation.post.hook_overlay import _fit
 
@@ -328,7 +334,7 @@ def fit_title(block: TitleBlock, place: LetterboxLayout) -> FittedTitle:
     size = min(setup_size, hook_size)
     while (
         size > 8
-        and (len(setup_lines) + len(hook_lines)) * size * TITLE_LINE_HEIGHT > box.height
+        and _block_height(place, size, len(setup_lines) + len(hook_lines)) > box.height
     ):
         size -= 2
     return FittedTitle(
@@ -346,26 +352,18 @@ def title_ass(
 ) -> tuple[str, FittedTitle]:  # fmt: skip
     """The ASS that draws the title block on the canvas for the whole video, and how it was fitted.
 
-    Arial Bold, upright, no outline (it sits on black),
-    bottom-centred on the title box's bottom edge so it grows upward: the setup
-    line white, the hook line house yellow.
+    Arial Bold, upright, no outline (it sits on black), centred. One event per
+    line, each on its own baseline: the last line's baseline at y 435, the
+    lines above it one pitch (63 px at 62) apart, so the block grows upward.
+    The setup line white, the hook line house yellow.
     """
 
     place = layout(width, height)
     fitted = fit_title(block, place)
     end = _ass_time(duration if duration else 24 * 3600 - 1)
-    parts: list[str] = []
-    if fitted.setup:
-        parts.append(
-            f"{{\\c{TITLE_SETUP_COLOUR}}}"
-            + "\\N".join(_ass_escape(line) for line in fitted.setup)
-        )
-    if fitted.hook:
-        parts.append(
-            f"{{\\c{TITLE_HOOK_COLOUR}}}"
-            + "\\N".join(_ass_escape(line) for line in fitted.hook)
-        )
-    text = "\\N".join(parts)
+    lines = [(TITLE_SETUP_COLOUR, line) for line in fitted.setup] + [
+        (TITLE_HOOK_COLOUR, line) for line in fitted.hook
+    ]
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -384,11 +382,17 @@ def title_ass(
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
-    event = (
-        f"Dialogue: 0,{_ass_time(0)},{end},Title,,0,0,0,,"
-        f"{{\\an2\\pos({place.canvas.width // 2},{place.title.bottom})}}{text}\n"
-    )
-    return header + event, fitted
+    pitch = place.title_pitch(fitted.size)
+    descent = place.line_descent(fitted.size)
+    events = []
+    for index, (colour, line) in enumerate(lines):
+        baseline = place.title.bottom - (len(lines) - 1 - index) * pitch
+        events.append(
+            f"Dialogue: 0,{_ass_time(0)},{end},Title,,0,0,0,,"
+            f"{{\\an2\\pos({place.canvas.width // 2},{round(baseline + descent)})\\c{colour}}}"
+            f"{_ass_escape(line)}\n"
+        )
+    return header + "".join(events), fitted
 
 
 # --- the picture on the canvas, and the mark and title --------------------------------------------

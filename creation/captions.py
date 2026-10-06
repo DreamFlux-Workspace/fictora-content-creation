@@ -57,8 +57,8 @@ and ``none`` (no captions burned).
 
 A letterbox show filmed 4:3 (``layout="letterbox"`` on :func:`caption_take`,
 6 Oct 2026) is captioned on its 9:16 canvas in the band under the picture
-(:mod:`creation.post.delivery_geometry`): Arial Bold 56 from y 1435, centred
-between the left margin and the right-hand rail, one line preferred
+(:mod:`creation.post.delivery_geometry`): Arial Bold (ASS 62), ink from y 1417, centred
+on the frame unless that crosses the right-hand rail, one line preferred
 (:func:`letterbox_caption_place`), yellow by default or white. Its words build up in phrases of up to five
 (:func:`phrase_cues`), never leaving one word alone, and a line's italics
 follow ``italic_overrides`` (a speaker the take draws is upright). A portrait
@@ -1463,35 +1463,57 @@ class LetterboxBand:
     step: int = 2
 
 
+def letterbox_centre(widest: float, band: LetterboxBand, width: int) -> int:
+    """Where a letterbox caption ``widest`` px wide is centred (user decision 2026-10-06).
+
+    On the frame's centre (x 540, like "Not Home") whenever its right edge then
+    stays at or left of ``band.right`` (x 950, clear of the right-hand
+    engagement buttons); else shifted left just enough that its right edge
+    sits on ``band.right``, its left edge never left of ``band.left``.
+    """
+
+    centre = width / 2
+    if centre + widest / 2 > band.right:
+        centre = max(band.left + widest / 2, band.right - widest / 2)
+    return round(centre)
+
+
 def letterbox_caption_place(
     text: str, band: LetterboxBand, width: int
-) -> tuple[list[str], int, int]:
-    """Lay one letterbox caption out: ``(lines, size, top)``.
+) -> tuple[list[str], int, int, int]:
+    """Lay one letterbox caption out: ``(lines, size, top, centre_x)``.
 
     One line at ``band.size`` when it fits between the margins; else the
     largest size down to ``band.min_size`` (in ``band.step`` px) that fits one
     line; else two balanced lines (:func:`wrap_caption`, shrunk only when even
     two lines are too wide), moved up so the block ends above ``band.floor``,
-    never higher than ``band.highest_top``.
+    never higher than ``band.highest_top``. Centred by :func:`letterbox_centre`.
+    Widths are Arial Bold's own advances (the server's table,
+    :func:`creation.post.delivery_geometry.arial_bold_width`), so the place is
+    the server's whatever font file this machine has.
     """
+
+    from creation.post.delivery_geometry import arial_bold_width
 
     room = band.right - band.left
     size = band.size
     while size >= band.min_size:
-        if text_width(text, size) <= room:
-            return [text], size, band.top
+        widest = arial_bold_width(text, size)
+        if widest <= room:
+            return [text], size, band.top, letterbox_centre(widest, band, width)
         size -= band.step
     lines, fit = wrap_caption(text, band.size, width, room=room)
     height = len(lines) * fit
     top = max(band.highest_top, min(band.top, band.floor - height))
-    return lines, fit, top
+    widest = max(arial_bold_width(line, fit) for line in lines)
+    return lines, fit, top, letterbox_centre(widest, band, width)
 
 
 def _letterbox_caption_text(
     cue: Cue, band: LetterboxBand, width: int, *, platform: str | None
 ) -> str:
-    lines, fit, top = letterbox_caption_place(cue.text, band, width)
-    tags = f"\\an8\\pos({(band.left + band.right) // 2},{top})"
+    lines, fit, top, centre = letterbox_caption_place(cue.text, band, width)
+    tags = f"\\an8\\pos({centre},{top})"
     if fit != band.size:
         tags += f"\\fs{italic_size(fit) if cue.italic else fit}"
     if has_cjk(cue.text):

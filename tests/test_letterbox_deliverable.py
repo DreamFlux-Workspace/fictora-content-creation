@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 import io
 import json
 from pathlib import Path
@@ -47,18 +48,22 @@ def test_the_layout_matches_not_home_on_1080x1920() -> None:
     place = layout()
     picture = place.picture
     assert (picture.x, picture.y, picture.width, picture.height) == (0, 555, 1080, 810)
-    assert place.title.bottom == 505, "50 px above the picture"
-    assert (place.caption.y, place.caption.bottom) == (1435, 1536), (
-        "70 px under the picture, down to the chrome"
+    assert place.title.bottom == 435, "the last title baseline, as on Not Home"
+    assert (place.caption.y, place.caption.bottom) == (1407, 1536), (
+        "the box whose capital ink starts at y 1417, down to the chrome"
     )
     assert place.caption_highest_top == 1385
     assert (place.caption.x, place.caption.right) == (60, 950), (
         "clear of the right-hand rail"
     )
-    assert (place.caption_size, place.caption_min_size) == (56, 46)
-    assert place.mark == (60, 173), "under the top 8% strip, in the black band"
+    assert (place.caption_size, place.caption_min_size) == (62, 52), (
+        "ASS 62 draws Not Home's 56 px"
+    )
+    assert place.mark == (32, 173), (
+        "its ink lands at x 38-97, y 179-228 (Not Home: 39-96, 179-227)"
+    )
     assert place.title.y >= place.mark[1] + 63, "the title never runs into the mark"
-    assert title_sizes() == (48, 46, 44, 42, 40)
+    assert title_sizes() == (62, 60, 58, 56, 54, 52)
 
 
 def _band() -> LetterboxBand:
@@ -72,24 +77,63 @@ def test_a_caption_keeps_one_line_by_stepping_down_then_moves_up_when_it_needs_t
 ):
     band = _band()
     assert letterbox_caption_place("Three missed payments", band, 1080) == (
-        ["Three missed payments"], 56, 1435,
+        ["Three missed payments"], 62, 1407, 540,
     )  # fmt: skip
     room = band.right - band.left
-    wide = "She has been missing for two whole years"
-    assert text_width(wide, 56) > room >= text_width(wide, 46), (
+    wide = "She has been missing for two years"
+    assert text_width(wide, 62) > room >= text_width(wide, 52), (
         "the fixture fits one line only smaller"
     )
-    lines, size, top = letterbox_caption_place(wide, band, 1080)
-    assert len(lines) == 1 and 46 <= size < 56 and top == 1435, (
+    lines, size, top, _ = letterbox_caption_place(wide, band, 1080)
+    assert len(lines) == 1 and 52 <= size < 62 and top == 1407, (
         "one line, a smaller size"
     )
-    long = "Previous owner is my sister. She has been missing for two years"
-    lines, size, top = letterbox_caption_place(long, band, 1080)
-    assert len(lines) == 2 and size == 56
-    assert top + 2 * size <= 1536 and top >= 1385, (
-        "moved up to end above the chrome, never above 1385"
+    long = "Previous owner is my sister. She has been missing"
+    lines, size, top, _ = letterbox_caption_place(long, band, 1080)
+    assert len(lines) == 2 and size == 62
+    assert top == 1407 and top + 2 * size <= 1536, (
+        "two lines at 62 still end above the chrome"
     )
-    assert top < 1435
+    # A band whose top sits lower (a bigger caption, another canvas): the block moves up, never above 1385.
+    low = replace(band, top=1460)
+    lines, size, top, _ = letterbox_caption_place(long, low, 1080)
+    assert top == 1536 - 2 * size, "moved up to end on the chrome floor"
+    lower = replace(band, top=1460, floor=1480)
+    assert letterbox_caption_place(long, lower, 1080)[2] == 1385, "never above y 1385"
+
+
+def test_a_caption_centres_on_the_frame_unless_it_would_cross_the_right_hand_buttons() -> (
+    None
+):
+    from creation.post.delivery_geometry import arial_bold_width
+
+    band = _band()
+    lines, size, _top, centre = letterbox_caption_place(
+        "Who are you texting?", band, 1080
+    )
+    assert (lines, size, centre) == (["Who are you texting?"], 62, 540), (
+        "a caption whose right edge stays left of x 950 centres on x 540, like Not Home"
+    )
+    wide = "Previous owner was my mother!"
+    width = arial_bold_width(wide, 62)
+    assert 540 + width / 2 > 950 and width <= 890, (
+        "the fixture would cross x 950 if centred"
+    )
+    lines, size, _top, centre = letterbox_caption_place(wide, band, 1080)
+    assert len(lines) == 1 and size == 62
+    assert abs(centre + width / 2 - 950) <= 0.5, (
+        "shifted left just enough: its right edge on x 950"
+    )
+    assert centre - width / 2 >= 60
+
+
+def test_caption_widths_are_arial_bolds_own_advances_the_servers_table() -> None:
+    from creation.post.delivery_geometry import ARIAL_BOLD_ADVANCES, arial_bold_width
+
+    assert ARIAL_BOLD_ADVANCES["W"] == 1933 and ARIAL_BOLD_ADVANCES[" "] == 569
+    assert arial_bold_width("Who are you texting?", 62) == pytest.approx(
+        564.23, abs=0.01
+    )
 
 
 # --- phrase chunking ------------------------------------------------------------------------------
@@ -163,7 +207,9 @@ def test_the_title_block_is_the_setup_line_white_and_the_hook_line_yellow(
     )
     titled = copy.deepcopy(SPINE)
     titled["episode_summaries"][0]["title_line"] = "He came for the arm"
-    assert title_block(titled, 1, desk=tmp_path)[0].setup == "He came for the arm"
+    assert title_block(titled, 1, desk=tmp_path)[0].setup == "Three Payments Late", (
+        "the server has no episode title line: the setup line is the series title"
+    )
     over, _ = title_block(SPINE, 1, desk=tmp_path, override="He came to take her arm.")
     assert (over.hook, over.hook_source) == ("He came to take her arm.", "--hook-line")
     record_desk_hook_line(
@@ -191,11 +237,10 @@ def test_the_title_fits_the_servers_ladder_two_lines_each_and_stays_under_the_ma
         place,
     )
     assert fitted.size in title_sizes() and not fitted.note
-    assert fitted.size == 48, "Not Home's 48 px"
+    assert fitted.size == 62, "Not Home's 56 px (ASS 62)"
     assert len(fitted.setup) == 1 and len(fitted.hook) in (1, 2)
-    assert (
-        len(fitted.setup) + len(fitted.hook)
-    ) * fitted.size * 1.04 <= place.title.height
+    pitch = fitted.size * 63 / 62
+    assert (len(fitted.setup) + len(fitted.hook) - 1) * pitch <= place.title.height
     huge = fit_title(TitleBlock("A " * 40, "B " * 60), place)
     assert huge.note.startswith("!!") and len(huge.hook) <= 2
 
@@ -361,8 +406,8 @@ def test_finish_builds_the_9_16_letterbox_file_with_mark_title_and_band_captions
     )
     assert probe_video(takes / "take-ep01-t1-mix-v1.mp4").width == 256
     ass = master.with_suffix(".ass").read_text(encoding="utf-8")
-    assert "\\an8\\pos(505,1435)" in ass, "top at y 1435, centred on x 60-950"
-    assert "Style: House,Arial,56," in ass
+    assert "\\an8\\pos(540,1407)" in ass, "ink top at y 1417, centred on the frame"
+    assert "Style: House,Arial,62," in ass
     assert "&H0000E5FF" in ass and "Italic,,0,0,0,,Wait" not in ass, (
         "upright: the take draws Kenji"
     )
@@ -385,7 +430,7 @@ def test_finish_builds_the_9_16_letterbox_file_with_mark_title_and_band_captions
     assert _yellow(frame[260:500]).sum() > 200, "the yellow hook line above the picture"
     white = (frame[260:500].min(axis=-1) > 220).sum()
     assert white > 200, "the white setup line"
-    assert frame[173:236, 60:132].mean() > frame[173:236, 200:272].mean() + 20, (
+    assert frame[179:228, 38:98].mean() > frame[179:228, 200:260].mean() + 20, (
         "the mark in the top band"
     )
 
@@ -447,9 +492,9 @@ def test_join_marks_and_titles_the_joined_letterbox_file_once(tmp_path: Path) ->
     )
     frame = _frame(result.marked, 3.0)
     assert _yellow(frame[260:500]).sum() > 100, "the hook line on the joined file"
-    assert frame[173:236, 60:132].max() > 100, "the mark in the top band"
+    assert frame[179:228, 38:98].max() > 100, "the mark in the top band"
     master = _frame(result.master, 3.0)
-    assert master[173:236, 60:132].max() < 30, "the master carries no mark"
+    assert master[179:228, 38:98].max() < 30, "the master carries no mark"
     assert any("letterbox: Sokii mark in the top band" in n for n in result.notes)
     with pytest.raises(ValueError, match="burned in yellow"):
         run_join(desk, episodes=(1,), caption_colour="white", stream=io.StringIO())
