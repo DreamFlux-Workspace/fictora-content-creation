@@ -1727,7 +1727,8 @@ def make_reel(
         return result
     style, style_note = resolve_caption_style(desk, caption_style)
     panels: list[tuple[int, int, Any]] = []
-    if not no_panels:
+    # A desk created before 6 Oct 2026 never draws panels (creation.rules_epoch; frozen, do not change).
+    if not no_panels and not legacy:
         from creation.post.system_panels import reel_panels
         from creation.spine_view import episode_id_for
 
