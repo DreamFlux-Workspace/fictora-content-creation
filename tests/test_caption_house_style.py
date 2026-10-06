@@ -157,21 +157,23 @@ def test_none_is_never_rendered() -> None:
         build_ass([], width=768, height=1344, style="none")
 
 
-def test_the_flag_wins_then_the_desk_config_then_house(tmp_path: Path) -> None:
-    assert resolve_caption_style(tmp_path) == ("house", "")
+def test_the_flag_wins_then_the_desk_config_then_the_show_default(
+    tmp_path: Path,
+) -> None:
+    assert resolve_caption_style(tmp_path) == ("bold", "")  # a new show: Bold
     save_production_config(tmp_path, ProductionConfig(caption_style="plain"))
     assert resolve_caption_style(tmp_path) == ("plain", "")
     assert resolve_caption_style(tmp_path, "none") == ("none", "")
-    with pytest.raises(ValueError, match="house, plain, none"):
+    with pytest.raises(ValueError, match="bold, subtle, house, plain, none"):
         resolve_caption_style(tmp_path, "karaoke")
 
 
-def test_a_server_caption_style_on_the_desk_is_captioned_house_with_a_note(
+def test_a_server_caption_style_on_the_desk_is_captioned_as_the_show_default_with_a_note(
     tmp_path: Path,
 ) -> None:
     save_production_config(tmp_path, ProductionConfig(caption_style="viral_karaoke"))
     style, note = resolve_caption_style(tmp_path)
-    assert style == "house" and "viral_karaoke" in note
+    assert style == "bold" and "viral_karaoke" in note
 
 
 def _config_args(*argv: str) -> argparse.Namespace:
@@ -201,8 +203,10 @@ def test_finish_and_caption_take_caption_style(command: str) -> None:
 
     with pytest.raises(SystemExit) as stopped:
         main([command, "--desk", "/nowhere", "--caption-style", "loud"])
-    assert stopped.value.code == 2  # argparse: not one of house, plain, none
-    assert CAPTION_STYLES == ("house", "plain", "none")
+    assert (
+        stopped.value.code == 2
+    )  # argparse: not one of bold, subtle, house, plain, none
+    assert CAPTION_STYLES == ("bold", "subtle", "house", "plain", "none")
 
 
 def test_caption_none_burns_nothing(

@@ -53,7 +53,8 @@ def test_review_of_a_portrait_finished_take_runs_the_commands_it_always_ran(
         json.dumps(FACTS)
     )
     _board(post_desk)
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    # Subtle (today's house captions) must burn exactly what the golden recorded; a new show's Bold is new.
+    result = run_finish(post_desk, caption_style="subtle", sfx_render=fake_sfx([]), bed_maker=fake_bed,
                         facts_fetcher=lambda *a: None, stream=io.StringIO())  # fmt: skip
     assert result.complete and result.final is not None
     calls = _recording(monkeypatch, [post_desk, REPO])

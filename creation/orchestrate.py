@@ -2439,9 +2439,19 @@ def approve_gate(
                 )
             state.phase = "wait_script"
             save_production(desk, state)
+            # A desk that drew no look frame is asked its captions at its first plates yes (free, never blocks).
+            from io import StringIO
+
+            from creation.caption_preview import caption_style_at_look
+
+            asked = StringIO()
+            caption_style_at_look(desk, out=asked)
+            captions = (
+                f"\n{asked.getvalue().rstrip()}" if asked.getvalue().strip() else ""
+            )
             return StepResult(
                 state.phase,
-                f"Plates approved ({record.status}). Human: approve script lines.{voices}",
+                f"Plates approved ({record.status}). Human: approve script lines.{voices}{captions}",
                 (),
             )
 

@@ -1705,8 +1705,16 @@ def retime_cues(
                 added = text[len(before.text) :].strip()
                 prior = shown.get(index - 1)
                 text = f"{prior} {added}".strip() if prior else added
+            # A Bold yellow word read back (``emphasis``) keeps its word when earlier words were cut.
+            moved = cue.emphasis + len(text.split()) - len(cue.text.split())
             out.append(
-                Cue(round(at + start - a, 3), round(at + end - a, 3), text, cue.italic)
+                Cue(
+                    round(at + start - a, 3),
+                    round(at + end - a, 3),
+                    text,
+                    cue.italic,
+                    emphasis=moved if cue.emphasis >= 0 and moved >= 0 else -1,
+                )  # fmt: skip
             )
             shown[index] = text
     return out

@@ -3834,6 +3834,10 @@ def run_approve_look(
         f"look {record.status}: {shown}. Next: fictora-produce step --desk {desk}",
         file=out,
     )
+    # The show's captions, asked once with a free preview on this frame (never blocks).
+    from creation.caption_preview import caption_style_at_look
+
+    caption_style_at_look(desk, out=out)
     return record
 
 
