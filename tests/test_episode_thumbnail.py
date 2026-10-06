@@ -146,6 +146,8 @@ def test_finish_never_draws_a_cover_without_the_opt_in(
     thumb_step = next(s for s in result.steps if s.step == "thumbnail")
     assert thumb_step.status == "skipped"
     assert "$0.30" in thumb_step.detail and "--thumbnail" in thumb_step.detail
+    # The skip also says where a free cover comes from: the reel step's cover image.
+    assert "reel" in thumb_step.detail and "free cover image" in thumb_step.detail
     assert _posted(fake) == []
     assert result.final.name.startswith("take-ep01-t1-sokii-v")
     assert all(e.unit != "thumbnail" for e in load_series(post_desk).spend_log)

@@ -125,10 +125,13 @@ PICTURE_WEIGHTS: dict[str, dict[str, float]] = {
     "default":  {"motion": 0.35, "contrast": 0.20, "face": 0.30, "stillness": 0.15},
 }  # fmt: skip
 #: Which genre words land in which family (the spine's ``microdrama_genre``, split on ``_`` / spaces).
-#: First match in this order wins; no match is ``default``.
+#: First match in this order wins; no match is ``default``. An entry of two words ("last human")
+#: matches only those words side by side, never either one alone.
 GENRE_FAMILY_WORDS: dict[str, tuple[str, ...]] = {
     "horror": ("horror", "scp", "ghost", "haunted", "haunting", "occult", "zombie", "creepypasta"),
-    "action": ("action", "war", "martial", "murim", "wuxia", "fight", "battle", "heist", "revenge"),
+    "action": ("action", "war", "martial", "murim", "wuxia", "fight", "battle", "heist", "revenge",
+               "system", "leveling", "levelling", "regression", "regressor", "apocalypse", "last human",
+               "isekai", "cultivation", "hunter", "dungeon", "awakening"),
     "intimate": ("romance", "romantic", "bl", "gl", "slice", "cozy", "cosy", "love", "healing"),
 }  # fmt: skip
 #: A held frame: no motion this many samples either side (8 fps: about a third of a second each way).
@@ -673,9 +676,10 @@ def genre_family(genre: str) -> str:
         A key of :data:`PICTURE_WEIGHTS`.
     """
 
-    words = {w for w in re.split(r"[^a-z0-9]+", (genre or "").lower()) if w}
+    words = [w for w in re.split(r"[^a-z0-9]+", (genre or "").lower()) if w]
+    spaced = f" {' '.join(words)} "
     for family, keys in GENRE_FAMILY_WORDS.items():
-        if words & set(keys):
+        if any(f" {key} " in spaced for key in keys):
             return family
     return "default"
 
@@ -1907,22 +1911,22 @@ def post_text(
         Whether to point at the next episode.
     premise_line
         The show's one-sentence premise (``spine.premise_line``). When set it is the post's
-        title and "Series · Episode N" moves under it.
+        title and "Series · Part N" moves under it.
 
     Returns
     -------
     str
-        The post text, ending in a newline.
+        The post text, ending in a newline. A stranger scrolling past reads "Part N"
+        (a numbered story they can start), never "Episode N"; "PART N" itself is never on
+        screen in the reel (:data:`_CALL_TO_ACTION`), only here and on the cover image.
     """
 
-    head = f"{series} · Episode {episode}" + (f": {title}" if title else "")
+    head = f"{series} · Part {episode}" + (f": {title}" if title else "")
     lines = [premise_line.strip(), head, ""] if premise_line.strip() else [head, ""]
     if question:
         lines.append(question.strip())
     lines.append(
-        f"Episode {episode + 1} is next. Follow so you don't miss it."
-        if has_next
-        else "Follow for the next one."
+        f"Follow for part {episode + 1}." if has_next else "Follow for the next one."
     )
     tags = genre_hashtags(genre)
     if tags:
@@ -1931,6 +1935,82 @@ def post_text(
         line for line in lines if not (_POST_BANNED.search(line) or _PRICE.search(line))
     ]
     return "\n".join(kept).strip() + "\n"
+
+
+#: The line between the post's caption and the operator's notes in ``post-epNN-vN.txt``.
+OPERATOR_DIVIDER = "----- Not part of the caption: for you, not for Instagram -----"
+#: Where the posting rules live (one lane per account, slots at least 2 h apart).
+POSTING_DOC = "docs/content-ops/posting.md"
+
+
+def post_operator_notes(
+    *,
+    cover: str | None,
+    account: str | None = None,
+    lane: str | None = None,
+    posting_slot: str | None = None,
+) -> list[str]:
+    """What the operator does in Instagram for this reel (never part of the caption).
+
+    Instagram ignores a cover attached inside the MP4: the cover is chosen in its
+    editor, from the camera roll, so the reel's cover image is a separate file.
+
+    Parameters
+    ----------
+    cover
+        The reel's cover image file name (``None`` when ``--no-cover``).
+    account, lane, posting_slot
+        The desk's ``production.config.json`` posting fields, when set.
+
+    Returns
+    -------
+    list[str]
+        Plain lines, the account line first when any posting field is set.
+    """
+
+    lines: list[str] = []
+    posting = [
+        f"Account: {account}" if account else "",
+        f"Lane: {lane}" if lane else "",
+        f"Post at: {posting_slot}" if posting_slot else "",
+    ]
+    if any(posting):
+        lines.append(" · ".join(p for p in posting if p))
+    lines.append("To do in Instagram:")
+    if cover:
+        lines.append(
+            f"- Cover: tap Edit cover, then Add from camera roll, and pick {cover}."
+        )
+    else:
+        lines.append(
+            "- Cover: no cover image was made (--no-cover); pick a frame with Edit cover."
+        )
+    lines.append(
+        "- Sound: add a trending sound in the Instagram editor, its volume turned down so the voices stay clear."
+    )
+    return lines
+
+
+def posting_warnings(*, account: str | None, posting_slot: str | None) -> list[str]:
+    """A warning (never a stop) when the desk names an account but no posting slot.
+
+    Parameters
+    ----------
+    account, posting_slot
+        The desk's ``production.config.json`` fields.
+
+    Returns
+    -------
+    list[str]
+        Zero or one plain line.
+    """
+
+    if account and not (posting_slot or "").strip():
+        return [
+            f'account {account} has no posting_slot in production.config.json: set one (e.g. "18:30 IST"), '
+            f"at least 2 h from your other accounts' slots ({POSTING_DOC})"
+        ]
+    return []
 
 
 __all__ = [
@@ -1960,7 +2040,10 @@ __all__ = [
     "payoff_end",
     "plan_json",
     "plan_reel",
+    "OPERATOR_DIVIDER",
+    "post_operator_notes",
     "post_text",
+    "posting_warnings",
     "reel_seconds",
     "retime_cues",
     "segment_map",

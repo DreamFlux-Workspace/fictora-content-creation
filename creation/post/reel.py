@@ -34,8 +34,12 @@ on the accepted file after finish) is applied to the source first.
 
 Outputs, never overwritten, all in ``<desk>/reels/`` (nothing else on the desk
 is touched: no run note, no edit chain line): ``reel-epNN-vN.mp4`` (+ ``.ass``),
-``reel-plan-epNN-vN.json`` and ``post-epNN-vN.txt`` (the suggested post text:
-the call to action lives there, never on screen).
+``reel-plan-epNN-vN.json``, ``post-epNN-vN.txt`` (the suggested post text:
+the call to action lives there, never on screen; under it, the operator's
+"To do in Instagram" notes and posting lane), the free cover image
+``reel-epNN-vN-cover-vN.jpg`` ("PART N" and the series title,
+:mod:`creation.post.reel_cover`; ``--no-cover`` skips it) and one appended row
+of ``metrics.csv`` (the reel results sheet).
 """
 
 from __future__ import annotations
@@ -72,8 +76,10 @@ from creation.post.hook_overlay import (
     selected_hook_line,
 )
 from creation.post.media import decode_frames, probe_video, run_ffmpeg
+from creation.post.reel_cover import METRICS_FILE, append_metrics_row
 from creation.post.reel_plan import (
     DEFAULT_SECONDS,
+    OPERATOR_DIVIDER,
     BeatInput,
     ReelPlan,
     Segment,
@@ -84,7 +90,9 @@ from creation.post.reel_plan import (
     last_beat_from_json,
     plan_json,
     plan_reel,
+    post_operator_notes,
     post_text,
+    posting_warnings,
     reel_seconds,
     retime_cues,
     segment_map,
@@ -685,6 +693,12 @@ class ReelResult:
     loudness: str = ""
     captions: str = ""
     lines: list[str] = field(default_factory=list)
+    #: The free cover image for Instagram's "Edit cover" (``None`` with ``--no-cover`` or when it failed).
+    cover: Path | None = None
+    #: Where the cover's picture came from, or why there is none.
+    cover_note: str = ""
+    #: The reel results sheet the run appended its row to.
+    metrics: Path | None = None
 
     def summary(self) -> str:
         order = " → ".join(
@@ -692,7 +706,8 @@ class ReelResult:
         )
         if self.video is None:
             return f"Plan only: {self.plan_path} ({len(self.plan.segments)} segments, {self.plan.total:.2f} s): {order}"
-        return f"Reel {self.video.name}: {self.seconds:.2f} s, {self.loudness}, {self.captions}; {order}"
+        cover = f"; cover {self.cover.name}" if self.cover else "; no cover image"
+        return f"Reel {self.video.name}: {self.seconds:.2f} s, {self.loudness}, {self.captions}{cover}; {order}"
 
 
 def reel_hook(
@@ -984,6 +999,8 @@ def run_reel(
     hook_line_position: str | None = None,
     stream: TextIO | None = None,
     detector: Detector | None | str = "local",
+    no_cover: bool = False,
+    cover_frame: float | None = None,
 ) -> ReelResult:
     """Plan (and unless ``plan_only``, render) the episode's reel. Writes only under ``<desk>/reels/``.
 
@@ -1016,6 +1033,11 @@ def run_reel(
         The face detector: ``"local"`` (default) both OpenCV cascades, the anime one
         first on an anime / manhwa show (:func:`creation.post.faces.detector_for`);
         ``None`` the take facts' head count; tests pass a stand-in.
+    no_cover
+        ``--no-cover``: write no cover image.
+    cover_frame
+        ``--cover-frame S``: the cover's picture at ``S`` seconds on the reel (taken from the
+        take's picture before captions), instead of a saved cover or the strongest frame.
 
     Returns
     -------
@@ -1040,7 +1062,178 @@ def run_reel(
             watermark_y=watermark_y, ending=ending, stream=stream, scratch=Path(tmp),
             detector=found if not isinstance(found, str) else None,
             hook_line=hook_line, no_hook_line=no_hook_line, hook_line_position=hook_line_position,
+            no_cover=no_cover, cover_frame=cover_frame,
         )  # fmt: skip
+
+
+def _cover_picture(
+    desk: Path,
+    episode: int,
+    plan: ReelPlan,
+    sources: Sequence[TakeSource],
+    takes: Sequence[TakeInput],
+    *,
+    cover_frame: float | None,
+) -> tuple[TakeSource | None, Path | None, float | None, str]:
+    """Which picture the cover is drawn on: ``(take source, still, seconds into the source, why)``.
+
+    ``--cover-frame`` (seconds on the reel, mapped through the segment map) wins;
+    then a cover the server already drew for one of the episode's takes (the
+    cold open's take first; the still is returned); then the plan's strongest
+    frame; then the middle of the cold open, else of the first segment.
+    """
+
+    from creation.post.desk import take_stored_url
+    from creation.post.thumbnail import saved_cover
+
+    by_take = {s.take_id: s for s in sources}
+    fps = {t.take_id: t.fps for t in takes}
+    if cover_frame is not None and plan.segments:
+        rate = fps.get(plan.segments[0].take) or 24.0
+        placed = segment_map(plan.segments, rate)
+        seg, offset = placed[-1]
+        for candidate, begins in placed:
+            if begins <= cover_frame < begins + candidate.seconds:
+                seg, offset = candidate, begins
+                break
+        at = min(seg.end, max(seg.start, seg.start + cover_frame - offset))
+        return (
+            by_take.get(seg.take),
+            None,
+            at,
+            (f"--cover-frame {cover_frame:g} s on the reel ({seg.take} {at:.2f} s)"),
+        )
+    strongest = plan.strongest
+    order = [strongest.take] if strongest and strongest.take in by_take else []
+    order += [t for t in by_take if t not in order]
+    takes_dir = desk / f"ep{episode:02d}" / "takes"
+    for take_id in order:
+        saved = saved_cover(
+            takes_dir, f"take-ep{episode:02d}-{take_id}", take_stored_url(desk, episode, take_id)
+        )  # fmt: skip
+        if saved is not None:
+            return (
+                by_take[take_id],
+                saved,
+                None,
+                f"the saved server cover `{saved.name}` ($0, reused)",
+            )
+    if strongest is not None and strongest.take in by_take:
+        return (
+            by_take[strongest.take],
+            None,
+            strongest.at,
+            (
+                f"the strongest frame, {strongest.take} {strongest.at:.2f} s (score {strongest.score:.2f}, "
+                f"{strongest.role.replace('_', ' ')} beat)"
+            ),
+        )
+    seg = next((s for s in plan.segments if s.role == "cold_open"), None) or (
+        plan.segments[0] if plan.segments else None
+    )
+    if seg is None or seg.take not in by_take:
+        return None, None, None, "no segment to take a picture from"
+    at = (seg.start + seg.end) / 2
+    return (
+        by_take[seg.take],
+        None,
+        at,
+        f"the middle of the {seg.role.replace('_', ' ')}, {seg.take} {at:.2f} s",
+    )
+
+
+def make_cover(
+    desk: Path,
+    *,
+    episode: int,
+    plan: ReelPlan,
+    sources: Sequence[TakeSource],
+    takes: Sequence[TakeInput],
+    patches: Sequence[Mapping[str, Any]],
+    video: Path,
+    series: str,
+    detector: Detector | None,
+    cover_frame: float | None = None,
+) -> tuple[Path | None, str, list[str]]:
+    """Draw the reel's free cover image beside ``video`` (:mod:`creation.post.reel_cover`).
+
+    Parameters
+    ----------
+    desk, episode
+        The desk and episode ordinal ("PART N").
+    plan, sources, takes, patches
+        The reel's plan and its takes (the picture comes from the take before captions,
+        with the plan's blur patches for that take applied).
+    video
+        The rendered reel; the cover is ``<its stem>-cover-vN.jpg`` beside it.
+    series
+        The series title drawn under "PART N".
+    detector
+        The face detector (``None``: faces unknown, the text sits low).
+    cover_frame
+        ``--cover-frame S``: seconds on the reel.
+
+    Returns
+    -------
+    tuple[Path | None, str, list[str]]
+        The cover (``None`` when no picture could be found), where its picture came
+        from, and ⚠ lines.
+    """
+
+    from creation.post.reel_cover import (
+        cover_layout,
+        cover_path,
+        draw_cover,
+        face_boxes,
+    )
+
+    source, still, at, why = _cover_picture(
+        desk, episode, plan, sources, takes, cover_frame=cover_frame
+    )
+    warnings: list[str] = []
+    if source is None and still is None:
+        return None, why, [f"no cover image: {why}"]
+    with tempfile.TemporaryDirectory(prefix="fictora-cover-") as tmp:
+        scratch = Path(tmp)
+        if still is not None:
+            from PIL import Image
+
+            with Image.open(still) as image:
+                width, height = image.size
+            picture = still
+        else:
+            assert source is not None
+            picture = _patched(source, scratch, patches)
+            info = probe_video(picture)
+            width, height = info.width, info.height
+            if source.inferred and source.inferred.burned:
+                warnings.append(
+                    f"cover: {source.take_id} is cut from the accepted file, so its burned captions and mark "
+                    "are on the cover's picture; pick a frame between lines with --cover-frame S"
+                )
+        faces = face_boxes(picture, at, detector)
+        layout = cover_layout(
+            series=series, part=episode, width=width, height=height, faces=faces or ()
+        )
+        if layout.face_overlap:
+            warnings.append(
+                "cover: a face sits under the text wherever it goes; look at the cover, or pick "
+                "another moment with --cover-frame S"
+            )
+        out = draw_cover(
+            picture, cover_path(video), layout=layout, at=at, scratch=scratch
+        )
+    where = (
+        "low, above the bottom band"
+        if layout.placement == "lower"
+        else "high, under the top strip"
+    )
+    faces_said = (
+        "faces not read (no face detector)"
+        if faces is None
+        else f"{len(faces)} face box(es) read"
+    )
+    return out, f"{why}; text {where}; {faces_said}", warnings
 
 
 def _run_reel(
@@ -1062,6 +1255,8 @@ def _run_reel(
     hook_line: str | None = None,
     no_hook_line: bool = False,
     hook_line_position: str | None = None,
+    no_cover: bool = False,
+    cover_frame: float | None = None,
 ) -> ReelResult:
     from creation.post.desk import saved_spine
     from creation.spine_view import episode_summary
@@ -1226,29 +1421,91 @@ def _run_reel(
         hook=hook.overlay,
     )  # fmt: skip
     summary = episode_summary(spine, episode)
+    series = str(spine.get("title") or desk.name)
+    posting, posting_notes = _posting(desk)
+    cover: Path | None = None
+    if no_cover:
+        cover_note = "no cover image (--no-cover)"
+    else:
+        cover, cover_note, cover_warnings = make_cover(
+            desk, episode=episode, plan=plan, sources=srcs, takes=takes, patches=patches,
+            video=paths["video"], series=series, detector=detector, cover_frame=cover_frame,
+        )  # fmt: skip
+        posting_notes += cover_warnings
+    caption = post_text(
+        series=series,
+        episode=episode,
+        title=str(summary.get("title") or ""),
+        question=str(summary.get("hook_question") or ""),
+        genre=str(spine.get("microdrama_genre") or ""),
+        premise_line=str(spine.get("premise_line") or ""),
+    )  # fmt: skip
+    todo = post_operator_notes(cover=cover.name if cover else None, **posting)
     write_new(
-        paths["post"],
-        post_text(
-            series=str(spine.get("title") or desk.name),
-            episode=episode,
-            title=str(summary.get("title") or ""),
-            question=str(summary.get("hook_question") or ""),
-            genre=str(spine.get("microdrama_genre") or ""),
-            premise_line=str(spine.get("premise_line") or ""),
-        ),  # fmt: skip
+        paths["post"], caption + "\n" + OPERATOR_DIVIDER + "\n" + "\n".join(todo) + "\n"
     )
     result.video, result.post, result.seconds, result.loudness, result.captions = (
         paths["video"], paths["post"], secs, loud, cap_line,
     )  # fmt: skip
+    result.cover, result.cover_note = cover, cover_note
     result.ass = paths["ass"] if paths["ass"].exists() else None
+    cold = next((s for s in plan.segments if s.role == "cold_open"), None)
+    result.metrics = append_metrics_row(
+        desk / REELS_DIR / METRICS_FILE,
+        {
+            "reel_file": paths["video"].name, "cover_file": cover.name if cover else "",
+            "series": series, "part": episode, "account": posting["account"], "lane": posting["lane"],
+            "planned_post_slot": posting["posting_slot"],
+            "cold_open_role": plan.strongest.role if plan.strongest and cold else "",
+            "cold_open_time": f"{cold.take} {cold.start:.2f}-{cold.end:.2f} s" if cold else "",
+            "hook_text": hook.overlay.text if hook.overlay is not None else "",
+        },
+    )  # fmt: skip
     result.lines = report + ([style_note] if style_note else [])
+    result.lines.append(f"cover: {cover_note}")
     for line in result.lines:
         print(f"- {line}", file=out)
+    for line in posting_notes:
+        print(f"⚠ {line}", file=out)
     for key in ("video", "ass", "plan", "post"):
         if paths[key].exists():
             print(f"{key}: {paths[key]}", file=out)
+    if cover is not None:
+        print(f"cover: {cover}", file=out)
+    print(
+        f"metrics: {result.metrics} (a row for this reel: fill in views and the rest after posting)",
+        file=out,
+    )
+    print("Post text (copy the caption; the rest is for you):", file=out)
+    print(paths["post"].read_text(encoding="utf-8").rstrip(), file=out)
     print(result.summary(), file=out)
     return result
+
+
+def _posting(desk: Path) -> tuple[dict[str, str | None], list[str]]:
+    """The desk's posting fields (``account``, ``lane``, ``posting_slot``) and any warning about them."""
+
+    from creation.production_config import CONFIG_FILENAME, load_production_config
+
+    try:
+        config = load_production_config(desk)
+    except (ValueError, TypeError) as exc:
+        empty: dict[str, str | None] = {
+            "account": None,
+            "lane": None,
+            "posting_slot": None,
+        }
+        return empty, [
+            f"{CONFIG_FILENAME} could not be read ({exc}); no account, lane or posting slot"
+        ]
+    posting = {
+        "account": (config.account or "").strip() or None,
+        "lane": (config.lane or "").strip() or None,
+        "posting_slot": (config.posting_slot or "").strip() or None,
+    }
+    return posting, posting_warnings(
+        account=posting["account"], posting_slot=posting["posting_slot"]
+    )
 
 
 __all__ = [
@@ -1257,6 +1514,7 @@ __all__ = [
     "TakeSource",
     "cut_sound",
     "episode_beats",
+    "make_cover",
     "measure_take",
     "parse_ass_cues",
     "reel_paths",

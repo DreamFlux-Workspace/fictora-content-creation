@@ -623,6 +623,16 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     add_hook_line_args(reel)
     reel.add_argument("--watermark-y", type=int, default=None)
     add_ending_arg(reel)
+    reel.add_argument(
+        "--no-cover", action="store_true",
+        help="Write no cover image (by default every reel writes reels/<reel>-cover-vN.jpg: "
+        "PART N and the series title, free, for Instagram's Edit cover).",
+    )  # fmt: skip
+    reel.add_argument(
+        "--cover-frame", type=float, default=None, metavar="S",
+        help="Draw the cover on the reel's picture at S seconds (default: a saved server cover, "
+        "else the strongest frame).",
+    )  # fmt: skip
 
     add_edit_parsers(sub)
     add_review_parser(sub)
@@ -821,6 +831,8 @@ def dispatch_post(args: argparse.Namespace) -> int:
             hook_line=args.hook_line,
             no_hook_line=args.no_hook_line,
             hook_line_position=args.hook_line_position,
+            no_cover=args.no_cover,
+            cover_frame=args.cover_frame,
         )
         return 0
     if args.command == "join":

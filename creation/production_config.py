@@ -51,6 +51,14 @@ class ProductionConfig:
     #: Per-take dollars used only when the endpoint the server films on has no verified price in
     #: ``creation.prices``. ``None`` (default) prices such a take at the H3 Max Turbo dated rate.
     fallback_estimate_usd: float | None = None
+    #: Posting, for the operator only (never sent to the server, never in the caption): the
+    #: show's lane (one lane per account, e.g. ``mystery``), the Instagram ``account`` it posts
+    #: on (``@handle``) and its ``posting_slot`` (``"18:30 IST"``; at least 2 h from the other
+    #: accounts' slots, docs/content-ops/posting.md). ``reel`` prints them with the post text
+    #: and writes them in ``reels/metrics.csv``.
+    lane: str | None = None
+    account: str | None = None
+    posting_slot: str | None = None
     poll_plan_deadline_seconds: float = 1800.0
     poll_cast_deadline_seconds: float = 3600.0
     poll_boards_deadline_seconds: float = 7200.0
