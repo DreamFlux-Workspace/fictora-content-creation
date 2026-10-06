@@ -218,6 +218,7 @@ def measure_opening(
     head_count_face: float | None = None,
     silent_open: bool = False,
     where: str = "the opening",
+    crop: tuple[int, int, int, int] | None = None,
 ) -> OpeningReading:
     """Measure a file's first second: luma, motion and frame 0's face.
 
@@ -234,6 +235,9 @@ def measure_opening(
         The opening beat has no spoken line (no face check).
     where
         What opens, for the warnings.
+    crop
+        ``(x, y, width, height)``: measure only this part of the frame (a
+        letterbox file's picture, not its black bands); ``None`` measures it all.
 
     Returns
     -------
@@ -247,16 +251,18 @@ def measure_opening(
     width, height = MEASURE_SIZE
     count = int(OPENING_SECONDS * MEASURE_FPS) + 2
     frames = decode_frames(
-        path, width=width, height=height, fps=MEASURE_FPS, max_frames=count
-    )
+        path, width=width, height=height, fps=MEASURE_FPS, max_frames=count,
+        crop=crop,
+    )  # fmt: skip
     grey = luma(frames)
     lumas = grey.mean(axis=(1, 2)).tolist() if len(grey) else []
     face: FaceReading | float | None = None
     source = "none"
     if detector is not None:
         first = decode_frames(
-            path, width=FACE_SIZE[0], height=FACE_SIZE[1], max_frames=1
-        )
+            path, width=FACE_SIZE[0], height=FACE_SIZE[1], max_frames=1,
+            crop=crop,
+        )  # fmt: skip
         if len(first):
             face, source = detector(first[0].astype(np.uint8)), "detector"
     elif head_count_face is not None:
@@ -362,7 +368,11 @@ def tail_warning(reading: TailReading, *, what: str = "the cut") -> str | None:
 
 
 def measure_tail(
-    path: Path, *, last_mark: float | None, window: float = TAIL_WINDOW_SECONDS
+    path: Path,
+    *,
+    last_mark: float | None,
+    window: float = TAIL_WINDOW_SECONDS,
+    crop: tuple[int, int, int, int] | None = None,
 ) -> TailReading:
     """Measure the last ``window`` seconds of a file for a settled tail.
 
@@ -374,6 +384,8 @@ def measure_tail(
         The last line's or sound event's end, seconds into the file (``None`` when unknown).
     window
         How much of the end to read.
+    crop
+        ``(x, y, width, height)``: read only this part of the frame (a letterbox file's picture).
 
     Returns
     -------
@@ -387,8 +399,9 @@ def measure_tail(
     start = max(0.0, duration - window)
     width, height = MEASURE_SIZE
     frames = decode_frames(
-        path, width=width, height=height, fps=MEASURE_FPS, start=start
-    )
+        path, width=width, height=height, fps=MEASURE_FPS, start=start,
+        crop=crop,
+    )  # fmt: skip
     grey = luma(frames)
     moves = motion_of(grey)
     if moves:

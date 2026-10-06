@@ -69,6 +69,18 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    printed first and booked as ``thumbnail``. Without it, finish says what a
    cover would cost and spends nothing.
 
+A letterbox show's 4:3 take (spine ``delivery_format: letterbox``, a 4:3
+picture; founder decisions of 6 Oct 2026, :mod:`creation.post.letterbox`)
+finishes into the 9:16 file itself: after the mix the picture goes on the
+1080x1920 black canvas (``letterbox``: scaled to 1080x810, centred; the 4:3
+takes stay on the desk), the captions are burned in the band under the picture
+(phrases of up to five words, yellow or ``--caption-colour white``, ending with
+the voice on a locked-voice take, upright for a speaker the take draws), and
+the mark step puts the Sokii mark in the top band and the title block above the
+picture (setup line white, hook line yellow). The master ``join`` reads is the
+captioned canvas without mark or title. A portrait show finishes exactly as
+before.
+
 A locked-voice take (take facts ``soundtrack.mode == "target_audio"``: the
 server sent the lines in the locked voices to the video model as its audio, and
 the take's sound is exactly that dialogue track, digital silence between lines)
@@ -203,6 +215,7 @@ from creation.post.hook_overlay import (
     delivery_format,
     selected_hook_line,
 )
+from creation.post import letterbox as lb
 from creation.post.media import MediaToolError, measure_loudness, probe_video
 from creation.post.mix import CueLevel, check_duck_db, mix_take, pick_gain
 from creation.post.take_facts import (
@@ -677,8 +690,13 @@ def take_inner_voice(
     )
 
 
-def _opening_lines(desk: Path, episode: int, take_id: str, final: Path) -> list[str]:
-    """``⚠`` lines for how the finished first take opens (:mod:`creation.post.opening`)."""
+def _opening_lines(
+    desk: Path, episode: int, take_id: str, final: Path, *, letterbox: bool = False
+) -> list[str]:
+    """``⚠`` lines for how the finished first take opens (:mod:`creation.post.opening`).
+
+    On a letterbox file only the picture is measured (the black bands are not the opening).
+    """
 
     from creation.post.faces import detector_for
     from creation.post.opening import measure_opening, opening_context
@@ -688,6 +706,7 @@ def _opening_lines(desk: Path, episode: int, take_id: str, final: Path) -> list[
         reading = measure_opening(
             final, detector=detector_for(desk, episode), head_count_face=head_face,
             silent_open=silent, where=f"ep{episode:02d} {take_id}",
+            crop=letterbox_picture_crop() if letterbox else None,
         )  # fmt: skip
     except MediaToolError as exc:
         return [f"⚠ opening not measured ({str(exc)[:160]})"]
@@ -765,6 +784,83 @@ def _cut_held_head(
     return HandleCut(done.final, done.record, f"{why}; {done.note}")
 
 
+def letterbox_picture_crop() -> tuple[int, int, int, int]:
+    """``(x, y, width, height)`` of the picture on the letterbox canvas (what the opening checks measure)."""
+
+    from creation.post.delivery_geometry import layout
+
+    pic = layout().picture
+    return (pic.x, pic.y, pic.width, pic.height)
+
+
+def letterbox_caption_facts(
+    desk: Path,
+    *,
+    episode: int,
+    take_id: str,
+    source: Path,
+    spine: dict[str, Any] | None,
+    facts: dict[str, Any] | None,
+    soundtrack: Soundtrack | None,
+) -> tuple[dict[str, Span] | None, dict[str, bool], list[str]]:
+    """A letterbox take's caption facts: line ends at the voice, and which flagged lines are upright.
+
+    ``soundtrack`` is the locked-voice take's soundtrack (``None`` on a native
+    take, whose lines are timed as usual). Each line's window ends where its
+    voice does (:func:`creation.post.letterbox.voice_end_spans`: a saved
+    transcript of this very take, else measured on its dialogue track). A line
+    flagged ``off_screen`` whose speaker the take draws is set upright
+    (:func:`creation.post.letterbox.italic_overrides`).
+
+    Returns
+    -------
+    tuple[dict[str, Span] | None, dict[str, bool], list[str]]
+        The line windows for ``caption_take`` (``None`` on a native take), the
+        italic overrides, and the lines to print.
+    """
+
+    from types import SimpleNamespace
+
+    from creation.post.review import saved_words
+    from creation.post.whisper import load_words
+
+    notes: list[str] = []
+    spans: dict[str, Span] | None = None
+    take_lines: list[Any] = []
+    if soundtrack is not None:
+        take_lines = list(soundtrack.lines)
+        words = None
+        try:
+            raw = latest_raw_take(desk, episode, take_id)
+        except FileNotFoundError:
+            raw = None
+        saved = saved_words(desk, episode, take_id) if raw is not None else None
+        if saved is not None and raw is not None and raw.resolve() == source.resolve():
+            words = load_words(saved)
+        ends = lb.voice_end_spans(source, take_lines, words=words)
+        spans = {e.line_id: Span(e.window.start, e.end) for e in ends}
+        trimmed = [e.text() for e in ends if e.trimmed]
+        notes.append(
+            "captions end with the voice: " + "; ".join(trimmed)
+            if trimmed
+            else "captions end with their line windows (the voice runs to each window's end)"
+        )
+    elif facts:
+        body = facts.get("take_facts", facts)
+        for item in body.get("lines") or [] if isinstance(body, dict) else []:
+            if isinstance(item, dict) and item.get("count"):
+                take_lines.append(
+                    SimpleNamespace(
+                        line_id=str(item.get("line_id")),
+                        start=item.get("start_seconds"),
+                        end=item.get("end_seconds"),
+                    )
+                )
+    overrides, italic_notes = lb.italic_overrides(spine, facts, take_lines)
+    notes += [f"italics: {n}" for n in italic_notes]
+    return spans, overrides, notes
+
+
 def finish_hook(
     spine: dict[str, Any] | None,
     *,
@@ -839,6 +935,7 @@ def run_finish(
     hook_line: str | None = None,
     no_hook_line: bool = False,
     hook_line_position: str | None = None,
+    caption_colour: str | None = None,
     stream: TextIO | None = None,
 ) -> FinishResult:
     """Run the whole local post chain on one accepted take.
@@ -935,7 +1032,13 @@ def run_finish(
         episode's on-screen hook line (the spine's selected one by default) is burned over
         the first ~3 s of the episode's first take, ``t1``, after the captions and before the
         mark; a letterbox show gets its title bar on every take instead
-        (:mod:`creation.post.hook_overlay`). With none, nothing changes.
+        (:mod:`creation.post.hook_overlay`). With none, nothing changes. On a
+        letterbox show's 4:3 take ``--hook-line`` is the title block's yellow
+        line and ``--no-hook-line`` leaves the title block off.
+    caption_colour
+        ``--caption-colour yellow|white``: a letterbox show's caption colour
+        (default the desk's ``letterbox_caption_colour``, else the spine's,
+        else yellow). Refused on a portrait show.
     stream
         Progress output (stderr by default).
 
@@ -1159,10 +1262,50 @@ def run_finish(
             flush=True,
         )
 
+    picked = (
+        lb.desk_hook_line(desk, episode)
+        if hook_line is None and not no_hook_line
+        else None
+    )
+    if picked is not None:
+        # `hook-line` on a server without the route: the operator's pick, kept on the desk, wins.
+        print(
+            f"[hook-line] the desk's pick from `hook-line`: {picked.get('text') or 'off'!r}",
+            file=out,
+            flush=True,
+        )
     hook = finish_hook(
         spine, episode=episode, take_id=take_id, source=source, facts_payload=facts_payload,
-        override=hook_line, off=no_hook_line, position=hook_line_position,
+        override=hook_line or (picked or {}).get("text") or None,
+        off=no_hook_line or (picked or {}).get("kind") == "off", position=hook_line_position,
     )  # fmt: skip
+    # A letterbox show's 4:3 take: the kit builds its 9:16 file (lb); anything else finishes as before.
+    letterbox = False
+    if delivery_format(spine) == "letterbox":
+        info = probe_video(source)
+        letterbox = lb.is_letterbox_take(spine, (info.width, info.height))
+    if caption_colour is not None and not letterbox:
+        raise ValueError(
+            "--caption-colour is for a letterbox show's 4:3 take (its captions sit under the picture); "
+            "a portrait take is captioned in the house colours (--caption-style plain is white)"
+        )
+    title: lb.TitleBlock | None = None
+    colour_name, colour_source = lb.DEFAULT_CAPTION_COLOUR, ""
+    if letterbox:
+        hook = HookDecision(None, "letterbox: the title block goes on with the mark")
+        title, title_note = lb.title_block(
+            spine, episode, desk=desk, override=hook_line, off=no_hook_line
+        )
+        colour_name, colour_source = lb.resolve_caption_colour(
+            desk, spine, caption_colour
+        )
+        print(
+            "[letterbox] 4:3 take on a letterbox show: the 9:16 file is built here "
+            f"(captions {colour_name}, from {colour_source}; "
+            f"{title.describe() if title else title_note})",
+            file=out,
+            flush=True,
+        )
 
     def step(name: str, doing: str, work: Callable[[Path], StepReport]) -> None:
         nonlocal current
@@ -1946,6 +2089,20 @@ def run_finish(
         if words_note:
             append_run_note(run_dir, f"Finish · captions: {words_note}")
         laid, laid_notes = laid_voice_lines() if voice_state["path"] else ([], [])
+        spans = (
+            {line.line_id: Span(line.start, line.end) for line in soundtrack.lines}
+            if locked and not treated_voice(source)
+            else None
+        )
+        overrides: dict[str, bool] = {}
+        letterbox_notes: list[str] = []
+        if letterbox:
+            spans, overrides, letterbox_notes = letterbox_caption_facts(
+                desk, episode=episode, take_id=take_id, source=source, spine=caption_spine or spine,
+                facts=facts_payload, soundtrack=soundtrack if spans is not None else None,
+            )  # fmt: skip
+            for note in letterbox_notes:
+                print(f"[captions] {note}", file=out, flush=True)
         try:
             captioned = caption_take(
                 desk,
@@ -1976,16 +2133,15 @@ def run_finish(
                 ],
                 # Only this take's beats' lines: t2 is never captioned with t1's.
                 take_index=thoughts.take_number(take_id),
-                line_spans=(
-                    {
-                        line.line_id: Span(line.start, line.end)
-                        for line in soundtrack.lines
-                    }
-                    if locked and not treated_voice(source)
-                    else None
-                ),
+                line_spans=spans,
                 style=style,
-            )
+                **(
+                    {"layout": "letterbox", "caption_colour": colour_name,
+                     "italic_overrides": overrides}
+                    if letterbox
+                    else {}
+                ),
+            )  # fmt: skip
         except ValueError as exc:
             if "no dialogue lines" in str(exc):
                 return StepReport(
@@ -1996,6 +2152,10 @@ def run_finish(
             raise
         timing = "; ".join(captioned.timing_lines())
         treatment = "whole English lines" if captioned.whole_lines else "word flicker"
+        if letterbox:
+            treatment = f"letterbox band under the picture, {colour_name}, " + (
+                "whole lines" if captioned.whole_lines else "phrases of up to 5 words"
+            )
         if style != "house":
             treatment = f"{style}, {treatment}"
         if words_note:
@@ -2012,6 +2172,7 @@ def run_finish(
                 captioned.timing_warning,
                 spine_note,
                 *laid_notes,
+                *letterbox_notes,
             )
             if w
         )
@@ -2047,6 +2208,17 @@ def run_finish(
             drawn,
         )
 
+    def do_letterbox(take: Path) -> StepReport:
+        canvas = lb.pad_to_canvas(
+            take, next_versioned_path(takes, f"{base}-letterbox", ".mp4")
+        )
+        detail = (
+            "the 4:3 picture on the 1080x1920 black canvas (1080x810, y 555-1365); "
+            f"the 4:3 take stays as `{take.name}`"
+        )
+        append_run_note(run_dir, f"Letterbox -> `{canvas.name}`: {detail}")
+        return StepReport("letterbox", "ran", detail, canvas)
+
     def do_hook_line(take: Path) -> StepReport:
         assert hook.overlay is not None
         ass = next_versioned_path(takes, f"{base}-hook", ".ass")
@@ -2060,6 +2232,24 @@ def run_finish(
         return StepReport("hook-line", "ran", hook.overlay.describe(), drawn)
 
     def do_watermark(take: Path) -> StepReport:
+        if letterbox:
+            marked, fitted = lb.mark_and_title(
+                take, next_versioned_path(takes, f"{base}-sokii", ".mp4"), title=title,
+                ass_path=next_versioned_path(takes, f"{base}-title", ".ass"),
+            )  # fmt: skip
+            record_state["master"] = take
+            words = (
+                f"{title.describe()} at {fitted.size} px"
+                + (f"; {fitted.note}" if fitted and fitted.note else "")
+                if title and fitted
+                else "no title block"
+            )
+            detail = f"Sokii mark in the top band; {words}"
+            append_run_note(
+                run_dir,
+                f"Mark and title -> `{marked.name}` (un-marked master `{take.name}`): {detail}",
+            )
+            return StepReport("watermark", "ran", detail, marked)
         marked = watermark(
             take, next_versioned_path(takes, f"{base}-sokii", ".mp4"), y=watermark_y
         )
@@ -2199,6 +2389,12 @@ def run_finish(
                 "Drawing the story sign's exact words over the garbled lettering",
                 do_sign_overlay,
             )
+        if letterbox:
+            step(
+                "letterbox",
+                "Putting the 4:3 picture on the 9:16 black canvas",
+                do_letterbox,
+            )
         step(
             "captions",
             "Skipping captions (--caption-style none)"
@@ -2212,7 +2408,13 @@ def run_finish(
             hook_line or no_hook_line or selected_hook_line(spine, episode)
         ):
             print(f"[hook-line] {hook.line()}", file=out, flush=True)
-        step("watermark", "Putting the Sokii mark on", do_watermark)
+        step(
+            "watermark",
+            "Putting the Sokii mark in the top band and the title block on"
+            if letterbox
+            else "Putting the Sokii mark on",
+            do_watermark,
+        )
     if result.complete:
         step(
             "thumbnail",
@@ -2255,6 +2457,7 @@ def run_finish(
              **({"spoken_text": cue.spoken_text} if cue.spoken_text else {})}
             for cue, line, seconds in thought_state["laid"]
         ],
+        letterbox={"letterbox": True, "caption_colour": colour_name} if letterbox else None,
     )  # fmt: skip
     handles_note = ""
     server_handles = None
@@ -2303,7 +2506,9 @@ def run_finish(
     if result.complete and take_id == "t1":
         # Every episode's first take opens the episode: its first second, as finished (warnings only).
         at = 3 if handles_note else 2
-        summary[at:at] = _opening_lines(desk, episode, take_id, result.final)
+        summary[at:at] = _opening_lines(
+            desk, episode, take_id, result.final, letterbox=letterbox
+        )
     append_run_note(
         run_dir,
         "Finish summary\n"

@@ -54,6 +54,11 @@ class FinishRecord:
     #: The harness's music was already in the take's soundtrack (take facts ``music.laid``), so ``finish``
     #: laid no bed and ``pre_bed`` carries the music: ``join`` and ``reel`` lay no bed over it.
     music_in_take: bool = False
+    #: A letterbox show's take: ``master`` and ``final`` are the 9:16 canvas (the master captioned in the
+    #: band, the final with the mark and title block); ``join`` puts the mark and title on the joined file.
+    letterbox: bool = False
+    #: The letterbox captions' colour (``yellow`` / ``white``); ``None`` on a portrait take.
+    caption_colour: str | None = None
 
     def resolve(self, desk: Path, name: str) -> Path | None:
         """Absolute path of one stored file (``pre_bed``, ``master``, ``final``, ``bed``)."""
@@ -92,6 +97,7 @@ def write_finish_record(
     inner_voice: Sequence[Mapping[str, Any]] = (),
     bed_db_source: str | None = None,
     music_in_take: bool = False,
+    letterbox: Mapping[str, Any] | None = None,
 ) -> Path:
     """Write ``takes/take-epNN-tK-finish-vN.json`` (a new version; never overwrites).
 
@@ -122,6 +128,10 @@ def write_finish_record(
     inner_voice
         The inner-voice cues laid on this take (``{cue_id, file, start, seconds,
         episode_start, speaker_cast_id, line}``; ``start`` on the take).
+    letterbox
+        A letterbox take's ``{"letterbox": True, "caption_colour": ...}``,
+        written into the record; ``None`` (every portrait take) writes the
+        record exactly as before.
 
     Returns
     -------
@@ -147,6 +157,7 @@ def write_finish_record(
         "edits": [dict(edit) for edit in edits],
         "hand_voices": [dict(voice) for voice in hand_voices],
         "inner_voice": [dict(cue) for cue in inner_voice],
+        **(dict(letterbox) if letterbox else {}),
     }
     path.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
     return path
@@ -164,7 +175,7 @@ def _load(path: Path) -> FinishRecord | None:
     body = {
         f.name: raw.get(f.name)
         for f in fields(FinishRecord)
-        if f.name not in ("path", "edits", "hand_voices", "music_in_take")
+        if f.name not in ("path", "edits", "hand_voices", "music_in_take", "letterbox")
     }
     edits = tuple(e for e in raw.get("edits") or () if isinstance(e, dict))
     voices = tuple(v for v in raw.get("hand_voices") or () if isinstance(v, dict))
@@ -174,6 +185,7 @@ def _load(path: Path) -> FinishRecord | None:
         edits=edits,
         hand_voices=voices,
         music_in_take=raw.get("music_in_take") is True,
+        letterbox=raw.get("letterbox") is True,
     )
 
 
@@ -267,4 +279,9 @@ def carry_finish_record(
         edits=[*record.edits, step],
         hand_voices=record.hand_voices,
         music_in_take=record.music_in_take,
+        letterbox=(
+            {"letterbox": True, "caption_colour": record.caption_colour}
+            if record.letterbox
+            else None
+        ),
     )
