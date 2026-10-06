@@ -14,6 +14,7 @@ from creation.ops.folder import (
 )
 from creation.look_gate import record_look_approval
 from creation.ops.luma import measure_board_luma
+from creation.ops.notes import ensure_run_notes
 from creation.ops.preflight import PreflightReport, evaluate_preflight
 from creation.ops.state import (
     MAX_LINES_PER_TAKE,
@@ -100,6 +101,8 @@ def init_series_desk(
     desk.mkdir(parents=True)
     for relative in SHARED_SUBDIRS:
         (desk / relative).mkdir(parents=True)
+    # The desk's own notes (the first `fictora-ops note --run-dir DESK` needs one).
+    ensure_run_notes(desk, title.strip())
     series = new_series(
         title.strip(),
         slugify_series(title),

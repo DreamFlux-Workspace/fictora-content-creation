@@ -116,6 +116,8 @@ DUCK_RELEASE_SECONDS = 0.6
 
 #: A detected cut within this of a planned shot change is that shot change.
 CUT_MATCH_SECONDS = 0.5
+#: Two hard cuts closer than this are a flash or a stutter (a shot a few frames long), not two shots.
+CLOSE_CUT_SECONDS = 0.25
 #: A line with fewer words than this is never a re-film call on the transcript alone ("check by ear").
 SHORT_LINE_WORDS = 3
 
@@ -513,6 +515,40 @@ def compare_cuts(
     return missing, free
 
 
+def close_cuts(
+    cuts: tuple[float, ...], *, within: float = CLOSE_CUT_SECONDS
+) -> list[tuple[float, float]]:
+    """Pairs of consecutive hard cuts less than ``within`` seconds apart (a flash or a stutter).
+
+    Parameters
+    ----------
+    cuts
+        Hard-cut times in seconds.
+    within
+        The gap below which two cuts are one flash (default 0.25 s).
+
+    Returns
+    -------
+    list[tuple[float, float]]
+        ``(first, second)`` per close pair, in time order.
+    """
+
+    ordered = sorted(cuts)
+    return [
+        (round(a, 3), round(b, 3))
+        for a, b in zip(ordered, ordered[1:])
+        if b - a < within - 1e-9
+    ]
+
+
+def _close_cut_lines(pairs: list[tuple[float, float]]) -> list[str]:
+    return [
+        f"!! two hard cuts {b - a:.2f} s apart at {a:.2f}s and {b:.2f}s: a shot a few frames long reads as "
+        "a flash or a stutter. Watch it full size; trim past it or soften the cut"
+        for a, b in pairs
+    ]
+
+
 def cuts_section(
     take: Path,
     *,
@@ -534,6 +570,9 @@ def cuts_section(
         "missing": [],
         "extra": [],
     }
+    flashes = close_cuts(cuts)
+    data["close_cuts"] = [list(pair) for pair in flashes]
+    flash_lines = _close_cut_lines(flashes)
     found = f"{len(cuts)} hard cut(s)" + (f" at {_times(cuts)}" if cuts else "")
     planned = planned_shot_changes(facts) if facts is not None else None
     if planned is None:
@@ -544,16 +583,22 @@ def cuts_section(
         )
         return Section(
             "Cuts",
-            NONE if not cuts else OK,
+            WARN if flash_lines else NONE if not cuts else OK,
             f"{found}; not compared ({why})",
             threshold,
+            flash_lines,
             data=data,
         )
     data["planned"] = list(planned)
     if retimed:
         why = retimed_by or "a trim or tempo moved the times off the take facts"
         return Section(
-            "Cuts", OK, f"{found}; not compared ({why})", threshold, data=data
+            "Cuts",
+            WARN if flash_lines else OK,
+            f"{found}; not compared ({why})",
+            threshold,
+            flash_lines,
+            data=data,
         )
     missing, extra = compare_cuts(cuts, planned)
     data["missing"], data["extra"] = missing, extra
@@ -568,8 +613,14 @@ def cuts_section(
         f"extra cut at {t:.2f}s the take facts do not plan (a forced cut or an H3 cell seam: soften it)"
         for t in extra
     ]
+    details += flash_lines
     return Section(
-        "Cuts", WARN if missing or extra else OK, summary, threshold, details, data
+        "Cuts",
+        WARN if missing or extra or flash_lines else OK,
+        summary,
+        threshold,
+        details,
+        data,
     )
 
 
@@ -1886,6 +1937,7 @@ __all__ = [
     "TRUE_PEAK_MAX_DBTP",
     "Section",
     "TakeReview",
+    "close_cuts",
     "compare_cuts",
     "default_take",
     "safe_zones_section",

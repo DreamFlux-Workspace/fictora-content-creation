@@ -1088,6 +1088,9 @@ def opening_sound_flat(
         return None
     return (
         f"!! opening_sound_flat: episode {episode} has no sound in its first {OPENING_WINDOW_SECONDS:g} s. "
-        "Refresh take 1's facts (fictora-produce take-facts --refresh) so the server plans the opening hook: "
-        "one event tied to the first picture (a door, a phone buzz, a breath)."
+        "Refreshing the take facts cannot add one: the server writes the opening hook into take 1 when it "
+        "is filmed, and this take was filmed without it (an older server, or a take filmed before the hook). "
+        "To give it one, lay a hand cue at 0 s: make one sound tied to the first picture with `cue` "
+        '(a door, a phone buzz, a breath; name it "..., on the first frame") and finish take 1 again '
+        "with `--cue FILE@0`. Or leave it: this is a nudge, not a stop."
     )

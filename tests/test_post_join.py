@@ -677,3 +677,63 @@ def test_accept_seam_marks_the_join_and_records_who_and_why(
     assert "Seam accepted by Tejas: the line starts on the cut" in notes
     assert "ACCEPTED: seam at 2.50s" in notes
     assert "before " in notes and "after " in notes
+
+
+def test_gain_matching_is_skipped_when_every_part_finished_at_minus_18() -> None:
+    from creation.post.join import gain_match_needed
+
+    # Three Payments Late (5 Oct 2026): every take finished at -18 LUFS, and matching widened a seam 5.0 -> 7.4 dB.
+    assert gain_match_needed([-18.0, -18.4, -17.6]) == (
+        False,
+        "every take finished within ±0.5 LU of -18 LUFS (-18.0, -18.4, -17.6)",
+    )
+    needed, why = gain_match_needed([-18.0, -16.9])
+    assert needed and "-16.9" in why
+    needed, why = gain_match_needed([-18.0, None])
+    assert needed and "not measured" in why
+
+
+@needs_ffmpeg
+def test_join_skips_matching_by_default_and_gain_match_forces_it(
+    join_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    finished_take(join_desk, 1, "t1", tone=0.01)
+    finished_take(join_desk, 1, "t2", tone=0.5)
+    noise_bed(join_desk)
+    monkeypatch.setattr(
+        join_module, "finished_levels", lambda desk, parts: [-18.1, -17.8]
+    )
+
+    auto = run_join(
+        join_desk,
+        episodes=(1,),
+        accept_seam="test",
+        accepted_by="t",
+        stream=io.StringIO(),
+    )
+    assert auto.gains_db == [0.0, 0.0]
+    assert any("gain matching skipped" in note for note in auto.notes), auto.notes
+
+    forced = run_join(join_desk, episodes=(1,), gain_match=True, stream=io.StringIO())
+    assert forced.gains_db[0] - forced.gains_db[1] > 30
+
+
+def test_join_cli_passes_the_gain_match_choice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[object] = []
+
+    class _Joined:
+        complete = True
+
+        def as_json(self) -> dict:
+            return {}
+
+    def fake(desk: Path, **kwargs: object) -> _Joined:
+        seen.append(kwargs["gain_match"])
+        return _Joined()
+
+    monkeypatch.setattr(cli_post, "run_join", fake)
+    for flag in ([], ["--gain-match"], ["--no-gain-match"]):
+        main(["join", "--desk", str(tmp_path), "--episode", "1", "--json", *flag])
+    assert seen == [None, True, False]

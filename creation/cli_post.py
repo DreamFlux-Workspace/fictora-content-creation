@@ -496,8 +496,15 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         default=None,
         help="Default: what the takes were finished with.",
     )
-    join.add_argument(
+    gain = join.add_mutually_exclusive_group()
+    gain.add_argument(
         "--no-gain-match", action="store_true", help="Keep each take's own level."
+    )
+    gain.add_argument(
+        "--gain-match",
+        action="store_true",
+        help="Gain every take to the takes' median loudness even when every take finished within "
+        "±0.5 LU of -18 LUFS (default: matched only when they did not).",
     )
     join.add_argument(
         "--watermark-y",
@@ -765,7 +772,11 @@ def dispatch_post(args: argparse.Namespace) -> int:
             dissolve=args.dissolve,
             bed_db=args.bed_db,
             duck_db=args.duck_db,
-            gain_match=not args.no_gain_match,
+            gain_match=False
+            if args.no_gain_match
+            else True
+            if args.gain_match
+            else None,
             watermark_y=args.watermark_y,
             accept_seam=args.accept_seam,
             accepted_by=args.accepted_by,

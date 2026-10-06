@@ -625,6 +625,59 @@ def match_gains(parts: list[JoinPart]) -> list[float]:
     ]
 
 
+#: ``finish`` lands every take here; parts all this close already match, and matching them again
+#: only moves a quiet tail against a spoken open (Three Payments Late: a seam widened 5.0 -> 7.4 dB).
+FINISHED_LUFS = -18.0
+FINISHED_LUFS_TOLERANCE = 0.5
+
+
+def finished_levels(desk: Path, parts: list[JoinPart]) -> list[float | None]:
+    """Each part's finished loudness (its record's ``final``), or ``None`` when it cannot be measured."""
+
+    levels: list[float | None] = []
+    for part in parts:
+        final = part.record.resolve(desk, "final")
+        try:
+            level = (
+                measure_loudness(final)
+                if final is not None and final.is_file()
+                else None
+            )
+        except MediaToolError:
+            level = None
+        levels.append(level if level is not None and math.isfinite(level) else None)
+    return levels
+
+
+def gain_match_needed(levels: list[float | None]) -> tuple[bool, str]:
+    """Whether ``join`` should gain-match by default, and why.
+
+    Parameters
+    ----------
+    levels
+        Each part's finished loudness (LUFS); ``None`` when not measured.
+
+    Returns
+    -------
+    tuple[bool, str]
+        False when every part finished within ±0.5 LU of -18 LUFS (they
+        already match), else True; and the reason in words.
+    """
+
+    shown = ", ".join("not measured" if v is None else f"{v:.1f}" for v in levels)
+    if levels and all(
+        v is not None and abs(v - FINISHED_LUFS) <= FINISHED_LUFS_TOLERANCE + 1e-9
+        for v in levels
+    ):
+        return False, (
+            f"every take finished within ±{FINISHED_LUFS_TOLERANCE:g} LU of {FINISHED_LUFS:g} LUFS ({shown})"
+        )
+    return (
+        True,
+        f"the takes finished at {shown} LUFS, not all within ±{FINISHED_LUFS_TOLERANCE:g} LU of {FINISHED_LUFS:g}",
+    )
+
+
 def decode_stereo(path: Path) -> np.ndarray:
     """A file's sound as float samples, stereo at 48 kHz, shape ``(samples, 2)``.
 
@@ -1032,7 +1085,7 @@ def run_join(
     dissolve: float | None = None,
     bed_db: float | None = None,
     duck_db: float | None = None,
-    gain_match: bool = True,
+    gain_match: bool | None = None,
     watermark_y: int | None = None,
     accept_seam: str | None = None,
     accepted_by: str | None = None,
@@ -1060,7 +1113,10 @@ def run_join(
     duck_db
         Exact duck depth; default what the takes were finished with.
     gain_match
-        Gain every part to the parts' median loudness first.
+        Gain every part to the parts' median loudness first. ``None`` (the
+        default) matches unless every part finished within ±0.5 LU of -18 LUFS
+        (:func:`gain_match_needed`); ``True`` forces it (``--gain-match``),
+        ``False`` keeps each take's level (``--no-gain-match``).
     watermark_y
         Mark top offset override.
     accept_seam
@@ -1183,8 +1239,17 @@ def run_join(
     )
     if level is not None:
         print(f"Bed level: {level.one_line()}", file=out, flush=True)
+    skip_note = None
+    if gain_match is None:
+        gain_match, why = gain_match_needed(finished_levels(desk, parts))
+        if not gain_match:
+            skip_note = (
+                f"gain matching skipped: {why}, so they already match "
+                "(--gain-match forces it)"
+            )
+            print(skip_note, file=out, flush=True)
     gains = match_gains(parts) if gain_match else [0.0] * len(parts)
-    gain_note = gain_match_note(gains) if gain_match else None
+    gain_note = gain_match_note(gains) if gain_match else skip_note
     total = sum(lengths) - sum(dissolves)
     master = next_versioned_path(folder, stem, ".mp4")
     with tempfile.TemporaryDirectory() as scratch:

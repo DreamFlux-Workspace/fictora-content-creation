@@ -327,3 +327,37 @@ def test_a_photoreal_look_note_is_warned_about_and_still_added(
     assert any(
         call[0] == "POST" and call[1].endswith("/look-notes") for call in api.calls
     )
+
+
+CAST_TABLE_BRIEF = """# Brief
+
+## Cast
+
+| Name | Role | Speaks? | Age |
+| --- | --- | --- | --- |
+| Noor Vatan | Noodle cook | Yes | 24 |
+| Dez Okoye | Repo man | Yes | 38 |
+
+## Arc (this episode)
+
+Repossession, then the twist. Ends on Dez's face.
+"""
+
+
+def test_a_cast_name_in_the_brief_is_not_a_real_person() -> None:
+    # Three Payments Late (5 Oct 2026): "Ends on Dez's face." paused the draft.
+    assert so.find_real_people(CAST_TABLE_BRIEF) == ()
+    assert so.brief_notices(CAST_TABLE_BRIEF) == []
+
+
+def test_cast_names_come_from_a_table_or_a_list() -> None:
+    assert {"Noor Vatan", "Dez Okoye"} <= set(so.brief_cast_names(CAST_TABLE_BRIEF))
+    listed = "## Cast\n\n- **Mina Park** — the heir\n- Joon: her bodyguard\n\n## Set\n\nA roof.\n"
+    assert {"Mina Park", "Joon"} <= set(so.brief_cast_names(listed))
+
+
+def test_a_real_likeness_is_still_flagged_beside_a_cast() -> None:
+    brief = (
+        CAST_TABLE_BRIEF + "\nDez looks like Park Seo-joon. Ends on Jungkook's face.\n"
+    )
+    assert so.find_real_people(brief) == ("Park Seo-joon", "Jungkook")
