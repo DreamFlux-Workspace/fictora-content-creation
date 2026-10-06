@@ -19,11 +19,14 @@ GateStatus = Literal["pending", "approved", "rejected"]
 TakeVerdict = Literal["pending", "use", "change"]
 
 TAKES_FOR_BAND: dict[str, int] = {"15s": 1, "30s": 2, "60s": 4}
-#: Takes per band on a letterbox (4:3) story: the server films 10-second takes
-#: there (fictora-drama #604), so 30 s is three takes and 60 s six. 15 s stays
-#: one take: the server films a 15 s letterbox episode portrait.
-LETTERBOX_TAKES_FOR_BAND: dict[str, int] = {"15s": 1, "30s": 3, "60s": 6}
-#: Seconds one letterbox (4:3) take films on the server.
+#: Takes per band on a letterbox (4:3) story: one per 10 s, rounded up
+#: (fictora-drama #604, #617). 30 s is three 10-second takes, 60 s six, and
+#: 15 s two 7-second takes (a 14 s episode).
+LETTERBOX_TAKES_FOR_BAND: dict[str, int] = {"15s": 2, "30s": 3, "60s": 6}
+#: Seconds one letterbox (4:3) take films on the server, per band: episode
+#: length over take count, rounded down (``storyboard_take_seconds``).
+LETTERBOX_TAKE_SECONDS_FOR_BAND: dict[str, int] = {"15s": 7, "30s": 10, "60s": 10}
+#: Seconds one letterbox (4:3) take films at 30 s and 60 s.
 LETTERBOX_TAKE_SECONDS = 10
 MAX_LINES_PER_TAKE = 3
 #: Preflight warns (never blocks) past this multiple of the envelope.
@@ -389,7 +392,7 @@ def new_episode(ordinal: int, band: str, *, letterbox: bool = False) -> EpisodeS
     band
         Duration band.
     letterbox
-        True for a letterbox desk (10-second takes; see :func:`take_ids_for_band`).
+        True for a letterbox desk (10-second takes, 7-second at 15 s; see :func:`take_ids_for_band`).
 
     Returns
     -------
@@ -534,7 +537,7 @@ def sync_take_slots_to_spine(series: SeriesState, spine: dict[str, Any]) -> list
     """Give every episode as many take slots as the server's story films.
 
     The desk opens its slots from the band (two at 30 s); a 4:3 letterbox story
-    films 10-second takes, so the server's spine holds three (or six at 60 s).
+    films 10-second takes, so the server's spine holds three (or six at 60 s; two 7-second takes at 15 s).
     The spine wins: missing slots are added, and trailing slots the story does
     not film are dropped while they hold nothing. A slot that already holds
     work is never dropped; it is named in the returned notes instead.

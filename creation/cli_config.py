@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 
+from creation.ops.state import LETTERBOX_TAKE_SECONDS_FOR_BAND
 from creation.production_config import ProductionConfig
 
 
@@ -20,8 +21,8 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
         "--clip-seconds",
         type=int,
         default=None,
-        help="Take length 4–15. Default 15, or 10 with --delivery-format letterbox (the server films "
-        "10-second 4:3 takes).",
+        help="Take length 4–15. Default 15, or with --delivery-format letterbox the server's 4:3 "
+        "take length: 10 s at 30s/60s, 7 s at 15s (two takes, a 14 s episode).",
     )
     parser.add_argument(
         "--cut-tempo",
@@ -76,17 +77,22 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
 #: Take length when ``--clip-seconds`` is not given.
 DEFAULT_CLIP_SECONDS = 15
 #: Take length of a letterbox desk when ``--clip-seconds`` is not given: the
-#: server films 10-second takes on a 4:3 story (fictora-drama #604).
+#: server films 10-second 4:3 takes at 30 s and 60 s (fictora-drama #604).
 LETTERBOX_CLIP_SECONDS = 10
 
 
 def default_clip_seconds(args: argparse.Namespace) -> int:
-    """Return the take length: ``--clip-seconds``, else 10 for letterbox, else 15."""
+    """Return the take length: ``--clip-seconds``, else the server's 4:3 take for letterbox, else 15.
+
+    A letterbox take is 10 s at 30 s and 60 s and 7 s at 15 s (two takes, a
+    14 s episode; fictora-drama #617).
+    """
 
     if getattr(args, "clip_seconds", None) is not None:
         return int(args.clip_seconds)
     if getattr(args, "delivery_format", None) == "letterbox":
-        return LETTERBOX_CLIP_SECONDS
+        band = getattr(args, "band", None)
+        return LETTERBOX_TAKE_SECONDS_FOR_BAND.get(str(band), LETTERBOX_CLIP_SECONDS)
     return DEFAULT_CLIP_SECONDS
 
 
