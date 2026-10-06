@@ -1235,6 +1235,8 @@ def run_reel(
         take's picture before captions), instead of a saved cover or the strongest frame.
     made_by
         What made it, for ``latest.json``: ``reel`` (this command), ``finish`` or an edit's name.
+    no_panels
+        ``--no-panels``: draw none of the writer's system panels (system and game genres only).
 
     Returns
     -------
@@ -1259,7 +1261,7 @@ def run_reel(
             watermark_y=watermark_y, ending=ending, stream=stream, scratch=Path(tmp),
             detector=found if not isinstance(found, str) else None,
             hook_line=hook_line, no_hook_line=no_hook_line, hook_line_position=hook_line_position,
-            no_cover=no_cover, cover_frame=cover_frame,
+            no_cover=no_cover, cover_frame=cover_frame, no_panels=no_panels,
         )  # fmt: skip
     return record_reel(
         desk.expanduser().resolve(), episode, result, made_by=made_by, stream=stream
@@ -1461,6 +1463,7 @@ def make_reel(
     hook_line_position: str | None = None,
     no_cover: bool = False,
     cover_frame: float | None = None,
+    no_panels: bool = False,
 ) -> ReelResult:
     """The renderer: plan the reel and make its files (video, captions, plan, cover, post text).
 
@@ -1672,7 +1675,7 @@ def make_reel(
         )
         return result
     style, style_note = resolve_caption_style(desk, caption_style)
-    panels = []
+    panels: list[tuple[int, int, Any]] = []
     if not no_panels:
         from creation.post.system_panels import reel_panels
         from creation.spine_view import episode_id_for

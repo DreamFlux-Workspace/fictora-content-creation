@@ -217,7 +217,12 @@ from creation.post.hook_overlay import (
     selected_hook_line,
 )
 from creation.post import letterbox as lb
-from creation.post.system_panels import PlacedPanel, burn_panels, show_takes_panels, take_panels
+from creation.post.system_panels import (
+    PlacedPanel,
+    burn_panels,
+    show_takes_panels,
+    take_panels,
+)
 from creation.post.media import MediaToolError, measure_loudness, probe_video
 from creation.post.mix import CueLevel, check_duck_db, mix_take, pick_gain
 from creation.post.take_facts import (
@@ -1335,7 +1340,10 @@ def run_finish(
 
             lengths, _ = take_lengths(desk, episode, take_id, source=source)
             panels = take_panels(
-                spine, episode_id_for(spine or {}, episode), thoughts.take_number(take_id), lengths
+                spine,
+                episode_id_for(spine or {}, episode),
+                thoughts.take_number(take_id),
+                lengths,
             )
 
     def step(name: str, doing: str, work: Callable[[Path], StepReport]) -> None:
@@ -2312,10 +2320,18 @@ def run_finish(
             picture = (pic.x, pic.y, pic.width, pic.height)
         ass = next_versioned_path(takes, f"{base}-panels", ".ass")
         drawn = burn_panels(
-            panels, take, ass, next_versioned_path(takes, f"{base}-panels", ".mp4"), picture=picture
+            panels,
+            take,
+            ass,
+            next_versioned_path(takes, f"{base}-panels", ".mp4"),
+            picture=picture,
         )
-        detail = f"{len(panels)} panel(s): " + "; ".join(panel.describe() for _, _, panel in panels)
-        append_run_note(run_dir, f"System panels -> `{drawn.name}` (`{ass.name}`): {detail}")
+        detail = f"{len(panels)} panel(s): " + "; ".join(
+            panel.describe() for _, _, panel in panels
+        )
+        append_run_note(
+            run_dir, f"System panels -> `{drawn.name}` (`{ass.name}`): {detail}"
+        )
         return StepReport("system-panels", "ran", detail, drawn)
 
     def do_hook_line(take: Path) -> StepReport:
@@ -2504,7 +2520,11 @@ def run_finish(
             do_captions,
         )
         if panels:
-            step("system-panels", "Drawing the system panels the writer put on this take", do_system_panels)
+            step(
+                "system-panels",
+                "Drawing the system panels the writer put on this take",
+                do_system_panels,
+            )
         elif panels_note:
             print(f"[system-panels] {panels_note}", file=out, flush=True)
         if hook.overlay is not None:

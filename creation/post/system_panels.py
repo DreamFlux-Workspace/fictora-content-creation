@@ -107,7 +107,10 @@ def show_takes_panels(spine: Mapping[str, Any] | None) -> bool:
 
     if not isinstance(spine, Mapping):
         return False
-    genres = [spine.get("microdrama_genre"), *(spine.get("microdrama_genre_overlays") or [])]
+    genres = [
+        spine.get("microdrama_genre"),
+        *(spine.get("microdrama_genre_overlays") or []),
+    ]
     return any(g in SYSTEM_PANEL_GENRES for g in genres if isinstance(g, str))
 
 
@@ -121,7 +124,13 @@ def _style(raw: Any) -> PanelStyle | None:
     return PanelStyle(str(frame), palette)
 
 
-def _take_for_beat(ordinal: int, position: int, beat_count: int, pattern: Sequence[int], take_count: int) -> int:
+def _take_for_beat(
+    ordinal: int,
+    position: int,
+    beat_count: int,
+    pattern: Sequence[int],
+    take_count: int,
+) -> int:
     if pattern and sum(pattern) >= ordinal >= 1:
         cursor = 1
         for index, count in enumerate(pattern, start=1):
@@ -157,13 +166,23 @@ def place_panels(
     durations = [max(0, int(d)) for d in take_durations_ms]
     show_look = _style(spine.get("system_panel_look"))
     beats = sorted(
-        (b for b in spine.get("beats") or [] if isinstance(b, Mapping) and b.get("episode_id") == episode_id),
+        (
+            b
+            for b in spine.get("beats") or []
+            if isinstance(b, Mapping) and b.get("episode_id") == episode_id
+        ),
         key=lambda beat: int(beat.get("ordinal") or 0),
     )
     pattern = tuple(int(n) for n in spine.get("beats_per_storyboard_set") or ())
     by_take: dict[int, list[Mapping[str, Any]]] = {}
     for position, beat in enumerate(beats, start=1):
-        take = _take_for_beat(int(beat.get("ordinal") or position), position, len(beats), pattern, max(len(pattern), 1))
+        take = _take_for_beat(
+            int(beat.get("ordinal") or position),
+            position,
+            len(beats),
+            pattern,
+            max(len(pattern), 1),
+        )
         by_take.setdefault(take, []).append(beat)
     starts = [sum(durations[:index]) for index in range(len(durations))]
     placed: list[PlacedPanel] = []
@@ -178,25 +197,49 @@ def place_panels(
             for number, cue in enumerate(beat.get("system_panels") or [], start=1):
                 if not isinstance(cue, Mapping):
                     continue
-                lines = tuple(without_long_dashes(str(line)) for line in cue.get("lines") or [] if str(line).strip())[:5]
+                lines = tuple(
+                    without_long_dashes(str(line))
+                    for line in cue.get("lines") or []
+                    if str(line).strip()
+                )[:5]
                 form = str(cue.get("form") or "")
                 panel_id = f"{beat.get('beat_id') or f'beat{index + 1}'}-panel{number}"
                 if not lines or not form:
                     continue
                 if in_take >= MAX_SYSTEM_PANELS_PER_TAKE:
-                    _LOG.info("system panel %s dropped: take %d already has %d", panel_id, take, in_take)
+                    _LOG.info(
+                        "system panel %s dropped: take %d already has %d",
+                        panel_id,
+                        take,
+                        in_take,
+                    )
                     continue
                 if placed and placed[-1].form == form:
-                    _LOG.info("system panel %s dropped: the same %s straight after another", panel_id, form)
+                    _LOG.info(
+                        "system panel %s dropped: the same %s straight after another",
+                        panel_id,
+                        form,
+                    )
                     continue
-                anchor = take_start if cue.get("anchor") == "take" else take_start + take_ms * index // len(members)
-                duration = min(MAX_SYSTEM_PANEL_MS, max(MIN_SYSTEM_PANEL_MS, int(cue.get("duration_ms") or 2000)))
+                anchor = (
+                    take_start
+                    if cue.get("anchor") == "take"
+                    else take_start + take_ms * index // len(members)
+                )
+                duration = min(
+                    MAX_SYSTEM_PANEL_MS,
+                    max(MIN_SYSTEM_PANEL_MS, int(cue.get("duration_ms") or 2000)),
+                )
                 start = anchor + max(0, int(cue.get("appear_at_ms") or 0))
                 if placed:
                     start = max(start, placed[-1].end_ms + PANEL_GAP_MS)
                 start = min(start, take_end - MIN_SYSTEM_PANEL_MS)
                 end = min(start + duration, take_end)
-                if start < take_start or end - start < MIN_SYSTEM_PANEL_MS or (placed and start < placed[-1].end_ms):
+                if (
+                    start < take_start
+                    or end - start < MIN_SYSTEM_PANEL_MS
+                    or (placed and start < placed[-1].end_ms)
+                ):
                     continue
                 placed.append(
                     PlacedPanel(
@@ -344,14 +387,22 @@ def panel_area(
     portrait = height > width
     inset = round(0.04 * ph)
     left = max(px + inset, round(SIDE_MARGIN_FRACTION * width))
-    right = min(px + pw - inset, round((1.0 - SAFE_RIGHT_RAIL_WIDTH_FRACTION) * width) - round(0.01 * width))
+    right = min(
+        px + pw - inset,
+        round((1.0 - SAFE_RIGHT_RAIL_WIDTH_FRACTION) * width) - round(0.01 * width),
+    )
     top = py + inset
     bottom = py + ph - inset
     if portrait and picture is None:
         top = max(top, round(max(PANEL_TOP_FRACTION, SAFE_TOP_FRACTION) * height))
         if captions_on_picture:
-            bottom = min(bottom, round((CAPTION_BAND_TOP_FRACTION - CAPTION_GAP_FRACTION) * height))
-    return PanelArea(left=left, top=top, right=max(left + 1, right), bottom=max(top + 1, bottom))
+            bottom = min(
+                bottom,
+                round((CAPTION_BAND_TOP_FRACTION - CAPTION_GAP_FRACTION) * height),
+            )
+    return PanelArea(
+        left=left, top=top, right=max(left + 1, right), bottom=max(top + 1, bottom)
+    )
 
 
 # --- colour -------------------------------------------------------------------------------------
@@ -428,7 +479,10 @@ def _layout(form: str, lines: Sequence[str], scale: float) -> list[_Line]:
             out.append(_Line(rest[0], size("skill"), "c", "text", glow=True))
         out += [_Line(line, size("small"), "c", "text") for line in rest[1:]]
     elif form == "alert":
-        out += [_Line(line, size("body"), "l", "accent" if i == 0 else "text") for i, line in enumerate(lines)]
+        out += [
+            _Line(line, size("body"), "l", "accent" if i == 0 else "text")
+            for i, line in enumerate(lines)
+        ]
     elif form == "dungeon_gate":
         out.append(_Line(head, size("header"), "c", "accent", glow=True))
         out += [_Line(line, size("body"), "c", "text") for line in rest]
@@ -484,7 +538,12 @@ class PanelBox:
 
 
 def _fit(
-    form: str, lines: Sequence[str], *, max_width: int, frame_height: int, serif: bool = False
+    form: str,
+    lines: Sequence[str],
+    *,
+    max_width: int,
+    frame_height: int,
+    serif: bool = False,
 ) -> tuple[list[_Line], int, int, int]:
     """Lay the lines out and size the box; shrink the type until the widest line fits."""
 
@@ -499,9 +558,14 @@ def _fit(
         laid = _layout(form, lines, scale)
         widest = max(_line_width(line, serif=serif) for line in laid)
     gap_total = sum(round(line.size * _LINE_GAP) for line in laid[1:])
-    rule = round(18 * base) if form in ("status_window", "stat_sheet", "quest_log") else 0
+    rule = (
+        round(18 * base) if form in ("status_window", "stat_sheet", "quest_log") else 0
+    )
     inner_h = sum(line.size for line in laid) + gap_total + rule
-    box_w = min(max_width, round(widest) + 2 * pad + (round(14 * base) if form == "alert" else 0))
+    box_w = min(
+        max_width,
+        round(widest) + 2 * pad + (round(14 * base) if form == "alert" else 0),
+    )
     box_w = max(box_w, round(0.36 * max_width)) if form != "alert" else box_w
     return laid, box_w, inner_h + 2 * pad, pad
 
@@ -533,7 +597,9 @@ def place_panel_box(
     narrow = panel.position in ("upper_left", "upper_right")
     max_width = round(area.width * (NARROW_SHARE if narrow else 1.0))
     serif = panel.style.frame in SERIF_FRAMES
-    _, box_w, box_h, _ = _fit(panel.form, panel.lines, max_width=max_width, frame_height=height, serif=serif)
+    _, box_w, box_h, _ = _fit(
+        panel.form, panel.lines, max_width=max_width, frame_height=height, serif=serif
+    )
     box_h = min(box_h, area.height)
     if panel.position == "upper_left":
         x = area.left
@@ -563,7 +629,9 @@ def _ass_time(ms: int) -> str:
 
 
 def _clean(text: str) -> str:
-    return without_long_dashes(text).replace("\\", "/").replace("{", "(").replace("}", ")")
+    return (
+        without_long_dashes(text).replace("\\", "/").replace("{", "(").replace("}", ")")
+    )
 
 
 def _rounded_rect(w: int, h: int, r: int) -> str:
@@ -602,8 +670,14 @@ def _corner_brackets(w: int, h: int, arm: int, t: int) -> str:
 def _brush_stroke(w: int, h: int, seed: str) -> str:
     rng = random.Random(int(hashlib.sha256(seed.encode("utf-8")).hexdigest()[:8], 16))
     steps = 14
-    top = [(round(w * i / steps), round(rng.uniform(0, 0.12) * h)) for i in range(steps + 1)]
-    bottom = [(round(w * i / steps), round(h - rng.uniform(0, 0.12) * h)) for i in range(steps, -1, -1)]
+    top = [
+        (round(w * i / steps), round(rng.uniform(0, 0.12) * h))
+        for i in range(steps + 1)
+    ]
+    bottom = [
+        (round(w * i / steps), round(h - rng.uniform(0, 0.12) * h))
+        for i in range(steps, -1, -1)
+    ]
     lead = round(rng.uniform(0.02, 0.06) * w)
     points = [(-lead, round(h * 0.5)), *top, (w + lead, round(h * 0.45)), *bottom]
     head = f"m {points[0][0]} {points[0][1]}"
@@ -611,7 +685,13 @@ def _brush_stroke(w: int, h: int, seed: str) -> str:
 
 
 def _box_events(
-    panel: PlacedPanel, box: PanelBox, colours: _Colours, *, start: str, end: str, unit: float
+    panel: PlacedPanel,
+    box: PanelBox,
+    colours: _Colours,
+    *,
+    start: str,
+    end: str,
+    unit: float,
 ) -> list[str]:
     frame = panel.style.frame
     w, h = box.width, box.height
@@ -620,9 +700,17 @@ def _box_events(
     head = f"\\an7\\pos({box.x},{box.y})\\org({cx},{cy})\\fad({FADE_IN_MS},{FADE_OUT_MS})\\fscy30\\t(0,{OPEN_MS},\\fscy100)"
     events: list[str] = []
 
-    def draw(layer: int, tags: str, shape: str, *, at: tuple[int, int] | None = None) -> None:
-        placed = head if at is None else head.replace(f"\\pos({box.x},{box.y})", f"\\pos({at[0]},{at[1]})")
-        events.append(f"Dialogue: {layer},{start},{end},Panel,,0,0,0,,{{{placed}{tags}\\p1}}{shape}{{\\p0}}")
+    def draw(
+        layer: int, tags: str, shape: str, *, at: tuple[int, int] | None = None
+    ) -> None:
+        placed = (
+            head
+            if at is None
+            else head.replace(f"\\pos({box.x},{box.y})", f"\\pos({at[0]},{at[1]})")
+        )
+        events.append(
+            f"Dialogue: {layer},{start},{end},Panel,,0,0,0,,{{{placed}{tags}\\p1}}{shape}{{\\p0}}"
+        )
 
     fill, accent = _ass_colour(colours.fill), _ass_colour(colours.accent)
     if frame == "glass":
@@ -638,20 +726,30 @@ def _box_events(
             _rect(0, 0, w, h),
         )
         arm, t = round(min(w, h) * 0.22), max(2, round(5 * unit))
-        draw(1, f"\\1c{accent}\\1a&H00&\\bord0\\shad0\\blur{max(1, round(2 * unit))}", _corner_brackets(w, h, arm, t))
+        draw(
+            1,
+            f"\\1c{accent}\\1a&H00&\\bord0\\shad0\\blur{max(1, round(2 * unit))}",
+            _corner_brackets(w, h, arm, t),
+        )
     elif frame == "neon":
         draw(
             0,
             f"\\1c{fill}\\1a&H48&\\3c{accent}\\3a&H00&\\bord{border * 3}\\shad0\\blur{max(2, round(10 * unit))}",
             _rect(0, 0, w, h),
         )
-        draw(1, f"\\1a&HFF&\\3c{accent}\\3a&H00&\\bord{border}\\shad0", _rect(0, 0, w, h))
+        draw(
+            1, f"\\1a&HFF&\\3c{accent}\\3a&H00&\\bord{border}\\shad0", _rect(0, 0, w, h)
+        )
     elif frame == "ink_scroll":
         rod_h = max(4, round(14 * unit))
         over = max(4, round(16 * unit))
         rod = _rounded_rect(w + 2 * over, rod_h, rod_h // 2)
-        rod_tags = f"\\1c{accent}\\1a&H00&\\bord0\\shad{max(1, round(2 * unit))}\\4a&H80&"
-        draw(0, f"\\1c{fill}\\1a&H14&\\bord0\\shad0", _rect(0, rod_h // 2, w, h - rod_h))
+        rod_tags = (
+            f"\\1c{accent}\\1a&H00&\\bord0\\shad{max(1, round(2 * unit))}\\4a&H80&"
+        )
+        draw(
+            0, f"\\1c{fill}\\1a&H14&\\bord0\\shad0", _rect(0, rod_h // 2, w, h - rod_h)
+        )
         draw(1, rod_tags, rod, at=(box.x - over, box.y))
         draw(1, rod_tags, rod, at=(box.x - over, box.y + h - rod_h))
     elif frame == "parchment":
@@ -662,7 +760,9 @@ def _box_events(
         )
     else:  # brush
         draw(
-            0, f"\\1c{fill}\\1a&H40&\\bord0\\shad0\\blur{max(1, round(2 * unit))}", _brush_stroke(w, h, panel.panel_id)
+            0,
+            f"\\1c{fill}\\1a&H40&\\bord0\\shad0\\blur{max(1, round(2 * unit))}",
+            _brush_stroke(w, h, panel.panel_id),
         )
     if panel.form == "dungeon_gate":
         inset = max(4, round(9 * unit))
@@ -722,7 +822,9 @@ def system_panel_events(
     narrow = panel.position in ("upper_left", "upper_right")
     max_width = round(area.width * (NARROW_SHARE if narrow else 1.0))
     serif = panel.style.frame in SERIF_FRAMES
-    laid, _, _, pad = _fit(panel.form, panel.lines, max_width=max_width, frame_height=height, serif=serif)
+    laid, _, _, pad = _fit(
+        panel.form, panel.lines, max_width=max_width, frame_height=height, serif=serif
+    )
     colours = _colours(panel.style.palette)
     start, end = _ass_time(start_ms), _ass_time(end_ms)
     events = _box_events(panel, box, colours, start=start, end=end, unit=unit)
@@ -845,17 +947,24 @@ def system_panels_ass(
 
     if not panels:
         return None
-    area = panel_area(width, height, picture=picture, captions_on_picture=captions_on_picture)
+    area = panel_area(
+        width, height, picture=picture, captions_on_picture=captions_on_picture
+    )
     events: list[str] = []
     for start_ms, end_ms, panel in panels:
         if end_ms <= start_ms:
             continue
-        events += system_panel_events(panel, start_ms=start_ms, end_ms=end_ms, width=width, height=height, area=area)
+        events += system_panel_events(
+            panel,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            width=width,
+            height=height,
+            area=area,
+        )
     if not events:
         return None
     return ass_header(width, height) + "".join(f"{event}\n" for event in events)
-
-
 
 
 def burn_panels(
@@ -888,7 +997,11 @@ def burn_panels(
 
     info = probe_video(video)
     document = system_panels_ass(
-        panels, width=info.width, height=info.height, picture=picture, captions_on_picture=picture is None
+        panels,
+        width=info.width,
+        height=info.height,
+        picture=picture,
+        captions_on_picture=picture is None,
     )
     if document is None:
         raise ValueError("no system panel to burn")
@@ -938,12 +1051,19 @@ def reel_panels(
 
     from creation.post.reel_plan import contiguous_runs, segment_map
 
-    numbered = {take_id: int(m.group(1)) for take_id, _ in takes if (m := _TAKE_NUMBER.match(take_id))}
+    numbered = {
+        take_id: int(m.group(1))
+        for take_id, _ in takes
+        if (m := _TAKE_NUMBER.match(take_id))
+    }
     if not numbered:
         return []
     last = max(numbered.values())
     lengths = {numbered[t]: d for t, d in takes if t in numbered}
-    durations = [round(lengths[n] * 1000) if lengths.get(n) else NOMINAL_TAKE_MS for n in range(1, last + 1)]
+    durations = [
+        round(lengths[n] * 1000) if lengths.get(n) else NOMINAL_TAKE_MS
+        for n in range(1, last + 1)
+    ]
     placed = place_panels(spine, episode_id, durations)
     starts = [sum(durations[:index]) / 1000.0 for index in range(len(durations))]
     out: list[tuple[int, int, PlacedPanel]] = []
@@ -960,9 +1080,13 @@ def reel_panels(
             seen = end - start
             if seen <= 0:
                 continue
-            if seen < PANEL_MIN_VISIBLE_SECONDS and seen < PANEL_VISIBLE_FRACTION * (p_end - p_start):
+            if seen < PANEL_MIN_VISIBLE_SECONDS and seen < PANEL_VISIBLE_FRACTION * (
+                p_end - p_start
+            ):
                 continue
-            out.append((round((at + start - a) * 1000), round((at + end - a) * 1000), panel))
+            out.append(
+                (round((at + start - a) * 1000), round((at + end - a) * 1000), panel)
+            )
     return sorted(out, key=lambda item: item[0])
 
 
