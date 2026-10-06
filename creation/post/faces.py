@@ -255,7 +255,9 @@ def _cascade(kind: str) -> Any:
     return None if cascade.empty() else cascade
 
 
-def local_detector(*, anime: bool | None = None) -> Detector | None:
+def local_detector(
+    *, anime: bool | None = None, profile_faces: bool | None = None
+) -> Detector | None:
     """The cascades (real, anime and profile faces), unioned; ``None`` only when OpenCV cannot be used.
 
     Parameters
@@ -266,6 +268,10 @@ def local_detector(*, anime: bool | None = None) -> Detector | None:
         cascade's boxes come first, both at the same strictness. The profile
         cascade (both orientations) always comes last, adding only faces the
         others missed.
+    profile_faces
+        Run the profile cascade. ``None``: on, except for a desk created
+        before 6 Oct 2026 (:func:`creation.rules_epoch.legacy_rules`), which
+        keeps the front-on pair it always had (frozen; do not change).
 
     Returns
     -------
@@ -273,7 +279,12 @@ def local_detector(*, anime: bool | None = None) -> Detector | None:
         A callable reading one RGB frame.
     """
 
-    human, drawn, profile = _cascade("human"), _cascade("anime"), _cascade("profile")
+    if profile_faces is None:
+        from creation.rules_epoch import legacy_rules
+
+        profile_faces = not legacy_rules()
+    human, drawn = _cascade("human"), _cascade("anime")
+    profile = _cascade("profile") if profile_faces else None
     if human is None and drawn is None and profile is None:
         return None
     cv2 = _cv2()
@@ -312,7 +323,8 @@ def local_detector(*, anime: bool | None = None) -> Detector | None:
             found = union_boxes(
                 boxes(human, gray, NEIGHBOURS), boxes(drawn, gray, NEIGHBOURS)
             )
-        found = union_boxes(found, turned(plain))
+        if profile is not None:
+            found = union_boxes(found, turned(plain))
         height, width = gray.shape[:2]
         if not found:
             return FaceReading(0, 0.0, (), (width, height))
@@ -351,7 +363,12 @@ def detector_for(desk: Path, episode: int) -> Detector | None:
         preset = load_production(desk).preset_id
     except (FileNotFoundError, ValueError, TypeError):
         preset = None
-    return local_detector(anime=anime_style(found[0] if found else None, preset))
+    from creation.rules_epoch import is_legacy
+
+    return local_detector(
+        anime=anime_style(found[0] if found else None, preset),
+        profile_faces=not is_legacy(desk),
+    )
 
 
 def detect_faces(

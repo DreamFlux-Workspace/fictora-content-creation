@@ -235,8 +235,14 @@ def caption_style_at_look(desk: Path, *, out: TextIO | None = None) -> Path | No
         save_production_config,
     )
 
+    from creation.rules_epoch import is_legacy
+
     out = out or sys.stdout
     desk = desk.expanduser().resolve()
+    if is_legacy(desk):
+        # A desk created before 6 Oct 2026 is never asked: it keeps its captions (house) and its
+        # production.config.json untouched (creation.rules_epoch; frozen, do not change).
+        return None
     config = load_production_config(desk)
     if config.caption_style:
         return None
@@ -327,6 +333,7 @@ def run_caption_style(
         "show": "set for this show",
         "continuing": "not chosen; this show has finished episodes, so it keeps subtle",
         "new": "not chosen yet; a new show is captioned bold (asked at the look approval)",
+        "legacy": "not chosen; a desk created before 6 Oct 2026 keeps subtle, as it always had",
     }[source]
     word = (
         caption_style_word(canonical_caption_style(style))

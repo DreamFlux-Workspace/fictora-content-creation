@@ -116,6 +116,7 @@ from creation.post.reel_plan import (
     segments_from_json,
     strongest_from_json,
 )
+from creation.rules_epoch import is_legacy, under_desk_rules
 from creation.post.reel_sources import (
     Inferred,
     accepted_from_notes,
@@ -619,6 +620,38 @@ def reel_paths(desk: Path, episode: int, *, draft: bool = False) -> dict[str, Pa
     return paths
 
 
+def legacy_reel_paths(desk: Path, episode: int) -> dict[str, Path]:
+    """:func:`reel_paths` for a desk created before 2026-10-06: flat ``reels/``, no drafts.
+
+    Frozen for desks created before 2026-10-06; do not change (:mod:`creation.rules_epoch`).
+    """
+
+    folder = desk / REELS_DIR
+    folder.mkdir(parents=True, exist_ok=True)
+    stems = (
+        f"reel-ep{episode:02d}",
+        f"reel-plan-ep{episode:02d}",
+        f"post-ep{episode:02d}",
+    )
+    used = {0}
+    for path in folder.iterdir():
+        for stem in stems:
+            match = re.match(rf"^{re.escape(stem)}-v(\d+)(\.|-)", path.name)
+            if match:
+                used.add(int(match.group(1)))
+    n = max(used) + 1
+    paths = {
+        "video": folder / f"reel-ep{episode:02d}-v{n}.mp4",
+        "ass": folder / f"reel-ep{episode:02d}-v{n}.ass",
+        "plan": folder / f"reel-plan-ep{episode:02d}-v{n}.json",
+        "post": folder / f"post-ep{episode:02d}-v{n}.txt",
+    }
+    for path in paths.values():
+        if path.exists():
+            raise FileExistsError(f"{path} exists; the reel never overwrites")
+    return paths
+
+
 def write_new(path: Path, text: str) -> Path:
     """Write ``text`` to a file that must not exist yet (``x`` mode)."""
 
@@ -754,6 +787,9 @@ class ReelResult:
     series: str = ""
     hook_text: str = ""
     posting_notes: list[str] = field(default_factory=list)
+    #: Made for a desk created before 6 Oct 2026 (:mod:`creation.rules_epoch`): flat ``reels/``,
+    #: no cover, no draft names, no books, the post text as it was.
+    legacy: bool = False
 
     def summary(self) -> str:
         order = " → ".join(
@@ -761,6 +797,9 @@ class ReelResult:
         )
         if self.video is None:
             return f"Plan only: {self.plan_path} ({len(self.plan.segments)} segments, {self.plan.total:.2f} s): {order}"
+        if self.legacy:
+            # Frozen for desks created before 2026-10-06; do not change.
+            return f"Reel {self.video.name}: {self.seconds:.2f} s, {self.loudness}, {self.captions}; {order}"
         cover = f"; cover {self.cover.name}" if self.cover else "; no cover image"
         return f"Reel {self.video.name}: {self.seconds:.2f} s, {self.loudness}, {self.captions}{cover}; {order}"
 
@@ -1156,6 +1195,7 @@ def render_reel(
 # --- the command -------------------------------------------------------------------------------
 
 
+@under_desk_rules
 def run_reel(
     desk: Path,
     *,
@@ -1242,6 +1282,11 @@ def run_reel(
             hook_line=hook_line, no_hook_line=no_hook_line, hook_line_position=hook_line_position,
             no_cover=no_cover, cover_frame=cover_frame,
         )  # fmt: skip
+    if result.legacy:
+        # A desk created before 2026-10-06 keeps no books (latest.json, metrics.csv): frozen.
+        if result.video is not None:
+            print(result.summary(), file=stream or sys.stdout)
+        return result
     return record_reel(
         desk.expanduser().resolve(), episode, result, made_by=made_by, stream=stream
     )
@@ -1577,7 +1622,8 @@ def make_reel(
                     f"{s.take_id}: `{variant.name}` is a blurred variant made after finish; its patch is not on the "
                     "pre-caption source: add it to the plan's patches (--plan-only, edit, --plan FILE)"
                 )
-    expected = expected_takes(desk, spine, episode)
+    legacy = is_legacy(desk)
+    expected = None if legacy else expected_takes(desk, spine, episode)
     draft = expected is not None and len(srcs) < expected
     if draft:
         print(
@@ -1586,7 +1632,11 @@ def make_reel(
             file=out,
             flush=True,
         )
-    paths = reel_paths(desk, episode, draft=draft)
+    paths = (
+        legacy_reel_paths(desk, episode)
+        if legacy
+        else reel_paths(desk, episode, draft=draft)
+    )
     boxed = reel_letterbox(
         desk, spine, episode, srcs, hook_line=hook_line, no_hook_line=no_hook_line
     )
@@ -1645,6 +1695,7 @@ def make_reel(
         sources=sources_fingerprint(desk, srcs), series=str(spine.get("title") or desk.name),
         hook_text=hook.overlay.text if hook.overlay is not None
         else boxed.title.hook if boxed is not None and boxed.title is not None else "",
+        legacy=legacy,
     )  # fmt: skip
     if plan_only:
         print(
@@ -1660,6 +1711,11 @@ def make_reel(
     )  # fmt: skip
     summary = episode_summary(spine, episode)
     series = str(spine.get("title") or desk.name)
+    if legacy:
+        return _legacy_reel_files(
+            result, paths, episode=episode, spine=spine, summary=summary, series=series, seconds=secs,
+            loudness=loud, captions_line=cap_line, report=report, style_note=style_note, out=out,
+        )  # fmt: skip
     posting, posting_notes = _posting(desk)
     cover: Path | None = None
     if no_cover:
@@ -1699,6 +1755,50 @@ def make_reel(
             print(f"{key}: {paths[key]}", file=out)
     if cover is not None:
         print(f"cover: {cover}", file=out)
+    return result
+
+
+def _legacy_reel_files(
+    result: ReelResult,
+    paths: Mapping[str, Path],
+    *,
+    episode: int,
+    spine: Mapping[str, Any],
+    summary: Mapping[str, Any],
+    series: str,
+    seconds: float,
+    loudness: str,
+    captions_line: str,
+    report: list[str],
+    style_note: str,
+    out: TextIO,
+) -> ReelResult:
+    """The end of a reel for a desk created before 2026-10-06: the post text alone, no cover.
+
+    Frozen for desks created before 2026-10-06; do not change (:mod:`creation.rules_epoch`).
+    """
+
+    write_new(
+        paths["post"],
+        post_text(
+            series=series,
+            episode=episode,
+            title=str(summary.get("title") or ""),
+            question=str(summary.get("hook_question") or ""),
+            genre=str(spine.get("microdrama_genre") or ""),
+            premise_line=str(spine.get("premise_line") or ""),
+        ),  # fmt: skip
+    )
+    result.video, result.post, result.seconds, result.loudness, result.captions = (
+        paths["video"], paths["post"], seconds, loudness, captions_line,
+    )  # fmt: skip
+    result.ass = paths["ass"] if paths["ass"].exists() else None
+    result.lines = report + ([style_note] if style_note else [])
+    for line in result.lines:
+        print(f"- {line}", file=out)
+    for key in ("video", "ass", "plan", "post"):
+        if paths[key].exists():
+            print(f"{key}: {paths[key]}", file=out)
     return result
 
 
@@ -2078,6 +2178,9 @@ def auto_reel(
 
     out = stream or sys.stdout
     desk = desk.expanduser().resolve()
+    if is_legacy(desk):
+        # A desk created before 6 Oct 2026 makes reels only with `reel` (frozen; do not change).
+        return None
     found = saved_spine(desk, episode)
     if found is None:
         print(

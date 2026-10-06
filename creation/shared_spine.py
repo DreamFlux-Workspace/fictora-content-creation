@@ -22,7 +22,7 @@ from creation.production_state import PRODUCTION_FILENAME
 READ_OR_LOCAL_COMMANDS = frozenset(
     {
         # fictora-produce
-        "start", "bind", "presets", "config", "status", "setup-check", "caption",
+        "start", "bind", "presets", "config", "status", "setup-check", "caption", "rules-epoch",
         # episode flow: reads
         "expressions", "spine", "take-facts", "check-lines", "plates",
         # local post (ffmpeg on this laptop)

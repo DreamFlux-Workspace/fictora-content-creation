@@ -41,7 +41,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
-from creation.caption_dashes import caption_text as no_dash_text
+from creation.caption_dashes import drawn_text as no_dash_text
 from creation.captions import (
     CAPTION_BAND,
     FONT_NAME,

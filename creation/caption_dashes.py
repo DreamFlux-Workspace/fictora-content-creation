@@ -83,4 +83,17 @@ def caption_text(text: str) -> str:
     return out.strip()
 
 
-__all__ = ["DASH_IN_CAPTION", "ELLIPSIS", "caption_text"]
+def drawn_text(text: str) -> str:
+    """``text`` as the picture draws it under the running desk's rules.
+
+    A desk created before 6 Oct 2026 keeps its dashes, as its captions always
+    had them (:func:`creation.rules_epoch.legacy_rules`; frozen for those
+    desks, do not change); every other desk gets :func:`caption_text`.
+    """
+
+    from creation.rules_epoch import legacy_rules
+
+    return text if legacy_rules() else caption_text(text)
+
+
+__all__ = ["DASH_IN_CAPTION", "ELLIPSIS", "caption_text", "drawn_text"]

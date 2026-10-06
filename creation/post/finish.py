@@ -279,6 +279,7 @@ from creation.post.story_signs import (
 from creation.post.take_text import OcrRunner, TextCheck, desk_text_check
 from creation.post.thumbnail import THUMBNAIL_USD, attach_episode_thumbnail_to_finish
 from creation.post.watermark import watermark
+from creation.rules_epoch import legacy_rules, under_desk_rules
 
 #: The finish step that lays and captions the episode's inner-voice cues on this take.
 INNER_VOICE_STEP = "inner-voice"
@@ -904,6 +905,7 @@ def finish_hook(
     )  # fmt: skip
 
 
+@under_desk_rules
 def run_finish(
     desk: Path,
     *,
@@ -2361,10 +2363,14 @@ def run_finish(
         if answer.get("needs_opt_in"):
             ask = (
                 f"no cover on the desk yet. Drawing one on the server costs ${THUMBNAIL_USD:.2f}; "
-                f"after the human's yes, finish again with --thumbnail. For Instagram you need none: "
-                f"the reel step (`reel --desk D --episode N`) makes a free cover image to upload "
-                f"with Edit cover"
+                f"after the human's yes, finish again with --thumbnail"
             )
+            if not legacy_rules():
+                # A desk created before 6 Oct 2026 keeps the note as it was (its reel makes no cover).
+                ask += (
+                    ". For Instagram you need none: the reel step (`reel --desk D --episode N`) "
+                    "makes a free cover image to upload with Edit cover"
+                )
             append_run_note(run_dir, f"Finish · thumbnail: skipped, {ask}")
             return StepReport("thumbnail", "skipped", ask)
         if answer.get("reused"):
@@ -2464,7 +2470,7 @@ def run_finish(
             "captions",
             "Skipping captions (--caption-style none)"
             if style == "none"
-            else f"Burning {caption_style_word(style)} captions",
+            else f"Burning {style if legacy_rules() else caption_style_word(style)} captions",
             do_captions,
         )
         if hook.overlay is not None:

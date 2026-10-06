@@ -62,6 +62,10 @@ class ProductionConfig:
     lane: str | None = None
     account: str | None = None
     posting_slot: str | None = None
+    #: The desk's rules epoch (:mod:`creation.rules_epoch`): ``start`` stamps ``"2026-10-06"`` on a
+    #: new desk; ``"legacy"`` keeps a desk's original behaviour (created before 6 Oct 2026). ``None``:
+    #: classified by the desk's creation date. Set with ``rules-epoch --desk D --set ...``.
+    rules_epoch: str | None = None
     poll_plan_deadline_seconds: float = 1800.0
     poll_cast_deadline_seconds: float = 3600.0
     poll_boards_deadline_seconds: float = 7200.0

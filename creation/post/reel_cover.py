@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from creation.caption_dashes import caption_text as no_dash_text
+from creation.caption_dashes import drawn_text as no_dash_text
 from creation.captions import FONT_NAME, FONTS_DIR, _ass_escape, text_width
 from creation.ops.folder import next_versioned_path
 from creation.post.hook_overlay import (
