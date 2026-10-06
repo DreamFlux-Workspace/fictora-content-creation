@@ -1254,7 +1254,7 @@ def make_cover(
                     f"cover: {source.take_id} is cut from the accepted file, so its burned captions and mark "
                     "are on the cover's picture; pick a frame between lines with --cover-frame S"
                 )
-        faces = face_boxes(picture, at, detector)
+        faces = face_boxes(picture, at, detector, scratch=scratch)
         missing = face_note(faces)
         if missing is not None:
             warnings.append(missing.removeprefix("⚠ "))

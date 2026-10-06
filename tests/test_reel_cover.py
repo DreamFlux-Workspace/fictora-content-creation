@@ -321,7 +321,7 @@ def test_a_long_title_wraps_on_two_lines_inside_the_safe_area() -> None:
 
 # --- follow-up (6 Oct): the profile-face cascade finds a three-quarter face -------------------------
 
-FACE_FIXTURE = Path(__file__).parent / "data" / "scp173-ep01-cover-face.jpg"
+FACE_FIXTURE = Path(__file__).parent / "data" / "scp173-ep01-cover-face.png"
 
 
 def test_the_profile_cascade_finds_the_three_quarter_crying_face() -> None:
@@ -350,3 +350,15 @@ def test_a_cover_with_no_face_found_says_to_look_at_it() -> None:
         "⚠ no face found on the cover picture — look at the cover before posting"
     )
     assert face_note([(0.1, 0.1, 0.2, 0.2)]) is None
+
+
+def test_the_cover_reads_faces_on_the_still_at_its_own_aspect() -> None:
+    from creation.post.faces import local_detector
+    from creation.post.reel_cover import face_boxes
+
+    detector = local_detector(anime=True)
+    if detector is None:
+        pytest.skip("OpenCV not available")
+    boxes = face_boxes(FACE_FIXTURE, None, detector)
+    assert boxes, "the three-quarter face is found on the cover still"
+    assert face_boxes(FACE_FIXTURE, None, None) is None

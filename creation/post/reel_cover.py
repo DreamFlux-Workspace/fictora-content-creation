@@ -311,36 +311,65 @@ def draw_cover(
     return out
 
 
+#: Widths the cover's picture is read at for faces (aspect kept): a take's reading width and twice it.
+#: The cascades are brittle on drawn faces; two scales find more of them than one.
+COVER_FACE_WIDTHS = (270, 540)
+
+
 def face_boxes(
-    picture: Path, at: float | None, detector: Any
+    picture: Path, at: float | None, detector: Any, *, scratch: Path | None = None
 ) -> list[tuple[float, float, float, float]] | None:
-    """Face boxes on the cover's picture as frame fractions ``(x, y, w, h)``; ``None`` when no detector runs."""
+    """Face boxes on the cover's picture as frame fractions ``(x, y, w, h)``; ``None`` when no detector runs.
+
+    The picture is read as a still at its own aspect (a video's frame at ``at``
+    is grabbed first, into ``scratch``), at each of :data:`COVER_FACE_WIDTHS`;
+    the boxes of every width are kept.
+
+    Parameters
+    ----------
+    picture
+        A still image, or a video with ``at``.
+    at
+        Seconds into the video; ``None`` for a still.
+    detector
+        From :func:`creation.post.faces.local_detector` (``None``: not read).
+    scratch
+        A folder for the grabbed frame (a temporary one when not given).
+
+    Returns
+    -------
+    list | None
+        The boxes (empty: none found), or ``None`` when no detector ran.
+    """
 
     if detector is None:
         return None
+    import tempfile
+
+    import numpy as np
+    from PIL import Image
+
     from creation.post.faces import upper_band_face
+    from creation.post.media import run_ffmpeg
 
-    if at is None:
-        import numpy as np
-        from PIL import Image
-
-        from creation.post.faces import FACE_SIZE
-
-        # Read at the size a take's faces are read at (the cascades are tuned there).
-        with Image.open(picture) as image:
-            scale = FACE_SIZE[0] / image.width
-            small = image.convert("RGB").resize(
-                (FACE_SIZE[0], max(1, round(image.height * scale))), Image.LANCZOS
-            )
-            frame = np.asarray(small)
-        found = upper_band_face(frame, top=0.0, bottom=1.0, detector=detector)
-    else:
-        found = upper_band_face(
-            picture, at, None, top=0.0, bottom=1.0, detector=detector
-        )
-    if found is None:
-        return None
-    return [box for _, box in found.boxes]
+    with tempfile.TemporaryDirectory(prefix="fictora-cover-face-") as tmp:
+        still = picture
+        if at is not None:
+            still = (scratch or Path(tmp)) / "cover-face-frame.png"
+            run_ffmpeg(
+                ["-ss", f"{max(0.0, at):.3f}", "-i", str(picture), "-frames:v", "1", str(still)]
+            )  # fmt: skip
+        with Image.open(still) as image:
+            rgb = image.convert("RGB")
+        boxes: list[tuple[float, float, float, float]] = []
+        for width in COVER_FACE_WIDTHS:
+            height = max(1, round(rgb.height * width / rgb.width))
+            frame = np.asarray(rgb.resize((width, height), Image.LANCZOS))
+            found = upper_band_face(frame, top=0.0, bottom=1.0, detector=detector)
+            if found is None:
+                return None
+            boxes += [box for _, box in found.boxes]
+    return boxes
 
 
 #: Printed when no face box is found on the cover's picture.
