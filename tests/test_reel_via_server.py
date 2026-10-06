@@ -511,15 +511,91 @@ def test_reel_captions_go_to_the_server_without_a_dash(
     assert texts[-1] == "It was me…"
 
 
+def _spine_emphasis(desk: Path, words: dict[str, str]) -> None:
+    """Mark the writer's emphasis word on the desk spine's lines (``{line text: word}``)."""
+
+    path = desk / "ep01" / "api" / "spine.json"
+    spine = json.loads(path.read_text(encoding="utf-8"))
+    body = spine.get("spine", spine)
+    for beat in body.get("beats") or []:
+        for line in beat.get("dialogue_lines") or []:
+            if line.get("text") in words:
+                line["emphasis_word"] = words[line["text"]]
+    path.write_text(json.dumps(spine), encoding="utf-8")
+
+
 @needs_ffmpeg
-def test_a_bold_show_is_captioned_subtle_on_the_server_and_says_so(
+def test_a_bold_show_is_captioned_bold_on_the_server_with_the_writers_emphasis_words(
     reel_desk: Path, reel_server: FakeReelServer
 ) -> None:
+    _spine_emphasis(reel_desk, {"Open the door": "Open"})
     out = io.StringIO()
     run_reel(reel_desk, episode=1, seconds=6.0, stream=out, caption_style="bold")
 
-    assert reel_server.requests[0]["operator"]["caption_style"] == "house"
-    assert "does not take Bold yet" in out.getvalue()
+    operator = reel_server.requests[0]["operator"]
+    assert operator["caption_style"] == "bold"
+    cues = operator["takes"][0]["cues"]
+    assert cues[0]["emphasis_word"] == "Open"
+    # A line the writer did not mark sends none: the server's Bold fallback picks, as the local reel did.
+    assert "emphasis_word" not in cues[1] and "emphasis_word" not in cues[2]
+    assert "does not take Bold" not in out.getvalue()
+
+
+@needs_ffmpeg
+def test_a_bold_cuts_yellow_word_goes_to_the_server(
+    reel_desk: Path, reel_server: FakeReelServer
+) -> None:
+    from creation.caption_bold import BOLD_COLOUR, EMPHASIS_COLOUR
+
+    _spine_emphasis(reel_desk, {"Who is there": "Who"})
+    yellow, white = f"{{\\c{EMPHASIS_COLOUR}&}}", f"{{\\c{BOLD_COLOUR}&}}"
+    (reel_desk / "ep01" / "takes" / "take-ep01-t1-cap-v1.ass").write_text(
+        "[Events]\n"
+        f"Dialogue: 0,0:00:00.30,0:00:01.20,Bold,,0,0,0,,Open the {yellow}door{white}\n"
+        "Dialogue: 0,0:00:03.10,0:00:04.00,Bold,,0,0,0,,Who is there\n",
+        encoding="utf-8",
+    )
+    run_reel(
+        reel_desk, episode=1, seconds=6.0, stream=io.StringIO(), caption_style="bold"
+    )
+
+    cues = reel_server.requests[0]["operator"]["takes"][0]["cues"]
+    # The accepted cut's yellow word first; else the spine's word for the line.
+    assert [c.get("emphasis_word") for c in cues] == ["door", "Who"]
+
+
+@needs_ffmpeg
+def test_the_desks_show_style_goes_to_the_server_and_subtle_is_house(
+    reel_desk: Path, reel_server: FakeReelServer
+) -> None:
+    config = reel_desk / "production.config.json"
+    body = json.loads(config.read_text(encoding="utf-8")) if config.is_file() else {}
+    config.write_text(json.dumps({**body, "caption_style": "bold"}), encoding="utf-8")
+    run_reel(reel_desk, episode=1, seconds=6.0, stream=io.StringIO())
+    config.write_text(json.dumps({**body, "caption_style": "subtle"}), encoding="utf-8")
+    run_reel(reel_desk, episode=1, seconds=6.0, stream=io.StringIO())
+
+    assert [r["operator"]["caption_style"] for r in reel_server.requests] == [
+        "bold",
+        "house",
+    ]
+
+
+@needs_ffmpeg
+def test_watermark_y_and_no_panels_go_to_the_server(
+    reel_desk: Path, reel_server: FakeReelServer
+) -> None:
+    out = io.StringIO()
+    run_reel(
+        reel_desk, episode=1, seconds=6.0, stream=out, watermark_y=220, no_panels=True
+    )
+    run_reel(reel_desk, episode=1, seconds=6.0, stream=io.StringIO())
+
+    marked, plain = (r["operator"] for r in reel_server.requests)
+    assert marked["watermark_y"] == 220 and marked["no_panels"] is True
+    # Unset, they are left out: the server's defaults (the mark where /export puts it, the spine's panels).
+    assert "watermark_y" not in plain and "no_panels" not in plain
+    assert "the server puts the mark where /export does" not in out.getvalue()
 
 
 @needs_ffmpeg

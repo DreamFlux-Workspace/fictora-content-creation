@@ -204,6 +204,21 @@ def take_cues(source: TakeSource) -> tuple[Cue, ...]:
     No em or en dash goes to the burn (:mod:`creation.caption_dashes`, 6 Oct 2026).
     """
 
+    return tuple(cue for cue, _ in take_cue_emphasis(source))
+
+
+def take_cue_emphasis(
+    source: TakeSource, lines: Sequence[Any] = ()
+) -> list[tuple[Cue, str | None]]:
+    """The take's accepted caption cues, each with the Bold emphasis word of its line (or ``None``).
+
+    The word is the accepted cut's yellow word when the cue shows one (a Bold
+    ``.ass`` read back, ``Cue.emphasis``), else the writer's word on the spine
+    line the cue's words belong to (``lines``: :func:`creation.captions.episode_caption_lines`),
+    else ``None`` (the server's Bold fallback picks, as the local reel's did).
+    No em or en dash goes to the burn (:mod:`creation.caption_dashes`, 6 Oct 2026).
+    """
+
     from dataclasses import replace as with_text
 
     from creation.caption_dashes import caption_text
@@ -213,8 +228,46 @@ def take_cues(source: TakeSource) -> tuple[Cue, ...]:
     elif source.captions is not None:
         cues = tuple(parse_ass_cues(source.captions.read_text(encoding="utf-8")))
     else:
-        return ()
-    return tuple(with_text(c, text=caption_text(c.text)) for c in cues)
+        return []
+    out: list[tuple[Cue, str | None]] = []
+    for cue in cues:
+        words = cue.text.split()
+        word = words[cue.emphasis] if 0 <= cue.emphasis < len(words) else None
+        if word is None:
+            word = spine_emphasis_word(cue.text, lines)
+        word = caption_text(word).strip() if word else None
+        out.append((with_text(cue, text=caption_text(cue.text)), word or None))
+    return out
+
+
+def spine_emphasis_word(text: str, lines: Sequence[Any]) -> str | None:
+    """The writer's emphasis word of the spine line ``text`` is (part of), or ``None``.
+
+    A cue matches a line when its words (case and punctuation aside) run
+    inside the line's words; the line's ``emphasis`` (a word, a phrase or an
+    index, :func:`creation.caption_bold.marked_index`) is turned into the word.
+    """
+
+    from creation.caption_bold import marked_index, word_key
+
+    keys = [word_key(w) for w in text.split() if word_key(w)]
+    if not keys:
+        return None
+    for line in lines:
+        emphasis = getattr(line, "emphasis", None)
+        if emphasis is None or emphasis == "":
+            continue
+        words = str(getattr(line, "text", "")).split()
+        line_keys = [word_key(w) for w in words]
+        if not any(
+            line_keys[i : i + len(keys)] == keys
+            for i in range(len(line_keys) - len(keys) + 1)
+        ):
+            continue
+        index = marked_index(words, emphasis)
+        if index is not None:
+            return words[index]
+    return None
 
 
 # --- naming ------------------------------------------------------------------------------------
@@ -428,6 +481,8 @@ def operator_body(
     pov: bool,
     seconds: float,
     bands_in_source: bool = False,
+    watermark_y: int | None = None,
+    no_panels: bool = False,
     ending: str | None,
     hook_line: str | None,
     no_hook_line: bool,
@@ -448,6 +503,10 @@ def operator_body(
     }
     if bands_in_source:
         operator["bands_in_source"] = True
+    if watermark_y is not None:
+        operator["watermark_y"] = max(0, int(watermark_y))
+    if no_panels:
+        operator["no_panels"] = True
     if bed_upload is not None:
         operator["bed_url"], operator["bed_sha256"] = bed_upload
     if still_upload is not None:
@@ -493,6 +552,8 @@ def run_reel(
     cover_frame: float | None = None,
     made_by: str = "reel",
     server: ReelServer | None = None,
+    watermark_y: int | None = None,
+    no_panels: bool = False,
 ) -> ReelResult:
     """Make the episode's reel on the server and keep the books. Writes only under ``<desk>/reels/``.
 
@@ -511,11 +572,15 @@ def run_reel(
     take_files, sources, captions
         Which accepted cut, pre-caption source and caption cues per take (see :func:`take_sources`).
     caption_style
-        ``house`` / ``plain`` / ``none``; default the desk's.
+        ``bold`` / ``subtle`` (``house``) / ``plain`` / ``none``; default the desk's show style.
     ending
         ``hard`` (default) or ``freeze-black``; ``None`` keeps a hand-edited plan's own.
     hook_line, no_hook_line, hook_line_position
         ``--hook-line TEXT`` / ``--no-hook-line`` / ``--hook-line-position top|lower``.
+    watermark_y
+        ``--watermark-y``: the mark's top edge in pixels (never into the top 8%).
+    no_panels
+        ``--no-panels``: the server draws none of the spine's system panels.
     stream
         Progress output (stdout by default).
     no_cover
@@ -552,6 +617,7 @@ def run_reel(
             take_files=take_files, sources=sources, captions=captions, caption_style=caption_style,
             ending=ending, stream=stream, scratch=Path(tmp), hook_line=hook_line, no_hook_line=no_hook_line,
             hook_line_position=hook_line_position, no_cover=no_cover, cover_frame=cover_frame, server=server,
+            watermark_y=watermark_y, no_panels=no_panels,
         )  # fmt: skip
     return record_reel(desk, episode, result, made_by=made_by, stream=stream)
 
@@ -576,6 +642,8 @@ def make_reel(
     no_cover: bool = False,
     cover_frame: float | None = None,
     server: ReelServer | None = None,
+    watermark_y: int | None = None,
+    no_panels: bool = False,
 ) -> ReelResult:
     """The renderer: send the desk's takes to the server's reel engine and download what it made.
 
@@ -697,15 +765,11 @@ def make_reel(
             file=out,
             flush=True,
         )
+    # The show's style (bold / house for subtle / plain / none); Bold sends each line's emphasis word.
     style, style_note = resolve_caption_style(desk, caption_style)
-    if style == "bold":
-        # The server's operator mode burns house / plain / none; Bold (and the lines' emphasis words)
-        # is not in its request yet, so a Bold show's reel is captioned in the house (Subtle) look.
-        warnings.append(
-            "captions: the show is Bold, but the server's reel engine does not take Bold yet; this reel is "
-            "captioned Subtle (house yellow word flicker)"
-        )
-        style = "house"
+    from creation.captions import episode_caption_lines
+
+    caption_lines = episode_caption_lines(spine, episode) if style == "bold" else []
     bed = reel_bed(desk, srcs)
     finals = letterbox_finals(desk, spine, srcs, warnings)
     if finals is not None:
@@ -760,8 +824,13 @@ def make_reel(
                                 "end_s": round(c.end, 3),
                                 "text": c.text,
                                 "italic": c.italic,
+                                **(
+                                    {"emphasis_word": word}
+                                    if word and style == "bold"
+                                    else {}
+                                ),
                             }
-                            for c in take_cues(s)
+                            for c, word in take_cue_emphasis(s, caption_lines)
                             if c.end > c.start and c.text.strip()
                         ],
                         "shots": shots,
@@ -780,7 +849,7 @@ def make_reel(
                 takes=takes, bed=bed, bed_upload=bed_upload, still_upload=still_upload, caption_style=style,
                 pov=pov, seconds=seconds, ending=ending, hook_line=hook_line, no_hook_line=no_hook_line,
                 hook_line_position=hook_line_position, no_cover=no_cover, cover_frame=cover_frame, plan=body,
-                bands_in_source=finals is not None,
+                bands_in_source=finals is not None, watermark_y=watermark_y, no_panels=no_panels,
             )  # fmt: skip
             return client.make(job_id, episode_id_for(spine, episode), request)
 
