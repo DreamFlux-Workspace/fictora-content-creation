@@ -205,7 +205,7 @@ def test_the_reel_records_and_burns_the_hook_line(reel_desk: Path) -> None:  # n
     assert (
         body["hook_line"]["placement"] == "top" and body["hook_line"]["start_s"] == 0.0
     )
-    assert (reel_desk / "reels" / "reel-ep01-v1-hook.ass").is_file()
+    assert (reel_desk / "reels" / "ep01" / "reel-ep01-v1-hook.ass").is_file()
     assert any("hook line" in line for line in result.lines)
 
 

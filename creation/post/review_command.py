@@ -102,7 +102,9 @@ def dispatch_review(args: argparse.Namespace, *, stream: TextIO | None = None) -
         # A reel never touches an existing desk file: its review goes in a new file beside it.
         from creation.ops.folder import next_versioned_path
 
-        note = next_versioned_path(reels, f"{result.take.stem}-review", ".txt")
+        note = next_versioned_path(
+            result.take.parent, f"{result.take.stem}-review", ".txt"
+        )
         with note.open("x", encoding="utf-8") as handle:
             handle.write(result.block() + "\n")
         print(

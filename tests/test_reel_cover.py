@@ -16,7 +16,7 @@ from test_reel import reel_desk  # noqa: F401  (fixture)
 
 from creation.post.reel_cover import (
     METRICS_COLUMNS,
-    append_metrics_row,
+    record_metrics_row,
     cover_layout,
     cover_path,
 )
@@ -124,14 +124,18 @@ def test_cover_path_is_versioned_next_to_the_reel(tmp_path: Path) -> None:
 # --- the results sheet ---------------------------------------------------------------------------
 
 
-def test_metrics_rows_append_under_one_header(tmp_path: Path) -> None:
+def test_metrics_keep_one_row_per_part_and_list_what_it_superseded(
+    tmp_path: Path,
+) -> None:
     sheet = tmp_path / "metrics.csv"
     row = {"reel_file": "reel-ep01-v1.mp4", "part": "1", "series": "Night Shift"}
-    append_metrics_row(sheet, row)
-    append_metrics_row(sheet, {**row, "reel_file": "reel-ep01-v2.mp4"})
+    record_metrics_row(sheet, row)
+    record_metrics_row(sheet, {**row, "reel_file": "reel-ep01-v2.mp4"})
+    record_metrics_row(sheet, {**row, "reel_file": "reel-ep02-v1.mp4", "part": "2"})
     rows = list(csv.reader(sheet.open(encoding="utf-8")))
     assert rows[0] == list(METRICS_COLUMNS)
-    assert [r[0] for r in rows[1:]] == ["reel-ep01-v1.mp4", "reel-ep01-v2.mp4"]
+    assert [r[0] for r in rows[1:]] == ["reel-ep01-v2.mp4", "reel-ep02-v1.mp4"]
+    assert rows[1][METRICS_COLUMNS.index("superseded")] == "reel-ep01-v1.mp4"
     for name in (
         "posted_at",
         "views",
@@ -278,3 +282,71 @@ def test_the_cli_takes_the_cover_flags(
     assert (seen["no_cover"], seen["cover_frame"]) == (False, 1.5)
     assert main(["reel", "--desk", str(tmp_path), "--episode", "2", "--no-cover"]) == 0
     assert (seen["no_cover"], seen["cover_frame"]) == (True, None)
+
+
+# --- follow-up (6 Oct): the title leads, PART N follows -------------------------------------------
+
+
+def test_the_series_title_is_large_yellow_and_part_n_is_half_its_size_in_white() -> (
+    None
+):
+    from creation.post.reel_cover import PART_COLOUR, TITLE_COLOUR, cover_ass
+
+    layout = cover_layout(series="SCP-173 Blink", part=1, width=1080, height=1920)
+    assert layout.title_size >= 2 * layout.part_size - 2
+    assert layout.part_size >= layout.title_size * 0.4
+    assert layout.title_top_px < layout.part_top_px, "the title sits above PART N"
+    assert TITLE_COLOUR == "&H0000E5FF" and PART_COLOUR == "&H00FFFFFF"
+    ass = cover_ass(layout)
+    assert f"Style: Title,Arial,{layout.title_size},{TITLE_COLOUR}" in ass
+    assert f"Style: Part,Arial,{layout.part_size},{PART_COLOUR}" in ass
+    # Readable on the profile grid (a tile is about a third of the phone's width).
+    assert layout.title_size / 3 >= 30 and layout.part_size / 3 >= 18
+
+
+def test_a_long_title_wraps_on_two_lines_inside_the_safe_area() -> None:
+    from creation.captions import text_width
+
+    title = "The Regressor Who Remembers Every Single Betrayal"
+    layout = cover_layout(series=title, part=12, width=1080, height=1920)
+    assert len(layout.title_lines) == 2
+    room = 1080 * 0.88 - 2 * 60
+    assert all(
+        text_width(line, layout.title_size) <= room + 1 for line in layout.title_lines
+    )
+    assert zones_entered(layout.box) == []
+    left, top, right, bottom = layout.box
+    assert top >= 0.125 and bottom <= 0.875 and right <= 0.88
+
+
+# --- follow-up (6 Oct): the profile-face cascade finds a three-quarter face -------------------------
+
+FACE_FIXTURE = Path(__file__).parent / "data" / "scp173-ep01-cover-face.jpg"
+
+
+def test_the_profile_cascade_finds_the_three_quarter_crying_face() -> None:
+    from creation.post.faces import local_detector
+
+    detector = local_detector(anime=True)
+    if detector is None:
+        pytest.skip("OpenCV not available")
+    frame = np.asarray(Image.open(FACE_FIXTURE).convert("RGB"))
+    reading = detector(frame)
+    # The face (a three-quarter view, crying) spans about x 0.15-0.45, y 0.25-0.6 of the cover.
+    assert any(
+        x < 0.45 and x + w > 0.15 and y < 0.6 and y + h > 0.25
+        for x, y, w, h in reading.fractions()
+    ), reading.boxes
+
+
+def test_a_cover_with_no_face_found_says_to_look_at_it() -> None:
+    from creation.post.reel_cover import face_note
+
+    assert (
+        face_note([])
+        == "⚠ no face found on the cover picture — look at the cover before posting"
+    )
+    assert face_note(None).startswith(
+        "⚠ no face found on the cover picture — look at the cover before posting"
+    )
+    assert face_note([(0.1, 0.1, 0.2, 0.2)]) is None

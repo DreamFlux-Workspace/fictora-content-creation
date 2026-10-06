@@ -59,8 +59,41 @@ def _stub_cascades(
         "human": _FakeCascade(human, calls, "human"),
         "anime": _FakeCascade(anime, calls, "anime"),
     }
-    monkeypatch.setattr(faces, "_cascade", lambda kind: table[kind])
+    # No profile cascade here (``None``: it finds nothing): these tests are about the front-on pair.
+    monkeypatch.setattr(faces, "_cascade", lambda kind: table.get(kind))
     return calls
+
+
+class _MirrorAwareCascade(_FakeCascade):
+    """A profile cascade that sees a face only on the mirrored frame (a face turned the other way)."""
+
+    def detectMultiScale(self, gray, scaleFactor, minNeighbors, minSize):  # noqa: N802, N803
+        mirrored = bool(gray[0, 0] == 255)
+        self.calls.append((self.name + ("-mirror" if mirrored else ""), minNeighbors))
+        return np.asarray(self.found if mirrored else [])
+
+
+def test_the_profile_cascade_reads_both_ways_and_only_adds_faces_the_others_missed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, int]] = []
+    table = {
+        "human": _FakeCascade([], calls, "human"),
+        "anime": _FakeCascade([(200, 300, 40, 40)], calls, "anime"),
+        "profile": _MirrorAwareCascade(
+            [(20, 30, 60, 60), (30, 300, 40, 40)], calls, "profile"
+        ),
+    }
+    monkeypatch.setattr(faces, "_cascade", lambda kind: table.get(kind))
+    detector = faces.local_detector(anime=True)
+    assert detector is not None
+    frame = np.zeros((480, 270, 3), dtype=np.uint8)
+    frame[0, -1] = 255  # the mirror puts this pixel at [0, 0]
+    reading = detector(frame)
+    # Mirrored back: x = 270 - 20 - 60 = 190. The second profile box is the anime face, mirrored: dropped.
+    assert reading.boxes == ((200, 300, 40, 40), (190, 30, 60, 60))
+    assert ("profile", faces.PROFILE_NEIGHBOURS) in calls
+    assert ("profile-mirror", faces.PROFILE_NEIGHBOURS) in calls
 
 
 def test_the_detector_runs_both_cascades_and_unions_them(

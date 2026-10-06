@@ -26,16 +26,16 @@ An account with no `posting_slot` gets a ⚠ on every `reel`. It never stops the
 
 ## What to do in Instagram for each reel
 
-`reel` writes `reels/post-epNN-vN.txt` and prints it at the end of the run:
+A reel is made by itself after every finish (and after an edit that writes a new finished file) in `reels/epNN/`; `reel` re-cuts it by hand. A name with `-draft-` means the episode still had takes to finish: wait for the full reel. Each reel writes `reels/epNN/post-epNN-vN.txt` and prints it at the end of the run:
 
 1. **Caption.** Copy only the part above `----- Not part of the caption: for you, not for Instagram -----`. It says "Part N" and "Follow for part N+1." Strangers don't know what an episode is; a numbered part tells them there's a story to start.
-2. **Cover.** Instagram ignores a cover attached inside the MP4. In the editor tap **Edit cover**, then **Add from camera roll**, and pick `reels/reel-epNN-vN-cover-vN.jpg` (the "PART N" and series title still `reel` made for free). Without this the grid shows a random frame.
+2. **Cover.** Instagram ignores a cover attached inside the MP4. In the editor tap **Edit cover**, then **Add from camera roll**, and pick `reels/epNN/reel-epNN-vN-cover-vN.jpg` (the series title in yellow with "PART N" under it, the still the reel made for free; `reels/epNN/latest.json` names the current one). If the run printed `⚠ no face found on the cover picture`, look at the cover first. Without this the grid shows a random frame.
 3. **Sound.** Add a trending sound in the Instagram editor and turn its volume down so the voices stay clear.
 4. Post in the account's slot.
 
 ## The results sheet: `reels/metrics.csv`
 
-Every rendered reel appends one row to `<desk>/reels/metrics.csv`. The kit fills what it knows: reel and cover file, series, part, account, lane, planned slot, the cold open's role and time, and the hook text. You fill the rest by hand from the reel's insights about 48 hours after posting:
+`<desk>/reels/metrics.csv` has one row per episode. Every new reel updates that episode's row to name it (the reels it replaced go in `superseded`); once you have filled a row in (posted), it is never changed, and a re-cut after posting gets its own row. The kit fills what it knows: reel and cover file, series, part, account, lane, planned slot, the cold open's role and time, and the hook text. You fill the rest by hand from the reel's insights about 48 hours after posting:
 
 | Column | What to write |
 | --- | --- |

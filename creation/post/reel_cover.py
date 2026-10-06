@@ -14,9 +14,13 @@ never goes inside the video.
   scorer; it never comes from the new fact, so the cover never spoils the
   ending). Grabbed from the take's picture before captions, so no caption or
   mark is under the text.
-* **Text.** "PART N" large in the house yellow and the series title under it in
-  white, the house font (:data:`creation.captions.FONT_NAME`) with a heavy
-  black outline and shadow like the captions. The block stays out of the
+* **Text** (founder decision, 6 Oct 2026: the show's name sells it, the part
+  number follows). The series title large in the house yellow, on at most two
+  lines (a long title wraps, then shrinks to fit), and "PART N" under it in
+  white at about half the title's size, both in the house font
+  (:data:`creation.captions.FONT_NAME`) with a heavy black outline and shadow
+  like the captions. Sized to read on the profile grid, where a cover is about
+  a third of the phone's width. The block stays out of the
   covered zones (top 8%, bottom 20%, right 12% of the lower two thirds,
   :data:`creation.post.safe_zones.ZONES`) and inside the middle 3:4 that the
   profile grid shows. It sits just above the bottom band, or just under the
@@ -27,8 +31,9 @@ never goes inside the video.
 "PART N" is never on screen in the reel itself (the reel's viewer-address
 rule cuts it); it lives only on the cover and in the post text.
 
-Every rendered reel also appends one row to ``reels/metrics.csv`` (made with
-its header when missing): what was posted and how, plus blank columns the
+Every rendered reel also puts its row in ``reels/metrics.csv`` (made with its
+header when missing), one row per part, updated to the newest reel
+(:func:`record_metrics_row`): what was posted and how, plus blank columns the
 operator fills from Instagram's insights (:data:`METRICS_COLUMNS`).
 """
 
@@ -51,27 +56,29 @@ from creation.post.hook_overlay import (
     _scaled,
 )
 
-#: "PART N" and the series title on the 1920-high canvas (the house caption is 64).
-PART_FONT_SIZE = 190
-PART_MIN_FONT_SIZE = 110
-TITLE_FONT_SIZE = 64
-TITLE_MIN_FONT_SIZE = 44
+#: The series title on the 1920-high canvas (the house caption is 64): at most two lines, shrinking
+#: to fit the safe width when a long title needs it.
+TITLE_FONT_SIZE = 150
+#: "PART N": about half the title's size (half its cap height), never under this on 1920.
+PART_SCALE = 0.5
+PART_MIN_FONT_SIZE = 60
 COVER_OUTLINE = 9
 COVER_SHADOW = 4
-#: Gap between "PART N" and the title, as a share of the title's size.
-TITLE_GAP = 0.35
+#: Gap between the title and "PART N", as a share of PART N's size.
+PART_GAP = 0.3
 #: The bottom band the platforms cover (post caption, username, music) starts here.
 BOTTOM_BAND = 0.80
 #: Instagram's profile grid shows the middle 3:4 of a 9:16 cover: keep the text inside it.
 GRID_TOP = 0.125
 GRID_BOTTOM = 0.875
-#: House yellow (``#FFE500``) and white, as ASS ``&HAABBGGRR``.
-PART_COLOUR = "&H0000E5FF"
-TITLE_COLOUR = "&H00FFFFFF"
-#: The reel results sheet's columns, in order. The last eight are the operator's, from Instagram.
+#: House yellow (``#FFE500``) for the title and white for PART N, as ASS ``&HAABBGGRR``.
+TITLE_COLOUR = "&H0000E5FF"
+PART_COLOUR = "&H00FFFFFF"
+#: The reel results sheet's columns, in order: one row per part (``superseded`` lists the older reels
+#: it replaced); the last eight are the operator's, from Instagram.
 METRICS_COLUMNS: tuple[str, ...] = (
     "reel_file", "cover_file", "series", "part", "account", "lane", "planned_post_slot",
-    "cold_open_role", "cold_open_time", "hook_text",
+    "cold_open_role", "cold_open_time", "hook_text", "superseded",
     "posted_at", "views", "hold_3s_pct", "avg_watch_pct", "follows", "saves", "shares", "notes",
 )  # fmt: skip
 METRICS_FILE = "metrics.csv"
@@ -88,12 +95,12 @@ class CoverLayout:
     ----------
     placement
         ``lower`` (just above the bottom band) or ``upper`` (just under the top strip).
-    part_text, part_lines, part_size
-        "PART N", its lines and font size.
+    part_text, part_size
+        "PART N" and its font size (about half the title's).
     title_lines, title_size
         The series title's lines (at most two) and font size.
-    centre_x, top_px, title_top_px
-        The block's centre and the top of each part, in pixels.
+    centre_x, top_px, title_top_px, part_top_px
+        The block's centre, its top, and the top of the title and of PART N, in pixels.
     box
         The text block as frame fractions ``(left, top, right, bottom)``.
     face_overlap
@@ -102,13 +109,13 @@ class CoverLayout:
 
     placement: str
     part_text: str
-    part_lines: tuple[str, ...]
     part_size: int
     title_lines: tuple[str, ...]
     title_size: int
     centre_x: int
     top_px: int
     title_top_px: int
+    part_top_px: int
     box: Box
     width: int
     height: int
@@ -158,21 +165,23 @@ def cover_layout(
     room = max(1, width - left - right)
     centre_x = left + room // 2
     part_text = f"PART {part}"
-    part_lines, part_size = _fit(
-        part_text, _scaled(PART_FONT_SIZE, height), room, _scaled(PART_MIN_FONT_SIZE, height)
-    )  # fmt: skip
     title = " ".join(series.split())
     title_lines: list[str] = []
     title_size = _scaled(TITLE_FONT_SIZE, height)
     if title:
-        title_lines, title_size = _fit(
-            title, title_size, room, _scaled(TITLE_MIN_FONT_SIZE, height)
-        )
-    part_h = part_size * len(part_lines)
-    gap = round(TITLE_GAP * title_size) if title_lines else 0
-    block_h = part_h + gap + title_size * len(title_lines)
+        # Two balanced lines at most; a title still too wide shrinks until it fits.
+        title_lines, title_size = _fit(title, title_size, room, 8)
+    part_size = min(
+        max(round(PART_SCALE * title_size), _scaled(PART_MIN_FONT_SIZE, height)),
+        title_size if title_lines else _scaled(TITLE_FONT_SIZE, height),
+    )
+    if text_width(part_text, part_size) > room:
+        part_size = max(8, int(part_size * room / text_width(part_text, part_size)))
+    title_h = title_size * len(title_lines)
+    gap = round(PART_GAP * part_size) if title_lines else 0
+    block_h = title_h + gap + part_size
     widest = max(
-        [text_width(line, part_size) for line in part_lines]
+        [text_width(part_text, part_size)]
         + [text_width(line, title_size) for line in title_lines]
     )
     half = min(widest, room) / 2
@@ -199,9 +208,9 @@ def cover_layout(
     chosen = min(("lower", "upper"), key=lambda name: (cost[name] > 0, cost[name]))
     top_px, box = options[chosen]
     return CoverLayout(
-        placement=chosen, part_text=part_text, part_lines=tuple(part_lines), part_size=part_size,
+        placement=chosen, part_text=part_text, part_size=part_size,
         title_lines=tuple(title_lines), title_size=title_size, centre_x=centre_x, top_px=top_px,
-        title_top_px=top_px + part_h + gap, box=box, width=width, height=height,
+        title_top_px=top_px, part_top_px=top_px + title_h + gap, box=box, width=width, height=height,
         face_overlap=all(c > 0 for c in cost.values()),
     )  # fmt: skip
 
@@ -223,25 +232,26 @@ def cover_ass(layout: CoverLayout) -> str:
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Part,{FONT_NAME},{layout.part_size},{PART_COLOUR},{PART_COLOUR},&H00000000,&H80000000,"
-        f"-1,0,0,0,100,100,0,0,1,{outline},{shadow},8,0,0,0,1\n"
         f"Style: Title,{FONT_NAME},{layout.title_size},{TITLE_COLOUR},{TITLE_COLOUR},&H00000000,&H80000000,"
+        f"-1,0,0,0,100,100,0,0,1,{outline},{shadow},8,0,0,0,1\n"
+        f"Style: Part,{FONT_NAME},{layout.part_size},{PART_COLOUR},{PART_COLOUR},&H00000000,&H80000000,"
         f"-1,0,0,0,100,100,0,0,1,{max(2, outline * 2 // 3)},{shadow},8,0,0,0,1\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
-    events = [
-        f"Dialogue: 0,0:00:00.00,9:59:59.00,Part,,0,0,0,,{{\\an8\\pos({layout.centre_x},{layout.top_px})}}"
-        + "\\N".join(_ass_escape(line) for line in layout.part_lines)
-        + "\n"
-    ]
+    events: list[str] = []
     if layout.title_lines:
         events.append(
-            f"Dialogue: 0,0:00:00.00,9:59:59.00,Title,,0,0,0,,{{\\an8\\pos({layout.centre_x},{layout.title_top_px})}}"
+            f"Dialogue: 0,0:00:00.00,9:59:59.00,Title,,0,0,0,,"
+            f"{{\\an8\\pos({layout.centre_x},{layout.title_top_px})}}"
             + "\\N".join(_ass_escape(line) for line in layout.title_lines)
             + "\n"
         )
+    events.append(
+        f"Dialogue: 0,0:00:00.00,9:59:59.00,Part,,0,0,0,,"
+        f"{{\\an8\\pos({layout.centre_x},{layout.part_top_px})}}{_ass_escape(layout.part_text)}\n"
+    )
     return header + "".join(events)
 
 
@@ -314,8 +324,15 @@ def face_boxes(
         import numpy as np
         from PIL import Image
 
+        from creation.post.faces import FACE_SIZE
+
+        # Read at the size a take's faces are read at (the cascades are tuned there).
         with Image.open(picture) as image:
-            frame = np.asarray(image.convert("RGB"))
+            scale = FACE_SIZE[0] / image.width
+            small = image.convert("RGB").resize(
+                (FACE_SIZE[0], max(1, round(image.height * scale))), Image.LANCZOS
+            )
+            frame = np.asarray(small)
         found = upper_band_face(frame, top=0.0, bottom=1.0, detector=detector)
     else:
         found = upper_band_face(
@@ -326,15 +343,57 @@ def face_boxes(
     return [box for _, box in found.boxes]
 
 
-def append_metrics_row(sheet: Path, row: Mapping[str, Any]) -> Path:
-    """Append one reel's row to the results sheet, writing the header first when the file is new.
+#: Printed when no face box is found on the cover's picture.
+NO_FACE_NOTE = "⚠ no face found on the cover picture — look at the cover before posting"
+
+
+def face_note(faces: Sequence[tuple[float, float, float, float]] | None) -> str | None:
+    """The ⚠ to print when the cover's picture has no face box (``None`` when one was found).
+
+    Parameters
+    ----------
+    faces
+        :func:`face_boxes`' answer: boxes, an empty list (none found) or ``None`` (no detector ran).
+
+    Returns
+    -------
+    str | None
+        :data:`NO_FACE_NOTE` (with why when no detector ran), or ``None``.
+    """
+
+    if faces is None:
+        return f"{NO_FACE_NOTE} (no face detector ran: OpenCV did not load; `uv sync`)"
+    return None if faces else NO_FACE_NOTE
+
+
+#: The columns the operator fills from Instagram; a row with any of them filled was posted.
+OPERATOR_COLUMNS = (
+    "posted_at",
+    "views",
+    "hold_3s_pct",
+    "avg_watch_pct",
+    "follows",
+    "saves",
+    "shares",
+)
+
+
+def record_metrics_row(sheet: Path, row: Mapping[str, Any]) -> Path:
+    """Put one reel in the results sheet: one row per part, updated to the newest reel.
+
+    The part's row that was not posted yet (no :data:`OPERATOR_COLUMNS` filled)
+    is updated in place: the kit's columns take the new reel, the old reel file
+    joins ``superseded`` (oldest first, ``; `` between), the operator's columns
+    and ``notes`` stay. A posted row is history and never changed: a re-cut
+    after posting gets a new row. The header is written when the file is new;
+    a sheet from an older kit gains the new columns.
 
     Parameters
     ----------
     sheet
         ``<desk>/reels/metrics.csv``.
     row
-        Values by column name (:data:`METRICS_COLUMNS`); a missing column is left blank.
+        Values by column name (:data:`METRICS_COLUMNS`); ``part`` is the key, a missing column is blank.
 
     Returns
     -------
@@ -342,14 +401,36 @@ def append_metrics_row(sheet: Path, row: Mapping[str, Any]) -> Path:
         ``sheet``.
     """
 
-    new = not sheet.exists() or sheet.stat().st_size == 0
-    with sheet.open("a", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(
-            handle, fieldnames=list(METRICS_COLUMNS), extrasaction="ignore"
-        )
-        if new:
-            writer.writeheader()
-        writer.writerow({name: row.get(name, "") or "" for name in METRICS_COLUMNS})
+    rows: list[dict[str, str]] = []
+    if sheet.is_file() and sheet.stat().st_size:
+        with sheet.open(encoding="utf-8", newline="") as handle:
+            rows = [dict(r) for r in csv.DictReader(handle)]
+    new = {name: str(row.get(name, "") or "") for name in METRICS_COLUMNS}
+    open_row = next(
+        (
+            r
+            for r in rows
+            if str(r.get("part") or "") == new["part"]
+            and not any((r.get(c) or "").strip() for c in OPERATOR_COLUMNS)
+        ),
+        None,
+    )
+    if open_row is None:
+        rows.append(new)
+    else:
+        older = [x for x in (open_row.get("superseded") or "").split("; ") if x]
+        if open_row.get("reel_file") and open_row["reel_file"] != new["reel_file"]:
+            older.append(open_row["reel_file"])
+        keep = {c: open_row.get(c, "") for c in (*OPERATOR_COLUMNS, "notes")}
+        open_row.update({**new, **keep, "superseded": "; ".join(older)})
+    extra = [c for r in rows for c in r if c not in METRICS_COLUMNS and c]
+    columns = [*METRICS_COLUMNS, *dict.fromkeys(extra)]
+    scratch = sheet.with_name(sheet.name + ".tmp")
+    with scratch.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows({c: r.get(c, "") or "" for c in columns} for r in rows)
+    scratch.replace(sheet)
     return sheet
 
 
@@ -357,10 +438,11 @@ __all__ = [
     "METRICS_COLUMNS",
     "METRICS_FILE",
     "CoverLayout",
-    "append_metrics_row",
+    "record_metrics_row",
     "cover_ass",
     "cover_layout",
     "cover_path",
     "draw_cover",
     "face_boxes",
+    "face_note",
 ]

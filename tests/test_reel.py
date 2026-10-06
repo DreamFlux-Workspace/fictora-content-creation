@@ -434,9 +434,13 @@ def test_reel_plans_then_renders_only_new_files_under_reels(reel_desk: Path) -> 
     assert (
         _snapshot(reel_desk) == before
     )  # nothing outside reels/ was written or touched
-    names = sorted(p.name for p in (reel_desk / "reels").iterdir())
+    assert sorted(p.name for p in (reel_desk / "reels").iterdir()) == [
+        "ep01",
+        "metrics.csv",
+    ]
+    names = sorted(p.name for p in (reel_desk / "reels" / "ep01").iterdir())
     assert names == [
-        "metrics.csv", "post-ep01-v2.txt", "reel-ep01-v2-cover-v1.jpg", "reel-ep01-v2.ass",
+        "latest.json", "post-ep01-v2.txt", "reel-ep01-v2-cover-v1.jpg", "reel-ep01-v2.ass",
         "reel-ep01-v2.mp4", "reel-plan-ep01-v1.json", "reel-plan-ep01-v2.json",
     ]  # fmt: skip
 
@@ -468,7 +472,7 @@ def test_review_of_a_reel_never_touches_run_notes_and_does_not_compare_take_cuts
     assert code == 0
     out = capsys.readouterr().out
     assert notes.read_text(encoding="utf-8") == "# run notes\n"
-    saved = reel_desk / "reels" / f"{result.video.stem}-review-v1.txt"
+    saved = reel_desk / "reels" / "ep01" / f"{result.video.stem}-review-v1.txt"
     assert saved.is_file() and "Review ep01 t1" in saved.read_text(encoding="utf-8")
     assert "(finished," in out
     assert "not compared (the reel cut and reordered the take)" in out

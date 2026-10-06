@@ -1344,8 +1344,18 @@ def _overlaps(take: str, a: float, b: float, other: tuple[str, float, float]) ->
     return take == other[0] and a < other[2] - 1e-6 and other[1] < b - 1e-6
 
 
+#: What :func:`cold_open_spoils` says: a note to check, never a fault (founder decision, 6 Oct 2026:
+#: opening on the strongest moment, even when it plays again later, builds anticipation).
+FLASH_FORWARD_NOTE = "the reel opens on its strongest moment (it repeats later — that's the flash-forward)"
+FLASH_FORWARD_CHECK = "Check the opening shows the danger, not the answer."
+
+
 def cold_open_spoils(plan: ReelPlan) -> list[str]:
-    """⚠ when the cold open shows the ending: the last beat, or the reel's last segment.
+    """A note when the cold open repeats the ending: the last beat, or the reel's last segment.
+
+    Opening on the strongest moment is allowed and liked (it repeats later:
+    that is the flash-forward). The note only asks the human to check the
+    opening shows the danger, not the answer. Never a warning, never a stop.
 
     Parameters
     ----------
@@ -1355,7 +1365,7 @@ def cold_open_spoils(plan: ReelPlan) -> list[str]:
     Returns
     -------
     list[str]
-        One warning per spoiler.
+        One note per cold open that repeats the ending.
     """
 
     out: list[str] = []
@@ -1372,9 +1382,8 @@ def cold_open_spoils(plan: ReelPlan) -> list[str]:
         ):
             take, a, b = plan.last_beat
             out.append(
-                f"the cold open {cold.take} {cold.start:.2f}-{cold.end:.2f} s is inside the last beat "
-                f"({take} {a:.2f}-{b:.2f} s, the new fact): the reel opens on its own ending. Take the cold open "
-                "from the pivot or the peak before the reveal"
+                f"{FLASH_FORWARD_NOTE}: the cold open {cold.take} {cold.start:.2f}-{cold.end:.2f} s is inside "
+                f"the last beat ({take} {a:.2f}-{b:.2f} s). {FLASH_FORWARD_CHECK}"
             )
             continue
         for seg in ending:
@@ -1382,8 +1391,9 @@ def cold_open_spoils(plan: ReelPlan) -> list[str]:
                 cold.take, cold.start, cold.end, (seg.take, seg.start, seg.end)
             ):
                 out.append(
-                    f"the cold open {cold.take} {cold.start:.2f}-{cold.end:.2f} s overlaps the ending "
-                    f"({seg.role} {seg.take} {seg.start:.2f}-{seg.end:.2f} s): the reel opens on its own ending"
+                    f"{FLASH_FORWARD_NOTE}: the cold open {cold.take} {cold.start:.2f}-{cold.end:.2f} s also "
+                    f"plays at the end ({seg.role} {seg.take} {seg.start:.2f}-{seg.end:.2f} s). "
+                    f"{FLASH_FORWARD_CHECK}"
                 )
                 break
     return out
@@ -1539,7 +1549,7 @@ def check_plan(
 
     warnings: list[str] = []
     by_id = {t.take_id: t for t in takes}
-    warnings += cold_open_spoils(plan)
+    plan.notes += [n for n in cold_open_spoils(plan) if n not in plan.notes]
     opening, tail, edge_warnings = plan_edges(plan, takes)
     plan.opening, plan.tail = opening, tail
     warnings += edge_warnings
