@@ -205,6 +205,7 @@ from creation.shot_plan import (
     plan_lines,
     same_plan,
 )
+from creation.touch_and_side import touch_owner_heads_up
 from creation.spine_view import (
     BOARD_INPUT_NAMES,
     beats_by_take,
@@ -5253,6 +5254,16 @@ def run_redraw_board(
         if names and not reauthors:
             # The board gate's name check, before the paid redraw: the frames are drawn as written.
             raise CommandStopped(names)
+        touches = (
+            None
+            if resuming or reauthors
+            else touch_owner_heads_up(
+                spine, episode=episode, desk=str(desk), sets=[set_index]
+            )
+        )
+        if touches:
+            # Warning only: the server writes the owner line when it draws (fictora-drama).
+            print(touches, file=out)
         if names:
             print(
                 f"note: the server re-authors {take_id}'s frames on this redraw; these frames name one "

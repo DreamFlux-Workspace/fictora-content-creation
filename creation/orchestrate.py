@@ -103,6 +103,7 @@ from creation.production_state import (
     production_path,
     save_production,
 )
+from creation.touch_and_side import one_sided_side_lines, touch_owner_heads_up
 from creation.spine_view import (
     beats_by_take,
     board_assets,
@@ -1417,6 +1418,12 @@ def run_step(
             if names:
                 _note(ep_dir, names)
                 gate += "\n" + names
+            # Free warnings before any picture is paid for (Three Payments Late).
+            sided = one_sided_side_lines(spine)
+            touches = touch_owner_heads_up(spine, episode=ep, desk=str(desk))
+            for warning in [*sided, *([touches] if touches else [])]:
+                _note(ep_dir, warning)
+                gate += "\n" + warning
             return StepResult(
                 state.phase,
                 f"Draft done. spine_id={spine_id}. {sum(counts.values())} lines on the desk.\n{gate}\n"
@@ -1436,7 +1443,10 @@ def run_step(
                 raise RuntimeError(
                     "Stopped before the plates. Nothing was sent.\n" + "\n".join(young)
                 )
-            for line in adult_face_lines(spine_now):
+            for line in [
+                *adult_face_lines(spine_now),
+                *one_sided_side_lines(spine_now),
+            ]:
                 _note(ep_dir, line)
             owing: set[str] | None = None
             if ep >= 2:
@@ -2488,6 +2498,10 @@ def approve_gate(
             if names:
                 _note(_episode_dir(desk, ep), names)
                 warning += f"\n{names}"
+            touches = touch_owner_heads_up(spine, episode=ep, desk=str(desk))
+            if touches:
+                _note(_episode_dir(desk, ep), touches)
+                warning += f"\n{touches}"
             camera = locked_camera_line(spine, episode=ep)
             if camera:
                 warning += "\n" + camera
