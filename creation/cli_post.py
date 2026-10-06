@@ -878,26 +878,41 @@ def dispatch_post(args: argparse.Namespace) -> int:
         return 0 if result.complete else FINISH_INCOMPLETE
     if args.command == "reel":
         from creation.post.reel import run_reel
-
-        run_reel(
-            args.desk,
-            episode=args.episode,
-            seconds=args.seconds,
-            plan_only=args.plan_only,
-            plan_file=args.plan,
-            take_files=tuple(args.take_file or ()),
-            sources=tuple(args.source or ()),
-            captions=tuple(args.captions or ()),
-            caption_style=args.caption_style,
-            watermark_y=args.watermark_y,
-            ending=args.ending,
-            hook_line=args.hook_line,
-            no_hook_line=args.no_hook_line,
-            hook_line_position=args.hook_line_position,
-            no_cover=args.no_cover,
-            cover_frame=args.cover_frame,
-            no_panels=args.no_panels,
+        from creation.post.reel_server import (
+            ReelServerError,
+            ReelServerUnreachable,
+            unreachable_message,
         )
+
+        try:
+            run_reel(
+                args.desk,
+                episode=args.episode,
+                seconds=args.seconds,
+                plan_only=args.plan_only,
+                plan_file=args.plan,
+                take_files=tuple(args.take_file or ()),
+                sources=tuple(args.source or ()),
+                captions=tuple(args.captions or ()),
+                caption_style=args.caption_style,
+                watermark_y=args.watermark_y,
+                ending=args.ending,
+                hook_line=args.hook_line,
+                no_hook_line=args.no_hook_line,
+                hook_line_position=args.hook_line_position,
+                no_cover=args.no_cover,
+                cover_frame=args.cover_frame,
+                no_panels=args.no_panels,
+            )
+        except ReelServerUnreachable as exc:
+            print(
+                f"{unreachable_message(args.desk, args.episode)} ({exc})",
+                file=sys.stderr,
+            )
+            return 1
+        except ReelServerError as exc:
+            print(f"Reel not made: {exc}", file=sys.stderr)
+            return 1
         return 0
     if args.command == "join":
         joined = run_join(

@@ -1,29 +1,29 @@
 """``reel`` on a letterbox show: the same 9:16 layout as finish and join (6 Oct 2026).
 
-A letterbox show's reel is cut from its 4:3 takes (the finish record's
-``pre_bed``) and must come out like the episode's own file: the 1080x1920
-black canvas, the picture 1080x810 at y 555-1365, the title block above it
-(white setup line, yellow hook line), phrase captions in the band under it
-(never on the picture) and the Sokii mark in the top band. A portrait reel is
-untouched (``tests/test_hook_overlay_portrait_unchanged.py``'s ``reel`` golden).
+A letterbox show's reel must come out like the episode's own file: the
+1080x1920 black canvas, the picture at y 555-1365, the title block above it,
+captions in the band under it and the Sokii mark in the top band. The server's
+reel engine cuts it from each take's letterbox final (the file ``finish``
+made on the canvas), keeping its bands, captions and mark, as it cuts the
+app's letterbox delivery.
 """
 
 from __future__ import annotations
 
 import io
 import json
-import re
 import subprocess
 from pathlib import Path
 
 import pytest
 from conftest import needs_ffmpeg
 
-from creation.post.delivery_geometry import layout
 from creation.post.finish_record import write_finish_record
-from creation.post.media import decode_frames, probe_video
+from creation.post.letterbox import pad_to_canvas
+from creation.post.media import probe_video
 from creation.post.reel import run_reel
 from creation.post.safe_zones import letterbox_file
+from reel_fake_server import FakeReelServer
 
 pytestmark = needs_ffmpeg
 
@@ -106,70 +106,83 @@ def letterbox_reel_desk(tmp_path: Path) -> Path:
     (desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
         json.dumps(facts), encoding="utf-8"
     )
+    # finish's letterbox final: the 4:3 take on the 9:16 canvas (captions, mark and title burned on it).
+    pad_to_canvas(
+        takes / "take-ep01-t1-colour-v1.mp4", takes / "take-ep01-t1-sokii-v1.mp4"
+    )
+    (desk / "ep01" / "api" / "17_raw_scene_clips.json").write_text(
+        json.dumps(
+            {
+                "coordinator_job_id": "video-1",
+                "clips": [{"job_id": "take-1", "episode_id": "", "set_index": 1}],
+            }
+        ),
+        encoding="utf-8",
+    )
     return desk
 
 
-def test_a_letterbox_reel_is_the_9_16_letterbox_file(letterbox_reel_desk: Path) -> None:
+def test_a_letterbox_reel_is_cut_from_the_9_16_letterbox_file(
+    letterbox_reel_desk: Path, reel_server: FakeReelServer
+) -> None:
     out = io.StringIO()
     result = run_reel(
         letterbox_reel_desk, episode=1, seconds=6.0, stream=out, no_cover=True
     )
 
-    assert result.video is not None and result.ass is not None
-    info = probe_video(result.video)
-    assert (info.width, info.height) == (1080, 1920)
-
-    # Captions: in the band under the picture, white (the finish record's colour), never on the picture.
-    ass = result.ass.read_text(encoding="utf-8")
-    assert "PlayResX: 1080" in ass and "PlayResY: 1920" in ass
-    place = layout()
-    tops = [int(m) for m in re.findall(r"\\pos\(\d+,(\d+)\)", ass)]
-    assert tops and all(t >= place.picture.bottom for t in tops), tops
-    assert "&H00FFFFFF" in ass.split("[Events]")[0]
-
-    # The title block: setup line (series title) and the hook line, written beside the reel.
-    title = result.video.with_name(result.video.stem + "-title.ass")
-    assert title.is_file()
-    words = title.read_text(encoding="utf-8")
-    assert "Three Payments Late" in words and "She paid the third time" in words
-    assert "\\c&H00E5FF&" in words  # the hook line in house yellow
-
-    # Pixels: black above and below the picture (outside the title, mark and captions), picture inside.
-    frame = decode_frames(result.video, width=1080, height=1920, max_frames=1)[0]
-    luma = frame.mean(axis=2)
-    assert luma[460:550, 120:960].max() < 20, "the strip above the picture is black"
-    assert luma[1370:1395].max() < 20, "the strip under the picture is black"
-    assert luma[600:1320].mean() > 90, "the picture fills y 555-1365"
-    mark = luma[179:228, 38:97]
-    assert mark.max() > 100, "the Sokii mark sits in the top band"
-
+    # The final (on the canvas) went up, not the 4:3 picture; the server keeps its bands and text.
+    assert [path.name for kind, path in reel_server.uploads] == [
+        "take-ep01-t1-sokii-v1.mp4"
+    ]
+    operator = reel_server.requests[0]["operator"]
+    take = operator["takes"][0]
+    assert take["captions_burned"] is True and take["marked"] is True
+    assert operator["bands_in_source"] is True and operator["music_in_take"] is True
+    assert "bed_url" not in operator
+    assert result.video is not None
+    assert (probe_video(result.video).width, probe_video(result.video).height) == (
+        1080,
+        1920,
+    )
     # The plan says what kind of file it is, so review and the safe zones read it as letterbox.
     plan = json.loads(result.plan_path.read_text(encoding="utf-8"))
-    assert plan.get("letterbox") is True
+    assert plan.get("letterbox") is True and plan["caption_colour"] == "white"
     assert letterbox_file(result.video)
-    text = out.getvalue()
-    assert "letterbox" in text
+    assert "[letterbox]" in out.getvalue()
 
 
-def test_a_letterbox_reel_with_no_hook_line_keeps_the_mark_alone(
-    letterbox_reel_desk: Path,
+def test_the_title_block_is_the_finished_files_and_the_flags_say_so(
+    letterbox_reel_desk: Path, reel_server: FakeReelServer
 ) -> None:
-    result = run_reel(
-        letterbox_reel_desk, episode=1, seconds=6.0, stream=io.StringIO(),
-        no_cover=True, no_hook_line=True,
-    )  # fmt: skip
+    out = io.StringIO()
+    run_reel(
+        letterbox_reel_desk,
+        episode=1,
+        seconds=6.0,
+        stream=out,
+        no_cover=True,
+        no_hook_line=True,
+    )
 
-    assert result.video is not None
-    info = probe_video(result.video)
-    assert (info.width, info.height) == (1080, 1920)
-    frame = decode_frames(result.video, width=1080, height=1920, max_frames=1)[0]
-    luma = frame.mean(axis=2)
-    assert luma[179:228, 38:97].max() > 100
-    assert luma[250:450].max() < 20, "--no-hook-line: no title block"
+    assert "the title block is part of each take's letterbox file" in out.getvalue()
+
+
+def test_a_letterbox_take_without_its_letterbox_final_is_cut_as_portrait_with_a_warning(
+    letterbox_reel_desk: Path, reel_server: FakeReelServer
+) -> None:
+    (letterbox_reel_desk / "ep01" / "takes" / "take-ep01-t1-sokii-v1.mp4").unlink()
+    out = io.StringIO()
+
+    run_reel(letterbox_reel_desk, episode=1, seconds=6.0, stream=out, no_cover=True)
+
+    assert [path.name for _, path in reel_server.uploads][
+        0
+    ] == "take-ep01-t1-colour-v1.mp4"
+    assert "has no 9:16 letterbox file" in out.getvalue()
 
 
 def test_review_reads_a_letterbox_reel_s_picture_only(
-    letterbox_reel_desk: Path,
+    letterbox_reel_desk: Path, reel_server: FakeReelServer
 ) -> None:
     from creation.post.review import review_take
 

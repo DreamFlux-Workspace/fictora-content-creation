@@ -24,7 +24,6 @@ from test_post_finish import FACTS, TWO_LINES, _board, fake_bed, fake_sfx
 from test_reel import reel_desk  # noqa: F401
 
 from creation.post.finish import run_finish
-from creation.post.reel import run_reel
 from creation.post.review import review_take
 
 GOLDEN = Path(__file__).parent / "golden" / "review-portrait-unchanged.json"
@@ -65,22 +64,3 @@ def test_review_of_a_portrait_finished_take_runs_the_commands_it_always_ran(
 
     sections = [[s.name, s.status] for s in review.sections]
     _check("review-finished", [*calls, sections])
-
-
-@needs_ffmpeg
-def test_review_of_a_portrait_reel_runs_the_commands_it_always_ran(
-    reel_desk: Path,  # noqa: F811
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    made = run_reel(
-        reel_desk, episode=1, seconds=6.0, stream=io.StringIO(), no_cover=True
-    )
-    assert made.video is not None
-    calls = _recording(monkeypatch, [reel_desk, REPO])
-
-    review = review_take(
-        reel_desk, take_file=made.video, text_ocr=_no_text, face_detector=None
-    )
-
-    sections = [[s.name, s.status] for s in review.sections]
-    _check("review-reel", [*calls, sections])

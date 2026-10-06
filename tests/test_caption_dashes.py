@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 from conftest import needs_ffmpeg
+from reel_fake_server import FakeReelServer
 from test_reel import reel_desk  # noqa: F401  (fixture)
 
 from creation.caption_dashes import DASH_IN_CAPTION, ELLIPSIS, caption_text
@@ -27,8 +28,7 @@ from creation.captions import (
 )
 from creation.post.hook_overlay import HookOverlay, overlay_ass
 from creation.post.letterbox import TitleBlock, title_ass
-from creation.post.reel import parse_ass_cues, run_reel
-from creation.post.reel_cover import cover_ass, cover_layout
+from creation.post.reel import run_reel
 
 #: Lines as scripts write them: every kind of dash, spaced and not.
 FIXTURE_LINES = (
@@ -151,14 +151,6 @@ def test_letterbox_title_band_has_no_dash() -> None:
     assert "POV: your roommate, texted" in ass
 
 
-def test_reel_cover_title_has_no_dash() -> None:
-    ass = cover_ass(
-        cover_layout(series="Night Shift — Ward 9", part=2, width=1080, height=1920)
-    )
-    _no_dash_in_events(ass)
-    assert "Night Shift, Ward 9" in ass.replace("\\N", " ")
-
-
 def _tone_take(path: Path) -> None:
     # 4 s clip: silence, a 1 s tone standing in for the line, silence.
     subprocess.run(
@@ -187,7 +179,10 @@ def test_finish_captions_burn_without_a_dash(tmp_path: Path) -> None:
 
 
 @needs_ffmpeg
-def test_reel_captions_burn_without_a_dash(reel_desk: Path) -> None:  # noqa: F811
+def test_reel_captions_go_to_the_server_without_a_dash(
+    reel_desk: Path,  # noqa: F811
+    reel_server: FakeReelServer,
+) -> None:
     cap = reel_desk / "ep01" / "takes" / "take-ep01-t1-cap-v1.ass"
     cap.write_text(
         "[Events]\n"
@@ -196,8 +191,7 @@ def test_reel_captions_burn_without_a_dash(reel_desk: Path) -> None:  # noqa: F8
         "Dialogue: 0,0:00:04.60,0:00:05.30,House,,0,0,0,,It was me–\n",
         encoding="utf-8",
     )
-    result = run_reel(reel_desk, episode=1, seconds=6.0)
-    assert result.ass is not None
-    ass = result.ass.read_text(encoding="utf-8")
-    _no_dash_in_events(ass)
-    assert [c.text for c in parse_ass_cues(ass)][-1] == "It was me…"
+    run_reel(reel_desk, episode=1, seconds=6.0)
+    texts = [c["text"] for c in reel_server.requests[0]["operator"]["takes"][0]["cues"]]
+    assert not any(ch in t for t in texts for ch in "—–")
+    assert texts[-1] == "It was me…"
