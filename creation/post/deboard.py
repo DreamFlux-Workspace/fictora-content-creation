@@ -151,6 +151,7 @@ def measure_board_leak(
     *,
     max_frames: int = BOARD_LEAK_MAX_FRAMES,
     margin_db: float = BOARD_LEAK_MARGIN_DB,
+    crop: tuple[int, int, int, int] | None = None,
 ) -> BoardLeak:
     """Count the opening frames that are the storyboard, by PSNR against the board.
 
@@ -164,6 +165,9 @@ def measure_board_leak(
         Cap on leading frames counted.
     margin_db
         Separation from the baseline that marks a board frame.
+    crop
+        ``(x, y, width, height)`` of the frame compared with the board (a
+        letterbox file's picture); ``None`` compares the whole frame.
 
     Returns
     -------
@@ -181,8 +185,10 @@ def measure_board_leak(
     if not board.is_file():
         raise FileNotFoundError(f"board image not found: {board}")
     width, height = LEAK_ANALYSIS_SIZE
-    head = decode_frames(take, width=width, height=height, max_frames=max_frames + 1)
-    later = decode_frames(take, width=width, height=height, fps=1.0)[1:]
+    head = decode_frames(
+        take, width=width, height=height, max_frames=max_frames + 1, crop=crop
+    )
+    later = decode_frames(take, width=width, height=height, fps=1.0, crop=crop)[1:]
     if len(head) < 2 or len(later) < 1:
         raise ValueError(f"{take.name} is too short to measure board frames")
     with Image.open(board) as opened:

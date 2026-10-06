@@ -1702,6 +1702,23 @@ class LetterboxBand:
     step: int = 2
 
 
+def letterbox_band(width: int, height: int) -> LetterboxBand:
+    """The caption band under the picture on a ``width`` x ``height`` letterbox canvas.
+
+    The one place ``finish`` (:func:`caption_take`) and ``reel`` read it from
+    (:mod:`creation.post.delivery_geometry`).
+    """
+
+    from creation.post.delivery_geometry import layout as letterbox_layout
+
+    place = letterbox_layout(width, height)
+    return LetterboxBand(
+        place.caption.x, place.caption.right, place.caption.y,
+        place.caption_highest_top, place.caption.bottom,
+        place.caption_size, place.caption_min_size,
+    )  # fmt: skip
+
+
 def letterbox_centre(widest: float, band: LetterboxBand, width: int) -> int:
     """Where a letterbox caption ``widest`` px wide is centred (user decision 2026-10-06).
 
@@ -2702,16 +2719,10 @@ def caption_take(
     ass = next_versioned_path(takes, stem or f"{base}-house", ".ass")
     if letterbox:
         from creation.post.delivery_geometry import caption_colour_code
-        from creation.post.delivery_geometry import layout as letterbox_layout
 
-        place = letterbox_layout(width, height)
         text = build_ass(
             cues, width=width, height=height, style=style,
-            band=LetterboxBand(
-                place.caption.x, place.caption.right, place.caption.y,
-                place.caption_highest_top, place.caption.bottom,
-                place.caption_size, place.caption_min_size,
-            ),
+            band=letterbox_band(width, height),
             colour=caption_colour_code(caption_colour)
             if caption_colour or style != "plain"
             else None,

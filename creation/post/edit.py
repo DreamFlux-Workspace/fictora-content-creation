@@ -810,7 +810,12 @@ def frame_difference_cut_times(
     return tuple(cuts)
 
 
-def measure_cuts(take: Path, *, skip_head_frames: int = 0) -> tuple[float, ...]:
+def measure_cuts(
+    take: Path,
+    *,
+    skip_head_frames: int = 0,
+    crop: tuple[int, int, int, int] | None = None,
+) -> tuple[float, ...]:
     """Hard-cut times from the scaled ``tblend`` difference trace (scene detect is blind on H3 cell seams).
 
     Parameters
@@ -819,6 +824,9 @@ def measure_cuts(take: Path, *, skip_head_frames: int = 0) -> tuple[float, ...]:
         Video.
     skip_head_frames
         Ignore a cut inside the first N+1 frames (a board-leak jump).
+    crop
+        ``(x, y, width, height)`` of the frame to read (a letterbox file's
+        picture); ``None`` reads the whole frame.
 
     Returns
     -------
@@ -831,9 +839,10 @@ def measure_cuts(take: Path, *, skip_head_frames: int = 0) -> tuple[float, ...]:
         When the analysis fails.
     """
 
+    region = "" if crop is None else f"crop={crop[2]}:{crop[3]}:{crop[0]}:{crop[1]},"
     run = subprocess.run(
         [ffmpeg_bin(), "-nostdin", "-i", str(take), "-vf",
-         f"scale={FRAME_DIFF_SCALE},format=gray,tblend=all_mode=difference,signalstats,metadata=print:file=-",
+         f"{region}scale={FRAME_DIFF_SCALE},format=gray,tblend=all_mode=difference,signalstats,metadata=print:file=-",
          "-an", "-f", "null", "-"],
         capture_output=True, text=True, check=False,
     )  # fmt: skip
