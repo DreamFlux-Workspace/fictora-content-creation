@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import io
 import json
+import re
 from pathlib import Path
 
 from conftest import make_take, make_tone, needs_ffmpeg
@@ -134,7 +135,10 @@ def test_finish_lays_the_hook_at_zero_and_says_flat_when_take_one_has_none(
     assert "opening_sound_flat" not in out.getvalue()
     assert "on the opening line" not in out.getvalue()
     sfx = next(step for step in result.steps if step.step == "sfx")
-    assert f"{HOOK} @0.00s {OPENING_SOUND_GAIN_DB:+.0f} dB" in sfx.detail
+    # Laid at 0 s at the hook's level, measured under the take (never over OPENING_SOUND_GAIN_DB).
+    laid = re.search(rf"{re.escape(HOOK)} @0\.00s ([+-][0-9]+) dB", sfx.detail)
+    assert laid is not None, sfx.detail
+    assert int(laid.group(1)) <= OPENING_SOUND_GAIN_DB
 
 
 def test_the_flat_opening_warning_does_not_promise_a_refresh_will_fix_it() -> None:

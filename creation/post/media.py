@@ -253,6 +253,78 @@ def measure_loudness(path: Path) -> float:
     return -math.inf if value == "-inf" else float(value)
 
 
+@dataclass(frozen=True)
+class AudioLevels:
+    """A file's EBU R128 levels (``None`` where ffmpeg found nothing to measure).
+
+    Parameters
+    ----------
+    integrated_lufs
+        Integrated (gated) loudness.
+    max_momentary_lufs
+        The loudest 400 ms.
+    true_peak_dbtp
+        True peak.
+    """
+
+    integrated_lufs: float | None
+    max_momentary_lufs: float | None
+    true_peak_dbtp: float | None
+
+
+def _level(raw: str) -> float | None:
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return value if math.isfinite(value) and value > -70.0 else None
+
+
+def measure_levels(path: Path) -> AudioLevels:
+    """Measure a file's integrated loudness, loudest 400 ms and true peak with ffmpeg ``ebur128``.
+
+    Parameters
+    ----------
+    path
+        Audio, or video with audio.
+
+    Returns
+    -------
+    AudioLevels
+        The levels.
+
+    Raises
+    ------
+    MediaToolError
+        When ffmpeg fails.
+    """
+
+    result = subprocess.run(
+        [ffmpeg_bin(), "-hide_banner", "-nostats", "-i", str(path), "-vn",
+         "-af", "aresample=48000,pan=mono|c0=c0,ebur128=peak=true", "-f", "null", "-"],
+        capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    if result.returncode != 0:
+        raise MediaToolError(
+            f"level scan failed on {path.name}: {result.stderr.strip()[-300:]}"
+        )
+    summary = result.stderr.rsplit("Summary:", 1)[-1]
+    integrated = re.findall(r"I:\s+(-?[0-9.]+|-inf)\s+LUFS", summary)
+    peak = re.findall(r"Peak:\s+(-?[0-9.]+|-inf)\s+dBFS", summary)
+    momentary = [
+        value
+        for value in (
+            _level(raw) for raw in re.findall(r"\bM:\s*(-?[0-9.]+|-inf)", result.stderr)
+        )
+        if value is not None
+    ]
+    return AudioLevels(
+        integrated_lufs=_level(integrated[-1]) if integrated else None,
+        max_momentary_lufs=max(momentary) if momentary else None,
+        true_peak_dbtp=_level(peak[-1]) if peak else None,
+    )
+
+
 def measure_rms_windows(
     path: Path, *, window_seconds: float = 0.5
 ) -> tuple[float, ...]:

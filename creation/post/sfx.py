@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -31,7 +32,17 @@ from typing import Any
 
 from creation.harness_rules import is_opening_cue
 from creation.post.audio_service import AudioService, download
-from creation.post.media import LIMITER, measure_rms_windows, probe_video, run_ffmpeg
+from creation.post.media import (
+    LIMITER,
+    AudioLevels,
+    MediaToolError,
+    measure_levels,
+    measure_rms_windows,
+    probe_video,
+    run_ffmpeg,
+)
+
+_log = logging.getLogger(__name__)
 
 SFX_USD_PER_SECOND = 0.002
 SFX_GAIN_DB = -8.0
@@ -40,10 +51,18 @@ SFX_MIN_SECONDS = 0.5
 SFX_MAX_SECONDS = 22.0
 SFX_MIN_PLACED_SECONDS = 0.25
 SFX_SPEECH_DUCK_DB = -10.0
-#: The episode's opening hook at 0 s: 4 dB over an ordinary effect and still under the take. The
-#: finish's measured gain (about -18 LUFS here; the server's join levels to -14 LUFS) and its one
-#: limiter (``media.LIMITER``, peaks held at about -1 dBFS) set the delivered level, so it never clips.
-OPENING_SOUND_GAIN_DB = -4.0
+#: The episode's opening hook at 0 s: at most 3 dB over an ordinary effect (it was 4 dB until the
+#: writer's own events became hooks, fictora-drama 6 Oct 2026). A ceiling, never a target: each laid
+#: hook is measured and levelled under the take (:func:`opening_hook_gain_db`), the same rule as the
+#: server's ``opening_sound.opening_hook_level``. The finish's one limiter (``media.LIMITER``) still
+#: holds peaks at about -1 dBFS.
+OPENING_SOUND_GAIN_DB = -5.0
+#: What the hook is held under when the take's audio cannot be measured: a spoken line's level
+#: (the server levels locked voices to -18 LUFS) and a true peak under nine in ten levelled lines'.
+OPENING_HOOK_REFERENCE_LUFS = -18.0
+OPENING_HOOK_REFERENCE_PEAK_DBTP = -6.0
+#: How far the hook's loudest 400 ms may sit over the take's loudness: none.
+OPENING_HOOK_OVER_TAKE_LU = 0.0
 SILENCE_DB = -50.0
 
 Renderer = Callable[["SfxCue", Path], Path]
@@ -658,6 +677,102 @@ def _cue_chain(
     return f"[{position}:a]aresample=48000,{shape},adelay={delay}|{delay},volume={cue.gain_db:+.1f}dB{ducks}[s{position}]"
 
 
+Levels = Callable[[Path], AudioLevels]
+"""``file -> levels`` (:func:`creation.post.media.measure_levels` in production)."""
+
+
+def opening_hook_gain_db(
+    planned_gain_db: float, hook: AudioLevels, take: AudioLevels | None
+) -> float:
+    """The gain an opening hook is laid at: never awkwardly loud against the take.
+
+    Lowered (never raised past ``planned_gain_db``) until the hook's loudest 400 ms sits at or under
+    the take's loudness and its true peak at or under the take's. The server levels its own hooks
+    the same way (fictora-drama ``opening_sound.opening_hook_level``).
+
+    Parameters
+    ----------
+    planned_gain_db
+        The cue's planned gain (:func:`noted_gain_db`).
+    hook
+        The rendered hook's levels.
+    take
+        The take's own levels; ``None`` (or unmeasurable) holds the hook under a spoken line's.
+
+    Returns
+    -------
+    float
+        The gain, never below the effect floor.
+    """
+
+    reference_lufs = (
+        take.integrated_lufs
+        if take and take.integrated_lufs is not None
+        else OPENING_HOOK_REFERENCE_LUFS
+    )
+    reference_peak = (
+        take.true_peak_dbtp
+        if take and take.true_peak_dbtp is not None
+        else OPENING_HOOK_REFERENCE_PEAK_DBTP
+    )
+    gain = planned_gain_db
+    if hook.max_momentary_lufs is not None:
+        gain = min(
+            gain, reference_lufs + OPENING_HOOK_OVER_TAKE_LU - hook.max_momentary_lufs
+        )
+    if hook.true_peak_dbtp is not None:
+        gain = min(gain, reference_peak - hook.true_peak_dbtp)
+    return round(_clamp_gain(gain), 1)
+
+
+def level_opening_hooks(
+    kept: list[tuple[SfxCue, Path]], take: Path, *, levels: Levels = measure_levels
+) -> list[tuple[SfxCue, Path]]:
+    """Level each opening hook against the take it opens; every other cue is returned as is.
+
+    Parameters
+    ----------
+    kept
+        The cues to mix with their rendered files.
+    take
+        The take as delivered, before any effect of ours.
+    levels
+        Level meter.
+
+    Returns
+    -------
+    list[tuple[SfxCue, Path]]
+        The same cues, each hook at its levelled gain.
+    """
+
+    if not any(is_opening_cue(cue.sound) for cue, _path in kept):
+        return kept
+    try:
+        reference: AudioLevels | None = levels(take)
+    except MediaToolError as exc:
+        _log.warning(
+            "opening hook: the take could not be measured (%s); held under a spoken line's level",
+            exc,
+        )
+        reference = None
+    out: list[tuple[SfxCue, Path]] = []
+    for cue, path in kept:
+        if is_opening_cue(cue.sound):
+            try:
+                gain = opening_hook_gain_db(cue.gain_db, levels(path), reference)
+            except MediaToolError as exc:
+                _log.warning(
+                    "opening hook %r could not be measured (%s); laid at %+.1f dB",
+                    cue.sound,
+                    exc,
+                    cue.gain_db,
+                )
+                gain = cue.gain_db
+            cue = replace(cue, gain_db=gain)
+        out.append((cue, path))
+    return out
+
+
 def lay_sfx(
     take: Path,
     plan: SfxPlan,
@@ -667,6 +782,7 @@ def lay_sfx(
     adjustments: tuple[Adjustment, ...] = (),
     render: Renderer,
     measure: Meter = measure_rms_windows,
+    levels: Levels = measure_levels,
 ) -> SfxResult:
     """Render (or reuse) each cue and mix the usable ones under the take into ``output``.
 
@@ -686,6 +802,8 @@ def lay_sfx(
         Cue renderer (:func:`service_renderer` in production).
     measure
         Shape meter (also gives each mixed cue's placed peak, for the mix's quiet-cue check).
+    levels
+        Level meter for the opening hook and the take it is levelled under (:func:`level_opening_hooks`).
 
     Returns
     -------
@@ -750,6 +868,8 @@ def lay_sfx(
             skipped=tuple(skipped), dropped=tuple(dropped), rendered=rendered,
             cost_usd=round(cost, 4),
         )  # fmt: skip
+    # The episode's opening hook: heard clearly, never over the take.
+    kept = level_opening_hooks(kept, take, levels=levels)
     inputs: list[str] = ["-i", str(take)]
     parts: list[str] = []
     labels = ["[0:a]"]
