@@ -398,6 +398,8 @@ def face_note(faces: Sequence[tuple[float, float, float, float]] | None) -> str 
 
 
 #: The columns the operator fills from Instagram; a row with any of them filled was posted.
+#: A TikTok clip's columns (``kind`` ``reel`` / ``clip``, the clip's number), after ``part`` once a desk has clips.
+CLIP_COLUMNS: tuple[str, ...] = ("kind", "clip")
 OPERATOR_COLUMNS = (
     "posted_at",
     "views",
@@ -410,21 +412,26 @@ OPERATOR_COLUMNS = (
 
 
 def record_metrics_row(sheet: Path, row: Mapping[str, Any]) -> Path:
-    """Put one reel in the results sheet: one row per part, updated to the newest reel.
+    """Put one reel (or one clip) in the results sheet: one row per part (per part and clip), updated to the newest.
 
     The part's row that was not posted yet (no :data:`OPERATOR_COLUMNS` filled)
     is updated in place: the kit's columns take the new reel, the old reel file
     joins ``superseded`` (oldest first, ``; `` between), the operator's columns
     and ``notes`` stay. A posted row is history and never changed: a re-cut
     after posting gets a new row. The header is written when the file is new;
-    a sheet from an older kit gains the new columns.
+    a sheet from an older kit gains the new columns. A TikTok clip's row is
+    ``kind`` ``clip`` with its number in ``clip`` (:data:`CLIP_COLUMNS`, after
+    ``part``): its key is the part and the clip, apart from the reel's row. A
+    sheet gets those two columns with its first clip (every reel row then says
+    ``reel``); a sheet with no clip (an older desk's) keeps its columns.
 
     Parameters
     ----------
     sheet
         ``<desk>/reels/metrics.csv``.
     row
-        Values by column name (:data:`METRICS_COLUMNS`); ``part`` is the key, a missing column is blank.
+        Values by column name (:data:`METRICS_COLUMNS`); ``part`` (with ``kind`` and ``clip``) is the key, a
+        missing column is blank (``kind`` blank is ``reel``).
 
     Returns
     -------
@@ -436,12 +443,27 @@ def record_metrics_row(sheet: Path, row: Mapping[str, Any]) -> Path:
     if sheet.is_file() and sheet.stat().st_size:
         with sheet.open(encoding="utf-8", newline="") as handle:
             rows = [dict(r) for r in csv.DictReader(handle)]
-    new = {name: str(row.get(name, "") or "") for name in METRICS_COLUMNS}
+    new = {
+        name: str(row.get(name, "") or "") for name in (*METRICS_COLUMNS, *CLIP_COLUMNS)
+    }
+    clipped = new["kind"] == "clip" or any(r.get("kind") for r in rows)
+    if clipped:
+        new["kind"] = new["kind"] or "reel"
+        for r in rows:
+            r["kind"] = r.get("kind") or "reel"
+
+    def key(r: Mapping[str, Any]) -> tuple[str, str, str]:
+        return (
+            str(r.get("part") or ""),
+            str(r.get("kind") or "reel"),
+            str(r.get("clip") or ""),
+        )
+
     open_row = next(
         (
             r
             for r in rows
-            if str(r.get("part") or "") == new["part"]
+            if key(r) == key(new)
             and not any((r.get(c) or "").strip() for c in OPERATOR_COLUMNS)
         ),
         None,
@@ -454,8 +476,17 @@ def record_metrics_row(sheet: Path, row: Mapping[str, Any]) -> Path:
             older.append(open_row["reel_file"])
         keep = {c: open_row.get(c, "") for c in (*OPERATOR_COLUMNS, "notes")}
         open_row.update({**new, **keep, "superseded": "; ".join(older)})
-    extra = [c for r in rows for c in r if c not in METRICS_COLUMNS and c]
-    columns = [*METRICS_COLUMNS, *dict.fromkeys(extra)]
+    base = list(METRICS_COLUMNS)
+    if clipped:
+        at = base.index("part") + 1
+        base[at:at] = list(CLIP_COLUMNS)
+    extra = [
+        c
+        for r in rows
+        for c in r
+        if c not in base and c and not (c in CLIP_COLUMNS and not clipped)
+    ]
+    columns = [*base, *dict.fromkeys(extra)]
     scratch = sheet.with_name(sheet.name + ".tmp")
     with scratch.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore")
@@ -466,6 +497,7 @@ def record_metrics_row(sheet: Path, row: Mapping[str, Any]) -> Path:
 
 
 __all__ = [
+    "CLIP_COLUMNS",
     "METRICS_COLUMNS",
     "METRICS_FILE",
     "CoverLayout",
