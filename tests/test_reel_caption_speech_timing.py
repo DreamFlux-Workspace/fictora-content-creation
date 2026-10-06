@@ -112,7 +112,7 @@ def _starts(cues: list, word: str) -> list[float]:  # type: ignore[type-arg]
     """When each cue whose newest word is ``word`` starts (a flicker cue ends with the word just said)."""
 
     return [
-        c.start for c in cues if c.text.split()[-1].strip(",.!—-").casefold() == word
+        c.start for c in cues if c.text.split()[-1].strip(",.!…—-").casefold() == word
     ]
 
 
@@ -193,8 +193,9 @@ def test_what_was_said_wins_over_the_stale_accepted_wording(tmp_path: Path) -> N
     )
     assert not any("matter" in c.text or "happens" in c.text for c in cues)
     assert any("was said" in n and "D-9341." in n for n in notes), notes
-    # The line's own spelling stays where the words agree (house punctuation, NOT in capitals).
-    assert any(c.text.endswith("NOT—") for c in cues)
+    # The line's own spelling stays where the words agree (house punctuation, NOT in capitals);
+    # its cut-off dash is drawn as an ellipsis (no dash in a burned caption, 6 Oct 2026).
+    assert any(c.text.endswith("NOT…") for c in cues)
 
 
 def test_a_dubbed_line_keeps_its_recorded_wording_and_says_its_timing_is_estimated(

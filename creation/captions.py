@@ -80,6 +80,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
+from creation.caption_dashes import caption_text as no_dash_text
 from creation.ops.folder import next_versioned_path
 
 #: The house style's canvas height: the content team's 1080x1920 deliverable.
@@ -1448,6 +1449,9 @@ def build_line_cues(
     as they were heard, and is the text shown; without it the line's words are
     spread over its span by length (:func:`time_words`: an estimate).
 
+    Every cue's text goes through :func:`creation.caption_dashes.caption_text`
+    (no em or en dash on the picture; the script and the voice keep theirs).
+
     English shows flicker word by word (:func:`flicker_cues`; with
     ``chunking="phrase"``, a letterbox show, :func:`phrase_cues`). With
     ``whole_lines`` (a show spoken in Japanese or Korean, captioned with the
@@ -1481,9 +1485,11 @@ def build_line_cues(
             timed = list(heard) if heard else time_words(text, span)
             line_cues = build(timed, hold_until=next_start, hold=hold)
         slanted = i < len(italic) and italic[i]
+        # The cue's text is drawn without an em or en dash (after timing, so word timings
+        # are unchanged): "Please—" shows "Please…" (creation.caption_dashes).
         groups.append(
             [
-                Cue(c.start, c.end, c.text, italic=True) if slanted else c
+                Cue(c.start, c.end, no_dash_text(c.text), italic=slanted or c.italic)
                 for c in line_cues
             ]
         )
@@ -1797,6 +1803,9 @@ def build_ass(
     ``italic``. The italic ``Fontsize`` is :func:`italic_size`, so both
     faces draw at the same em.
 
+    No cue draws an em or en dash: a cut-off ("Please—") shows "Please…",
+    a dash between words a comma (:func:`creation.caption_dashes.caption_text`).
+
     A cue too wide for one line is wrapped into two balanced lines
     (:func:`wrap_caption`; ``WrapStyle: 2`` so libass adds no breaks of its
     own). The block's bottom edge sits at 62%, inside the 55-70% band. A
@@ -1834,6 +1843,8 @@ def build_ass(
         raise ValueError(
             f"caption style {style!r} draws no captions; use house or plain"
         )
+    # No em or en dash on the picture (6 Oct 2026): every cue, after timing (creation.caption_dashes).
+    cues = [replace(c, text=no_dash_text(c.text)) for c in cues]
     scale = height / HOUSE_CANVAS_HEIGHT
     size = house_font_size(height)
     margin_v = caption_margin_v(height)

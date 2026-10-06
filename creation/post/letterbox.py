@@ -38,11 +38,12 @@ import json
 import re
 import statistics
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from creation.caption_dashes import caption_text as no_dash_text
 from creation.captions import (
     FONTS_DIR,
     FONT_NAME,
@@ -359,6 +360,10 @@ def title_ass(
     """
 
     place = layout(width, height)
+    # No em or en dash on the picture (6 Oct 2026; creation.caption_dashes).
+    block = replace(
+        block, setup=no_dash_text(block.setup), hook=no_dash_text(block.hook)
+    )
     fitted = fit_title(block, place)
     end = _ass_time(duration if duration else 24 * 3600 - 1)
     lines = [(TITLE_SETUP_COLOUR, line) for line in fitted.setup] + [
