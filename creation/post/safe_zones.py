@@ -408,14 +408,30 @@ def zone_sheet(
     return out
 
 
-def letterbox_file(video: Path) -> bool:
+def letterbox_file(video: Path, *, desk: Path | None = None) -> bool:
     """True when ``video`` is a letterbox show's 9:16 file: a finish record names it (or, for a joined
-    episode, its takes' records) as ``letterbox``."""
+    episode, its takes' records) as ``letterbox``, or it is a reel whose plan says ``letterbox``.
+
+    ``desk`` is the series desk (default: the nearest folder above ``video`` with a ``series.json``).
+    """
 
     from creation.post.finish_record import latest_finish_record, record_for_file
 
     resolved = video.expanduser().resolve()
-    desk = next((p for p in resolved.parents if (p / "series.json").is_file()), None)
+    reel = re.match(r"reel-(ep\d+(?:-draft)?-v\d+)\.mp4$", resolved.name)
+    if reel:
+        plan = resolved.with_name(f"reel-plan-{reel.group(1)}.json")
+        if not plan.is_file():
+            return False
+        try:
+            body = json.loads(plan.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return isinstance(body, dict) and body.get("letterbox") is True
+    if desk is None:
+        desk = next(
+            (p for p in resolved.parents if (p / "series.json").is_file()), None
+        )
     if desk is None:
         return False
     record = record_for_file(desk, resolved)

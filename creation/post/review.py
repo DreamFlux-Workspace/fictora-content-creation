@@ -58,6 +58,11 @@ command exits 0 whatever it finds.
 With no ``--take-file`` (alias ``--file``) it reads the newest finished file for
 the take, else the newest raw take, and the block's first line says which.
 
+On a letterbox show's 9:16 file (its finish record, a joined episode's records, or its reel plan
+says ``letterbox``) the opening, frames, cuts, board and ending checks read only the picture
+(y 555-1365 on 1080x1920, :func:`picture_crop`): the black bands, the title and the band captions
+are never measured as picture. A portrait take reads exactly as before.
+
 It writes nothing but an optional transcript and the text check's crop sheet.
 Everything is local and free except ``--transcribe``, which asks the server for
 a Whisper transcript of the take's stored URL (a few cents; nothing is uploaded).
@@ -556,10 +561,18 @@ def cuts_section(
     facts: Mapping[str, Any] | None,
     retimed: bool,
     retimed_by: str | None = None,
+    crop: tuple[int, int, int, int] | None = None,
 ) -> Section:
-    """Hard cuts from the ``tblend`` trace, against the take facts' shot changes."""
+    """Hard cuts from the ``tblend`` trace, against the take facts' shot changes.
 
-    cuts = measure_cuts(take, skip_head_frames=head_board_frames)
+    ``crop`` reads only that part of the frame (a letterbox file's picture).
+    """
+
+    cuts = (
+        measure_cuts(take, skip_head_frames=head_board_frames)
+        if crop is None
+        else measure_cuts(take, skip_head_frames=head_board_frames, crop=crop)
+    )
     threshold = (
         f"tblend mean luma diff ≥ {FRAME_DIFF_CUT_THRESHOLD:g}; "
         f"matched to shot changes within ±{CUT_MATCH_SECONDS:g} s"
@@ -642,8 +655,10 @@ def _runs(mask: npt.NDArray[np.bool_], step: float) -> list[tuple[float, float]]
 
 def measure_frames(
     take: Path,
+    *,
+    crop: tuple[int, int, int, int] | None = None,
 ) -> tuple[list[tuple[float, float]], list[tuple[float, float]], float, float]:
-    """Frozen and stacked stretches at 8 fps.
+    """Frozen and stacked stretches at 8 fps (``crop``: only that part of the frame, a letterbox picture).
 
     Returns
     -------
@@ -652,12 +667,14 @@ def measure_frames(
         ``(start, end)`` in seconds, already filtered to the ones long enough to report.
     """
 
-    frozen, stacked, lowest_move, lowest_stack, _ = _measure_frames(take)
+    frozen, stacked, lowest_move, lowest_stack, _ = _measure_frames(take, crop=crop)
     return frozen, stacked, lowest_move, lowest_stack
 
 
 def _measure_frames(
     take: Path,
+    *,
+    crop: tuple[int, int, int, int] | None = None,
 ) -> tuple[
     list[tuple[float, float]],
     list[tuple[float, float]],
@@ -668,7 +685,10 @@ def _measure_frames(
     """:func:`measure_frames` plus the top-vs-bottom score of every 8 fps sample."""
 
     width, height = STACK_SIZE
-    frames = decode_frames(take, width=width, height=height, fps=STACK_FPS) / 255.0
+    frames = (
+        decode_frames(take, width=width, height=height, fps=STACK_FPS, crop=crop)
+        / 255.0
+    )
     step = 1.0 / STACK_FPS
     half = height // 2
     stack_scores = np.sqrt(
@@ -695,10 +715,14 @@ def _measure_frames(
     return frozen, stacked, round(lowest_move, 4), round(lowest_stack, 3), stack_scores
 
 
-def frames_section(take: Path, *, steps: set[str]) -> Section:
-    """Frozen stretches (stalls) and stacked double frames."""
+def frames_section(
+    take: Path, *, steps: set[str], crop: tuple[int, int, int, int] | None = None
+) -> Section:
+    """Frozen stretches (stalls) and stacked double frames (``crop``: a letterbox file's picture only)."""
 
-    frozen, all_stacked, lowest_move, lowest_stack, scores = _measure_frames(take)
+    frozen, all_stacked, lowest_move, lowest_stack, scores = _measure_frames(
+        take, crop=crop
+    )
     step = 1.0 / STACK_FPS
     span = max(len(scores) * step, step)
 
@@ -746,6 +770,9 @@ def frames_section(take: Path, *, steps: set[str]) -> Section:
     data = {"frozen": [list(r) for r in frozen], "stacked": [list(r) for r in stacked],
             "stacked_whole_take": [list(r) for r in whole],
             "lowest_frame_rmse": lowest_move, "lowest_stack_rmse": lowest_stack}  # fmt: skip
+    if crop is not None:
+        data["region"] = list(crop)
+        details.append(picture_only_note(crop))
     return Section(
         "Frames", WARN if frozen or stacked else OK, summary, threshold, details, data
     )
@@ -755,12 +782,20 @@ def frames_section(take: Path, *, steps: set[str]) -> Section:
 
 
 def _iter_frames(
-    take: Path, width: int, height: int
+    take: Path,
+    width: int,
+    height: int,
+    *,
+    crop: tuple[int, int, int, int] | None = None,
 ) -> Iterator[npt.NDArray[np.float64]]:
-    """Every frame at ``width`` x ``height``, one at a time (a whole take never sits in memory)."""
+    """Every frame at ``width`` x ``height``, one at a time (a whole take never sits in memory).
 
+    ``crop`` keeps only that part of the frame first (a letterbox file's picture).
+    """
+
+    region = "" if crop is None else f"crop={crop[2]}:{crop[3]}:{crop[0]}:{crop[1]},"
     proc = subprocess.Popen(
-        [ffmpeg_bin(), "-nostdin", "-v", "error", "-i", str(take), "-vf", f"scale={width}:{height}",
+        [ffmpeg_bin(), "-nostdin", "-v", "error", "-i", str(take), "-vf", f"{region}scale={width}:{height}",
          "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )  # fmt: skip
@@ -803,7 +838,11 @@ class BoardScan:
 
 
 def scan_board(
-    take: Path, board: Path, *, margin_db: float = BOARD_LEAK_MARGIN_DB
+    take: Path,
+    board: Path,
+    *,
+    margin_db: float = BOARD_LEAK_MARGIN_DB,
+    crop: tuple[int, int, int, int] | None = None,
 ) -> BoardScan:
     """Find board frames anywhere in ``take``: the head as ``deboard`` counts it, then every later frame.
 
@@ -815,7 +854,7 @@ def scan_board(
         When the take is too short to measure a baseline.
     """
 
-    leak = measure_board_leak(take, board, margin_db=margin_db)
+    leak = measure_board_leak(take, board, margin_db=margin_db, crop=crop)
     width, height = LEAK_ANALYSIS_SIZE
     with Image.open(board) as opened:
         reference = np.asarray(
@@ -824,7 +863,7 @@ def scan_board(
         )
     floor = leak.baseline_db + margin_db
     later: list[tuple[int, float]] = []
-    for index, frame in enumerate(_iter_frames(take, width, height)):
+    for index, frame in enumerate(_iter_frames(take, width, height, crop=crop)):
         if index < leak.frames:
             continue
         value = _psnr(frame, reference)
@@ -834,9 +873,17 @@ def scan_board(
 
 
 def board_section(
-    take: Path, board: Path | None, *, fps: float, deboarded: bool
+    take: Path,
+    board: Path | None,
+    *,
+    fps: float,
+    deboarded: bool,
+    crop: tuple[int, int, int, int] | None = None,
 ) -> tuple[Section, int]:
-    """Board frames anywhere in the take; returns the section and the head count (for the cut trace)."""
+    """Board frames anywhere in the take; returns the section and the head count (for the cut trace).
+
+    ``crop``: compare only that part of the frame with the board (a letterbox file's 4:3 picture).
+    """
 
     threshold = f"PSNR vs the board ≥ baseline + {BOARD_LEAK_MARGIN_DB:g} dB, every frame at 192x336"
     if board is None:
@@ -847,7 +894,7 @@ def board_section(
             threshold,
         ), 0
     try:
-        scan = scan_board(take, board)
+        scan = scan_board(take, board, crop=crop)
     except ValueError as exc:
         return Section("Board", NONE, f"not measured: {exc}", threshold), 0
     data = {"board": str(board), "head_frames": scan.head, "baseline_db": scan.baseline_db,
@@ -1647,10 +1694,12 @@ def opening_section(
     silent_open: bool,
     head_count_face: float | None,
     detector: Any = None,
+    crop: tuple[int, int, int, int] | None = None,
 ) -> Section:
     """The first second (:mod:`creation.post.opening`): a dark frame 0, a static head, no face on frame 0.
 
     Run on the first take of every episode and on every reel. Warnings only.
+    ``crop``: only that part of the frame is read (a letterbox file's picture).
     """
 
     from creation.post.opening import (
@@ -1662,7 +1711,7 @@ def opening_section(
 
     reading = measure_opening(
         take, detector=detector, head_count_face=head_count_face,
-        silent_open=silent_open, where=where,
+        silent_open=silent_open, where=where, crop=crop,
     )  # fmt: skip
     face = (
         "not checked (a silent / visual opening)"
@@ -1685,12 +1734,21 @@ def opening_section(
     )  # fmt: skip
 
 
-def ending_section(take: Path, *, last_mark: float | None, what: str) -> Section:
-    """The tail (:mod:`creation.post.opening`): more than 0.3 s settled after the last line or action."""
+def ending_section(
+    take: Path,
+    *,
+    last_mark: float | None,
+    what: str,
+    crop: tuple[int, int, int, int] | None = None,
+) -> Section:
+    """The tail (:mod:`creation.post.opening`): more than 0.3 s settled after the last line or action.
+
+    ``crop``: only that part of the frame is read (a letterbox file's picture).
+    """
 
     from creation.post.opening import TAIL_MAX_SECONDS, measure_tail, tail_warning
 
-    reading = measure_tail(take, last_mark=last_mark)
+    reading = measure_tail(take, last_mark=last_mark, crop=crop)
     line = tail_warning(reading, what=what)
     summary = f"{reading.settled_seconds:.2f} s after the last line or action" + (
         "" if last_mark is not None else " (no caption times: motion only)"
@@ -1700,6 +1758,37 @@ def ending_section(take: Path, *, last_mark: float | None, what: str) -> Section
         f"settled tail ≤ {TAIL_MAX_SECONDS:g} s; ends hard on the last frame",
         [line] if line else [], {"tail": reading.as_json()},
     )  # fmt: skip
+
+
+def picture_crop(
+    desk: Path, take: Path, width: int, height: int
+) -> tuple[int, int, int, int] | None:
+    """``(x, y, width, height)`` of the picture on a letterbox show's 9:16 file, else ``None``.
+
+    A file is letterbox when its finish record (or a joined episode's takes'
+    records) or its reel plan says so (:func:`creation.post.safe_zones.letterbox_file`):
+    nothing is measured to decide, so a portrait take reads exactly as before.
+    The picture is the 4:3 take on the canvas, y 555-1365 on 1080x1920
+    (:mod:`creation.post.delivery_geometry`).
+    """
+
+    from creation.post.delivery_geometry import layout
+    from creation.post.safe_zones import letterbox_file
+
+    if not letterbox_file(take, desk=desk):
+        return None
+    pic = layout(width, height).picture
+    return (pic.x, pic.y, pic.width, pic.height)
+
+
+def picture_only_note(crop: tuple[int, int, int, int]) -> str:
+    """The line that says a section read only the letterbox picture."""
+
+    x, y, w, h = crop
+    return (
+        f"letterbox file: measured on the picture only (x {x}-{x + w}, y {y}-{y + h}); "
+        "the black bands, title and band captions are not read"
+    )
 
 
 def review_take(
@@ -1766,6 +1855,8 @@ def review_take(
     info = probe_video(take)
     fps = info.fps or 24.0
     kind = take_kind(take)
+    # A letterbox show's 9:16 file: every picture check reads the 4:3 picture only, never the bands.
+    crop = picture_crop(desk, take, info.width, info.height)
     steps = _steps(take)
     board_path = (
         board.expanduser().resolve()
@@ -1810,8 +1901,9 @@ def review_take(
             words_note = f"saved transcript not used: {why}; `--transcribe` makes one of this take (a few cents)"
     loud = loudness_section(take, kind, has_audio=info.has_audio)
     board_sec, head = board_section(
-        take, board_path, fps=fps, deboarded=bool(steps & set(DEBOARDED_STEPS))
-    )
+        take, board_path, fps=fps, deboarded=bool(steps & set(DEBOARDED_STEPS)),
+        crop=crop,
+    )  # fmt: skip
     held = server_board_frames(facts)
     if held is not None:
         # The server already cleaned the raw take: its head reads 0 here, and nothing is shifted.
@@ -1857,8 +1949,9 @@ def review_take(
         facts=facts,
         retimed=bool(steps & set(RETIMED_STEPS)),
         retimed_by="the reel cut and reordered the take" if "reel" in steps else None,
+        crop=crop,
     )
-    frames = frames_section(take, steps=steps)
+    frames = frames_section(take, steps=steps, crop=crop)
     text = text_section(
         desk, episode=episode, take_id=take_id, take=take, kind=kind, ocr=text_ocr
     )
@@ -1903,6 +1996,7 @@ def review_take(
                 detector=face_detector
                 if face_detector != "local"
                 else detector_for(desk, episode),
+                crop=crop,
             )  # fmt: skip
         )
     if "reel" in steps:
@@ -1912,6 +2006,7 @@ def review_take(
                 take,
                 last_mark=max((c.end for c in cues), default=None),
                 what="the reel",
+                crop=crop,
             )
         )
     if kind == "finished":

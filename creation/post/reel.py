@@ -26,6 +26,11 @@ inferred step printed with a ⚠):
   across every cut. A take whose record says the harness's music is in its own
   soundtrack (``music_in_take``) gets no bed: its music cuts with the picture.
 
+A letterbox show's reel (spine ``delivery_format: letterbox``, 4:3 sources, :func:`reel_letterbox`)
+is delivered like the episode's own file: after the mix it goes on the 9:16 black canvas, its
+captions in the band under the picture, then the mark in the top band and the title block above
+the picture (:mod:`creation.post.letterbox`); no hook line overlay. Portrait reels are unchanged.
+
 Render: each run of picture is cut on the frame grid; the sound before the bed
 is cut with short equal-power crossfades centred on each cut (no clicks); the
 bed goes under; captions; the Sokii mark top left (:func:`creation.post.watermark.watermark`,
@@ -746,6 +751,76 @@ class ReelResult:
         return f"Reel {self.video.name}: {self.seconds:.2f} s, {self.loudness}, {self.captions}{cover}; {order}"
 
 
+@dataclass(frozen=True)
+class LetterboxReel:
+    """A letterbox show's reel: cut from its 4:3 takes, delivered on the 9:16 letterbox canvas.
+
+    ``title`` is the title block above the picture (``None``: the mark alone,
+    ``--no-hook-line`` or nothing to show); ``colour`` the band captions'
+    colour (``yellow`` / ``white``) and where it came from.
+    """
+
+    title: Any
+    colour: str
+    colour_source: str
+    title_note: str = ""
+
+    def describe(self) -> str:
+        title = self.title.describe() if self.title is not None else self.title_note
+        return (
+            f"letterbox: 1080x1920 black canvas, the 4:3 picture at y 555-1365; {title}; "
+            f"captions in the band under the picture, {self.colour} ({self.colour_source})"
+        )
+
+
+def reel_letterbox(
+    desk: Path,
+    spine: Mapping[str, Any],
+    episode: int,
+    sources: Sequence[TakeSource],
+    *,
+    hook_line: str | None = None,
+    no_hook_line: bool = False,
+) -> LetterboxReel | None:
+    """The letterbox layout for this reel, or ``None`` for every other reel (portrait shows untouched).
+
+    Only a show whose ``delivery_format`` is ``letterbox`` AND whose reel
+    sources are really 4:3 (:func:`creation.post.letterbox.is_letterbox_take`)
+    gets it: the same canvas, title block, band captions and mark that
+    ``finish`` and ``join`` give the episode (:mod:`creation.post.letterbox`).
+    A source that is already the 9:16 file (an accepted file with its text
+    burned in) is not 4:3 and keeps the old path.
+
+    The caption colour is the finish record's (what the episode was finished
+    with), else :func:`creation.post.letterbox.resolve_caption_colour`.
+    """
+
+    if delivery_format(spine) != "letterbox" or not sources:
+        return None
+    from creation.post import letterbox as lb
+
+    for source in sources:
+        info = probe_video(source.source)
+        if not lb.is_letterbox_take(spine, (info.width, info.height)):
+            return None
+    recorded = next(
+        (
+            s.record.caption_colour
+            for s in sources
+            if s.record is not None and s.record.letterbox and s.record.caption_colour
+        ),
+        None,
+    )
+    if recorded:
+        colour, colour_source = recorded, "the finish record"
+    else:
+        colour, colour_source = lb.resolve_caption_colour(desk, spine)
+    title, why = lb.title_block(
+        spine, episode, desk=desk, override=hook_line, off=no_hook_line
+    )
+    return LetterboxReel(title, colour, colour_source, why)
+
+
 def reel_hook(
     spine: Mapping[str, Any],
     episode: int,
@@ -827,6 +902,7 @@ def render_reel(
     whole_lines: bool,
     watermark_y: int | None = None,
     hook: HookOverlay | None = None,
+    letterbox: LetterboxReel | None = None,
 ) -> tuple[float, str, str, list[str]]:
     """Cut the plan from the sources into ``paths['video']`` (and its ``.ass``).
 
@@ -836,6 +912,13 @@ def render_reel(
 
     ``hook`` (:mod:`creation.post.hook_overlay`) is burned over the captions,
     before the mark; None draws nothing and runs exactly the commands it always ran.
+
+    ``letterbox`` (:func:`reel_letterbox`): a letterbox show's reel goes on
+    the 9:16 black canvas after the mix (:func:`creation.post.letterbox.pad_to_canvas`),
+    its captions in the band under the picture, then the mark in the top
+    band and the title block (:func:`creation.post.letterbox.mark_and_title`),
+    as ``finish`` and ``join`` make the episode. ``None`` runs exactly the
+    commands it always ran.
 
     Returns
     -------
@@ -964,6 +1047,21 @@ def render_reel(
                 f"!! no bed on the record or the desk: the reel has no music; {mix.one_line()}"
             )
         loudness = f"{mix.mix_lufs:.1f} LUFS"
+        band, band_colour = None, None
+        if letterbox is not None:
+            from creation.captions import letterbox_band
+            from creation.post.delivery_geometry import (
+                CANVAS_HEIGHT,
+                CANVAS_WIDTH,
+                caption_colour_code,
+            )
+            from creation.post.letterbox import pad_to_canvas
+
+            mixed = pad_to_canvas(mixed, scratch / "reel-canvas.mp4")
+            width, height = CANVAS_WIDTH, CANVAS_HEIGHT
+            band = letterbox_band(width, height)
+            band_colour = caption_colour_code(letterbox.colour)
+            report.append(letterbox.describe())
         cues = retime_cues(plan.segments, {t.take_id: t.cues for t in takes}, fps)
         grain = "whole English lines" if whole_lines else "word flicker"
         if caption_style == "none":
@@ -976,7 +1074,16 @@ def render_reel(
         else:
             write_new(
                 paths["ass"],
-                build_ass(cues, width=width, height=height, style=caption_style),
+                build_ass(cues, width=width, height=height, style=caption_style)
+                if band is None
+                else build_ass(
+                    cues,
+                    width=width,
+                    height=height,
+                    style=caption_style,
+                    band=band,
+                    colour=band_colour,
+                ),  # fmt: skip
             )
             captioned = scratch / "reel-cap.mp4"
             burn_ass(find_ffmpeg()[0], mixed, paths["ass"], captioned)
@@ -997,6 +1104,22 @@ def render_reel(
             mark_line = (
                 f"⚠ no second mark: {', '.join(burned)} cut from the accepted file, its own mark and burned "
                 "captions kept as they are"
+            )
+        elif letterbox is not None:
+            from creation.post.letterbox import mark_and_title
+
+            _, fitted = mark_and_title(
+                captioned, marked, title=letterbox.title,
+                ass_path=paths["video"].with_name(paths["video"].stem + "-title.ass"),
+            )  # fmt: skip
+            words = (
+                f"{letterbox.title.describe()} at {fitted.size} px"
+                + (f"; {fitted.note}" if fitted.note else "")
+                if letterbox.title is not None and fitted is not None
+                else letterbox.title_note or "no title block"
+            )
+            mark_line = (
+                f"Sokii mark in the top band (as finish and join apply it); {words}"
             )
         else:
             watermark(captioned, marked, y=watermark_y)
@@ -1448,15 +1571,27 @@ def make_reel(
             flush=True,
         )
     paths = reel_paths(desk, episode, draft=draft)
-    hook = reel_hook(
-        spine,
-        episode,
-        plan,
-        srcs,
-        override=hook_line,
-        off=no_hook_line,
-        position=hook_line_position,
+    boxed = reel_letterbox(
+        desk, spine, episode, srcs, hook_line=hook_line, no_hook_line=no_hook_line
     )
+    if boxed is not None:
+        hook = HookDecision(None, "letterbox: the title block goes on with the mark")
+        print(
+            "[letterbox] 4:3 takes on a letterbox show: the reel is the 9:16 letterbox file "
+            "(as finish and join make it)",
+            file=out,
+            flush=True,
+        )
+    else:
+        hook = reel_hook(
+            spine,
+            episode,
+            plan,
+            srcs,
+            override=hook_line,
+            off=no_hook_line,
+            position=hook_line_position,
+        )
     extra = {
         "language": "ja/ko/other: whole English lines" if whole else "en: word flicker",
         "edited_from": plan_file.name if plan_file else None,
@@ -1470,6 +1605,19 @@ def make_reel(
     ):
         # Recorded only when there is a hook line to speak of, so a plan without one keeps its keys.
         extra["hook_line"] = hook.as_json()
+    if boxed is not None:
+        # Only on a letterbox reel, so a portrait plan keeps its keys; review reads it (safe_zones.letterbox_file).
+        extra["letterbox"] = True
+        extra["letterbox_title"] = (
+            {
+                "setup": boxed.title.setup,
+                "hook": boxed.title.hook,
+                "hook_source": boxed.title.hook_source,
+            }
+            if boxed.title is not None
+            else None
+        )
+        extra["caption_colour"] = boxed.colour
     payload = plan_json(
         plan, takes={s.take_id: s.as_json(desk) for s in srcs}, extra=extra
     )
@@ -1479,7 +1627,8 @@ def make_reel(
     result = ReelResult(
         plan=plan, plan_path=paths["plan"], draft=draft, paths=dict(paths),
         sources=sources_fingerprint(desk, srcs), series=str(spine.get("title") or desk.name),
-        hook_text=hook.overlay.text if hook.overlay is not None else "",
+        hook_text=hook.overlay.text if hook.overlay is not None
+        else boxed.title.hook if boxed is not None and boxed.title is not None else "",
     )  # fmt: skip
     if plan_only:
         print(
@@ -1491,7 +1640,7 @@ def make_reel(
     secs, loud, cap_line, report = render_reel(
         desk, episode=episode, plan=plan, sources=srcs, takes=takes, patches=patches,
         paths=paths, caption_style=style, whole_lines=whole, watermark_y=watermark_y,
-        hook=hook.overlay,
+        hook=hook.overlay, letterbox=boxed,
     )  # fmt: skip
     summary = episode_summary(spine, episode)
     series = str(spine.get("title") or desk.name)
