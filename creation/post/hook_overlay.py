@@ -37,10 +37,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
+from creation.caption_dashes import caption_text as no_dash_text
 from creation.captions import (
     CAPTION_BAND,
     FONT_NAME,
@@ -390,6 +391,10 @@ def overlay_ass(
     black outline and shadow. Title bar: a solid dark band with white text.
     """
 
+    # No em or en dash on the picture (6 Oct 2026; creation.caption_dashes).
+    overlay = replace(
+        overlay, text=no_dash_text(overlay.text), title=no_dash_text(overlay.title)
+    )
     left = round(SIDE_MARGIN * width / 1080)
     right = width - round(RIGHT_RAIL_X * width) + left
     room = width - left - right
