@@ -216,7 +216,9 @@ def test_captions_are_rebuilt_on_the_accepted_wording_and_windows(
     assert cues[0].start == pytest.approx(0.3) and cues[-1].end == pytest.approx(5.3)
     assert any(c.text.endswith("Who is there") for c in cues)
     assert not any("Who is it" in c.text for c in cues)
-    assert "accepted 'Who is there', spine now 'Who is it'" in notes[-1]
+    assert any("accepted 'Who is there', spine now 'Who is it'" in n for n in notes)
+    # No speech timestamps: the words are spread over the windows, and the plan says so.
+    assert "caption timing is ESTIMATED" in notes[-1]
 
 
 def test_captions_are_rebuilt_on_the_words_json_when_the_notes_recorded_no_windows(
@@ -236,7 +238,15 @@ def test_captions_are_rebuilt_on_the_words_json_when_the_notes_recorded_no_windo
                         words_json=words, notes=notes, label="cap-v1.mp4")  # fmt: skip
 
     assert cues is not None and cues[0].start == pytest.approx(0.3)
-    assert "timed on `words.json` (words, words, words)" in notes[-1]
+    assert (
+        "speech timestamps `words.json`; line 1: speech timestamps, line 2: speech timestamps"
+        in notes[-1]
+    )
+    assert [c.start for c in cues if c.text in ("Who", "Who is", "Who is there")] == [
+        3.1,
+        3.4,
+        3.6,
+    ]
     # Neither windows nor words: nothing is made up.
     assert rebuild_cues(SPINE, desk=tmp_path, episode=1, take_index=1, duration=6.0,
                         notes=notes, label="x") is None  # fmt: skip

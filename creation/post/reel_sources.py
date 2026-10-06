@@ -26,11 +26,14 @@ reading only what the desk already says, and names every step it took:
 4. **The same edits on the source**: each trim / tempo is applied again to a
    scratch copy (never a desk file), and the result must be the accepted
    file's length.
-5. **Captions** (no ``.ass`` for the master): the take's spine lines, timed on
-   the windows the run notes recorded for the master's captions, else on the
-   take's words json of the same finish run, built with the kit's caption
-   builder (:func:`creation.captions.build_line_cues`) and moved through the
-   edits.
+5. **Captions** (no ``.ass`` for the master): the take's lines, each word
+   timed when it is said on the take's words json of the same finish run
+   (checked against the speech in the ``.wav`` beside it) and shown as it was
+   said; a line the transcript cannot speak for (a dub laid over it, or not
+   matched) keeps the wording the run notes recorded, spread over that
+   window, with a ⚠ that its timing is estimated (:func:`rebuild_cues`). Built
+   with the kit's caption builder (:func:`creation.captions.build_line_cues`)
+   and moved through the edits.
 
 When the source cannot be followed, the reel is cut from the accepted file
 itself: its burned captions and mark stay as they are (no second captions,
@@ -43,23 +46,29 @@ from __future__ import annotations
 import ast
 import json
 import re
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from creation.captions import (
+    LAST_WORD_HOLD_SECONDS,
+    WORD_HOLD_SECONDS,
     CaptionLine,
     Cue,
     Span,
     build_line_cues,
     captions_whole_lines,
     desk_take_count,
-    is_english,
+    detect_silences,
+    find_ffmpeg,
+    heard_word_cues,
+    line_words,
+    speech_spans,
     take_caption_lines,
-    time_lines,
+    word_span,
 )
-from creation.post.media import probe_video
+from creation.post.media import media_duration, probe_video
 
 #: Two files are "the same length" within this many frames.
 SAME_LENGTH_FRAMES = 2.0
@@ -75,6 +84,8 @@ _CAPTIONS = re.compile(r"^Captions\b.*?-> `([^`]+\.mp4)`(?::\s*(.*))?$")
 _WINDOW = re.compile(
     r"(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)s? ('(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\")( \(italic\))?"
 )
+#: An older finish's note under its Captions line: that line was timed on a hand-laid dub.
+_DUBBED = re.compile(r"^- line (\d+) captioned on the dub ")
 _MIX = re.compile(r"^Mix: (\S+\.mp4):")
 _HAND_LAYERS = re.compile(
     r"hand layers: (\d+) voice\(s\), (\d+) mute\(s\), (\d+) cue\(s\)"
@@ -157,7 +168,13 @@ def parse_run_notes(text: str) -> list[NoteEvent]:
                     )
                     for w in _WINDOW.finditer(m.group(2) or "")
                 ]
-                add("captions", m.group(1), windows=windows)
+                dubbed = []
+                for rest in block[index + 1 :]:
+                    if not rest.startswith("- "):
+                        break
+                    if d := _DUBBED.match(rest):
+                        dubbed.append(int(d.group(1)))
+                add("captions", m.group(1), windows=windows, dubbed=dubbed)
             elif m := _MIX.match(line):
                 rest = block[index + 1 :]
                 layers = next((h for r in rest if (h := _HAND_LAYERS.search(r))), None)
@@ -568,6 +585,38 @@ def _words_json(takes: Path, master: Path) -> Path | None:
     return found[-1] if found else None
 
 
+def _speech_of(
+    words_json: Path, colour: Path | None, notes: list[str]
+) -> Callable[[], Sequence[Span]]:
+    """Speech spans of the sound the transcript heard: its saved ``.wav``, else the colour file before the bed.
+
+    The spans say when each word's sound starts (Whisper stamps a word after a
+    pause from the end of the word before it). Asked once, when needed.
+    """
+
+    heard = words_json.with_suffix(".wav")
+    source = heard if heard.is_file() else colour
+
+    def spans() -> Sequence[Span]:
+        if source is None:
+            notes.append(
+                f"⚠ no sound beside `{words_json.name}` and no colour file before the bed: word starts are "
+                "the transcript's own (Whisper may stamp a word after a pause early)"
+            )
+            return ()
+        ffmpeg, _ = find_ffmpeg()
+        length = media_duration(source)
+        found = speech_spans(detect_silences(ffmpeg, source, length), length)
+        if source is not heard:
+            notes.append(
+                f"⚠ word starts checked against the speech in `{source.name}` (no `{heard.name}`; "
+                "its sound effects may read as speech)"
+            )
+        return found
+
+    return spans
+
+
 def _plain(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().casefold()
 
@@ -582,10 +631,30 @@ def rebuild_cues(
     windows: Sequence[tuple[float, float, str, bool]] = (),
     marks_italic: bool = False,
     words_json: Path | None = None,
+    speech: Callable[[], Sequence[Span]] | None = None,
+    dubbed: Collection[int] = (),
+    hand_sound: bool = False,
     notes: list[str],
     label: str,
 ) -> tuple[Cue, ...] | None:
-    """The take's captions rebuilt with the kit's builder, on recorded windows or a words json.
+    """The take's captions rebuilt with the kit's builder: each word when it is said.
+
+    The words and their times come from the take's speech timestamps
+    (``words_json``, the finish run's transcript): every word starts when it
+    is said (:func:`creation.captions.heard_word_cues`, on ``speech``), and
+    where the line as written and what was said differ, what was said is
+    shown. A line the transcript cannot speak for keeps the wording the run
+    notes recorded and its words are spread over that window, with a ⚠ saying
+    the timing is estimated:
+
+    - a line the mix laid a dub over (``dubbed``): the transcript heard the
+      take, not the dub;
+    - with hand voices or mutes the run notes do not place (``hand_sound``),
+      a line whose recorded wording is not what the take said;
+    - a line the transcript did not match.
+
+    Without a transcript every line is spread over its recorded window (⚠
+    estimated); without windows either, the take is uncaptioned.
 
     Parameters
     ----------
@@ -603,6 +672,12 @@ def rebuild_cues(
         Otherwise each line's slant is the spine's.
     words_json
         A transcript of the take on the same timeline.
+    speech
+        The take's speech spans (asked once, only with a transcript).
+    dubbed
+        Line numbers (1-based) the finish captioned on a hand-laid dub.
+    hand_sound
+        The mix laid hand voices or mutes that ``dubbed`` does not account for.
     notes
         Report lines (appended).
     label
@@ -630,59 +705,134 @@ def rebuild_cues(
         )
         return None
     whole = captions_whole_lines(dict(spine))
-    texts = [line.text for line in lines]
-    shown: list[CaptionLine] = list(lines)
-    if windows and len(windows) == len(lines):
-        # The accepted cut's wording and times: what the human approved, even when the spine changed since.
+    recorded = bool(windows) and len(windows) == len(lines)
+    if windows and not recorded:
+        notes.append(
+            f"⚠ the run notes recorded {len(windows)} caption window(s) for {len(lines)} line(s): not used"
+        )
+    # The accepted cut's wording (what the human approved, even when the spine changed since),
+    # matched against the transcript on every spelling the line has had.
+    shown: list[CaptionLine] = [
+        replace(
+            line,
+            text=w[2],
+            italic=w[3] if marks_italic else line.italic,
+            performed=w[2],
+            spellings=tuple(
+                dict.fromkeys((line.text, line.performed, *line.spellings))
+            ),
+        )
+        if recorded
+        else line
+        for line, w in zip(lines, windows if recorded else [None] * len(lines))  # type: ignore[list-item]
+    ]
+    if recorded:
         differ = [
             f"accepted {w[2]!r}, spine now {line.text!r}"
             for w, line in zip(windows, lines)
             if _plain(w[2]) != _plain(line.text)
         ]
-        anchors = [Span(w[0], w[1]) for w in windows]
-        italic = [
-            w[3] if marks_italic else line.italic for w, line in zip(windows, shown)
-        ]
-        how = (
-            f"the wording and {len(windows)} window(s) the run notes recorded for `{label}`"
-            f" (slant: {'as recorded' if marks_italic else 'the spine'})"
-        )
         if differ:
-            how += f"; kept the accepted wording where the spine changed since: {'; '.join(differ)}"
-        groups = build_line_cues(
-            [w[2] for w in windows], anchors, whole_lines=whole, italic=italic,
-            skip=[not is_english(w[2]) for w in windows], fixed_ends=[True] * len(anchors),
-        )  # fmt: skip
-    elif words_json is not None:
-        try:
-            timing = time_lines(
-                lines, duration=duration, words=load_words(words_json), spans=None
-            )
-        except ValueError as exc:
             notes.append(
-                f"⚠ captions not rebuilt: `{words_json.name}` does not time every line ({exc}); the reel is uncaptioned there"
+                f"⚠ `{label}`: the run notes' wording differs from the spine: {'; '.join(differ)}"
             )
-            return None
-        how = f"timed on `{words_json.name}` ({', '.join(timing.methods)})"
-        groups = build_line_cues(
-            texts, list(timing.anchors), whole_lines=whole, italic=[line.italic for line in shown],
-            skip=[not line.english for line in shown], holds=timing.holds, fixed_ends=timing.fixed_ends,
-        )  # fmt: skip
-    else:
-        reason = (
-            f"the run notes recorded {len(windows)} caption window(s) for {len(lines)} line(s)"
-            if windows
-            else "no caption windows in the run notes and no words json of the finish run"
-        )
+    if words_json is None and not recorded:
         notes.append(
-            f"⚠ captions not rebuilt ({reason}): the reel is uncaptioned there"
+            "⚠ captions not rebuilt (no caption windows in the run notes and no speech timestamps of the "
+            "finish run): the reel is uncaptioned there"
         )
         return None
+    heard: list[list[Any]] = [[] for _ in shown]
+    spans: Sequence[Span] | None = None
+    if words_json is not None:
+        heard = line_words(shown, load_words(words_json))
+        spans = speech() if speech is not None and not whole else None
+    anchors: list[Span | None] = []
+    timed: list[tuple[Cue, ...] | None] = []
+    holds: list[float] = []
+    fixed: list[bool] = []
+    how: list[str] = []
+    estimated: list[str] = []
+    wording: list[str] = []
+    for i, line in enumerate(shown):
+        n = i + 1
+        window = Span(windows[i][0], windows[i][1]) if recorded else None
+        why = ""
+        if n in dubbed:
+            why = "a dub the transcript did not hear"
+        elif not heard[i]:
+            why = (
+                "not in the speech timestamps"
+                if words_json is not None
+                else "no speech timestamps"
+            )
+        else:
+            span = word_span(heard[i], (lambda: spans or ()) if spans else None)
+            cues, changes = (
+                heard_word_cues(
+                    line.text, heard[i], speech=spans, not_before=span.start
+                )
+                if span is not None and not whole
+                else ([], [])
+            )
+            if changes and hand_sound and window is not None:
+                why = (
+                    "the mix laid a hand voice or mute and the take said otherwise "
+                    f"({'; '.join(changes)})"
+                )
+            elif span is not None:
+                anchors.append(span)
+                timed.append(tuple(cues) if cues else None)
+                holds.append(WORD_HOLD_SECONDS)
+                fixed.append(False)
+                how.append("speech timestamps")
+                wording += [f"line {n}: {change}" for change in changes]
+                continue
+            else:
+                why = "not in the speech timestamps"
+        if window is None:
+            notes.append(
+                f"⚠ line {n} {line.text!r}: {why} and no recorded window: uncaptioned in the reel"
+            )
+            anchors.append(None)
+            timed.append(None)
+            holds.append(LAST_WORD_HOLD_SECONDS)
+            fixed.append(True)
+            how.append("none")
+            continue
+        anchors.append(window)
+        timed.append(None)
+        holds.append(0.0)
+        fixed.append(True)
+        how.append("recorded window")
+        estimated.append(f"line {n} {line.text!r} ({why})")
+    kept = [i for i, a in enumerate(anchors) if a is not None]
+    if not kept:
+        return None
+    groups = build_line_cues(
+        [shown[i].text for i in kept], [anchors[i] for i in kept],  # type: ignore[misc]
+        whole_lines=whole, italic=[shown[i].italic for i in kept],
+        skip=[not shown[i].english for i in kept], holds=[holds[i] for i in kept],
+        fixed_ends=[fixed[i] for i in kept], word_cues=[timed[i] for i in kept],
+    )  # fmt: skip
     cues = tuple(sorted((c for g in groups for c in g), key=lambda c: c.start))
     grain = "whole English lines" if whole else "word flicker"
-    notes.append(
-        f"⚠ captions rebuilt (no .ass for `{label}`): {len(lines)} spine line(s), {grain}, {how}"
+    source = (
+        f"speech timestamps `{words_json.name}`"
+        if words_json is not None
+        else "no speech timestamps"
     )
+    notes.append(
+        f"⚠ captions rebuilt (no .ass for `{label}`): {len(lines)} spine line(s), {grain}, {source}; "
+        + ", ".join(f"line {i + 1}: {h}" for i, h in enumerate(how))
+    )
+    if wording:
+        notes.append(f"⚠ captioned as said, not as written: {'; '.join(wording)}")
+    if estimated:
+        notes.append(
+            "⚠ caption timing is ESTIMATED (words spread across the recorded window, not when each is said) "
+            f"for {'; '.join(estimated)}: watch those words against the voice"
+        )
     return cues
 
 
@@ -871,6 +1021,8 @@ def infer_take_source(
             f"({_seconds(cut)[0]:.3f} s, the accepted file's length)"
         )
     match = re.match(r"t(\d+)$", take_id)
+    words_json = _words_json(takes, master) if master is not None else None
+    dubbed = list(captioned.detail.get("dubbed") or ()) if captioned is not None else []
     cues = rebuild_cues(
         spine, desk=desk, episode=episode, take_index=int(match.group(1)) if match else 1,
         duration=_seconds(mix_file)[0],
@@ -878,7 +1030,10 @@ def infer_take_source(
         marks_italic=any(
             w[3] for e in events if e.kind == "captions" for w in e.detail.get("windows") or ()
         ),
-        words_json=_words_json(takes, master) if master is not None else None,
+        words_json=words_json,
+        speech=_speech_of(words_json, colour, notes) if words_json is not None else None,
+        dubbed=dubbed,
+        hand_sound=hand is None or hand["voices"] + hand["mutes"] > len(dubbed),
         notes=notes, label=master.name if master is not None else accepted.name,
     )  # fmt: skip
     if cues is not None and edits:
