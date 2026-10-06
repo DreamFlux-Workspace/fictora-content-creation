@@ -105,7 +105,11 @@ def test_reel_without_a_hook_line_runs_the_commands_it_always_ran(
 ) -> None:
     calls = _recording(monkeypatch, [reel_desk, REPO])
 
-    result = run_reel(reel_desk, episode=1, seconds=6.0, stream=io.StringIO())
+    # The free cover image is a separate still made after the reel (tests/test_reel_cover.py);
+    # this guard is about the reel's own video commands.
+    result = run_reel(
+        reel_desk, episode=1, seconds=6.0, stream=io.StringIO(), no_cover=True
+    )
 
     assert result.video is not None and result.ass is not None
     _check("reel", [*calls, [result.ass.read_text(encoding="utf-8")]])

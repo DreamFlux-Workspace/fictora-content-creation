@@ -3,16 +3,22 @@
 The reel's cold-open score, the opening checks and the hook-line overlay ask
 of a frame: is a face there, how close is it, and where is it?
 
-1. **Two local detectors** (``source = "detector"``), both OpenCV cascades,
-   both free and on this laptop (``opencv-python-headless`` is a default
+1. **Local detectors** (``source = "detector"``), all OpenCV cascades, all
+   free and on this laptop (``opencv-python-headless`` is a default
    dependency):
 
    - OpenCV's frontal-face Haar cascade (ships inside the wheel): real faces.
    - nagadomi's ``lbpcascade_animeface.xml`` (MIT, vendored in
      ``creation/post/data/``, see ``THIRD_PARTY.md``): anime / manhwa faces,
      which the Haar cascade misses. Most Fictora shows are drawn this way.
+   - OpenCV's profile-face Haar cascade, on the frame and on its mirror image
+     (it only knows faces turned one way): a face in three-quarter view or
+     profile, which both front-on cascades miss (the crying three-quarter face
+     on SCP-173 Blink's ep01 cover). It runs on the plain grey frame (the
+     equalised one hides a drawn face's shading) with :data:`PROFILE_NEIGHBOURS`,
+     and comes last: it only adds a face the other two did not find.
 
-   Both run on every frame and their boxes are **unioned** (:func:`union_boxes`):
+   All run on every frame and their boxes are **unioned** (:func:`union_boxes`):
    a box the other detector already found (IoU over :data:`SAME_FACE_IOU`) is
    one face. When the show's style is known to be anime / manhwa
    (:func:`anime_style`), the anime detector has priority: its boxes are kept
@@ -59,6 +65,8 @@ SAME_FACE_IOU = 0.3
 #: Neighbours a cascade hit needs; the de-prioritised detector on a known style needs more.
 NEIGHBOURS = 5
 STRICT_NEIGHBOURS = 8
+#: Neighbours a profile-face hit needs (its own scale: it fires less often than the front-on cascades).
+PROFILE_NEIGHBOURS = 3
 #: The vendored anime-face cascade.
 ANIME_CASCADE = Path(__file__).with_name("data") / "lbpcascade_animeface.xml"
 #: Words in a show's art style that mean drawn anime / manhwa faces.
@@ -220,7 +228,14 @@ def _cv2() -> Any:
     return cv2
 
 
-@lru_cache(maxsize=2)
+#: The OpenCV cascade file for each built-in kind (the anime one is vendored).
+HAAR_FILES = {
+    "human": "haarcascade_frontalface_default.xml",
+    "profile": "haarcascade_profileface.xml",
+}
+
+
+@lru_cache(maxsize=4)
 def _cascade(kind: str) -> Any:
     cv2 = _cv2()
     if cv2 is None:
@@ -230,7 +245,7 @@ def _cascade(kind: str) -> Any:
         path = str(ANIME_CASCADE)
     else:
         data = getattr(getattr(cv2, "data", None), "haarcascades", None)
-        path = str(data) + "haarcascade_frontalface_default.xml" if data else ""
+        path = str(data) + HAAR_FILES.get(kind, HAAR_FILES["human"]) if data else ""
     if classifier is None or not path:
         message = f"!! the {kind} face cascade is missing from this OpenCV ({cv2.__version__}): pin opencv <5"
         print(message, file=sys.stderr, flush=True)
@@ -241,14 +256,16 @@ def _cascade(kind: str) -> Any:
 
 
 def local_detector(*, anime: bool | None = None) -> Detector | None:
-    """Both cascades (real and anime faces), unioned; ``None`` only when OpenCV cannot be used.
+    """The cascades (real, anime and profile faces), unioned; ``None`` only when OpenCV cannot be used.
 
     Parameters
     ----------
     anime
         The show's style is anime / manhwa (:func:`anime_style`): the anime
         detector has priority. ``None`` (unknown) or False: the real-face
-        cascade's boxes come first, both at the same strictness.
+        cascade's boxes come first, both at the same strictness. The profile
+        cascade (both orientations) always comes last, adding only faces the
+        others missed.
 
     Returns
     -------
@@ -256,8 +273,8 @@ def local_detector(*, anime: bool | None = None) -> Detector | None:
         A callable reading one RGB frame.
     """
 
-    human, drawn = _cascade("human"), _cascade("anime")
-    if human is None and drawn is None:
+    human, drawn, profile = _cascade("human"), _cascade("anime"), _cascade("profile")
+    if human is None and drawn is None and profile is None:
         return None
     cv2 = _cv2()
 
@@ -270,13 +287,23 @@ def local_detector(*, anime: bool | None = None) -> Detector | None:
         )
         return [tuple(int(v) for v in box) for box in (found if len(found) else [])]  # type: ignore[misc]
 
+    def turned(plain: Any) -> list[Box]:
+        """Profile faces facing either way: the cascade on the frame, then on its mirror (boxes mirrored back)."""
+
+        width = plain.shape[1]
+        mirrored = [
+            (width - x - w, y, w, h)
+            for x, y, w, h in boxes(profile, cv2.flip(plain, 1), PROFILE_NEIGHBOURS)
+        ]
+        return union_boxes(boxes(profile, plain, PROFILE_NEIGHBOURS), mirrored)
+
     def detect(frame: npt.NDArray[Any]) -> FaceReading:
         image = np.asarray(frame)
         if image.dtype != np.uint8:
             image = np.clip(image * (255.0 if image.max() <= 1.0 else 1.0), 0, 255)
             image = image.astype(np.uint8)
-        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) if image.ndim == 3 else image
-        gray = cv2.equalizeHist(gray)
+        plain = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) if image.ndim == 3 else image
+        gray = cv2.equalizeHist(plain)
         if anime:
             found = union_boxes(
                 boxes(drawn, gray, NEIGHBOURS), boxes(human, gray, STRICT_NEIGHBOURS)
@@ -285,6 +312,7 @@ def local_detector(*, anime: bool | None = None) -> Detector | None:
             found = union_boxes(
                 boxes(human, gray, NEIGHBOURS), boxes(drawn, gray, NEIGHBOURS)
             )
+        found = union_boxes(found, turned(plain))
         height, width = gray.shape[:2]
         if not found:
             return FaceReading(0, 0.0, (), (width, height))

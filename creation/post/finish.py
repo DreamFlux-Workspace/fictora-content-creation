@@ -2298,7 +2298,9 @@ def run_finish(
         if answer.get("needs_opt_in"):
             ask = (
                 f"no cover on the desk yet. Drawing one on the server costs ${THUMBNAIL_USD:.2f}; "
-                f"after the human's yes, finish again with --thumbnail"
+                f"after the human's yes, finish again with --thumbnail. For Instagram you need none: "
+                f"the reel step (`reel --desk D --episode N`) makes a free cover image to upload "
+                f"with Edit cover"
             )
             append_run_note(run_dir, f"Finish · thumbnail: skipped, {ask}")
             return StepReport("thumbnail", "skipped", ask)

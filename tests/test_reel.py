@@ -295,8 +295,8 @@ def test_post_text_carries_the_call_to_action_without_prices_or_model_names() ->
         series="SCP-173 Blink", episode=2, title="Blinking",
         question="Where will the statue be? Made with Kling for $0.30", genre="horror",
     )  # fmt: skip
-    assert text.startswith("SCP-173 Blink · Episode 2: Blinking")
-    assert "Follow" in text and "Episode 3" in text
+    assert text.startswith("SCP-173 Blink · Part 2: Blinking")
+    assert "Follow for part 3." in text
     assert "$" not in text and "Kling" not in text
     assert "#horror" in text
 
@@ -417,7 +417,7 @@ def test_reel_plans_then_renders_only_new_files_under_reels(reel_desk: Path) -> 
     result = run_reel(reel_desk, episode=1, plan_file=planned.plan_path)
 
     assert result.video is not None and result.video.name == "reel-ep01-v2.mp4"
-    assert result.post is not None and "Episode 2 is next" in result.post.read_text(
+    assert result.post is not None and "Follow for part 2." in result.post.read_text(
         encoding="utf-8"
     )
     # The show's premise line is the post's title (founder decision, 5 Oct 2026).
@@ -434,10 +434,14 @@ def test_reel_plans_then_renders_only_new_files_under_reels(reel_desk: Path) -> 
     assert (
         _snapshot(reel_desk) == before
     )  # nothing outside reels/ was written or touched
-    names = sorted(p.name for p in (reel_desk / "reels").iterdir())
+    assert sorted(p.name for p in (reel_desk / "reels").iterdir()) == [
+        "ep01",
+        "metrics.csv",
+    ]
+    names = sorted(p.name for p in (reel_desk / "reels" / "ep01").iterdir())
     assert names == [
-        "post-ep01-v2.txt", "reel-ep01-v2.ass", "reel-ep01-v2.mp4",
-        "reel-plan-ep01-v1.json", "reel-plan-ep01-v2.json",
+        "latest.json", "post-ep01-v2.txt", "reel-ep01-v2-cover-v1.jpg", "reel-ep01-v2.ass",
+        "reel-ep01-v2.mp4", "reel-plan-ep01-v1.json", "reel-plan-ep01-v2.json",
     ]  # fmt: skip
 
 
@@ -468,7 +472,7 @@ def test_review_of_a_reel_never_touches_run_notes_and_does_not_compare_take_cuts
     assert code == 0
     out = capsys.readouterr().out
     assert notes.read_text(encoding="utf-8") == "# run notes\n"
-    saved = reel_desk / "reels" / f"{result.video.stem}-review-v1.txt"
+    saved = reel_desk / "reels" / "ep01" / f"{result.video.stem}-review-v1.txt"
     assert saved.is_file() and "Review ep01 t1" in saved.read_text(encoding="utf-8")
     assert "(finished," in out
     assert "not compared (the reel cut and reordered the take)" in out

@@ -32,14 +32,29 @@ bed goes under; captions; the Sokii mark top left (:func:`creation.post.watermar
 as ``finish`` applies it). A ``patches`` entry in the plan (a ``blur`` box made
 on the accepted file after finish) is applied to the source first.
 
-Outputs, never overwritten, all in ``<desk>/reels/`` (nothing else on the desk
-is touched: no run note, no edit chain line): ``reel-epNN-vN.mp4`` (+ ``.ass``),
-``reel-plan-epNN-vN.json`` and ``post-epNN-vN.txt`` (the suggested post text:
-the call to action lives there, never on screen).
+The renderer is :func:`make_reel` (plan, cut, cover, post text); the episode
+folder's books (``latest.json``, the hand-edited plans, ``metrics.csv``) are
+:func:`record_reel`'s, so the renderer alone can be swapped (the server's reel
+route is planned to replace it). :func:`auto_reel` runs both after every
+complete ``finish`` and every edit that writes a new finished file: a draft
+while takes are still to finish, nothing when the finished files are unchanged,
+the newest hand-edited plan while its takes are unchanged.
+
+Outputs, never overwritten, all in ``<desk>/reels/epNN/`` (an older desk's flat
+``reels/`` files are still read; nothing else on the desk is touched: no run
+note, no edit chain line): ``reel-epNN[-draft]-vN.mp4`` (+ ``.ass``),
+``reel-plan-epNN-vN.json``, ``post-epNN-vN.txt`` (the suggested post text:
+the call to action lives there, never on screen; under it, the operator's
+"To do in Instagram" notes and posting lane), the free cover image
+``reel-epNN-vN-cover-vN.jpg`` (the series title and "PART N",
+:mod:`creation.post.reel_cover`; ``--no-cover`` skips it), the episode's row
+of ``reels/metrics.csv`` (the reel results sheet, one row per episode), and
+``latest.json`` naming the current reel.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -47,6 +62,7 @@ import sys
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -71,9 +87,11 @@ from creation.post.hook_overlay import (
     delivery_format,
     selected_hook_line,
 )
-from creation.post.media import decode_frames, probe_video, run_ffmpeg
+from creation.post.media import MediaToolError, decode_frames, probe_video, run_ffmpeg
+from creation.post.reel_cover import METRICS_FILE, record_metrics_row
 from creation.post.reel_plan import (
     DEFAULT_SECONDS,
+    OPERATOR_DIVIDER,
     BeatInput,
     ReelPlan,
     Segment,
@@ -84,7 +102,9 @@ from creation.post.reel_plan import (
     last_beat_from_json,
     plan_json,
     plan_reel,
+    post_operator_notes,
     post_text,
+    posting_warnings,
     reel_seconds,
     retime_cues,
     segment_map,
@@ -522,15 +542,27 @@ def episode_beats(
 # --- naming ------------------------------------------------------------------------------------
 
 
-def reel_paths(desk: Path, episode: int) -> dict[str, Path]:
+def episode_reels(desk: Path, episode: int) -> Path:
+    """The episode's reel folder, ``<desk>/reels/epNN/`` (older desks also have flat ``reels/`` files)."""
+
+    return desk / REELS_DIR / f"ep{episode:02d}"
+
+
+def reel_paths(desk: Path, episode: int, *, draft: bool = False) -> dict[str, Path]:
     """The next free ``vN`` for the reel's four files, the same N for all (never an existing file).
+
+    New files go in the episode's folder (:func:`episode_reels`); N counts on
+    from every reel of the episode already on the desk, in that folder or flat
+    in ``reels/`` (an older desk), drafts included, so a name is never reused.
 
     Parameters
     ----------
     desk
-        Series desk (``reels/`` is made when missing).
+        Series desk (``reels/epNN/`` is made when missing).
     episode
         Episode ordinal.
+    draft
+        The episode still has takes to finish: the files are named ``…-epNN-draft-vN``.
 
     Returns
     -------
@@ -538,7 +570,7 @@ def reel_paths(desk: Path, episode: int) -> dict[str, Path]:
         ``video``, ``ass``, ``plan``, ``post``.
     """
 
-    folder = desk / REELS_DIR
+    folder = episode_reels(desk, episode)
     folder.mkdir(parents=True, exist_ok=True)
     stems = (
         f"reel-ep{episode:02d}",
@@ -546,17 +578,21 @@ def reel_paths(desk: Path, episode: int) -> dict[str, Path]:
         f"post-ep{episode:02d}",
     )
     used = {0}
-    for path in folder.iterdir():
-        for stem in stems:
-            match = re.match(rf"^{re.escape(stem)}-v(\d+)(\.|-)", path.name)
-            if match:
-                used.add(int(match.group(1)))
+    for where in (desk / REELS_DIR, folder):
+        for path in where.iterdir():
+            for stem in stems:
+                match = re.match(
+                    rf"^{re.escape(stem)}(?:-draft)?-v(\d+)(\.|-)", path.name
+                )
+                if match:
+                    used.add(int(match.group(1)))
     n = max(used) + 1
+    tag = f"ep{episode:02d}" + ("-draft" if draft else "")
     paths = {
-        "video": folder / f"reel-ep{episode:02d}-v{n}.mp4",
-        "ass": folder / f"reel-ep{episode:02d}-v{n}.ass",
-        "plan": folder / f"reel-plan-ep{episode:02d}-v{n}.json",
-        "post": folder / f"post-ep{episode:02d}-v{n}.txt",
+        "video": folder / f"reel-{tag}-v{n}.mp4",
+        "ass": folder / f"reel-{tag}-v{n}.ass",
+        "plan": folder / f"reel-plan-{tag}-v{n}.json",
+        "post": folder / f"post-{tag}-v{n}.txt",
     }
     for path in paths.values():
         if path.exists():
@@ -685,6 +721,20 @@ class ReelResult:
     loudness: str = ""
     captions: str = ""
     lines: list[str] = field(default_factory=list)
+    #: The free cover image for Instagram's "Edit cover" (``None`` with ``--no-cover`` or when it failed).
+    cover: Path | None = None
+    #: Where the cover's picture came from, or why there is none.
+    cover_note: str = ""
+    #: The reel results sheet the run put its row in.
+    metrics: Path | None = None
+    #: Named ``…-draft-vN``: the episode still had takes to finish.
+    draft: bool = False
+    #: The renderer's files by role (``video``, ``ass``, ``plan``, ``post``) and what they were cut from.
+    paths: dict[str, Path] = field(default_factory=dict)
+    sources: dict[str, Any] = field(default_factory=dict)
+    series: str = ""
+    hook_text: str = ""
+    posting_notes: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         order = " → ".join(
@@ -692,7 +742,8 @@ class ReelResult:
         )
         if self.video is None:
             return f"Plan only: {self.plan_path} ({len(self.plan.segments)} segments, {self.plan.total:.2f} s): {order}"
-        return f"Reel {self.video.name}: {self.seconds:.2f} s, {self.loudness}, {self.captions}; {order}"
+        cover = f"; cover {self.cover.name}" if self.cover else "; no cover image"
+        return f"Reel {self.video.name}: {self.seconds:.2f} s, {self.loudness}, {self.captions}{cover}; {order}"
 
 
 def reel_hook(
@@ -984,6 +1035,9 @@ def run_reel(
     hook_line_position: str | None = None,
     stream: TextIO | None = None,
     detector: Detector | None | str = "local",
+    no_cover: bool = False,
+    cover_frame: float | None = None,
+    made_by: str = "reel",
 ) -> ReelResult:
     """Plan (and unless ``plan_only``, render) the episode's reel. Writes only under ``<desk>/reels/``.
 
@@ -1016,6 +1070,13 @@ def run_reel(
         The face detector: ``"local"`` (default) both OpenCV cascades, the anime one
         first on an anime / manhwa show (:func:`creation.post.faces.detector_for`);
         ``None`` the take facts' head count; tests pass a stand-in.
+    no_cover
+        ``--no-cover``: write no cover image.
+    cover_frame
+        ``--cover-frame S``: the cover's picture at ``S`` seconds on the reel (taken from the
+        take's picture before captions), instead of a saved cover or the strongest frame.
+    made_by
+        What made it, for ``latest.json``: ``reel`` (this command), ``finish`` or an edit's name.
 
     Returns
     -------
@@ -1034,16 +1095,194 @@ def run_reel(
     )
     # Edited copies of an inferred source live in a scratch folder for the whole run, never on the desk.
     with tempfile.TemporaryDirectory(prefix="fictora-reel-") as tmp:
-        return _run_reel(
+        result = make_reel(
             desk, episode=episode, seconds=seconds, plan_only=plan_only, plan_file=plan_file,
             take_files=take_files, sources=sources, captions=captions, caption_style=caption_style,
             watermark_y=watermark_y, ending=ending, stream=stream, scratch=Path(tmp),
             detector=found if not isinstance(found, str) else None,
             hook_line=hook_line, no_hook_line=no_hook_line, hook_line_position=hook_line_position,
+            no_cover=no_cover, cover_frame=cover_frame,
         )  # fmt: skip
+    return record_reel(
+        desk.expanduser().resolve(), episode, result, made_by=made_by, stream=stream
+    )
 
 
-def _run_reel(
+def _cover_picture(
+    desk: Path,
+    episode: int,
+    plan: ReelPlan,
+    sources: Sequence[TakeSource],
+    takes: Sequence[TakeInput],
+    *,
+    cover_frame: float | None,
+) -> tuple[TakeSource | None, Path | None, float | None, str]:
+    """Which picture the cover is drawn on: ``(take source, still, seconds into the source, why)``.
+
+    ``--cover-frame`` (seconds on the reel, mapped through the segment map) wins;
+    then a cover the server already drew for one of the episode's takes (the
+    cold open's take first; the still is returned); then the plan's strongest
+    frame; then the middle of the cold open, else of the first segment.
+    """
+
+    from creation.post.desk import take_stored_url
+    from creation.post.thumbnail import saved_cover
+
+    by_take = {s.take_id: s for s in sources}
+    fps = {t.take_id: t.fps for t in takes}
+    if cover_frame is not None and plan.segments:
+        rate = fps.get(plan.segments[0].take) or 24.0
+        placed = segment_map(plan.segments, rate)
+        seg, offset = placed[-1]
+        for candidate, begins in placed:
+            if begins <= cover_frame < begins + candidate.seconds:
+                seg, offset = candidate, begins
+                break
+        at = min(seg.end, max(seg.start, seg.start + cover_frame - offset))
+        return (
+            by_take.get(seg.take),
+            None,
+            at,
+            (f"--cover-frame {cover_frame:g} s on the reel ({seg.take} {at:.2f} s)"),
+        )
+    strongest = plan.strongest
+    order = [strongest.take] if strongest and strongest.take in by_take else []
+    order += [t for t in by_take if t not in order]
+    takes_dir = desk / f"ep{episode:02d}" / "takes"
+    for take_id in order:
+        saved = saved_cover(
+            takes_dir, f"take-ep{episode:02d}-{take_id}", take_stored_url(desk, episode, take_id)
+        )  # fmt: skip
+        if saved is not None:
+            return (
+                by_take[take_id],
+                saved,
+                None,
+                f"the saved server cover `{saved.name}` ($0, reused)",
+            )
+    if strongest is not None and strongest.take in by_take:
+        return (
+            by_take[strongest.take],
+            None,
+            strongest.at,
+            (
+                f"the strongest frame, {strongest.take} {strongest.at:.2f} s (score {strongest.score:.2f}, "
+                f"{strongest.role.replace('_', ' ')} beat)"
+            ),
+        )
+    seg = next((s for s in plan.segments if s.role == "cold_open"), None) or (
+        plan.segments[0] if plan.segments else None
+    )
+    if seg is None or seg.take not in by_take:
+        return None, None, None, "no segment to take a picture from"
+    at = (seg.start + seg.end) / 2
+    return (
+        by_take[seg.take],
+        None,
+        at,
+        f"the middle of the {seg.role.replace('_', ' ')}, {seg.take} {at:.2f} s",
+    )
+
+
+def make_cover(
+    desk: Path,
+    *,
+    episode: int,
+    plan: ReelPlan,
+    sources: Sequence[TakeSource],
+    takes: Sequence[TakeInput],
+    patches: Sequence[Mapping[str, Any]],
+    video: Path,
+    series: str,
+    detector: Detector | None,
+    cover_frame: float | None = None,
+) -> tuple[Path | None, str, list[str]]:
+    """Draw the reel's free cover image beside ``video`` (:mod:`creation.post.reel_cover`).
+
+    Parameters
+    ----------
+    desk, episode
+        The desk and episode ordinal ("PART N").
+    plan, sources, takes, patches
+        The reel's plan and its takes (the picture comes from the take before captions,
+        with the plan's blur patches for that take applied).
+    video
+        The rendered reel; the cover is ``<its stem>-cover-vN.jpg`` beside it.
+    series
+        The series title drawn under "PART N".
+    detector
+        The face detector (``None``: faces unknown, the text sits low).
+    cover_frame
+        ``--cover-frame S``: seconds on the reel.
+
+    Returns
+    -------
+    tuple[Path | None, str, list[str]]
+        The cover (``None`` when no picture could be found), where its picture came
+        from, and ⚠ lines.
+    """
+
+    from creation.post.reel_cover import (
+        face_note,
+        cover_layout,
+        cover_path,
+        draw_cover,
+        face_boxes,
+    )
+
+    source, still, at, why = _cover_picture(
+        desk, episode, plan, sources, takes, cover_frame=cover_frame
+    )
+    warnings: list[str] = []
+    if source is None and still is None:
+        return None, why, [f"no cover image: {why}"]
+    with tempfile.TemporaryDirectory(prefix="fictora-cover-") as tmp:
+        scratch = Path(tmp)
+        if still is not None:
+            from PIL import Image
+
+            with Image.open(still) as image:
+                width, height = image.size
+            picture = still
+        else:
+            assert source is not None
+            picture = _patched(source, scratch, patches)
+            info = probe_video(picture)
+            width, height = info.width, info.height
+            if source.inferred and source.inferred.burned:
+                warnings.append(
+                    f"cover: {source.take_id} is cut from the accepted file, so its burned captions and mark "
+                    "are on the cover's picture; pick a frame between lines with --cover-frame S"
+                )
+        faces = face_boxes(picture, at, detector, scratch=scratch)
+        missing = face_note(faces)
+        if missing is not None:
+            warnings.append(missing.removeprefix("⚠ "))
+        layout = cover_layout(
+            series=series, part=episode, width=width, height=height, faces=faces or ()
+        )
+        if layout.face_overlap:
+            warnings.append(
+                "cover: a face sits under the text wherever it goes; look at the cover, or pick "
+                "another moment with --cover-frame S"
+            )
+        out = draw_cover(
+            picture, cover_path(video), layout=layout, at=at, scratch=scratch
+        )
+    where = (
+        "low, above the bottom band"
+        if layout.placement == "lower"
+        else "high, under the top strip"
+    )
+    faces_said = (
+        "faces not read (no face detector)"
+        if faces is None
+        else f"{len(faces)} face box(es) read"
+    )
+    return out, f"{why}; text {where}; {faces_said}", warnings
+
+
+def make_reel(
     desk: Path,
     *,
     episode: int,
@@ -1062,7 +1301,23 @@ def _run_reel(
     hook_line: str | None = None,
     no_hook_line: bool = False,
     hook_line_position: str | None = None,
+    no_cover: bool = False,
+    cover_frame: float | None = None,
 ) -> ReelResult:
+    """The renderer: plan the reel and make its files (video, captions, plan, cover, post text).
+
+    Everything the episode's folder keeps about its reels (``latest.json``,
+    the hand-edited plans, ``metrics.csv``) is :func:`record_reel`'s, outside
+    this boundary, so another renderer (the server's reel route, planned) can
+    replace this function alone. Writes only the reel's own new files.
+
+    Returns
+    -------
+    ReelResult
+        With ``paths``, ``sources`` (:func:`sources_fingerprint`), ``series``,
+        ``hook_text``, ``draft`` and the render report for :func:`record_reel`.
+    """
+
     from creation.post.desk import saved_spine
     from creation.spine_view import episode_summary
 
@@ -1183,7 +1438,16 @@ def _run_reel(
                     f"{s.take_id}: `{variant.name}` is a blurred variant made after finish; its patch is not on the "
                     "pre-caption source: add it to the plan's patches (--plan-only, edit, --plan FILE)"
                 )
-    paths = reel_paths(desk, episode)
+    expected = expected_takes(desk, spine, episode)
+    draft = expected is not None and len(srcs) < expected
+    if draft:
+        print(
+            f"Draft reel: {len(srcs)} of {expected} take(s) finished; episode incomplete — re-cut when the last "
+            "take is finished",
+            file=out,
+            flush=True,
+        )
+    paths = reel_paths(desk, episode, draft=draft)
     hook = reel_hook(
         spine,
         episode,
@@ -1212,7 +1476,11 @@ def _run_reel(
     write_new(paths["plan"], json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
     for line in plan.lines():
         print(line, file=out)
-    result = ReelResult(plan=plan, plan_path=paths["plan"])
+    result = ReelResult(
+        plan=plan, plan_path=paths["plan"], draft=draft, paths=dict(paths),
+        sources=sources_fingerprint(desk, srcs), series=str(spine.get("title") or desk.name),
+        hook_text=hook.overlay.text if hook.overlay is not None else "",
+    )  # fmt: skip
     if plan_only:
         print(
             f"Plan: {paths['plan']} (edit it, then: reel --desk D --episode {episode} --plan FILE)",
@@ -1226,37 +1494,530 @@ def _run_reel(
         hook=hook.overlay,
     )  # fmt: skip
     summary = episode_summary(spine, episode)
+    series = str(spine.get("title") or desk.name)
+    posting, posting_notes = _posting(desk)
+    cover: Path | None = None
+    if no_cover:
+        cover_note = "no cover image (--no-cover)"
+    else:
+        cover, cover_note, cover_warnings = make_cover(
+            desk, episode=episode, plan=plan, sources=srcs, takes=takes, patches=patches,
+            video=paths["video"], series=series, detector=detector, cover_frame=cover_frame,
+        )  # fmt: skip
+        posting_notes += cover_warnings
+    caption = post_text(
+        series=series,
+        episode=episode,
+        title=str(summary.get("title") or ""),
+        question=str(summary.get("hook_question") or ""),
+        genre=str(spine.get("microdrama_genre") or ""),
+        premise_line=str(spine.get("premise_line") or ""),
+    )  # fmt: skip
+    todo = post_operator_notes(cover=cover.name if cover else None, **posting)
     write_new(
-        paths["post"],
-        post_text(
-            series=str(spine.get("title") or desk.name),
-            episode=episode,
-            title=str(summary.get("title") or ""),
-            question=str(summary.get("hook_question") or ""),
-            genre=str(spine.get("microdrama_genre") or ""),
-            premise_line=str(spine.get("premise_line") or ""),
-        ),  # fmt: skip
+        paths["post"], caption + "\n" + OPERATOR_DIVIDER + "\n" + "\n".join(todo) + "\n"
     )
     result.video, result.post, result.seconds, result.loudness, result.captions = (
         paths["video"], paths["post"], secs, loud, cap_line,
     )  # fmt: skip
+    result.cover, result.cover_note = cover, cover_note
     result.ass = paths["ass"] if paths["ass"].exists() else None
+    result.posting_notes = posting_notes
     result.lines = report + ([style_note] if style_note else [])
+    result.lines.append(f"cover: {cover_note}")
     for line in result.lines:
         print(f"- {line}", file=out)
+    for line in posting_notes:
+        print(f"⚠ {line}", file=out)
     for key in ("video", "ass", "plan", "post"):
         if paths[key].exists():
             print(f"{key}: {paths[key]}", file=out)
+    if cover is not None:
+        print(f"cover: {cover}", file=out)
+    return result
+
+
+def record_reel(
+    desk: Path,
+    episode: int,
+    result: ReelResult,
+    *,
+    made_by: str = "reel",
+    stream: TextIO | None = None,
+) -> ReelResult:
+    """Keep the books on a reel :func:`make_reel` made: the plan's hash, ``latest.json``, ``metrics.csv``.
+
+    Parameters
+    ----------
+    desk, episode
+        The desk and episode.
+    result
+        What the renderer made (a plan only: just the plan's hash is kept).
+    made_by
+        ``reel``, ``finish`` or an edit's name.
+    stream
+        Progress output (stdout by default).
+
+    Returns
+    -------
+    ReelResult
+        ``result``, with ``metrics`` set when a reel was rendered.
+    """
+
+    out = stream or sys.stdout
+    _remember_plan(desk, episode, result.plan_path)
+    if result.video is None:
+        return result
+    paths = result.paths
+    posting, _ = _posting(desk)
+    plan = result.plan
+    cold = next((s for s in plan.segments if s.role == "cold_open"), None)
+    write_latest(
+        desk, episode, paths=paths, cover=result.cover, draft=result.draft, made_by=made_by,
+        sources=result.sources,
+    )  # fmt: skip
+    result.metrics = record_metrics_row(
+        desk / REELS_DIR / METRICS_FILE,
+        {
+            "reel_file": result.video.name, "cover_file": result.cover.name if result.cover else "",
+            "series": result.series, "part": episode, "account": posting["account"],
+            "lane": posting["lane"], "planned_post_slot": posting["posting_slot"],
+            "cold_open_role": plan.strongest.role if plan.strongest and cold else "",
+            "cold_open_time": f"{cold.take} {cold.start:.2f}-{cold.end:.2f} s" if cold else "",
+            "hook_text": result.hook_text,
+        },
+    )  # fmt: skip
+    print(f"latest: {episode_reels(desk, episode) / LATEST_FILE}", file=out)
+    print(
+        f"metrics: {result.metrics} (this episode's row now names this reel: fill in views and the rest "
+        "after posting)",
+        file=out,
+    )
+    if result.post is not None:
+        print("Post text (copy the caption; the rest is for you):", file=out)
+        print(result.post.read_text(encoding="utf-8").rstrip(), file=out)
     print(result.summary(), file=out)
     return result
 
 
+# --- the episode's reel folder: latest.json, what changed, the automatic reel --------------------
+
+#: The episode folder's record of its current reel (``reels/epNN/latest.json``).
+LATEST_FILE = "latest.json"
+#: What a finish or an edit says when its reel failed: the finish itself is done.
+AUTO_REEL_FAILED = (
+    MediaToolError,
+    ValueError,
+    FileNotFoundError,
+    FileExistsError,
+    RuntimeError,
+    OSError,
+)
+
+
+def expected_takes(desk: Path, spine: Mapping[str, Any], episode: int) -> int | None:
+    """How many takes the episode has: the desk's series slot, else its storyboards on the spine.
+
+    Parameters
+    ----------
+    desk
+        Series desk (``series.json``).
+    spine
+        The saved spine.
+    episode
+        Episode ordinal.
+
+    Returns
+    -------
+    int | None
+        ``None`` when neither says (the reel is then never called a draft).
+    """
+
+    from creation.captions import desk_take_count
+    from creation.spine_view import episode_id_for
+
+    count = desk_take_count(desk, episode)
+    if count:
+        return count
+    wanted = episode_id_for(spine, episode)
+    groups = {
+        f.get("storyboard_group_id")
+        for f in spine.get("frames") or []
+        if isinstance(f, Mapping) and f.get("episode_id") == wanted
+    } - {None, ""}
+    return len(groups) or None
+
+
+def sources_fingerprint(
+    desk: Path, sources: Sequence[TakeSource]
+) -> dict[str, dict[str, list[Any]]]:
+    """Each take's reel files (picture before captions, captions, accepted cut) with size and mtime.
+
+    Two reels made from the same fingerprint were cut from the same finished
+    files: the automatic reel skips a second one.
+
+    Parameters
+    ----------
+    desk
+        Series desk (paths are written relative to it).
+    sources
+        The takes the reel cuts.
+
+    Returns
+    -------
+    dict
+        ``{take: {"source" | "captions" | "accepted": [path, size, mtime_ns]}}``.
+    """
+
+    out: dict[str, dict[str, list[Any]]] = {}
+    for source in sources:
+        body = source.as_json(desk)
+        files: dict[str, list[Any]] = {}
+        for key in ("source", "captions", "accepted"):
+            rel = body.get(key)
+            if not rel:
+                continue
+            path = Path(rel) if Path(rel).is_absolute() else desk / rel
+            stat = path.stat() if path.is_file() else None
+            files[key] = [
+                rel,
+                stat.st_size if stat else None,
+                stat.st_mtime_ns if stat else None,
+            ]
+        out[source.take_id] = files
+    return out
+
+
+def read_latest(desk: Path, episode: int) -> dict[str, Any]:
+    """The episode folder's ``latest.json`` (empty when there is none or it cannot be read)."""
+
+    path = episode_reels(desk, episode) / LATEST_FILE
+    if not path.is_file():
+        return {}
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        print(
+            f"⚠ {path} could not be read ({exc}); it is written again with this reel",
+            file=sys.stderr,
+        )
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def _save_latest(desk: Path, episode: int, body: Mapping[str, Any]) -> Path:
+    path = episode_reels(desk, episode) / LATEST_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    scratch = path.with_name(path.name + ".tmp")
+    scratch.write_text(
+        json.dumps(body, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    scratch.replace(path)
+    return path
+
+
+def _sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _remember_plan(desk: Path, episode: int, plan: Path) -> None:
+    """Note the plan's hash as written, so a later hand edit of it can be told apart."""
+
+    body = read_latest(desk, episode)
+    written = dict(body.get("plans_written") or {})
+    written[plan.name] = _sha(plan)
+    _save_latest(desk, episode, {**body, "plans_written": written})
+
+
+def write_latest(
+    desk: Path,
+    episode: int,
+    *,
+    paths: Mapping[str, Path],
+    cover: Path | None,
+    draft: bool,
+    made_by: str,
+    sources: Mapping[str, Any],
+) -> Path:
+    """Write ``reels/epNN/latest.json``: the current reel, its cover, post text and plan, and what it was cut from.
+
+    Parameters
+    ----------
+    desk, episode
+        The desk and episode.
+    paths
+        The reel's files (:func:`reel_paths`).
+    cover
+        Its cover image, or ``None``.
+    draft
+        Named as a draft (takes still to finish).
+    made_by
+        ``finish``, an edit's name, or ``reel``.
+    sources
+        :func:`sources_fingerprint` of the takes it was cut from.
+
+    Returns
+    -------
+    Path
+        ``latest.json``.
+    """
+
+    def rel(path: Path | None) -> str | None:
+        if path is None or not path.exists():
+            return None
+        return str(path.resolve().relative_to(desk.resolve()))
+
+    body = read_latest(desk, episode)
+    return _save_latest(
+        desk,
+        episode,
+        {
+            "episode": episode,
+            "reel": rel(paths["video"]),
+            "cover": rel(cover),
+            "post": rel(paths["post"]),
+            "plan": rel(paths["plan"]),
+            "captions": rel(paths["ass"]),
+            "draft": draft,
+            "made_by": made_by,
+            "made_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "sources": dict(sources),
+            "plans_written": body.get("plans_written") or {},
+        },
+    )
+
+
+def _plan_files(desk: Path, episode: int) -> list[Path]:
+    """The episode's plan files, newest version first (its folder and an older desk's flat ``reels/``)."""
+
+    pattern = re.compile(rf"^reel-plan-ep{episode:02d}(?:-draft)?-v(\d+)\.json$")
+    found = [
+        path
+        for where in (episode_reels(desk, episode), desk / REELS_DIR)
+        if where.is_dir()
+        for path in where.iterdir()
+        if pattern.match(path.name)
+    ]
+    return sorted(
+        found,
+        key=lambda p: int(pattern.match(p.name).group(1)),
+        reverse=True,  # type: ignore[union-attr]
+    )
+
+
+def hand_edited_plan(desk: Path, episode: int) -> tuple[Path, dict[str, Any]] | None:
+    """The newest plan a human edited: changed since the kit wrote it, or rendered from an edited plan.
+
+    Parameters
+    ----------
+    desk, episode
+        The desk and episode.
+
+    Returns
+    -------
+    tuple[Path, dict] | None
+        The plan file and its body; ``None`` when no plan was edited.
+    """
+
+    written = read_latest(desk, episode).get("plans_written") or {}
+    for path in _plan_files(desk, episode):
+        try:
+            body = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            print(
+                f"⚠ {path.name} is not valid JSON ({exc}); not reused", file=sys.stderr
+            )
+            continue
+        recorded = written.get(path.name)
+        if body.get("edited_from") or (recorded and recorded != _sha(path)):
+            return path, body
+    return None
+
+
+def plan_take_changes(
+    planned: Mapping[str, Any], current: Mapping[str, Mapping[str, Any]]
+) -> list[str]:
+    """What changed in the takes since a plan was made, in plain words (empty: nothing).
+
+    Parameters
+    ----------
+    planned
+        The plan's ``takes`` block.
+    current
+        Each finished take's :meth:`TakeSource.as_json` now.
+
+    Returns
+    -------
+    list[str]
+        One line per changed, new or missing take.
+    """
+
+    lines: list[str] = []
+    for take in sorted(
+        set(planned) | set(current), key=lambda t: int(t[1:]) if t[1:].isdigit() else 0
+    ):
+        before, now = planned.get(take), current.get(take)
+        if before is None:
+            lines.append(f"{take}: newly finished")
+        elif now is None:
+            lines.append(f"{take}: in the plan but not finished now")
+        else:
+            for key in ("source", "captions", "accepted", "record"):
+                if (before or {}).get(key) != (now or {}).get(key):
+                    lines.append(
+                        f"{take} {key}: {(before or {}).get(key)} → {(now or {}).get(key)}"
+                    )
+    return lines
+
+
+def auto_reel(
+    desk: Path,
+    episode: int,
+    *,
+    trigger: str,
+    stream: TextIO | None = None,
+    detector: Detector | None | str = "local",
+    force: bool = False,
+) -> ReelResult | None:
+    """The reel made by itself after ``finish`` or an edit that wrote a new deliverable ($0, local).
+
+    It writes into ``reels/epNN/`` like ``reel`` and never draws a paid cover.
+    It cuts nothing when the episode's finished files are the ones the
+    current reel (``latest.json``) was cut from; it reuses the newest
+    hand-edited plan while the takes it names are unchanged (else a fresh
+    plan, saying what changed); and it names the reel a draft while takes are
+    still to finish. A failure is printed (the finish is done), never raised.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    episode
+        Episode ordinal.
+    trigger
+        ``finish`` or the edit's name (``trim`` …), written in ``latest.json``.
+    stream
+        Progress output (stdout by default).
+    detector
+        As :func:`run_reel`.
+    force
+        Cut even when nothing changed.
+
+    Returns
+    -------
+    ReelResult | None
+        The reel, or ``None`` when none was made (unchanged, no spine, or it failed).
+    """
+
+    from creation.post.desk import saved_spine
+
+    out = stream or sys.stdout
+    desk = desk.expanduser().resolve()
+    found = saved_spine(desk, episode)
+    if found is None:
+        print(
+            f"Reel: not made (no saved spine with beats in ep{episode:02d}/api/); "
+            f"`reel --desk D --episode {episode}` once it has one",
+            file=out,
+        )
+        return None
+    try:
+        with tempfile.TemporaryDirectory(prefix="fictora-reel-check-") as tmp:
+            srcs = take_sources(
+                desk, episode, spine=found[0], scratch=Path(tmp), stream=out
+            )
+            fingerprint = sources_fingerprint(desk, srcs)
+            current = {s.take_id: s.as_json(desk) for s in srcs}
+        latest = read_latest(desk, episode)
+        reel = desk / str(latest.get("reel") or "")
+        if (
+            not force
+            and latest.get("sources") == fingerprint
+            and latest.get("reel")
+            and reel.is_file()
+        ):
+            print(
+                f"Reel: unchanged since `{latest['reel']}` (the same finished takes); not cut again",
+                file=out,
+            )
+            return None
+        plan_file: Path | None = None
+        edited = hand_edited_plan(desk, episode)
+        if edited is not None:
+            changes = plan_take_changes(edited[1].get("takes") or {}, current)
+            if changes:
+                print(
+                    f"Reel: a fresh plan: the takes changed since the hand-edited plan `{edited[0].name}` "
+                    f"({'; '.join(changes)})",
+                    file=out,
+                )
+            else:
+                plan_file = edited[0]
+                print(
+                    f"Reel: reusing the hand-edited plan `{plan_file.name}` (its takes are unchanged)",
+                    file=out,
+                )
+        print(
+            f"Reel (after {trigger}; $0, local; --no-reel skips it):",
+            file=out,
+            flush=True,
+        )
+        return run_reel(
+            desk, episode=episode, plan_file=plan_file, stream=out, detector=detector, made_by=trigger
+        )  # fmt: skip
+    except AUTO_REEL_FAILED as exc:
+        print(
+            f"⚠ Reel not made ({type(exc).__name__}: {exc}); the {trigger} is done. "
+            f"Try again with `reel --desk D --episode {episode}`",
+            file=out,
+        )
+        return None
+
+
+def _posting(desk: Path) -> tuple[dict[str, str | None], list[str]]:
+    """The desk's posting fields (``account``, ``lane``, ``posting_slot``) and any warning about them."""
+
+    from creation.production_config import CONFIG_FILENAME, load_production_config
+
+    try:
+        config = load_production_config(desk)
+    except (ValueError, TypeError) as exc:
+        empty: dict[str, str | None] = {
+            "account": None,
+            "lane": None,
+            "posting_slot": None,
+        }
+        return empty, [
+            f"{CONFIG_FILENAME} could not be read ({exc}); no account, lane or posting slot"
+        ]
+    posting = {
+        "account": (config.account or "").strip() or None,
+        "lane": (config.lane or "").strip() or None,
+        "posting_slot": (config.posting_slot or "").strip() or None,
+    }
+    return posting, posting_warnings(
+        account=posting["account"], posting_slot=posting["posting_slot"]
+    )
+
+
 __all__ = [
+    "LATEST_FILE",
     "REELS_DIR",
     "ReelResult",
+    "auto_reel",
+    "episode_reels",
+    "expected_takes",
+    "hand_edited_plan",
+    "plan_take_changes",
+    "read_latest",
+    "sources_fingerprint",
+    "write_latest",
     "TakeSource",
     "cut_sound",
     "episode_beats",
+    "make_cover",
+    "make_reel",
+    "record_reel",
     "measure_take",
     "parse_ass_cues",
     "reel_paths",

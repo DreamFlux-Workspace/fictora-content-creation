@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import sys
 from pathlib import Path
 
 from creation.cli_text import HELP_SUFFIX, text_or_file
@@ -479,6 +481,12 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         action="store_true",
         help="No cover on the deliverable (not even a saved one).",
     )
+    fin.add_argument(
+        "--no-reel",
+        action="store_true",
+        help="Make no reel. By default every complete finish makes the episode's social reel in "
+        "reels/epNN/ ($0, local; a draft while takes are still to finish; skipped when nothing changed).",
+    )
     add_caption_style_arg(fin)
     add_caption_colour_arg(fin)
     add_hook_line_args(fin)
@@ -623,6 +631,16 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     add_hook_line_args(reel)
     reel.add_argument("--watermark-y", type=int, default=None)
     add_ending_arg(reel)
+    reel.add_argument(
+        "--no-cover", action="store_true",
+        help="Write no cover image (by default every reel writes reels/<reel>-cover-vN.jpg: "
+        "PART N and the series title, free, for Instagram's Edit cover).",
+    )  # fmt: skip
+    reel.add_argument(
+        "--cover-frame", type=float, default=None, metavar="S",
+        help="Draw the cover on the reel's picture at S seconds (default: a saved server cover, "
+        "else the strongest frame).",
+    )  # fmt: skip
 
     add_edit_parsers(sub)
     add_review_parser(sub)
@@ -802,6 +820,17 @@ def dispatch_post(args: argparse.Namespace) -> int:
             print(json.dumps(result.as_json(), indent=2))
         else:
             print(result.final)
+        if result.complete and not args.no_reel:
+            from creation.post import reel as reel_module
+
+            # The reel follows every finish ($0, local); a failure is printed, the finish stands.
+            named = re.search(r"take-ep(\d+)-", Path(str(result.final)).name)
+            reel_module.auto_reel(
+                args.desk,
+                int(named.group(1)) if named else (args.episode or 1),
+                trigger="finish",
+                stream=sys.stderr if args.json else sys.stdout,
+            )
         return 0 if result.complete else FINISH_INCOMPLETE
     if args.command == "reel":
         from creation.post.reel import run_reel
@@ -821,6 +850,8 @@ def dispatch_post(args: argparse.Namespace) -> int:
             hook_line=args.hook_line,
             no_hook_line=args.no_hook_line,
             hook_line_position=args.hook_line_position,
+            no_cover=args.no_cover,
+            cover_frame=args.cover_frame,
         )
         return 0
     if args.command == "join":

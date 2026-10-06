@@ -121,7 +121,7 @@ def test_the_cold_open_never_comes_from_the_new_fact_even_when_it_is_the_stronge
     assert body["last_beat"] == {"take": "t1", "start_s": 11.25, "end_s": 15.0}
 
 
-def test_a_hand_edited_cold_open_inside_the_last_beat_is_warned() -> None:
+def test_a_hand_edited_cold_open_inside_the_last_beat_is_a_note() -> None:
     measured = take(cues=CUES)
     plan = ReelPlan(
         episode=4,
@@ -134,12 +134,17 @@ def test_a_hand_edited_cold_open_inside_the_last_beat_is_warned() -> None:
         last_beat=("t1", 11.25, 15.0),
     )
     warnings = check_plan(plan, [measured])
-    assert any("inside the last beat" in w and "own ending" in w for w in warnings)
+    # A note, never a fault: opening on the strongest moment is the flash-forward (6 Oct 2026).
+    assert not any("ending" in w for w in warnings)
+    assert any(
+        "the reel opens on its strongest moment (it repeats later — that's the flash-forward)"
+        in n
+        and "Check the opening shows the danger, not the answer." in n
+        for n in plan.notes
+    )
 
 
-def test_a_cold_open_overlapping_the_last_segment_is_warned_without_beat_times() -> (
-    None
-):
+def test_a_cold_open_overlapping_the_last_segment_is_noted_without_beat_times() -> None:
     """A plan file from before ``last_beat`` was written still gets the check, from its last segment."""
 
     plan = ReelPlan(
@@ -151,7 +156,10 @@ def test_a_cold_open_overlapping_the_last_segment_is_warned_without_beat_times()
             Segment("t1", 11.25, 13.15, "new_fact"),
         ],
     )
-    assert any("overlaps the ending" in w for w in check_plan(plan, [take(cues=CUES)]))
+    assert not check_plan(plan, [take(cues=CUES)]) or not any(
+        "ending" in w for w in check_plan(plan, [take(cues=CUES)])
+    )
+    assert any("that's the flash-forward" in n for n in plan.notes)
 
 
 def test_a_one_beat_episode_gets_no_cold_open_rather_than_its_ending() -> None:

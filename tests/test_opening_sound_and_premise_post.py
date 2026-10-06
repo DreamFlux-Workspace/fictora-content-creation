@@ -82,9 +82,9 @@ def test_the_premise_line_is_the_post_title_and_an_older_show_posts_as_before() 
     )  # fmt: skip
     lines = titled.splitlines()
     assert lines[0] == "The night-shift clerk is wearing his jacket."
-    assert lines[1] == "Night Shift · Episode 3: The Jacket"
+    assert lines[1] == "Night Shift · Part 3: The Jacket"
     plain = post_text(series="Night Shift", episode=3, title="The Jacket")
-    assert plain.startswith("Night Shift · Episode 3: The Jacket")
+    assert plain.startswith("Night Shift · Part 3: The Jacket")
 
 
 @needs_ffmpeg
