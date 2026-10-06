@@ -207,8 +207,8 @@ def test_the_title_block_is_the_setup_line_white_and_the_hook_line_yellow(
     )
     titled = copy.deepcopy(SPINE)
     titled["episode_summaries"][0]["title_line"] = "He came for the arm"
-    assert title_block(titled, 1, desk=tmp_path)[0].setup == "Three Payments Late", (
-        "the server has no episode title line: the setup line is the series title"
+    assert title_block(titled, 1, desk=tmp_path)[0].setup == "He came for the arm", (
+        "the episode's own setup line (fictora-drama #628 title_line) wins over the series title"
     )
     over, _ = title_block(SPINE, 1, desk=tmp_path, override="He came to take her arm.")
     assert (over.hook, over.hook_source) == ("He came to take her arm.", "--hook-line")
