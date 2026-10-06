@@ -1,51 +1,28 @@
-"""Reel part covers, Part wording, posting lanes and the results sheet (founder decision, 6 Oct 2026)."""
+"""Reel covers, posting lanes and the results sheet: what the kit keeps of the reel's books.
+
+The cover image and the post caption are made by the server's reel engine
+(fictora-drama); the kit downloads the cover beside the reel, writes the
+operator's notes under the caption and keeps ``reels/metrics.csv``.
+"""
 
 from __future__ import annotations
 
 import csv
 import io
 import json
-import subprocess
 from pathlib import Path
 
-import numpy as np
 import pytest
 from conftest import needs_ffmpeg
-from PIL import Image
 from test_reel import reel_desk  # noqa: F401  (fixture)
 
 from creation.post.reel_cover import (
     METRICS_COLUMNS,
-    record_metrics_row,
-    cover_layout,
     cover_path,
+    record_metrics_row,
 )
-from creation.post.reel_plan import (
-    genre_family,
-    post_operator_notes,
-    post_text,
-    posting_warnings,
-)
-from creation.post.safe_zones import caption_mask, zones_entered
-
-# --- the post text: Part wording -----------------------------------------------------------------
-
-
-def test_post_text_says_part_n_and_follow_for_the_next_part() -> None:
-    text = post_text(
-        series="Night Shift", episode=3, title="The Jacket",
-        premise_line="The night-shift clerk is wearing his jacket.", genre="mystery",
-    )  # fmt: skip
-    lines = text.splitlines()
-    assert lines[0] == "The night-shift clerk is wearing his jacket."
-    assert lines[1] == "Night Shift · Part 3: The Jacket"
-    assert "Follow for part 4." in lines
-    assert "Episode" not in text
-
-
-def test_the_last_part_says_follow_for_the_next_one() -> None:
-    text = post_text(series="Night Shift", episode=3, has_next=False)
-    assert "Follow for the next one." in text and "part 4" not in text
+from creation.post.reel_plan import post_operator_notes, posting_warnings
+from reel_fake_server import FakeReelServer
 
 
 def test_operator_notes_name_the_cover_the_sound_and_the_lane() -> None:
@@ -65,52 +42,6 @@ def test_a_missing_posting_slot_warns_and_never_blocks() -> None:
     warned = posting_warnings(account="@a", posting_slot=None)
     assert len(warned) == 1 and "@a" in warned[0] and "posting_slot" in warned[0]
     assert "posting.md" in warned[0]
-
-
-# --- genre families ------------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "genre",
-    [
-        "system", "leveling_system", "levelling", "regression", "regressor_revenge",
-        "apocalypse", "last_human", "isekai", "cultivation", "hunter", "dungeon_crawl", "awakening",
-    ],
-)  # fmt: skip
-def test_power_fantasy_genres_score_as_action(genre: str) -> None:
-    assert genre_family(genre) == "action"
-
-
-def test_a_lone_last_or_human_is_not_the_last_human() -> None:
-    assert genre_family("the_last_dance") == "default"
-    assert genre_family("human_drama") == "default"
-
-
-# --- the cover's layout (pure) -------------------------------------------------------------------
-
-
-def test_cover_text_stays_out_of_the_covered_zones_and_in_the_grid() -> None:
-    layout = cover_layout(series="Night Shift", part=3, width=1080, height=1920)
-    assert layout.part_text == "PART 3"
-    assert zones_entered(layout.box) == []
-    left, top, right, bottom = layout.box
-    # Instagram's profile grid shows the middle 3:4 of a 9:16 cover.
-    assert top >= 0.125 and bottom <= 0.875
-    assert right <= 0.88
-
-
-def test_cover_text_moves_off_a_face() -> None:
-    plain = cover_layout(series="Night Shift", part=3, width=1080, height=1920)
-    # A face over where the text would sit.
-    left, top, right, bottom = plain.box
-    face = (0.3, top, 0.4, bottom - top)
-    moved = cover_layout(
-        series="Night Shift", part=3, width=1080, height=1920, faces=[face]
-    )
-    assert moved.placement != plain.placement
-    m_left, m_top, m_right, m_bottom = moved.box
-    assert m_bottom <= face[1] or m_top >= face[1] + face[3]
-    assert zones_entered(moved.box) == []
 
 
 def test_cover_path_is_versioned_next_to_the_reel(tmp_path: Path) -> None:
@@ -153,14 +84,6 @@ def test_metrics_keep_one_row_per_part_and_list_what_it_superseded(
 # --- end to end on the tiny desk -----------------------------------------------------------------
 
 
-def _streams(video: Path) -> list[str]:
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(video)],
-        capture_output=True, text=True, check=True,
-    )  # fmt: skip
-    return [line for line in out.stdout.split() if line]
-
-
 @needs_ffmpeg
 def test_every_reel_writes_a_part_cover_a_metrics_row_and_operator_notes(
     reel_desk: Path,  # noqa: F811
@@ -174,27 +97,13 @@ def test_every_reel_writes_a_part_cover_a_metrics_row_and_operator_notes(
         encoding="utf-8",
     )
     out = io.StringIO()
-    result = run_reel(reel_desk, episode=1, seconds=6.0, stream=out, detector=None)
+    result = run_reel(reel_desk, episode=1, seconds=6.0, stream=out)
 
     assert result.video is not None and result.cover is not None
     assert result.cover.name == "reel-ep01-v1-cover-v1.jpg"
     assert result.cover.parent == result.video.parent
-    picture = np.asarray(Image.open(result.cover).convert("RGB"))
-    assert picture.shape[:2] == (168, 96)
-    # PART N is drawn in the house yellow, outside the covered zones.
-    mask = caption_mask(picture)
-    assert mask.any()
-    ys, xs = np.nonzero(mask)
-    height, width = mask.shape
-    box = (
-        xs.min() / width,
-        ys.min() / height,
-        (xs.max() + 1) / width,
-        (ys.max() + 1) / height,
-    )
-    assert zones_entered(box) == []
-    # The cover never goes inside the video.
-    assert sorted(_streams(result.video)) == ["audio", "video"]
+    # The cover is the server's, downloaded beside the reel (never inside the video).
+    assert result.cover.read_bytes().startswith(b"\xff\xd8")
     printed = out.getvalue()
     assert f"cover: {result.cover}" in printed
     post = result.post.read_text(encoding="utf-8") if result.post else ""
@@ -225,13 +134,14 @@ def test_every_reel_writes_a_part_cover_a_metrics_row_and_operator_notes(
 
 
 @needs_ffmpeg
-def test_no_cover_skips_it_and_cover_frame_picks_the_time(reel_desk: Path) -> None:  # noqa: F811
+def test_no_cover_skips_it_and_cover_frame_picks_the_time(
+    reel_desk: Path,  # noqa: F811
+    reel_server: FakeReelServer,
+) -> None:
     from creation.post.reel import run_reel
 
     out = io.StringIO()
-    skipped = run_reel(
-        reel_desk, episode=1, seconds=6.0, stream=out, detector=None, no_cover=True
-    )
+    skipped = run_reel(reel_desk, episode=1, seconds=6.0, stream=out, no_cover=True)
     assert skipped.cover is None
     assert not list((reel_desk / "reels").glob("*cover*"))
     assert "--no-cover" in out.getvalue()
@@ -242,11 +152,11 @@ def test_no_cover_skips_it_and_cover_frame_picks_the_time(reel_desk: Path) -> No
         episode=1,
         seconds=6.0,
         stream=io.StringIO(),
-        detector=None,
         cover_frame=0.2,
     )
     assert picked.cover is not None and picked.cover.is_file()
-    assert picked.cover_note and "--cover-frame" in picked.cover_note
+    assert reel_server.requests[0]["no_cover"] is True
+    assert reel_server.requests[1]["cover_frame_s"] == 0.2
 
 
 @needs_ffmpeg
@@ -257,7 +167,7 @@ def test_an_account_without_a_slot_warns(reel_desk: Path) -> None:  # noqa: F811
         json.dumps({"account": "@tiny.show"}), encoding="utf-8"
     )
     out = io.StringIO()
-    result = run_reel(reel_desk, episode=1, seconds=6.0, stream=out, detector=None)
+    result = run_reel(reel_desk, episode=1, seconds=6.0, stream=out)
     assert result.video is not None
     assert "⚠" in out.getvalue() and "posting_slot" in out.getvalue()
 
@@ -282,83 +192,3 @@ def test_the_cli_takes_the_cover_flags(
     assert (seen["no_cover"], seen["cover_frame"]) == (False, 1.5)
     assert main(["reel", "--desk", str(tmp_path), "--episode", "2", "--no-cover"]) == 0
     assert (seen["no_cover"], seen["cover_frame"]) == (True, None)
-
-
-# --- follow-up (6 Oct): the title leads, PART N follows -------------------------------------------
-
-
-def test_the_series_title_is_large_yellow_and_part_n_is_half_its_size_in_white() -> (
-    None
-):
-    from creation.post.reel_cover import PART_COLOUR, TITLE_COLOUR, cover_ass
-
-    layout = cover_layout(series="SCP-173 Blink", part=1, width=1080, height=1920)
-    assert layout.title_size >= 2 * layout.part_size - 2
-    assert layout.part_size >= layout.title_size * 0.4
-    assert layout.title_top_px < layout.part_top_px, "the title sits above PART N"
-    assert TITLE_COLOUR == "&H0000E5FF" and PART_COLOUR == "&H00FFFFFF"
-    ass = cover_ass(layout)
-    assert f"Style: Title,Arial,{layout.title_size},{TITLE_COLOUR}" in ass
-    assert f"Style: Part,Arial,{layout.part_size},{PART_COLOUR}" in ass
-    # Readable on the profile grid (a tile is about a third of the phone's width).
-    assert layout.title_size / 3 >= 30 and layout.part_size / 3 >= 18
-
-
-def test_a_long_title_wraps_on_two_lines_inside_the_safe_area() -> None:
-    from creation.captions import text_width
-
-    title = "The Regressor Who Remembers Every Single Betrayal"
-    layout = cover_layout(series=title, part=12, width=1080, height=1920)
-    assert len(layout.title_lines) == 2
-    room = 1080 * 0.88 - 2 * 60
-    assert all(
-        text_width(line, layout.title_size) <= room + 1 for line in layout.title_lines
-    )
-    assert zones_entered(layout.box) == []
-    left, top, right, bottom = layout.box
-    assert top >= 0.125 and bottom <= 0.875 and right <= 0.88
-
-
-# --- follow-up (6 Oct): the profile-face cascade finds a three-quarter face -------------------------
-
-FACE_FIXTURE = Path(__file__).parent / "data" / "scp173-ep01-cover-face.png"
-
-
-def test_the_profile_cascade_finds_the_three_quarter_crying_face() -> None:
-    from creation.post.faces import local_detector
-
-    detector = local_detector(anime=True)
-    if detector is None:
-        pytest.skip("OpenCV not available")
-    frame = np.asarray(Image.open(FACE_FIXTURE).convert("RGB"))
-    reading = detector(frame)
-    # The face (a three-quarter view, crying) spans about x 0.15-0.45, y 0.25-0.6 of the cover.
-    assert any(
-        x < 0.45 and x + w > 0.15 and y < 0.6 and y + h > 0.25
-        for x, y, w, h in reading.fractions()
-    ), reading.boxes
-
-
-def test_a_cover_with_no_face_found_says_to_look_at_it() -> None:
-    from creation.post.reel_cover import face_note
-
-    assert (
-        face_note([])
-        == "⚠ no face found on the cover picture — look at the cover before posting"
-    )
-    assert face_note(None).startswith(
-        "⚠ no face found on the cover picture — look at the cover before posting"
-    )
-    assert face_note([(0.1, 0.1, 0.2, 0.2)]) is None
-
-
-def test_the_cover_reads_faces_on_the_still_at_its_own_aspect() -> None:
-    from creation.post.faces import local_detector
-    from creation.post.reel_cover import face_boxes
-
-    detector = local_detector(anime=True)
-    if detector is None:
-        pytest.skip("OpenCV not available")
-    boxes = face_boxes(FACE_FIXTURE, None, detector)
-    assert boxes, "the three-quarter face is found on the cover still"
-    assert face_boxes(FACE_FIXTURE, None, None) is None

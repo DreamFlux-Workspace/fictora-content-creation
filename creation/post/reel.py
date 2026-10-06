@@ -1284,6 +1284,23 @@ def run_reel(
         The plan and what was written.
     """
 
+    from creation.post import reel_via_server
+
+    if not reel_via_server.legacy_desk(desk.expanduser().resolve()):
+        # A desk made on or after 6 Oct 2026: the server's reel engine. Older desks keep this
+        # local reel exactly as it was (rules epoch, 6 Oct 2026).
+        if watermark_y is not None:
+            print(
+                "⚠ --watermark-y: the server puts the mark where /export does",
+                file=stream or sys.stdout,
+            )
+        return reel_via_server.run_reel(  # type: ignore[return-value]
+            desk, episode=episode, seconds=seconds, plan_only=plan_only, plan_file=plan_file,
+            take_files=take_files, sources=sources, captions=captions, caption_style=caption_style,
+            ending=ending, hook_line=hook_line, no_hook_line=no_hook_line,
+            hook_line_position=hook_line_position, stream=stream, no_cover=no_cover,
+            cover_frame=cover_frame, made_by=made_by,
+        )  # fmt: skip
     if ending is not None:
         from creation.post.ending import check_ending
 
@@ -2207,6 +2224,14 @@ def auto_reel(
         The reel, or ``None`` when none was made (unchanged, no spine, or it failed).
     """
 
+    from creation.post import reel_via_server
+
+    if not reel_via_server.legacy_desk(desk.expanduser().resolve()):
+        # A desk made on or after 6 Oct 2026: the server's reel engine (this module stays as it was
+        # for older desks).
+        return reel_via_server.auto_reel(
+            desk, episode, trigger=trigger, stream=stream, force=force
+        )
     from creation.post.desk import saved_spine
 
     out = stream or sys.stdout

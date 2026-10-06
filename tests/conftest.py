@@ -327,3 +327,34 @@ def _voices_gate_off_by_default(
     monkeypatch.setattr(orchestrate, "voices_gate_text", lambda *a, **k: "")
     monkeypatch.setattr(orchestrate, "voices_pending_for_film", lambda *a, **k: [])
     monkeypatch.setattr(episode_commands, "voices_film_refusal", lambda *a, **k: None)
+
+
+@pytest.fixture
+def reel_server(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """The stand-in for the server's reel engine every reel in a test talks to (``reels`` made offline).
+
+    Every test gets one (:func:`_offline_reel_server`): no test ever uploads to or calls the real
+    Drama API. A test that checks what was sent asks for this fixture by name.
+    """
+
+    from creation.post import reel_via_server
+    from reel_fake_server import FakeReelServer
+
+    fake = FakeReelServer()
+    monkeypatch.setattr(reel_via_server, "ReelServer", lambda desk, episode: fake)
+    real_job = reel_via_server.reel_job_id
+
+    def job_id(desk: Path, episode: int, take_ids: list[str]) -> str:
+        # A test desk with no clip record is filmed by video job ``video-1``.
+        try:
+            return real_job(desk, episode, take_ids)
+        except reel_via_server.ReelServerError:
+            return "video-1"
+
+    monkeypatch.setattr(reel_via_server, "reel_job_id", job_id)
+    return fake
+
+
+@pytest.fixture(autouse=True)
+def _offline_reel_server(reel_server: Any) -> None:
+    """The reel after ``finish`` and every ``reel`` run against :func:`reel_server`, never the network."""

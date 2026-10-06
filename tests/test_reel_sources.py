@@ -12,7 +12,8 @@ from conftest import needs_ffmpeg
 
 from creation.captions import Cue
 from creation.post.edit import cut_frames
-from creation.post.reel import parse_ass_cues, run_reel
+from creation.post.reel import run_reel
+from reel_fake_server import FakeReelServer
 from creation.post.reel_sources import (
     Edit,
     accepted_from_notes,
@@ -336,9 +337,18 @@ def test_colour_is_the_sound_before_the_bed_when_the_mix_laid_nothing_by_hand(
 
 @needs_ffmpeg
 def test_a_desk_with_no_finish_record_reels_from_the_accepted_file(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], reel_server: FakeReelServer
 ) -> None:
     desk = make_desk(tmp_path)
+    (desk / "ep01" / "api" / "17_raw_scene_clips.json").write_text(
+        json.dumps(
+            {
+                "coordinator_job_id": "video-1",
+                "clips": [{"job_id": "take-1", "episode_id": "", "set_index": 1}],
+            }
+        ),
+        encoding="utf-8",
+    )
     before = _snapshot(desk)
 
     result = run_reel(
@@ -355,10 +365,11 @@ def test_a_desk_with_no_finish_record_reels_from_the_accepted_file(
     inferred = body["takes"]["t1"]["inferred"]
     assert body["takes"]["t1"]["source"] == f"ep01/takes/{T}-mix-v1.mp4"
     assert inferred["edits"][0]["frames"] == [48, 60] and inferred["bed_in_source"]
-    assert result.ass is not None
-    texts = [c.text for c in parse_ass_cues(result.ass.read_text(encoding="utf-8"))]
-    assert texts[-1].endswith("me")
-    assert any("no bed laid" in line for line in result.lines)
+    sent = reel_server.requests[0]["operator"]
+    assert sent["takes"][0]["cues"][-1]["text"].endswith("me")
+    # The source is the mix, its bed already in: no second bed, the music cuts with the picture.
+    assert "bed_url" not in sent and sent["music_in_take"] is True
+    assert any(line.startswith("no bed:") for line in result.lines)
     assert _snapshot(desk) == before  # nothing outside reels/ was written or touched
 
     # The plan re-renders: the inferred take is inferred again from its accepted file.

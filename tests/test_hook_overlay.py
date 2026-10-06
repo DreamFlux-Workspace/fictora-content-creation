@@ -12,6 +12,7 @@ import pytest
 from conftest import make_take, needs_ffmpeg
 from test_post_finish import FACTS, TWO_LINES, _board, fake_bed, fake_sfx
 from test_reel import reel_desk  # noqa: F401  (fixture)
+from reel_fake_server import FakeReelServer
 
 from creation.captions import CAPTION_BAND, text_width
 from creation.cli_produce import main
@@ -193,34 +194,21 @@ def _set_hook(desk: Path, hook: dict[str, Any]) -> None:
 
 
 @needs_ffmpeg
-def test_the_reel_records_and_burns_the_hook_line(reel_desk: Path) -> None:  # noqa: F811
+def test_the_reel_records_the_servers_hook_line_and_sends_the_operators_choices(
+    reel_desk: Path,  # noqa: F811
+    reel_server: FakeReelServer,
+) -> None:
     _set_hook(reel_desk, ON)
 
     result = run_reel(reel_desk, episode=1, seconds=6.0, stream=io.StringIO())
+    run_reel(reel_desk, episode=1, seconds=6.0, stream=io.StringIO(), no_hook_line=True)
 
+    # The spine's pick is the server's to read; the request names only the operator's flags.
+    first, second = reel_server.requests
+    assert "hook_line" not in first and first["no_hook_line"] is False
+    assert second["no_hook_line"] is True
     body = json.loads(result.plan_path.read_text())
-    assert (
-        body["hook_line"]["text"] == ON["text"] and body["hook_line"]["mode"] == "hook"
-    )
-    assert (
-        body["hook_line"]["placement"] == "top" and body["hook_line"]["start_s"] == 0.0
-    )
-    assert (reel_desk / "reels" / "ep01" / "reel-ep01-v1-hook.ass").is_file()
-    assert any("hook line" in line for line in result.lines)
-
-
-@needs_ffmpeg
-def test_no_hook_line_records_why_in_the_plan(reel_desk: Path) -> None:  # noqa: F811
-    _set_hook(reel_desk, ON)
-
-    result = run_reel(
-        reel_desk, episode=1, seconds=6.0, plan_only=True, no_hook_line=True
-    )
-
-    assert (
-        json.loads(result.plan_path.read_text())["hook_line"]["skipped"]
-        == "turned off (--no-hook-line)"
-    )
+    assert body["hook_line"]["mode"] == "hook" and result.hook_text
 
 
 @needs_ffmpeg

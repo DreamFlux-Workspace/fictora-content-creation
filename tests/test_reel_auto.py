@@ -53,7 +53,7 @@ def test_auto_reel_writes_the_episode_folder_latest_json_and_one_metrics_row(
     reel_desk: Path,  # noqa: F811
 ) -> None:
     out = io.StringIO()
-    result = auto_reel(reel_desk, 1, trigger="finish", stream=out, detector=None)
+    result = auto_reel(reel_desk, 1, trigger="finish", stream=out)
 
     assert result is not None and result.video is not None and result.cover is not None
     folder = reel_desk / "reels" / "ep01"
@@ -68,9 +68,7 @@ def test_auto_reel_writes_the_episode_folder_latest_json_and_one_metrics_row(
 
     # Nothing changed: the next finish says so in one line and cuts nothing.
     again = io.StringIO()
-    assert (
-        auto_reel(reel_desk, 1, trigger="finish", stream=again, detector=None) is None
-    )
+    assert auto_reel(reel_desk, 1, trigger="finish", stream=again) is None
     assert "unchanged" in again.getvalue()
     assert len(again.getvalue().strip().splitlines()) == 1
     assert sorted(p.name for p in folder.glob("reel-ep01-v*.mp4")) == [
@@ -81,7 +79,7 @@ def test_auto_reel_writes_the_episode_folder_latest_json_and_one_metrics_row(
     pre_bed = reel_desk / "ep01" / "takes" / "take-ep01-t1-colour-v1.mp4"
     stat = pre_bed.stat()
     os.utime(pre_bed, ns=(stat.st_atime_ns, stat.st_mtime_ns + 5_000_000_000))
-    third = auto_reel(reel_desk, 1, trigger="trim", stream=io.StringIO(), detector=None)
+    third = auto_reel(reel_desk, 1, trigger="trim", stream=io.StringIO())
     assert (
         third is not None
         and third.video is not None
@@ -96,7 +94,7 @@ def test_auto_reel_writes_the_episode_folder_latest_json_and_one_metrics_row(
 
 @needs_ffmpeg
 def test_a_posted_row_is_kept_and_the_recut_gets_its_own_row(reel_desk: Path) -> None:  # noqa: F811
-    auto_reel(reel_desk, 1, trigger="finish", stream=io.StringIO(), detector=None)
+    auto_reel(reel_desk, 1, trigger="finish", stream=io.StringIO())
     sheet = reel_desk / "reels" / "metrics.csv"
     rows = _rows(reel_desk)
     rows[0]["posted_at"], rows[0]["views"] = "2026-10-06 18:30 IST", "120"
@@ -107,10 +105,8 @@ def test_a_posted_row_is_kept_and_the_recut_gets_its_own_row(reel_desk: Path) ->
     pre_bed = reel_desk / "ep01" / "takes" / "take-ep01-t1-colour-v1.mp4"
     stat = pre_bed.stat()
     os.utime(pre_bed, ns=(stat.st_atime_ns, stat.st_mtime_ns + 5_000_000_000))
-    auto_reel(reel_desk, 1, trigger="finish", stream=io.StringIO(), detector=None)
-    auto_reel(
-        reel_desk, 1, trigger="reel", stream=io.StringIO(), detector=None, force=True
-    )
+    auto_reel(reel_desk, 1, trigger="finish", stream=io.StringIO())
+    auto_reel(reel_desk, 1, trigger="reel", stream=io.StringIO(), force=True)
 
     rows = _rows(reel_desk)
     assert [r["views"] for r in rows] == ["120", ""]
@@ -137,7 +133,7 @@ def test_an_episode_with_takes_still_to_finish_is_a_draft(reel_desk: Path) -> No
     spine_file.write_text(json.dumps(spine), encoding="utf-8")
     out = io.StringIO()
 
-    result = auto_reel(reel_desk, 1, trigger="finish", stream=out, detector=None)
+    result = auto_reel(reel_desk, 1, trigger="finish", stream=out)
 
     assert result is not None and result.video is not None
     assert result.video.name == "reel-ep01-draft-v1.mp4"
@@ -151,9 +147,7 @@ def test_an_episode_with_takes_still_to_finish_is_a_draft(reel_desk: Path) -> No
 def test_a_hand_edited_plan_is_reused_while_its_takes_are_unchanged(
     reel_desk: Path,  # noqa: F811
 ) -> None:
-    first = auto_reel(
-        reel_desk, 1, trigger="finish", stream=io.StringIO(), detector=None
-    )
+    first = auto_reel(reel_desk, 1, trigger="finish", stream=io.StringIO())
     assert first is not None
     body = json.loads(first.plan_path.read_text(encoding="utf-8"))
     body["segments"] = body["segments"][1:]  # the human drops the flash-forward
@@ -164,12 +158,10 @@ def test_a_hand_edited_plan_is_reused_while_its_takes_are_unchanged(
     os.utime(pre_bed, ns=(stat.st_atime_ns, stat.st_mtime_ns + 5_000_000_000))
 
     out = io.StringIO()
-    second = auto_reel(reel_desk, 1, trigger="finish", stream=out, detector=None)
+    second = auto_reel(reel_desk, 1, trigger="finish", stream=out)
 
     assert second is not None
-    assert [s.role for s in second.plan.segments] == [
-        s["role"] for s in body["segments"]
-    ]
+    assert [s["role"] for s in second.segments] == [s["role"] for s in body["segments"]]
     assert f"reusing the hand-edited plan `{first.plan_path.name}`" in out.getvalue()
     made = json.loads(second.plan_path.read_text(encoding="utf-8"))
     assert made["edited_from"] == first.plan_path.name
@@ -179,9 +171,7 @@ def test_a_hand_edited_plan_is_reused_while_its_takes_are_unchanged(
 def test_a_hand_edited_plan_for_other_takes_is_not_reused_and_says_why(
     reel_desk: Path,  # noqa: F811
 ) -> None:
-    first = auto_reel(
-        reel_desk, 1, trigger="finish", stream=io.StringIO(), detector=None
-    )
+    first = auto_reel(reel_desk, 1, trigger="finish", stream=io.StringIO())
     assert first is not None
     body = json.loads(first.plan_path.read_text(encoding="utf-8"))
     body["notes"].append("hand edit")
@@ -192,7 +182,7 @@ def test_a_hand_edited_plan_for_other_takes_is_not_reused_and_says_why(
     os.utime(pre_bed, ns=(stat.st_atime_ns, stat.st_mtime_ns + 5_000_000_000))
 
     out = io.StringIO()
-    second = auto_reel(reel_desk, 1, trigger="finish", stream=out, detector=None)
+    second = auto_reel(reel_desk, 1, trigger="finish", stream=out)
 
     assert second is not None
     text = out.getvalue()
@@ -203,7 +193,7 @@ def test_a_hand_edited_plan_for_other_takes_is_not_reused_and_says_why(
 
 def test_auto_reel_without_a_spine_is_one_line(tmp_path: Path) -> None:
     out = io.StringIO()
-    assert auto_reel(tmp_path, 1, trigger="finish", stream=out, detector=None) is None
+    assert auto_reel(tmp_path, 1, trigger="finish", stream=out) is None
     lines = out.getvalue().strip().splitlines()
     assert len(lines) == 1 and lines[0].startswith("Reel: not made")
 

@@ -8,7 +8,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from conftest import needs_ffmpeg
 
 from creation.captions import Cue
 from creation.post import reel as reel_module
@@ -17,7 +16,6 @@ from creation.post.reel import (
     cut_sound,
     parse_ass_cues,
     reel_paths,
-    run_reel,
     write_new,
 )
 from creation.post.reel_plan import (
@@ -405,106 +403,6 @@ def _snapshot(desk: Path) -> dict[str, tuple[int, float]]:
         for p in desk.rglob("*")
         if p.is_file() and "reels" not in p.parts
     }
-
-
-@needs_ffmpeg
-def test_reel_plans_then_renders_only_new_files_under_reels(reel_desk: Path) -> None:
-    before = _snapshot(reel_desk)
-
-    planned = run_reel(reel_desk, episode=1, seconds=6.0, plan_only=True)
-    assert planned.video is None
-    assert planned.plan_path.name == "reel-plan-ep01-v1.json"
-    body = json.loads(planned.plan_path.read_text(encoding="utf-8"))
-    assert body["segments"][-1]["role"] == "new_fact"
-    assert body["segments"][0]["role"] == "cold_open"
-
-    result = run_reel(reel_desk, episode=1, plan_file=planned.plan_path)
-
-    assert result.video is not None and result.video.name == "reel-ep01-v2.mp4"
-    assert result.post is not None and "Follow for part 2." in result.post.read_text(
-        encoding="utf-8"
-    )
-    # The show's premise line is the post's title (founder decision, 5 Oct 2026).
-    assert result.post.read_text(encoding="utf-8").startswith(
-        "The door was never locked.\nTiny Show"
-    )
-    assert result.ass is not None
-    texts = [c.text for c in parse_ass_cues(result.ass.read_text(encoding="utf-8"))]
-    assert texts[-1] == "It was me"
-    assert result.seconds == pytest.approx(
-        sum(s.end - s.start for s in result.plan.segments), abs=0.1
-    )
-    assert "LUFS" in result.loudness
-    assert (
-        _snapshot(reel_desk) == before
-    )  # nothing outside reels/ was written or touched
-    assert sorted(p.name for p in (reel_desk / "reels").iterdir()) == [
-        "ep01",
-        "metrics.csv",
-    ]
-    names = sorted(p.name for p in (reel_desk / "reels" / "ep01").iterdir())
-    assert names == [
-        "latest.json", "post-ep01-v2.txt", "reel-ep01-v2-cover-v1.jpg", "reel-ep01-v2.ass",
-        "reel-ep01-v2.mp4", "reel-plan-ep01-v1.json", "reel-plan-ep01-v2.json",
-    ]  # fmt: skip
-
-
-@needs_ffmpeg
-def test_review_of_a_reel_never_touches_run_notes_and_does_not_compare_take_cuts(
-    reel_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from creation.cli_produce import main
-
-    notes = reel_desk / "ep01" / "run-notes.md"
-    notes.write_text("# run notes\n", encoding="utf-8")
-    result = run_reel(reel_desk, episode=1, seconds=6.0)
-    assert result.video is not None
-    capsys.readouterr()
-
-    code = main(
-        [
-            "review",
-            "--desk",
-            str(reel_desk),
-            "--episode",
-            "1",
-            "--take-file",
-            str(result.video),
-        ]
-    )
-
-    assert code == 0
-    out = capsys.readouterr().out
-    assert notes.read_text(encoding="utf-8") == "# run notes\n"
-    saved = reel_desk / "reels" / "ep01" / f"{result.video.stem}-review-v1.txt"
-    assert saved.is_file() and "Review ep01 t1" in saved.read_text(encoding="utf-8")
-    assert "(finished," in out
-    assert "not compared (the reel cut and reordered the take)" in out
-
-
-@needs_ffmpeg
-def test_reel_records_the_cold_open_and_ends_with_the_chosen_style(
-    reel_desk: Path,
-) -> None:
-    result = run_reel(
-        reel_desk, episode=1, seconds=6.0, ending="freeze-black", detector=None
-    )
-
-    body = json.loads(result.plan_path.read_text(encoding="utf-8"))
-    assert body["cold_open"]["beat_role"] in {"pivot", "escalation", "plant"}
-    assert body["cold_open"]["spoils_ending"] is False
-    assert body["cold_open"]["face_source"] == "head_count"
-    last = body["last_beat"]
-    window = body["cold_open"]["window"]
-    assert window[1] <= last["start_s"] + 1e-6, (
-        "the cold open never shows the last beat"
-    )
-    assert set(body["opening"]) >= {"frame0_luma", "first_second_motion", "warnings"}
-    assert body["ending"]["style"] == "freeze-black"
-    assert result.video is not None
-    assert result.seconds == pytest.approx(
-        sum(s.end - s.start for s in result.plan.segments) + 0.7, abs=0.1
-    )
 
 
 @pytest.mark.parametrize(
