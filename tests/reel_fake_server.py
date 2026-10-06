@@ -29,6 +29,8 @@ class FakeReelServer:
     files: dict[str, bytes] = field(default_factory=dict)
     reused: bool = False
     closed: bool = False
+    #: Answer like a server from before clip mode (a reel, whatever the request says).
+    no_clip_mode: bool = False
 
     def upload(self, path: Path, *, kind: str) -> tuple[str, str]:
         if self.unreachable:
@@ -51,6 +53,8 @@ class FakeReelServer:
         self.requests.append(body)
         takes = body["operator"]["takes"]
         first = takes[0]["video_url"]
+        if body.get("mode") == "clips":
+            return self._clips(body, first)
         self.files["https://assets.test/reels/reel.mp4"] = self.files[first]
         self.files["https://assets.test/reels/cover.jpg"] = b"\xff\xd8\xff\xe0fake-jpeg"
         segments = [
@@ -138,6 +142,55 @@ class FakeReelServer:
             "report": [
                 "auto take gain +0.0 dB (take -18.0 LUFS) -> mix -18.0 LUFS (in band, target -18)"
             ],
+        }
+
+    def _clips(self, body: dict[str, Any], first: str) -> dict[str, Any]:
+        """Clip mode: ``clip_count`` (default 2) clips, each the first take's bytes, 12 s apart."""
+
+        if self.no_clip_mode:
+            # An older server ignores ``mode`` and answers with a reel.
+            return {
+                "reel_video_url": "https://assets.test/reels/reel.mp4",
+                "caption_text": CAPTION,
+                "plan": {},
+            }
+        clips = []
+        for k in range(1, int(body.get("clip_count") or 2) + 1):
+            video, cover = (
+                f"https://assets.test/clips/clip-{k}.mp4",
+                f"https://assets.test/clips/clip-{k}.jpg",
+            )
+            self.files[video] = self.files[first]
+            self.files[cover] = b"\xff\xd8\xff\xe0fake-jpeg"
+            clips.append(
+                {
+                    "index": k,
+                    "video_url": video,
+                    "cover_url": cover,
+                    "caption_text": CAPTION.replace(
+                        "The Door\n", f"The Door · clip {k}\n"
+                    ),
+                    "start_ms": (k - 1) * 12_000,
+                    "end_ms": (k - 1) * 12_000 + 11_000,
+                    "duration_ms": 11_000,
+                    "why": f"clip {k}: opens on a line; ends on a peak",
+                    "warnings": [],
+                }
+            )
+        return {
+            "reel_video_url": clips[0]["video_url"],
+            "cover_url": clips[0]["cover_url"],
+            "caption_text": clips[0]["caption_text"],
+            "part": 1,
+            "duration_ms": 11_000,
+            "rules_version": "reel-rules-v4+clip-rules-v1",
+            "cached": False,
+            "mode": "operator",
+            "kind": "clips",
+            "clips": clips,
+            "plan": {"kind": "fictora-clips-plan"},
+            "warnings": ["a clip warning"],
+            "report": [],
         }
 
     def download(self, url: str, dest: Path) -> Path:
