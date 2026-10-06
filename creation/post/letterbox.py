@@ -25,7 +25,7 @@ What ``finish`` and ``join`` make for such a show (positions in
 * **Mark and title** go on last, with the mark (:func:`mark_and_title`): the
   Sokii mark in the top band (ink x 38-97, y 179-228), never on the picture; the title
   block just above the picture: the setup line in white (the episode's
-  series title, as the server's setup line) and the hook line in house yellow
+  own ``title_line`` from ``hook-line --setup-line``, else the series title) and the hook line in house yellow
   (``--hook-line``, else the desk's pick from ``hook-line``, else the spine's
   ``hook_line_selected``), each on at most two lines, for the whole video.
   The master ``join`` reads is the captioned canvas without mark or title:
@@ -69,6 +69,10 @@ from creation.post.watermark import MARK, MARK_ALPHA
 
 #: Where an operator's hook-line pick is kept when the server cannot store it (an older server).
 HOOK_LINE_FILE = Path("shared") / "hook-line.json"
+#: Where an operator's setup line is kept when the server cannot store it (before fictora-drama #628).
+SETUP_LINE_FILE = Path("shared") / "setup-line.json"
+#: The longest setup line the server takes (fictora-drama ``TITLE_LINE_MAX_CHARS``).
+SETUP_LINE_MAX_CHARS = 60
 #: A line's caption ends at the voice only when the voice stops at least this much before its window does.
 VOICE_END_MIN_TRIM = 0.1
 #: Level windows for the voice-end measure.
@@ -204,6 +208,64 @@ def clear_desk_hook_line(desk: Path, episode: int) -> bool:
     return True
 
 
+# --- the episode's own setup line the operator set on the desk ---------------------------------------
+
+
+def _episodes(path: Path) -> dict[str, Any]:
+    raw = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    return dict(raw.get("episodes") or {}) if isinstance(raw, dict) else {}
+
+
+def desk_setup_line(desk: Path, episode: int) -> dict[str, Any] | None:
+    """The setup line kept on the desk for one episode (``shared/setup-line.json``), or ``None``.
+
+    Returns
+    -------
+    dict[str, Any] | None
+        ``{"kind": "custom", "text": ...}`` or ``{"kind": "default"}`` (the series title), or ``None``.
+    """
+
+    entry = _episodes(desk.expanduser().resolve() / SETUP_LINE_FILE).get(str(episode))
+    if not isinstance(entry, dict) or entry.get("kind") not in ("custom", "default"):
+        return None
+    if entry["kind"] == "custom":
+        text = " ".join(str(entry.get("text") or "").split())
+        return {"kind": "custom", "text": text} if text else None
+    return {"kind": "default"}
+
+
+def record_desk_setup_line(
+    desk: Path, episode: int, choice: Mapping[str, Any], *, why: str
+) -> Path:
+    """Keep the operator's setup line on the desk (the server could not store it)."""
+
+    path = desk.expanduser().resolve() / SETUP_LINE_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    episodes = _episodes(path)
+    episodes[str(episode)] = {
+        **dict(choice),
+        "why": why,
+        "recorded_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    path.write_text(
+        json.dumps({"episodes": episodes}, indent=2) + "\n", encoding="utf-8"
+    )
+    return path
+
+
+def clear_desk_setup_line(desk: Path, episode: int) -> bool:
+    """Drop the desk's setup line for one episode (the server holds it now). True when one was dropped."""
+
+    path = desk.expanduser().resolve() / SETUP_LINE_FILE
+    episodes = _episodes(path)
+    if episodes.pop(str(episode), None) is None:
+        return False
+    path.write_text(
+        json.dumps({"episodes": episodes}, indent=2) + "\n", encoding="utf-8"
+    )
+    return True
+
+
 # --- the title block --------------------------------------------------------------------------------
 
 
@@ -214,9 +276,13 @@ class TitleBlock:
     setup: str
     hook: str
     hook_source: str = "spine"
+    setup_source: str = "the series title"
 
     def describe(self) -> str:
-        parts = [f"setup {self.setup!r}" if self.setup else "", ""]
+        own = (
+            "" if self.setup_source == "the series title" else f" ({self.setup_source})"
+        )
+        parts = [f"setup {self.setup!r}{own}" if self.setup else "", ""]
         if self.hook:
             parts[1] = f"hook {self.hook!r} ({self.hook_source})"
         return "title block: " + "; ".join(p for p in parts if p)
@@ -232,7 +298,10 @@ def title_block(
 ) -> tuple[TitleBlock | None, str]:
     """The title block for one episode's letterbox file, or ``None`` and why.
 
-    Line 1 (white) is the series ``title`` (the server's setup line when no run title is given).
+    Line 1 (white) is the episode's own setup line: the desk's (``hook-line
+    --setup-line`` on a server without the field), else the spine's
+    ``episode_summaries[].title_line`` (fictora-drama #628), else the series
+    ``title`` (the server's fallback when no run title is given).
     Line 2 (yellow) is ``override`` (``--hook-line``), else the desk's pick
     (``hook-line`` on an older server), else the spine's ``hook_line_selected``
     (nothing when it is ``off``).
@@ -244,9 +313,22 @@ def title_block(
         return None, "no title block (--no-hook-line)"
     body = (spine or {}).get("spine", spine) if isinstance(spine, Mapping) else {}
     body = body if isinstance(body, Mapping) else {}
-    # The server has no episode-level title line: its setup line is the run's title, else the series
-    # title (fictora-drama #612). The kit has no run title, so it is the series title.
+    # The server's setup line is the episode's title_line, else the run's title, else the series title
+    # (fictora-drama #614, #628). The kit has no run title.
+    from creation.spine_view import episode_summary
+
     setup = " ".join(str(body.get("title") or "").split())
+    setup_source = "the series title"
+    kept = desk_setup_line(desk, episode) if desk is not None else None
+    own = " ".join(str(episode_summary(body, episode).get("title_line") or "").split())
+    if kept is not None:
+        if kept["kind"] == "custom":
+            setup, setup_source = (
+                kept["text"],
+                "the desk's setup line (hook-line --setup-line)",
+            )
+    elif own:
+        setup, setup_source = own, "the episode's setup line"
     hook, source = "", "spine"
     if override and override.strip():
         hook, source = " ".join(override.split()), "--hook-line"
@@ -264,7 +346,7 @@ def title_block(
             None,
             "no title block: the show has no title and the episode no hook line",
         )
-    return TitleBlock(setup, hook, source), ""
+    return TitleBlock(setup, hook, source, setup_source), ""
 
 
 def _two_lines(text: str, size: int, room: float) -> list[str] | None:
@@ -802,6 +884,10 @@ def italic_overrides(
 
 __all__ = [
     "HOOK_LINE_FILE",
+    "SETUP_LINE_FILE",
+    "clear_desk_setup_line",
+    "desk_setup_line",
+    "record_desk_setup_line",
     "FittedTitle",
     "TitleBlock",
     "VoiceEnd",

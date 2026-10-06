@@ -185,7 +185,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     hook.add_argument("--desk", type=Path, required=True)
     hook.add_argument("--episode", type=int, default=1)
-    hook_which = hook.add_mutually_exclusive_group(required=True)
+    hook_which = hook.add_mutually_exclusive_group()
     hook_which.add_argument(
         "--list", action="store_true", help="Print the options (free, no call)."
     )
@@ -201,6 +201,19 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     hook_which.add_argument(
         "--off", action="store_true", help="No hook line for this episode."
+    )
+    hook_setup = hook.add_mutually_exclusive_group()
+    hook_setup.add_argument(
+        "--setup-line",
+        default=None,
+        metavar="TEXT",
+        help="A letterbox episode's own setup line (the white title line, at most 60 characters), "
+        "alone or with a hook-line choice; finish, join and reel use it before the series title.",
+    )
+    hook_setup.add_argument(
+        "--default-setup-line",
+        action="store_true",
+        help="Clear the episode's own setup line (the series title shows).",
     )
 
     voice_mode = sub.add_parser(
@@ -709,7 +722,8 @@ def dispatch_post(args: argparse.Namespace) -> int:
 
         return run_hook_line(
             args.desk, episode=args.episode, list_only=args.list, pick=args.pick,
-            text=args.text, off=args.off,
+            text=args.text, off=args.off, setup_line=args.setup_line,
+            default_setup_line=args.default_setup_line,
         )  # fmt: skip
     if args.command == "voice-mode":
         from creation.voice_mode import run_voice_mode

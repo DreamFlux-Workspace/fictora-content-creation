@@ -22,6 +22,15 @@ filmed; it spends nothing.
 ``finish`` burns the hook line on a portrait show's first take, and a
 letterbox show's title block carries it for the whole video
 (:mod:`creation.post.letterbox`).
+
+**Setup line** (a letterbox show's white title line, fictora-drama #628):
+``--setup-line "..."`` (at most 60 characters) sets the episode's own line on
+the same route (``title_line: {kind: custom, text}``) and
+``--default-setup-line`` clears it (``{kind: default}``: the series title).
+It goes as its own send, after any hook-line choice. A server without the
+field (it refuses it, has no route, or answers without ``title_line``) gets
+the line kept on the desk (``shared/setup-line.json``) for finish, join and
+reel; a later one the server stores drops it.
 """
 
 from __future__ import annotations
@@ -35,9 +44,14 @@ from creation.harness.http_util import api_error_text
 from creation.post.desk import saved_spine, spine_body
 from creation.post.letterbox import (
     HOOK_LINE_FILE,
+    SETUP_LINE_FILE,
+    SETUP_LINE_MAX_CHARS,
     clear_desk_hook_line,
+    clear_desk_setup_line,
     desk_hook_line,
+    desk_setup_line,
     record_desk_hook_line,
+    record_desk_setup_line,
 )
 
 #: The server's opening route (the app's opening picker uses it too).
@@ -110,8 +124,21 @@ def list_lines(desk: Path, spine: Mapping[str, Any], episode: int) -> list[str]:
             f"Desk pick (finish and join use it; the app still shows the server's): {picked['text']!r} "
             f"({HOOK_LINE_FILE})"
         )
+    from creation.spine_view import episode_summary
+
+    own = episode_summary(spine_body(spine), episode).get("title_line")
+    kept = desk_setup_line(desk, episode)
+    if kept is not None:
+        shown = repr(kept["text"]) if kept["kind"] == "custom" else "the series title"
+        rows.append(
+            f"Setup line kept on the desk (finish and join use it; the app still shows the server's): {shown} "
+            f"({SETUP_LINE_FILE})"
+        )
+    elif own:
+        rows.append(f"Setup line (letterbox white line): {own!r}")
     rows.append(
-        f'Choose: hook-line --desk {desk} --episode {episode} --pick K | --text "..." | --off'
+        f'Choose: hook-line --desk {desk} --episode {episode} --pick K | --text "..." | --off; '
+        'a letterbox setup line: --setup-line "..." | --default-setup-line'
     )
     return rows
 
@@ -202,6 +229,93 @@ def choose_hook_line(
     raise AssertionError("unreachable")
 
 
+def choose_setup_line(
+    desk: Path,
+    run: _Api,
+    spine: Mapping[str, Any],
+    *,
+    episode: int,
+    choice: Mapping[str, Any],
+    out: TextIO,
+) -> dict[str, Any] | None:
+    """Send the episode's setup line to the opening route; on an older server keep it on the desk.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    run
+        Open API session.
+    spine
+        The spine as just read from the server.
+    episode
+        Episode ordinal.
+    choice
+        ``{kind: custom, text}`` or ``{kind: default}``.
+    out
+        Text stream.
+
+    Returns
+    -------
+    dict[str, Any] | None
+        The route's answer, or ``None`` when the line was kept on the desk instead.
+
+    Raises
+    ------
+    RuntimeError
+        Any other refusal (an unknown episode, a job open on the story, ...).
+    """
+
+    from creation.spine_view import episode_id_for
+
+    body = spine_body(spine)
+    spine_id = str(body.get("spine_id") or "")
+    path = OPENING_ROUTE.format(
+        spine_id=spine_id, episode_id=episode_id_for(body, episode)
+    )
+    for attempt in (1, 2):
+        status, answer = run.patch_optional(
+            path,
+            {"spine_version": body.get("spine_version"), "title_line": dict(choice)},
+        )
+        code = _error_code(answer)
+        if status == 409 and code in STALE_CODES and attempt == 1:
+            body = spine_body(run.spine(spine_id))
+            continue
+        stored = (
+            200 <= status < 300
+            and isinstance(answer, Mapping)
+            and "title_line" in answer
+        )
+        if stored:
+            return dict(answer)
+        # The line was checked here (1-60 characters), so a 422 is a server without the field.
+        older = (
+            (200 <= status < 300)
+            or status == 422
+            or (status == 404 and code not in KNOWN_NOT_FOUND)
+            or status == 405
+        )
+        if older:
+            why = "this Drama API does not keep an episode's setup line yet (before fictora-drama #628)"
+            saved = record_desk_setup_line(desk, episode, dict(choice), why=why)
+            shown = (
+                repr(choice.get("text"))
+                if choice.get("kind") == "custom"
+                else "the series title"
+            )
+            print(
+                f"Recorded on the desk, not on the server: {why}. finish, join and reel use {shown} "
+                f"(`{saved.relative_to(desk)}`); the app will still show the server's.",
+                file=out,
+            )
+            return None
+        raise RuntimeError(
+            f"the server refused the setup line (HTTP {status}): {api_error_text(answer)}"
+        )
+    raise AssertionError("unreachable")
+
+
 def _choice_text(
     body: Mapping[str, Any], episode: int, choice: Mapping[str, Any]
 ) -> str | None:
@@ -238,10 +352,15 @@ def run_hook_line(
     pick: int | None = None,
     text: str | None = None,
     off: bool = False,
+    setup_line: str | None = None,
+    default_setup_line: bool = False,
     out: TextIO | None = None,
     api: _Api | None = None,
 ) -> int:
-    """``hook-line --desk D --episode N [--list | --pick K | --text "..." | --off]`` (free).
+    """``hook-line --desk D --episode N [--list | --pick K | --text "..." | --off] [--setup-line "..."]`` (free).
+
+    ``setup_line`` / ``default_setup_line`` set or clear a letterbox episode's
+    own setup line (:func:`choose_setup_line`), alone or after a hook-line choice.
 
     Returns
     -------
@@ -254,10 +373,28 @@ def run_hook_line(
     stream: TextIO = out if out is not None else sys.stdout
     desk = desk.expanduser().resolve()
     asked = [list_only, pick is not None, text is not None, off]
-    if sum(bool(a) for a in asked) != 1:
+    if setup_line is not None and default_setup_line:
+        raise ValueError("--setup-line or --default-setup-line, not both")
+    setup: dict[str, Any] | None = None
+    if setup_line is not None:
+        words = " ".join(setup_line.split())
+        if not words:
+            raise ValueError("--setup-line needs the words of the setup line")
+        if len(words) > SETUP_LINE_MAX_CHARS:
+            raise ValueError(
+                f"--setup-line is {len(words)} characters; a setup line is at most {SETUP_LINE_MAX_CHARS} "
+                "(the server refuses longer). Use fewer words."
+            )
+        setup = {"kind": "custom", "text": words}
+    elif default_setup_line:
+        setup = {"kind": "default"}
+    if sum(bool(a) for a in asked) > 1 or (not any(asked) and setup is None):
         raise ValueError(
-            'hook-line needs exactly one of --list, --pick K, --text "...", --off'
+            'hook-line needs exactly one of --list, --pick K, --text "...", --off '
+            '(and/or --setup-line "..." / --default-setup-line)'
         )
+    if list_only and setup is not None:
+        raise ValueError("--list sends nothing; give --setup-line on its own")
     if list_only:
         found = saved_spine(desk, episode)
         if found is None:
@@ -278,22 +415,28 @@ def run_hook_line(
             f"--text is {len(' '.join(text.split()))} characters; a hook line is at most "
             f"{HOOK_LINE_MAX_CHARS} (the server refuses longer). Use fewer words."
         )
-    choice: dict[str, Any] = (
+    choice: dict[str, Any] | None = (
         {"kind": "option", "index": pick - 1}
         if pick is not None
         else {"kind": "custom", "text": " ".join(text.split())}
         if text is not None
         else {"kind": "off"}
+        if off
+        else None
     )
     session = open_api(desk, episode) if api is None else None
     run: _Api = api if api is not None else session  # type: ignore[assignment]
     try:
         spine = _read_spine(run, desk, episode)
-        if choice["kind"] == "option":
+        if choice is not None and choice["kind"] == "option":
             # An option that does not exist is refused before anything is sent.
             _choice_text(spine, episode, choice)
-        answer = choose_hook_line(
-            desk, run, spine, episode=episode, choice=choice, out=stream
+        answer = (
+            choose_hook_line(
+                desk, run, spine, episode=episode, choice=choice, out=stream
+            )
+            if choice is not None
+            else None
         )
         if answer is not None:
             _read_spine(run, desk, episode)
@@ -314,6 +457,31 @@ def run_hook_line(
                     warning.get("message") if isinstance(warning, Mapping) else warning
                 )
                 print(f"note: {message}", file=stream)
+        if setup is not None:
+            if choice is not None:
+                # The hook-line send moved the spine's version: read it again first.
+                spine = _read_spine(run, desk, episode)
+            said = choose_setup_line(
+                desk, run, spine, episode=episode, choice=setup, out=stream
+            )
+            if said is not None:
+                _read_spine(run, desk, episode)
+                cleared = clear_desk_setup_line(desk, episode)
+                shown = said.get("title_line")
+                print(
+                    f"Setup line for episode {episode}: "
+                    + (
+                        repr(shown)
+                        if shown
+                        else "none of its own (the series title shows)"
+                    )
+                    + (
+                        " (the desk's earlier line is dropped: the server holds it now)"
+                        if cleared
+                        else ""
+                    ),
+                    file=stream,
+                )
     finally:
         if session is not None:
             session.client.close()
@@ -328,6 +496,7 @@ def run_hook_line(
 __all__ = [
     "OPENING_ROUTE",
     "choose_hook_line",
+    "choose_setup_line",
     "hook_line_options",
     "list_lines",
     "run_hook_line",
