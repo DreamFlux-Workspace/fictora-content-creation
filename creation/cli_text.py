@@ -116,6 +116,20 @@ def force_utf8_output(*streams: TextIO | None) -> None:
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is None:
             continue
+        # Line by line even when piped, so a run read through a pipe (an agent, a script) keeps
+        # the kit's order: the closing Applied / Refused line stays last, never above the change
+        # list it closes (the canary of 7 Oct 2026 misread a refused look as applied).
+        if not getattr(stream, "line_buffering", True):
+            try:
+                reconfigure(line_buffering=True)
+            except (
+                ValueError,
+                OSError,
+            ) as exc:  # a detached or closed stream keeps its buffering
+                print(
+                    f"WARNING: could not make output line-buffered: {exc}",
+                    file=sys.stderr,
+                )
         encoding = str(getattr(stream, "encoding", "") or "").lower().replace("-", "")
         if encoding == "utf8":
             continue

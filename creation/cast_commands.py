@@ -210,7 +210,9 @@ def parse_look(raw: str, *, flag: str = "--look") -> tuple[str | None, dict[str,
             key: (_as_list(value) if key in LIST_FIELDS else value)
             for key, value in fields.items()
         }
-        return (_one_line(description) if description else None), brief
+        return (_one_line(description) if description else None), _with_gender_word(
+            brief, flag=flag
+        )
     brief: dict[str, Any] = {}
     prose: list[str] = []
     for row in text.splitlines():
@@ -225,7 +227,34 @@ def parse_look(raw: str, *, flag: str = "--look") -> tuple[str | None, dict[str,
         else:
             brief[field] = _one_line(value)
     description = _one_line(" ".join(prose))
-    return (description or None), brief
+    return (description or None), _with_gender_word(brief, flag=flag)
+
+
+#: Everyday words for the server's two ``gender_presentation`` values.
+GENDER_WORDS = {
+    "female": "female", "woman": "female", "girl": "female", "f": "female", "she": "female",
+    "male": "male", "man": "male", "boy": "male", "m": "male", "he": "male",
+}  # fmt: skip
+
+
+def _with_gender_word(brief: dict[str, Any], *, flag: str) -> dict[str, Any]:
+    """Read ``gender: woman`` as the server's ``female`` (it takes only ``female`` or ``male``).
+
+    The canary of 7 Oct 2026 sent ``gender: woman``: the server refused the
+    whole look, and a plate was redrawn from the unchanged card ($0.60).
+    Anything else stops here, before anything is sent.
+    """
+
+    value = brief.get("gender_presentation")
+    if value is None:
+        return brief
+    word = str(value).strip().lower()
+    if word not in GENDER_WORDS:
+        raise ec.CommandStopped(
+            f"{flag}: gender is {value!r}; the server takes female or male "
+            "(woman, man, girl and boy work too). Nothing was sent."
+        )
+    return {**brief, "gender_presentation": GENDER_WORDS[word]}
 
 
 def _style_source(spine: Mapping[str, Any], cast_id: str) -> Mapping[str, Any]:
