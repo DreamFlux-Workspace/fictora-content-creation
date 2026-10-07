@@ -5908,8 +5908,48 @@ def _settle_failed_plates_step(
 STALE_DRAW_CODE = "plan_media_spine_version_stale"
 
 
+#: ``DramaCastRegenerationRequest`` (fictora-drama #652): ``fresh`` draws the character from the card like a
+#: first plate, with no reference to the old plate.
+FRESH_FIELD = "fresh"
+FRESH_SCHEMA = "DramaCastRegenerationRequest"
+
+
+def fresh_unsupported(openapi: Any) -> bool:
+    """The deploy's ``/openapi.json`` lists the regenerate body and it has no ``fresh`` (an older server).
+
+    Anything unreadable (no doc, no such schema) reads as unknown (``False``):
+    the server's own answer to the request decides then.
+    """
+
+    if not isinstance(openapi, Mapping):
+        return False
+    schema = ((openapi.get("components") or {}).get("schemas") or {}).get(FRESH_SCHEMA)
+    if not isinstance(schema, Mapping) or not isinstance(
+        schema.get("properties"), Mapping
+    ):
+        return False
+    return FRESH_FIELD not in schema["properties"]
+
+
+def fresh_refused(message: str) -> bool:
+    """A 4xx answer to the regenerate POST that names the ``fresh`` field (a server without it)."""
+
+    return bool(re.search(r"HTTP 4\d\d", message)) and bool(
+        re.search(r"\bfresh\b", message)
+    )
+
+
+def fresh_not_here(where: str) -> str:
+    """What the creator is told when this server cannot redraw from scratch."""
+
+    return (
+        f"this server can't redraw a plate from scratch yet ({where}). Nothing was drawn or charged. "
+        "Redraw without --fresh (an edit of the old plate), or wait for the deploy that takes it."
+    )
+
+
 def run_redraw_plate_with_note(
-    desk: Path, *, cast: str, note: str, out: Any = None
+    desk: Path, *, cast: str, note: str, out: Any = None, fresh: bool = False
 ) -> Path:
     """Correct ONE character and redraw only their plate. Spends one still; nobody else is drawn or paid.
 
@@ -5936,6 +5976,13 @@ def run_redraw_plate_with_note(
         The correction, in the creator's words.
     out
         Text stream.
+    fresh
+        Send ``"fresh": true`` (fictora-drama #652): draw the character from
+        the card like a first plate, without the old plate as a reference. For
+        a plate redrawn by edit that still shows the old look. A deploy whose
+        ``/openapi.json`` lists the regenerate body without ``fresh`` is
+        refused before anything is sent; a 4xx naming ``fresh`` stops with the
+        same plain words (nothing drawn or charged).
 
     Returns
     -------
@@ -5965,6 +6012,15 @@ def run_redraw_plate_with_note(
     desk, state, run = _desk_session(desk)
     folder, ep = _plates_home(desk)
     try:
+        if fresh:
+            status, doc = run.get_optional("/openapi.json")
+            if 200 <= status < 300 and fresh_unsupported(doc):
+                raise CommandStopped(
+                    fresh_not_here(
+                        f"its /openapi.json {FRESH_SCHEMA} has no `{FRESH_FIELD}`"
+                    )
+                    + " The note was not sent either."
+                )
         spine = run.spine(state.spine_id or "")
         everyone = [
             card
@@ -6011,6 +6067,11 @@ def run_redraw_plate_with_note(
             )
             spine = run.spine(state.spine_id or "")
         digest = hashlib.sha256(_note_key(note).encode()).hexdigest()[:10]
+        if fresh:
+            print(
+                f"[plate] drawing {name} from scratch from their card (--fresh: the old plate is not a reference).",
+                file=sys.stderr,
+            )
         terminal: dict[str, Any] = {}
         for attempt in (1, 2):
             body = reuse_generation_body(
@@ -6020,16 +6081,28 @@ def run_redraw_plate_with_note(
                 preset_version=state.preset_version,
                 video_lane=state.video_lane,
             )
+            if fresh:
+                body[FRESH_FIELD] = True
             try:
                 terminal = run_unit(
                     desk,
                     run,
-                    unit=f"plate-{cast_id}-{digest}",
+                    # A fresh draw is its own job: never the key of an edit-redraw of the same note.
+                    unit=f"plate-{cast_id}-{digest}" + ("-fresh" if fresh else ""),
                     path=f"/v1/spines/{state.spine_id}/cast/{quote(cast_id, safe='')}/regenerate",
                     body=body,
                     video_route=True,
                     deadline_seconds=PLATE_DEADLINE_SECONDS,
                 )
+            except SystemExit as exc:
+                if fresh and fresh_refused(str(exc.code)):
+                    raise CommandStopped(
+                        fresh_not_here(
+                            f"it refused the `{FRESH_FIELD}` field: {exc.code}"
+                        )
+                        + f" {name}'s note is on their card."
+                    ) from None
+                raise
             except CommandStopped as exc:
                 if attempt == 2 or STALE_DRAW_CODE not in str(exc):
                     raise
@@ -7490,6 +7563,15 @@ def add_episode_parsers(
         required=True,
         help=f"What to change about this character, in your words (<={CAST_NOTE_MAX} characters).",
     )
+    plate.add_argument(
+        "--fresh",
+        action="store_true",
+        help=(
+            "Draw the character from scratch from their card (like a first plate), not as an edit of the old "
+            "plate. Use it when a plate redrawn with --note still shows the old look (the edit keeps too much "
+            "of it). Same price; a server without it says so and nothing is sent or charged."
+        ),
+    )
 
     film = sub.add_parser(
         "film",
@@ -7741,7 +7823,9 @@ def dispatch_episode(args: argparse.Namespace) -> int:
             print(plates_cast_retired(args.desk, args.cast), file=sys.stderr)
             return 2
         if args.command == "redraw-plate":
-            run_redraw_plate_with_note(args.desk, cast=args.cast, note=args.note)
+            run_redraw_plate_with_note(
+                args.desk, cast=args.cast, note=args.note, fresh=args.fresh
+            )
             return 0
         if args.command == "film":
             run_film(

@@ -95,6 +95,8 @@ class RecordCarry:
         self.step = step
         self.files: dict[str, Path | None] = {}
         self.problem: str | None = None
+        #: What happened to the captions on the last :meth:`write` (``!!`` when they could not be carried).
+        self.caption_line: str | None = None
         if record is not None:
             self.problem = self._check()
 
@@ -154,7 +156,36 @@ class RecordCarry:
                 if role == "pre_bed" and self.step in PICTURE_ONLY:
                     continue
                 self.files[role] = output
-        return carry_finish_record(self.desk, self.record, files=self.files, edit=edit)
+        written = carry_finish_record(
+            self.desk, self.record, files=self.files, edit=edit
+        )
+        self.caption_line = self._carry_captions(edit)
+        return written
+
+    def _carry_captions(self, edit: dict[str, Any]) -> str | None:
+        """Carry the master's ``.ass`` onto the edited master, re-timed as the picture was (canary 7 Oct 2026).
+
+        ``reel`` and ``clips`` read a take's captions beside the record's master;
+        without this an edit after finish left the reel uncaptioned.
+        """
+
+        from creation.post.edit_captions import captions_for_record, carry_ass
+
+        assert self.record is not None
+        before = self.record.resolve(self.desk, "master")
+        after = self.files.get("master")
+        if before is None or after is None or after.resolve() == before.resolve():
+            return None
+        source, notes = captions_for_record(self.desk, self.record)
+        if source is None:
+            if any(note.startswith("!!") for note in notes):
+                return "\n".join(notes)
+            return (
+                f"- Captions: none beside the master `{before.name}`, so none on `{after.name}` "
+                "(the take was finished without burned captions)"
+            )
+        carried = carry_ass(source, after.with_suffix(".ass"), [edit])
+        return "\n".join([*notes, carried.line])
 
     def lines(self, record: Path | None) -> list[str]:
         """What the operator is told about the record."""
@@ -172,7 +203,8 @@ class RecordCarry:
             else "the take before the bed was edited the same way"
         )
         return [
-            f"- Record: `{record.name}` (what `join` reads; {sound}; the un-marked master too)"
+            f"- Record: `{record.name}` (what `join` reads; {sound}; the un-marked master too)",
+            *([self.caption_line] if self.caption_line else []),
         ]
 
 
