@@ -36,6 +36,14 @@ direct call is covered).
 
 The legacy code paths these gates pick are frozen for desks created before
 2026-10-06: do not change them.
+
+Fixes that also reach continuing desks (founder decision, 7 Oct 2026): a gate
+for a fix that changes no voice, character or art style asks
+:func:`continuing_fix` instead of :func:`is_legacy`, and the fix reaches a
+legacy desk only while its name is in :data:`CONTINUING_FIXES`. Every other
+gate stays legacy. To approve another fix later, add its name to the
+allow-list and swap its gate. (Do not use ``rules-epoch --set``: that opts a
+desk into every 6 Oct change.)
 """
 
 from __future__ import annotations
@@ -60,6 +68,16 @@ CURRENT_EPOCH = EPOCH_DATE.isoformat()
 LEGACY = "legacy"
 #: The values ``rules-epoch --set`` takes.
 EPOCH_CHOICES = (LEGACY, CURRENT_EPOCH)
+
+#: The 6 Oct fixes a legacy desk also gets (founder decision, 7 Oct 2026, after
+#: a risk review: "Group A", fixes that change no voice, character or art
+#: style). Mirrors fictora-drama ``rules_epoch.CONTINUING_FIXES``.
+CONTINUING_FIXES: frozenset[str] = frozenset(
+    {
+        # Seam fix: join lays a steady bed under a loud seam and trims a near-silent head on a filmed cut (#156). Approved 2026-10-07.
+        "seam_fix",
+    }
+)
 
 _FOLDER_DATE = re.compile(r"^(\d{4}-\d{2}-\d{2})-")
 _ACTIVE: ContextVar[bool] = ContextVar("fictora_legacy_rules", default=False)
@@ -157,6 +175,24 @@ def is_legacy(desk: Path | None) -> bool:
     """
 
     return desk is not None and desk_epoch(desk).legacy
+
+
+def continuing_fix(desk: Path | None, name: str) -> bool:
+    """True when the 6 Oct fix ``name`` applies to this desk.
+
+    Always True for a new desk (and for no desk); for a desk created before
+    6 Oct 2026 only while ``name`` is in :data:`CONTINUING_FIXES` (founder
+    decision, 7 Oct 2026).
+
+    Parameters
+    ----------
+    desk
+        Series desk, or ``None``.
+    name
+        The fix's name, as listed in :data:`CONTINUING_FIXES`.
+    """
+
+    return not is_legacy(desk) or name in CONTINUING_FIXES
 
 
 def legacy_rules() -> bool:
@@ -258,11 +294,13 @@ def run_rules_epoch(desk: Path, *, set_to: str | None = None, out: Any = None) -
 
 
 __all__ = [
+    "CONTINUING_FIXES",
     "CURRENT_EPOCH",
     "EPOCH_CHOICES",
     "EPOCH_DATE",
     "LEGACY",
     "DeskEpoch",
+    "continuing_fix",
     "desk_epoch",
     "desk_rules",
     "is_legacy",

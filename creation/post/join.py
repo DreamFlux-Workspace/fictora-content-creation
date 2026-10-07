@@ -128,7 +128,7 @@ from creation.post.seam_fix import (
 )
 from creation.post.seam_fix import keep as keep_seam_fix
 from creation.post.watermark import watermark
-from creation.rules_epoch import is_legacy
+from creation.rules_epoch import continuing_fix
 from creation.harness_rules import (
     gain_match_note,
     inner_voice_cues,
@@ -1623,7 +1623,7 @@ def run_join(
             seam_fix
             and not accept_seam
             and any(abs(lv.step_db) > SEAM_STEP_DB for lv in levels)
-            and not is_legacy(desk)
+            and continuing_fix(desk, "seam_fix")
         ):
             print(
                 "A seam steps over 5 dB: trying a steady bed under it and a silent-head trim (free)",

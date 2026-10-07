@@ -1,7 +1,7 @@
 """``join`` fixes a loud seam itself before refusing: a steady bed on the quiet side, then a silent-head trim.
 
-Desks created on or after 6 Oct 2026 only (:func:`creation.rules_epoch.is_legacy`):
-an older desk keeps measure-and-refuse exactly as it was.
+Every desk, those created before 6 Oct 2026 included (founder decision, 7 Oct
+2026: :func:`creation.rules_epoch.continuing_fix`, ``seam_fix``).
 
 Why: the join seam (one take ends quiet, the next starts loud, or the
 reverse) was the most repeated issue, seen 8 times across four series, and

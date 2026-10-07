@@ -26,6 +26,7 @@ from creation.post import seam_fix
 from creation.post.finish_record import write_finish_record
 from creation.post.join import JOIN_NOT_DONE, decode_stereo, run_join
 from creation.post.watermark import watermark
+from creation import rules_epoch
 from creation.rules_epoch import is_legacy, run_rules_epoch
 
 SIZE = (192, 336)
@@ -336,12 +337,15 @@ def test_a_seam_that_cannot_be_fixed_still_refuses_and_lists_what_was_tried(
 
 
 @needs_ffmpeg
-def test_a_legacy_desk_and_no_seam_fix_measure_and_refuse_exactly_as_before(
+def test_a_legacy_desk_off_the_allow_list_and_no_seam_fix_measure_and_refuse_exactly_as_before(
     desk: Path,
     legacy_desk: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    # Since 7 Oct 2026 a legacy desk gets the seam fix (continuing_fix); with
+    # "seam_fix" off the allow-list it measures and refuses as it always did.
+    monkeypatch.setattr(rules_epoch, "CONTINUING_FIXES", frozenset())
     for each in (desk, legacy_desk):
         finished(each, "t1", seconds=4.0, level=0.05)
         finished(each, "t2", seconds=4.0, level=0.001, seed=2)
@@ -438,3 +442,25 @@ def test_a_seam_fixed_join_still_gets_its_cover_on_the_first_frame(
     assert join_module.count_frames(result.marked) == join_module.count_frames(
         result.master
     )
+
+
+@needs_ffmpeg
+def test_a_continuing_desk_tries_the_seam_fix(
+    legacy_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Founder decision 7 Oct 2026: the seam fix (#156) reaches desks created before 6 Oct."""
+
+    finished(legacy_desk, "t1", seconds=4.0, level=0.05)
+    finished(legacy_desk, "t2", seconds=4.0, level=0.001, seed=2)
+    ambience(legacy_desk)
+    assert is_legacy(legacy_desk)
+
+    class _Tried(Exception):
+        pass
+
+    def tried(*args: object, **kwargs: object) -> None:
+        raise _Tried
+
+    monkeypatch.setattr(join_module, "_fix_seams", tried)
+    with pytest.raises(_Tried):
+        _join(legacy_desk)
