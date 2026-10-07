@@ -17,9 +17,14 @@ Routes (bearer token, ``X-Drama-Session-Id`` and ``Idempotency-Key`` on each):
 
 Each call's ``Idempotency-Key`` is stable across re-runs, so a replay returns
 the first answer and never pays twice. ``429`` and ``409
-operator_audio_in_progress`` are waited out per ``Retry-After``; ``502
-operator_audio_failed`` and ``504 operator_audio_timed_out`` are replayed with
-the same key (the server retries up to three attempts). Every request has an
+operator_audio_in_progress`` are waited out per ``Retry-After``. A busy or
+restarting server (any ``502``/``503``/``504``, ``operator_audio_failed`` and
+``operator_audio_timed_out`` included) and a dropped connection are asked again
+with the same key through the kit's one retry policy
+(:func:`creation.harness.http_util.send_with_retries`: ``Retry-After`` or 10,
+20 s jittered, three tries in all, which is what the server allows per key):
+safe, because a replayed key or a repeated cue returns the first answer
+(L-20261005-18). Every request has an
 overall deadline, waits included (a ``cue`` 120 s): past it the command stops
 with a message saying to re-run it, never waiting on "in progress" forever.
 ``cost_usd`` in the answers is operator-only: it goes to run notes and the desk
@@ -35,13 +40,18 @@ from typing import Any, Protocol
 
 import httpx
 
-from creation.harness.http_util import api_error_text
+from creation.harness.http_util import (
+    api_error_text,
+    send_with_retries,
+    transient_status,
+)
 
 #: Most waits on 429 / in-progress before giving up (the rate bucket refills ~1 per 6 s).
 MAX_WAITS = 12
 #: Longest single wait honoured from ``Retry-After``.
 MAX_WAIT_SECONDS = 60.0
-#: Replays of a ``502 operator_audio_failed`` / ``504 operator_audio_timed_out``
+#: Replays of a request the server answered 502/503/504 (``operator_audio_failed``,
+#: ``operator_audio_timed_out``, a gateway error) or whose connection dropped
 #: (the server allows three attempts per key).
 MAX_FAILED_REPLAYS = 2
 #: Longest one ``cue`` waits for the server, waits on 429 / in progress included.
@@ -341,13 +351,23 @@ def post_with_retries(
     def left() -> float:
         return deadline_seconds - (clock() - started)
 
-    waits = replays = 0
+    waits = 0
     while True:
         remaining = left()
         if remaining <= 0:
             raise _timed_out(url, deadline_seconds, "the deadline passed")
         try:
-            response = client.post(url, headers=headers, json=body, timeout=remaining)
+            # Every operator audio route replays its key (or caches the cue by its content),
+            # so a busy server or a dropped connection is asked again (L-20261005-18).
+            response = send_with_retries(
+                lambda: client.post(
+                    url, headers=headers, json=body, timeout=max(left(), 0.001)
+                ),
+                attempts=MAX_FAILED_REPLAYS + 1,
+                sleep=sleep,
+                time_left=left,
+                retry_timeouts=False,
+            )
         except httpx.TimeoutException as exc:
             raise _timed_out(
                 url, deadline_seconds, "the request got no answer"
@@ -375,19 +395,14 @@ def post_with_retries(
                     )
                 sleep(wait)
                 continue
-        elif (response.status_code, code) in {
-            (502, "operator_audio_failed"),
-            (504, "operator_audio_timed_out"),
-        } and replays < MAX_FAILED_REPLAYS:
-            replays += 1
-            if response.status_code == 504:
-                wait = _retry_after(response, 15.0)
-                if wait >= left():
-                    raise _timed_out(
-                        url, deadline_seconds, "the provider timed out on the server"
-                    )
-                sleep(wait)
-            continue
+        elif transient_status(response.status_code, detail, url):
+            route = url.rsplit("/v1/", 1)[-1]
+            raise AudioServiceError(
+                f"HTTP {response.status_code} {route}: the server stayed busy after "
+                f"{MAX_FAILED_REPLAYS + 1} tries ({api_error_text(detail)}); nothing was saved. "
+                "Run the same command again in a few minutes: it sends the same Idempotency-Key, so "
+                "nothing is paid twice."
+            )
         hint = HINTS.get(code, "")
         raise AudioServiceError(
             f"HTTP {response.status_code} {url.rsplit('/v1/', 1)[-1]}: {api_error_text(detail)}"
