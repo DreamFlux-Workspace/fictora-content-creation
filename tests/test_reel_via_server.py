@@ -191,22 +191,24 @@ def test_a_plan_only_run_keeps_the_plan_and_a_hand_edited_plan_is_sent_back(
 
 
 @needs_ffmpeg
-def test_a_server_that_does_not_answer_says_how_to_make_the_reel_later(
+def test_a_server_that_does_not_answer_gets_the_reel_cut_locally(
     reel_desk: Path, reel_server: FakeReelServer, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Since 7 Oct 2026 a silent server no longer means no reel: the local engine cuts it (same rules)."""
+
     from creation.cli_produce import main
 
     reel_server.unreachable = True
 
     code = main(["reel", "--desk", str(reel_desk), "--episode", "1"])
 
-    assert code == 1
-    err = capsys.readouterr().err
+    assert code == 0
+    said = capsys.readouterr().out
     assert (
-        "Reel not made: the server didn't answer. Re-run `fictora-produce reel --desk"
-        in err
+        "Reel made locally (the server reel engine did not answer: ConnectError); same rules"
+        in said
     )
-    assert not (reel_desk / "reels" / "ep01" / "reel-ep01-v1.mp4").exists()
+    assert (reel_desk / "reels" / "ep01" / "reel-ep01-v1.mp4").is_file()
 
 
 @needs_ffmpeg

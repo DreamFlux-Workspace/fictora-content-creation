@@ -1253,6 +1253,7 @@ def run_reel(
     cover_frame: float | None = None,
     made_by: str = "reel",
     no_panels: bool = False,
+    server_refused: Exception | None = None,
 ) -> ReelResult:
     """Plan (and unless ``plan_only``, render) the episode's reel. Writes only under ``<desk>/reels/``.
 
@@ -1294,6 +1295,11 @@ def run_reel(
         What made it, for ``latest.json``: ``reel`` (this command), ``finish`` or an edit's name.
     no_panels
         ``--no-panels``: draw none of the writer's system panels (system and game genres only).
+    server_refused
+        Why the server's reel engine could not be used for this run (a new desk): cut here with
+        the desk's same rules and say so in one line. Set by itself when the server is
+        unreachable, can't take uploads (``operator_upload_unavailable``) or has no operator
+        reel route (:data:`creation.post.reel_server.SERVER_UNUSABLE`).
 
     Returns
     -------
@@ -1302,17 +1308,25 @@ def run_reel(
     """
 
     from creation.post import reel_via_server
+    from creation.post.reel_server import SERVER_UNUSABLE
 
-    if not reel_via_server.legacy_desk(desk.expanduser().resolve()):
+    if server_refused is None and not reel_via_server.legacy_desk(
+        desk.expanduser().resolve()
+    ):
         # A desk made on or after 6 Oct 2026: the server's reel engine. Older desks keep this
         # local reel exactly as it was (rules epoch, 6 Oct 2026).
-        return reel_via_server.run_reel(  # type: ignore[return-value]
-            desk, episode=episode, seconds=seconds, plan_only=plan_only, plan_file=plan_file,
-            take_files=take_files, sources=sources, captions=captions, caption_style=caption_style,
-            ending=ending, hook_line=hook_line, no_hook_line=no_hook_line,
-            hook_line_position=hook_line_position, stream=stream, no_cover=no_cover,
-            cover_frame=cover_frame, made_by=made_by, watermark_y=watermark_y, no_panels=no_panels,
-        )  # fmt: skip
+        try:
+            return reel_via_server.run_reel(  # type: ignore[return-value]
+                desk, episode=episode, seconds=seconds, plan_only=plan_only, plan_file=plan_file,
+                take_files=take_files, sources=sources, captions=captions, caption_style=caption_style,
+                ending=ending, hook_line=hook_line, no_hook_line=no_hook_line,
+                hook_line_position=hook_line_position, stream=stream, no_cover=no_cover,
+                cover_frame=cover_frame, made_by=made_by, watermark_y=watermark_y, no_panels=no_panels,
+            )  # fmt: skip
+        except SERVER_UNUSABLE as exc:
+            # The server can't take this run (no uploads on this deploy, no answer, no operator
+            # route): this desk's same rules, cut here. A refusal about the content still stops.
+            server_refused = exc
     if ending is not None:
         from creation.post.ending import check_ending
 
@@ -1337,9 +1351,48 @@ def run_reel(
         if result.video is not None:
             print(result.summary(), file=stream or sys.stdout)
         return result
-    return record_reel(
+    recorded = record_reel(
         desk.expanduser().resolve(), episode, result, made_by=made_by, stream=stream
     )
+    if server_refused is not None:
+        print(
+            local_fallback_line(server_refused, made=recorded.video is not None),
+            file=stream or sys.stdout,
+        )
+    return recorded
+
+
+def local_fallback_line(exc: Exception, *, made: bool = True) -> str:
+    """The one line saying the reel was cut locally because the server's reel engine could not be used."""
+
+    from creation.post.reel_server import ReelServerError, fallback_reason
+
+    why = fallback_reason(exc) if isinstance(exc, ReelServerError) else str(exc)
+    return f"{'Reel' if made else 'Reel plan'} made locally ({why}); same rules"
+
+
+def local_fallback_reel(
+    desk: Path,
+    refused: Exception,
+    *,
+    episode: int,
+    plan_file: Path | None = None,
+    stream: TextIO | None = None,
+    made_by: str = "reel",
+    detector: Detector | None | str = "local",
+) -> ReelResult:
+    """The reel of a new desk cut by this local engine because the server's could not be used for the run.
+
+    The desk's current rules (cover drawn here and laid on frame 0, ``reels/epNN/``
+    names, ``latest.json`` and ``metrics.csv`` books, post text and posting
+    notes), as :func:`run_reel` keeps them; one line says why
+    (:func:`local_fallback_line`).
+    """
+
+    return run_reel(
+        desk, episode=episode, plan_file=plan_file, stream=stream, made_by=made_by,
+        detector=detector, server_refused=refused,
+    )  # fmt: skip
 
 
 def _cover_picture(
@@ -2363,6 +2416,8 @@ __all__ = [
     "auto_reel",
     "episode_reels",
     "expected_takes",
+    "local_fallback_line",
+    "local_fallback_reel",
     "hand_edited_plan",
     "plan_take_changes",
     "read_latest",

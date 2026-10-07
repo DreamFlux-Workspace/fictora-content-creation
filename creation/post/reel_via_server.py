@@ -20,9 +20,11 @@ a letterbox show's 9:16 letterbox final), the accepted caption cues (no em or en
 dash), the take facts' shots and sound events, the harness bed and its level,
 a saved server cover, the desk's caption style, POV and hook-line flags.
 Outputs in ``reels/epNN/`` with the local reel's names and versioning, plus
-``uploads.json`` (uploads remembered by digest). When the server does not
-answer, the reel is not made and the operator is told to run ``reel`` later;
-the finish is done either way.
+``uploads.json`` (uploads remembered by digest). When the server can't be used
+for the run (it does not answer, cannot take uploads, ``operator_upload_unavailable``,
+or has no operator reel route), the local reel engine cuts it with the desk's
+same rules and one line says so (:func:`creation.post.reel.local_fallback_reel`);
+a refusal about the content still stops. The finish is done either way.
 """
 
 from __future__ import annotations
@@ -69,6 +71,7 @@ from creation.post.reel_plan import (
     post_operator_notes,
 )
 from creation.post.reel_server import (
+    SERVER_UNUSABLE,
     ReelServer,
     ReelServerError,
     ReelServerUnreachable,
@@ -1054,6 +1057,9 @@ def auto_reel(
 ) -> ReelResult | None:
     """The reel made by itself after ``finish`` or an edit that wrote a new deliverable ($0, on the server).
 
+    When the server can't be used for the run (:data:`creation.post.reel_server.SERVER_UNUSABLE`)
+    the local reel engine cuts it instead, with the desk's same rules.
+
     It writes into ``reels/epNN/`` like ``reel`` and never draws a paid cover.
     It cuts nothing when the episode's finished files are the ones the
     current reel (``latest.json``) was cut from; it reuses the newest
@@ -1135,9 +1141,17 @@ def auto_reel(
             file=out,
             flush=True,
         )
-        return run_reel(
-            desk, episode=episode, plan_file=plan_file, stream=out, made_by=trigger, server=server
-        )  # fmt: skip
+        try:
+            return run_reel(
+                desk, episode=episode, plan_file=plan_file, stream=out, made_by=trigger, server=server
+            )  # fmt: skip
+        except SERVER_UNUSABLE as exc:
+            # The server can't take this run: the local reel engine, this desk's same rules.
+            from creation.post.reel import local_fallback_reel
+
+            return local_fallback_reel(
+                desk, exc, episode=episode, plan_file=plan_file, stream=out, made_by=trigger
+            )  # fmt: skip
     except ReelServerUnreachable as exc:
         print(
             f"⚠ {unreachable_message(desk, episode)} ({exc}; the {trigger} is done)",
