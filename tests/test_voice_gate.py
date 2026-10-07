@@ -39,7 +39,10 @@ def voiced(api: FakeApi, monkeypatch: pytest.MonkeyPatch) -> FakeApi:
         "seedance_vocal_signature": "warm low alto, unhurried",
         "reference_audio_url": "https://media.test/hana-ref.mp3",
     }
-    ren["voice_brief"] = {"provider_voice": "Liam"}
+    ren["voice_brief"] = {
+        "provider_voice": "Liam",
+        "reference_audio_url": "https://media.test/ren-ref.mp3",
+    }
     api.routes[("POST", KEEP)] = lambda _m, _p, body: _server_keep(api, body)
     monkeypatch.setattr(voice_mod, "open_api", lambda _desk, _episode: api)
     return api
@@ -92,7 +95,9 @@ def _ready_to_film(api: FakeApi) -> None:
 
 
 def _keep(desk: Path, *flags: str) -> int:
-    return produce_main(["voice", "--desk", str(desk), *flags])
+    # A keep comes after the human heard each voice (desks from 6 Oct 2026 refuse it without --heard).
+    heard = ["--heard"] if {"--keep", "--keep-all"} & set(flags) else []
+    return produce_main(["voice", "--desk", str(desk), *flags, *heard])
 
 
 # --- The gate shows after the plates ---------------------------------------------------------------
@@ -111,10 +116,13 @@ def test_the_plates_yes_shows_each_speaking_voice_and_what_to_run(
     assert "Hana (cast_hana): Aria: warm low alto, unhurried [needs a yes]" in text
     assert "sample: https://media.test/hana-ref.mp3" in text
     assert "Ren (cast_ren): Liam [needs a yes]" in text
-    assert f"voice --desk {desk} --cast cast_hana --keep" in text
-    assert f"voice --desk {desk} --cast cast_ren --audition" in text
-    assert "$0.30, only after the human's yes" in text
-    assert f"voice --desk {desk} --keep-all" in text
+    # Listen first: the sample or an audition, and a keep only once the human heard it.
+    assert "Hear each voice with the human first" in text
+    assert f"voice --desk {desk} --cast cast_hana --keep --heard" in text
+    assert (
+        f"voice --desk {desk} --cast cast_ren --audition ($0.30), then --pick N" in text
+    )
+    assert f"voice --desk {desk} --keep-all --heard" in text
     assert load_production(desk).phase == "wait_script"
 
 
@@ -520,7 +528,7 @@ def test_a_server_refusal_that_is_not_an_older_deploy_is_not_hidden(
     set_phase(desk, "wait_spend", estimate_usd=1.2)
 
     with pytest.raises(RuntimeError, match="cast_not_found"):
-        voice_mod.run_voice_gate(desk, cast="Hana", keep=True)
+        voice_mod.run_voice_gate(desk, cast="Hana", keep=True, heard=True)
 
     assert load_approvals(desk)["voices"] == {}
 
@@ -559,7 +567,10 @@ def test_a_keep_that_meets_a_newer_spine_reads_it_and_tries_once_more(
 
     voiced.routes[("POST", KEEP)] = keep
 
-    assert voice_mod.run_voice_gate(desk, keep=True) == ["cast_hana", "cast_ren"]
+    assert voice_mod.run_voice_gate(desk, keep=True, heard=True) == [
+        "cast_hana",
+        "cast_ren",
+    ]
 
     assert calls == ["v5", "v6"]
     assert {r["cast_id"] for r in voiced.spine_doc["voice_approvals"]} == {

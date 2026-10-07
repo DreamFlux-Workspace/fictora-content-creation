@@ -431,6 +431,10 @@ def voice_rows(
 
 
 def _commands(desk: Path, pending: list[CastVoice]) -> list[str]:
+    from creation.rules_epoch import is_legacy
+
+    if not is_legacy(desk):
+        return _listen_first_commands(desk, pending)
     lines = [
         "Play each voice to the human (the sample, or an audition), then for each character:",
     ]
@@ -501,6 +505,95 @@ def gate_text(
     body, approvals = sync_approvals(desk, run, spine)
     text = render_gate(desk, body, approvals, episode=episode)
     return "\n".join([voices.line(), text]) if text else ""
+
+
+def _listen_first_commands(desk: Path, pending: list[CastVoice]) -> list[str]:
+    """What to run on a new desk: hear each voice first; keep only what the human heard.
+
+    Paramjeet, 7 Oct 2026: the audition never happened as a step of its own, so default
+    voices went through unheard. A voice with no free sample can only be heard by an
+    audition, so that is its step.
+    """
+
+    lines = [
+        "Hear each voice with the human first (founder rule: never keep a voice nobody heard):"
+    ]
+    for voice in pending:
+        audition = (
+            f"fictora-produce voice --desk {desk} --cast {voice.cast_id} --audition "
+            f"(${AUDITION_USD:.2f}), then --pick N"
+        )
+        if voice.sample_url:
+            lines.append(
+                f"  {voice.name}: play the sample above; to hear others: {audition}"
+            )
+        else:
+            lines.append(
+                f"  {voice.name}: no free sample, so audition first: {audition}"
+            )
+        lines.append(
+            f"  {voice.name}: keep it once the human heard it: "
+            f"fictora-produce voice --desk {desk} --cast {voice.cast_id} --keep --heard"
+        )
+    lines.append(
+        f"Or, once the human heard every one: fictora-produce voice --desk {desk} --keep-all --heard"
+    )
+    return lines
+
+
+def keep_unheard_refusal(
+    desk: Path, voices: Sequence[CastVoice], *, heard: bool
+) -> str | None:
+    """The refusal of ``voice --keep`` on a new desk before the human heard the voice, or ``None``.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    voices
+        The voices the keep would cover.
+    heard
+        ``--heard``: the operator played each one to the human.
+
+    Returns
+    -------
+    str | None
+        ``None`` on a legacy desk, or when every voice was heard and can be heard
+        (a free sample, or an audition on the desk).
+    """
+
+    from creation.post.desk import cast_slug
+    from creation.rules_epoch import is_legacy
+
+    if is_legacy(desk):
+        return None
+    silent = [
+        voice
+        for voice in voices
+        if not voice.sample_url
+        and not any(
+            (desk / "shared" / "voices" / cast_slug(voice.cast_id)).glob("audition-v*")
+        )
+    ]
+    if silent:
+        return "\n".join(
+            [
+                "Not kept, nothing sent: there is nothing to hear yet for "
+                + ", ".join(v.name for v in silent)
+                + " (no free sample, no audition). Audition first:",
+                *(
+                    f"  fictora-produce voice --desk {desk} --cast {v.cast_id} --audition "
+                    f"(${AUDITION_USD:.2f}), then --pick N or --keep --heard"
+                    for v in silent
+                ),
+            ]
+        )
+    if not heard:
+        return (
+            "Not kept, nothing sent: play each voice to the human first (its sample or its audition), "
+            "then add --heard. Never keep a voice nobody heard."
+        )
+    return None
 
 
 def _model_voices(desk: Path, spine: Mapping[str, Any], run: _Api) -> bool:

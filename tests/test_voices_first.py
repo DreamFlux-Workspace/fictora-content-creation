@@ -187,3 +187,58 @@ def test_author_never_stops_a_legacy_desk(
         voices_unconfirmed_stop(desk, api, api.spine_doc, episode=2, keep_voices=False)
         is None
     )
+
+
+# --- the audition is the step: nothing is kept unheard (Paramjeet, 7 Oct 2026) --------------------
+
+
+def test_a_keep_without_heard_is_refused(
+    desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _show(api, monkeypatch, mode="locked")
+    hana = api.spine_doc["cast"][0]
+    hana["voice_brief"]["reference_audio_url"] = "https://media.test/hana-ref.mp3"
+
+    with pytest.raises(ValueError, match="play each voice to the human first"):
+        voice_mod.run_voice_gate(desk, cast="Hana", keep=True, out=io.StringIO())
+
+    assert api.posted("/v1/spines/sp1/voice-approvals") == []
+
+
+def test_a_voice_with_nothing_to_hear_must_be_auditioned_first(
+    desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _show(api, monkeypatch, mode="locked")  # Hana and Ren have no free sample
+
+    with pytest.raises(ValueError, match="nothing to hear yet for Hana") as refused:
+        voice_mod.run_voice_gate(
+            desk, cast="Hana", keep=True, heard=True, out=io.StringIO()
+        )
+
+    assert "--cast cast_hana --audition" in str(refused.value)
+
+
+def test_an_auditioned_voice_can_be_kept_once_heard(
+    desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from creation.voice_gate import keep_unheard_refusal, speaking_voices
+
+    _show(api, monkeypatch, mode="locked")
+    (desk / "shared" / "voices" / "hana" / "audition-v1").mkdir(parents=True)
+    hana = [v for v in speaking_voices(api.spine_doc) if v.cast_id == "cast_hana"]
+
+    assert keep_unheard_refusal(desk, hana, heard=True) is None
+    assert keep_unheard_refusal(desk, hana, heard=False) is not None
+
+
+def test_a_legacy_desk_keeps_as_before(
+    desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from creation.voice_gate import keep_unheard_refusal, speaking_voices
+
+    _legacy(desk)
+    _show(api, monkeypatch, mode="locked")
+
+    assert (
+        keep_unheard_refusal(desk, speaking_voices(api.spine_doc), heard=False) is None
+    )
