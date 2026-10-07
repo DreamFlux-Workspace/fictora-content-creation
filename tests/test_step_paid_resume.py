@@ -9,7 +9,8 @@
 - A dropped connection while waiting on a job marked the desk failed, leaving
   only paid restarts (L-20261006-14). It now leaves the desk where it was.
 
-Desks created before 6 Oct 2026 keep their old behaviour (rules epoch).
+Price first is for desks from 6 Oct 2026; the same key and the kept desk are on every desk
+(money-only, founder 7 Oct 2026).
 """
 
 from __future__ import annotations
@@ -154,16 +155,24 @@ def test_a_rerun_after_a_lost_reply_sends_the_same_boards_key(
     )
 
 
-def test_a_legacy_desk_keeps_the_run_prefix(desk: Path, api: FakeApi) -> None:
+def test_a_legacy_desk_resends_the_same_boards_key_too(
+    desk: Path, api: FakeApi
+) -> None:
+    # Money-only, so older desks have it too (founder, 7 Oct 2026).
     _legacy(desk)
     _lost_reply_then_job(api)
     set_phase(desk, "ready_boards_enrol")
 
     with pytest.raises(httpx.ConnectError):
         orchestrate.run_step(desk)
+    result = orchestrate.run_step(desk)
 
-    [key] = _keys(api, BOARDS)
-    assert key is not None and key.startswith(f"{api.prefix}-")
+    assert result.phase == "wait_board"
+    first, second = _keys(api, BOARDS)
+    assert first == second
+    assert first is not None and first.startswith(
+        f"{load_production(desk).idempotency_prefix}-step-"
+    )
 
 
 # --- a drop while waiting does not fail the desk (#3) ----------------------------------------------
@@ -191,7 +200,7 @@ def test_a_drop_while_waiting_leaves_the_desk_where_it_was(
     assert state.phase == "ready_boards_enrol" and state.failed_phase is None
 
 
-def test_a_legacy_desk_is_still_marked_failed_on_a_drop(
+def test_a_legacy_desk_is_left_where_it_was_on_a_drop_too(
     desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _legacy(desk)
@@ -201,4 +210,5 @@ def test_a_legacy_desk_is_still_marked_failed_on_a_drop(
     with pytest.raises(ConnectionDropped):
         orchestrate.run_step(desk)
 
-    assert load_production(desk).phase == "failed"
+    state = load_production(desk)
+    assert state.phase == "ready_boards_enrol" and state.failed_phase is None

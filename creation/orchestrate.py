@@ -1778,10 +1778,10 @@ def run_step(
             )
         raise RuntimeError(f"unknown phase: {state.phase}")
     except SystemExit as exc:
-        if isinstance(exc, ConnectionDropped) and not is_legacy(desk):
+        if isinstance(exc, ConnectionDropped):
             # The job is still on the server. Marking the desk failed left only
             # paid restarts (L-20261006-14); left where it was, the next `step`
-            # picks the job up under the same key.
+            # picks the job up under the same key. Every desk (founder, 7 Oct 2026).
             raise
         if state.phase != "failed":
             state.failed_phase = state.phase

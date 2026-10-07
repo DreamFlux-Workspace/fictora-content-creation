@@ -172,8 +172,8 @@ def paid_key_prefix(
     the server answers with the job it already has (in flight or done) instead
     of starting, and charging, a second one. The server forgets a key whose job
     failed, so a fixed key never pins a dead job (fictora-drama
-    ``_live_enrolment_replay``). Desks created before 6 Oct 2026 keep the
-    per-run ``fallback`` they always had (rules epoch).
+    ``_live_enrolment_replay``). On every desk: it changes nothing a viewer
+    sees, so desks created before 6 Oct 2026 have it too (founder, 7 Oct 2026).
 
     Parameters
     ----------
@@ -182,7 +182,7 @@ def paid_key_prefix(
     state
         Production state (its ``idempotency_prefix`` is fixed for the desk).
     fallback
-        The run's own prefix, used on legacy desks.
+        The run's own prefix, used only when the desk has no prefix saved yet.
     scope
         What the key is for (``step``), so two commands never share one; empty
         for a caller whose keys already name themselves (``-music-note-<id>``).
@@ -193,9 +193,8 @@ def paid_key_prefix(
         ``<desk prefix>-<scope>`` (``<desk prefix>`` without a scope), or ``fallback``.
     """
 
-    from creation.rules_epoch import is_legacy
-
-    if is_legacy(desk) or not state.idempotency_prefix:
+    # Every desk, older ones included (founder, 7 Oct 2026): it only stops a second charge.
+    if not state.idempotency_prefix:
         return fallback
     return f"{state.idempotency_prefix}-{scope}" if scope else state.idempotency_prefix
 
