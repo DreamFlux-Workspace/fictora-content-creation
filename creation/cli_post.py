@@ -970,7 +970,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
                 return 1
             return 0
         try:
-            run_reel(
+            made = run_reel(
                 args.desk,
                 episode=args.episode,
                 seconds=args.seconds,
@@ -989,6 +989,11 @@ def dispatch_post(args: argparse.Namespace) -> int:
                 cover_frame=args.cover_frame,
                 no_panels=args.no_panels,
             )
+            if not args.plan_only and not args.take_file:
+                from creation.post.cover_frame import cover_one_take_final
+
+                # A 15 s episode's final file takes the reel's cover as its first frame.
+                cover_one_take_final(args.desk, args.episode, made, sys.stdout)
         except ReelServerUnreachable as exc:
             print(
                 f"{unreachable_message(args.desk, args.episode)} ({exc})",

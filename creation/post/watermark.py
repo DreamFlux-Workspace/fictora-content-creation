@@ -31,9 +31,16 @@ def mark_position(width: int, height: int, *, y: int | None = None) -> tuple[int
 
 
 def watermark(
-    video: Path, out: Path, *, y: int | None = None, mark: Path = MARK
+    video: Path,
+    out: Path,
+    *,
+    y: int | None = None,
+    mark: Path = MARK,
+    cover: Path | None = None,
 ) -> Path:
     """Put the mark on ``video`` into ``out`` (audio copied); the un-marked file stays.
+
+    ``cover`` becomes the first frame in the same encode (:mod:`creation.post.cover_frame`).
 
     Raises
     ------
@@ -50,7 +57,21 @@ def watermark(
     info = probe_video(video)
     x, top = mark_position(info.width, info.height, y=y)
     graph = f"[1:v]format=rgba,colorchannelmixer=aa={MARK_ALPHA}[m];[0:v][m]overlay={x}:{top}[v]"
-    args = ["-i", str(video), "-i", str(mark), "-filter_complex", graph, "-map", "[v]"]
+    inputs = ["-i", str(video), "-i", str(mark)]
+    picture = "[v]"
+    if cover is not None:
+        from creation.post.cover_frame import cover_frame_graph
+
+        inputs += ["-i", str(cover)]
+        graph += ";" + cover_frame_graph(
+            cover_input=2,
+            picture="[v]",
+            width=info.width,
+            height=info.height,
+            out="[vc]",
+        )
+        picture = "[vc]"
+    args = [*inputs, "-filter_complex", graph, "-map", picture]
     if info.has_audio:
         args += ["-map", "0:a", "-c:a", "copy"]
     run_ffmpeg(
