@@ -257,12 +257,21 @@ def _mix_once(
     duck_db: float | None,
     buses: tuple[Path, Path, Path] | None = None,
     key_source: Path | None = None,
+    seam_layer: Path | None = None,
 ) -> None:
     inputs = ["-i", str(take)]
     graph = [f"[0:a]aresample=48000,volume={gain_db:+.1f}dB[take]"]
     bus_maps: list[str] = []
+    # A seam bed (join, new desks): added after the take gain and the duck, before the one limiter,
+    # never in the duck key. Silent everywhere but its windows.
+    seam = "[seam]" if seam_layer is not None else ""
     if bed is None:
-        graph.append(f"[take]{LIMITER}[a]")
+        if seam:
+            graph.append(
+                f"[take]{seam}amix=inputs=2:duration=first:normalize=0,{LIMITER}[a]"
+            )
+        else:
+            graph.append(f"[take]{LIMITER}[a]")
     else:
         inputs += ["-stream_loop", "-1", "-i", str(bed)]
         fade_out = max(0.0, total - BED_FADE_OUT_SECONDS)
@@ -308,8 +317,11 @@ def _mix_once(
                     str(path),
                 ]
         graph.append(
-            f"{front}[bd]amix=inputs=2:duration=first:normalize=0,{LIMITER}[a]"
+            f"{front}[bd]{seam}amix=inputs={3 if seam else 2}:duration=first:normalize=0,{LIMITER}[a]"
         )
+    if seam_layer is not None:
+        graph.append(f"[{inputs.count('-i')}:a]aresample=48000[seam]")
+        inputs += ["-i", str(seam_layer)]
     run_ffmpeg(
         [*inputs, "-filter_complex", ";".join(graph), "-map", "0:v", "-map", "[a]",
          "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-t", f"{total:.3f}", str(out), *bus_maps]
@@ -328,6 +340,8 @@ def mix_take(
     buses: bool = False,
     duck_windows: Sequence[tuple[float, float]] | None = None,
     music_in_take: bool = False,
+    seam_layer: Path | None = None,
+    gain_db: float | None = None,
 ) -> MixResult:
     """Mix ``take`` with ``bed`` into ``out`` at a measured take gain.
 
@@ -356,6 +370,13 @@ def mix_take(
     music_in_take
         ``bed`` is ``None`` because the harness's music is already in ``take``
         (said in the mix line instead of ``NO MUSIC BED``).
+    seam_layer
+        ``join`` on a new desk: a seam bed (silent but for its windows) added
+        after the take gain and the duck, before the limiter, and never in the
+        duck key (:mod:`creation.post.seam_fix`).
+    gain_db
+        A fixed take gain (one pass, no correction): the gain an earlier mix
+        of the same take settled on, so only the seam windows change.
 
     Returns
     -------
@@ -398,11 +419,15 @@ def mix_take(
         "buses": written,
         "key_source": voice_source,
     }
+    if seam_layer is not None:
+        kwargs["seam_layer"] = seam_layer
+    if gain_db is not None:
+        gain = gain_db
     _mix_once(take, out, gain_db=gain, **kwargs)  # type: ignore[arg-type]
     mixed = measure_loudness(out)
     passes = 1
     miss = TARGET_LUFS - mixed
-    if math.isfinite(miss) and abs(miss) > GAIN_TOLERANCE_LU:
+    if gain_db is None and math.isfinite(miss) and abs(miss) > GAIN_TOLERANCE_LU:
         corrected = round(min(max(gain + miss, GAIN_RANGE_DB[0]), GAIN_RANGE_DB[1]), 1)
         if corrected != gain:
             for path in (out, *(written or ())):

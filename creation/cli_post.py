@@ -646,6 +646,12 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         metavar="NAME",
         help="Who accepted the seam (with --accept-seam).",
     )
+    join.add_argument(
+        "--no-seam-fix",
+        action="store_true",
+        help="Desks created on or after 6 Oct 2026: do not let join fix a seam over 5 dB itself "
+        "(a steady bed on the quiet side, a silent-head trim on a filmed cut); measure and refuse as before.",
+    )
     add_ending_arg(join)
     add_caption_colour_arg(join)
     title = join.add_mutually_exclusive_group()
@@ -1023,6 +1029,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             watermark_y=args.watermark_y,
             accept_seam=args.accept_seam,
             accepted_by=args.accepted_by,
+            seam_fix=not args.no_seam_fix,
             ending=args.ending or "hard",
             hook_line=args.hook_line,
             no_hook_line=args.no_hook_line,
