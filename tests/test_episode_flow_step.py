@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import set_phase, turbo_take_usd
+from conftest import SHOWN_PRICES, set_phase, turbo_take_usd
 from creation import orchestrate
 from creation.episode_commands import run_author
 from creation.harness.stages_gated import draft_request_body, spoken_language_tag
@@ -165,14 +165,14 @@ def test_episode_two_boards_reach_episode_two_and_print_the_shot_list(
     desk: Path, api: FakeApi
 ) -> None:
     _add_episode_two(desk, api)
-    set_phase(desk, "ready_boards_enrol")
+    set_phase(desk, "ready_boards_enrol", drawing_estimates=SHOWN_PRICES)
     api.routes[("POST", "/v1/spines/sp1/boards/enrol")] = {"job_id": "job_boards"}
     api.jobs["job_boards"] = {"status": "completed"}
     api.routes[("GET", "/v1/spines/sp1/episodes/2/boards/exposure")] = {
         "boards": [{"set_index": 1, "mean_percent": 14.2}]
     }
 
-    result = orchestrate.run_step(desk)
+    result = orchestrate.run_step(desk, confirm_spend=True)
 
     body = api.posted("/v1/spines/sp1/boards/enrol")[0]
     assert body["episode_count"] == 2
@@ -199,7 +199,7 @@ def test_episode_two_boards_reach_episode_two_and_print_the_shot_list(
 
 
 def test_boards_already_on_the_server_are_picked_up(desk: Path, api: FakeApi) -> None:
-    set_phase(desk, "ready_boards_enrol")
+    set_phase(desk, "ready_boards_enrol", drawing_estimates=SHOWN_PRICES)
     api.routes[("POST", "/v1/spines/sp1/boards/enrol")] = SystemExit(
         "HTTP 409 POST /v1/spines/sp1/boards/enrol: boards_already_generated"
     )
@@ -207,7 +207,7 @@ def test_boards_already_on_the_server_are_picked_up(desk: Path, api: FakeApi) ->
         "boards": [{"set_index": 1, "mean_percent": 12.0}]
     }
 
-    result = orchestrate.run_step(desk)
+    result = orchestrate.run_step(desk, confirm_spend=True)
 
     assert api.polled == []
     downloads = [payload["url"] for phase, payload in api.events if phase == "download"]
@@ -224,12 +224,13 @@ def test_boards_quote_r2v_with_its_references_once_the_server_has_named_r2v(
         "ready_boards_enrol",
         video_endpoint_id="minimax/h3-max/reference-to-video",
         video_resolution="768P",
+        drawing_estimates=SHOWN_PRICES,
     )
     api.routes[("POST", "/v1/spines/sp1/boards/enrol")] = {"job_id": "job_boards"}
     api.jobs["job_boards"] = {"status": "completed"}
     api.routes[("GET", "/v1/spines/sp1/episodes/2/boards/exposure")] = {"boards": []}
 
-    result = orchestrate.run_step(desk)
+    result = orchestrate.run_step(desk, confirm_spend=True)
 
     assert (
         "A take will cost about $1.20 on H3 Max R2V 768P at $0.08/s (15 s, up to 3 reference images)."

@@ -106,7 +106,7 @@ def test_a_dropped_connection_says_to_run_step_again() -> None:
         def get(self, path: str) -> dict:
             raise httpx.ConnectError("reset")
 
-    with pytest.raises(SystemExit, match="Run `fictora-produce step` again"):
+    with pytest.raises(SystemExit, match="Run the same command again"):
         raw_video.wait_for_raw_scene_clips(
             _Drop([], {}), "job_video_1", interval_seconds=0
         )

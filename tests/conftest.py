@@ -75,6 +75,14 @@ def turbo_take_usd(seconds: float = 15.0) -> float:
     return round(rate * max(seconds, 5.0), 2)
 
 
+#: Plate and board prices ``step`` has shown (``step --confirm-spend`` needs one on new desks).
+SHOWN_PRICES = {
+    f"{kind}-ep{episode:02d}": 0.30
+    for kind in ("plates", "boards")
+    for episode in range(1, 6)
+}
+
+
 def set_phase(desk: Path, phase: str, **fields: Any) -> None:
     """Move the desk's phase machine (test setup only)."""
 
@@ -327,6 +335,11 @@ def _voices_gate_off_by_default(
     monkeypatch.setattr(orchestrate, "voices_gate_text", lambda *a, **k: "")
     monkeypatch.setattr(orchestrate, "voices_pending_for_film", lambda *a, **k: [])
     monkeypatch.setattr(episode_commands, "voices_film_refusal", lambda *a, **k: None)
+    # Voices decided first (new desks): the stops before plates, boards and `author`.
+    monkeypatch.setattr(orchestrate, "voices_first_refusal", lambda *a, **k: None)
+    monkeypatch.setattr(
+        episode_commands, "voices_unconfirmed_stop", lambda *a, **k: None
+    )
 
 
 @pytest.fixture

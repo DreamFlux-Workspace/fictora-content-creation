@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from conftest import set_phase
+from conftest import SHOWN_PRICES, set_phase
 from creation import episode_commands as ec
 from creation import narrator_cast as nc
 from creation import orchestrate
@@ -319,11 +319,11 @@ def test_step_will_not_draw_plates_until_the_narrator_is_answered(
     desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _narrated(api)
-    set_phase(desk, "ready_cast_enrol")
+    set_phase(desk, "ready_cast_enrol", drawing_estimates=SHOWN_PRICES)
     api.routes[("POST", "/v1/spines/sp1/cast/enrol")] = {"job_id": "job_cast"}
     api.jobs["job_cast"] = {"status": "completed"}
 
-    assert produce_main(["step", "--desk", str(desk)]) == 2
+    assert produce_main(["step", "--desk", str(desk), "--confirm-spend"]) == 2
 
     err = capsys.readouterr().err
     assert (
@@ -334,7 +334,16 @@ def test_step_will_not_draw_plates_until_the_narrator_is_answered(
     assert load_production(desk).phase == "ready_cast_enrol"
 
     assert (
-        produce_main(["step", "--desk", str(desk), "--narrator-heard-only", "Narrator"])
+        produce_main(
+            [
+                "step",
+                "--desk",
+                str(desk),
+                "--confirm-spend",
+                "--narrator-heard-only",
+                "Narrator",
+            ]
+        )
         == 0
     )
 
@@ -345,12 +354,21 @@ def test_step_will_not_draw_plates_until_the_narrator_is_answered(
 
 def test_step_draws_a_narrator_answered_on_screen(desk: Path, api: FakeApi) -> None:
     _narrated(api)
-    set_phase(desk, "ready_cast_enrol")
+    set_phase(desk, "ready_cast_enrol", drawing_estimates=SHOWN_PRICES)
     api.routes[("POST", "/v1/spines/sp1/cast/enrol")] = {"job_id": "job_cast"}
     api.jobs["job_cast"] = {"status": "completed"}
 
     assert (
-        produce_main(["step", "--desk", str(desk), "--narrator-on-screen", "Narrator"])
+        produce_main(
+            [
+                "step",
+                "--desk",
+                str(desk),
+                "--confirm-spend",
+                "--narrator-on-screen",
+                "Narrator",
+            ]
+        )
         == 0
     )
 

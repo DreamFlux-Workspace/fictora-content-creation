@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import set_phase
+from conftest import SHOWN_PRICES, set_phase
 from creation import orchestrate
 from creation.cli_produce import main as produce_main
 from creation.ops.floor import approve_series_gate
@@ -32,11 +32,11 @@ def _approve_keys(api: FakeApi) -> list[str | None]:
 def test_boards_refused_for_unapproved_cast_print_the_reapprove_command(
     desk: Path, api: FakeApi
 ) -> None:
-    set_phase(desk, "ready_boards_enrol")
+    set_phase(desk, "ready_boards_enrol", drawing_estimates=SHOWN_PRICES)
     api.routes[("POST", BOARDS)] = SystemExit(REFUSED)
 
     with pytest.raises(SystemExit) as raised:
-        orchestrate.run_step(desk)
+        orchestrate.run_step(desk, confirm_spend=True)
 
     assert "approve --desk" in str(raised.value.code)
     assert "--gate plates --again" in str(raised.value.code)

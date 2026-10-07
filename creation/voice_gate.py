@@ -526,7 +526,13 @@ def pending_for_film(
 
 
 def film_refusal(
-    desk: Path, spine: Mapping[str, Any], *, episode: int, run: _Api
+    desk: Path,
+    spine: Mapping[str, Any],
+    *,
+    episode: int,
+    run: _Api,
+    stage: str = "filming",
+    rerun: str = "the film command",
 ) -> str | None:
     """The refusal before filming episode ``episode``, or ``None`` when every speaking voice has a yes.
 
@@ -551,13 +557,88 @@ def film_refusal(
     )
     return "\n".join(
         [
-            "Stopped before filming. Nothing was sent.",
+            f"Stopped before {stage}. Nothing was sent.",
             f"No human yes yet on these voices in episode {episode}: {who}.",
             *voice_rows(body, approvals, episode=episode),
             *_commands(desk, pending),
             *([approvals.note] if approvals.note else []),
-            "Then run the film command again.",
+            f"Then run {rerun} again.",
         ]
+    )
+
+
+def thought_and_narration_names(spine: Mapping[str, Any]) -> list[str]:
+    """Who is heard in a voice made after filming: a character's thoughts, or a narrator's lines.
+
+    Thoughts are inner-voice cues; a narrator is a voice-only character with a
+    line. Both are spoken in the character's kept voice, never the video
+    model's, so on a show filmed in the model's own voices they never match the
+    voice that character speaks in (Don't Look, Hana: about 5 h, three voices).
+
+    Parameters
+    ----------
+    spine
+        The show's spine.
+
+    Returns
+    -------
+    list[str]
+        Their names, in cast order; empty when nobody thinks aloud or narrates.
+    """
+
+    heard: set[str] = set()
+    for summary in spine.get("episode_summaries") or []:
+        for cue in summary.get("inner_voice") or []:
+            if cue.get("speaker_cast_id"):
+                heard.add(str(cue["speaker_cast_id"]))
+    speakers = {
+        str(line.get("cast_id"))
+        for beat in spine.get("beats") or []
+        for line in beat.get("dialogue_lines") or []
+    }
+    for card in spine.get("cast") or []:
+        if card.get("voice_only") is True and card.get("cast_id") in speakers:
+            heard.add(str(card["cast_id"]))
+    return [
+        str(card.get("name") or card.get("cast_id"))
+        for card in spine.get("cast") or []
+        if card.get("cast_id") in heard
+    ]
+
+
+def locked_voices_needed(desk: Path, names: Sequence[str]) -> str:
+    """Why a show with thoughts or narration cannot use the video model's own voices, and what to run."""
+
+    return (
+        f"This show has thoughts or narration ({', '.join(names)}). They are spoken in each character's kept "
+        "voice, and the video model invents a new voice on every take, so they could never match. "
+        f"Lock the voices: fictora-produce voice-mode --desk {desk} --set locked, then hear and keep each one "
+        f"(fictora-produce voice --desk {desk} --list)."
+    )
+
+
+def voices_first_refusal(
+    desk: Path, spine: Mapping[str, Any], *, episode: int, run: _Api, stage: str
+) -> str | None:
+    """The stop before plates or boards on a new desk until the voices are decided, or ``None``.
+
+    Voices are the operator's choice, made before anything is drawn: on a
+    locked show every speaking voice needs the human's yes first (the film
+    gate, asked earlier); a show on the video model's own voices goes on only
+    when nobody thinks aloud or narrates (:func:`thought_and_narration_names`).
+    """
+
+    from creation.voice_mode import voices_for_film
+
+    if not voices_for_film(desk, run, spine).locked:
+        names = thought_and_narration_names(spine)
+        if not names:
+            return None
+        return f"Stopped before {stage}. Nothing was sent.\n" + locked_voices_needed(
+            desk, names
+        )
+    return film_refusal(
+        desk, spine, episode=episode, run=run, stage=stage, rerun="`step`"
     )
 
 

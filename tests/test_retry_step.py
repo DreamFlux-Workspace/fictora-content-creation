@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import set_phase
+from conftest import SHOWN_PRICES, set_phase
 from creation import orchestrate
 from creation.cli_produce import main as produce_main
 from creation.production_state import load_production
@@ -39,10 +39,10 @@ def test_failed_boards_retry_to_ready_boards_enrol_with_a_new_key(
     desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _boards_fail_then_succeed(api)
-    set_phase(desk, "ready_boards_enrol")
+    set_phase(desk, "ready_boards_enrol", drawing_estimates=SHOWN_PRICES)
 
     with pytest.raises(SystemExit):
-        orchestrate.run_step(desk)
+        orchestrate.run_step(desk, confirm_spend=True)
     failed = load_production(desk)
     assert failed.phase == "failed" and failed.failed_phase == "ready_boards_enrol"
     before = (desk / "production.json").read_text(encoding="utf-8")
@@ -68,7 +68,7 @@ def test_failed_boards_retry_to_ready_boards_enrol_with_a_new_key(
     assert backup.read_text(encoding="utf-8") == before
     assert json.loads(backup.read_text(encoding="utf-8"))["phase"] == "failed"
 
-    result = orchestrate.run_step(desk)
+    result = orchestrate.run_step(desk, confirm_spend=True)
 
     assert result.phase == "wait_board"
     first, second = _board_keys(api)

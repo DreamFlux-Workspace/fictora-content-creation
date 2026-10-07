@@ -189,7 +189,13 @@ from creation.stranded_voice import (
     voices_left_without_lines,
 )
 from creation.voice_gate import film_refusal as voices_film_refusal
-from creation.voice_mode import VOICE_MODE_WORDS, next_take_voices_line
+from creation.rules_epoch import is_legacy
+from creation.voice_mode import (
+    VOICE_MODE_WORDS,
+    next_take_voices_line,
+    show_voices,
+    voices_for_film,
+)
 from creation.harness_rules import (
     early_extra_shots_stop,
     film_stop_message,
@@ -968,6 +974,33 @@ def check_direction_length(
     return limit
 
 
+def voices_unconfirmed_stop(
+    desk: Path, run: Any, spine: dict[str, Any], *, episode: int, keep_voices: bool
+) -> str | None:
+    """The stop before ``author`` writes episode N on a new desk until the human confirms its voices.
+
+    Voices are decided before an episode is written, never left to a default:
+    Noodle24 ep 2 was filmed in other voices than ep 1 and re-filmed ($1.20,
+    L-20261006-5). Free; desks created before 6 Oct 2026 are never stopped.
+
+    Returns
+    -------
+    str | None
+        The stop, with whose voices the show speaks in and what to run; ``None``
+        after ``--keep-voices`` or on a legacy desk.
+    """
+
+    if keep_voices or is_legacy(desk):
+        return None
+    return (
+        f"Voices first, nothing written: {voices_for_film(desk, run, spine).line()}\n"
+        f"Episode {episode} carries on with the voices above. Say them to the human; on their yes, run "
+        "author again with --keep-voices. To change them first: "
+        f"fictora-produce voice-mode --desk {desk} --set locked|model, or "
+        f"fictora-produce voice --desk {desk} --cast NAME --audition, then --pick N."
+    )
+
+
 def run_author(
     desk: Path,
     *,
@@ -976,6 +1009,7 @@ def run_author(
     narrator_heard_only: Sequence[str] = (),
     narrator_on_screen: Sequence[str] = (),
     ask: Callable[[str], str] | None = None,
+    keep_voices: bool = False,
     out: Any = None,
 ) -> Path:
     """Write episode N (2 on), save the spine, put its lines on the desk, and point the desk at it. Never approves.
@@ -998,6 +1032,10 @@ def run_author(
         narrator the episode brings in (:mod:`creation.narrator_cast`). With
         no answer and nobody to ask, the episode is kept and the command stops
         after it, naming both flags; nothing is drawn until it is answered.
+    keep_voices
+        The human's yes to carrying the earlier episodes' voices on. On a desk
+        from 6 Oct 2026 the episode is not written without it: the command
+        stops first, free, and prints whose voices the show speaks in.
     out
         Text stream for the script gate.
 
@@ -1034,6 +1072,11 @@ def run_author(
         print(f"[author] Opened desk slot {opened.slug}.", file=sys.stderr)
     try:
         spine = run.spine(state.spine_id or "")
+        stopped = voices_unconfirmed_stop(
+            desk, run, spine, episode=episode, keep_voices=keep_voices
+        )
+        if stopped:
+            raise CommandStopped(stopped)
         before = spine
         body: dict[str, Any] = {"spine_version": spine["spine_version"]}
         if direction:
@@ -4349,6 +4392,13 @@ def run_inner_voice(
         added: dict[str, Any] | None = None
         what = ""
         dropped: list[str] = []
+        if adding and not is_legacy(desk) and not show_voices(run, spine).locked:
+            raise CommandStopped(
+                "Not added, nothing sent: this show films in the video model's own voices, and a thought is "
+                "spoken in the character's kept voice, so it could never match the voice they speak in. "
+                f"Lock the voices first: fictora-produce voice-mode --desk {desk} --set locked, then hear and "
+                f"keep each one (fictora-produce voice --desk {desk} --list)."
+            )
         if adding:
             wanted = str(cast).strip().lower()
             speaker = next(
@@ -6801,6 +6851,12 @@ def add_episode_parsers(
     author.add_argument(
         "--title", default=None, help="With --line: a short name for it."
     )
+    author.add_argument(
+        "--keep-voices",
+        action="store_true",
+        help="The human said yes to carrying the earlier episodes' voices on (desks from 6 Oct 2026 stop "
+        "without it, free, and print whose voices the show speaks in).",
+    )
     add_narrator_answer_args(author)
 
     rewrite = sub.add_parser(
@@ -7339,6 +7395,7 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 narrator_heard_only=args.narrator_heard_only,
                 narrator_on_screen=args.narrator_on_screen,
                 ask=interactive_ask(),
+                keep_voices=args.keep_voices,
             )
             return 0
         if args.command == "rewrite":

@@ -42,6 +42,7 @@ from typing import Any, TextIO
 
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
+from creation.production_state import paid_key_prefix
 from creation.post.bed import (
     MUSIC_NOTES_FILE,
     music_note_entries,
@@ -499,7 +500,11 @@ def send_entry(
                 "only --confirm-refilm (with its price) films them again.",
                 file=out,
             )
-        key = apply_key(run.prefix, entry, confirm_refilm=confirm_refilm)
+        key = apply_key(
+            paid_key_prefix(_desk, state, run.prefix),
+            entry,
+            confirm_refilm=confirm_refilm,
+        )
         update_music_note(desk, entry["id"], idempotency_key=key)
         try:
             answer = run.post(
