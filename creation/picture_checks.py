@@ -5,7 +5,8 @@ filmed take once against its spec (fictora-drama ``picture_checks``) and keeps
 what it found as warnings: a board row the shot list does not have, a spoken
 line drawn on the back of the speaker's head, one person drawn twice, a man
 drawn for a woman's card, a forbidden element, a take that opens wide on a
-close-up board. Until now nothing compared the picture with its spec before a
+close-up board, letters drawn on a prop or a sign (``garbled_text`` /
+``readable_text``). Until now nothing compared the picture with its spec before a
 human looked, and each miss became a paid redraw or a re-film.
 
 This module only prints them, one ``!!`` line each, plus "look before
@@ -33,6 +34,8 @@ UNAVAILABLE = "picture_check_unavailable"
 LOOK_BEFORE_APPROVING = (
     "   look before approving: the picture check is a warning, never a block"
 )
+#: The server's findings about letters drawn on a prop or a sign (fictora-drama prop_text).
+LETTERING_KINDS = frozenset({"readable_text", "garbled_text"})
 _SET_SUFFIX = re.compile(r"_set(\d+)$")
 
 
@@ -217,7 +220,26 @@ def take_picture_check_lines(
         The lines; empty when no check ran.
     """
 
-    return picture_check_lines(take_picture_checks(facts), what=take_id)
+    raw = take_picture_checks(facts)
+    lines = picture_check_lines(raw, what=take_id)
+    lettered = sorted(
+        {
+            int(where["shot"])
+            for item in _findings(raw) or []
+            if item.get("kind") in LETTERING_KINDS
+            and isinstance(where := item.get("where"), Mapping)
+            and isinstance(where.get("shot"), int)
+        }
+    )
+    if lettered:
+        shots = ", ".join(str(shot) for shot in lettered)
+        lines.insert(
+            len(lines) - 1,
+            f"   lettering on a prop or sign (shot {shots}): write the story's real words on it in finish "
+            f'(`--prop-text "@SHOT" --prop-box x,y,w,h`, or `--prop-text "WORDS@SHOT"`) or blur it '
+            "(`blur --box x,y,w,h`); never keep the model's letters",
+        )
+    return lines
 
 
 def needs_a_look(lines: Sequence[str]) -> bool:
