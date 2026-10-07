@@ -562,6 +562,70 @@ def test_the_script_gate_prints_the_pitch_and_its_world_rules(desk: Path) -> Non
     )  # the fixture's beats carry no expression or delivery
 
 
+HOOK_OPTIONS = [
+    {"style": "stakes", "text": "One bark could cost him everything"},
+    {"style": "rule", "text": "Never leave the bar unguarded"},
+    {"style": "twist", "text": "Rescue sees the knife first"},
+]
+
+
+def _hooked_spine(selected: dict[str, Any]) -> dict[str, Any]:
+    spine = spine_fixture()
+    spine["episode_summaries"][0].update(
+        {"hook_line_options": HOOK_OPTIONS, "hook_line_selected": selected}
+    )
+    return spine
+
+
+def test_the_script_gate_prints_the_hook_lines_words_and_options(desk: Path) -> None:
+    """L-20261005-11 (Sweet Racket, Last Call): the gate asked only yes/no to a hook line, never its
+    words, so the twist went out on screen. Founder, 7 Oct 2026: show the text and the options."""
+
+    spine = _hooked_spine(
+        {"kind": "option", "index": 0, "text": HOOK_OPTIONS[0]["text"]}
+    )
+
+    text = orchestrate.script_gate_text(desk, spine, episode=1)
+
+    assert (
+        "Hook line text (on screen over the first ~3 s): 'One bark could cost him everything' [stakes]"
+        in text
+    )
+    assert "    3. Rescue sees the knife first [twist]" in text
+    assert "hook-line --desk" in text and "--pick K" in text
+    assert "twist option" not in text
+
+
+def test_a_selected_twist_hook_line_is_warned_at_the_gate(desk: Path) -> None:
+    spine = _hooked_spine(
+        {"kind": "option", "index": 2, "text": HOOK_OPTIONS[2]["text"]}
+    )
+
+    text = orchestrate.script_gate_text(desk, spine, episode=1)
+
+    assert "'Rescue sees the knife first' [twist] (the writer's option 3)" in text
+    assert "!! The hook line is the twist option" in text
+
+
+def test_the_pitch_card_prints_the_hook_line_it_says_yes_to(desk: Path) -> None:
+    spine = _hooked_spine({"kind": "custom", "text": "He guards the bar alone"})
+    (desk / "api").mkdir(exist_ok=True)
+    (desk / "api" / "spine.json").write_text(json.dumps(spine), encoding="utf-8")
+    store_pitch(desk, 1, card(hook_line_on_screen=True))
+    out = io.StringIO()
+
+    run_pitch(desk, episode=1, out=out)
+
+    printed = out.getvalue()
+    assert "Hook line burned on screen: yes" in printed
+    assert "'He guards the bar alone' (your own line)" in printed
+    assert "    1. One bark could cost him everything [stakes]" in printed
+    # The script gate prints it once, not again inside the card.
+    approve_pitch(desk, 1)
+    gate = orchestrate.script_gate_text(desk, spine, episode=1)
+    assert gate.count("He guards the bar alone") == 1
+
+
 def test_no_pitch_prints_nothing_extra(desk: Path) -> None:
     assert script_pitch_lines(desk, spine_fixture(), episode=1) == []
     assert "Pitch card" not in orchestrate.script_gate_text(

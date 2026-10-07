@@ -887,8 +887,12 @@ def reel_hook(
     override: str | None = None,
     off: bool = False,
     position: str | None = None,
+    captions: Sequence[tuple[float, float]] = (),
 ) -> HookDecision:
     """The reel's hook line (or letterbox title bar): leaves at the reel's first cut after ~3 s.
+
+    ``captions``: the reel's caption spans; a line moved low for a face stays at
+    the top while one is on screen (:func:`creation.post.hook_overlay.clear_of_captions`).
 
     A reel cut from an accepted file that already carries burned text gets no
     second hook line (the episode's own may already be on it).
@@ -923,6 +927,7 @@ def reel_hook(
         spine, episode, override=override, off=off,
         position=position if position in ("top", "lower") else None,  # type: ignore[arg-type]
         cuts=cuts, duration=plan.total, size=size, video=video, face_in_upper_band=face,
+        captions=captions,
     )  # fmt: skip
 
 
@@ -1757,6 +1762,21 @@ def make_reel(
             flush=True,
         )
     else:
+        # Every caption the reel will carry, re-timed through the cut as render_reel burns them:
+        # the hook line never sits on one (founder, 7 Oct 2026, L-20261005-11).
+        hook_style, _ = resolve_caption_style(desk, caption_style)
+        reel_captions = (
+            []
+            if hook_style == "none"
+            else [
+                (c.start, c.end)
+                for c in retime_cues(
+                    plan.segments,
+                    {t.take_id: t.cues for t in takes},
+                    takes[0].fps if takes else 24.0,
+                )
+            ]
+        )
         hook = reel_hook(
             spine,
             episode,
@@ -1765,6 +1785,7 @@ def make_reel(
             override=hook_line,
             off=no_hook_line,
             position=hook_line_position,
+            captions=reel_captions,
         )
     extra = {
         "language": "ja/ko/other: whole English lines" if whole else "en: word flicker",

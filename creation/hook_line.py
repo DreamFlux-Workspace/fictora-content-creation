@@ -143,6 +143,83 @@ def list_lines(desk: Path, spine: Mapping[str, Any], episode: int) -> list[str]:
     return rows
 
 
+def gate_hook_line_lines(
+    desk: Path, spine: Mapping[str, Any] | None, episode: int
+) -> list[str]:
+    """What the pitch card and the script gate print about the hook line (founder, 7 Oct 2026).
+
+    The text that will be burned (the desk's pick from ``hook-line`` wins over
+    the server's selection, as ``finish`` and ``join`` read it), where it goes,
+    and the writer's options, so the producer approves the words, not a yes/no
+    (L-20261005-11: "Rescue sees the knife first" gave the twist away). A
+    selected ``twist`` option gets a plain warning: the reveal comes after the
+    commitment (house rule H5).
+    """
+
+    from creation.post.hook_overlay import delivery_format
+
+    body = spine_body(spine) if isinstance(spine, Mapping) else {}
+    if not body:
+        return [
+            "  Hook line text: no spine on the desk yet; "
+            f"`fictora-produce hook-line --desk {desk} --episode {episode} --list` once the outline exists"
+        ]
+    options, selected = hook_line_options(body, episode)
+    where = (
+        "title band, the whole episode"
+        if delivery_format(body) == "letterbox"
+        else "on screen over the first ~3 s"
+    )
+    picked = desk_hook_line(desk, episode)
+    style = ""
+    if picked is not None:
+        text = str(picked.get("text") or "") if picked.get("kind") != "off" else ""
+        source = "the desk's pick from `hook-line`"
+        if picked.get("kind") == "option" and isinstance(picked.get("index"), int):
+            index = picked["index"]
+            style = (
+                str(options[index].get("style") or "")
+                if 0 <= index < len(options)
+                else ""
+            )
+    elif selected.get("kind") == "off":
+        text, source = "", "turned off"
+    elif selected.get("kind") == "custom":
+        text, source = str(selected.get("text") or ""), "your own line"
+    else:
+        index = selected.get("index")
+        text = str(selected.get("text") or "")
+        source = (
+            f"the writer's option {index + 1}"
+            if isinstance(index, int)
+            else "the server's selection"
+        )
+        if isinstance(index, int) and 0 <= index < len(options):
+            style = str(options[index].get("style") or "")
+    text = " ".join(text.split())
+    rows = [
+        f"  Hook line text ({where}): {text!r}"
+        + (f" [{style}]" if style else "")
+        + f" ({source})"
+        if text
+        else f"  Hook line text: none ({source if selected or picked else 'none drafted'})"
+    ]
+    if style == "twist":
+        rows.append(
+            "  !! The hook line is the twist option: check it does not name the reveal or the ending "
+            "(the reveal comes after the commitment); pick the stakes or rule line if it does."
+        )
+    if options:
+        rows.append("  Hook line options:")
+        for index, option in enumerate(options):
+            label = f" [{option['style']}]" if option.get("style") else ""
+            rows.append(f"    {index + 1}. {option.get('text', '')}{label}")
+    rows.append(
+        f'  Change it: fictora-produce hook-line --desk {desk} --episode {episode} --pick K | --text "..." | --off'
+    )
+    return rows
+
+
 def _error_code(answer: Any) -> str:
     error = answer.get("error") if isinstance(answer, Mapping) else None
     return str(error.get("code") or "") if isinstance(error, Mapping) else ""
@@ -497,6 +574,7 @@ __all__ = [
     "OPENING_ROUTE",
     "choose_hook_line",
     "choose_setup_line",
+    "gate_hook_line_lines",
     "hook_line_options",
     "list_lines",
     "run_hook_line",

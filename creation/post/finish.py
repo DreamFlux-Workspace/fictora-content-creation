@@ -220,6 +220,7 @@ from creation.post.desk import (
 from creation.post.hook_overlay import (
     HookDecision,
     burn,
+    clear_of_captions,
     decide,
     delivery_format,
     selected_hook_line,
@@ -2240,6 +2241,9 @@ def run_finish(
             )
         return laid, notes
 
+    # The captions this run burned (their .ass), for the hook line to stay clear of.
+    burned_captions: dict[str, Path] = {}
+
     def do_captions(take: Path) -> StepReport:
         if style == "none":
             append_run_note(
@@ -2314,6 +2318,7 @@ def run_finish(
                     "no dialogue lines in the spine (wordless take)",
                 )
             raise
+        burned_captions["ass"] = captioned.ass
         timing = "; ".join(captioned.timing_lines())
         treatment = "whole English lines" if captioned.whole_lines else "word flicker"
         if style == "bold" and not letterbox:
@@ -2450,15 +2455,23 @@ def run_finish(
 
     def do_hook_line(take: Path) -> StepReport:
         assert hook.overlay is not None
+        # Never on the first caption (founder, 7 Oct 2026, L-20261005-11): a line moved low for a
+        # face goes back to the top while a caption this run burned is on screen.
+        overlay = hook.overlay
+        if "ass" in burned_captions:
+            from creation.post.reel import parse_ass_cues
+
+            cues = parse_ass_cues(burned_captions["ass"].read_text(encoding="utf-8"))
+            overlay = clear_of_captions(overlay, [(c.start, c.end) for c in cues])
         ass = next_versioned_path(takes, f"{base}-hook", ".ass")
         drawn = burn(
-            hook.overlay, take, ass, next_versioned_path(takes, f"{base}-hook", ".mp4")
+            overlay, take, ass, next_versioned_path(takes, f"{base}-hook", ".mp4")
         )
         append_run_note(
             run_dir,
-            f"Hook line -> `{drawn.name}` (`{ass.name}`): {hook.overlay.describe()}",
+            f"Hook line -> `{drawn.name}` (`{ass.name}`): {overlay.describe()}",
         )
-        return StepReport("hook-line", "ran", hook.overlay.describe(), drawn)
+        return StepReport("hook-line", "ran", overlay.describe(), drawn)
 
     def do_watermark(take: Path) -> StepReport:
         if letterbox:

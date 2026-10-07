@@ -8,7 +8,10 @@ Founder decisions of 5 Oct 2026 (fictora-drama ``episode_openings``):
   first ~3 s of the finished episode (its first take, at ``finish``) and of
   every reel. It sits in the upper safe band just below the top 8% UI strip,
   kept out of the right-hand rail, on at most two lines. When a face sits in
-  the upper band it moves to just above the caption band. It leaves at the
+  the upper band it moves to just above the caption band, unless a caption is
+  on screen while it is up: then it stays at the top, so it never sits on the
+  first caption (founder, 7 Oct 2026, L-20261005-11; captions are never held
+  for it; the server's ``reel_overlays.decide_hook`` is the same rule). It leaves at the
   first cut after ~3 s (2.5-4 s), else with a quick fade at 3 s. It is skipped
   when it says the same words as the episode's first spoken line.
 * **title_bar** (only when the show's ``delivery_format`` is ``letterbox``).
@@ -185,6 +188,8 @@ class HookOverlay:
     on_cut: bool = False
     title: str = ""
     source: str = "spine"
+    #: Why the line is where it is, when that is not the usual place (plan and run lines only).
+    note: str = ""
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -209,6 +214,8 @@ class HookOverlay:
             else "just above the captions (a face is up top)"
         )
         leaves = "on the cut" if self.on_cut else "with a fade"
+        if self.note:
+            where = f"{where} ({self.note})"
         return f"hook line {self.text!r} {self.start_s:.1f}-{self.end_s:.1f} s, {where}, leaves {leaves}"
 
 
@@ -253,6 +260,37 @@ def default_face_in_upper_band(
     return None if answer is None else bool(answer)
 
 
+def caption_on_screen(
+    captions: Sequence[tuple[float, float]], start: float, end: float
+) -> bool:
+    """True when any caption ``(start_s, end_s)`` overlaps ``start``-``end`` (touching ends do not)."""
+
+    return any(a < end and b > start for a, b in captions)
+
+
+def clear_of_captions(
+    overlay: HookOverlay, captions: Sequence[tuple[float, float]]
+) -> HookOverlay:
+    """``overlay`` back at the top when it sits low while a caption is on screen, else unchanged.
+
+    The lower place is just above the caption band, so a caption up at the same
+    time stacks right under it (Sweet Racket, Last Call). The top is clear of
+    every caption; the caption keeps its timing.
+    """
+
+    if (
+        overlay.mode == "hook"
+        and overlay.placement == "lower"
+        and caption_on_screen(captions, overlay.start_s, overlay.end_s or HOOK_SECONDS)
+    ):
+        return replace(
+            overlay,
+            placement="top",
+            note="kept at the top: a caption is on screen under it",
+        )
+    return overlay
+
+
 def is_four_three(width: int, height: int) -> bool:
     """True when the picture is 4:3 (within ``ASPECT_TOLERANCE``)."""
 
@@ -272,6 +310,7 @@ def decide(
     video: Path | None = None,
     face_in_upper_band: FaceInUpperBand | None = default_face_in_upper_band,
     series_title: str | None = None,
+    captions: Sequence[tuple[float, float]] = (),
 ) -> HookDecision:
     """Decide the overlay for one episode's finished video or reel.
 
@@ -299,6 +338,9 @@ def decide(
         Face signal (:data:`FaceInUpperBand`); None skips it.
     series_title
         The series title for the letterbox bar (default the spine's ``title``).
+    captions
+        ``(start_s, end_s)`` of the captions on the video, when known: a line
+        that would sit low while one is up stays at the top (:func:`clear_of_captions`).
 
     Returns
     -------
@@ -355,7 +397,12 @@ def decide(
         if face_in_upper_band(video, 0.0, end):
             placement = "lower"
     return HookDecision(
-        HookOverlay("hook", text, placement, 0.0, end, on_cut=on_cut, source=source)
+        clear_of_captions(
+            HookOverlay(
+                "hook", text, placement, 0.0, end, on_cut=on_cut, source=source
+            ),
+            captions,
+        )
     )
 
 
@@ -502,6 +549,8 @@ __all__ = [
     "HookDecision",
     "HookOverlay",
     "burn",
+    "caption_on_screen",
+    "clear_of_captions",
     "decide",
     "default_face_in_upper_band",
     "delivery_format",
