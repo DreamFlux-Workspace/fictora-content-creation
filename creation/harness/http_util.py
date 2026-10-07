@@ -12,6 +12,7 @@ from typing import Any, Callable, Protocol
 
 import httpx
 
+from creation.harness.board_edit_refusal import board_edit_choice
 from creation.harness.minor_scene_refusal import minor_scene_fix, says_minor_scene
 
 _TERMINAL = frozenset({"completed", "failed", "cancelled"})
@@ -237,6 +238,10 @@ def api_error_text(body: Any) -> str:
     if says_minor_scene(code, message):
         # fictora-drama #562: name each scene and child and how to fix it, wherever the refusal comes from.
         text += "\n" + minor_scene_fix(details if isinstance(details, dict) else None)
+    # fictora-drama #641: a board drawn before a script edit; the commands that clear it.
+    choice = board_edit_choice(code, details if isinstance(details, dict) else None)
+    if choice is not None:
+        text += "\n" + choice
     return text
 
 
