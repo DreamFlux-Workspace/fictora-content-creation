@@ -4,8 +4,9 @@ Founder decisions of 6 Oct 2026. Instagram ignores a cover attached inside an
 MP4 (``attached_pic``): a reel's cover is picked in the Instagram editor
 ("Edit cover", then "Add from camera roll"), so every ``reel`` writes a
 separate still next to the reel, ``reels/<reel stem>-cover-vN.jpg`` (never
-overwritten), and the post text tells the operator to upload it. The cover
-never goes inside the video.
+overwritten), and the post text tells the operator to upload it. Since 7 Oct
+2026 the same image is also the reel's first frame (:mod:`creation.post.cover_frame`):
+Discord and the phones show a video's first frame as its preview.
 
 * **Picture.** ``--cover-frame S`` (seconds on the reel) when given; else a
   cover the server already drew for one of the episode's takes

@@ -935,6 +935,13 @@ def make_reel(
             cover = client.download(
                 str(answer["cover_url"]), cover_path(paths["video"])
             )
+        if cover is not None:
+            # The cover is the reel's first frame: the preview Discord and the phones show.
+            from creation.post.cover_frame import cover_first_frame_in_place
+
+            skipped = cover_first_frame_in_place(paths["video"], cover)
+            if skipped:
+                print(skipped, file=out)
     finally:
         if server is None:
             client.close()

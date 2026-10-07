@@ -1174,6 +1174,30 @@ def _agreed(values: list[Any], default: Any) -> Any:
     return values[0] if len(distinct) == 1 else default
 
 
+def _cover_first_frame(desk: Path, episodes: tuple[int, ...], marked: Path) -> str:
+    """Put the episode's reel cover on the joined file's first frame; the note for the report.
+
+    The first frame is the preview Discord, WhatsApp and the phones show
+    (:mod:`creation.post.cover_frame`). A series cut takes its first episode's cover.
+    """
+
+    from creation.post.cover_frame import cover_first_frame_in_place, episode_cover
+
+    if not episodes:
+        return "cover frame: none (no episode named; the first frame is the picture's)"
+    cover = episode_cover(desk, episodes[0])
+    if cover is None:
+        return (
+            f"cover frame: none yet for episode {episodes[0]} (no reel cover on the desk): make the reel "
+            "(`reel`), then join again for the cover as the first frame"
+        )
+    skipped = cover_first_frame_in_place(marked, cover)
+    return (
+        skipped
+        or f"cover frame: {cover.name} is the first frame (the preview Discord and phones show)"
+    )
+
+
 def run_join(
     desk: Path,
     *,
@@ -1478,6 +1502,8 @@ def run_join(
                 f"ending {ending}: the marked file holds its last frame, then cuts to black "
                 "(the master stays as joined)"
             )
+    if result.marked is not None:
+        result.notes.append(_cover_first_frame(desk, episodes, result.marked))
     summary = result.summary_lines()
     for run_dir in run_dirs:
         append_run_note(run_dir, "Join\n" + "\n".join(summary))

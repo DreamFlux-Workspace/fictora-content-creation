@@ -116,6 +116,7 @@ from creation.post.reel_plan import (
     segments_from_json,
     strongest_from_json,
 )
+from creation.post.cover_frame import cover_first_frame_in_place
 from creation.rules_epoch import is_legacy, under_desk_rules
 from creation.post.reel_sources import (
     Inferred,
@@ -1757,6 +1758,19 @@ def make_reel(
     summary = episode_summary(spine, episode)
     series = str(spine.get("title") or desk.name)
     if legacy:
+        # The cover and its first frame reach older desks too (founder, 7 Oct 2026).
+        if not no_cover:
+            legacy_cover, _, cover_warnings = make_cover(
+                desk, episode=episode, plan=plan, sources=srcs, takes=takes, patches=patches,
+                video=paths["video"], series=series, detector=detector, cover_frame=cover_frame,
+            )  # fmt: skip
+            report += cover_warnings
+            if legacy_cover is not None:
+                cover_first_frame_in_place(paths["video"], legacy_cover)
+                result.cover = legacy_cover
+                report.append(
+                    f"cover: {legacy_cover.name} (also the reel's first frame)"
+                )
         return _legacy_reel_files(
             result, paths, episode=episode, spine=spine, summary=summary, series=series, seconds=secs,
             loudness=loud, captions_line=cap_line, report=report, style_note=style_note, out=out,
@@ -1771,6 +1785,8 @@ def make_reel(
             video=paths["video"], series=series, detector=detector, cover_frame=cover_frame,
         )  # fmt: skip
         posting_notes += cover_warnings
+        if cover is not None:
+            cover_first_frame_in_place(paths["video"], cover)
     caption = post_text(
         series=series,
         episode=episode,
@@ -1818,9 +1834,11 @@ def _legacy_reel_files(
     style_note: str,
     out: TextIO,
 ) -> ReelResult:
-    """The end of a reel for a desk created before 2026-10-06: the post text alone, no cover.
+    """The end of a reel for a desk created before 2026-10-06: the post text alone.
 
     Frozen for desks created before 2026-10-06; do not change (:mod:`creation.rules_epoch`).
+    The one exception (founder, 7 Oct 2026): the caller draws the cover image and makes
+    it the reel's first frame before this runs.
     """
 
     write_new(
