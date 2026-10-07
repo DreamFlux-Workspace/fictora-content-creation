@@ -20,6 +20,7 @@ desk with a versioned name, and never approves (the human's yes goes through
 - ``look`` / ``look-note``: pin the style frame by URL, add or remove look notes.
 - ``sound-note``: add a sound to one take, or drop / level one on every take; ``--remove``; list.
 - ``take-facts --refresh``: read a filmed take's facts again (new sound notes, planned impacts), versioned.
+- ``collect-takes``: collect the filmed takes of a film job that stopped moving (spends nothing).
 - ``spine --refresh``: save the story again.
 - ``redraw-board``: redraw one board on ``/boards/{set}/regenerate``; ``--note "what's wrong"`` first turns the note into
   shot edits through the director (the app's path) and prints them per row; stops unpaid when nothing it is drawn
@@ -6774,6 +6775,80 @@ def _run_film(
             + (f" --take {take_id}" if take_id else "")
             + " --confirm-spend` starts a NEW paid job under a fresh key (only after the human's yes)."
         ) from None
+    return book_film_unit(
+        desk,
+        run,
+        state,
+        raw,
+        episode=episode,
+        unit=unit,
+        key=key,
+        take_ids=take_ids,
+        take_id=take_id,
+        job_id=str(job_id),
+        reason=reason,
+        out=out,
+    )
+
+
+def book_film_unit(
+    desk: Path,
+    run: DramaApiRunSession,
+    state: ProductionState,
+    raw: dict[str, Any],
+    *,
+    episode: int,
+    unit: str,
+    key: str,
+    take_ids: list[str],
+    take_id: str | None,
+    job_id: str,
+    reason: str | None = None,
+    out: Any = None,
+) -> str:
+    """Collect a ``film`` unit's takes from its clip record, book them and clear the unit.
+
+    What ``film --confirm-spend`` does once its job's takes are in. Shared by
+    ``collect-takes`` for a film job that stopped moving with every take filmed
+    (L-20261006-4), so a collected take is booked exactly like a filmed one.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    run
+        Session for the episode.
+    state
+        Production state when the film started.
+    raw
+        The clip record (:func:`creation.harness.raw_video.raw_clips_record`).
+    episode
+        Episode filmed.
+    unit
+        The film unit (``film-ep02-t2-s2``).
+    key
+        Its scope key (``ep02-t2``).
+    take_ids
+        The takes it asked for.
+    take_id
+        ``tK`` for a one-take film, else ``None``.
+    job_id
+        The film job.
+    reason
+        The re-film cause, if any.
+    out
+        Text stream.
+
+    Returns
+    -------
+    str
+        The printed summary.
+    """
+
+    out = out or sys.stdout
+    cfg = load_production_config(desk)
+    take_index = take_number(take_id) if take_id else None
+    what = f"ep{episode:02d} {take_id}" if take_id else f"episode {episode}"
     spine = run.spine(state.spine_id or "")
     save_spine_snapshot(desk, episode, spine)
     collecting = load_production(desk)
@@ -6989,6 +7064,7 @@ EPISODE_COMMANDS = frozenset(
         "redraw-plate",
         "check-lines",
         "film",
+        "collect-takes",
     }
 )
 
@@ -7596,6 +7672,26 @@ def add_episode_parsers(
         help="The human said yes to the printed number.",
     )
 
+    collect = sub.add_parser(
+        "collect-takes",
+        help=(
+            "Collect the filmed takes of a film job that stopped moving (every take filmed, no change for 10 "
+            "minutes, or the job failed after filming them). Writes the clip record, downloads and books the "
+            "takes and marks the film done, as `film` does. Spends nothing."
+        ),
+    )
+    collect.add_argument("--desk", type=Path, required=True)
+    collect.add_argument(
+        "--job-id",
+        default=None,
+        help="The film job, when the desk waits on more than one (or `film` let a failed one go).",
+    )
+    collect.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Say what would be collected; write nothing.",
+    )
+
     check = sub.add_parser(
         "check-lines",
         help="Were the approved lines in the take's instructions? (take facts)",
@@ -7836,6 +7932,11 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 confirm_spend=args.confirm_spend,
             )
             return 0
+        if args.command == "collect-takes":
+            from creation.collect_stuck import run_collect_takes
+
+            run_collect_takes(args.desk, job_id=args.job_id, dry_run=args.dry_run)
+            return 0
         if args.command == "check-lines":
             return (
                 5
@@ -7897,6 +7998,7 @@ __all__ = [
     "run_expressions",
     "deploy_expressions",
     "resolve_or_stop",
+    "book_film_unit",
     "run_film",
     "run_line",
     "run_approve_look",

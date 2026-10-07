@@ -46,6 +46,10 @@ class VideoJobFailed(SystemExit):
     """
 
 
+#: A film job that has not moved for this long while every take it asked for is filmed is
+#: stuck, not slow: ``collect-takes`` collects the takes without it (L-20261006-4).
+COLLECT_AFTER_IDLE_SECONDS = 600.0
+
 STEP_RAW_CLIPS = "17_raw_scene_clips.json"
 """The clip record ``step`` writes in ``epNN/api`` (also what ``adopt-desk`` builds for an old desk)."""
 
@@ -166,9 +170,18 @@ def video_generation_failure(
 
 
 def stuck_film_warning(
-    *, minutes: int, last_update: datetime, job_id: str, desk: str | None
+    *,
+    minutes: int,
+    last_update: datetime,
+    job_id: str,
+    desk: str | None,
+    takes_ready: int | None = None,
 ) -> str:
     """The stuck warning for a film whose job has not moved: what to check, never a paid retry.
+
+    With ``takes_ready`` (every take the film asked for is filmed, and the job
+    has not moved for :data:`COLLECT_AFTER_IDLE_SECONDS`) it also says to
+    collect them with ``collect-takes``, which spends nothing (L-20261006-4).
 
     Parameters
     ----------
@@ -180,6 +193,8 @@ def stuck_film_warning(
         The video job.
     desk
         The desk, for the commands (``D`` when unknown).
+    takes_ready
+        How many takes are filmed, when that is every take asked for; else ``None``.
 
     Returns
     -------
@@ -187,6 +202,12 @@ def stuck_film_warning(
         One warning.
     """
 
+    collect = (
+        f" All {takes_ready} take(s) are filmed but the film job has stopped moving: collect them without "
+        f"filming again with `fictora-produce collect-takes --desk {desk or 'D'}` (spends nothing)."
+        if takes_ready
+        else ""
+    )
     return (
         f"video job {job_id}: "
         + stale_job_warning(
@@ -194,7 +215,7 @@ def stuck_film_warning(
         )
         + " Do not film again or pass --confirm-spend again while it runs (that starts another paid job); "
         "tell the human and send the job id to engineering. The poll keeps watching and stops at once if "
-        "the server reports it failed."
+        "the server reports it failed." + collect
     )
 
 
@@ -203,6 +224,76 @@ def set_index_of(relation_id: str | None) -> int | None:
 
     match = _SET_SUFFIX.search(str(relation_id or ""))
     return int(match.group(1)) if match else None
+
+
+def clip_from_child(child_id: str, child: dict[str, Any]) -> dict[str, Any] | None:
+    """One take job's entry in the clip record, or ``None`` while it has no video URL yet.
+
+    The one shape every clip record is written in (``film``, ``step`` and
+    ``collect-takes``): finish, transcription and ``take-facts --refresh`` find a
+    take's job and stored URL through it (:func:`creation.post.desk.take_clip`).
+
+    Parameters
+    ----------
+    child_id
+        The take job id (from the film job's ``depends_on``).
+    child
+        Its ``GET /v1/jobs/{id}`` record.
+
+    Returns
+    -------
+    dict[str, Any] | None
+        ``{"job_id", "url", "relation_id", "set_index", "episode_id"}``.
+    """
+
+    url = clip_url_from_job_payload(child)
+    if url is None:
+        return None
+    relation = child.get("relation") if isinstance(child.get("relation"), dict) else {}
+    episodes = child.get("episode_ids") or []
+    return {
+        "job_id": child_id,
+        "url": url,
+        "relation_id": relation.get("id"),
+        "set_index": set_index_of(relation.get("id")),
+        "episode_id": str(episodes[0]) if episodes else "",
+    }
+
+
+def raw_clips_record(
+    coordinator_job_id: str,
+    clips: list[dict[str, Any]],
+    *,
+    collected_from_stuck_job: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The clip record a filming saves in ``epNN/api`` (:func:`raw_clips_name`).
+
+    Parameters
+    ----------
+    coordinator_job_id
+        The film job.
+    clips
+        :func:`clip_from_child` entries, in the film job's order.
+    collected_from_stuck_job
+        Set only by ``collect-takes``: what the film job said when its finished
+        takes were collected without it (status, progress, last update). The
+        takes are whole, so ``coordinator_status`` still reads ``completed``
+        for every reader; this key says the film job itself never finished.
+
+    Returns
+    -------
+    dict[str, Any]
+        ``{"coordinator_job_id", "coordinator_status": "completed", "clips"}`` (plus the stuck note).
+    """
+
+    record: dict[str, Any] = {
+        "coordinator_job_id": coordinator_job_id,
+        "coordinator_status": "completed",
+        "clips": clips,
+    }
+    if collected_from_stuck_job is not None:
+        record["collected_from_stuck_job"] = collected_from_stuck_job
+    return record
 
 
 def wait_for_raw_scene_clips(
@@ -301,6 +392,7 @@ def wait_for_raw_scene_clips(
         depends = parent.get("depends_on")
         if isinstance(depends, list) and depends:
             child_ids = [str(item) for item in depends if item]
+        all_filmed = False
         if child_ids:
             pending = False
             clips = []
@@ -319,25 +411,16 @@ def wait_for_raw_scene_clips(
                     raise VideoJobFailed(
                         f"take job {child_id} {describe_job_error(child)}"
                     )
-                url = clip_url_from_job_payload(child)
-                if url is None:
+                clip = clip_from_child(child_id, child)
+                if clip is None:
                     pending = True
                     continue
-                relation = (
-                    child.get("relation")
-                    if isinstance(child.get("relation"), dict)
-                    else {}
-                )
-                episodes = child.get("episode_ids") or []
-                clips.append(
-                    {
-                        "job_id": child_id,
-                        "url": url,
-                        "relation_id": relation.get("id"),
-                        "set_index": set_index_of(relation.get("id")),
-                        "episode_id": str(episodes[0]) if episodes else "",
-                    }
-                )
+                clips.append(clip)
+            all_filmed = (
+                not pending
+                and len(clips) == len(child_ids)
+                and (expected_clips is None or len(clips) >= expected_clips)
+            )
             parent_done = str(parent.get("status") or "") == "completed"
             if (
                 parent_done
@@ -350,11 +433,7 @@ def wait_for_raw_scene_clips(
                     "server before filming again (the clips it has are paid for)."
                 )
             if parent_done and clips and not pending and len(clips) == len(child_ids):
-                payload = {
-                    "coordinator_job_id": coordinator_job_id,
-                    "coordinator_status": "completed",
-                    "clips": clips,
-                }
+                payload = raw_clips_record(coordinator_job_id, clips)
                 run.save(save_as, payload)
                 return payload
         elif str(parent.get("status") or "") == "completed":
@@ -392,6 +471,9 @@ def wait_for_raw_scene_clips(
                     last_update=changed_utc,
                     job_id=coordinator_job_id,
                     desk=desk,
+                    takes_ready=len(clips)
+                    if all_filmed and now - changed_at >= COLLECT_AFTER_IDLE_SECONDS
+                    else None,
                 )
             )
             next_warning += stale_after_seconds
