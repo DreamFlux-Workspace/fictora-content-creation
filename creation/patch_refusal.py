@@ -162,6 +162,30 @@ def _schema(openapi: Any, name: str) -> tuple[Mapping[str, Any], Any]:
     return schemas, None
 
 
+def schema_fields(openapi: Any, root: str) -> frozenset[str] | None:
+    """Every field the deploy's schema ``root`` takes, as its ``/openapi.json`` lists them.
+
+    Parameters
+    ----------
+    openapi
+        ``/openapi.json`` as read from the deploy (anything else reads as unknown).
+    root
+        :data:`FRAME_BRIEF_SCHEMA` or :data:`BEAT_DIRECTION_SCHEMA`.
+
+    Returns
+    -------
+    frozenset[str] | None
+        The field names, or ``None`` when the schema does not say.
+    """
+
+    schemas, node = _schema(openapi, root)
+    node = _resolve(schemas, node)
+    properties = node.get("properties") if isinstance(node, Mapping) else None
+    if not isinstance(properties, Mapping) or not properties:
+        return None
+    return frozenset(str(name) for name in properties)
+
+
 def allowed_values(openapi: Any, root: str, path: str) -> list[str] | None:
     """The enum an edited field takes, as the deploy's ``/openapi.json`` lists it.
 

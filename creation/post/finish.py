@@ -199,10 +199,18 @@ from creation.post.colour import colour_match
 from creation.post.deboard import deboard as deboard_take
 from creation.post.edit import measure_cuts
 from creation.post.finish_record import write_finish_record
-from creation.post.hand import HandPlan, Placed, check_hand_plan, lay_cues, lay_voice
+from creation.post.hand import (
+    HandPlan,
+    Placed,
+    check_hand_plan,
+    lay_cues,
+    lay_voice,
+    voice_gain,
+)
 from creation.post.lineage import CHAIN_FILE, raw_take_behind, record_edit
 from creation.post.desk import (
     approved_board,
+    current_cast_cards,
     latest_raw_take,
     open_api,
     saved_spine,
@@ -326,6 +334,8 @@ class StepReport:
     cost_usd: float = 0.0
     #: Planned pieces the step did not lay, each ``what (why)`` (the sfx step's cues).
     not_laid: tuple[str, ...] = ()
+    #: Why a step that ran is not verified (captions with no transcript): the summary marks it ⚠, not ✓.
+    caveat: str = ""
 
 
 @dataclass
@@ -433,6 +443,9 @@ class FinishResult:
         captions = next((s for s in self.steps if s.step == "captions"), None)
         if captions is not None and captions.detail.startswith(CAPTIONS_OFF):
             marks.append("captions off (--caption-style none)")
+        elif captions is not None and self._ran("captions") and captions.caveat:
+            # Timed with no transcript (L-20261006-26): burned, but nobody checked the words land.
+            marks.append(f"captions ⚠ ({captions.caveat})")
         else:
             marks.append(f"captions {'✓' if self._ran('captions') else '✗'}")
         marks += [
@@ -490,6 +503,8 @@ class FinishResult:
 
 #: The captions step's detail when the caption style is ``none`` (nothing burned, on purpose).
 CAPTIONS_OFF = "caption style none"
+#: The summary's caption mark when the transcript was not read (L-20261006-26).
+CAPTIONS_UNTIMED = "no transcript: timed on speech spans, check by eye"
 
 INCOMPLETE_FIX = (
     "Music: the bed step's error says why the harness bed could not be found or made (the spine is "
@@ -692,12 +707,17 @@ def take_inner_voice(
         cues, take=thoughts.take_number(take_id), lengths=lengths, last_filmed=last
     )
     spoken = thoughts.load_spoken(desk, episode)
-    if not spoken:
+    levels = thoughts.load_levels(desk, episode)
+    if not spoken and not levels:
         return plan
     return replace(
         plan,
         cues=tuple(
-            replace(cue, spoken_text=thoughts.spoken_for(spoken, cue.cue_id, cue.line))
+            replace(
+                cue,
+                spoken_text=thoughts.spoken_for(spoken, cue.cue_id, cue.line),
+                db=levels.get(cue.cue_id, 0.0),
+            )
             for cue in plan.cues
         ),
     )
@@ -952,6 +972,7 @@ def run_finish(
     caption_colour: str | None = None,
     stream: TextIO | None = None,
     no_panels: bool = False,
+    thought_db: float = 0.0,
 ) -> FinishResult:
     """Run the whole local post chain on one accepted take.
 
@@ -1058,6 +1079,10 @@ def run_finish(
         ``--no-panels``: draw none of the writer's system panels (a system or game
         genre's status windows, :mod:`creation.post.system_panels`). Other genres
         never have any.
+    thought_db
+        ``--thought-db N``: every inner-voice cue of the take N dB against a dialogue
+        line, on top of each cue's own ``inner-voice --db`` (L-20261006-30). 0: a line's
+        level, as before.
     caption_colour
         ``--caption-colour yellow|white``: a letterbox show's caption colour
         (default the desk's ``letterbox_caption_colour``, else the spine's,
@@ -1082,6 +1107,10 @@ def run_finish(
 
     out = stream or sys.stderr
     desk = desk.expanduser().resolve()
+    if thought_db:
+        thoughts.check_level(
+            thought_db
+        )  # --thought-db: the range inner-voice --db takes
     check_duck_db(duck_db)
     if music is not None:
         # The operator says what should change; `music-note` sends it to the harness (plan first, --yes applies).
@@ -1447,11 +1476,8 @@ def run_finish(
     def do_inner_voice(take: Path) -> StepReport:
         from creation.post.handmade import make_voice_line
 
-        cards = {
-            str(card.get("cast_id")): dict(card)
-            for card in (spine or {}).get("cast") or []
-            if isinstance(card, dict) and card.get("cast_id")
-        }
+        # The voice the desk holds now, not the one the episode's snapshot was saved with (L-20261006-29).
+        cards = current_cast_cards(desk, spine, found_spine[1] if found_spine else None)
         service = voice_audio or audio
         take_seconds = probe_video(take).duration_seconds
         not_laid = list(thought_plan.problems)
@@ -1494,7 +1520,18 @@ def run_finish(
                 flags.append(
                     f"!! {cue.cue_id}: the dry line may be misread, listen to `{made.path.name}`"
                 )
-            placed.append((cue, Placed(made.path, cue.start)))
+            level = round(cue.db + thought_db, 1)
+            # A level other than a line's: levelled like a line, then moved by the dB asked (L-20261006-30).
+            placed.append(
+                (
+                    cue,
+                    Placed(
+                        made.path,
+                        cue.start,
+                        voice_gain(made.path) + level if level else None,
+                    ),
+                )
+            )
         checked: list[tuple[thoughts.TakeCue, Placed, float]] = []
         for cue, line in placed:
             try:
@@ -1507,6 +1544,11 @@ def run_finish(
             checked.append((cue, line, seconds))
         parts = [
             f"{cue.cue_id} {line.path.name} @{line.start:.2f}s ({seconds:.2f}s)"
+            + (
+                f" at {round(cue.db + thought_db, 1):+g} dB"
+                if round(cue.db + thought_db, 1)
+                else ""
+            )
             + (
                 f", says {cue.spoken_text!r} under the caption {cue.line!r}"
                 if cue.spoken_text
@@ -2280,6 +2322,9 @@ def run_finish(
             "ran",
             f"{len(captioned.lines)} line(s), {treatment}: {timing}{warnings}",
             captioned.video,
+            caveat=CAPTIONS_UNTIMED
+            if words_json is None and words_note.startswith("no transcript")
+            else "",
         )
 
     def do_sign_overlay(take: Path) -> StepReport:

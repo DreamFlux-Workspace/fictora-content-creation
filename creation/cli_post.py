@@ -62,6 +62,14 @@ def add_hook_line_args(parser: argparse.ArgumentParser) -> None:
         help="No hook line (and no letterbox title bar), whatever the spine says.",
     )
     parser.add_argument(
+        "--thought-db",
+        type=float,
+        default=0.0,
+        metavar="N",
+        help="Every inner-voice thought N dB against a dialogue line (-3 a little quieter), on top of each "
+        "thought's own `inner-voice --db`. Default 0: a line's level.",
+    )
+    parser.add_argument(
         "--no-panels",
         action="store_true",
         help="Draw none of the writer's system panels (status windows, level ups, quest notices: system "
@@ -916,6 +924,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             hook_line_position=args.hook_line_position,
             caption_colour=args.caption_colour,
             no_panels=args.no_panels,
+            thought_db=args.thought_db,
         )
         if args.json:
             print(json.dumps(result.as_json(), indent=2))

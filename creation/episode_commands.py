@@ -114,6 +114,7 @@ from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
 from creation.ops.state import GateRecord, episode_by_ordinal, load_series, save_series
 from creation.patch_refusal import (
+    FRAME_BRIEF_SCHEMA,
     FRAME_CAST_FIXES,
     INVALID_PATCH,
     LINE_DELIVERIES,
@@ -122,6 +123,7 @@ from creation.patch_refusal import (
     delivery_values,
     explain_invalid_patch,
     refusal_code,
+    schema_fields,
     server_named_rules,
 )
 from creation.post.take_facts import (
@@ -1564,13 +1566,35 @@ def parse_assignment(raw: str) -> tuple[str, Any]:
     return key.strip(), value
 
 
-#: visual_brief fields the server omits from a saved frame while they are empty
-#: (server #583: ``story_signs``); ``edit --frame --set`` may still set them.
-OPTIONAL_VISUAL_BRIEF_FIELDS = frozenset({"story_signs"})
+#: visual_brief fields the server may leave out of a saved frame while they are empty
+#: (server #583: ``story_signs``; ``expression_cause``, the reaction fields, ...);
+#: ``edit --frame --set`` may still set them. Used when the deploy's ``/openapi.json``
+#: does not list ``DramaFrameVisualBrief``'s fields (that list answers first).
+OPTIONAL_VISUAL_BRIEF_FIELDS = frozenset(
+    {
+        "story_signs",
+        "expression_cause",
+        "unnamed_figures",
+        "cell_role",
+        "reaction_kind",
+        "reaction_cast_id",
+        "row_direction",
+    }
+)
 
 
-def _apply(target: Any, key: str, value: Any, *, label: str) -> None:
-    """Set a dotted ``key`` inside ``target``; a numeric part indexes a list (``subject_blocking.0.pose``)."""
+def _apply(
+    target: Any,
+    key: str,
+    value: Any,
+    *,
+    label: str,
+    absent_ok: frozenset[str] = OPTIONAL_VISUAL_BRIEF_FIELDS,
+) -> None:
+    """Set a dotted ``key`` inside ``target``; a numeric part indexes a list (``subject_blocking.0.pose``).
+
+    ``absent_ok``: top-level ``visual_brief`` fields that may be set although the saved frame lacks them.
+    """
 
     head, _, rest = key.partition(".")
     if isinstance(target, list):
@@ -1594,11 +1618,7 @@ def _apply(target: Any, key: str, value: Any, *, label: str) -> None:
             f"{label} is not an object or a list, so {key!r} cannot be set"
         )
     if head not in target:
-        if (
-            not rest
-            and label.endswith("visual_brief")
-            and head in OPTIONAL_VISUAL_BRIEF_FIELDS
-        ):
+        if not rest and label.endswith("visual_brief") and head in absent_ok:
             # Optional fields the server leaves out of a saved frame when empty.
             target[head] = value
             return
@@ -1865,6 +1885,7 @@ def build_patch(
     clear_shot_plan: bool = False,
     set_reaction_kind: bool = False,
     reaction_kind: str | None = None,
+    brief_fields: Callable[[], frozenset[str] | None] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """Build the spine patch for one beat, frame or line, merged onto what the spine has now.
 
@@ -2067,7 +2088,7 @@ def build_patch(
         episode=episode,
         kind="frame",
     )
-    return _frame_patch(spine, found, assignments)
+    return _frame_patch(spine, found, assignments, brief_fields=brief_fields)
 
 
 def _refuse_compiled_beat(spine: Mapping[str, Any], beat: Mapping[str, Any]) -> None:
@@ -2117,10 +2138,56 @@ def _blocking_ids(brief: Mapping[str, Any]) -> list[str]:
     ]
 
 
+def _frame_settable(
+    stored: Mapping[str, Any],
+    assignments: Sequence[tuple[str, Any]],
+    brief_fields: Callable[[], frozenset[str] | None] | None,
+) -> frozenset[str]:
+    """The absent brief fields this edit may set; refuses every unknown key at once, before anything is sent.
+
+    A key the saved frame lacks is still a brief field when the deploy's schema
+    lists it (``brief_fields``, read from ``/openapi.json`` only when a key is
+    absent), else when the kit knows the server leaves it out while empty
+    (:data:`OPTIONAL_VISUAL_BRIEF_FIELDS`). L-20261006-36: ``expression_cause``,
+    which the mood-jump advice asks for, was refused and took every other field
+    of the command with it.
+    """
+
+    absent = [
+        key.partition(".")[0]
+        for key, _ in assignments
+        if key != "cast_refs" and key.partition(".")[0] not in stored
+    ]
+    if not absent:
+        return OPTIONAL_VISUAL_BRIEF_FIELDS
+    listed = brief_fields() if brief_fields is not None else None
+    settable = (listed or frozenset()) | OPTIONAL_VISUAL_BRIEF_FIELDS
+    unknown = sorted({head for head in absent if head not in settable})
+    if unknown:
+        source = (
+            "this deploy's /openapi.json"
+            if listed
+            else "the kit's list (/openapi.json did not say)"
+        )
+        raise CommandStopped(
+            f"visual_brief has no field {', '.join(repr(k) for k in unknown)} ({source}); "
+            f"the saved frame has: {', '.join(sorted(stored))}"
+            + (
+                f"; the brief also takes: {', '.join(sorted(settable - set(stored)))}"
+                if settable - set(stored)
+                else ""
+            )
+            + ". Nothing was sent: fix the key(s) and send the whole command again."
+        )
+    return settable
+
+
 def _frame_patch(
     spine: Mapping[str, Any],
     found: Mapping[str, Any],
     assignments: Sequence[tuple[str, Any]],
+    *,
+    brief_fields: Callable[[], frozenset[str] | None] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """A frame's patch: the WHOLE current ``visual_brief`` with only the set fields changed, and its cast.
 
@@ -2139,6 +2206,7 @@ def _frame_patch(
 
     frame_id = found["frame_id"]
     stored = found.get("visual_brief") or {}
+    settable = _frame_settable(stored, assignments, brief_fields)
     brief = copy.deepcopy(stored)
     wanted_refs: list[str] | None = None
     for key, value in assignments:
@@ -2153,7 +2221,7 @@ def _frame_patch(
         elif isinstance(value, Mapping) and isinstance(brief.get(key), dict):
             brief[key] = {**brief[key], **value}
         else:
-            _apply(brief, key, value, label="visual_brief")
+            _apply(brief, key, value, label="visual_brief", absent_ok=settable)
     old_refs = [
         str(ref) for ref in found.get("cast_refs") or [] if ref
     ] or _blocking_ids(stored)
@@ -3366,6 +3434,22 @@ def run_edit(
         finally:
             check.client.close()
 
+    read_fields: list[frozenset[str] | None] = []
+
+    def frame_brief_fields() -> frozenset[str] | None:
+        """``DramaFrameVisualBrief``'s fields from the deploy's ``/openapi.json`` (read once, free)."""
+
+        if not read_fields:
+            _, _, check = _desk_session(desk)
+            try:
+                status, doc = check.get_optional("/openapi.json")
+            finally:
+                check.client.close()
+            read_fields.append(
+                schema_fields(doc, FRAME_BRIEF_SCHEMA) if 200 <= status < 300 else None
+            )
+        return read_fields[0]
+
     def build(spine: Mapping[str, Any]) -> tuple[dict[str, Any], list[str], str]:
         patch, changed = build_patch(
             spine,
@@ -3384,6 +3468,7 @@ def run_edit(
             clear_shot_plan=clear_shot_plan,
             set_reaction_kind=setting_expression,
             reaction_kind=kind,
+            brief_fields=frame_brief_fields,
         )
         what = (
             f"beat {beat}"
@@ -4339,6 +4424,8 @@ def run_inner_voice(
     remove: str | None = None,
     clear: bool = False,
     spoken_text: str | None = None,
+    db: float | None = None,
+    cue: str | None = None,
     out: Any = None,
 ) -> list[dict[str, Any]]:
     """Add, remove, clear or list an episode's inner-voice cues (a character's own thoughts). Spends nothing.
@@ -4366,6 +4453,12 @@ def run_inner_voice(
         With ``text``: the words the voice says when they differ from the caption
         (a Japanese thought under an English caption). Kept on the desk
         (:func:`creation.inner_voice.save_spoken`): the server's cue has no field for it.
+    db
+        The thought's level in dB against a dialogue line (``-3``: a little quieter), with a new
+        thought or with ``cue``. Kept on the desk (:func:`creation.inner_voice.save_level`): the
+        server's cue has no field for it; ``finish`` applies it when it lays the cue. Default 0 dB.
+    cue
+        With ``db`` alone: the existing cue (id or number) whose level changes. Nothing is sent.
     remove
         A cue id, or its number in the listing.
     clear
@@ -4385,6 +4478,23 @@ def run_inner_voice(
     """
 
     adding = any(value is not None for value in (cast, text, at, until))
+    if db is not None:
+        try:
+            db = inner_voice.check_level(float(db))
+        except inner_voice.InnerVoiceError as exc:
+            raise CommandStopped(str(exc)) from None
+    if cue is not None and (db is None or adding or remove is not None or clear):
+        raise CommandStopped(
+            "--cue ID --db N changes one thought's level alone; a new thought takes --db with --cast/--text/--at"
+        )
+    if db is not None and not adding and cue is None:
+        raise CommandStopped(
+            "--db goes with a new thought (--cast, --text, --at) or with --cue ID (an existing one)"
+        )
+    if cue is not None:
+        return _set_thought_level(
+            desk, episode=episode, cue=cue, db=float(db or 0), out=out or sys.stdout
+        )
     spoken = " ".join((spoken_text or "").split()) or None
     if spoken_text is not None and not adding:
         raise CommandStopped(
@@ -4471,7 +4581,8 @@ def run_inner_voice(
                 file=out,
             )
             spoken_saved = inner_voice.load_spoken(desk, episode)
-            for row in inner_voice.cue_listing(cues, names, spoken_saved) or [
+            levels = inner_voice.load_levels(desk, episode)
+            for row in inner_voice.cue_listing(cues, names, spoken_saved, levels) or [
                 "  (none)"
             ]:
                 print(row, file=out)
@@ -4494,6 +4605,16 @@ def run_inner_voice(
     kept = inner_voice.episode_cues(fresh, episode=episode)
     if dropped:
         inner_voice.drop_spoken(desk, episode, dropped)
+        inner_voice.drop_levels(desk, episode, dropped)
+    if added is not None and db:
+        level_at = inner_voice.save_level(
+            desk, episode, cue_id=str(added["cue_id"]), db=db
+        )
+        print(
+            f"  level {db:+g} dB against a line kept on the desk (`{level_at.relative_to(desk)}`); "
+            "finish lays it at that level",
+            file=out,
+        )
     if added is not None and spoken:
         saved_at = inner_voice.save_spoken(
             desk,
@@ -4510,7 +4631,10 @@ def run_inner_voice(
     fresh_names = _cast_names(fresh)
     print(f"ep{episode:02d} inner voice: {what}", file=out)
     spoken_saved = inner_voice.load_spoken(desk, episode)
-    for row in inner_voice.cue_listing(kept, fresh_names, spoken_saved) or ["  (none)"]:
+    levels = inner_voice.load_levels(desk, episode)
+    for row in inner_voice.cue_listing(kept, fresh_names, spoken_saved, levels) or [
+        "  (none)"
+    ]:
         print(row, file=out)
     if added is not None and not is_english(str(added["line"])):
         print(
@@ -4544,6 +4668,36 @@ def run_inner_voice(
         desk, episode, f"inner-voice: {what}; {len(kept)} cue(s) on episode {episode}"
     )
     return kept
+
+
+def _set_thought_level(
+    desk: Path, *, episode: int, cue: str, db: float, out: Any
+) -> list[dict[str, Any]]:
+    """``inner-voice --cue ID --db N``: change one saved thought's level on the desk. Sends nothing."""
+
+    desk, state, run = _desk_session(desk)
+    try:
+        spine = run.spine(state.spine_id or "")
+    finally:
+        run.client.close()
+    cues = inner_voice.episode_cues(spine, episode=episode)
+    try:
+        cue_id = inner_voice.cue_id_for(cues, str(cue))
+    except inner_voice.InnerVoiceError as exc:
+        raise CommandStopped(str(exc)) from None
+    inner_voice.save_level(desk, episode, cue_id=cue_id, db=db)
+    print(
+        f"ep{episode:02d} inner voice: {cue_id} now plays at {db:+g} dB against a line "
+        "(kept on the desk; nothing sent). Finish the take again to hear it.",
+        file=out,
+    )
+    for row in inner_voice.cue_listing(
+        cues, _cast_names(spine), inner_voice.load_spoken(desk, episode),
+        inner_voice.load_levels(desk, episode),
+    ) or ["  (none)"]:  # fmt: skip
+        print(row, file=out)
+    _note(desk, episode, f"inner-voice: {cue_id} level {db:+g} dB")
+    return cues
 
 
 def _say_inner_voice_approval(
@@ -7246,6 +7400,21 @@ def add_episode_parsers(
         metavar="S",
         help="End, seconds. Left out: about 0.4 s a word (at least 1.2 s).",
     )
+    thought.add_argument(
+        "--db",
+        type=float,
+        default=None,
+        metavar="N",
+        help="The thought's level against a dialogue line, dB (-3 a little quieter, -6 clearly quieter; "
+        "-24 to +6; default 0). With a new thought, or with --cue ID for an existing one. Kept on the desk "
+        "(epNN/inner-voice-levels.json); finish lays it at that level.",
+    )
+    thought.add_argument(
+        "--cue",
+        default=None,
+        metavar="ID|N",
+        help="With --db alone: the existing thought whose level changes (nothing is sent).",
+    )
     change_thought = thought.add_mutually_exclusive_group()
     change_thought.add_argument("--remove", default=None, metavar="ID|N")
     change_thought.add_argument(
@@ -7534,6 +7703,8 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 remove=args.remove,
                 clear=args.clear,
                 spoken_text=args.spoken_text,
+                db=args.db,
+                cue=args.cue,
             )
             return 0
         if args.command == "take-facts":

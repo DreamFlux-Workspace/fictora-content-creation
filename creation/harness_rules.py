@@ -969,6 +969,55 @@ def _adult_age(text: str) -> int | None:
     return None
 
 
+#: The card fields that state a character's age: read before any free text.
+_AGE_FIELDS = ("age", "age_band", "apparent_age")
+_CLAUSE = re.compile(r"[.;!?\n]+|\s[-\u2013\u2014]\s")
+
+
+def _name_words(name: str) -> set[str]:
+    """A name and each of its words of 3+ letters, folded (``Han Seo-yeon`` -> the name, ``han``, ``seo-yeon``)."""
+
+    folded = name.strip().casefold()
+    return {folded, *(w for w in re.split(r"[\s,()]+", folded) if len(w) >= 3)} - {""}
+
+
+def _card_age(
+    card: Mapping[str, Any], spine: Mapping[str, Any] | None = None
+) -> int | None:
+    """The age a card states for its own character, or ``None``.
+
+    The card's age fields (``age`` / ``age_band`` on the card or its
+    ``visual_brief``) answer first. Only then the card's free text, clause by
+    clause, leaving out every clause that names another character: "Kang
+    Jun-ho is 26" was read out of his role text about Seo-yeon (L-20261006-27).
+    """
+
+    brief = card.get("visual_brief")
+    for holder in (card, brief if isinstance(brief, Mapping) else {}):
+        for key in _AGE_FIELDS:
+            value = holder.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                value = str(int(value))
+            if isinstance(value, str):
+                age = _adult_age(value)
+                if age is not None:
+                    return age
+    own = _name_words(str(card.get("name") or ""))
+    others: set[str] = set()
+    for other in (spine or {}).get("cast") or []:
+        if isinstance(other, Mapping) and other.get("cast_id") != card.get("cast_id"):
+            others |= _name_words(str(other.get("name") or ""))
+    others -= own
+    for clause in _CLAUSE.split(_card_text(card)):
+        words = clause.casefold()
+        if any(re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", words) for n in others):
+            continue
+        age = _adult_age(clause)
+        if age is not None:
+            return age
+    return None
+
+
 def adult_face_lines(spine: Mapping[str, Any]) -> list[str]:
     """Warn when a stated adult age has no adult face words.
 
@@ -993,7 +1042,7 @@ def adult_face_lines(spine: Mapping[str, Any]) -> list[str]:
         if not isinstance(card, Mapping):
             continue
         text = _card_text(card)
-        age = _adult_age(text)
+        age = _card_age(card, spine)
         if age is None or _ADULT_FACE.search(text) is not None:
             continue
         name = str(card.get("name") or card.get("cast_id") or "the character")
@@ -1045,7 +1094,7 @@ def sparkle_adult_line(spine: Mapping[str, Any], *, episode: int) -> str | None:
             card = cards.get(cast_id)
             if card is None:
                 continue
-            age = _adult_age(_card_text(card))
+            age = _card_age(card, spine)
             if age is None:
                 continue
             name = str(card.get("name") or cast_id)

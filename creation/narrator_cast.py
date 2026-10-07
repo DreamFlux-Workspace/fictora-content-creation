@@ -465,6 +465,16 @@ def _put_on_voice_only_route(
         line_ids = [
             entry["line_id"] for entry in (patch or {}).get("dialogue_lines") or []
         ]
+        if not _lines_of(spine, answer.cast_id):
+            # No line to mark off screen, so there is no cascade to run: the answer is
+            # saved on the desk and never asked again (L-20261005-3: it looped here).
+            print(
+                f"[cast] {answer.name}: heard only, never seen; saved on the desk. The script is approved, "
+                "so the server keeps their card as it is; they have no line, so there is nothing to mark "
+                "off screen. Not asked again.",
+                file=out,
+            )
+            return
         steps = (
             "; ".join(f"`line --line {line_id} --off-screen`" for line_id in line_ids)
             or "none"

@@ -79,6 +79,57 @@ def test_shape_check_rejects_a_late_event_and_a_collapsing_hum() -> None:
     assert shape_problem("event", (-90.0,)) == "silent"
 
 
+def _noise(path: Path, *, seconds: float, decay_db_per_second: float = 0.0) -> Path:
+    """Pink noise, steady or falling ``decay_db_per_second`` dB each second."""
+
+    gain = f"volume='pow(10,-{decay_db_per_second}*t/20)':eval=frame"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+         f"anoisesrc=color=pink:amplitude=0.3:d={seconds}:sample_rate=48000",
+         "-af", gain, str(path)],
+        check=True,
+    )  # fmt: skip
+    return path
+
+
+@needs_ffmpeg
+def test_a_constant_cue_that_fades_away_fails_the_shape_check_on_a_new_desk(
+    tmp_path: Path,
+) -> None:
+    """L-20261001-4: a "constant" bed decaying ~25 dB over 5 s passed (half its tail within 18 dB)."""
+
+    steady = measure_rms_windows(_noise(tmp_path / "steady.wav", seconds=5.0))
+    fading = measure_rms_windows(
+        _noise(tmp_path / "fade.wav", seconds=5.0, decay_db_per_second=5.0)
+    )
+
+    assert shape_problem("sustained", steady, legacy=False) is None
+    assert shape_problem("sustained", steady, legacy=True) is None
+    problem = shape_problem("sustained", fading, legacy=False)
+    assert problem is not None and problem.startswith("sustained sound fades"), (
+        fading,
+        problem,
+    )
+    # Legacy desks keep the old rule: the same fade still passes there.
+    assert shape_problem("sustained", fading, legacy=True) is None
+
+
+def test_the_hold_rule_skips_the_first_second_and_short_cues() -> None:
+    swell = (-40.0, -30.0, -12.0, -12.0, -12.0, -12.0, -12.0, -12.0)
+    assert shape_problem("sustained", swell, legacy=False) is None
+    assert shape_problem("sustained", (-12.0, -30.0, -30.0), legacy=False) is None
+    # The rule follows the running command's rules when not forced.
+    from creation.rules_epoch import _ACTIVE
+
+    decay = (-12.0, -12.0, -16.0, -18.0, -24.0, -26.0, -30.0, -32.0)
+    token = _ACTIVE.set(True)
+    try:
+        assert shape_problem("sustained", decay) is None
+    finally:
+        _ACTIVE.reset(token)
+    assert shape_problem("sustained", decay).startswith("sustained sound fades")
+
+
 @needs_ffmpeg
 def test_sfx_is_laid_under_the_take_cached_and_dropped_on_request(
     tmp_path: Path,
