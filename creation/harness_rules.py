@@ -921,6 +921,32 @@ _WORD_AGE = re.compile(
 )
 
 
+_UNITS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+    "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
+    "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
+}  # fmt: skip
+_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70,
+         "eighty": 80, "ninety": 90}  # fmt: skip
+_DECADES = {"teens": 10, "twenties": 20, "thirties": 30, "forties": 40, "fifties": 50,
+            "sixties": 60, "seventies": 70, "eighties": 80}  # fmt: skip
+#: A band written in words, as one age in digits: early 2x -> 23, mid -> 25, late -> 28 (teens: 13, 15, 18).
+_BAND_YEARS = {"early": 3, "mid": 5, "late": 8}
+
+
+def worded_age(words: str) -> int | None:
+    """``twenty-eight`` -> 28, ``thirty`` -> 30, ``late twenties`` -> 28 (one age to write as digits)."""
+
+    parts = [p for p in re.split(r"[- ]+", words.strip().lower()) if p]
+    if len(parts) == 2 and parts[0] in _BAND_YEARS and parts[1] in _DECADES:
+        return _DECADES[parts[1]] + _BAND_YEARS[parts[0]]
+    if len(parts) == 2 and parts[0] in _TENS and parts[1] in _UNITS:
+        return _TENS[parts[0]] + _UNITS[parts[1]]
+    if len(parts) == 1:
+        return _TENS.get(parts[0]) or _UNITS.get(parts[0])
+    return None
+
+
 def word_age_lines(spine: Mapping[str, Any]) -> list[str]:
     """Warn when a cast card writes an age in words ("twenty-six", "late twenties").
 
@@ -948,9 +974,13 @@ def word_age_lines(spine: Mapping[str, Any]) -> list[str]:
         )
         if found:
             name = card.get("name") or card.get("cast_id")
+            # The card's own age in digits, never a fixed example (canary 7 Oct: "26" for 28 and 31).
+            digits = next(
+                (str(age) for age in map(worded_age, found) if age is not None), "N"
+            )
             lines.append(
-                f'!! {name}: the age is written in words ({", ".join(found)}). Write it as digits ("26") '
-                f"before the plates: `cast --desk D --name {name} --look @look.txt` with `age: 26`."
+                f'!! {name}: the age is written in words ({", ".join(found)}). Write it as digits ("{digits}") '
+                f"before the plates: `cast --desk D --name {name} --look @look.txt` with `age: {digits}`."
             )
     return lines
 

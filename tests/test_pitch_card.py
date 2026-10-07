@@ -719,3 +719,107 @@ def test_a_device_in_a_japanese_spoken_line_in_three_episodes_running_is_caught(
     lines = premise_device_lines(spine, pitch, episode=3)
 
     assert any("each of the last 3 episodes" in line for line in lines)
+
+
+# --- canary 7 Oct (Lost and Found): the script checks read the story's expressions and ages ----------
+
+
+def test_the_worded_age_warning_prints_each_cards_own_age_in_digits() -> None:
+    spine = spine_fixture(episodes=1)
+    spine["cast"][0]["visual_brief"] = {"age_band": "twenty-eight, adult"}
+    spine["cast"][1]["visual_brief"] = {"age_band": "thirty-one, adult"}
+
+    first, second = word_age_lines(spine)
+
+    assert '("28")' in first and "`age: 28`" in first, first
+    assert '("31")' in second and "`age: 31`" in second, second
+    assert "26" not in first + second
+
+
+@pytest.mark.parametrize(
+    ("words", "age"),
+    [("twenty-eight", 28), ("thirty", 30), ("late twenties", 28), ("sixteen", 16)],
+)
+def test_a_worded_age_reads_as_one_number(words: str, age: int) -> None:
+    from creation.harness_rules import worded_age
+
+    assert worded_age(words) == age
+
+
+def _anchor(spine: dict[str, Any], kind: str) -> dict[str, Any]:
+    """Beat 1 drawn on frame 01, whose brief carries ``kind``."""
+
+    beat = spine["beats"][0]
+    frame = spine["frames"][0]
+    beat["frame_id"] = frame["frame_id"]
+    frame["visual_brief"]["reaction_kind"] = kind
+    return beat
+
+
+def test_an_expression_on_the_beats_frame_or_its_tag_counts_for_an_emotional_beat() -> (
+    None
+):
+    """Beat 2's panel showed tear_up, yet the check said "no expression"."""
+
+    pitch = card(
+        emotional_beats=[
+            {"beat": "Hana wipes the counter in tears", "expression": "tears",
+             "delivery": "through_tears"}
+        ]
+    )  # fmt: skip
+    spine = spine_fixture(episodes=1)
+    spine["beats"][0]["motion_direction"]["delivery"] = "through_tears"
+    assert "no expression" in emotional_beat_lines(spine, pitch, episode=1)[0]
+
+    _anchor(spine, "tear_up")
+    assert emotional_beat_lines(spine, pitch, episode=1) == []
+
+    tagged = spine_fixture(episodes=1)
+    tagged["beats"][0]["motion_direction"]["delivery"] = "through_tears"
+    tagged["beats"][0]["motion_intent"] += " Expression: Hana — tear_up"
+    assert emotional_beat_lines(tagged, pitch, episode=1) == []
+
+
+def test_a_restrained_kind_on_an_emotional_beat_or_its_frame_is_warned() -> None:
+    """Shot 3 got stunned_blank and nothing warned: the check read beat text only."""
+
+    from creation.pitch_card import restraint_kind_lines
+
+    pitch = card(
+        emotional_beats=[
+            {"beat": "Hana wipes the counter", "expression": "eyes wide, mouth open",
+             "delivery": "breathless"}
+        ]
+    )  # fmt: skip
+    spine = spine_fixture(episodes=1)
+    assert restraint_kind_lines(spine, pitch, episode=1) == []
+
+    spine["beats"][0]["motion_intent"] += " Expression: Hana — stunned_blank"
+    (line,) = restraint_kind_lines(spine, pitch, episode=1)
+    assert (
+        "restrained expression (stunned_blank)" in line
+        and "pitch emotional beat 1" in line
+    )
+    assert restraint_beat_lines(spine, episode=1) == [], (
+        "not a grief beat: the pitch check names it"
+    )
+
+    framed = spine_fixture(episodes=1)
+    _anchor(framed, "deadpan")
+    (line,) = restraint_kind_lines(framed, pitch, episode=1)
+    assert "deadpan" in line
+
+
+def test_a_restrained_kind_on_a_grief_beat_is_warned_without_a_pitch() -> None:
+    spine = spine_fixture(episodes=1)
+    spine["beats"][0]["motion_intent"] = (
+        "Hana holds her late mother's umbrella. Expression: Hana — stunned_blank"
+    )
+
+    (line,) = restraint_beat_lines(spine, episode=1)
+
+    assert "restrained expression (stunned_blank) on a grief beat" in line
+    spine["beats"][0]["motion_intent"] = (
+        "Hana holds her late mother's umbrella. Expression: Hana — tear_up"
+    )
+    assert restraint_beat_lines(spine, episode=1) == []
