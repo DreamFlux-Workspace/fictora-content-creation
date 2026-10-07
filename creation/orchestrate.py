@@ -74,6 +74,11 @@ from creation.plan_prompt import (
     narrator_warning,
     server_cast_floor,
 )
+from creation.picture_checks import (
+    board_picture_check_lines,
+    plate_picture_check_lines,
+    take_picture_check_lines,
+)
 from creation.post.take_facts import (
     cast_names_from,
     save_take_facts,
@@ -1148,6 +1153,10 @@ def board_report(
             f"{take_id} board {path.name}: brightness {luma:.1f}% ({source}). Information only."
         )
     lines += shot_list_lines(spine, episode=episode, sets=[index for index, _ in made])
+    # The server's picture check of each board (warnings only; fictora-drama picture_checks).
+    lines += board_picture_check_lines(
+        spine, episode=episode, sets=[index for index, _ in made]
+    )
     cost = float(STILL_USD) * len(made)
     what = "Redrew" if redraw else "Drew"
     lines.append(f"{what} {len(made)} board(s): ${cost:.2f} booked.")
@@ -1605,9 +1614,15 @@ def run_step(
                 ep_dir,
                 f"Cast enrol complete: {len(paths)} plate(s), ${float(STILL_USD) * len(paths):.2f}. Open plates/ and approve.",
             )
+            # The server's picture check of each plate drawn (warnings only).
+            checked = plate_picture_check_lines(spine, only=owing)
+            for line in checked:
+                if line.startswith("!!"):
+                    _note(ep_dir, line)
             return StepResult(
                 state.phase,
-                "Cast drawn. Human gate: review plates/, then `fictora-produce approve --gate plates`.",
+                "Cast drawn. Human gate: review plates/, then `fictora-produce approve --gate plates`."
+                + ("\n" + "\n".join(checked) if checked else ""),
                 tuple(paths),
             )
 
@@ -2051,6 +2066,8 @@ def collect_takes(
                 priced = take_facts_usd(facts, on=today)
                 on_screen += on_screen_lines(take_id, facts, cast_names)
                 on_screen += take_soundtrack_lines(take_id, facts)
+                # The server's picture check of the take's stills (warnings only).
+                on_screen += take_picture_check_lines(facts, take_id=take_id)
                 state.remember_server_lane(
                     server_lane(facts)
                 )  # the caller saves the state

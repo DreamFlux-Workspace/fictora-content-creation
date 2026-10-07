@@ -124,6 +124,7 @@ from creation.patch_refusal import (
     refusal_code,
     server_named_rules,
 )
+from creation.picture_checks import picture_check_lines, plate_picture_check_lines
 from creation.post.take_facts import (
     cast_names_from,
     save_take_facts,
@@ -4038,6 +4039,11 @@ def run_look_frame(
     )
     print(str(path), file=out)
     print(f"image_url: {image_url}", file=out)
+    # The server's picture check of who is drawn vs the description (warnings only).
+    for line in picture_check_lines(answer.get("picture_checks"), what="look frame"):
+        print(line, file=out)
+        if line.startswith("!!"):
+            _note(desk, 1, f"look-frame {line}")
     print(
         f"Show {path.name} to the human. If it is the look: fictora-produce approve --desk {desk} --gate look "
         f"(pins {path.name} and records the yes; step will not draw plates or boards before it). "
@@ -5930,6 +5936,9 @@ def run_redraw_plate_with_note(
         f"{name} redrawn alone (${float(STILL_USD):.2f}); nobody else was drawn or paid.",
         file=out,
     )
+    # The server's picture check of the redrawn plate (warnings only).
+    for line in plate_picture_check_lines(spine, only=[cast_id]):
+        print(line, file=out)
     _settle_failed_plates_step(desk, spine, out=out)
     if load_production(desk).phase == "wait_plates":
         print(
