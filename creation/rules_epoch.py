@@ -74,8 +74,8 @@ EPOCH_CHOICES = (LEGACY, CURRENT_EPOCH)
 #: style). Mirrors fictora-drama ``rules_epoch.CONTINUING_FIXES``.
 CONTINUING_FIXES: frozenset[str] = frozenset(
     {
-        # Seam fix: join lays a steady bed under a loud seam and trims a near-silent head on a filmed cut (#156). Approved 2026-10-07.
-        "seam_fix",
+        # Seam bed: join lays a steady sound bed under a loud seam (#156). Approved 2026-10-07, bed only: the silent-head trim stays new desks.
+        "seam_bed",
     }
 )
 

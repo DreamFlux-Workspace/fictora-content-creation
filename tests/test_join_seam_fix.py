@@ -343,8 +343,8 @@ def test_a_legacy_desk_off_the_allow_list_and_no_seam_fix_measure_and_refuse_exa
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # Since 7 Oct 2026 a legacy desk gets the seam fix (continuing_fix); with
-    # "seam_fix" off the allow-list it measures and refuses as it always did.
+    # Since 7 Oct 2026 a legacy desk gets the seam bed (continuing_fix); with
+    # "seam_bed" off the allow-list it measures and refuses as it always did.
     monkeypatch.setattr(rules_epoch, "CONTINUING_FIXES", frozenset())
     for each in (desk, legacy_desk):
         finished(each, "t1", seconds=4.0, level=0.05)
@@ -445,22 +445,54 @@ def test_a_seam_fixed_join_still_gets_its_cover_on_the_first_frame(
 
 
 @needs_ffmpeg
-def test_a_continuing_desk_tries_the_seam_fix(
-    legacy_desk: Path, monkeypatch: pytest.MonkeyPatch
+def test_a_continuing_desk_gets_the_steady_bed_but_never_a_trim(
+    legacy_desk: Path,
 ) -> None:
-    """Founder decision 7 Oct 2026: the seam fix (#156) reaches desks created before 6 Oct."""
+    """Founder decision 7 Oct 2026: the seam bed (#156) reaches desks created before 6 Oct; picture is never cut."""
 
     finished(legacy_desk, "t1", seconds=4.0, level=0.05)
-    finished(legacy_desk, "t2", seconds=4.0, level=0.001, seed=2)
+    finished(
+        legacy_desk, "t2", seconds=4.0, level=0.05, silent_head=1.5, cut_at=1.5, seed=2
+    )
     ambience(legacy_desk)
     assert is_legacy(legacy_desk)
 
-    class _Tried(Exception):
-        pass
+    result, printed = _join(legacy_desk)
 
-    def tried(*args: object, **kwargs: object) -> None:
-        raise _Tried
+    fix = result.seam_fix
+    assert fix is not None and fix.fixed, printed
+    assert fix.laid and not fix.trimmed, (fix.laid, fix.trimmed)
+    assert "trying a steady bed under it (free)" in printed
+    assert "silent-head trim" not in printed
+    assert result.complete and abs(result.seam_steps_db[0]) <= 5
+    assert abs(join_module.count_frames(result.master) / 24 - 8.0) < 0.05, (
+        "every frame of both takes is kept"
+    )
 
-    monkeypatch.setattr(join_module, "_fix_seams", tried)
-    with pytest.raises(_Tried):
-        _join(legacy_desk)
+
+@needs_ffmpeg
+def test_when_the_bed_is_not_enough_a_continuing_desk_refuses_and_a_new_desk_trims(
+    desk: Path, legacy_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for each in (desk, legacy_desk):
+        finished(each, "t1", seconds=4.0, level=0.05)
+        finished(
+            each, "t2", seconds=4.0, level=0.05, silent_head=1.5, cut_at=1.5, seed=2
+        )
+    # A bed this quiet cannot close the seam: only a trim could.
+    monkeypatch.setattr(seam_fix, "SEAM_BED_MAX_DB", -90.0)
+
+    old, old_printed = _join(legacy_desk)
+    new, new_printed = _join(desk)
+
+    assert old.seam_fix is not None and not old.seam_fix.fixed, old_printed
+    assert not old.seam_fix.trimmed and not old.complete and old.marked is None
+    assert any("no silent-head trim" in line for line in old.seam_fix.tried), (
+        old.seam_fix.tried
+    )
+    assert abs(join_module.count_frames(old.master) / 24 - 8.0) < 0.05, (
+        "the continuing desk's join keeps every frame"
+    )
+    assert new.seam_fix is not None and new.seam_fix.fixed and new.seam_fix.trimmed
+    assert "and a silent-head trim (free)" in new_printed
+    assert abs(join_module.count_frames(new.master) / 24 - 6.5) < 0.05

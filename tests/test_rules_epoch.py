@@ -583,9 +583,9 @@ def test_a_legacy_reel_never_draws_system_panels(
 
 
 def test_the_allow_list_is_group_a_only() -> None:
-    """The seam fix (#156), sound and silent-head trims only; nothing that changes a voice, character or look."""
+    """The seam bed (#156), sound only (the silent-head trim cuts picture: new desks only)."""
 
-    assert CONTINUING_FIXES == frozenset({"seam_fix"})
+    assert CONTINUING_FIXES == frozenset({"seam_bed"})
 
 
 def test_continuing_fix_reaches_a_legacy_desk_only_while_listed(
@@ -594,12 +594,12 @@ def test_continuing_fix_reaches_a_legacy_desk_only_while_listed(
     old = _old_desk(tmp_path)
     new = init_series_desk(tmp_path / "new", "New", band="30s", episode_count=1)
     assert is_legacy(old) and not is_legacy(new)
-    assert continuing_fix(old, "seam_fix") is True
+    assert continuing_fix(old, "seam_bed") is True
     assert continuing_fix(old, "not_approved") is False
     assert continuing_fix(new, "not_approved") is True
     assert continuing_fix(None, "not_approved") is True
     # The desk keeps its epoch: every other gate still reads it as legacy.
     assert desk_epoch(old).legacy
     monkeypatch.setattr(rules_epoch, "CONTINUING_FIXES", frozenset())
-    assert continuing_fix(old, "seam_fix") is False
-    assert continuing_fix(new, "seam_fix") is True
+    assert continuing_fix(old, "seam_bed") is False
+    assert continuing_fix(new, "seam_bed") is True

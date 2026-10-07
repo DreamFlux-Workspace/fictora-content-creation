@@ -1,7 +1,9 @@
 """``join`` fixes a loud seam itself before refusing: a steady bed on the quiet side, then a silent-head trim.
 
-Every desk, those created before 6 Oct 2026 included (founder decision, 7 Oct
-2026: :func:`creation.rules_epoch.continuing_fix`, ``seam_fix``).
+The steady bed reaches every desk, those created before 6 Oct 2026 included
+(founder decision, 7 Oct 2026: :func:`creation.rules_epoch.continuing_fix`,
+``seam_bed``). The silent-head trim cuts picture, so it stays new-desks-only
+(:func:`creation.rules_epoch.is_legacy`).
 
 Why: the join seam (one take ends quiet, the next starts loud, or the
 reverse) was the most repeated issue, seen 8 times across four series, and
@@ -776,8 +778,12 @@ def fix_seams(
     measure: Callable[[Path, list[float], list[tuple[float, float]]], list[SeamLevel]],
     render: Callable[[Joined, list[SeamBed], Path], Path],
     scratch: Path,
+    trim: bool = True,
 ) -> tuple[Joined, SeamFixReport]:
     """Try a steady bed, then a silent-head trim with the bed again, on every seam over ``threshold``.
+
+    ``trim=False`` (a desk created before 6 Oct 2026) lays the bed only: no
+    picture is ever cut (founder decision, 7 Oct 2026).
 
     Returns
     -------
@@ -817,6 +823,12 @@ def fix_seams(
         report.fixed, report.after = True, first.steps()
         report.laid = [bed.describe() for bed in beds]
         return first, report
+    if not trim:
+        report.tried.append(
+            "no silent-head trim: this desk was created before 6 Oct 2026 (steady bed only)"
+        )
+        report.after = first.steps()
+        return joined, report
 
     trims: list[Trim] = []
     for index in [i for i, s in enumerate(first.steps()) if abs(s) > threshold]:
