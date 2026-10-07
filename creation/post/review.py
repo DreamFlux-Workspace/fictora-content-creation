@@ -1461,6 +1461,47 @@ def take_warnings_section(
     )
 
 
+# --- The server's picture check (fictora-drama picture_checks) -------------------------------------------
+
+
+def picture_checks_section(facts: Mapping[str, Any] | None) -> Section | None:
+    """What the server's picture check found in the take's stills, or ``None`` when no check ran.
+
+    Warnings only: the check is one cheap vision read of a few stills against
+    what each shot was asked to show (people on screen, one person twice, the
+    first shot's framing vs board row 1, forbidden elements).
+    """
+
+    from creation.picture_checks import (
+        LOOK_BEFORE_APPROVING,
+        picture_check_lines,
+        take_picture_checks,
+    )
+
+    raw = take_picture_checks(facts)
+    lines = picture_check_lines(raw, what="take")
+    if not lines:
+        return None
+    found = [line.removeprefix("!! ") for line in lines if line.startswith("!! ")]
+    if not found:
+        return Section(
+            "Picture check",
+            OK,
+            "the server's check of the take's stills found nothing",
+            "one vision read of a few stills against each shot's plan",
+            [],
+            {"picture_checks": []},
+        )
+    return Section(
+        "Picture check",
+        WARN,
+        f"{len(found)} warning(s) from the server's check of the take's stills",
+        "one vision read of a few stills against each shot's plan",
+        [*found, LOOK_BEFORE_APPROVING.strip()],
+        {"picture_checks": found},
+    )
+
+
 # --- People on screen (a human check) ----------------------------------------------------------------------
 
 
@@ -1971,6 +2012,9 @@ def review_take(
     warned = take_warnings_section(facts, cast_names_from(found[0] if found else None))
     if warned is not None:
         sections.append(warned)
+    pictured = picture_checks_section(facts)
+    if pictured is not None:
+        sections.append(pictured)
     if facts is not None and "soundtrack" in facts.get("take_facts", facts):
         sections.append(
             soundtrack_section(facts, cast_names_from(found[0] if found else None))
@@ -2037,6 +2081,7 @@ __all__ = [
     "default_take",
     "safe_zones_section",
     "take_warnings_section",
+    "picture_checks_section",
     "measure_duck",
     "measure_frames",
     "measure_true_peak",
