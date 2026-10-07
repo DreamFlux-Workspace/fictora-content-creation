@@ -450,6 +450,25 @@ def seam_fix_line() -> str:
     )
 
 
+def seam_fix_tried_line() -> str:
+    """What is left once ``join`` tried its own seam fix (desks created on or after 6 Oct 2026).
+
+    ``join`` already laid the show's steady sound on the quiet side and trimmed
+    a silent head on a filmed cut where it could (the report lists both).
+
+    Returns
+    -------
+    str
+        The line ``join`` prints with the stop.
+    """
+
+    return (
+        "join already tried a steady bed on the quiet side and a silent-head trim (listed above as tried). "
+        "What is left: a steadier sound that belongs in the scene on the quiet take (`finish --cue`), a trim "
+        "of the dead air by hand on a filmed cut (`trim`), then join again."
+    )
+
+
 def late_opening_line(rows: Sequence[str], *, take_id: str) -> str | None:
     """Flag take 1 when its first line starts after the hook window.
 

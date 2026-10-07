@@ -231,6 +231,7 @@ def test_a_seam_step_over_5_db_stops_the_join_unmarked_and_gain_matching_fixes_i
             "--episode",
             "1",
             "--no-gain-match",
+            "--no-seam-fix",  # a new desk would lay a bed first (tests/test_join_seam_fix.py)
             "--json",
         ]
     )

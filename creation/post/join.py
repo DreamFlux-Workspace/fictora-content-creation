@@ -46,7 +46,11 @@ What ``join`` does, in order:
    sides' levels are printed. A bigger step stops the join: the un-marked
    master is kept to listen to, nothing is marked, and the CLI exits 5, unless
    a human passes ``--accept-seam "why" --accepted-by NAME`` (recorded in the
-   run notes).
+   run notes). On a desk created on or after 6 Oct 2026 ``join`` first fixes
+   the seam itself, free (:mod:`creation.post.seam_fix`: a steady bed under the
+   quiet side, then a silent-head trim on a filmed cut) and stops only when that
+   is not enough, listing what it tried; ``--no-seam-fix`` turns it off. An
+   older desk measures and refuses exactly as before.
 7. **Mark once** on the joined master (the parts are un-marked); the master
    stays beside the marked file.
 
@@ -68,6 +72,7 @@ from __future__ import annotations
 import json
 import math
 import statistics
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -110,11 +115,25 @@ from creation.post.mix import (
     check_duck_db,
     mix_take,
 )
+from creation.post.seam_fix import (
+    Joined,
+    SeamBed,
+    SeamFixReport,
+    SteadyCue,
+    Trim,
+    find_steady_cue,
+    fix_seams,
+    lay_beds,
+    plan_silent_trim,
+)
+from creation.post.seam_fix import keep as keep_seam_fix
 from creation.post.watermark import watermark
+from creation.rules_epoch import is_legacy
 from creation.harness_rules import (
     gain_match_note,
     inner_voice_cues,
     seam_fix_line,
+    seam_fix_tried_line,
     thought_short_of_cut,
 )
 
@@ -240,6 +259,8 @@ class JoinResult:
     accepted: dict[str, Any] | None = None
     #: The bed's level across the join (:func:`creation.post.bed.bed_level`).
     bed_db: float | None = None
+    #: What ``join`` laid / trimmed on its loud seams (new desks; ``None`` when it tried nothing).
+    seam_fix: SeamFixReport | None = None
 
     @property
     def loud_seams(self) -> list[tuple[float, float]]:
@@ -286,6 +307,8 @@ class JoinResult:
             f"Seams: {seams}",
             f"Frames / seconds: {self.fps:.2f}; loudness {self.loudness}",
         ]
+        if self.seam_fix is not None:
+            lines += self.seam_fix.lines(SEAM_STEP_DB)
         if self.accepted is not None:
             lines.append(
                 f"Seam accepted by {self.accepted['by']}: {self.accepted['why']} "
@@ -313,6 +336,7 @@ class JoinResult:
             "loudness": self.loudness,
             "bed_db": self.bed_db,
             "accepted": self.accepted,
+            **({"seam_fix": self.seam_fix.as_json()} if self.seam_fix is not None else {}),
         }  # fmt: skip
 
 
@@ -975,11 +999,14 @@ def join_sound(
     lengths: list[float],
     gains: list[float],
     dissolves: list[float],
+    heads: list[float] | None = None,
 ) -> np.ndarray:
     """Each part's pre-bed sound, cut or padded to its picture, gained, then butted or crossfaded (linear).
 
     On the samples, so every part starts exactly where its picture does (ffmpeg's
     ``acrossfade`` / ``concat`` chain lost a part's sound at random in testing).
+    ``heads``: seconds cut off each part's start (a silent-head trim; ``lengths``
+    are then the parts' lengths after the cut).
     """
 
     joined = np.zeros((0, 2))
@@ -987,7 +1014,8 @@ def join_sound(
         zip(parts, lengths, gains, strict=True)
     ):
         size = int(round(seconds * BED_RATE))
-        sound = decode_stereo(part.pre_bed)[:size]
+        skip = int(round(heads[index] * BED_RATE)) if heads else 0
+        sound = decode_stereo(part.pre_bed)[skip : skip + size]
         sound = np.pad(sound, ((0, size - len(sound)), (0, 0))) * 10 ** (gain / 20)
         overlap = int(round(dissolves[index - 1] * BED_RATE)) if index else 0
         if overlap:
@@ -1007,17 +1035,27 @@ def _join_bedless(
     gains: list[float],
     dissolves: list[float],
     out: Path,
+    heads: list[float] | None = None,
 ) -> list[float]:
-    """Captioned pictures + pre-bed sound, gain-matched, cut or dissolved; no bed, no limiter (float sound)."""
+    """Captioned pictures + pre-bed sound, gain-matched, cut or dissolved; no bed, no limiter (float sound).
+
+    ``heads``: seconds cut off each part's start (a silent-head trim on a filmed cut).
+    """
 
     first = probe_video(parts[0].picture)
     inputs: list[str] = []
     graph: list[str] = []
     for index, (part, seconds) in enumerate(zip(parts, lengths, strict=True)):
         inputs += ["-i", str(part.picture)]
+        head = heads[index] if heads else 0.0
+        window = (
+            f"trim=start={head:.4f}:duration={seconds:.4f}"
+            if head > 0
+            else f"trim=duration={seconds:.4f}"
+        )
         graph.append(
             f"[{index}:v]settb=AVTB,fps={HOUSE_FPS:g},scale={first.width}:{first.height},setsar=1,"
-            f"format=yuv420p,trim=duration={seconds:.4f},setpts=PTS-STARTPTS,fps={HOUSE_FPS:g}[v{index}]"
+            f"format=yuv420p,{window},setpts=PTS-STARTPTS,fps={HOUSE_FPS:g}[v{index}]"
         )
     video, elapsed = "[v0]", lengths[0]
     seams: list[float] = []
@@ -1039,7 +1077,7 @@ def _join_bedless(
             elapsed += lengths[index]
         video = f"[vx{index}]"
     sound = write_wav(
-        join_sound(parts, lengths, gains, dissolves),
+        join_sound(parts, lengths, gains, dissolves, heads),
         out.with_name(f"{out.stem}-sound.wav"),
     )
     run_ffmpeg(
@@ -1200,6 +1238,89 @@ def _join_cover(desk: Path, episodes: tuple[int, ...]) -> tuple[Path | None, str
     )
 
 
+def _part_sound(part: JoinPart, gain: float, seconds: float) -> np.ndarray:
+    size = int(round(seconds * BED_RATE))
+    sound = decode_stereo(part.pre_bed)[:size]
+    return np.pad(sound, ((0, size - len(sound)), (0, 0))) * 10 ** (gain / 20)
+
+
+def _fix_seams(
+    desk: Path,
+    parts: list[JoinPart],
+    lengths: list[float],
+    gains: list[float],
+    build: Any,
+    render: Any,
+    work: Path,
+    joined: Joined,
+) -> tuple[Joined, SeamFixReport]:
+    """Run :func:`creation.post.seam_fix.fix_seams` on this join (its cue search, trims and re-join)."""
+
+    from creation.post.edit import measure_cuts
+
+    passed_over: list[str] = []
+    cues: dict[tuple[int, bool], SteadyCue] = {}
+
+    def own(
+        index: int, base: Joined
+    ) -> tuple[str, np.ndarray, list[tuple[float, float]]]:
+        part, head = parts[index], base.heads[index]
+        seconds = lengths[index] - head - base.tails[index]
+        windows, _ = part_speech(desk, part, lengths[index])
+        sound = _part_sound(part, gains[index], lengths[index])[
+            int(round(head * BED_RATE)) :
+        ]
+        sound = sound[: int(round(seconds * BED_RATE))]
+        return part.label, sound, [(a - head, b - head) for a, b in windows if b > head]
+
+    def pick_cue(base: Joined, index: int, quiet_after: bool) -> SteadyCue:
+        quiet, loud = (index + 1, index) if quiet_after else (index, index + 1)
+        if (index, quiet_after) not in cues:
+            cues[(index, quiet_after)] = find_steady_cue(
+                desk, [parts[quiet].episode, parts[loud].episode],
+                [own(loud, base), own(quiet, base)], decode=decode_stereo, tried=passed_over,
+            )  # fmt: skip
+        return cues[(index, quiet_after)]
+
+    def plan_trim(index: int, head: bool) -> Trim | str:
+        part = parts[index]
+        crop = None
+        if part.record.letterbox:
+            from creation.post.delivery_geometry import layout
+
+            pic = layout().picture
+            crop = (pic.x, pic.y, pic.width, pic.height)
+        try:
+            cuts = measure_cuts(part.picture, crop=crop)
+        except RuntimeError as exc:
+            return f"{part.label}: its filmed cuts could not be read ({exc})"
+        windows, _ = part_speech(desk, part, lengths[index])
+        return plan_silent_trim(
+            part_index=index, label=part.label,
+            sound=_part_sound(part, gains[index], lengths[index]), seconds=lengths[index],
+            speech=windows, cuts=cuts, head=head, fps=HOUSE_FPS,
+        )  # fmt: skip
+
+    def rejoin(heads: list[float], tails: list[float], target: Path) -> Joined:
+        seams, mixed, _, speech, notes, sources = build(
+            heads, tails, target, work / "trim"
+        )
+        return Joined(
+            target, seams, speech, seam_levels(target, seams, speech=speech), heads, tails, mixed,
+            notes, sources,
+        )  # fmt: skip
+
+    scratch = work / "seam-fix"
+    scratch.mkdir(parents=True, exist_ok=True)
+    kept, report = fix_seams(
+        joined, parts=parts, threshold=SEAM_STEP_DB, pick_cue=pick_cue, plan_trim=plan_trim,
+        rejoin=rejoin, measure=lambda path, seams, speech: seam_levels(path, seams, speech=speech),
+        render=render, scratch=scratch,
+    )  # fmt: skip
+    report.tried = passed_over + report.tried
+    return kept, report
+
+
 def run_join(
     desk: Path,
     *,
@@ -1213,6 +1334,7 @@ def run_join(
     watermark_y: int | None = None,
     accept_seam: str | None = None,
     accepted_by: str | None = None,
+    seam_fix: bool = True,
     ending: str = "hard",
     hook_line: str | None = None,
     no_hook_line: bool = False,
@@ -1251,6 +1373,12 @@ def run_join(
         the join is marked anyway, and who and why go in the run notes.
     accepted_by
         Who accepted (required with ``accept_seam``).
+    seam_fix
+        On a desk created on or after 6 Oct 2026, a seam over 5 dB is first fixed
+        by ``join`` itself, free (:mod:`creation.post.seam_fix`: a steady bed on the
+        quiet side, then a silent-head trim on a filmed cut); ``False``
+        (``--no-seam-fix``) measures and refuses as before. Not tried with
+        ``accept_seam`` or on an older desk.
     ending
         ``hard`` (default): the episode ends on its last frame, the bed stops
         with it. ``freeze-black``: the marked file holds its last frame, then
@@ -1398,53 +1526,136 @@ def run_join(
             print(skip_note, file=out, flush=True)
     gains = match_gains(parts) if gain_match else [0.0] * len(parts)
     gain_note = gain_match_note(gains) if gain_match else skip_note
-    total = sum(lengths) - sum(dissolves)
     master = next_versioned_path(folder, stem, ".mp4")
-    with tempfile.TemporaryDirectory() as scratch:
-        bedless = Path(scratch) / "joined-no-bed.mkv"
-        seams = _join_bedless(parts, lengths, gains, dissolves, bedless)
+    zeros = [0.0] * len(parts)
+
+    def joined_speech(
+        heads: list[float], tails: list[float]
+    ) -> tuple[list[tuple[float, float]], list[str]]:
+        kept = [n - h - t for n, h, t in zip(lengths, heads, tails, strict=True)]
+        speech: list[tuple[float, float]] = []
+        notes: list[str] = []
+        start = 0.0
+        for index, (part, seconds) in enumerate(zip(parts, lengths, strict=True)):
+            if index:
+                start += kept[index - 1] - dissolves[index - 1]
+            windows, note = part_speech(desk, part, seconds)
+            head, length = heads[index], kept[index]
+            if head or tails[index]:
+                windows = [
+                    (max(0.0, a - head), min(b - head, length))
+                    for a, b in windows
+                    if a - head < length and b - head > 0
+                ]
+            speech += [(start + a, start + b) for a, b in windows]
+            notes.append(note)
+            short = thought_short_of_cut(
+                inner_voice_cues(part.record.path),
+                duration=seconds - tails[index],
+                label=part.label,
+                last_take=index == len(parts) - 1,
+            )
+            if short:
+                notes.append(short)
+        return speech, notes
+
+    def build(
+        heads: list[float], tails: list[float], target: Path, work: Path
+    ) -> tuple[
+        list[float],
+        Any,
+        float,
+        list[tuple[float, float]],
+        list[str],
+        tuple[Path, Path | None],
+    ]:
+        kept = [n - h - t for n, h, t in zip(lengths, heads, tails, strict=True)]
+        total = sum(kept) - sum(dissolves)
+        work.mkdir(parents=True, exist_ok=True)
+        bedless = work / "joined-no-bed.mkv"
+        seams = _join_bedless(parts, kept, gains, dissolves, bedless, heads)
         looped = (
-            loop_bed(bed, total + 1.0, Path(scratch) / "bed-looped.wav")
+            loop_bed(bed, total + 1.0, work / "bed-looped.wav")
             if bed is not None
             else None
         )
         mixed = mix_take(
             bedless,
-            master,
+            target,
             bed=looped,
             bed_db=bed_db if bed_db is not None else -16.5,
             duck_db=duck_db if looped is not None else None,
             music_in_take=looped is None,
         )
-    fps = assert_house_fps(master)
-    speech: list[tuple[float, float]] = []
-    speech_notes: list[str] = []
-    start = 0.0
-    for index, (part, seconds) in enumerate(zip(parts, lengths, strict=True)):
-        if index:
-            start += lengths[index - 1] - dissolves[index - 1]
-        windows, note = part_speech(desk, part, seconds)
-        speech += [(start + a, start + b) for a, b in windows]
-        speech_notes.append(note)
-        short = thought_short_of_cut(
-            inner_voice_cues(part.record.path),
-            duration=seconds,
-            label=part.label,
-            last_take=index == len(parts) - 1,
+        fps = assert_house_fps(target)
+        speech, notes = joined_speech(heads, tails)
+        return seams, mixed, fps, speech, notes, (bedless, looped)
+
+    def render(base: Joined, beds: list[SeamBed], target: Path) -> Path:
+        """``base`` mixed again from its own sound before the mix, at its take gain, with the seam beds."""
+
+        bedless, looped = base.sources
+        count = int(round(media_duration(bedless) * BED_RATE))
+        layer = write_wav(
+            lay_beds(np.zeros((count, 2)), beds),
+            target.with_name(f"{target.stem}-layer.wav"),
         )
-        if short:
-            speech_notes.append(short)
+        mix_take(
+            bedless, target, bed=looped, bed_db=bed_db if bed_db is not None else -16.5,
+            duck_db=duck_db if looped is not None else None, music_in_take=looped is None,
+            seam_layer=layer, gain_db=base.mixed.gain_db,
+        )  # fmt: skip
+        layer.unlink(missing_ok=True)
+        return target
+
+    work = Path(tempfile.mkdtemp(prefix="fictora-join-"))
+    try:
+        seams, mixed, fps, speech, speech_notes, sources = build(
+            zeros, zeros, master, work
+        )
+        opening_notes = edge_notes(
+            desk, master, parts, speech=speech, letterbox=letterbox
+        )
+        levels = seam_levels(master, seams, speech=speech)
+        fix_report = None
+        loudness_now: str | None = None
+        if (
+            seam_fix
+            and not accept_seam
+            and any(abs(lv.step_db) > SEAM_STEP_DB for lv in levels)
+            and not is_legacy(desk)
+        ):
+            print(
+                "A seam steps over 5 dB: trying a steady bed under it and a silent-head trim (free)",
+                file=out,
+                flush=True,
+            )
+            joined, fix_report = _fix_seams(
+                desk, parts, lengths, gains, build, render, work,
+                Joined(master, seams, speech, levels, zeros, zeros, mixed, speech_notes, sources),
+            )  # fmt: skip
+            if fix_report.fixed:
+                keep_seam_fix(joined, master)
+                mixed, speech_notes = joined.mixed, joined.notes
+                fps = assert_house_fps(master)
+                seams, speech, levels = joined.seams, joined.speech, joined.levels
+                loudness_now = f"{measure_loudness(master):.1f} LUFS"
+                if fix_report.trimmed:
+                    opening_notes = edge_notes(
+                        desk, master, parts, speech=speech, letterbox=letterbox
+                    )
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
     if gain_note:
         speech_notes.append(gain_note)
-    speech_notes += edge_notes(desk, master, parts, speech=speech, letterbox=letterbox)
+    speech_notes += opening_notes
     if title_note:
         speech_notes.append(title_note)
-    levels = seam_levels(master, seams, speech=speech)
     result = JoinResult(
         parts=parts, master=master, marked=None, bed=bed, gains_db=gains, dissolves=dissolves, seams=seams,
         seam_steps_db=[level.step_db for level in levels], fps=round(fps, 3),
-        loudness=f"{mixed.mix_lufs:.1f} LUFS", mix_line=mixed.one_line(), seam_levels=levels,
-        bed_db=bed_db,
+        loudness=loudness_now or f"{mixed.mix_lufs:.1f} LUFS", mix_line=mixed.one_line(), seam_levels=levels,
+        bed_db=bed_db, seam_fix=fix_report,
     )  # fmt: skip
     if level is not None:
         result.notes.append(f"bed level {level.one_line()}")
@@ -1533,7 +1744,11 @@ def run_join(
             "Fix: join again with gain matching on (the default), or re-finish the loud take with a lower level. "
             "If the master sounds right through the seam (the step is a line starting on the cut, not the "
             'room), join again with --accept-seam "why" --accepted-by NAME; both go in the run notes. '
-            + seam_fix_line(),
+            + (
+                seam_fix_tried_line()
+                if result.seam_fix is not None
+                else seam_fix_line()
+            ),
             file=out,
         )
         return result
