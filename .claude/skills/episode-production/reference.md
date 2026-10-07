@@ -456,6 +456,7 @@ uv run fictora-produce film --desk D --episode N [--cause "…"] [--confirm-spen
 | "The deployed Drama API does not film one episode alone yet" | Nothing was sent or charged. Stop; tell engineering (the deploy needs fictora-drama #436) |
 | `step` shows the same `PAUSED for the creator` again | The brief has not changed (same words and draft settings), so nothing was sent. Edit it with the creator, `bind --prompt` the edited brief (or `brief --edit`), then `step`: a changed brief is always a new draft. Not `retry-step` (the desk is at `new`, not failed) |
 | `author`, `redraw-board` or `film` interrupted | Run the same command again: it reuses the recorded key or polls the recorded job, never pays twice |
+| `Server busy (HTTP 502/503/504), retrying in N s` / `The server stayed busy …` | The kit asks reads, job polls and the audio routes again (Retry-After, else 10, 20, 40 s; four tries, audio three); a POST that starts paid work is sent once. After the stop the desk is not failed: run the same command again in a few minutes (same key; a running job is picked up). Not `retry-step` |
 
 Trust `GET /v1/video-generations/{id}` or `GET /v1/jobs/{id}` over log lines.
 

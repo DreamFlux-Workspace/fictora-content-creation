@@ -493,7 +493,8 @@ def test_rate_limits_and_in_progress_are_waited_out_and_a_failed_render_is_repla
         audio.sfx_cue(spine_id="sp", sound="hum", seconds=2.0, key="same")["audio_url"]
         == "u"
     )
-    assert waits == [6.0, 15.0]
+    # The failed render is replayed after the kit's busy-server wait (10 s, jittered), no longer at once.
+    assert waits[:2] == [6.0, 15.0] and len(waits) == 3 and 7.5 <= waits[2] <= 12.5
     assert {r.headers["Idempotency-Key"] for r in rec.requests} == {"same"}, (
         "every retry replays the same key"
     )

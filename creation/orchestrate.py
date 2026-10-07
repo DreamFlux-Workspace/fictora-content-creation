@@ -1832,6 +1832,8 @@ def run_step(
             # The job is still on the server. Marking the desk failed left only
             # paid restarts (L-20261006-14); left where it was, the next `step`
             # picks the job up under the same key. Every desk (founder, 7 Oct 2026).
+            # A server that stayed busy (502/503/504, ServerBusy) is the same case
+            # (L-20261005-21).
             raise
         if state.phase != "failed":
             state.failed_phase = state.phase

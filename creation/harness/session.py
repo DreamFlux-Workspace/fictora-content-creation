@@ -7,17 +7,22 @@ import re
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urljoin
 
 import httpx
 from creation.harness.http_util import (
     HOSTED_POST_OFF_HINT,
+    RETRY_ATTEMPTS,
+    ServerBusy,
     api_error_text,
     api_headers,
     hosted_post_off,
     poll_until_terminal,
     save_json,
+    send_with_retries,
+    server_busy,
+    transient_status,
 )
 
 #: The compiled provider prompt is core-team only on the server (403 for operator
@@ -39,6 +44,7 @@ class DramaApiRunSession:
         poll_interval_seconds: float = 15.0,
         client_timeout: float = 180.0,
         log_name: str = "run.log",
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         """Bind credentials, output directory, and correlation ids for one run.
 
@@ -60,6 +66,8 @@ class DramaApiRunSession:
             HTTP client timeout in seconds.
         log_name
             Filename for append-only JSONL phase log under ``out_dir``.
+        sleep
+            Wait between retries of a read the server answered 502/503/504 (injected in tests).
         """
         self.base_url = base_url.rstrip("/")
         self.token = token
@@ -69,6 +77,7 @@ class DramaApiRunSession:
         self.poll_interval_seconds = poll_interval_seconds
         self._log_name = log_name
         self.client = httpx.Client(timeout=client_timeout)
+        self.sleep = sleep
 
     def url(self, path: str) -> str:
         """Join a drama API path against the configured base URL.
@@ -110,6 +119,15 @@ class DramaApiRunSession:
         """Write one JSON artefact under ``out_dir``."""
         save_json(self.out / name, payload)
 
+    def _read(self, path: str) -> httpx.Response:
+        """GET ``path``, asking again on 502/503/504 or a dropped connection (a read is safe to repeat)."""
+
+        url = self.url(path)
+        return send_with_retries(
+            lambda: self.client.get(url, headers=self.headers(read=True)),
+            sleep=self.sleep,
+        )
+
     def _ok(self, response: httpx.Response) -> dict[str, Any]:
         if response.is_success:
             return response.json()
@@ -121,15 +139,28 @@ class DramaApiRunSession:
             raise SystemExit(
                 f"HTTP {response.status_code} {response.request.method} {response.request.url}: {HOSTED_POST_OFF_HINT}"
             )
+        if transient_status(response.status_code, detail, str(response.request.url)):
+            # A busy server is not a failed desk: ``step`` leaves the desk where it
+            # was and the same command resumes (L-20261005-21). Reads were already
+            # asked again; a write is sent once (it may start paid work).
+            method = response.request.method
+            raise ServerBusy(
+                server_busy(
+                    response.status_code,
+                    method,
+                    response.request.url.path,
+                    repeated=method == "GET",
+                    attempts=RETRY_ATTEMPTS,
+                    detail=detail,
+                )
+            )
         raise SystemExit(
             f"HTTP {response.status_code} {response.request.method} {response.request.url}: {api_error_text(detail)}"
         )
 
     def get(self, path: str) -> dict[str, Any]:
-        """GET a drama API path and return JSON."""
-        return self._ok(
-            self.client.get(self.url(path), headers=self.headers(read=True))
-        )
+        """GET a drama API path and return JSON (502/503/504 and drops are asked again first)."""
+        return self._ok(self._read(path))
 
     def get_optional(self, path: str) -> tuple[int, Any]:
         """GET a drama API path without raising on an error status.
@@ -144,7 +175,7 @@ class DramaApiRunSession:
         tuple[int, Any]
             HTTP status and the parsed JSON body (text when it is not JSON).
         """
-        response = self.client.get(self.url(path), headers=self.headers(read=True))
+        response = self._read(path)
         try:
             body: Any = response.json()
         except ValueError:

@@ -10,6 +10,19 @@ from creation.harness import http_util
 from creation.orchestrate import _delivery_video_url
 
 
+class _Clock:
+    """Monotonic time that moves only when the poll sleeps."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
 def test_poll_until_terminal_retries_transient_read_error() -> None:
     calls = {"n": 0}
 
@@ -33,6 +46,7 @@ def test_poll_until_terminal_retries_transient_read_error() -> None:
         label="video",
         deadline_seconds=60.0,
         interval_seconds=0.01,
+        clock=_Clock(),
     )
 
     assert payload["status"] == "completed"
