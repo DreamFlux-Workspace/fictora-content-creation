@@ -14,7 +14,12 @@ from conftest import set_phase, turbo_take_usd
 from creation import episode_commands, orchestrate
 from creation.episode_commands import CommandStopped, run_film
 from creation.harness import stages_gated as stages
-from creation.ops.floor import approve_board, init_series_desk, record_filmed
+from creation.ops.floor import (
+    approve_board,
+    init_series_desk,
+    record_filmed,
+    record_spend,
+)
 from creation.ops.state import episode_by_ordinal, load_series
 from creation.ops.folder import next_versioned_path
 from creation.post.desk import take_job_id, take_stored_url
@@ -347,6 +352,59 @@ def test_an_interrupted_film_picks_up_its_job_without_posting_again(
 
     assert api30.posted(VIDEO) == []
     assert episode_by_ordinal(load_series(desk30), 2).takes[1].filmed_count == 2
+
+
+def test_a_film_cut_off_after_collecting_resumes_its_job_and_books_once(
+    desk30: Path, api30: FakeApi
+) -> None:
+    """L-20261005-8 / L-20261006-15: collecting raised the film count, so the
+    next run picked a new seed, a new unit and key, and posted a second paid
+    job; a retried download booked the take twice."""
+
+    _filmed_once(desk30)
+    api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "1.20"}}
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
+    _take_two_of_episode_two(api30)
+    state = load_production(desk30)
+    state.pending["film-ep02-t2-s2"] = {"key": "k-1", "job_id": "job_video_9"}
+    save_production(desk30, state)
+    # The cut-off run had already collected take 2: counted and booked.
+    record_filmed(desk30, episode=2, take_id="t2")
+    record_spend(
+        desk30,
+        episode=2,
+        usd=0.60,
+        take_id="t2",
+        unit="take 15s",
+        job_id="job_take_e2t2",
+    )
+    spent = load_series(desk30).spend_usd
+
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+
+    assert api30.posted(VIDEO) == []
+    series = load_series(desk30)
+    assert episode_by_ordinal(series, 2).takes[1].filmed_count == 2
+    assert series.spend_usd == pytest.approx(spent)
+    assert "film-ep02-t2-s2" not in load_production(desk30).pending
+
+
+def test_a_first_collect_books_the_take_with_its_job(
+    desk30: Path, api30: FakeApi
+) -> None:
+    _filmed_once(desk30)
+    api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "1.20"}}
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
+    _take_two_of_episode_two(api30)
+
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+
+    takes = [
+        entry
+        for entry in load_series(desk30).spend_log
+        if entry.unit.startswith("take")
+    ]
+    assert [entry.job_id for entry in takes] == ["job_take_e2t2"]
 
 
 def _video_keys(api: FakeApi) -> list[str | None]:

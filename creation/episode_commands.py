@@ -6357,8 +6357,15 @@ def _run_film(
             + (f" --take {take_id}" if take_id else "")
             + "` without --confirm-spend, show the human the number, then confirm"
         )
-    seed = seed_attempt_for(desk, episode=episode, take_ids=take_ids)
-    unit = f"film-{key}" + (f"-s{seed}" if seed else "")
+    resumed = _pending_film_unit(load_production(desk).pending, key)
+    if resumed is not None:
+        # An earlier run of this film was cut off. Collecting part of it may
+        # have raised the take's film count, which would pick a new seed and
+        # so a new unit and key: a second paid job. Resume its unit instead.
+        unit, seed = resumed
+    else:
+        seed = seed_attempt_for(desk, episode=episode, take_ids=take_ids)
+        unit = f"film-{key}" + (f"-s{seed}" if seed else "")
     spine = run.spine(state.spine_id or "")
     stopped = film_stop_message(spine, episode=episode) or voices_film_refusal(
         desk, spine, episode=episode, run=run
@@ -6510,6 +6517,35 @@ def _run_film(
     )
     print(text, file=out)
     return text
+
+
+def _pending_film_unit(
+    pending: dict[str, Any], key: str
+) -> tuple[str, int | None] | None:
+    """Return the unit and seed of a film for ``key`` still pending from an earlier run.
+
+    Parameters
+    ----------
+    pending
+        ``production.json``'s ``pending`` map.
+    key
+        The film scope key (:func:`_film_scope`).
+
+    Returns
+    -------
+    tuple[str, int | None] | None
+        ``(unit, seed)`` for ``film-<key>`` or ``film-<key>-sN``; ``None`` when
+        nothing is pending for this scope.
+    """
+
+    base = f"film-{key}"
+    for unit in pending:
+        if unit == base:
+            return unit, None
+        seed = unit.removeprefix(f"{base}-s")
+        if unit.startswith(f"{base}-s") and seed.isdigit():
+            return unit, int(seed)
+    return None
 
 
 def _forget_failed_film(

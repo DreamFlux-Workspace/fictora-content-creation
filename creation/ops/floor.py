@@ -394,6 +394,7 @@ def record_spend(
     usd: float,
     take_id: str | None = None,
     unit: str | None = None,
+    job_id: str | None = None,
 ) -> SeriesState:
     """Add a paid unit to the ledger.
 
@@ -411,6 +412,9 @@ def record_spend(
         What the money bought (``board``, ``look-frame``, ``cue:gaan-sting``).
         Appended to ``spend_log`` so the ledger says what each amount was for;
         ``unlabelled`` when not given.
+    job_id
+        The server take job the money paid for, kept on the ledger line so a
+        re-collected take is not booked twice (:func:`take_job_booked`).
 
     Returns
     -------
@@ -439,11 +443,34 @@ def record_spend(
             usd=round(usd, 4),
             unit=label,
             take_id=take_id,
+            job_id=job_id,
         )
     )
     save_series(desk, series)
     write_queue(desk, series)
     return series
+
+
+def take_job_booked(desk: Path, job_id: str) -> bool:
+    """Return whether the ledger already books this server take job.
+
+    A dropped connection mid-download makes the next run collect the same job
+    again; its takes were paid once and must be booked and counted once.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    job_id
+        Server take job id.
+
+    Returns
+    -------
+    bool
+        True when a ledger line carries ``job_id``.
+    """
+
+    return any(entry.job_id == job_id for entry in load_series(desk).spend_log)
 
 
 def set_handoff(desk: Path, *, episode: int, take_id: str, image: Path) -> TakeState:

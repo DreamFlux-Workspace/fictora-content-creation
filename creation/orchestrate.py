@@ -55,6 +55,7 @@ from creation.ops.floor import (
     record_filmed,
     record_spend,
     set_take_lines,
+    take_job_booked,
 )
 from creation.ops.floor import approve_script as record_script_gate
 from creation.ops.luma import measure_board_luma
@@ -1892,6 +1893,12 @@ def collect_takes(
                 default_suffix=".mp4",
             )
             paths.append(str(path))
+            if clip.get("job_id") and take_job_booked(desk, str(clip["job_id"])):
+                # A run cut off mid-collect already booked and counted this take.
+                jobs.append(
+                    f"{take_id}: take job `{clip['job_id']}` (already booked; not booked again)"
+                )
+                continue
             facts = fetch_take_facts(run, str(clip["job_id"]), spine_id=state.spine_id)
             priced: tuple[float, str] | None = None
             if facts is not None:
@@ -1920,6 +1927,7 @@ def collect_takes(
                     usd=priced[0],
                     take_id=take_id,
                     unit=f"take {clip_seconds}s",
+                    job_id=str(clip.get("job_id") or "") or None,
                 )
                 booked += priced[0]
             record_filmed(desk, episode=episode, take_id=take_id)
