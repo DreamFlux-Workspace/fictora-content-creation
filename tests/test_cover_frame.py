@@ -174,3 +174,133 @@ def test_a_join_with_no_reel_cover_yet_says_so(tmp_path: Path) -> None:
     cover, note = _join_cover(tmp_path, (3,))
 
     assert cover is None and "no reel cover on the desk" in note
+
+
+def _one_take_desk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, takes: int
+) -> Path:
+    """A desk whose episode 1 has ``takes`` takes; take 1's newest finish names ``final.mp4``."""
+
+    from types import SimpleNamespace
+
+    from creation.ops import state
+    from creation.post import finish_record
+
+    final = _clip(tmp_path / "final.mp4")
+    slot = SimpleNamespace(
+        takes=[SimpleNamespace(take_id=f"t{n}") for n in range(1, takes + 1)]
+    )
+    monkeypatch.setattr(state, "load_series", lambda desk: object())
+    monkeypatch.setattr(state, "episode_by_ordinal", lambda series, episode: slot)
+    record = SimpleNamespace(
+        complete=True, resolve=lambda desk, name: final if name == "final" else None
+    )
+    monkeypatch.setattr(
+        finish_record, "latest_finish_record", lambda desk, episode, take: record
+    )
+    return final
+
+
+def _reel(tmp_path: Path, *, draft: bool = False) -> object:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        cover=_red(tmp_path / "reel-cover.jpg"),
+        draft=draft,
+        video=tmp_path / "reel.mp4",
+    )
+
+
+def test_a_15s_episodes_final_takes_the_reels_cover_as_its_first_frame(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import io
+
+    from creation.post.cover_frame import cover_one_take_final
+
+    final = _one_take_desk(tmp_path, monkeypatch, takes=1)
+    frames = _frames(final)
+    out = io.StringIO()
+
+    cover_one_take_final(tmp_path, 1, _reel(tmp_path), out)
+
+    red, _, blue = _frame_rgb(final, 0)
+    assert red > 200 and blue < 60
+    red, _, blue = _frame_rgb(final, 1)
+    assert blue > 200 and red < 60
+    assert _frames(final) == frames
+    assert "is its first frame" in out.getvalue()
+    assert not list(tmp_path.glob(".*cover-frame.mp4"))
+
+
+@pytest.mark.parametrize("takes, draft", [(2, False), (1, True)])
+def test_a_joined_episode_or_a_draft_reel_leaves_the_final_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, takes: int, draft: bool
+) -> None:
+    import io
+
+    from creation.post.cover_frame import cover_one_take_final
+
+    final = _one_take_desk(tmp_path, monkeypatch, takes=takes)
+    before = final.read_bytes()
+
+    cover_one_take_final(tmp_path, 1, _reel(tmp_path, draft=draft), io.StringIO())
+
+    assert final.read_bytes() == before
+
+
+def test_a_failed_cover_on_the_15s_final_leaves_it_as_it_was(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import io
+
+    from creation.post import cover_frame
+    from creation.post.media import MediaToolError
+
+    final = _one_take_desk(tmp_path, monkeypatch, takes=1)
+    before = final.read_bytes()
+
+    def fail(*_: object) -> Path:
+        raise MediaToolError("ffmpeg failed")
+
+    monkeypatch.setattr(cover_frame, "put_cover_on_first_frame", fail)
+    out = io.StringIO()
+
+    cover_frame.cover_one_take_final(tmp_path, 1, _reel(tmp_path), out)
+
+    assert final.read_bytes() == before
+    assert out.getvalue().startswith("⚠ cover frame skipped on final.mp4")
+
+
+def test_a_broken_cover_fails_fast_and_never_hangs(tmp_path: Path) -> None:
+    # A 13-byte "JPEG" (a truncated download) made a looped picture input read forever.
+    import time
+
+    from creation.post.media import MediaToolError
+
+    video = _clip(tmp_path / "episode.mp4")
+    broken = tmp_path / "cover.jpg"
+    broken.write_bytes(b"not a jpeg!!!")
+    started = time.monotonic()
+
+    with pytest.raises(MediaToolError):
+        put_cover_on_first_frame(video, broken, tmp_path / "out.mp4")
+
+    assert time.monotonic() - started < 30
+
+
+def test_a_broken_cover_in_the_mark_step_fails_fast(tmp_path: Path) -> None:
+    import time
+
+    from creation.post.media import MediaToolError
+    from creation.post.watermark import watermark
+
+    video = _clip(tmp_path / "episode.mp4")
+    broken = tmp_path / "cover.jpg"
+    broken.write_bytes(b"not a jpeg!!!")
+    started = time.monotonic()
+
+    with pytest.raises(MediaToolError):
+        watermark(video, tmp_path / "marked.mp4", cover=broken)
+
+    assert time.monotonic() - started < 30

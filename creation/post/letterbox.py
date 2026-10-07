@@ -576,7 +576,7 @@ def mark_and_title(
     if cover is not None:
         from creation.post.cover_frame import cover_frame_graph
 
-        inputs += ["-loop", "1", "-i", str(cover)]
+        inputs += ["-i", str(cover)]
         graph += ";" + cover_frame_graph(
             cover_input=2,
             picture="[v]",

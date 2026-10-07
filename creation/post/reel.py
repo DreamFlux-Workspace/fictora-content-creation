@@ -2255,9 +2255,13 @@ def auto_reel(
     if not reel_via_server.legacy_desk(desk.expanduser().resolve()):
         # A desk made on or after 6 Oct 2026: the server's reel engine (this module stays as it was
         # for older desks).
-        return reel_via_server.auto_reel(
+        made = reel_via_server.auto_reel(
             desk, episode, trigger=trigger, stream=stream, force=force
         )
+        from creation.post.cover_frame import cover_one_take_final
+
+        cover_one_take_final(desk, episode, made, stream or sys.stdout)
+        return made
     from creation.post.desk import saved_spine
 
     out = stream or sys.stdout
