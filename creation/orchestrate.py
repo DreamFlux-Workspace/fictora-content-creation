@@ -139,6 +139,7 @@ from creation.harness.http_util import ConnectionDropped
 from creation.rules_epoch import is_legacy
 from creation.voice_gate import gate_text as voices_gate_text
 from creation.voice_gate import pending_for_film as voices_pending_for_film
+from creation.voice_gate import voices_first_refusal
 
 
 #: Phases whose ``step`` pays for drawings (cast plates, boards): held while a drawn look frame awaits its yes.
@@ -1524,6 +1525,12 @@ def run_step(
                 owing = {
                     cast_id for cast_id, _ in cast_owing_pictures(spine_now, episode=ep)
                 }
+            if not is_legacy(desk):
+                voices_first = voices_first_refusal(
+                    desk, spine_now, episode=ep, run=run, stage="the plates"
+                )
+                if voices_first:
+                    raise RuntimeError(voices_first)
             priced = drawing_spend_stop(
                 desk,
                 state,
@@ -1633,6 +1640,12 @@ def run_step(
                         ]
                     )
                 )
+            if not is_legacy(desk):
+                voices_first = voices_first_refusal(
+                    desk, spine_now, episode=ep, run=run, stage="the boards"
+                )
+                if voices_first:
+                    raise RuntimeError(voices_first)
             priced = drawing_spend_stop(
                 desk,
                 state,

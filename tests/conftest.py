@@ -335,6 +335,11 @@ def _voices_gate_off_by_default(
     monkeypatch.setattr(orchestrate, "voices_gate_text", lambda *a, **k: "")
     monkeypatch.setattr(orchestrate, "voices_pending_for_film", lambda *a, **k: [])
     monkeypatch.setattr(episode_commands, "voices_film_refusal", lambda *a, **k: None)
+    # Voices decided first (new desks): the stops before plates, boards and `author`.
+    monkeypatch.setattr(orchestrate, "voices_first_refusal", lambda *a, **k: None)
+    monkeypatch.setattr(
+        episode_commands, "voices_unconfirmed_stop", lambda *a, **k: None
+    )
 
 
 @pytest.fixture

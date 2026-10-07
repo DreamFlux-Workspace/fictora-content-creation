@@ -32,6 +32,8 @@ import httpx
 
 from creation.harness.http_util import api_error_text
 from creation.post.desk import open_api, refresh_spine, spine_body
+from creation.rules_epoch import is_legacy
+from creation.voice_gate import locked_voices_needed, thought_and_narration_names
 
 VoiceMode = Literal["locked", "model"]
 VOICE_MODES: tuple[VoiceMode, ...] = ("locked", "model")
@@ -217,6 +219,14 @@ def send_desk_choice(
     body = spine_body(spine)
     if wanted is None or not _spine_id(body) or body.get("voice_mode") in VOICE_MODES:
         return
+    names = thought_and_narration_names(body)
+    if wanted == "model" and names and not is_legacy(desk):
+        print(
+            "Note: the desk's voice mode `model` (start --voice-mode) was not sent. "
+            + locked_voices_needed(desk, names),
+            file=out or sys.stderr,
+        )
+        return
     try:
         answer = set_show_voices(run, body, wanted)  # type: ignore[arg-type]
     except RuntimeError as exc:
@@ -286,6 +296,13 @@ def run_voice_mode(
     run = open_api(desk, episode)
     try:
         spine = refresh_spine(run, desk, episode)
+        if set_to == "model" and not is_legacy(desk):
+            names = thought_and_narration_names(spine)
+            if names:
+                raise RuntimeError(
+                    "Not changed: the show stays on locked voices. "
+                    + locked_voices_needed(desk, names)
+                )
         if set_to is not None:
             answer = set_show_voices(run, spine, set_to)  # type: ignore[arg-type]
             config = load_production_config(desk)
