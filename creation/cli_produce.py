@@ -160,13 +160,40 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     add_narrator_answer_args(step)
 
+    pitch = sub.add_parser(
+        "pitch",
+        help="The episode's pitch card (free): with --file, check it and store it as epNN/pitch-vN.json "
+        "(never overwritten) and print it; without, print the current one. On desks from 6 Oct 2026 `step` "
+        "draws no plates or boards until the card has the human's yes (`approve --gate pitch`).",
+    )
+    pitch.add_argument("--desk", type=Path, required=True)
+    pitch.add_argument(
+        "--episode",
+        type=int,
+        default=None,
+        help="Episode ordinal (default: the desk's current episode).",
+    )
+    pitch.add_argument(
+        "--file",
+        type=Path,
+        default=None,
+        help="The card: pitch.md (one `## field` heading per field) or pitch.json.",
+    )
+
     ap = sub.add_parser(
         "approve",
-        help="Human yes on the look, plates, script, or board (the desk's current episode).",
+        help="Human yes on the pitch, look, plates, script, or board (the desk's current episode).",
     )
     ap.add_argument("--desk", type=Path, required=True)
     ap.add_argument(
-        "--gate", required=True, choices=("look", "plates", "script", "board")
+        "--gate", required=True, choices=("pitch", "look", "plates", "script", "board")
+    )
+    ap.add_argument(
+        "--episode",
+        type=int,
+        default=None,
+        help="Pitch only: the episode whose newest pitch card the human said yes to "
+        "(default: the desk's current episode). Desk-only record, free.",
     )
     ap.add_argument(
         "--path",
@@ -299,6 +326,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_command(args)
 
 
+def _desk_episode(desk: Path) -> int:
+    """The desk's current episode (1 on a desk with no production state yet)."""
+
+    from creation.production_state import load_production
+
+    try:
+        return load_production(desk.expanduser().resolve()).episode_ordinal
+    except (FileNotFoundError, ValueError, KeyError):
+        return 1
+
+
 def _run_command(args: argparse.Namespace) -> int:
     """Run one parsed command (under its desk's rules, :func:`creation.rules_epoch.desk_rules`)."""
 
@@ -416,6 +454,31 @@ def _run_command(args: argparse.Namespace) -> int:
             print(result.message)
             for path in result.paths:
                 print(f"  file: {path}")
+            return 0
+        if args.command == "pitch":
+            from creation.pitch_card import PitchRefused, run_pitch
+
+            try:
+                return run_pitch(
+                    args.desk,
+                    episode=args.episode or _desk_episode(args.desk),
+                    file=args.file,
+                )
+            except PitchRefused as exc:
+                print(exc, file=sys.stderr)
+                return 2
+        if (
+            args.command == "approve"
+            and args.episode is not None
+            and args.gate != "pitch"
+        ):
+            raise ValueError("--episode is for --gate pitch only")
+        if args.command == "approve" and args.gate == "pitch":
+            from creation.pitch_card import run_approve_pitch
+
+            run_approve_pitch(
+                args.desk, episode=args.episode or _desk_episode(args.desk)
+            )
             return 0
         if (
             args.command == "approve"

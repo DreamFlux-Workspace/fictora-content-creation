@@ -76,7 +76,7 @@ Always a deviation: a finished episode longer than its 15 / 30 / 60 s band; any 
 
 ## Characters and age
 
-Characters may be any age: children, teenagers, adults, the elderly. Write the real age ("10, primary-school kid", "sixteen", "late twenties") and the plate draws it.
+Characters may be any age: children, teenagers, adults, the elderly. Write the real age as digits ("10, primary-school kid", "16", "28") and the plate draws it. Never in words ("sixteen", "twenty-six", "late twenties"): the server read "twenty-six, adult woman" as under 18 and refused the scene, and changing the age afterwards made every plate stale (The Gallery Heiress, $0.90). The script gate warns on a worded age.
 
 The hard line: never romantic, sexual, suggestive or fan-service framing of anyone under 18. Their age and body are never sexualised, and they are never in a romance arc (no love interest, crush, dating, or someone else's romance aimed at them). A romance lead is 18+. The server rejects a breach as `minor_in_romance_arc`. A child is also never in a romantic, sexual or intimate scene, not even as a bystander: a beat or frame that puts someone under 18 on screen (its cast, blocking, an unnamed child figure, the beat's mover or on-screen speaker; a line heard off screen does not count) while its staging is intimate (making love, undressing, a kiss between adults, a romantic dinner …; family affection such as a goodnight kiss on the forehead is fine) is refused as `minor_in_intimate_scene` at authoring, `edit`/`line`/cascade, board admission, the estimate and film admission, before anything is paid. The kit prints each scene (`episode 1 frame 4 (frame_ep01_04): Mina is under 18 and on screen; "they kiss" makes it intimate`) and its fix: move the child out of that shot (`edit --frame F --set 'cast_refs=[…]'` naming everyone else) or change the scene so it is not intimate. Never age the child up to keep the scene. PG staging (no kissing, embracing or face contact) applies to everyone. Asked for a minor in a romance: say no and offer the character at 18+ or the relationship as non-romantic.
 
@@ -122,7 +122,7 @@ The writers pick an anime expression (`reaction_kind`) for every emotional momen
 | `comic_tears`, `tear_up` | waterfall tears; welling eyes, wobbling mouth |
 | `flinch` | a small recoil |
 
-- **Pick by the moment, not the genre.** Any kind may play in any genre. The symbolic kinds (`happy` through `deflated`) fit a light, awkward, petty or comic moment, even in a serious show (a sweat drop at an awkward pause in horror). Real dread, grief, danger or tenderness gets the plainer kinds.
+- **Pick by the moment, not the genre.** Never a comedy face on a grief or horror beat (Noodle24: a grieving nurse drawn beaming with dot eyes; Don't Look, Hana: `deadpan` on a horror beat). Any kind may play in any genre. The symbolic kinds (`happy` through `deflated`) fit a light, awkward, petty or comic moment, even in a serious show (a sweat drop at an awkward pause in horror). Real dread, grief, danger or tenderness gets the plainer kinds.
 - **Whose face.** On a cell with two or more people, the writers name the face that wears the kind. A listener's expression on a speaking cell plays whole and silent on the listener. Wrong or missing face, or a wrong mark: fix the frame (`edit --frame … --set …`), then `redraw-board`.
 - On a speaking cell the expression plays before the first word and after the last; during the words the mouth moves.
 

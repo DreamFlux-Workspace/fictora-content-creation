@@ -189,6 +189,7 @@ from creation.stranded_voice import (
     voices_left_without_lines,
 )
 from creation.voice_gate import film_refusal as voices_film_refusal
+from creation.pitch_card import pitch_gate_refusal
 from creation.rules_epoch import is_legacy
 from creation.voice_mode import (
     VOICE_MODE_WORDS,
@@ -431,6 +432,25 @@ def _save_desk_json(desk: Path, stem: str, payload: Any) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _hold_for_pitch(desk: Path, command: str, *, episode: int | None = None) -> None:
+    """Refuse a paid command, before anything is sent, while the episode's newest pitch lacks its yes (new desks).
+
+    ``episode`` defaults to the desk's current one. Older desks are never held.
+    """
+
+    desk = desk.expanduser().resolve()
+    if episode is None:
+        try:
+            episode = load_production(desk).episode_ordinal
+        except (FileNotFoundError, ValueError):
+            episode = 1
+    refusal = pitch_gate_refusal(
+        desk, episode=episode, stage=f"`{command}`", rerun=f"`{command}` again"
+    )
+    if refusal:
+        raise RuntimeError(refusal)
 
 
 def _hold_for_look(desk: Path, command: str) -> None:
@@ -5205,6 +5225,7 @@ def run_redraw_board(
     if not (take_id.startswith("t") and take_id[1:].isdigit()):
         raise CommandStopped("--take is t1, t2 ...")
     set_index = int(take_id[1:])
+    _hold_for_pitch(desk, "redraw-board", episode=episode)
     _hold_for_look(desk, "redraw-board")
     desk, state, run = _desk_session(desk)
     cfg = load_production_config(desk)
@@ -5779,6 +5800,7 @@ def run_redraw_plate_with_note(
         check_note_length(note, limit=CAST_NOTE_MAX, command="redraw-plate")
     except ValueError as exc:
         raise CommandStopped(str(exc)) from None
+    _hold_for_pitch(desk, "redraw-plate")
     _hold_for_look(desk, "redraw-plate")
     desk, state, run = _desk_session(desk)
     folder, ep = _plates_home(desk)
@@ -6336,6 +6358,8 @@ def run_film(
     """
 
     out = out or sys.stdout
+    if confirm_spend:
+        _hold_for_pitch(desk, "film --confirm-spend", episode=episode)
     desk, state, run = _desk_session(desk)
     if episode != state.episode_ordinal:
         run.client.close()
