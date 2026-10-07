@@ -780,8 +780,29 @@ def desk_voice_lines(desk: Path) -> list[str]:
     return lines
 
 
-def pitch_text(desk: Path, stored: StoredPitch, *, with_voices: bool = True) -> str:
-    """The card as the human reads it."""
+def _desk_spine(desk: Path) -> dict[str, Any] | None:
+    path = desk / "api" / "spine.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+    except (OSError, json.JSONDecodeError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def pitch_text(
+    desk: Path,
+    stored: StoredPitch,
+    *,
+    with_voices: bool = True,
+    with_hook_line: bool = True,
+) -> str:
+    """The card as the human reads it.
+
+    With a hook line on screen the card prints its words and the writer's
+    options (:func:`creation.hook_line.gate_hook_line_lines`), never only a
+    yes/no (founder, 7 Oct 2026, L-20261005-11); ``with_hook_line=False`` leaves
+    them to the caller (the script gate prints them itself).
+    """
 
     pitch = stored.pitch
     status = "approved" if is_approved(desk, stored) else "NOT approved yet"
@@ -807,6 +828,10 @@ def pitch_text(desk: Path, stored: StoredPitch, *, with_voices: bool = True) -> 
         f"  Hook line burned on screen: {'yes' if pitch.get('hook_line_on_screen') else 'no'}"
         + ("" if pitch.get("hook_line_on_screen") else " (finish with --no-hook-line)")
     )
+    if with_hook_line and pitch.get("hook_line_on_screen"):
+        from creation.hook_line import gate_hook_line_lines
+
+        out.extend(gate_hook_line_lines(desk, _desk_spine(desk), stored.episode))
     out.append("  World rules:")
     out.extend(f"    - {rule}" for rule in pitch.get("world_rules") or [])
     if with_voices:
@@ -1228,7 +1253,7 @@ def script_pitch_lines(
     if stored is None:
         return []
     lines = [
-        pitch_text(desk, stored, with_voices=False).replace(
+        pitch_text(desk, stored, with_voices=False, with_hook_line=False).replace(
             "  World rules:",
             "  World rules — check every line and beat against these:",
             1,

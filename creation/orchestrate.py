@@ -137,6 +137,7 @@ from creation.harness_rules import (
     word_age_lines,
     young_creature_lines,
 )
+from creation.hook_line import gate_hook_line_lines
 from creation.pitch_card import (
     pitch_gate_refusal,
     restraint_beat_lines,
@@ -470,6 +471,8 @@ def script_gate_text(desk: Path, spine: dict[str, Any], *, episode: int) -> str:
         notes.append(sparkle)
     if notes:
         text += "\n" + "\n".join(notes)
+    # The hook line's words and options, read with the script (founder, 7 Oct 2026, L-20261005-11).
+    text += "\n" + "\n".join(gate_hook_line_lines(desk, spine, episode))
     # The approved pitch (every desk that has one): read the lines against it.
     pitch = script_pitch_lines(desk, spine, episode=episode)
     if pitch:
