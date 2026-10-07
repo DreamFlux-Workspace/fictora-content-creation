@@ -1470,7 +1470,7 @@ def run_step(
                 # pause again from its plan job instead of paying for a second draft.
                 record = state.pending.get(unit)
                 if record is not None:
-                    record["paused"] = LOCKED_LINES_OUT_OF_BOUNDS
+                    record["paused"] = locked_lines_pause_code(str(exc.code))
                     save_production(desk, state)
                 raise RuntimeError(pause) from exc
             state.spine_id = spine_id
@@ -2315,14 +2315,27 @@ CAST_NOT_APPROVED = "cast_not_approved"
 
 #: The server's refusal when the brief's locked lines do not fit the episode (fictora-drama).
 LOCKED_LINES_OUT_OF_BOUNDS = "locked_lines_out_of_bounds"
+#: The server's refusal when a locked line is not in the show's spoken language (fictora-drama #650):
+#: "Line N ... is locked in English on a Korean show: give the Korean line ..., or unlock it".
+LOCKED_LINE_NOT_IN_SHOW_LANGUAGE = "locked_line_not_in_show_language"
+#: Draft pauses that are the creator's choice, never a failure: the desk stays at ``new``.
+LOCKED_LINE_PAUSES = (LOCKED_LINES_OUT_OF_BOUNDS, LOCKED_LINE_NOT_IN_SHOW_LANGUAGE)
+
+
+def locked_lines_pause_code(message: str) -> str | None:
+    """Which locked-line pause a draft failure is (:data:`LOCKED_LINE_PAUSES`), or ``None``."""
+
+    return next((code for code in LOCKED_LINE_PAUSES if code in message), None)
 
 
 def locked_lines_pause(message: str, *, desk: Path | str = "<desk>") -> str | None:
-    """The creator-facing pause for a brief whose locked lines do not fit, or None for any other error.
+    """The creator-facing pause for a brief whose locked lines cannot be drafted, or None for any other error.
 
-    The server never shortens, splits, merges or drops a locked line: it stops
-    the draft before any writer runs and names each line and its overrun. The
-    desk stays at ``new``; nothing was drafted.
+    The server never shortens, splits, merges, drops or translates a locked
+    line: it stops the draft before any writer runs and names each line. Two
+    codes pause this way: ``locked_lines_out_of_bounds`` (the lines do not fit
+    the episode) and ``locked_line_not_in_show_language`` (a line is locked in
+    another language than the show's). The desk stays at ``new``; nothing was drafted.
 
     Parameters
     ----------
@@ -2337,15 +2350,27 @@ def locked_lines_pause(message: str, *, desk: Path | str = "<desk>") -> str | No
         What to tell the creator, or None when the failure is something else.
     """
 
-    if LOCKED_LINES_OUT_OF_BOUNDS not in message:
+    code = locked_lines_pause_code(message)
+    if code is None:
         return None
-    # The server's own words: "locked_lines_out_of_bounds at scene_prompt: <refusal>".
+    # The server's own words: "<code> at scene_prompt: <refusal>".
     found = re.search(
-        rf"{LOCKED_LINES_OUT_OF_BOUNDS} at scene_prompt: (.+?)(?: \(\+\d+ more in details\.errors\)| \(details |$)",
+        rf"{code} at scene_prompt: (.+?)(?: \(\+\d+ more in details\.errors\)| \(details |$)",
         message,
         re.S,
     )
     listed = "\n  " + (found.group(1).strip() if found else message.strip()[:1200])
+    if code == LOCKED_LINE_NOT_IN_SHOW_LANGUAGE:
+        return (
+            "PAUSED for the creator: the brief locks a line word for word in another language than the show's, "
+            "so nothing was drafted (the server never translates a locked line)."
+            f"{listed}\n"
+            "Ask the creator, for each line named: give the line in the show's language, word for word, or "
+            "unlock it (take it out of the brief's locked Lines so the writer may write it). Then "
+            f"`fictora-produce bind --desk {desk} --prompt <edited brief> ...` and `fictora-produce step` again: "
+            "the edited brief is a new draft. `step` with the brief unchanged shows this pause again and drafts "
+            "nothing."
+        )
     return (
         "PAUSED for the creator: the brief locks its lines word for word and they do not fit this episode, "
         "so nothing was drafted (the server never shortens, splits, merges or drops a locked line)."

@@ -251,3 +251,26 @@ def test_reel_clips_n_recuts_the_clips_by_hand(
 
     assert reel_server.requests[-1]["mode"] == "clips"
     assert (episode_clips(reel_desk, 1) / "clip-ep01-3-v1.mp4").is_file()
+
+
+def test_clips_honour_the_reels_captions_override(
+    reel_desk: Path, reel_server: FakeReelServer
+) -> None:
+    """Canary 7 Oct 2026: ``reel --clips 3 --captions t1=FILE`` said "captions none"; the clips ignored it."""
+
+    from creation.cli_produce import main
+
+    other = reel_desk / "ep01" / "takes" / "take-ep01-t1-other-v1.ass"
+    other.write_text(
+        "[Events]\nDialogue: 0,0:00:00.40,0:00:01.30,House,,0,0,0,,Someone knocked\n",
+        encoding="utf-8",
+    )
+
+    assert main(["reel", "--desk", str(reel_desk), "--episode", "1", "--clips", "2",
+                 "--captions", f"t1={other}"]) == 0  # fmt: skip
+
+    body = reel_server.requests[-1]
+    assert body["mode"] == "clips"
+    assert [c["text"] for c in body["operator"]["takes"][0]["cues"]] == [
+        "Someone knocked"
+    ]

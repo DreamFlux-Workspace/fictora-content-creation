@@ -396,6 +396,10 @@ def run_clips(
     stream: TextIO | None = None,
     made_by: str = "reel",
     server: ReelServer | None = None,
+    take_files: Sequence[str] = (),
+    sources: Sequence[str] = (),
+    captions: Sequence[str] = (),
+    caption_style: str | None = None,
 ) -> ClipsResult:
     """Make the episode's clips on the server and keep the books. Writes only under ``<desk>/reels/``.
 
@@ -413,6 +417,9 @@ def run_clips(
         ``reel`` (by hand), ``finish`` or an edit's name, for ``clips/latest.json``.
     server
         The server client (tests pass a stand-in); default the desk's.
+    take_files, sources, captions, caption_style
+        ``reel``'s ``--take-file`` / ``--source`` / ``--captions`` / ``--caption-style``: the clips are cut
+        from the same takes and captions the reel would be (canary 7 Oct 2026: ``--clips`` ignored them).
 
     Returns
     -------
@@ -437,9 +444,9 @@ def run_clips(
         )
     with tempfile.TemporaryDirectory(prefix="fictora-clips-") as tmp:
         made = make_reel(
-            desk, episode=episode, seconds=15.0, plan_only=False, plan_file=None, take_files=(), sources=(),
-            captions=(), caption_style=None, ending=None, stream=stream, scratch=Path(tmp), server=server,
-            clips=ask,
+            desk, episode=episode, seconds=15.0, plan_only=False, plan_file=None, take_files=tuple(take_files),
+            sources=tuple(sources), captions=tuple(captions), caption_style=caption_style, ending=None,
+            stream=stream, scratch=Path(tmp), server=server, clips=ask,
         )  # fmt: skip
     assert isinstance(made, ClipsResult)
     return record_clips(desk, episode, made, made_by=made_by, stream=stream)

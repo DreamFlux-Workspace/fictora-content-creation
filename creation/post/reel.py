@@ -365,9 +365,13 @@ def take_sources(
             )
         ass = cue_files.get(take)
         if ass is None and record is not None:
-            master = record.resolve(desk, "master")
-            if master is not None and master.with_suffix(".ass").is_file():
-                ass = master.with_suffix(".ass")
+            # The master's .ass; a master an older edit wrote without one gets the captions carried
+            # forward from the record it was edited from (canary 7 Oct 2026).
+            from creation.post.edit_captions import captions_for_record
+
+            ass, carried = captions_for_record(desk, record)
+            for line in carried:
+                print(line, file=out_stream, flush=True)
         final = accepted.get(take) or (
             record.resolve(desk, "final") if record else None
         )

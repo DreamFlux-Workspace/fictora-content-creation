@@ -183,3 +183,108 @@ def test_a_second_stale_answer_stops(desk: Path, api: FakeApi) -> None:
     assert len(api.posted(REGENERATE)) == 2
     assert len(api.posted(NOTES)) == 1
     assert load_series(desk).spend_log == []
+
+
+# --- redraw-plate --fresh (fictora-drama #652) -----------------------------------------------------
+
+
+def _fresh_doc(*, fresh: bool) -> dict[str, Any]:
+    from fake_api import openapi_doc
+
+    doc = openapi_doc()
+    props: dict[str, Any] = {"spine_version": {}, "prompt": {}}
+    if fresh:
+        props["fresh"] = {"type": "boolean", "default": False}
+    doc["components"]["schemas"]["DramaCastRegenerationRequest"] = {"properties": props}
+    return doc
+
+
+def _plates(desk: Path) -> None:
+    plates = desk / "ep01" / "plates"
+    plates.mkdir(parents=True, exist_ok=True)
+    (plates / "plate-ep01-1-v1.png").write_bytes(png_bytes(200))
+
+
+def test_fresh_sends_fresh_true_under_its_own_key(desk: Path, api: FakeApi) -> None:
+    set_phase(desk, "wait_plates")
+    _serve_redraw(api)
+    _plates(desk)
+    api.routes[("GET", "/openapi.json")] = _fresh_doc(fresh=True)
+
+    assert produce_main(["redraw-plate", "--desk", str(desk), "--cast", "Ren",
+                         "--note", "nineteen, tall and lanky", "--fresh"]) == 0  # fmt: skip
+
+    [body] = api.posted(REGENERATE)
+    assert body is not None and body["fresh"] is True
+    [key] = [k for m, p, _b, k in api.calls if m == "POST" and p == REGENERATE]
+    assert key is not None and "-fresh-" in key, (
+        "never the key of an edit-redraw of the same note"
+    )
+    assert [e.unit for e in load_series(desk).spend_log] == [
+        "plate-note-redraw:cast_ren"
+    ]
+
+
+def test_without_fresh_the_body_has_no_fresh_field(desk: Path, api: FakeApi) -> None:
+    set_phase(desk, "wait_plates")
+    _serve_redraw(api)
+    _plates(desk)
+
+    ec.run_redraw_plate_with_note(desk, cast="Ren", note="older", out=io.StringIO())
+
+    [body] = api.posted(REGENERATE)
+    assert body is not None and "fresh" not in body
+
+
+def test_fresh_on_a_server_whose_schema_has_no_fresh_sends_nothing(
+    desk: Path, api: FakeApi
+) -> None:
+    set_phase(desk, "wait_plates")
+    _serve_redraw(api)
+    api.routes[("GET", "/openapi.json")] = _fresh_doc(fresh=False)
+
+    with pytest.raises(ec.CommandStopped) as stopped:
+        ec.run_redraw_plate_with_note(
+            desk, cast="Ren", note="older", out=io.StringIO(), fresh=True
+        )
+
+    text = str(stopped.value)
+    assert (
+        "can't redraw a plate from scratch yet" in text
+        and "Nothing was drawn or charged" in text
+    )
+    assert api.posted(REGENERATE) == [] and api.posted(NOTES) == [], "nothing sent"
+    assert load_series(desk).spend_log == []
+
+
+def test_fresh_refused_by_an_older_deploy_says_so_plainly(
+    desk: Path, api: FakeApi
+) -> None:
+    set_phase(desk, "wait_plates")
+    _serve_redraw(api)
+    api.routes[("GET", "/openapi.json")] = SystemExit("HTTP 404")
+    api.routes[("POST", REGENERATE)] = SystemExit(
+        "HTTP 422 POST /v1/spines/sp1/cast/cast_ren/regenerate: body.fresh: extra inputs are not permitted"
+    )
+
+    with pytest.raises(ec.CommandStopped) as stopped:
+        ec.run_redraw_plate_with_note(
+            desk, cast="Ren", note="older", out=io.StringIO(), fresh=True
+        )
+
+    text = str(stopped.value)
+    assert (
+        "can't redraw a plate from scratch yet" in text
+        and "Nothing was drawn or charged" in text
+    )
+    assert "extra inputs are not permitted" in text, "the server's words are kept"
+    assert load_series(desk).spend_log == []
+
+
+def test_redraw_plate_help_says_when_to_use_fresh(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit):
+        produce_main(["redraw-plate", "--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "--fresh" in out and "still shows the old look" in out

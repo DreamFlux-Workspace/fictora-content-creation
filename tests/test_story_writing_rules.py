@@ -264,3 +264,107 @@ def test_an_approved_newcomer_and_episode_one_cast_owe_no_picture(api: FakeApi) 
         == []
     )
     assert cast_owing_pictures(api.spine_doc, episode=2) == []
+
+
+# --- A locked line in another language than the show's: a pause, not a failure (fictora-drama #650) ---
+
+LANGUAGE_REFUSAL = (
+    'locked_line_not_in_show_language at scene_prompt: Line 2 (Ren: "No umbrella?") is locked in English on a '
+    "Korean show: give the Korean line you want performed, or unlock it."
+)
+
+
+def test_a_locked_line_not_in_the_shows_language_pauses_for_the_creator_and_never_pays_twice(
+    desk: Path, api: FakeApi
+) -> None:
+    drafts = "/v1/prompt-video-authoring-drafts"
+    api.routes[("POST", drafts)] = {"plan_job_id": "job_plan", "spine_id": "sp1"}
+    api.jobs["job_plan"] = {
+        "status": "failed",
+        "error": {
+            "code": "authoring_validation_failed",
+            "message": LANGUAGE_REFUSAL,
+            "retryable": False,
+        },
+    }
+    set_phase(desk, "new", spine_id=None)
+
+    with pytest.raises(RuntimeError) as paused:
+        orchestrate.run_step(desk)
+
+    text = str(paused.value)
+    assert text.startswith("PAUSED for the creator")
+    assert (
+        'Line 2 (Ren: "No umbrella?") is locked in English on a Korean show' in text
+    ), "the server's words"
+    assert "give the line in the show's language" in text and "unlock it" in text
+    assert "fictora-produce bind" in text
+    state = load_production(desk)
+    assert state.phase == "new", "not a failure"
+    assert (
+        state.pending[orchestrate.draft_unit(1)]["paused"]
+        == "locked_line_not_in_show_language"
+    )
+
+    with pytest.raises(RuntimeError) as again:
+        orchestrate.run_step(desk)
+
+    assert str(again.value) == text
+    assert len(api.posted(drafts)) == 1, (
+        "the same brief re-run never pays for a second draft"
+    )
+
+
+# --- A true kept count: a locked line is kept only when what is said and shown are the brief's --------
+
+
+def _counts(text: str) -> str:
+    return text.splitlines()[0].split("(", 1)[1]
+
+
+def test_a_locked_line_whose_performed_words_changed_is_not_counted_kept() -> None:
+    text = "\n".join(
+        brief_vs_spine_lines(
+            FATED,
+            _korean(
+                spoken=("비가 오네요.", "우산 없어요?"),
+                subtitles=("It's raining.", "No umbrella?"),
+            ),
+            episode=1,
+        )
+    )
+
+    assert _counts(text).startswith("kept 1, rewritten 1,"), text
+    assert "rewritten  Hana" in text and "!! BUG" in text
+
+
+def test_a_locked_line_whose_subtitle_changed_is_not_counted_kept() -> None:
+    text = "\n".join(
+        brief_vs_spine_lines(
+            FATED,
+            _korean(
+                spoken=("비가 와요.", "우산 없어요?"),
+                subtitles=("It's raining.", "You have no umbrella?"),
+            ),
+            episode=1,
+        )
+    )
+
+    assert _counts(text).startswith("kept 1, rewritten 1,"), text
+    assert "rewritten  Ren" in text and "BUG" not in text
+
+
+def test_a_locked_line_said_and_shown_as_the_brief_is_kept() -> None:
+    text = "\n".join(
+        brief_vs_spine_lines(
+            FATED,
+            _korean(
+                spoken=("비가 와요.", "우산 없어요?"),
+                subtitles=("It's raining.", "No umbrella?"),
+            ),
+            episode=1,
+        )
+    )
+
+    assert _counts(text).startswith("kept 2, rewritten 0,"), text
+    assert "!!" not in text

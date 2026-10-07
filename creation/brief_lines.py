@@ -65,7 +65,7 @@ class ScriptLine:
 
 @dataclass(frozen=True)
 class LineMatch:
-    """One row of the comparison: ``kept``, ``rewritten``, ``cut`` (brief only) or ``added`` (spine only)."""
+    """One row: ``kept``, ``rewritten``, ``changed`` (a locked line whose script matches but whose spoken or shown words do not), ``cut`` (brief only) or ``added`` (spine only)."""
 
     verdict: str
     brief: ScriptLine | None
@@ -274,6 +274,50 @@ def brief_locks_lines(brief: str) -> bool:
     return False
 
 
+def _said(brief: ScriptLine, drafted: ScriptLine) -> str:
+    """The drafted line's spoken words to compare with the brief's, or ``""`` when they cannot be compared.
+
+    ``spoken_text`` on a show performed in the brief's own script (a Korean
+    brief on a Korean show, an English brief whose ``spoken_text`` is English),
+    the script when there is no ``spoken_text``. A brief written in English for
+    a localized show is performed by the localizer: not compared.
+    """
+
+    if not drafted.alt_text:
+        return drafted.text
+    if _PERFORMED_SCRIPT.search(brief.text) or not _PERFORMED_SCRIPT.search(
+        drafted.alt_text
+    ):
+        return drafted.alt_text
+    return ""
+
+
+def _subtitle_differs(brief: ScriptLine, drafted: ScriptLine) -> str | None:
+    """The brief's subtitle when the shown ``subtitle_text`` differs from it, else ``None``."""
+
+    wanted = drafted.brief_subtitle or brief.subtitle
+    if wanted and drafted.subtitle and _norm(wanted) != _norm(drafted.subtitle):
+        return wanted
+    return None
+
+
+def kept_as_locked(match: LineMatch) -> bool:
+    """A script match is kept on a locked brief only when what is said and shown are the brief's too.
+
+    ``kept`` from :func:`compare_lines` reads the script text alone. A locked
+    line counts as kept only when its ``spoken_text`` (:func:`_said`) and its
+    ``subtitle_text`` match the brief's (7 Oct 2026: the script matched while
+    the performed line or its subtitle did not, and the report still said kept).
+    """
+
+    if match.verdict != "kept" or match.brief is None or match.spine is None:
+        return False
+    said = _said(match.brief, match.spine)
+    if said and _norm(said) != _norm(match.brief.text):
+        return False
+    return _subtitle_differs(match.brief, match.spine) is None
+
+
 def spoken_and_subtitle_lines(
     matches: Sequence[LineMatch], *, locked: bool, desk: Any = "D", episode: int = 1
 ) -> tuple[list[str], dict[str, int]]:
@@ -305,12 +349,7 @@ def spoken_and_subtitle_lines(
         # The spoken line: spoken_text on a localized show, the script otherwise.
         # A brief written in English for a localized show is performed by the
         # localizer, so only an original in the show's script is compared.
-        if drafted.alt_text and _PERFORMED_SCRIPT.search(brief.text):
-            said = drafted.alt_text
-        elif not drafted.alt_text:
-            said = drafted.text
-        else:
-            said = ""
+        said = _said(brief, drafted)
         if said and match.verdict == "kept" and _norm(said) == _norm(brief.text):
             count["locked"] += 1
         elif said and match.verdict == "kept":
@@ -321,8 +360,8 @@ def spoken_and_subtitle_lines(
                 f"[{drafted.line_id}]. Put it back: `fictora-produce line --desk {desk} --episode {episode} "
                 f'--line {drafted.line_id} --spoken "{brief.text}"`'
             )
-        wanted = drafted.brief_subtitle or brief.subtitle
-        if wanted and drafted.subtitle and _norm(wanted) != _norm(drafted.subtitle):
+        wanted = _subtitle_differs(brief, drafted)
+        if wanted is not None:
             count["adapted"] += 1
             out.append(
                 f'  subtitle adapted  [{drafted.line_id}]  brief "{wanted}"  ->  shown "{drafted.subtitle}"'
@@ -355,18 +394,27 @@ def brief_vs_spine_lines(
         return []
     drafted = spine_script_lines(spine, episode=episode)
     matches = compare_lines(brief, drafted)
-    count = {
-        verdict: sum(1 for m in matches if m.verdict == verdict)
-        for verdict in ("kept", "rewritten", "cut", "added")
-    }
-    out = [
-        f"brief lines vs the drafted script: brief {len(brief)} -> script {len(drafted)} "
-        f"(kept {count['kept']}, rewritten {count['rewritten']}, cut {count['cut']}, added {count['added']})"
-    ]
     locked = brief_locks_lines(brief_text)
     said, said_count = spoken_and_subtitle_lines(
         matches, locked=locked, episode=episode
     )
+    if locked:
+        # A locked line is kept only when its spoken_text and subtitle_text are the brief's as well.
+        matches = [
+            LineMatch("changed", m.brief, m.spine)
+            if m.verdict == "kept" and not kept_as_locked(m)
+            else m
+            for m in matches
+        ]
+    count = {
+        verdict: sum(1 for m in matches if m.verdict == verdict)
+        for verdict in ("kept", "rewritten", "changed", "cut", "added")
+    }
+    out = [
+        f"brief lines vs the drafted script: brief {len(brief)} -> script {len(drafted)} "
+        f"(kept {count['kept']}, rewritten {count['rewritten'] + count['changed']}, cut {count['cut']}, "
+        f"added {count['added']})"
+    ]
     out.append(
         f"  spoken: {said_count['locked']} {'locked' if locked else 'as written'}"
         f"{', ' + str(said_count['changed']) + ' CHANGED' if said_count['changed'] else ''}; "
@@ -376,6 +424,11 @@ def brief_vs_spine_lines(
         if match.verdict == "kept" and match.spine:
             out.append(
                 f'  kept       {match.spine.speaker}: "{match.spine.text}"  [{match.spine.line_id}]'
+            )
+        elif match.verdict == "changed" and match.spine:
+            out.append(
+                f'  rewritten  {match.spine.speaker}: "{match.spine.text}"  [{match.spine.line_id}] (the script '
+                "is the brief's, but what is said or shown is not: see below)"
             )
         elif match.verdict == "rewritten" and match.brief and match.spine:
             out.append(
@@ -408,6 +461,7 @@ __all__ = [
     "LineMatch",
     "ScriptLine",
     "brief_locks_lines",
+    "kept_as_locked",
     "brief_vs_spine_lines",
     "spoken_and_subtitle_lines",
     "compare_lines",

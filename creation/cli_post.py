@@ -990,6 +990,10 @@ def dispatch_post(args: argparse.Namespace) -> int:
                     episode=args.episode,
                     count=args.clips,
                     seconds=args.clip_seconds,
+                    take_files=tuple(args.take_file or ()),
+                    sources=tuple(args.source or ()),
+                    captions=tuple(args.captions or ()),
+                    caption_style=args.caption_style,
                 )
             except ReelServerUnreachable as exc:
                 print(

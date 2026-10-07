@@ -474,21 +474,15 @@ def apply_take_handles(
     edit = {"op": HANDLES_OP, "start_s": start_s, "end_s": end_s, "source": handles.source,
             "frames": [first, stop], "fps": fps}  # fmt: skip
     new_record = carry.write(output, edit)
-    master_before = record.resolve(desk, "master")
-    master_after = carry.files.get("master")
-    if (
-        master_before is not None
-        and master_after is not None
-        and master_before.with_suffix(".ass").is_file()
-    ):
-        shift_ass(master_before.with_suffix(".ass"), master_after.with_suffix(".ass"),
-                  start_s=start_s, end_s=end_s)  # fmt: skip
+    # The master's .ass moves with the cut (RecordCarry.write: creation.post.edit_captions).
     note = (
         f"trim handles {handles.one_line()}: kept frames {first}-{stop - 1} of {total} "
         f"({start_s:.3f}-{end_s:.3f} s, picture and sound together) on the take before the bed, the master "
         f"and the marked file -> `{output.name}`"
         + (f"; record `{new_record.name}` (what `join` reads)" if new_record else "")
     )
+    if carry.caption_line and "!!" in carry.caption_line:
+        note += "\n" + carry.caption_line
     if (
         handles.source == "creator"
         and held_head_s
