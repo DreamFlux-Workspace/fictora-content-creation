@@ -68,6 +68,7 @@ from creation.voice_gate import (
     Approvals,
     CastVoice,
     keep_on_server,
+    keep_unheard_refusal,
     local_approvals,
     record_voice,
     render_gate,
@@ -565,6 +566,7 @@ def run_voice_gate(
     cast: str | None = None,
     keep: bool = False,
     episode: int | None = None,
+    heard: bool = False,
     out: TextIO | None = None,
 ) -> list[str]:
     """List the speaking characters' voices, or record the human's yes on them as they are (spends nothing).
@@ -584,6 +586,9 @@ def run_voice_gate(
         Record the yes (``voice --keep`` / ``--keep-all``); without it the gate is only printed.
     episode
         List the speakers of this episode only (``--list``); a keep covers the whole spine.
+    heard
+        ``--heard``: the human heard each voice (its sample or audition). On a desk from
+        6 Oct 2026 a keep is refused without it, and for a voice with nothing to hear.
     out
         Text stream.
 
@@ -641,6 +646,9 @@ def run_voice_gate(
         if not voices:
             print("Nobody speaks a line on the spine: no voice to approve.", file=out)
             return []
+        refused = keep_unheard_refusal(desk, voices, heard=heard)
+        if refused:
+            raise ValueError(refused)
         note = approvals.note
         if note is None:
             kept, note = keep_on_server(run, desk, spine, [v.cast_id for v in voices])

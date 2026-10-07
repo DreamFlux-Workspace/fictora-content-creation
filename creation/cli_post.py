@@ -169,6 +169,12 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         default=None,
         help="Audition on this episode's lines only.",
     )
+    voice.add_argument(
+        "--heard",
+        action="store_true",
+        help="With --keep / --keep-all: the human heard each voice (its sample or audition). "
+        "Desks from 6 Oct 2026 keep nothing without it.",
+    )
     voice.add_argument("--count", type=int, default=8, help="Candidates, 4-10.")
     voice.add_argument(
         "--cause",
@@ -768,6 +774,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
                 cast=args.cast,
                 keep=args.keep or args.keep_all,
                 episode=args.episode,
+                heard=args.heard,
             )
             return 0
         if args.audition:
