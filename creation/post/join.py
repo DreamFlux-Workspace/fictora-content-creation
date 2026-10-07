@@ -128,7 +128,7 @@ from creation.post.seam_fix import (
 )
 from creation.post.seam_fix import keep as keep_seam_fix
 from creation.post.watermark import watermark
-from creation.rules_epoch import is_legacy
+from creation.rules_epoch import continuing_fix, is_legacy
 from creation.harness_rules import (
     gain_match_note,
     inner_voice_cues,
@@ -1253,8 +1253,13 @@ def _fix_seams(
     render: Any,
     work: Path,
     joined: Joined,
+    *,
+    trim: bool = True,
 ) -> tuple[Joined, SeamFixReport]:
-    """Run :func:`creation.post.seam_fix.fix_seams` on this join (its cue search, trims and re-join)."""
+    """Run :func:`creation.post.seam_fix.fix_seams` on this join (its cue search, trims and re-join).
+
+    ``trim=False``: the steady bed only, no silent-head trim (a desk created before 6 Oct 2026).
+    """
 
     from creation.post.edit import measure_cuts
 
@@ -1315,7 +1320,7 @@ def _fix_seams(
     kept, report = fix_seams(
         joined, parts=parts, threshold=SEAM_STEP_DB, pick_cue=pick_cue, plan_trim=plan_trim,
         rejoin=rejoin, measure=lambda path, seams, speech: seam_levels(path, seams, speech=speech),
-        render=render, scratch=scratch,
+        render=render, scratch=scratch, trim=trim,
     )  # fmt: skip
     report.tried = passed_over + report.tried
     return kept, report
@@ -1623,16 +1628,21 @@ def run_join(
             seam_fix
             and not accept_seam
             and any(abs(lv.step_db) > SEAM_STEP_DB for lv in levels)
-            and not is_legacy(desk)
+            and continuing_fix(desk, "seam_bed")
         ):
+            # The trim cuts picture: new desks only (founder decision, 7 Oct 2026).
+            trim = not is_legacy(desk)
             print(
-                "A seam steps over 5 dB: trying a steady bed under it and a silent-head trim (free)",
+                "A seam steps over 5 dB: trying a steady bed under it and a silent-head trim (free)"
+                if trim
+                else "A seam steps over 5 dB: trying a steady bed under it (free)",
                 file=out,
                 flush=True,
             )
             joined, fix_report = _fix_seams(
                 desk, parts, lengths, gains, build, render, work,
                 Joined(master, seams, speech, levels, zeros, zeros, mixed, speech_notes, sources),
+                trim=trim,
             )  # fmt: skip
             if fix_report.fixed:
                 keep_seam_fix(joined, master)
