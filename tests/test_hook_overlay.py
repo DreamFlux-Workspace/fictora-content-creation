@@ -105,6 +105,33 @@ def test_a_face_in_the_upper_band_moves_it_just_above_the_captions() -> None:
     assert anchor == "2" and y < CAPTION_BAND[0] * H
 
 
+def test_a_line_moved_down_for_a_face_never_sits_on_the_first_caption() -> None:
+    """L-20261005-11 (Sweet Racket, Last Call): the face check dropped the line to just above the
+    caption band while the first caption was up. Founder, 7 Oct 2026: it stays at the top then; the
+    caption keeps its timing. Same rule as the server's ``reel_overlays.decide_hook``."""
+
+    def placed(captions: list[tuple[float, float]], **kw: Any) -> HookOverlay:
+        decision = decide(
+            _spine(ON), 1, video=Path("x.mp4"), face_in_upper_band=lambda *a: True,
+            captions=captions, **kw,
+        )  # fmt: skip
+        assert decision.overlay is not None and decision.overlay.end_s == 3.0
+        return decision.overlay
+
+    up = placed([(0.3, 1.2)])
+    assert up.placement == "top" and "caption is on screen" in up.describe()
+    assert _pos(overlay_ass(up, width=W, height=H))[0] == "8"
+    assert placed([(2.9, 4.0)]).placement == "top"
+    # No caption while the line is up: it still clears the face, exactly as before.
+    assert placed([]).placement == "lower"
+    assert placed([(3.0, 4.0)]).placement == "lower"
+    assert placed([], position="lower").placement == "lower"
+    # An operator's --hook-line-position lower obeys the same rule.
+    assert placed([(0.3, 1.2)], position="lower").placement == "top"
+    # The plan JSON keeps its keys.
+    assert set(up.as_json()) == set(placed([]).as_json())
+
+
 def test_an_unknown_face_keeps_it_at_the_top() -> None:
     decision = decide(
         _spine(ON), 1, video=Path("x.mp4"), face_in_upper_band=lambda *a: None
@@ -233,6 +260,31 @@ def test_finish_burns_the_hook_line_on_the_first_take_before_the_mark(
     )
 
 
+@needs_ffmpeg
+def test_finish_keeps_a_lowered_hook_line_off_the_captions_it_burned(
+    post_desk: Path,
+) -> None:
+    """L-20261005-11: finish burns the captions first; a line placed low goes back to the top while
+    one of them is on screen, and the drawn ASS says so (an8 under the top strip)."""
+
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+        json.dumps(FACTS)
+    )
+    _board(post_desk)
+    _set_hook(post_desk, ON)
+
+    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+                        facts_fetcher=lambda *a: None, stream=io.StringIO(),
+                        hook_line_position="lower")  # fmt: skip
+
+    hook = next(s for s in result.steps if s.step == "hook-line")
+    assert hook.status == "ran"
+    assert "kept at the top: a caption is on screen under it" in hook.detail
+    drawn = sorted((post_desk / "ep01" / "takes").glob("*-hook-v*.ass"))[-1]
+    assert _pos(drawn.read_text(encoding="utf-8"))[0] == "8"
+
+
 def test_the_cli_takes_the_hook_line_flags(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -282,3 +334,33 @@ def test_the_default_face_check_asks_the_faces_module_for_the_upper_band(
     assert asked == [(0.0, 3.0, hook_overlay.TOP_STRIP, hook_overlay.CAPTION_BAND[0])]
     monkeypatch.setattr(faces, "upper_band_face", lambda *a, **k: None)
     assert hook_overlay.default_face_in_upper_band(Path("x.mp4"), 0.0, 3.0) is None
+
+
+class _HookDecided(Exception):
+    pass
+
+
+@needs_ffmpeg
+def test_the_local_reel_hands_its_captions_to_the_hook_line(
+    reel_desk: Path,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reel's captions, re-timed through the cut, reach the hook decision (L-20261005-11)."""
+
+    seen: dict[str, Any] = {}
+
+    def recording(*args: Any, **kwargs: Any) -> Any:
+        seen.update(kwargs)
+        raise _HookDecided
+
+    monkeypatch.setattr("creation.post.reel.reel_hook", recording)
+    _set_hook(reel_desk, ON)
+    with pytest.raises(_HookDecided):
+        run_reel(
+            reel_desk, episode=1, seconds=6.0, stream=io.StringIO(),
+            server_refused=RuntimeError("no server in this test"), hook_line_position="lower",
+        )  # fmt: skip
+
+    captions = seen["captions"]
+    assert captions and all(end > start >= 0.0 for start, end in captions)
+    assert captions[0][0] < 3.0, "a caption plays under the hook line's window"
