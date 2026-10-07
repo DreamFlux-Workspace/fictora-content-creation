@@ -129,24 +129,48 @@ def test_an_older_desks_flat_reel_cover_is_found(tmp_path: Path) -> None:
     assert episode_cover(tmp_path, 1) == flat / "reel-ep01-v1-cover-v1.jpg"
 
 
-def test_a_failed_cover_frame_leaves_the_video_as_it_was(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_the_mark_step_lays_the_cover_on_the_first_frame_in_its_own_encode(
+    tmp_path: Path,
 ) -> None:
-    # Older desks never stop on it: the reel or the join is kept as written, with a ⚠ line.
-    from creation.post import cover_frame
-    from creation.post.media import MediaToolError
+    from creation.post.watermark import watermark
 
     video = _clip(tmp_path / "episode.mp4")
-    before = video.read_bytes()
+    out = watermark(video, tmp_path / "marked.mp4", cover=_red(tmp_path / "cover.jpg"))
 
-    def fail(*_: object) -> Path:
-        raise MediaToolError("ffmpeg failed")
+    red, _, blue = _frame_rgb(out, 0)
+    assert red > 200 and blue < 60
+    red, _, blue = _frame_rgb(out, 1)
+    assert blue > 150 and red < 80
+    assert _frames(out) == _frames(video)
+    assert probe_video(out).has_audio
 
-    monkeypatch.setattr(cover_frame, "put_cover_on_first_frame", fail)
 
-    warning = cover_frame.cover_first_frame_in_place(
-        video, _red(tmp_path / "cover.jpg")
+def test_the_mark_step_without_a_cover_is_as_before(tmp_path: Path) -> None:
+    from creation.post.watermark import watermark
+
+    video = _clip(tmp_path / "episode.mp4")
+    out = watermark(video, tmp_path / "marked.mp4")
+
+    red, _, blue = _frame_rgb(out, 0)
+    assert blue > 150 and red < 80
+
+
+def test_the_letterbox_mark_lays_the_cover_on_the_first_frame(tmp_path: Path) -> None:
+    from creation.post.letterbox import mark_and_title
+
+    video = _clip(tmp_path / "episode.mp4")
+    out, _ = mark_and_title(
+        video, tmp_path / "marked.mp4", title=None, cover=_red(tmp_path / "cover.jpg")
     )
 
-    assert warning is not None and warning.startswith("⚠ cover frame skipped")
-    assert video.read_bytes() == before
+    red, _, blue = _frame_rgb(out, 0)
+    assert red > 200 and blue < 60
+    assert _frames(out) == _frames(video)
+
+
+def test_a_join_with_no_reel_cover_yet_says_so(tmp_path: Path) -> None:
+    from creation.post.join import _join_cover
+
+    cover, note = _join_cover(tmp_path, (3,))
+
+    assert cover is None and "no reel cover on the desk" in note

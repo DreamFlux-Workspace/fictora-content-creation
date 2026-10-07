@@ -404,7 +404,11 @@ def test_a_legacy_desk_reads_faces_without_the_profile_cascade(
 
 
 @needs_ffmpeg
-def test_a_legacy_reel_is_flat_with_no_cover_books_or_auto_reel(tmp_path: Path) -> None:
+def test_a_legacy_reel_is_flat_with_no_books_or_auto_reel_and_now_a_cover(
+    tmp_path: Path,
+) -> None:
+    """Frozen, with one exception (founder, 7 Oct 2026): the cover image and its first frame."""
+
     from test_reel import _make_reel_desk
 
     from creation.post.reel import auto_reel, run_reel
@@ -417,9 +421,10 @@ def test_a_legacy_reel_is_flat_with_no_cover_books_or_auto_reel(tmp_path: Path) 
     out = io.StringIO()
     result = run_reel(desk, episode=1, seconds=6.0, stream=out)
 
-    assert result.video is not None and result.cover is None
+    assert result.video is not None and result.cover is not None
     assert sorted(p.name for p in (desk / "reels").iterdir()) == [
-        "post-ep01-v1.txt", "reel-ep01-v1.ass", "reel-ep01-v1.mp4", "reel-plan-ep01-v1.json",
+        "post-ep01-v1.txt", "reel-ep01-v1-cover-v1.jpg", "reel-ep01-v1.ass", "reel-ep01-v1.mp4",
+        "reel-plan-ep01-v1.json",
     ]  # fmt: skip
     post = result.post.read_text(encoding="utf-8")  # type: ignore[union-attr]
     assert post == (
@@ -427,7 +432,8 @@ def test_a_legacy_reel_is_flat_with_no_cover_books_or_auto_reel(tmp_path: Path) 
         "Episode 2 is next. Follow so you don't miss it.\n\n#mystery #shortdrama\n"
     )
     said = out.getvalue()
-    assert "cover" not in said and "metrics" not in said and "latest" not in said
+    assert "metrics" not in said and "latest" not in said
+    assert "is also the reel's first frame" in said
     assert said.rstrip().splitlines()[-1].startswith("Reel reel-ep01-v1.mp4: ")
     assert "; no cover image" not in said
 
@@ -445,7 +451,8 @@ def test_a_legacy_reel_runs_the_commands_it_ran_before(
 
     desk = _legacy(_make_reel_desk(tmp_path))
     calls = _recording(monkeypatch, [desk, REPO])
-    result = run_reel(desk, episode=1, seconds=6.0, stream=io.StringIO())
+    # --no-cover: everything but the cover (founder, 7 Oct 2026) runs exactly as before.
+    result = run_reel(desk, episode=1, seconds=6.0, stream=io.StringIO(), no_cover=True)
     assert result.ass is not None
     golden = json.loads(GOLDEN.read_text())["reel"]
     before_133 = json.loads(json.dumps(golden).replace("/reels/ep01/", "/reels/"))
@@ -561,7 +568,8 @@ def test_a_legacy_reel_never_draws_system_panels(
     body["beats"][0]["system_panels"] = [_cue(appear_at_ms=0)]
     spine_path.write_text(json.dumps(body), encoding="utf-8")
     calls = _recording(monkeypatch, [desk, REPO])
-    result = run_reel(desk, episode=1, seconds=6.0, stream=io.StringIO())
+    # --no-cover: everything but the cover (founder, 7 Oct 2026) runs exactly as before.
+    result = run_reel(desk, episode=1, seconds=6.0, stream=io.StringIO(), no_cover=True)
     assert result.ass is not None
     assert not list((desk / "reels").glob("*panels*"))
     golden = json.loads(GOLDEN.read_text())["reel"]

@@ -1174,27 +1174,29 @@ def _agreed(values: list[Any], default: Any) -> Any:
     return values[0] if len(distinct) == 1 else default
 
 
-def _cover_first_frame(desk: Path, episodes: tuple[int, ...], marked: Path) -> str:
-    """Put the episode's reel cover on the joined file's first frame; the note for the report.
+def _join_cover(desk: Path, episodes: tuple[int, ...]) -> tuple[Path | None, str]:
+    """The cover for the joined file's first frame (the episode's newest reel cover), and its note.
 
     The first frame is the preview Discord, WhatsApp and the phones show
     (:mod:`creation.post.cover_frame`). A series cut takes its first episode's cover.
     """
 
-    from creation.post.cover_frame import cover_first_frame_in_place, episode_cover
+    from creation.post.cover_frame import episode_cover
 
     if not episodes:
-        return "cover frame: none (no episode named; the first frame is the picture's)"
+        return (
+            None,
+            "cover frame: none (no episode named; the first frame is the picture's)",
+        )
     cover = episode_cover(desk, episodes[0])
     if cover is None:
-        return (
+        return None, (
             f"cover frame: none yet for episode {episodes[0]} (no reel cover on the desk): make the reel "
             "(`reel`), then join again for the cover as the first frame"
         )
-    skipped = cover_first_frame_in_place(marked, cover)
     return (
-        skipped
-        or f"cover frame: {cover.name} is the first frame (the preview Discord and phones show)"
+        cover,
+        f"cover frame: {cover.name} is the first frame (the preview Discord and phones show)",
     )
 
 
@@ -1471,15 +1473,32 @@ def run_join(
     else:
         marked_stem = f"{stem}-sokii"
         target = next_versioned_path(folder, marked_stem, ".mp4")
+        cover, cover_note = _join_cover(desk, episodes)
 
         def mark(video: Path, out: Path) -> Path:
+            # The cover goes on the first frame in the mark's own encode. A cover that fails
+            # never stops the join: the mark is made again without it, with a ⚠ line.
+            nonlocal cover, cover_note
+            try:
+                return _mark(video, out, cover=cover)
+            except MediaToolError as exc:
+                if cover is None:
+                    raise
+                out.unlink(missing_ok=True)
+                cover_note = (
+                    f"⚠ cover frame skipped: {type(exc).__name__}: {str(exc)[-200:]}"
+                )
+                cover = None
+                return _mark(video, out, cover=None)
+
+        def _mark(video: Path, out: Path, *, cover: Path | None) -> Path:
             if not letterbox:
-                return watermark(video, out, y=watermark_y)
+                return watermark(video, out, y=watermark_y, cover=cover)
             from creation.post.letterbox import mark_and_title
 
             done, fitted = mark_and_title(
                 video, out, title=title,
-                ass_path=next_versioned_path(folder, f"{stem}-title", ".ass"),
+                ass_path=next_versioned_path(folder, f"{stem}-title", ".ass"), cover=cover,
             )  # fmt: skip
             result.notes.append(
                 "letterbox: Sokii mark in the top band; "
@@ -1502,8 +1521,7 @@ def run_join(
                 f"ending {ending}: the marked file holds its last frame, then cuts to black "
                 "(the master stays as joined)"
             )
-    if result.marked is not None:
-        result.notes.append(_cover_first_frame(desk, episodes, result.marked))
+        result.notes.append(cover_note)
     summary = result.summary_lines()
     for run_dir in run_dirs:
         append_run_note(run_dir, "Join\n" + "\n".join(summary))

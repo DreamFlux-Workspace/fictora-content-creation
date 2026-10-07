@@ -116,7 +116,6 @@ from creation.post.reel_plan import (
     segments_from_json,
     strongest_from_json,
 )
-from creation.post.cover_frame import cover_first_frame_in_place
 from creation.rules_epoch import is_legacy, under_desk_rules
 from creation.post.reel_sources import (
     Inferred,
@@ -958,8 +957,12 @@ def render_reel(
     hook: HookOverlay | None = None,
     letterbox: LetterboxReel | None = None,
     panels: Sequence[tuple[int, int, Any]] = (),
+    cover: Path | None = None,
 ) -> tuple[float, str, str, list[str]]:
     """Cut the plan from the sources into ``paths['video']`` (and its ``.ass``).
+
+    ``cover`` (the reel's cover image) becomes the reel's first frame in the mark
+    step's own encode (:mod:`creation.post.cover_frame`); ``None`` leaves it as filmed.
 
     The reel ends hard on its last frame (the bed stops with it); a plan whose
     ``ending`` is ``freeze-black`` holds that frame, then cuts to black
@@ -1172,7 +1175,16 @@ def render_reel(
             report.append(hook.describe())
         burned = [s.take_id for s in sources if s.inferred and s.inferred.burned]
         marked = scratch / "reel-marked.mp4"
-        if burned:
+        if burned and cover is not None:
+            # No second mark; the cover still goes on the first frame (one encode instead of a copy).
+            from creation.post.cover_frame import put_cover_on_first_frame
+
+            put_cover_on_first_frame(captioned, cover, marked)
+            mark_line = (
+                f"⚠ no second mark: {', '.join(burned)} cut from the accepted file, its own mark and burned "
+                "captions kept as they are"
+            )
+        elif burned:
             # Cut from the accepted (marked) file itself: its mark is already on the picture.
             run_ffmpeg(["-i", str(captioned), "-c", "copy", str(marked)])
             mark_line = (
@@ -1184,7 +1196,7 @@ def render_reel(
 
             _, fitted = mark_and_title(
                 captioned, marked, title=letterbox.title,
-                ass_path=paths["video"].with_name(paths["video"].stem + "-title.ass"),
+                ass_path=paths["video"].with_name(paths["video"].stem + "-title.ass"), cover=cover,
             )  # fmt: skip
             words = (
                 f"{letterbox.title.describe()} at {fitted.size} px"
@@ -1196,7 +1208,7 @@ def render_reel(
                 f"Sokii mark in the top band (as finish and join apply it); {words}"
             )
         else:
-            watermark(captioned, marked, y=watermark_y)
+            watermark(captioned, marked, y=watermark_y, cover=cover)
             mark_line = "Sokii mark top left (as finish applies it)"
         apply_ending(marked, paths["video"], style=plan.ending)
         report.append(
@@ -1208,6 +1220,10 @@ def render_reel(
     seconds = probe_video(paths["video"]).duration_seconds
     report.append(f"captions: {captions_line}")
     report.append(mark_line)
+    if cover is not None:
+        report.append(
+            f"cover: {cover.name} is also the reel's first frame (the preview Discord and phones show)"
+        )
     return seconds, loudness, captions_line, report
 
 
@@ -1750,43 +1766,40 @@ def make_reel(
             fps=takes[0].fps if takes else 24.0,
             skip_takes=[s.take_id for s in srcs if s.inferred and s.inferred.burned],
         )  # fmt: skip
-    secs, loud, cap_line, report = render_reel(
-        desk, episode=episode, plan=plan, sources=srcs, takes=takes, patches=patches,
-        paths=paths, caption_style=style, whole_lines=whole, watermark_y=watermark_y,
-        hook=hook.overlay, letterbox=boxed, panels=panels,
-    )  # fmt: skip
     summary = episode_summary(spine, episode)
     series = str(spine.get("title") or desk.name)
-    if legacy:
-        # The cover and its first frame reach older desks too (founder, 7 Oct 2026).
-        if not no_cover:
-            legacy_cover, _, cover_warnings = make_cover(
+    # The cover is drawn first (its picture comes from the takes, not the reel) and goes on
+    # the reel's first frame in the mark step's own encode: Discord and the phones show a
+    # video's first frame as its preview (founder, 7 Oct 2026; older desks too). A cover
+    # that cannot be drawn never stops the reel: a ⚠ line, and the first frame as filmed.
+    cover: Path | None = None
+    cover_warnings: list[str] = []
+    if no_cover:
+        cover_note = "no cover image (--no-cover)"
+    else:
+        try:
+            cover, cover_note, cover_warnings = make_cover(
                 desk, episode=episode, plan=plan, sources=srcs, takes=takes, patches=patches,
                 video=paths["video"], series=series, detector=detector, cover_frame=cover_frame,
             )  # fmt: skip
-            report += cover_warnings
-            if legacy_cover is not None:
-                cover_first_frame_in_place(paths["video"], legacy_cover)
-                result.cover = legacy_cover
-                report.append(
-                    f"cover: {legacy_cover.name} (also the reel's first frame)"
-                )
+        except (MediaToolError, OSError, ValueError) as exc:
+            cover_note = f"no cover image: {type(exc).__name__}: {exc}"
+            cover_warnings = [f"⚠ {cover_note}"]
+    secs, loud, cap_line, report = render_reel(
+        desk, episode=episode, plan=plan, sources=srcs, takes=takes, patches=patches,
+        paths=paths, caption_style=style, whole_lines=whole, watermark_y=watermark_y,
+        hook=hook.overlay, letterbox=boxed, panels=panels, cover=cover,
+    )  # fmt: skip
+    if legacy:
+        report += cover_warnings
+        if cover is not None:
+            result.cover = cover
         return _legacy_reel_files(
             result, paths, episode=episode, spine=spine, summary=summary, series=series, seconds=secs,
             loudness=loud, captions_line=cap_line, report=report, style_note=style_note, out=out,
         )  # fmt: skip
     posting, posting_notes = _posting(desk)
-    cover: Path | None = None
-    if no_cover:
-        cover_note = "no cover image (--no-cover)"
-    else:
-        cover, cover_note, cover_warnings = make_cover(
-            desk, episode=episode, plan=plan, sources=srcs, takes=takes, patches=patches,
-            video=paths["video"], series=series, detector=detector, cover_frame=cover_frame,
-        )  # fmt: skip
-        posting_notes += cover_warnings
-        if cover is not None:
-            cover_first_frame_in_place(paths["video"], cover)
+    posting_notes += cover_warnings
     caption = post_text(
         series=series,
         episode=episode,

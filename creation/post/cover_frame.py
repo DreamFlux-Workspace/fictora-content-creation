@@ -7,23 +7,20 @@ and the joined episode carry the reel's cover image (series title and "PART N",
 :mod:`creation.post.reel_cover`) as frame 0.
 
 Exactly one frame (about 0.04 s at the house 24 fps): too short to see while
-the reel plays, so the hook and the length are unchanged. The sound is copied
-as it is, so nothing moves; only the picture is encoded again (high quality),
-and a cover attached inside the file is kept. The cover image is still written
-beside the reel for Instagram's "Edit cover".
-
-A desk created before 6 Oct 2026 keeps its first frame (rules epoch).
+the reel plays, so the hook and the length are unchanged. The cover goes on in
+the encode the command already makes (the mark step: :func:`cover_frame_graph`),
+never as a second pass; the server reel engine does the same for its reels
+(fictora-drama ``reel-rules-v5``). The cover image is still written beside the
+reel for Instagram's "Edit cover". Every desk, older ones included (founder,
+7 Oct 2026).
 """
 
 from __future__ import annotations
 
 import re
-import shutil
-import tempfile
 from pathlib import Path
 
 from creation.post.media import (
-    MediaToolError,
     keep_cover_args,
     probe_video,
     run_ffmpeg,
@@ -62,6 +59,35 @@ def episode_cover(desk: Path, episode: int) -> Path | None:
                 finished = 0 if match.group(2) else 1
                 found.append((finished, int(match.group(3)), int(match.group(4)), path))
     return max(found)[3] if found else None
+
+
+def cover_frame_graph(
+    *, cover_input: int, picture: str, width: int, height: int, out: str
+) -> str:
+    """The filter that lays the cover over frame 0 of ``picture``, for a command's own encode.
+
+    Parameters
+    ----------
+    cover_input
+        The cover's input index (given with ``-loop 1 -i COVER``).
+    picture
+        The picture's label in the graph (``[v]``).
+    width, height
+        The picture's size (the cover is filled to it).
+    out
+        The output label (``[vc]``).
+
+    Returns
+    -------
+    str
+        Two filter chains joined by ``;``, to append to the command's graph.
+    """
+
+    return (
+        f"[{cover_input}:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},setsar=1,format=yuv420p[cover];"
+        f"{picture}[cover]overlay=0:0:enable='eq(n\\,0)':shortest=1:format=auto{out}"
+    )
 
 
 def put_cover_on_first_frame(video: Path, cover: Path, out: Path) -> Path:
@@ -105,34 +131,3 @@ def put_cover_on_first_frame(video: Path, cover: Path, out: Path) -> Path:
          *keep_cover_args(attached), "-c:a", "copy", "-movflags", "+faststart", str(out)]
     )  # fmt: skip
     return out
-
-
-def cover_first_frame_in_place(video: Path, cover: Path) -> str | None:
-    """Put ``cover`` on frame 0 of a file this command has just written (nobody has it open yet).
-
-    Never stops the reel or the join: when ffmpeg fails, ``video`` is left exactly
-    as it was written and the returned warning says so.
-
-    Parameters
-    ----------
-    video
-        The new reel or joined episode.
-    cover
-        The cover image.
-
-    Returns
-    -------
-    str | None
-        ``None`` when the cover is the first frame; else the ⚠ line to print.
-    """
-
-    try:
-        with tempfile.TemporaryDirectory(prefix="fictora-cover-frame-") as tmp:
-            done = put_cover_on_first_frame(video, cover, Path(tmp) / video.name)
-            shutil.move(str(done), str(video))
-    except (MediaToolError, OSError) as exc:
-        return (
-            f"⚠ cover frame skipped: {video.name} keeps its own first frame ({type(exc).__name__}: "
-            f"{str(exc)[-200:]})"
-        )
-    return None
