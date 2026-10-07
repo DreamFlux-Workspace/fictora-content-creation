@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from conftest import SHOWN_PRICES, set_phase
+from creation import episode_commands as ec
 from creation import orchestrate
 from creation.cli_produce import main
 from creation.harness_rules import silent_first_beat_lines, word_age_lines
@@ -198,7 +199,7 @@ mode: model
         "Taeho cannot see the tails.",
     ]
     assert pitch["premise_device"] == {
-        "device": "rain",
+        "device": ["rain"],
         "used": True,
         "why": "the umbrella scene needs it",
     }
@@ -250,7 +251,7 @@ def test_world_rules_and_the_device_carry_from_the_last_approved_pitch(
     stored, notes, _ = store_pitch(desk, 2, raw)
 
     assert stored.pitch["world_rules"] == ["Sota cannot feel a ghost or touch one."]
-    assert stored.pitch["premise_device"]["device"] == "rain"
+    assert stored.pitch["premise_device"]["device"] == ["rain"]
     assert any(
         "carried from the previous episode's approved pitch: re-confirm" in n
         for n in notes
@@ -572,3 +573,149 @@ def test_a_legacy_desk_gets_the_same_script_gate_without_a_pitch(desk: Path) -> 
     before = orchestrate.script_gate_text(desk, spine_fixture(), episode=1)
     _legacy(desk)
     assert orchestrate.script_gate_text(desk, spine_fixture(), episode=1) == before
+
+
+# --- every paid command waits for the newest pitch's yes (new desks) -----------------------------
+
+
+def _paid_posts(api: FakeApi) -> list[str]:
+    return [path for method, path, _, _ in api.calls if method != "GET"]
+
+
+@pytest.mark.usefixtures("pitch_gate")
+@pytest.mark.parametrize(
+    "command,call",
+    [
+        ("redraw-board", lambda desk: ec.run_redraw_board(desk, episode=1, take_id="t1", cause="the lamp")),
+        ("redraw-plate", lambda desk: ec.run_redraw_plate_with_note(desk, cast="Hana", note="narrow face")),
+        ("film --confirm-spend", lambda desk: ec.run_film(desk, episode=1, confirm_spend=True)),
+    ],
+)  # fmt: skip
+def test_paid_commands_send_nothing_while_the_newest_pitch_lacks_its_yes(
+    desk: Path, api: FakeApi, command: str, call: Any
+) -> None:
+    store_pitch(desk, 1, card())
+    approve_pitch(desk, 1)
+    # Rewritten mid-episode, after the boards: the new card has no yes yet.
+    store_pitch(desk, 1, card(ending="Jun-ho reaches for her."))
+
+    with pytest.raises(RuntimeError) as stop:
+        call(desk)
+
+    message = str(stop.value)
+    assert message.startswith(f"Stopped before `{command}`. Nothing was sent.")
+    assert (
+        "pitch v2 has no yes yet" in message and "--gate pitch --episode 1" in message
+    )
+    assert f"`{command}` again" in message
+    assert _paid_posts(api) == []
+
+
+@pytest.mark.usefixtures("pitch_gate")
+def test_step_does_not_film_while_the_newest_pitch_lacks_its_yes(
+    desk: Path, api: FakeApi
+) -> None:
+    store_pitch(desk, 1, card())
+    set_phase(desk, "wait_spend")
+
+    with pytest.raises(RuntimeError, match="Stopped before filming. Nothing was sent."):
+        orchestrate.run_step(desk, confirm_spend=True)
+    assert _paid_posts(api) == []
+
+
+@pytest.mark.usefixtures("pitch_gate")
+def test_pricing_a_film_is_never_held_for_the_pitch(desk: Path, api: FakeApi) -> None:
+    store_pitch(desk, 1, card())
+    try:
+        ec.run_film(desk, episode=1, confirm_spend=False, out=io.StringIO())
+    except Exception as exc:  # noqa: BLE001 - any other stop is fine; the pitch one is not
+        assert "pitch" not in str(exc)
+
+
+@pytest.mark.usefixtures("pitch_gate")
+def test_a_legacy_desk_runs_paid_commands_without_a_pitch(desk: Path) -> None:
+    _legacy(desk)
+    for command in ("redraw-board", "redraw-plate", "film --confirm-spend"):
+        ec._hold_for_pitch(desk, command, episode=1)  # nothing raised
+
+
+@pytest.mark.usefixtures("pitch_gate")
+def test_redraws_go_on_once_the_newest_pitch_has_its_yes(desk: Path) -> None:
+    store_pitch(desk, 1, card())
+    approve_pitch(desk, 1)
+    ec._hold_for_pitch(desk, "redraw-board", episode=1)
+    ec._hold_for_pitch(desk, "redraw-plate")
+
+
+# --- the premise device in every language --------------------------------------------------------
+
+
+def test_the_device_takes_a_list_of_words_and_a_single_string_still_works(
+    desk: Path,
+) -> None:
+    listed, _, _ = store_pitch(
+        desk,
+        1,
+        card(
+            premise_device={"device": ["rain", "비", "雨"], "used": False, "why": "x"}
+        ),
+    )
+    assert listed.pitch["premise_device"]["device"] == ["rain", "비", "雨"]
+    single, _, _ = store_pitch(
+        desk, 2, card(premise_device={"device": "rain", "used": False, "why": "x"})
+    )
+    assert single.pitch["premise_device"]["device"] == ["rain"]
+    assert (
+        parse_pitch_markdown(
+            "## Premise device\ndevice: rain, 비, 雨\nused: no\nwhy: x\n"
+        )["premise_device"]["device"]
+        == "rain, 비, 雨"
+    )
+    split, _, _ = store_pitch(
+        desk,
+        3,
+        card(premise_device={"device": "rain, 비, 雨", "used": False, "why": "x"}),
+    )
+    assert split.pitch["premise_device"]["device"] == ["rain", "비", "雨"]
+
+
+def _korean_spine(spoken: str) -> dict[str, Any]:
+    spine = spine_fixture(episodes=1, spoken_language="ko-KR")
+    line = spine["beats"][0]["dialogue_lines"][0]
+    line["text"] = "It's closing time."
+    line["subtitle_text"] = "It's closing time."
+    line["spoken_text"] = spoken
+    return spine
+
+
+def test_a_device_used_only_in_a_korean_spoken_line_is_caught() -> None:
+    pitch = card(
+        premise_device={"device": ["rain", "비"], "used": False, "why": "not this time"}
+    )
+    spine = _korean_spine("비가 그치면 문 닫아요.")
+
+    lines = premise_device_lines(spine, pitch, episode=1)
+
+    assert (
+        lines
+        and "rain / 비" in lines[0]
+        and "is in this episode's lines or beats" in lines[0]
+    )
+    assert (
+        premise_device_lines(_korean_spine("이제 문 닫아요."), pitch, episode=1) == []
+    )
+
+
+def test_a_device_in_a_japanese_spoken_line_in_three_episodes_running_is_caught() -> (
+    None
+):
+    pitch = card(
+        premise_device={"device": ["rain", "雨"], "used": True, "why": "premise"}
+    )
+    spine = spine_fixture(episodes=3, spoken_language="ja-JP")
+    for beat in spine["beats"]:
+        beat["dialogue_lines"][0]["spoken_text"] = "雨がやんだら閉めます。"
+
+    lines = premise_device_lines(spine, pitch, episode=3)
+
+    assert any("each of the last 3 episodes" in line for line in lines)

@@ -358,9 +358,10 @@ def _pitch_gate_off_by_default(
 
     if "pitch_gate" in request.fixturenames:
         return
-    from creation import orchestrate
+    from creation import episode_commands, orchestrate
 
     monkeypatch.setattr(orchestrate, "pitch_gate_refusal", lambda *a, **k: None)
+    monkeypatch.setattr(episode_commands, "pitch_gate_refusal", lambda *a, **k: None)
 
 
 @pytest.fixture

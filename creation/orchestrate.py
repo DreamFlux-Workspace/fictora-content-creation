@@ -1619,6 +1619,15 @@ def run_step(
                 "wait_spend": "spend",
             }[state.phase]
             if state.phase == "wait_spend" and confirm_spend:
+                # Filming is paid too: a pitch rewritten after the boards holds it until its new yes.
+                pitch = pitch_gate_refusal(
+                    desk,
+                    episode=ep,
+                    stage="filming",
+                    rerun="`step --confirm-spend` again",
+                )
+                if pitch:
+                    raise RuntimeError(pitch)
                 # The voices gate: nothing films until every speaking voice has the human's yes.
                 refused = voices_film_refusal(
                     desk, run.spine(state.spine_id or ""), episode=ep, run=run

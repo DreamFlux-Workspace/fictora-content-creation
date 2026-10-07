@@ -18,8 +18,10 @@ never the idea. The pitch card is that idea, written down and approved first.
   newest card (desk only: ``epNN/pitch-approvals.json``). A card changed after
   its yes (a new version, or the file edited by hand) needs a new yes.
 - On desks created on or after 6 Oct 2026 (:func:`creation.rules_epoch.is_legacy`)
-  ``step`` draws no plates or boards for an episode without an approved card
-  (:func:`pitch_gate_refusal`). Older desks are never held.
+  nothing paid runs for an episode whose newest card lacks its yes: ``step``
+  (plates, boards, filming), ``redraw-board``, ``redraw-plate`` and
+  ``film --confirm-spend`` all stop first (:func:`pitch_gate_refusal`). Older
+  desks are never held.
 - The script gate prints the approved card, its world rules ("check every line
   and beat against these") and free warnings that compare the script with it
   (:func:`script_pitch_lines`), on every desk.
@@ -66,7 +68,8 @@ FIELD_WORDS: Mapping[str, str] = {
     "throughline": "throughline: the episode in one sentence (about 200 characters at most)",
     "charged_situation": "charged_situation: the ONE situation the episode turns on",
     "world_rules": "world_rules: a list of the show's rules (carried from the last approved pitch when left out)",
-    "premise_device": "premise_device: {device: the show's premise device in a word or two, used: yes/no, why: why or why not}",
+    "premise_device": "premise_device: {device: the show's premise device, a word or a list of words in each language "
+    '("rain" or ["rain", "비", "雨"]), used: yes/no, why: why or why not}',
     "emotional_beats": "emotional_beats: a list of {beat: what happens, expression: the named face, delivery: how the line is played}",
     "intimacy": "intimacy: `none`, or a PG plan carried through the aftermath",
     "shouted_lines": "shouted_lines: yes or no (ask the producer)",
@@ -242,6 +245,28 @@ def read_pitch_file(path: Path) -> dict[str, Any]:
     return parse_pitch_markdown(text)
 
 
+def device_words(value: Any) -> list[str]:
+    """The premise device as a list of words, one or more per language.
+
+    A list is taken as it is; a string is split on commas, semicolons and
+    slashes (``"rain, 비, 雨"``), so a single word still works.
+    """
+
+    if isinstance(value, (list, tuple)):
+        items = [str(item) for item in value]
+    elif isinstance(value, str):
+        items = re.split(r"[,;/、，]", value)
+    else:
+        return []
+    return [item.strip() for item in items if item and item.strip()]
+
+
+def device_label(words: Any) -> str:
+    """The device words as printed: ``rain / 비 / 雨``."""
+
+    return " / ".join(device_words(words))
+
+
 def _yes_no(value: Any) -> bool | None:
     if isinstance(value, bool):
         return value
@@ -379,19 +404,19 @@ def validate_pitch(
     if not isinstance(device, Mapping):
         problems.append(FIELD_WORDS["premise_device"])
         device = {}
-    word = _text(device.get("device")) or _text(
-        (previous.get("premise_device") or {}).get("device")
-    )
-    if word and not _text(device.get("device")) and device:
+    own = device_words(device.get("device"))
+    word = own or device_words((previous.get("premise_device") or {}).get("device"))
+    if word and not own and device:
         notes.append(
-            f'premise device "{word}" carried from the previous episode\'s approved pitch.'
+            f'premise device "{device_label(word)}" carried from the previous episode\'s approved pitch.'
         )
     used = _yes_no(device.get("used"))
     why = _text(device.get("why"))
     if device:
         if not word:
             problems.append(
-                'premise_device.device: the show\'s premise device in a word or two ("rain", "the ghost\'s cold hand")'
+                "premise_device.device: the show's premise device, a word or a list of words in each language "
+                '("rain", or ["rain", "비", "雨"])'
             )
         if used is None:
             problems.append("premise_device.used: yes or no")
@@ -512,7 +537,7 @@ def pitch_warnings(
     before = (previous or {}).get("premise_device") or {}
     if device.get("used") and before.get("used"):
         lines.append(
-            f'!! the premise device "{device.get("device")}" was used in the previous episode too. '
+            f'!! the premise device "{device_label(device.get("device"))}" was used in the previous episode too. '
             'Use it sparingly and find this episode\'s own turn (Noodle24: "what do u keep bringing rain in?").'
         )
     return lines
@@ -774,7 +799,7 @@ def pitch_text(desk: Path, stored: StoredPitch, *, with_voices: bool = True) -> 
         )
     device = pitch.get("premise_device") or {}
     out.append(
-        f"  Premise device: {device.get('device')} — {'used' if device.get('used') else 'not used'} ({device.get('why')})"
+        f"  Premise device: {device_label(device.get('device'))} — {'used' if device.get('used') else 'not used'} ({device.get('why')})"
     )
     out.append(f"  Intimacy: {pitch.get('intimacy')}")
     out.append(f"  Shouted lines: {'yes' if pitch.get('shouted_lines') else 'no'}")
@@ -851,9 +876,15 @@ def run_approve_pitch(
 # --- the gate and the script checks ---------------------------------------------------------------
 
 
-def pitch_gate_refusal(desk: Path, *, episode: int, stage: str) -> str | None:
-    """The stop before plates or boards on a new desk until the episode's pitch has a yes, or ``None``.
+def pitch_gate_refusal(
+    desk: Path, *, episode: int, stage: str, rerun: str = "`step` again"
+) -> str | None:
+    """The stop before anything paid on a new desk until the episode's newest pitch has a yes, or ``None``.
 
+    ``step`` (plates, boards, the filming confirm), ``redraw-board``,
+    ``redraw-plate`` and ``film --confirm-spend`` ask it before they send
+    anything, so a pitch rewritten mid-episode holds every paid draw until its
+    new yes. ``stage`` names what is held, ``rerun`` what to run after the yes.
     Desks created before 6 Oct 2026 are never held (rules epoch).
     """
 
@@ -875,7 +906,7 @@ def pitch_gate_refusal(desk: Path, *, episode: int, stage: str) -> str | None:
         "rules, premise device, emotional beats with expression and delivery, intimacy, shouted lines, the "
         "on-screen hook line, hook, ending, voices), store it with "
         f"`fictora-produce pitch --desk {desk} --episode {episode} --file pitch.md`, show it, then after "
-        f"their yes `fictora-produce approve --desk {desk} --gate pitch --episode {episode}`, and `step` again."
+        f"their yes `fictora-produce approve --desk {desk} --gate pitch --episode {episode}`, and {rerun}."
     )
 
 
@@ -903,6 +934,7 @@ def _beat_text(spine: Mapping[str, Any], beat: Mapping[str, Any]) -> str:
     for line in beat.get("dialogue_lines") or []:
         if isinstance(line, Mapping):
             parts.append(str(line.get("text") or ""))
+            parts.append(str(line.get("spoken_text") or ""))
             parts.append(str(line.get("subtitle_text") or ""))
     return " ".join(part for part in parts if part)
 
@@ -986,11 +1018,18 @@ def emotional_beat_lines(
     return lines
 
 
-def _device_pattern(device: str) -> re.Pattern[str] | None:
-    words = [re.escape(word) for word in device.strip().split() if word]
-    if not words:
+def _device_pattern(device: Any) -> re.Pattern[str] | None:
+    """One pattern for every device word: a Latin word at a word start (``rain`` finds ``rainy``);
+    a Korean, Japanese or Chinese word anywhere (those scripts do not space or mark word starts)."""
+
+    parts: list[str] = []
+    for word in device_words(device):
+        pieces = [re.escape(piece) for piece in word.split()]
+        joined = r"\s+".join(pieces)
+        parts.append(rf"\b{joined}\w*" if word[0].isascii() else joined)
+    if not parts:
         return None
-    return re.compile(r"\b" + r"\s+".join(words) + r"\w*", re.IGNORECASE)
+    return re.compile("|".join(f"(?:{part})" for part in parts), re.IGNORECASE)
 
 
 def premise_device_lines(
@@ -999,7 +1038,7 @@ def premise_device_lines(
     """Warn when the premise device is in this episode though the pitch says not, or in each of the last 3."""
 
     device = pitch.get("premise_device") or {}
-    pattern = _device_pattern(str(device.get("device") or ""))
+    pattern = _device_pattern(device.get("device"))
     if pattern is None:
         return []
 
@@ -1012,14 +1051,14 @@ def premise_device_lines(
     lines: list[str] = []
     if not device.get("used") and present(episode):
         lines.append(
-            f'!! the premise device "{device.get("device")}" is in this episode\'s lines or beats, '
+            f'!! the premise device "{device_label(device.get("device"))}" is in this episode\'s lines or beats, '
             "but the approved pitch says it is not used. Take it out, or change the pitch and ask again."
         )
     if episode >= 3 and all(
         present(ordinal) for ordinal in range(episode - 2, episode + 1)
     ):
         lines.append(
-            f'!! the premise device "{device.get("device")}" is in each of the last 3 episodes '
+            f'!! the premise device "{device_label(device.get("device"))}" is in each of the last 3 episodes '
             f"({episode - 2}–{episode}). Use it sparingly; find this episode's own turn "
             '(Noodle24: "what do u keep bringing rain in?").'
         )
@@ -1079,6 +1118,8 @@ __all__ = [
     "approve_pitch",
     "approved_pitch",
     "current_pitch",
+    "device_label",
+    "device_words",
     "emotional_beat_lines",
     "is_approved",
     "memory_canon",
