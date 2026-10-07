@@ -132,6 +132,8 @@ class SpendEntry:
         ``unlabelled`` when the booking did not say.
     take_id
         The take it was charged to, if any.
+    job_id
+        The server's take job this paid for, if any; a take job is booked once.
     """
 
     at_utc: str
@@ -139,6 +141,7 @@ class SpendEntry:
     usd: float
     unit: str
     take_id: str | None = None
+    job_id: str | None = None
 
 
 @dataclass
@@ -726,6 +729,10 @@ def series_to_dict(series: SeriesState) -> dict[str, Any]:
     payload["episodes"] = [_fold_extra(episode) for episode in payload["episodes"]]
     for episode in payload["episodes"]:
         episode["takes"] = [_fold_extra(take) for take in episode["takes"]]
+    # Only take lines carry a job; other lines keep the keys the old kit wrote.
+    for entry in payload["spend_log"]:
+        if entry.get("job_id") is None:
+            entry.pop("job_id", None)
     return payload
 
 
@@ -784,6 +791,7 @@ def _spend_from_dict(raw: dict[str, Any]) -> SpendEntry:
         usd=float(raw.get("usd") or 0.0),
         unit=str(raw.get("unit") or "unlabelled"),
         take_id=raw.get("take_id"),
+        job_id=raw.get("job_id"),
     )
 
 
