@@ -6558,6 +6558,7 @@ def run_film(
     cause: str | None = None,
     confirm_spend: bool = False,
     out: Any = None,
+    single_frame_start: bool = False,
 ) -> str:
     """Price, then film episode N alone, or only take K of it. Nothing earlier is filmed or booked again.
 
@@ -6587,6 +6588,12 @@ def run_film(
         The human said yes to the printed number.
     out
         Text stream.
+    single_frame_start
+        Trial opening for a comparison run (``--single-frame-start``, never a
+        default): each take opens on one full picture instead of the
+        storyboard. Recorded on the film's pending unit, so a resume under the
+        same key sends the same body; a server that will not take it stops
+        the film with nothing charged.
 
     Returns
     -------
@@ -6595,6 +6602,10 @@ def run_film(
     """
 
     out = out or sys.stdout
+    if single_frame_start and not confirm_spend:
+        raise CommandStopped(
+            "--single-frame-start goes with --confirm-spend (it changes how the takes are filmed, not the price)"
+        )
     if confirm_spend:
         _hold_for_pitch(desk, "film --confirm-spend", episode=episode)
     desk, state, run = _desk_session(desk)
@@ -6613,6 +6624,7 @@ def run_film(
             cause=cause,
             confirm_spend=confirm_spend,
             out=out,
+            single_frame_start=single_frame_start,
         )
     finally:
         run.client.close()
@@ -6628,6 +6640,7 @@ def _run_film(
     cause: str | None,
     confirm_spend: bool,
     out: Any,
+    single_frame_start: bool = False,
 ) -> str:
     if episode < 1:
         raise CommandStopped("--episode is 1 or more")
@@ -6686,6 +6699,19 @@ def _run_film(
     for warning in stranded_preflight(spine, unit=key, desk=desk, episode=episode):
         print(warning, file=out)
     print(next_take_voices_line(desk, run, spine), file=out)
+    started = load_production(desk).pending.get(unit)
+    if started is not None:
+        # The same key goes out again: the body must be the one it was first sent with.
+        trial = bool(started.get("single_frame_start"))
+        if single_frame_start and not trial:
+            raise CommandStopped(
+                f"{what} was already sent without --single-frame-start and picks up under the same key, "
+                "so it carries on the same way. Run it without the flag to finish it."
+            )
+    else:
+        trial = single_frame_start
+    if trial:
+        print(stages.SINGLE_FRAME_START_NOTE, file=out)
     body = stages.video_request_body(
         run,
         spine=spine,
@@ -6700,6 +6726,7 @@ def _run_film(
         episode=episode,
         reroll_take_index=take_index,
         seed_attempt=seed,
+        single_frame_start=trial,
     )
     _save_desk_json(desk, f"{unit}-request", body)
     if filmed_before and reason:
@@ -6719,6 +6746,8 @@ def _run_film(
             "key": f"{fresh.idempotency_prefix}-{unit}-a{fresh.attempts.get(unit, 0) + 1}",
             "job_id": None,
         }
+        if trial:
+            pending["single_frame_start"] = True
         fresh.pending[unit] = pending
         save_production(desk, fresh)
     job_id = pending.get("job_id")
@@ -6732,6 +6761,19 @@ def _run_film(
             job = stages.post_video_generation(
                 run, body, idempotency_key=str(pending["key"]), episode=episode
             )
+        except stages.SingleFrameStartRefused as exc:
+            # Nothing was admitted: let the unit go and move to a fresh key, so
+            # a film without the flag never reuses this key with another body.
+            fresh = load_production(desk)
+            fresh.pending.pop(unit, None)
+            fresh.attempts[unit] = fresh.attempts.get(unit, 0) + 1
+            save_production(desk, fresh)
+            _note(
+                desk,
+                episode,
+                f"film {what} refused, nothing charged: trial opening not available",
+            )
+            raise CommandStopped(str(exc.code)) from None
         except SystemExit as exc:
             message = (
                 exc.code if isinstance(exc.code, str) else api_error_text(exc.code)
@@ -7671,6 +7713,13 @@ def add_episode_parsers(
         action="store_true",
         help="The human said yes to the printed number.",
     )
+    film.add_argument(
+        "--single-frame-start",
+        action="store_true",
+        help="Trial, for comparison runs only (operator): open each take on a single full picture instead "
+        "of the storyboard. Off by default; goes with --confirm-spend; a resume keeps what the film was "
+        "first sent with.",
+    )
 
     collect = sub.add_parser(
         "collect-takes",
@@ -7930,6 +7979,7 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 take_id=args.take,
                 cause=args.cause,
                 confirm_spend=args.confirm_spend,
+                single_frame_start=args.single_frame_start,
             )
             return 0
         if args.command == "collect-takes":
