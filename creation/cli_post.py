@@ -11,7 +11,9 @@ from pathlib import Path
 from creation.cli_text import HELP_SUFFIX, text_or_file
 from creation.post.edit_commands import EDIT_COMMANDS, add_edit_parsers, dispatch_edit
 from creation.post.finish import FINISH_INCOMPLETE, run_finish
+from creation.post.edit import parse_box
 from creation.post.hand import parse_caption_label, parse_placed, parse_range
+from creation.post.prop_text import parse_prop_text
 from creation.post.join import JOIN_NOT_DONE, run_join
 from creation.post.handmade import CUE_DEFAULT_SECONDS
 from creation.post.review_command import (
@@ -522,6 +524,17 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "Without it, finish prints the suggestion.",
     )
     fin.add_argument(
+        "--prop-text", action="append", default=[], metavar='"TEXT"[@SHOT]',
+        help="Write a prop's real words on it (a note, a letter, a phone the video drew letters on): "
+        "TEXT in a handwriting face in its own script (Latin, Hangul, Japanese), on --prop-box for "
+        "shot SHOT's window only. \"@3\" alone takes the story's words for shot 3 from the take facts "
+        "(prop_text). Never makes words up: with none, blur the prop (blur --box) (repeat, one --prop-box each).",
+    )  # fmt: skip
+    fin.add_argument(
+        "--prop-box", action="append", default=[], type=parse_box, metavar="X,Y,W,H",
+        help="The prop's box for the matching --prop-text, in pixels of the take (as blur --box) (repeat).",
+    )  # fmt: skip
+    fin.add_argument(
         "--caption-label", action="append", default=[], metavar="TEXT@A-B",
         help="A caption with no spoken line under it (a short line the take never says clearly): "
         "TEXT@A-B seconds on the take as filmed, drawn like the other captions (repeat).",
@@ -915,6 +928,8 @@ def dispatch_post(args: argparse.Namespace) -> int:
             caption_labels=tuple(
                 parse_caption_label(raw) for raw in args.caption_label
             ),
+            prop_texts=tuple(parse_prop_text(raw) for raw in args.prop_text),
+            prop_boxes=tuple(args.prop_box),
             thumbnail=not args.no_thumbnail,
             draw_thumbnail=args.thumbnail,
             over_locked_voices=args.over_locked_voices,

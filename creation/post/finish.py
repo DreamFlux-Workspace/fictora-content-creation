@@ -197,7 +197,7 @@ from creation.post.bed import (
 )
 from creation.post.colour import colour_match
 from creation.post.deboard import deboard as deboard_take
-from creation.post.edit import measure_cuts
+from creation.post.edit import BlurBox, measure_cuts
 from creation.post.finish_record import write_finish_record
 from creation.post.hand import (
     HandPlan,
@@ -290,6 +290,12 @@ from creation.post.story_signs import (
     story_signs,
     suggestion_lines,
 )
+from creation.post.prop_text import (
+    PropTextRequest,
+    plan_prop_overlays,
+    prop_text_ass,
+)
+from creation.post.prop_text import suggestion_lines as prop_suggestion_lines
 from creation.post.take_text import OcrRunner, TextCheck, desk_text_check
 from creation.post.thumbnail import THUMBNAIL_USD, attach_episode_thumbnail_to_finish
 from creation.post.watermark import watermark
@@ -953,6 +959,8 @@ def run_finish(
     cues: tuple[Placed, ...] = (),
     caption_labels: tuple[tuple[str, float, float], ...] = (),
     sign_overlay: bool = False,
+    prop_texts: tuple[PropTextRequest, ...] = (),
+    prop_boxes: tuple[BlurBox, ...] = (),
     sfx_render: Renderer | None = None,
     bed_maker: Maker | None = None,
     facts_fetcher: FactsFetcher = api_facts_fetcher,
@@ -1038,6 +1046,14 @@ def run_finish(
         take facts carry one story sign (``story_signs``), draw the sign's exact words in
         the house font over the flagged box for that shot (:mod:`creation.post.story_signs`),
         before the captions. Without it, the overlay is printed as a suggestion.
+    prop_texts, prop_boxes
+        ``--prop-text TEXT[@SHOT]`` and ``--prop-box x,y,w,h``, paired in order: write a
+        prop's real words (a note, a letter, a phone) in a handwriting face in their own
+        script on the box, for that shot's window only, before the captions
+        (:mod:`creation.post.prop_text`). ``@SHOT`` alone takes the story's words from the
+        take facts' ``prop_text``. Never invents words: a request with none is printed and
+        skipped (blur the prop instead). Without any, the take facts' writing props are
+        printed as a suggestion.
     sfx_render, bed_maker, facts_fetcher, transcriber, cut_meter, voice_audio, ambience_maker
         Injected for tests (``bed_maker`` makes the harness bed on the server;
         ``transcriber`` makes a transcript of the take on the server;
@@ -1313,6 +1329,24 @@ def run_finish(
             file=out,
             flush=True,
         )
+
+    # A prop with writing on it (fictora-drama prop_text): the operator's words, or the story's.
+    prop_overlays, prop_notes = (
+        plan_prop_overlays(facts_payload, prop_texts, prop_boxes)
+        if prop_texts
+        else ([], [])
+    )
+    for line in prop_notes:
+        print(f"[prop-text] !! {line}", file=out, flush=True)
+    if prop_notes:
+        append_run_note(
+            run_dir, "Finish · prop text not drawn: " + "; ".join(prop_notes)
+        )
+    if not prop_texts:
+        for line in prop_suggestion_lines(
+            facts_payload, desk=desk, episode=episode, take_id=take_id
+        ):
+            print(f"[prop-text] {line}", file=out, flush=True)
 
     picked = (
         lb.desk_hook_line(desk, episode)
@@ -2348,6 +2382,38 @@ def run_finish(
             drawn,
         )
 
+    def do_prop_text(take: Path) -> StepReport:
+        ffmpeg, _ = find_ffmpeg()
+        info = probe_video(take)
+        outside = [
+            item.describe()
+            for item in prop_overlays
+            if item.box[0] + item.box[2] > info.width
+            or item.box[1] + item.box[3] > info.height
+        ]
+        if outside:
+            raise ValueError(
+                f"--prop-box outside the {info.width}x{info.height} take: "
+                + "; ".join(outside)
+            )
+        ass = next_versioned_path(takes, f"{base}-prop", ".ass")
+        ass.write_text(
+            prop_text_ass(prop_overlays, width=info.width, height=info.height),
+            encoding="utf-8",
+        )
+        drawn = next_versioned_path(takes, f"{base}-prop", ".mp4")
+        burn_ass(ffmpeg, take, ass, drawn)
+        detail = "; ".join(item.describe() for item in prop_overlays)
+        append_run_note(
+            run_dir, f"Prop text -> `{drawn.name}` (`{ass.name}`): {detail}"
+        )
+        return StepReport(
+            "prop-text",
+            "ran",
+            f"the story's words written on the prop: {detail}",
+            drawn,
+        )
+
     def do_letterbox(take: Path) -> StepReport:
         canvas = lb.pad_to_canvas(
             take, next_versioned_path(takes, f"{base}-letterbox", ".mp4")
@@ -2557,6 +2623,12 @@ def run_finish(
                 "sign-overlay",
                 "Drawing the story sign's exact words over the garbled lettering",
                 do_sign_overlay,
+            )
+        if prop_overlays:
+            step(
+                "prop-text",
+                "Writing the prop's real words on it in a handwriting face",
+                do_prop_text,
             )
         if letterbox:
             step(
