@@ -49,7 +49,13 @@ from creation.post.reel import (
 )
 from creation.post.reel_cover import METRICS_FILE, record_metrics_row
 from creation.post.reel_plan import OPERATOR_DIVIDER
-from creation.post.reel_server import ReelServer, ReelServerError, ReelServerUnreachable
+from creation.post.reel_server import (
+    ReelEngineUnavailable,
+    ReelServer,
+    ReelServerError,
+    ReelServerUnreachable,
+    fallback_reason,
+)
 
 #: The episode's clip folder under its reel folder, and its record of the current set.
 CLIPS_DIR = "clips"
@@ -371,6 +377,16 @@ def clips_unreachable_message(desk: Path, episode: int) -> str:
     )
 
 
+def clips_need_server_message(desk: Path, episode: int, exc: ReelServerError) -> str:
+    """The clips can't be made now: only the server cuts them (no local clips engine); how to make them later."""
+
+    return (
+        f"Clips not made: the TikTok clips are cut only by the server's reel engine (no local clips engine), "
+        f"and it can't be used now ({fallback_reason(exc)}). Make them once it takes uploads: "
+        f"`fictora-produce reel --desk {desk} --episode {episode} --clips 3`."
+    )
+
+
 def run_clips(
     desk: Path,
     *,
@@ -494,6 +510,12 @@ def auto_clips(
             file=out,
         )
         return None
+    except ReelEngineUnavailable as exc:
+        print(
+            f"⚠ {clips_need_server_message(desk, episode, exc)} The {trigger} is done.",
+            file=out,
+        )
+        return None
     except AUTO_REEL_FAILED as exc:
         print(
             f"⚠ Clips not made ({type(exc).__name__}: {exc}); the {trigger} is done. "
@@ -512,6 +534,7 @@ __all__ = [
     "auto_clips",
     "clip_operator_notes",
     "clip_paths",
+    "clips_need_server_message",
     "clips_unreachable_message",
     "episode_clips",
     "next_clip_version",

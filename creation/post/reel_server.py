@@ -16,9 +16,14 @@ already uploaded is not sent again; the server's reel cache is keyed by the
 digests too, so a repeat costs one request. The rules live with the server:
 ``fictora-drama`` ``docs/reels/reel-rules.md``.
 
-When the server cannot be reached the reel is not made and the operator is told
-how to make it later; nothing is skipped silently, and a ``finish`` never fails
-because its reel did (:func:`creation.post.reel.auto_reel`).
+When the server cannot be used for a run (it does not answer, it cannot take
+uploads, ``operator_upload_unavailable``, or it is an older deploy without the
+operator reel route: :data:`SERVER_UNUSABLE`), the reel is cut by the local
+reel engine with the desk's same rules and one line says so
+(:func:`creation.post.reel.local_fallback_reel`); a refusal about the content
+still stops. The TikTok clips have no local engine: they say they need the
+server. A ``finish`` never fails because its reel did
+(:func:`creation.post.reel.auto_reel`).
 """
 
 from __future__ import annotations
@@ -61,6 +66,47 @@ class ReelServerError(RuntimeError):
 
 class ReelServerUnreachable(ReelServerError):
     """The server did not answer (network down, timed out, or a 5xx)."""
+
+
+class ReelEngineUnavailable(ReelServerError):
+    """The server answered, but its reel engine can't be used on this deployment (not about the content).
+
+    ``reason`` is the server's code (``operator_upload_unavailable``: signed
+    uploads are not configured) or ``no_operator_reel_route`` (an older server
+    whose reel route has no operator mode). The reel is cut locally instead
+    (:func:`creation.post.reel.local_fallback_reel`).
+    """
+
+    def __init__(self, message: str, *, reason: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+#: The server error codes that mean "this deployment can't take the reel's uploads", not "this reel is wrong".
+UNAVAILABLE_CODES = frozenset({"operator_upload_unavailable"})
+#: Why the server's reel engine can't be used for this run: the reel is cut locally instead.
+SERVER_UNUSABLE = (ReelServerUnreachable, ReelEngineUnavailable)
+
+
+def error_code(body: Any) -> str:
+    """The error envelope's ``code`` (``{"error": {"code"}}`` or a bare ``{"code"}``), else ``""``."""
+
+    if not isinstance(body, Mapping):
+        return ""
+    error = body.get("error") if isinstance(body.get("error"), Mapping) else body
+    return str(error.get("code") or "")
+
+
+def fallback_reason(exc: ReelServerError) -> str:
+    """Why the server's reel engine was not used, in a few words, for the one line the operator reads."""
+
+    if isinstance(exc, ReelEngineUnavailable):
+        if exc.reason == "no_operator_reel_route":
+            return (
+                "the server reel engine has no operator reel route on this deployment"
+            )
+        return f"the server reel engine refused: {exc.reason}"
+    return f"the server reel engine did not answer: {exc}"
 
 
 def unreachable_message(desk: Path, episode: int) -> str:
@@ -241,6 +287,11 @@ class ReelServer:
             ) from exc
         if status >= 500:
             raise ReelServerUnreachable(f"upload slot for `{path.name}`: HTTP {status}")
+        if error_code(slot) in UNAVAILABLE_CODES:
+            raise ReelEngineUnavailable(
+                f"the server refused the upload of `{path.name}`: {api_error_text(slot)}",
+                reason=error_code(slot),
+            )
         if not 200 <= status < 300 or not isinstance(slot, Mapping):
             raise ReelServerError(
                 f"the server refused the upload of `{path.name}`: {api_error_text(slot)}"
@@ -300,10 +351,16 @@ class ReelServer:
             raise ReelServerUnreachable(
                 f"HTTP {response.status_code}: {api_error_text(answer)}"
             )
+        if error_code(answer) in UNAVAILABLE_CODES:
+            raise ReelEngineUnavailable(
+                f"the server refused the reel: {api_error_text(answer)}",
+                reason=error_code(answer),
+            )
         if response.status_code in (404, 405, 422) and not self._operator_mode():
-            raise ReelServerError(
+            raise ReelEngineUnavailable(
                 "this server's reel route has no operator mode yet (fictora-drama's reel operator mode is "
-                "not deployed): make the reel again once it is"
+                "not deployed): make the reel again once it is",
+                reason="no_operator_reel_route",
             )
         raise ReelServerError(f"the server refused the reel: {api_error_text(answer)}")
 
@@ -363,6 +420,9 @@ def reel_job_id(desk: Path, episode: int, take_ids: list[str]) -> str:
 
 __all__ = [
     "REEL_ROUTE",
+    "SERVER_UNUSABLE",
+    "UNAVAILABLE_CODES",
+    "ReelEngineUnavailable",
     "ReelServer",
     "ReelServerError",
     "ReelServerUnreachable",

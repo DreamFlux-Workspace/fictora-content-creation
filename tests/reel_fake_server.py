@@ -12,7 +12,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from creation.post.reel_server import ReelServerError, ReelServerUnreachable
+from creation.post.reel_server import (
+    ReelEngineUnavailable,
+    ReelServerError,
+    ReelServerUnreachable,
+)
 
 CAPTION = "The door was never locked.\n\nTiny Show · Part 1: The Door\nFollow for part 2.\n\n#mystery #shortdrama\n"
 
@@ -31,10 +35,21 @@ class FakeReelServer:
     closed: bool = False
     #: Answer like a server from before clip mode (a reel, whatever the request says).
     no_clip_mode: bool = False
+    #: Refuse every upload with this error code, like a deploy without signed uploads
+    #: (``operator_upload_unavailable``: the R2 keys are missing on the server).
+    upload_refused: str | None = None
+    #: Answer like an older server whose reel route has no operator mode.
+    no_operator_route: bool = False
 
     def upload(self, path: Path, *, kind: str) -> tuple[str, str]:
         if self.unreachable:
             raise ReelServerUnreachable("ConnectError")
+        if self.upload_refused:
+            raise ReelEngineUnavailable(
+                f"the server refused the upload of `{path.name}`: {self.upload_refused}: "
+                "Signed uploads are not configured on this deployment. [request req_test]",
+                reason=self.upload_refused,
+            )
         data = path.read_bytes()
         sha = hashlib.sha256(data).hexdigest()
         url = f"https://assets.test/uploads/{sha[:12]}{path.suffix}"
@@ -47,6 +62,11 @@ class FakeReelServer:
     ) -> dict[str, Any]:
         if self.unreachable:
             raise ReelServerUnreachable("ConnectError")
+        if self.no_operator_route:
+            raise ReelEngineUnavailable(
+                "this server's reel route has no operator mode yet",
+                reason="no_operator_reel_route",
+            )
         if self.refuse:
             raise ReelServerError(f"the server refused the reel: {self.refuse}")
         self.jobs.append((job_id, episode_id))

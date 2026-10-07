@@ -13,6 +13,8 @@ from test_reel_via_server import legacy_reel_desk, reel_desk  # noqa: F401  (fix
 
 from creation.post.reel_via_server import run_reel
 from creation.post.reel_server import (
+    SERVER_UNUSABLE,
+    ReelEngineUnavailable,
     ReelServer,
     ReelServerError,
     ReelServerUnreachable,
@@ -104,9 +106,9 @@ OPENAPI_WITH_OPERATOR = {
     [
         (502, {"error": {"code": "episode_reel_failed", "message": "nothing was saved"}}, OPENAPI_WITH_OPERATOR,
          ReelServerUnreachable, "episode_reel_failed"),
-        (404, {"detail": "Not Found"}, {"paths": {}}, ReelServerError, "no operator mode yet"),
+        (404, {"detail": "Not Found"}, {"paths": {}}, ReelEngineUnavailable, "no operator mode yet"),
         (422, {"error": {"code": "invalid_request", "message": "operator: extra"}},
-         {"paths": OPENAPI_WITH_OPERATOR["paths"], "components": {"schemas": {}}}, ReelServerError,
+         {"paths": OPENAPI_WITH_OPERATOR["paths"], "components": {"schemas": {}}}, ReelEngineUnavailable,
          "no operator mode yet"),
         (422, {"error": {"code": "episode_reel_invalid", "message": "plan: segments name t9"}},
          OPENAPI_WITH_OPERATOR, ReelServerError, "episode_reel_invalid"),
@@ -143,6 +145,62 @@ def test_a_server_that_does_not_answer_is_unreachable(tmp_path: Path) -> None:
         server.make("video-1", "episode_01", {})
     with pytest.raises(ReelServerUnreachable):
         server.upload(take, kind="video")
+
+
+def test_a_deploy_without_signed_uploads_is_the_engine_unavailable_not_a_content_refusal(
+    tmp_path: Path,
+) -> None:
+    """The 7 Oct 2026 canary: production answered the upload slot 409 operator_upload_unavailable."""
+
+    refusal = {
+        "error": {
+            "code": "operator_upload_unavailable",
+            "message": "Signed uploads are not configured on this deployment.",
+        },
+        "request_id": "req_5ac59d900958437fbd15ed822072bb20",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json=refusal)
+
+    server = _server(tmp_path, handler)
+    take = tmp_path / "take.mp4"
+    take.write_bytes(b"x")
+
+    with pytest.raises(ReelEngineUnavailable, match="Signed uploads") as caught:
+        server.upload(take, kind="video")
+    assert caught.value.reason == "operator_upload_unavailable"
+    assert isinstance(caught.value, SERVER_UNUSABLE)
+    with pytest.raises(ReelEngineUnavailable) as on_route:
+        server.make("video-1", "episode_01", {"operator": {}})
+    assert on_route.value.reason == "operator_upload_unavailable"
+
+
+def test_a_content_refusal_is_not_a_reason_to_cut_locally(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/openapi.json":
+            return httpx.Response(200, json=OPENAPI_WITH_OPERATOR)
+        return httpx.Response(
+            422,
+            json={
+                "error": {
+                    "code": "episode_reel_invalid",
+                    "message": "plan: segments name t9",
+                }
+            },
+        )
+
+    server = _server(tmp_path, handler)
+    take = tmp_path / "take.mp4"
+    take.write_bytes(b"x")
+
+    for call in (
+        lambda: server.make("video-1", "episode_01", {}),
+        lambda: server.upload(take, kind="video"),
+    ):
+        with pytest.raises(ReelServerError) as caught:
+            call()
+        assert not isinstance(caught.value, SERVER_UNUSABLE)
 
 
 def test_the_route_posts_to_the_episode_of_the_video_job(tmp_path: Path) -> None:

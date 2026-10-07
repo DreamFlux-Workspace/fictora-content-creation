@@ -963,9 +963,11 @@ def dispatch_post(args: argparse.Namespace) -> int:
 
         if args.clips is not None or args.clip_seconds is not None:
             from creation.post.clips_via_server import (
+                clips_need_server_message,
                 clips_unreachable_message,
                 run_clips,
             )
+            from creation.post.reel_server import ReelEngineUnavailable
 
             try:
                 run_clips(
@@ -977,6 +979,12 @@ def dispatch_post(args: argparse.Namespace) -> int:
             except ReelServerUnreachable as exc:
                 print(
                     f"{clips_unreachable_message(args.desk, args.episode)} ({exc})",
+                    file=sys.stderr,
+                )
+                return 1
+            except ReelEngineUnavailable as exc:
+                print(
+                    clips_need_server_message(args.desk, args.episode, exc),
                     file=sys.stderr,
                 )
                 return 1
