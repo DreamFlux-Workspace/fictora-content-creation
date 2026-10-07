@@ -851,6 +851,91 @@ def thin_take_lines(
     return lines
 
 
+def silent_first_beat_lines(
+    spine: Mapping[str, Any], *, episode: int, take_count: int
+) -> list[str]:
+    """Warn when a take's first beat has no line though the take has lines.
+
+    The first beat carries the hook: a line on it (or a visible action already
+    in motion) lands by about 0.5 s. A take with no line at all is
+    :func:`thin_take_lines`' warning, not this one.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+    take_count
+        How many takes the episode is cut into.
+
+    Returns
+    -------
+    list[str]
+        One line per take whose beat 1 is silent.
+    """
+
+    if take_count < 1:
+        return []
+    lines: list[str] = []
+    for index, group in enumerate(
+        beats_by_take(spine, episode=episode, take_count=take_count), start=1
+    ):
+        if not group or spoken_lines(spine, group[0]):
+            continue
+        if not any(spoken_lines(spine, beat) for beat in group[1:]):
+            continue
+        lines.append(
+            f"take t{index}: its first beat ({_beat_label(group[0])}) has no line. Put a line on it "
+            "(`line --add --beat N`), or make sure it opens mid-motion on a visible action."
+        )
+    return lines
+
+
+_WORD_AGE = re.compile(
+    r"\b(?:(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[- ](?:one|two|three|four|five|six|seven|eight|nine)"
+    r"|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen"
+    r"|(?:early|mid|late)[- ](?:teens|twenties|thirties|forties|fifties|sixties|seventies|eighties)"
+    r"|(?:ten|eleven|twelve|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)"
+    r"(?=[- ](?:years?|yrs?|year-old)\b|,|\s*\())",
+    re.IGNORECASE,
+)
+
+
+def word_age_lines(spine: Mapping[str, Any]) -> list[str]:
+    """Warn when a cast card writes an age in words ("twenty-six", "late twenties").
+
+    The server read "twenty-six, adult woman" as under 18 and refused the scene
+    (The Gallery Heiress, L-20261006-10); changing the age afterwards made every
+    plate stale ($0.90). Ages are written as digits, before the plates.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+
+    Returns
+    -------
+    list[str]
+        One line per card.
+    """
+
+    lines: list[str] = []
+    for card in spine.get("cast") or []:
+        if not isinstance(card, Mapping):
+            continue
+        found = sorted(
+            {match.group(0).lower() for match in _WORD_AGE.finditer(_card_text(card))}
+        )
+        if found:
+            name = card.get("name") or card.get("cast_id")
+            lines.append(
+                f'!! {name}: the age is written in words ({", ".join(found)}). Write it as digits ("26") '
+                f"before the plates: `cast --desk D --name {name} --look @look.txt` with `age: 26`."
+            )
+    return lines
+
+
 def _card_text(card: Mapping[str, Any]) -> str:
     blobs: list[str] = []
     _strings(card, blobs)

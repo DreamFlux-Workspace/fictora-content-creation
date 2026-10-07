@@ -125,10 +125,17 @@ from creation.harness_rules import (
     hook_mouth_stop,
     locked_camera_line,
     near_touch_line,
+    silent_first_beat_lines,
     sparkle_adult_line,
     staging_contradiction_lines,
     thin_take_lines,
+    word_age_lines,
     young_creature_lines,
+)
+from creation.pitch_card import (
+    pitch_gate_refusal,
+    restraint_beat_lines,
+    script_pitch_lines,
 )
 from creation.stranded_voice import explain_film_refusal, stranded_preflight
 from creation.stylised_only import BriefNoticePause
@@ -443,6 +450,9 @@ def script_gate_text(desk: Path, spine: dict[str, Any], *, episode: int) -> str:
         text += "\n" + camera
     notes = [
         *thin_take_lines(spine, episode=episode, take_count=len(slot.takes)),
+        *silent_first_beat_lines(spine, episode=episode, take_count=len(slot.takes)),
+        *word_age_lines(spine),
+        *restraint_beat_lines(spine, episode=episode),
         *staging_contradiction_lines(spine, episode=episode),
         *adult_face_lines(spine),
         *hands_on_sound_lines(spine, episode=episode),
@@ -455,6 +465,10 @@ def script_gate_text(desk: Path, spine: dict[str, Any], *, episode: int) -> str:
         notes.append(sparkle)
     if notes:
         text += "\n" + "\n".join(notes)
+    # The approved pitch (every desk that has one): read the lines against it.
+    pitch = script_pitch_lines(desk, spine, episode=episode)
+    if pitch:
+        text += "\n" + "\n".join(pitch)
     return text
 
 
@@ -1321,6 +1335,10 @@ def run_step(
 ) -> StepResult:
     """Run the next automated API step for the current phase.
 
+    On a desk created on or after 6 Oct 2026 it first refuses a plate or board
+    drawing, with nothing sent, while the episode's pitch card has no yes
+    (:func:`creation.pitch_card.pitch_gate_refusal`).
+
     Before a paid plate or board drawing it refuses, with nothing sent, when the
     desk drew a look frame the look yes does not cover (:func:`look_gate_refusal`).
     It also stops before one while a character named like a narrator has no
@@ -1357,6 +1375,14 @@ def run_step(
     desk = desk.expanduser().resolve()
     state = load_production(desk)
     if state.phase in PAID_DRAWING_PHASES:
+        # The producer's yes to the idea comes before every other stop (new desks only).
+        pitch = pitch_gate_refusal(
+            desk,
+            episode=state.episode_ordinal,
+            stage="the plates" if state.phase == "ready_cast_enrol" else "the boards",
+        )
+        if pitch:
+            raise RuntimeError(pitch)
         refusal = look_gate_refusal(desk)
         if refusal:
             raise RuntimeError(refusal)
