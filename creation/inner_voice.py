@@ -93,8 +93,9 @@ def cue_listing(
     cues: Sequence[Mapping[str, Any]],
     names: Mapping[str, str],
     spoken: Mapping[str, Mapping[str, str]] | None = None,
+    levels: Mapping[str, float] | None = None,
 ) -> list[str]:
-    """One printable row per cue: number, id, time, speaker, words (and the words said, when apart)."""
+    """One printable row per cue: number, id, time, speaker, words (the words said, when apart; its level)."""
 
     rows = []
     for number, cue in enumerate(cues, start=1):
@@ -106,6 +107,11 @@ def cue_listing(
             f"{int(cue.get('end_ms') or 0) / 1000:.2f}s  "
             f"{names.get(str(cue.get('speaker_cast_id')), cue.get('speaker_cast_id'))} (thinks): {cue.get('line')}"
             + (f"  [says: {said}]" if said else "")
+            + (
+                f"  [{(levels or {})[str(cue.get('cue_id'))]:+g} dB]"
+                if (levels or {}).get(str(cue.get("cue_id")))
+                else ""
+            )
         )
     return rows
 
@@ -172,6 +178,86 @@ def drop_spoken(desk: Path, episode: int, cue_ids: Sequence[str]) -> None:
     }
     if kept != cues:
         _write_spoken(desk, episode, kept)
+
+
+#: Beside the spoken words: ``{"cues": {cue_id: dB}}``, each thought's level against a dialogue line
+#: (``inner-voice --db``). The server's cue has no field for it either (L-20261006-30).
+LEVELS_FILE = "inner-voice-levels.json"
+#: The levels ``--db`` takes: quieter than a line by up to 24 dB, louder by up to 6 dB.
+LEVEL_RANGE_DB = (-24.0, 6.0)
+
+
+def levels_path(desk: Path, episode: int) -> Path:
+    """``<desk>/epNN/inner-voice-levels.json``."""
+
+    return desk / f"ep{episode:02d}" / LEVELS_FILE
+
+
+def load_levels(desk: Path, episode: int) -> dict[str, float]:
+    """Each cue's level in dB against a dialogue line (empty when none are saved: every thought at 0 dB)."""
+
+    path = levels_path(desk, episode)
+    if not path.is_file():
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    cues = raw.get("cues") if isinstance(raw, Mapping) else None
+    return {
+        str(cue_id): float(db)
+        for cue_id, db in (cues or {}).items()
+        if isinstance(db, (int, float)) and not isinstance(db, bool)
+    }
+
+
+def _write_levels(desk: Path, episode: int, levels: Mapping[str, float]) -> None:
+    path = levels_path(desk, episode)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = {"cues": {cue_id: levels[cue_id] for cue_id in sorted(levels)}}
+    path.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
+
+
+def check_level(db: float) -> float:
+    """``db`` rounded to 0.1, or :class:`InnerVoiceError` outside :data:`LEVEL_RANGE_DB`."""
+
+    low, high = LEVEL_RANGE_DB
+    if not low <= db <= high:
+        raise InnerVoiceError(
+            f"--db {db:g} is out of range: a thought plays {low:g} to +{high:g} dB against a line "
+            "(-3 is a little quieter, -6 clearly quieter; 0 is a line's level)"
+        )
+    return round(db, 1)
+
+
+def save_level(desk: Path, episode: int, *, cue_id: str, db: float) -> Path:
+    """Keep one cue's level (0 dB forgets it: the default)."""
+
+    levels = load_levels(desk, episode)
+    if db == 0:
+        levels.pop(cue_id, None)
+    else:
+        levels[cue_id] = check_level(db)
+    _write_levels(desk, episode, levels)
+    return levels_path(desk, episode)
+
+
+def drop_levels(desk: Path, episode: int, cue_ids: Sequence[str]) -> None:
+    """Forget the levels of removed cues."""
+
+    levels = load_levels(desk, episode)
+    kept = {cue_id: db for cue_id, db in levels.items() if cue_id not in set(cue_ids)}
+    if kept != levels:
+        _write_levels(desk, episode, kept)
+
+
+def cue_id_for(cues: Sequence[Mapping[str, Any]], ref: str) -> str:
+    """A cue's id from its id or its number in :func:`cue_listing`."""
+
+    ids = [str(cue.get("cue_id")) for cue in cues]
+    wanted = ids[int(ref) - 1] if ref.isdigit() and 1 <= int(ref) <= len(ids) else ref
+    if wanted not in ids:
+        raise InnerVoiceError(
+            f"no inner-voice cue {ref!r} on this episode; the cues are: {', '.join(ids) or 'none'}"
+        )
+    return wanted
 
 
 def spoken_for(spoken: Mapping[str, Mapping[str, str]], cue_id: str, line: str) -> str:
@@ -314,6 +400,8 @@ class TakeCue:
     seam: str = ""
     #: The words the voice says when they differ from the caption (:func:`spoken_for`); ``""``: say ``line``.
     spoken_text: str = ""
+    #: The thought's level against a dialogue line, dB (``inner-voice --db``, :func:`load_levels`); 0: a line's.
+    db: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -460,16 +548,24 @@ __all__ = [
     "TakeCue",
     "TakeCuePlan",
     "add_cue",
+    "LEVELS_FILE",
+    "LEVEL_RANGE_DB",
+    "check_level",
+    "cue_id_for",
     "cue_listing",
     "default_seconds",
+    "drop_levels",
     "drop_spoken",
     "episode_cues",
+    "load_levels",
     "load_spoken",
     "new_cue_id",
     "overlaps",
     "refusal_words",
     "remove_cue",
     "request_body",
+    "levels_path",
+    "save_level",
     "save_spoken",
     "spoken_for",
     "spoken_path",

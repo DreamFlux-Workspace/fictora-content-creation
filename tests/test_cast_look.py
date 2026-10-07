@@ -199,3 +199,37 @@ def test_line_new_voice_with_a_look_ends_on_one_verdict_line(
     rows = [row for row in out.getvalue().splitlines() if row.strip()]
     assert rows[-1] == "Applied: all 3 changes"  # the voice, its line, the look
     assert sum(row.startswith("Applied") for row in rows) == 1
+
+
+# --- a partial look changes only its fields (canary 7 Oct, Mina) ---------------------------------------
+
+
+def _mina(description: str, age_band: str) -> dict[str, Any]:
+    return {
+        "cast_id": "cast_mina",
+        "name": "Mina",
+        "visual_description": description,
+        "visual_brief": {**SAM_BRIEF, "age_band": age_band},
+    }
+
+
+def test_a_look_with_only_an_age_keeps_the_description_and_every_other_field() -> None:
+    mina = _mina(
+        "A 28-year-old East Asian woman with an angular adult face, shoulder-length dark hair.",
+        "twenty-eight, adult",
+    )
+
+    patch, _changed = cc.look_patch({"cast": [mina]}, mina, "age: 28")
+
+    assert patch["visual_description"] == mina["visual_description"]
+    assert patch["visual_brief"] == {**mina["visual_brief"], "age_band": "28"}
+
+
+def test_a_new_age_moves_the_age_the_description_states() -> None:
+    mina = _mina("A 27-year-old East Asian woman with shoulder-length dark hair.", "27")
+
+    patch, _changed = cc.look_patch({"cast": [mina]}, mina, "age: 28")
+
+    assert patch["visual_description"] == (
+        "A 28-year-old East Asian woman with shoulder-length dark hair."
+    )

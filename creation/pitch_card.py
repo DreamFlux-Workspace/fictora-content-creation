@@ -968,6 +968,90 @@ def _match_beat(
     return beats[index] if index < len(beats) else None
 
 
+#: The expression a beat names at the end of its intent (the server's tag): "Expression: Mina — tear_up".
+_EXPRESSION_TAIL = re.compile(
+    r"\bExpression:\s*(?:(?P<face>[^.;:\n]+?)\s*(?:\u2014|\u2013|\s-\s)\s*)?(?P<kind>[a-z_]+)\b",
+    re.IGNORECASE,
+)
+#: Expression kinds that film as a held, blank face (canary 7 Oct: shot 3 ``stunned_blank``, unwarned).
+RESTRAINT_KINDS = frozenset(
+    {"blank", "stunned_blank", "deadpan", "neutral", "poker_face", "stoic", "frozen", "numb",
+     "expressionless", "cold_stare", "smile_goes_cold", "vacant_stare", "impassive"}
+)  # fmt: skip
+#: A beat about a death or a loss: a restrained face there is never the drama.
+_GRIEF = re.compile(
+    r"\b(?:grie(?:f|v\w*)|mourn\w*|funeral|died|death|passed away|bereave\w*|widow\w*|"
+    r"late (?:mother|father|mom|mum|dad|wife|husband|son|daughter|brother|sister|grand\w+))\b",
+    re.IGNORECASE,
+)
+
+
+def beat_frames(
+    spine: Mapping[str, Any], beat: Mapping[str, Any]
+) -> list[Mapping[str, Any]]:
+    """The frames a beat is drawn on: its anchor frame and the rest of that board row."""
+
+    frames = [f for f in spine.get("frames") or [] if isinstance(f, Mapping)]
+    anchor = next(
+        (
+            f
+            for f in frames
+            if beat.get("frame_id") and f.get("frame_id") == beat.get("frame_id")
+        ),
+        None,
+    )
+    if anchor is None:
+        return []
+
+    def row(frame: Mapping[str, Any]) -> int:
+        raw = frame.get("board_row")
+        return int(raw) if str(raw or "").isdigit() else int(frame.get("ordinal") or 0)
+
+    return [
+        f
+        for f in frames
+        if f is anchor
+        or (
+            f.get("storyboard_group_id") == anchor.get("storyboard_group_id")
+            and f.get("episode_id") == anchor.get("episode_id")
+            and row(f) == row(anchor)
+        )
+    ]
+
+
+def beat_expressions(spine: Mapping[str, Any], beat: Mapping[str, Any]) -> list[str]:
+    """Every expression kind a beat carries: its ``reaction_kind``, its intent's ``Expression:`` tag, and
+    the ``reaction_kind`` on its frames (canary 7 Oct: the panel showed ``tear_up`` and the check said none)."""
+
+    found: list[str] = []
+    kinds = [str(beat.get("reaction_kind") or "")]
+    kinds += [
+        m.group("kind")
+        for m in _EXPRESSION_TAIL.finditer(str(beat.get("motion_intent") or ""))
+    ]
+    for frame in beat_frames(spine, beat):
+        brief = frame.get("visual_brief")
+        if isinstance(brief, Mapping):
+            kinds.append(str(brief.get("reaction_kind") or ""))
+    for kind in kinds:
+        kind = kind.strip().replace(" ", "_").lower()
+        if kind and kind != "none" and kind not in found:
+            found.append(kind)
+    return found
+
+
+def restrained_kinds(kinds: Sequence[str]) -> list[str]:
+    """The kinds that film as a blank face (:data:`RESTRAINT_KINDS`, or a restraint word in the kind)."""
+
+    return [
+        k for k in kinds if k in RESTRAINT_KINDS or restraint_words(k.replace("_", " "))
+    ]
+
+
+def _is_grief(spine: Mapping[str, Any], beat: Mapping[str, Any]) -> bool:
+    return bool(_GRIEF.search(_beat_text(spine, beat)))
+
+
 def _beat_delivery(beat: Mapping[str, Any]) -> str:
     direction = beat.get("motion_direction")
     value = direction.get("delivery") if isinstance(direction, Mapping) else None
@@ -980,8 +1064,10 @@ def emotional_beat_lines(
     """Warn when a beat the pitch calls emotional has no expression or no delivery on the story.
 
     Each pitch beat is matched to the story beat that shares the most words with
-    it (else the beat in the same place). An expression is the beat's
-    ``reaction_kind``, or the pitch's named face written into its intent.
+    it (else the beat in the same place). An expression is any kind the beat
+    carries (:func:`beat_expressions`: its ``reaction_kind``, its intent's
+    ``Expression:`` tag, its frames' ``reaction_kind``), or the pitch's named
+    face written into its intent.
     """
 
     beats = _episode_beats(spine, episode)
@@ -995,7 +1081,7 @@ def emotional_beat_lines(
             continue
         number = beat.get("ordinal") or beat.get("beat_id")
         face_words = _words(str(wanted.get("expression") or ""))
-        has_face = bool(beat.get("reaction_kind")) or bool(
+        has_face = bool(beat_expressions(spine, beat)) or bool(
             face_words and face_words & _words(str(beat.get("motion_intent") or ""))
         )
         missing = []
@@ -1065,11 +1151,55 @@ def premise_device_lines(
     return lines
 
 
+def _restrained_kind_line(
+    beat: Mapping[str, Any], kinds: Sequence[str], why: str
+) -> str:
+    return (
+        f"!! beat {beat.get('ordinal') or beat.get('beat_id')}: restrained expression ({', '.join(kinds)}) "
+        f"on {why}. It films as a blank face: give it a big expression "
+        f"(`edit --beat N --expression KIND`, or the frame's `--set reaction_kind=…`) and a delivery."
+    )
+
+
+def restraint_kind_lines(
+    spine: Mapping[str, Any], pitch: Mapping[str, Any], *, episode: int
+) -> list[str]:
+    """Warn on a restrained expression kind on a beat (or its frames) the pitch calls emotional (every desk).
+
+    A grief beat is warned by :func:`restraint_beat_lines` already and is left out here.
+    """
+
+    beats = _episode_beats(spine, episode)
+    lines: list[str] = []
+    seen: set[str] = set()
+    for index, wanted in enumerate(pitch.get("emotional_beats") or []):
+        beat = _match_beat(str(wanted.get("beat") or ""), beats, spine, index)
+        if beat is None or str(beat.get("beat_id")) in seen or _is_grief(spine, beat):
+            continue
+        seen.add(str(beat.get("beat_id")))
+        kinds = restrained_kinds(beat_expressions(spine, beat))
+        if kinds:
+            lines.append(
+                _restrained_kind_line(
+                    beat,
+                    kinds,
+                    f'pitch emotional beat {index + 1} ("{wanted.get("beat")}")',
+                )
+            )
+    return lines
+
+
 def restraint_beat_lines(spine: Mapping[str, Any], *, episode: int) -> list[str]:
-    """Warn on restraint words in the episode's beat text and expressions (every desk)."""
+    """Warn on restraint words in the episode's beat text and expressions, and on a restrained
+    expression kind (beat or frames) on a grief beat (every desk)."""
 
     lines: list[str] = []
     for beat in _episode_beats(spine, episode):
+        if _is_grief(spine, beat):
+            kinds = restrained_kinds(beat_expressions(spine, beat))
+            if kinds:
+                lines.append(_restrained_kind_line(beat, kinds, "a grief beat"))
+                continue
         text = " ".join(
             [
                 str(beat.get("motion_intent") or ""),
@@ -1105,6 +1235,7 @@ def script_pitch_lines(
         )
     ]
     lines += emotional_beat_lines(spine, stored.pitch, episode=episode)
+    lines += restraint_kind_lines(spine, stored.pitch, episode=episode)
     lines += premise_device_lines(spine, stored.pitch, episode=episode)
     return lines
 
@@ -1130,7 +1261,12 @@ __all__ = [
     "pitch_warnings",
     "premise_device_lines",
     "read_pitch_file",
+    "RESTRAINT_KINDS",
+    "beat_expressions",
+    "beat_frames",
+    "restrained_kinds",
     "restraint_beat_lines",
+    "restraint_kind_lines",
     "restraint_words",
     "run_approve_pitch",
     "run_pitch",

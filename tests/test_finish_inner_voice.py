@@ -268,6 +268,89 @@ def test_a_second_finish_reuses_the_dry_line_and_pays_nothing(
 
 
 @needs_ffmpeg
+def test_after_a_voice_pick_the_next_finish_speaks_the_thought_in_the_new_voice(
+    post_desk: Path, downloads: list[str]
+) -> None:
+    """L-20261006-29: ``voice --pick`` refreshes ``api/spine.json`` (and ep01's copy) only.
+
+    The episode's own snapshot still names the old voice, so finish keyed the
+    thought on it and reused the line in the old voice from the desk.
+    """
+
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    _desk_with_cues(post_desk, [_cue("iv_ep01_01", 4.3, 4.9)])
+    audio = FakeAudio()
+    _finish(post_desk, audio)
+    assert len(audio.calls) == 1
+    picked = copy.deepcopy(SPINE)
+    picked["cast"][1]["voice_brief"] = {"provider_voice": "Jessica"}
+    (post_desk / "api").mkdir(exist_ok=True)
+    (post_desk / "api" / "spine.json").write_text(json.dumps(picked), encoding="utf-8")
+
+    again, text = _finish(post_desk, audio)
+
+    assert again.complete, text
+    assert len(audio.calls) == 2, "the old voice's line on the desk must not answer"
+    step = _step(again, INNER_VOICE_STEP)
+    assert "reused" not in step.detail
+    keys = {
+        json.loads(p.read_text(encoding="utf-8"))["key"]
+        for p in (post_desk / "ep01" / "voices").glob("voice-*.json")
+    }
+    assert (
+        handmade.voice_line_key(
+            episode=1, cast_id="cast_aya", text=THOUGHT, voice="Jessica", language="en"
+        )
+        in keys
+    )
+
+
+def _thought_rms(post_desk: Path, audio: FakeAudio, **kwargs: Any) -> float:
+    """Finish ep01 t1 with one thought at 4.3 s; its RMS (dB) at 4.5 s on the inner-voice step's file."""
+
+    result, text = _finish(post_desk, audio, **kwargs)
+    assert result.complete, text
+    laid = _step(result, INNER_VOICE_STEP).output
+    assert laid is not None
+    return measure_rms_windows(laid, window_seconds=0.1)[45]
+
+
+@needs_ffmpeg
+def test_a_thought_level_lays_the_cue_quieter_by_the_db_asked(
+    post_desk: Path, downloads: list[str]
+) -> None:
+    """L-20261006-30: a thought always played at a dialogue line's level; `inner-voice --db` and
+    `finish --thought-db` move it, 0 dB leaves it as before."""
+
+    from creation import inner_voice
+
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    _desk_with_cues(post_desk, [_cue("iv_ep01_01", 4.3, 4.9)])
+    audio = FakeAudio()
+    level = _thought_rms(post_desk, audio)
+
+    inner_voice.save_level(post_desk, 1, cue_id="iv_ep01_01", db=-6)
+    quieter = _thought_rms(post_desk, audio)
+    assert level - quieter == pytest.approx(6.0, abs=0.6), (level, quieter)
+
+    both = _thought_rms(post_desk, audio, thought_db=-3)
+    assert level - both == pytest.approx(9.0, abs=0.6), (level, both)
+    result, _ = _finish(post_desk, audio, thought_db=-3)
+    assert "at -9 dB" in _step(result, INNER_VOICE_STEP).detail
+
+
+def test_a_thought_level_out_of_range_is_refused(post_desk: Path) -> None:
+    from creation import inner_voice
+
+    with pytest.raises(inner_voice.InnerVoiceError, match="out of range"):
+        inner_voice.save_level(post_desk, 1, cue_id="iv_ep01_01", db=-40)
+    inner_voice.save_level(post_desk, 1, cue_id="iv_ep01_01", db=-3)
+    assert inner_voice.load_levels(post_desk, 1) == {"iv_ep01_01": -3.0}
+    inner_voice.save_level(post_desk, 1, cue_id="iv_ep01_01", db=0)
+    assert inner_voice.load_levels(post_desk, 1) == {}, "0 dB is the default: forgotten"
+
+
+@needs_ffmpeg
 def test_a_refusal_from_the_route_names_the_cue_and_the_rest_of_the_take_still_finishes(
     post_desk: Path, downloads: list[str]
 ) -> None:

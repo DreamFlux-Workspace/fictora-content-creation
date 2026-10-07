@@ -164,7 +164,9 @@ def run_cue(
         book(desk, episode=episode, usd=cost, stream=out, unit=f"cue:{_words(sound)}")
     levels = measure_rms_windows(dest, window_seconds=CUE_SHAPE_WINDOW_SECONDS)
     kind = "sustained" if answer.get("kind") == "sustained" else "event"
-    problem = answer.get("shape_problem") or shape_problem(kind, levels)
+    problem = answer.get("shape_problem") or shape_problem(
+        kind, levels, window_seconds=CUE_SHAPE_WINDOW_SECONDS
+    )
     dest.with_suffix(".json").write_text(
         json.dumps({"description": sound, "seconds": seconds, "url": answer.get("audio_url"), "key": key,
                     "kind": kind, "cached": bool(answer.get("cached")), "cost_usd": cost,

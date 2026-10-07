@@ -548,3 +548,53 @@ def test_stale_spoken_words_never_ride_a_changed_caption() -> None:
     assert spoken_for(saved, "iv_ep01_01", "Don't  look at him.") == "見ないで。"
     assert spoken_for(saved, "iv_ep01_01", "Look at him.") == ""
     assert spoken_for(saved, "iv_ep01_02", "Don't look at him.") == ""
+
+
+# --- a thought's level (L-20261006-30) --------------------------------------------------------------
+
+
+def test_a_thought_keeps_its_level_on_the_desk_and_the_cue_sent_is_unchanged(
+    desk: Path, api: FakeApi
+) -> None:
+    from creation.cli_produce import main as produce_main
+    from creation.inner_voice import load_levels
+
+    _inner_route(api)
+    code = produce_main(
+        ["inner-voice", "--desk", str(desk), "--episode", "1", "--cast", "Hana",
+         "--text", "Breathe.", "--at", "2", "--db", "-3"]
+    )  # fmt: skip
+
+    assert code == 0
+    (body,) = _sent(api, "PUT")
+    assert set(body["cues"][0]) == {
+        "cue_id",
+        "start_ms",
+        "end_ms",
+        "speaker_cast_id",
+        "line",
+    }
+    assert load_levels(desk, 1) == {"iv_ep01_01": -3.0}
+
+    listing = io.StringIO()
+    run_inner_voice(desk, episode=1, out=listing)
+    assert "Hana (thinks): Breathe.  [-3 dB]" in listing.getvalue()
+
+    # An existing thought's level changes alone, nothing sent.
+    run_inner_voice(desk, episode=1, cue="1", db=-6, out=io.StringIO())
+    assert load_levels(desk, 1) == {"iv_ep01_01": -6.0}
+    assert len(_sent(api, "PUT")) == 1
+
+    run_inner_voice(desk, episode=1, remove="1", out=io.StringIO())
+    assert load_levels(desk, 1) == {}, "a removed cue's level goes with it"
+
+
+def test_a_thought_level_needs_a_thought_and_a_range(desk: Path, api: FakeApi) -> None:
+    _inner_route(api)
+    with pytest.raises(CommandStopped, match="--db goes with a new thought"):
+        run_inner_voice(desk, episode=1, db=-3)
+    with pytest.raises(CommandStopped, match="out of range"):
+        run_inner_voice(desk, episode=1, cast="Hana", text="Hm.", at=1.0, db=-40)
+    with pytest.raises(CommandStopped, match="no inner-voice cue"):
+        run_inner_voice(desk, episode=1, cue="iv_ep01_09", db=-3)
+    assert _sent(api, "PUT") == []

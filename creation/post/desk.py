@@ -85,6 +85,41 @@ def saved_spine(desk: Path, episode: int) -> tuple[dict[str, Any], Path] | None:
     return None
 
 
+def current_cast_cards(
+    desk: Path, spine: Mapping[str, Any] | None, snapshot: Path | None
+) -> dict[str, dict[str, Any]]:
+    """The episode spine's cast cards, each with the voice the desk holds now (``cast_id`` -> card).
+
+    ``voice --pick`` (and every other ``refresh_spine``) saves the spine as the
+    desk's current story (``api/spine.json``) and as episode 1's snapshot only;
+    episode 2's snapshot still names the voice it had when it was saved. A
+    card's ``voice_brief`` therefore comes from ``api/spine.json`` when that
+    file is at least as new as the episode's ``snapshot``, so the next finish
+    speaks in the voice the operator picked (L-20261006-29). Every other field
+    stays the episode's own.
+    """
+
+    cards = {
+        str(card.get("cast_id")): dict(card)
+        for card in (spine or {}).get("cast") or []
+        if isinstance(card, dict) and card.get("cast_id")
+    }
+    current = desk / "api" / "spine.json"
+    try:
+        if snapshot is not None and current.stat().st_mtime < snapshot.stat().st_mtime:
+            return cards
+        body = spine_body(json.loads(current.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return cards
+    for card in body.get("cast") or []:
+        if not isinstance(card, dict) or str(card.get("cast_id")) not in cards:
+            continue
+        brief = card.get("voice_brief")
+        if isinstance(brief, Mapping):
+            cards[str(card["cast_id"])]["voice_brief"] = dict(brief)
+    return cards
+
+
 def refresh_spine(run: DramaApiRunSession, desk: Path, episode: int) -> dict[str, Any]:
     """GET the spine and save it where the episode flow keeps it (``api/spine.json``, ``epNN/api/spine.json``).
 

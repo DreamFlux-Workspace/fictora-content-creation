@@ -921,6 +921,32 @@ _WORD_AGE = re.compile(
 )
 
 
+_UNITS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+    "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
+    "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
+}  # fmt: skip
+_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70,
+         "eighty": 80, "ninety": 90}  # fmt: skip
+_DECADES = {"teens": 10, "twenties": 20, "thirties": 30, "forties": 40, "fifties": 50,
+            "sixties": 60, "seventies": 70, "eighties": 80}  # fmt: skip
+#: A band written in words, as one age in digits: early 2x -> 23, mid -> 25, late -> 28 (teens: 13, 15, 18).
+_BAND_YEARS = {"early": 3, "mid": 5, "late": 8}
+
+
+def worded_age(words: str) -> int | None:
+    """``twenty-eight`` -> 28, ``thirty`` -> 30, ``late twenties`` -> 28 (one age to write as digits)."""
+
+    parts = [p for p in re.split(r"[- ]+", words.strip().lower()) if p]
+    if len(parts) == 2 and parts[0] in _BAND_YEARS and parts[1] in _DECADES:
+        return _DECADES[parts[1]] + _BAND_YEARS[parts[0]]
+    if len(parts) == 2 and parts[0] in _TENS and parts[1] in _UNITS:
+        return _TENS[parts[0]] + _UNITS[parts[1]]
+    if len(parts) == 1:
+        return _TENS.get(parts[0]) or _UNITS.get(parts[0])
+    return None
+
+
 def word_age_lines(spine: Mapping[str, Any]) -> list[str]:
     """Warn when a cast card writes an age in words ("twenty-six", "late twenties").
 
@@ -948,9 +974,13 @@ def word_age_lines(spine: Mapping[str, Any]) -> list[str]:
         )
         if found:
             name = card.get("name") or card.get("cast_id")
+            # The card's own age in digits, never a fixed example (canary 7 Oct: "26" for 28 and 31).
+            digits = next(
+                (str(age) for age in map(worded_age, found) if age is not None), "N"
+            )
             lines.append(
-                f'!! {name}: the age is written in words ({", ".join(found)}). Write it as digits ("26") '
-                f"before the plates: `cast --desk D --name {name} --look @look.txt` with `age: 26`."
+                f'!! {name}: the age is written in words ({", ".join(found)}). Write it as digits ("{digits}") '
+                f"before the plates: `cast --desk D --name {name} --look @look.txt` with `age: {digits}`."
             )
     return lines
 
@@ -965,6 +995,55 @@ def _adult_age(text: str) -> int | None:
     for raw in _ADULT_AGE.findall(text):
         age = int(raw)
         if 18 <= age <= 80:
+            return age
+    return None
+
+
+#: The card fields that state a character's age: read before any free text.
+_AGE_FIELDS = ("age", "age_band", "apparent_age")
+_CLAUSE = re.compile(r"[.;!?\n]+|\s[-\u2013\u2014]\s")
+
+
+def _name_words(name: str) -> set[str]:
+    """A name and each of its words of 3+ letters, folded (``Han Seo-yeon`` -> the name, ``han``, ``seo-yeon``)."""
+
+    folded = name.strip().casefold()
+    return {folded, *(w for w in re.split(r"[\s,()]+", folded) if len(w) >= 3)} - {""}
+
+
+def _card_age(
+    card: Mapping[str, Any], spine: Mapping[str, Any] | None = None
+) -> int | None:
+    """The age a card states for its own character, or ``None``.
+
+    The card's age fields (``age`` / ``age_band`` on the card or its
+    ``visual_brief``) answer first. Only then the card's free text, clause by
+    clause, leaving out every clause that names another character: "Kang
+    Jun-ho is 26" was read out of his role text about Seo-yeon (L-20261006-27).
+    """
+
+    brief = card.get("visual_brief")
+    for holder in (card, brief if isinstance(brief, Mapping) else {}):
+        for key in _AGE_FIELDS:
+            value = holder.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                value = str(int(value))
+            if isinstance(value, str):
+                age = _adult_age(value)
+                if age is not None:
+                    return age
+    own = _name_words(str(card.get("name") or ""))
+    others: set[str] = set()
+    for other in (spine or {}).get("cast") or []:
+        if isinstance(other, Mapping) and other.get("cast_id") != card.get("cast_id"):
+            others |= _name_words(str(other.get("name") or ""))
+    others -= own
+    for clause in _CLAUSE.split(_card_text(card)):
+        words = clause.casefold()
+        if any(re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", words) for n in others):
+            continue
+        age = _adult_age(clause)
+        if age is not None:
             return age
     return None
 
@@ -993,7 +1072,7 @@ def adult_face_lines(spine: Mapping[str, Any]) -> list[str]:
         if not isinstance(card, Mapping):
             continue
         text = _card_text(card)
-        age = _adult_age(text)
+        age = _card_age(card, spine)
         if age is None or _ADULT_FACE.search(text) is not None:
             continue
         name = str(card.get("name") or card.get("cast_id") or "the character")
@@ -1045,7 +1124,7 @@ def sparkle_adult_line(spine: Mapping[str, Any], *, episode: int) -> str | None:
             card = cards.get(cast_id)
             if card is None:
                 continue
-            age = _adult_age(_card_text(card))
+            age = _card_age(card, spine)
             if age is None:
                 continue
             name = str(card.get("name") or cast_id)

@@ -24,7 +24,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import re
+import statistics
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -32,6 +34,7 @@ from typing import Any
 
 from creation.harness_rules import is_opening_cue
 from creation.post.audio_service import AudioService, download
+from creation.rules_epoch import legacy_rules
 from creation.post.media import (
     LIMITER,
     AudioLevels,
@@ -583,9 +586,54 @@ def saved_take_facts(desk: Path, episode: int, take_id: str) -> Path | None:
     return max(found, key=version) if found else None
 
 
-def shape_problem(kind: str, levels: tuple[float, ...]) -> str | None:
+#: New desks (6 Oct 2026 on): no one-second stretch of a sustained cue, after its first, may sit more
+#: than this far under the cue's median level (L-20261001-4: a decaying "constant" bed passed).
+SUSTAINED_HOLD_DB = 9.0
+#: The stretch the hold is measured on.
+SUSTAINED_HOLD_SECONDS = 1.0
+
+
+def _second_levels(levels: tuple[float, ...], window_seconds: float) -> list[float]:
+    """The windows pooled into whole one-second stretches (power mean, dB); a short last stretch is left out."""
+
+    per = max(1, round(SUSTAINED_HOLD_SECONDS / window_seconds))
+    pooled: list[float] = []
+    for start in range(0, len(levels) - per + 1, per):
+        block = levels[start : start + per]
+        power = sum(10 ** (level / 10) for level in block) / len(block)
+        pooled.append(10 * math.log10(power) if power > 0 else -120.0)
+    return pooled
+
+
+def shape_problem(
+    kind: str,
+    levels: tuple[float, ...],
+    *,
+    window_seconds: float = 0.5,
+    legacy: bool | None = None,
+) -> str | None:
     """What is wrong with a rendered cue's shape, or ``None``: an event must hit in its first second,
-    a sustained sound must not collapse after the first half second."""
+    a sustained sound must not collapse after the first half second.
+
+    On a desk created on/after 6 Oct 2026 (``legacy`` false; default: the running
+    command's rules, :func:`creation.rules_epoch.legacy_rules`) a sustained sound must
+    also HOLD: after its first second, no one-second stretch more than
+    :data:`SUSTAINED_HOLD_DB` under the cue's median, so a cue that fades away is
+    refused (``sustained sound fades``) and re-rendered like any wrong shape. The
+    first second is left out (a bed may swell in). Legacy desks keep the half-tail
+    check alone.
+
+    Parameters
+    ----------
+    kind
+        ``event`` or ``sustained``.
+    levels
+        RMS level (dB) per window, :func:`creation.post.media.measure_rms_windows`.
+    window_seconds
+        The windows' length.
+    legacy
+        Force the legacy (``True``) or new (``False``) rule.
+    """
 
     if not levels:
         return "no audio"
@@ -598,7 +646,21 @@ def shape_problem(kind: str, levels: tuple[float, ...]) -> str | None:
     if not tail:
         return None
     held = sum(1 for level in tail if level >= peak - 18.0 and level > SILENCE_DB)
-    return None if held / len(tail) >= 0.5 else "sustained sound collapses"
+    if held / len(tail) < 0.5:
+        return "sustained sound collapses"
+    if legacy_rules() if legacy is None else legacy:
+        return None
+    seconds = _second_levels(levels, window_seconds)
+    if len(seconds) < 2:
+        return None
+    median = statistics.median(seconds)
+    low = min(seconds[1:])
+    if low < median - SUSTAINED_HOLD_DB:
+        return (
+            f"sustained sound fades (a second at {low:.0f} dB, {median - low:.0f} dB under its median "
+            f"{median:.0f} dB; a constant sound holds within {SUSTAINED_HOLD_DB:g} dB)"
+        )
+    return None
 
 
 def service_renderer(audio: AudioService, spine_id: str) -> Renderer:

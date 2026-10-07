@@ -290,6 +290,28 @@ def test_after_the_script_gate_heard_only_names_the_line_edits(
     assert _answers(desk) == {}
 
 
+def test_after_the_script_gate_a_heard_only_voice_with_no_lines_is_saved_not_looped(
+    desk: Path, api: FakeApi
+) -> None:
+    """L-20261005-3: no lines, approved script: "Mark their lines off screen: none" on every step."""
+
+    _narrated(api, approved=True, lines=False)
+    api.routes[("PATCH", "/v1/spines/sp1")] = SystemExit(
+        "HTTP 409 PATCH: cascade_required: approved"
+    )
+    out = io.StringIO()
+
+    nc.settle_narrators(
+        desk, api, api.spine_doc, ask=lambda _p: "y", rerun="step", out=out
+    )
+
+    assert _answers(desk)["cast_ren"]["heard_only"] is True
+    assert "nothing to mark off screen" in out.getvalue()
+    # The next step does not ask again.
+    assert nc.open_questions(api.spine_doc, nc.load_answers(desk)) == []
+    nc.settle_narrators(desk, api, api.spine_doc, ask=None, rerun="step", out=out)
+
+
 def test_an_off_screen_person_is_never_asked_or_made_a_narrator(
     desk: Path, api: FakeApi
 ) -> None:

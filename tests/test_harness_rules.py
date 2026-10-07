@@ -246,6 +246,50 @@ def test_an_adult_age_without_adult_features_is_named() -> None:
     assert adult_face_lines(spine) == []
 
 
+def _gallery_heiress() -> dict:
+    """The Gallery Heiress shape (L-20261006-27): his role text states her age."""
+
+    return {
+        "cast": [
+            {"cast_id": "cast_junho", "name": "Kang Jun-ho",
+             "role": "Driver for Han Seo-yeon, 26, the gallery heiress. Quiet, watchful.",
+             "visual_brief": {"age_band": "early 30s", "face_anchors": ["soft eyes"]}},
+            {"cast_id": "cast_seoyeon", "name": "Han Seo-yeon",
+             "role": "The gallery heiress.",
+             "visual_brief": {"age_band": "26", "face_anchors": ["round cheeks"]}},
+        ],
+        "beats": [],
+    }  # fmt: skip
+
+
+def test_the_age_warning_never_reads_another_characters_age_from_a_role() -> None:
+    lines = adult_face_lines(_gallery_heiress())
+
+    assert not any(line.startswith("Kang Jun-ho is 26") for line in lines), lines
+    assert [line.split(" and ")[0] for line in lines] == ["Han Seo-yeon is 26"]
+
+
+def test_the_cards_own_age_field_answers_before_its_text() -> None:
+    spine = _gallery_heiress()
+    spine["cast"][0]["visual_brief"]["age_band"] = "34"
+
+    lines = adult_face_lines(spine)
+
+    assert "Kang Jun-ho is 34 and can be drawn young." in " ".join(lines), lines
+
+
+def test_an_age_in_the_characters_own_text_still_counts() -> None:
+    spine = _gallery_heiress()
+    spine["cast"][0]["visual_brief"] = {"face_anchors": ["soft eyes"]}
+    spine["cast"][0]["role"] = (
+        "Kang Jun-ho, 31, a driver. He works for Han Seo-yeon, 26."
+    )
+
+    lines = adult_face_lines(spine)
+
+    assert any(line.startswith("Kang Jun-ho is 31") for line in lines), lines
+
+
 def test_sparkle_on_an_adult_stops_and_a_card_with_no_age_does_not() -> None:
     spine = _spine()
     spine["beats"][0]["reaction_kind"] = "sparkle_delight"

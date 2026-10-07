@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -238,6 +239,24 @@ def _style_source(spine: Mapping[str, Any], cast_id: str) -> Mapping[str, Any]:
     return {}
 
 
+_AGE_DIGITS = re.compile(r"\b(1[89]|[2-7]\d|80)\b")
+
+
+def _description_with_age(description: str, before: Any, after: Any) -> str:
+    """The card's description, its stated age moved to the new ``age_band``'s digits when the age changed."""
+
+    old = _AGE_DIGITS.search(str(before or ""))
+    new = _AGE_DIGITS.search(str(after or ""))
+    if new is None or str(before or "") == str(after or ""):
+        return description
+    stated = _AGE_DIGITS.search(description)
+    if stated is None or stated.group(0) == new.group(0):
+        return description
+    if old is not None and stated.group(0) != old.group(0):
+        return description  # the number in the prose is not the old age: leave it
+    return description[: stated.start()] + new.group(0) + description[stated.end() :]
+
+
 def look_patch(
     spine: Mapping[str, Any], card: Mapping[str, Any], raw: str
 ) -> tuple[dict[str, Any], list[str]]:
@@ -246,7 +265,8 @@ def look_patch(
     The brief starts from the card's own brief when it has one (a partial look
     edits it), else from the show's drawing style (another cast card's
     ``STYLE_FIELDS``) and the default expression, gaze and posture. A
-    description left out is written from the anchors.
+    description left out keeps the card's own (its stated age moved to a new
+    ``age``), and is written from the anchors only for a card with none.
 
     Parameters
     ----------
@@ -302,6 +322,14 @@ def look_patch(
         raise ec.CommandStopped(
             f"the look for {card.get('name') or cast_id} is missing: {named}.{style_note} Nothing was sent. "
             f"A look reads like:\n{LOOK_TEMPLATE}"
+        )
+    kept = str(card.get("visual_description") or "").strip()
+    if not description and kept and isinstance(own, Mapping):
+        # A partial look changes only the fields it names (canary 7 Oct: `age: 28` alone rewrote
+        # Mina's description and dropped her ethnicity and hair). The description stays the card's;
+        # a new age in digits replaces the one it states.
+        description = _description_with_age(
+            kept, own.get("age_band"), brief.get("age_band")
         )
     if not description:
         description = _one_line(

@@ -12,6 +12,7 @@ import io
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 
 from conftest import make_take, make_tone, needs_ffmpeg
@@ -482,6 +483,36 @@ def test_finish_falls_back_to_speech_when_no_transcript_can_be_made(
     assert "2.6" in captions.detail.split("'Wait here for me.' (speech); ")[1][:4], (
         "speech spans still start line 2 on the stammer tone"
     )
+
+
+@needs_ffmpeg
+def test_a_transcript_that_could_not_be_reached_is_not_reported_as_captions_ok(
+    post_desk: Path,
+) -> None:
+    """L-20261006-26: a ConnectError became a note, yet the summary printed ``captions ✓``."""
+
+    _japanese_desk(post_desk)
+
+    def transcriber(desk: Path, episode: int, take_id: str) -> Path:
+        raise httpx.ConnectError("[Errno 8] nodename nor servname provided")
+
+    result, out = _finish(post_desk, transcriber=transcriber)
+    captions = next(s for s in result.steps if s.step == "captions")  # type: ignore[attr-defined]
+    assert captions.status == "ran", out
+    assert "no transcript (ConnectError" in captions.detail
+    sound = result.sound_line()  # type: ignore[attr-defined]
+    assert "captions ✓" not in sound, sound
+    assert "captions ⚠ (no transcript: timed on speech spans, check by eye)" in sound, (
+        sound
+    )
+
+
+@needs_ffmpeg
+def test_a_saved_transcript_still_reads_captions_ok(post_desk: Path) -> None:
+    _japanese_desk(post_desk)
+    _japanese_words(post_desk / "ep01" / "takes" / "take-ep01-t1-review-words-v1.json")
+    result, _ = _finish(post_desk)
+    assert "captions ✓" in result.sound_line()  # type: ignore[attr-defined]
 
 
 @needs_ffmpeg
