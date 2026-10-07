@@ -2203,7 +2203,6 @@ def _film(
     """Film the current episode alone (or pick up its job), collect every take raw with its take facts, book spend."""
 
     ep = state.episode_ordinal
-    ep_dir = _episode_dir(desk, ep)
     api_dir = api_dir_for_episode(desk, ep)
     expected = len(episode_by_ordinal(load_series(desk), ep).takes) or None
     raw = _resume_raw_clips(
@@ -2251,6 +2250,53 @@ def _film(
         delivery = stages.fetch_delivery_optional(
             run, str(raw.get("coordinator_job_id") or "")
         )
+    return book_filmed_episode(
+        desk, run, state, raw, cfg=cfg, paths=paths, delivery=delivery
+    )
+
+
+def book_filmed_episode(
+    desk: Path,
+    run: DramaApiRunSession,
+    state: ProductionState,
+    raw: dict[str, Any],
+    *,
+    cfg: Any,
+    paths: list[str],
+    delivery: dict[str, Any] | None = None,
+) -> StepResult:
+    """Collect a filmed episode's takes from its clip record and mark the step's film done.
+
+    What ``step`` does once its film job's takes are in: download each take raw,
+    save its take facts, book it, and move the desk to ``complete``. Shared by
+    ``collect-takes`` for a film job that stopped moving with every take filmed
+    (L-20261006-4), so a collected episode is booked exactly like a filmed one.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    run
+        Session for the episode (reads take facts and the story).
+    state
+        Production state (saved here).
+    raw
+        The clip record (:func:`creation.harness.raw_video.raw_clips_record`).
+    cfg
+        Production config.
+    paths
+        Files written so far (extended).
+    delivery
+        The hosted delivery, when hosted captions are on.
+
+    Returns
+    -------
+    StepResult
+        ``complete`` and what was collected.
+    """
+
+    ep = state.episode_ordinal
+    ep_dir = _episode_dir(desk, ep)
     video_job_id = str(raw.get("coordinator_job_id") or "")
     spine = run.spine(state.spine_id or "")
     save_spine_snapshot(desk, ep, spine)
