@@ -75,6 +75,14 @@ def turbo_take_usd(seconds: float = 15.0) -> float:
     return round(rate * max(seconds, 5.0), 2)
 
 
+#: Plate and board prices ``step`` has shown (``step --confirm-spend`` needs one on new desks).
+SHOWN_PRICES = {
+    f"{kind}-ep{episode:02d}": 0.30
+    for kind in ("plates", "boards")
+    for episode in range(1, 6)
+}
+
+
 def set_phase(desk: Path, phase: str, **fields: Any) -> None:
     """Move the desk's phase machine (test setup only)."""
 

@@ -291,6 +291,15 @@ def _payload_summary(payload: dict[str, Any]) -> str:
     return json.dumps(summary, default=str)
 
 
+class ConnectionDropped(SystemExit):
+    """A poll lost the connection; the job is still on the server.
+
+    A ``SystemExit`` like every other stop, so callers that catch those are
+    unchanged; ``step`` tells it apart and leaves the desk where it was, so the
+    same command picks the job up instead of the desk being marked failed.
+    """
+
+
 def connection_dropped(label: str, exc: BaseException) -> str:
     """The line to print when a poll loses the connection.
 
@@ -311,7 +320,7 @@ def connection_dropped(label: str, exc: BaseException) -> str:
 
     return (
         f"The connection dropped while waiting on {label}. The job is still on the server. "
-        "Run `fictora-produce step` again. It picks up the same job. Nothing is charged twice. "
+        "Run the same command again. It picks up the same job. Nothing is charged twice. "
         f"({type(exc).__name__})"
     )
 
@@ -373,7 +382,7 @@ def _get_json_with_transport_retries(
         except httpx.HTTPError as exc:
             remaining = deadline - clock.monotonic()
             if remaining <= 0:
-                raise SystemExit(connection_dropped(label, exc)) from exc
+                raise ConnectionDropped(connection_dropped(label, exc)) from exc
             sleep_for = min(backoff_seconds, max_backoff_seconds, remaining)
             clock.sleep(sleep_for)
             backoff_seconds = min(backoff_seconds * 2, max_backoff_seconds)

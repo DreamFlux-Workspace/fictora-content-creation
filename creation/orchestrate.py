@@ -101,6 +101,7 @@ from creation.production_state import (
     api_dir_for_episode,
     ensure_production,
     load_production,
+    paid_key_prefix,
     production_path,
     save_production,
 )
@@ -134,6 +135,7 @@ from creation.stylised_only import BriefNoticePause
 from creation.voice_gate import film_refusal as voices_film_refusal
 from creation.voice_mode import next_take_voices_line
 from creation.music_blend import music_blend_line
+from creation.harness.http_util import ConnectionDropped
 from creation.rules_epoch import is_legacy
 from creation.voice_gate import gate_text as voices_gate_text
 from creation.voice_gate import pending_for_film as voices_pending_for_film
@@ -1240,6 +1242,73 @@ def draft_key_prefix(state: ProductionState) -> str:
     )
 
 
+def drawing_spend_stop(
+    desk: Path,
+    state: ProductionState,
+    *,
+    kind: str,
+    count: int,
+    confirm_spend: bool,
+) -> StepResult | None:
+    """Price a plate or board drawing; draw only on ``--confirm-spend`` after that price was shown.
+
+    Plates and boards were paid by a bare ``step``, so a chained command drew
+    plates before the producer's yes (The Gallery Heiress, L-20261006-17, $0.90).
+    Like ``film``, the first ``step`` shows the price and sends nothing; the
+    confirm needs that price on the desk. Desks created before 6 Oct 2026 keep
+    drawing on a bare ``step`` (rules epoch).
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    state
+        Production state (saved when the price is shown).
+    kind
+        ``plates`` or ``boards``.
+    count
+        Pictures to draw (characters, or takes for boards).
+    confirm_spend
+        The operator's ``--confirm-spend``.
+
+    Returns
+    -------
+    StepResult | None
+        The price, with nothing sent; ``None`` to draw now.
+
+    Raises
+    ------
+    RuntimeError
+        ``--confirm-spend`` before any price was shown (nothing sent).
+    """
+
+    if is_legacy(desk):
+        return None
+    key = f"{kind}-ep{state.episode_ordinal:02d}"
+    if confirm_spend:
+        if key in state.drawing_estimates:
+            return None
+        raise RuntimeError(
+            f"Stopped, nothing drawn: no price shown for the {kind} yet. Run `fictora-produce step "
+            f"--desk {desk}` without --confirm-spend, show the human the number, then confirm."
+        )
+    usd = round(float(STILL_USD) * count, 2)
+    state.drawing_estimates[key] = usd
+    save_production(desk, state)
+    what = (
+        f"{count} character picture(s)"
+        if kind == "plates"
+        else f"{count} storyboard(s), one a take"
+    )
+    return StepResult(
+        state.phase,
+        f"{kind.capitalize()} for episode {state.episode_ordinal}: {what}, about ${usd:.2f}. "
+        "Nothing drawn yet.\n"
+        f"Human yes, then `fictora-produce step --desk {desk} --confirm-spend`.",
+        (),
+    )
+
+
 def run_step(
     desk: Path,
     *,
@@ -1293,8 +1362,7 @@ def run_step(
     cfg = load_production_config(desk)
     run = _open_run(desk, state)
     retry_prefix = step_retry_prefix(state)
-    if retry_prefix:
-        run.prefix = retry_prefix
+    run.prefix = retry_prefix or paid_key_prefix(desk, state, run.prefix, scope="step")
     ep = state.episode_ordinal
     ep_dir = _episode_dir(desk, ep)
     paths: list[str] = []
@@ -1456,6 +1524,17 @@ def run_step(
                 owing = {
                     cast_id for cast_id, _ in cast_owing_pictures(spine_now, episode=ep)
                 }
+            priced = drawing_spend_stop(
+                desk,
+                state,
+                kind="plates",
+                count=len(owing)
+                if owing is not None
+                else len(drawn_cast_rows(spine_now)),
+                confirm_spend=confirm_spend,
+            )
+            if priced is not None:
+                return priced
             stages.enrol_cast(
                 run,
                 spine_id=state.spine_id,
@@ -1487,6 +1566,7 @@ def run_step(
                     unit=f"plates x{len(paths)}",
                 )
             state.phase = "wait_plates"
+            state.drawing_estimates.pop(f"plates-ep{ep:02d}", None)
             save_production(desk, state)
             _note(
                 ep_dir,
@@ -1553,6 +1633,15 @@ def run_step(
                         ]
                     )
                 )
+            priced = drawing_spend_stop(
+                desk,
+                state,
+                kind="boards",
+                count=len(episode_by_ordinal(load_series(desk), ep).takes),
+                confirm_spend=confirm_spend,
+            )
+            if priced is not None:
+                return priced
             stages.enrol_boards(
                 run,
                 spine_id=state.spine_id or "",
@@ -1586,6 +1675,7 @@ def run_step(
             )
             state.exposure_accept_dim = False
             state.phase = "wait_board"
+            state.drawing_estimates.pop(f"boards-ep{ep:02d}", None)
             save_production(desk, state)
             _note(ep_dir, "Boards drawn: " + "; ".join(report[: len(made)]))
             return StepResult(
@@ -1675,6 +1765,11 @@ def run_step(
             )
         raise RuntimeError(f"unknown phase: {state.phase}")
     except SystemExit as exc:
+        if isinstance(exc, ConnectionDropped) and not is_legacy(desk):
+            # The job is still on the server. Marking the desk failed left only
+            # paid restarts (L-20261006-14); left where it was, the next `step`
+            # picks the job up under the same key.
+            raise
         if state.phase != "failed":
             state.failed_phase = state.phase
         state.phase = "failed"

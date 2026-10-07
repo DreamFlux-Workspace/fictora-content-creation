@@ -69,6 +69,9 @@ class ProductionState:
     series_arc: dict[str, Any] | None = None
     #: Prices ``film`` showed the human (``ep02`` or ``ep02-t3`` -> USD); ``--confirm-spend`` needs one.
     film_estimates: dict[str, float] = field(default_factory=dict)
+    #: Prices ``step`` showed for plates or boards (``plates-ep01`` / ``boards-ep02`` -> USD);
+    #: ``step --confirm-spend`` draws them only after one (desks from 6 Oct 2026).
+    drawing_estimates: dict[str, float] = field(default_factory=dict)
     #: Endpoint and resolution the server last said this story films on (a batch estimate's
     #: ``cost_estimate`` or a take's facts). ``None`` until one answer names it; the desk then
     #: prices the lane pin's default (H3 Max Turbo for ``minimax-h3``).
@@ -158,6 +161,43 @@ def start_episode(state: ProductionState, episode_ordinal: int) -> None:
     state.video_enrolled_suffix = None
     state.last_video_job_id = None
     state.board_paths = {}
+
+
+def paid_key_prefix(
+    desk: Path, state: ProductionState, fallback: str, *, scope: str = ""
+) -> str:
+    """Return the idempotency prefix a paid request is sent under: fixed by the desk.
+
+    A run that lost the server's reply and is run again sends the same key, so
+    the server answers with the job it already has (in flight or done) instead
+    of starting, and charging, a second one. The server forgets a key whose job
+    failed, so a fixed key never pins a dead job (fictora-drama
+    ``_live_enrolment_replay``). Desks created before 6 Oct 2026 keep the
+    per-run ``fallback`` they always had (rules epoch).
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    state
+        Production state (its ``idempotency_prefix`` is fixed for the desk).
+    fallback
+        The run's own prefix, used on legacy desks.
+    scope
+        What the key is for (``step``), so two commands never share one; empty
+        for a caller whose keys already name themselves (``-music-note-<id>``).
+
+    Returns
+    -------
+    str
+        ``<desk prefix>-<scope>`` (``<desk prefix>`` without a scope), or ``fallback``.
+    """
+
+    from creation.rules_epoch import is_legacy
+
+    if is_legacy(desk) or not state.idempotency_prefix:
+        return fallback
+    return f"{state.idempotency_prefix}-{scope}" if scope else state.idempotency_prefix
 
 
 def save_production(desk: Path, state: ProductionState) -> None:

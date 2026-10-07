@@ -17,7 +17,7 @@ from creation.cli_produce import main as produce_main
 from creation.ops.floor import approve_series_gate
 from creation.ops.state import load_series
 from creation.production_state import load_production
-from conftest import set_phase
+from conftest import SHOWN_PRICES, set_phase
 from fake_api import FakeApi
 
 FRAME_ROUTE = "/v1/spines/sp1/look-frame"
@@ -231,11 +231,11 @@ def test_step_draws_plates_once_the_look_is_approved(desk: Path, api: FakeApi) -
     _draw(desk, api, URL_1)
     _pin_answers(api)
     ec.run_approve_look(desk, out=io.StringIO())
-    set_phase(desk, "ready_cast_enrol")
+    set_phase(desk, "ready_cast_enrol", drawing_estimates=SHOWN_PRICES)
     api.routes[("POST", "/v1/spines/sp1/cast/enrol")] = {"job_id": "job_cast"}
     api.jobs["job_cast"] = {"status": "completed"}
 
-    result = orchestrate.run_step(desk)
+    result = orchestrate.run_step(desk, confirm_spend=True)
 
     assert result.phase == "wait_plates"
     assert api.posted("/v1/spines/sp1/cast/enrol")
@@ -244,11 +244,11 @@ def test_step_draws_plates_once_the_look_is_approved(desk: Path, api: FakeApi) -
 def test_a_desk_that_never_drew_a_look_frame_is_not_held(
     desk: Path, api: FakeApi
 ) -> None:
-    set_phase(desk, "ready_cast_enrol")
+    set_phase(desk, "ready_cast_enrol", drawing_estimates=SHOWN_PRICES)
     api.routes[("POST", "/v1/spines/sp1/cast/enrol")] = {"job_id": "job_cast"}
     api.jobs["job_cast"] = {"status": "completed"}
 
-    result = orchestrate.run_step(desk)
+    result = orchestrate.run_step(desk, confirm_spend=True)
 
     assert result.phase == "wait_plates"
     assert load_series(desk).look.status == "pending"

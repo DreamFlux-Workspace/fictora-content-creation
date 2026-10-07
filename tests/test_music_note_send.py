@@ -20,6 +20,7 @@ from creation.cli_produce import main
 from creation.ops.state import load_series
 from creation.post import music_send
 from creation.post.bed import music_note_entries
+from creation.production_state import load_production
 
 ROUTE = "/v1/spines/sp1/music-notes"
 FACTS = "/v1/jobs/job_take_t1/take-facts"
@@ -126,7 +127,11 @@ def test_yes_applies_saves_the_answer_books_the_bed_and_follows_the_refinish(
     assert applied == {"note": "calmer", "episode_ordinal": 1, "take": "t1",
                        "dry_run": False, "confirm_refilm": False}  # fmt: skip
     [entry] = music_note_entries(desk)
-    assert key == f"pfx-music-note-{entry['id']}-apply-1"
+    # A new desk sends under its own fixed prefix, so a re-run is the same request.
+    assert (
+        key
+        == f"{load_production(desk).idempotency_prefix}-music-note-{entry['id']}-apply-1"
+    )
     assert entry["status"] == "applied" and entry["version"] == 2
     assert entry["job_id"] == "job_audio_1" and entry["spent_usd"] == pytest.approx(
         0.20

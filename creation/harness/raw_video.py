@@ -23,6 +23,7 @@ from urllib.parse import quote
 
 from creation.harness.http_util import (
     STALE_JOB_SECONDS,
+    ConnectionDropped,
     _parse_utc,
     connection_dropped,
     describe_job_error,
@@ -283,7 +284,7 @@ def wait_for_raw_scene_clips(
         try:
             parent = _job_record(run.get(f"/v1/jobs/{coordinator_job_id}"))
         except httpx.HTTPError as exc:
-            raise SystemExit(connection_dropped("the film job", exc)) from exc
+            raise ConnectionDropped(connection_dropped("the film job", exc)) from exc
         if str(parent.get("status") or "") in _FAILED:
             run.save("17_video_terminal.json", parent)
             raise VideoJobFailed(
@@ -307,7 +308,9 @@ def wait_for_raw_scene_clips(
                 try:
                     child = _job_record(run.get(f"/v1/jobs/{child_id}"))
                 except httpx.HTTPError as exc:
-                    raise SystemExit(connection_dropped("the film job", exc)) from exc
+                    raise ConnectionDropped(
+                        connection_dropped("the film job", exc)
+                    ) from exc
                 status = str(child.get("status") or "")
                 if status in {"queued", "running", ""}:
                     pending = True
