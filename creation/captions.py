@@ -2053,7 +2053,10 @@ def find_ffmpeg() -> tuple[str, str]:
         if not probe:
             continue
         filters = subprocess.run(
-            [ffmpeg, "-hide_banner", "-filters"], capture_output=True, text=True
+            [ffmpeg, "-hide_banner", "-filters"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
         ).stdout
         if re.search(r"^\s*\S+\s+(ass|subtitles)\s", filters, re.MULTILINE):
             return ffmpeg, probe
@@ -2131,6 +2134,7 @@ def fc_match(pattern: str) -> tuple[str, str, str] | None:
     try:
         result = subprocess.run(
             [exe, "-f", "%{family}\t%{style}\t%{file}", pattern],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=30,
@@ -2403,6 +2407,7 @@ def probe_video(ffprobe: str, path: Path) -> tuple[int, int, float]:
             "json",
             str(path),
         ],
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         check=True,
@@ -2433,6 +2438,7 @@ def detect_silences(ffmpeg: str, path: Path, duration: float) -> list[Span]:
             "null",
             "-",
         ],
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
     )
@@ -2477,6 +2483,7 @@ def burn_ass(
             "copy",
             str(out),
         ],
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
     )

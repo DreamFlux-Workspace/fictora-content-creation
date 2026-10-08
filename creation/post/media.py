@@ -63,7 +63,7 @@ def run_ffmpeg(args: list[str]) -> None:
     Parameters
     ----------
     args
-        Arguments after ``ffmpeg -v error -y``.
+        Arguments after ``ffmpeg -v error -y`` (run with no stdin).
 
     Raises
     ------
@@ -72,7 +72,10 @@ def run_ffmpeg(args: list[str]) -> None:
     """
 
     result = subprocess.run(
+        # No stdin: a kit command inside a `while read` loop must not eat the loop's input
+        # (L-20261006-17). stdin, not -nostdin, so the recorded command lines stay what they were.
         [ffmpeg_bin(), "-v", "error", "-y", *args],
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         check=False,
@@ -115,7 +118,7 @@ def probe_video(path: Path) -> VideoInfo:
         [ffprobe_bin(), "-v", "error", "-show_entries",
          "stream=codec_type,width,height,r_frame_rate:stream_disposition=attached_pic:format=duration",
          "-of", "json", str(path)],
-        capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
     )  # fmt: skip
     if result.returncode != 0:
         raise MediaToolError(
@@ -169,7 +172,7 @@ def video_streams(path: Path) -> tuple[int, int | None]:
     result = subprocess.run(
         [ffprobe_bin(), "-v", "error", "-select_streams", "v",
          "-show_entries", "stream=index:stream_disposition=attached_pic", "-of", "json", str(path)],
-        capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
     )  # fmt: skip
     if result.returncode != 0:
         raise MediaToolError(
@@ -220,7 +223,7 @@ def media_duration(path: Path) -> float:
 
     result = subprocess.run(
         [ffprobe_bin(), "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path)],
-        capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
     )  # fmt: skip
     if result.returncode != 0:
         raise MediaToolError(
@@ -240,7 +243,7 @@ def measure_loudness(path: Path) -> float:
 
     result = subprocess.run(
         [ffmpeg_bin(), "-hide_banner", "-nostats", "-i", str(path), "-vn", "-af", "ebur128", "-f", "null", "-"],
-        capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
     )  # fmt: skip
     if result.returncode != 0:
         raise MediaToolError(
@@ -302,7 +305,7 @@ def measure_levels(path: Path) -> AudioLevels:
     result = subprocess.run(
         [ffmpeg_bin(), "-hide_banner", "-nostats", "-i", str(path), "-vn",
          "-af", "aresample=48000,pan=mono|c0=c0,ebur128=peak=true", "-f", "null", "-"],
-        capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
     )  # fmt: skip
     if result.returncode != 0:
         raise MediaToolError(
@@ -349,7 +352,7 @@ def measure_rms_windows(
          (f"aresample=48000,pan=mono|c0=c0,asetnsamples=n={samples}:p=0,astats=metadata=1:reset=1,"
           "ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-"),
          "-f", "null", "-"],
-        capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
     )  # fmt: skip
     levels: list[float] = []
     for line in result.stdout.splitlines():
@@ -399,7 +402,7 @@ def count_frames(path: Path) -> int:
     result = subprocess.run(
         [ffprobe_bin(), "-v", "error", "-select_streams", "v:0", "-count_frames",
          "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", str(path)],
-        capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
     )  # fmt: skip
     if result.returncode != 0 or not result.stdout.strip():
         raise MediaToolError(
@@ -462,7 +465,9 @@ def decode_frames(
     if max_frames is not None:
         args += ["-frames:v", str(max_frames)]
     args += ["-vf", vf, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
-    result = subprocess.run(args, capture_output=True, check=False)
+    result = subprocess.run(
+        args, stdin=subprocess.DEVNULL, capture_output=True, check=False
+    )
     if result.returncode != 0:
         raise MediaToolError(
             f"frame decode failed on {path.name}: {result.stderr.decode(errors='replace')[-300:]}"
@@ -514,7 +519,7 @@ def iter_frames(
     proc = subprocess.Popen(
         [ffmpeg_bin(), "-nostdin", "-v", "error", *seek, "-i", str(path), "-vf", vf,
          "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )  # fmt: skip
     size = width * height * 3
     assert proc.stdout is not None

@@ -574,7 +574,7 @@ def video_seconds(path: Path) -> float:
     result = subprocess.run(
         [ffprobe_bin(), "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=duration",
          "-of", "json", str(path)],
-        capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
     )  # fmt: skip
     try:
         return float(json.loads(result.stdout)["streams"][0]["duration"])
@@ -825,7 +825,7 @@ def decode_stereo(path: Path) -> np.ndarray:
 
     decoded = subprocess.run(
         [ffmpeg_bin(), "-v", "error", "-i", str(path), "-vn", "-f", "f32le", "-ac", "2", "-ar", str(BED_RATE), "-"],
-        capture_output=True, check=False,
+        stdin=subprocess.DEVNULL, capture_output=True, check=False,
     )  # fmt: skip
     if decoded.returncode != 0:
         raise MediaToolError(

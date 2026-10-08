@@ -844,7 +844,7 @@ def measure_cuts(
         [ffmpeg_bin(), "-nostdin", "-i", str(take), "-vf",
          f"{region}scale={FRAME_DIFF_SCALE},format=gray,tblend=all_mode=difference,signalstats,metadata=print:file=-",
          "-an", "-f", "null", "-"],
-        capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
     )  # fmt: skip
     if run.returncode != 0:
         raise RuntimeError(f"ffmpeg cut trace failed: {(run.stderr or '')[-400:]}")

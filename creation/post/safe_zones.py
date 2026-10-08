@@ -364,7 +364,7 @@ def grab_frame(video: Path, seconds: float) -> Image.Image:
     result = subprocess.run(
         [ffmpeg_bin(), "-v", "error", "-ss", f"{seconds:.3f}", "-i", str(video), "-frames:v", "1",
          "-f", "image2pipe", "-vcodec", "png", "-"],
-        capture_output=True, check=False,
+        stdin=subprocess.DEVNULL, capture_output=True, check=False,
     )  # fmt: skip
     if result.returncode != 0 or not result.stdout:
         raise RuntimeError(f"could not read a frame at {seconds:.2f}s of {video.name}")

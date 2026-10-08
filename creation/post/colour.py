@@ -273,7 +273,7 @@ def take_pixels(take: Path) -> Float:
     result = subprocess.run(
         [ffmpeg_bin(), "-v", "error", "-i", str(take), "-vf", f"fps={SAMPLE_FPS},scale={SAMPLE_WIDTH}:{height}",
          "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
-        capture_output=True, check=False,
+        stdin=subprocess.DEVNULL, capture_output=True, check=False,
     )  # fmt: skip
     if result.returncode != 0 or not result.stdout:
         raise MediaToolError(f"could not sample frames from {take.name}")

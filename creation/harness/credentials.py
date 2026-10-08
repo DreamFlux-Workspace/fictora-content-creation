@@ -52,6 +52,7 @@ def load_drama_api_credentials(
         return base_url, token
     completed = subprocess.run(
         ["railway", "variables", "--service", RAILWAY_DRAMA_SERVICE, "--json"],
+        stdin=subprocess.DEVNULL,
         check=False,
         capture_output=True,
         text=True,

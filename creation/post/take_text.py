@@ -348,7 +348,11 @@ def ocr_languages(binary: str, spoken: str | None) -> tuple[str, str | None]:
     if pack is None:
         return "eng", None
     listed = subprocess.run(
-        [binary, "--list-langs"], capture_output=True, text=True, timeout=30
+        [binary, "--list-langs"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if pack in listed.stdout.split():
         return f"eng+{pack}", None
@@ -369,7 +373,7 @@ def tesseract_runner(binary: str) -> OcrRunner:
             )
             done = subprocess.run(
                 [binary, str(listing), "stdout", "-l", languages, "--psm", "11", "tsv"],
-                capture_output=True, text=True, timeout=600,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600,
             )  # fmt: skip
         if done.returncode != 0:
             raise MediaToolError(f"tesseract failed: {done.stderr[-300:]}")
@@ -721,7 +725,7 @@ def _grab(take: Path, times: Sequence[float], folder: Path) -> list[Path]:
     done = subprocess.run(
         [ffmpeg_bin(), "-nostdin", "-v", "error", "-i", str(take), "-vf",
          f"fps={LINE_SAMPLE_FPS:g}:round=down,format=gray", "-start_number", "0", str(pattern)],
-        capture_output=True, text=True, timeout=600,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600,
     )  # fmt: skip
     if done.returncode != 0:
         raise MediaToolError(f"frame grab failed on {take.name}: {done.stderr[-300:]}")
