@@ -21,13 +21,22 @@ jobs:
   tests:
     name: tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The job's budget is the sum of the step budgets below plus a margin. Each
+    # step has its own limit so a slow Ubuntu mirror can no longer eat the time
+    # the tests need: on 7 Oct the ffmpeg install took 7.5-8 min three times
+    # (stalled package fetches) and the 15-min job was cancelled mid-suite with
+    # no failing test (runs 37662784945, 37664514275, 37692214292).
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install ffmpeg (post tests build real media)
+        timeout-minutes: 10
+        # A stalled mirror fetch gives up after 20 s and is retried, instead of
+        # sitting on the default timeout for each of ffmpeg's ~70 packages.
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends ffmpeg
+          APT_OPTS="-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+          sudo apt-get $APT_OPTS update -q
+          sudo apt-get $APT_OPTS install -y -q --no-install-recommends ffmpeg
           ffmpeg -hide_banner -version | head -1
       - uses: astral-sh/setup-uv@v10.2.0
         with:
@@ -37,9 +46,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --group test
       - name: Run tests
+        # The suite runs in 8-12 min here; 15 min bounds a test that truly hangs.
+        timeout-minutes: 15
         # The suite talks to a fake Drama API and needs no secrets or network.
-        # -rs prints the reason for any skipped test so a missing ffmpeg can't hide.
-        run: uv run --frozen --group test pytest tests -q -rs
+        # -rs prints the reason for any skipped test so a missing ffmpeg can't hide;
+        # --durations=15 lists the slowest tests, so a test drifting toward the limit is seen early.
+        run: uv run --frozen --group test pytest tests -q -rs --durations=15
 
   lint:
     name: lint
