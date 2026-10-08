@@ -6559,6 +6559,7 @@ def run_film(
     confirm_spend: bool = False,
     out: Any = None,
     single_frame_start: bool = False,
+    reference_mode: bool = False,
 ) -> str:
     """Price, then film episode N alone, or only take K of it. Nothing earlier is filmed or booked again.
 
@@ -6594,6 +6595,14 @@ def run_film(
         storyboard. Recorded on the film's pending unit, so a resume under the
         same key sends the same body; a server that will not take it stops
         the film with nothing charged.
+    reference_mode
+        Reference-lane trial (``--reference-mode``, never a default): the take
+        films on H3 Max reference-to-video from its board and the cast plates.
+        Goes with ``confirm_spend``, never with ``single_frame_start``. The
+        reference price is asked for (``reference_mode: true`` on the estimate)
+        and printed before anything is sent, kept on the pending unit with the
+        choice, and the takes are booked at it; a server that will not price
+        or film it stops with nothing sent or charged.
 
     Returns
     -------
@@ -6602,9 +6611,16 @@ def run_film(
     """
 
     out = out or sys.stdout
+    if reference_mode and single_frame_start:
+        raise CommandStopped(stages.REFERENCE_WITH_SINGLE_FRAME)
     if single_frame_start and not confirm_spend:
         raise CommandStopped(
             "--single-frame-start goes with --confirm-spend (it changes how the takes are filmed, not the price)"
+        )
+    if reference_mode and not confirm_spend:
+        raise CommandStopped(
+            "--reference-mode goes with --confirm-spend (the reference price is fetched and printed "
+            "then, before anything is sent)"
         )
     if confirm_spend:
         _hold_for_pitch(desk, "film --confirm-spend", episode=episode)
@@ -6625,6 +6641,7 @@ def run_film(
             confirm_spend=confirm_spend,
             out=out,
             single_frame_start=single_frame_start,
+            reference_mode=reference_mode,
         )
     finally:
         run.client.close()
@@ -6641,6 +6658,7 @@ def _run_film(
     confirm_spend: bool,
     out: Any,
     single_frame_start: bool = False,
+    reference_mode: bool = False,
 ) -> str:
     if episode < 1:
         raise CommandStopped("--episode is 1 or more")
@@ -6700,18 +6718,33 @@ def _run_film(
         print(warning, file=out)
     print(next_take_voices_line(desk, run, spine), file=out)
     started = load_production(desk).pending.get(unit)
+    reference_price: dict[str, float] = {}
     if started is not None:
         # The same key goes out again: the body must be the one it was first sent with.
         trial = bool(started.get("single_frame_start"))
-        if single_frame_start and not trial:
-            raise CommandStopped(
-                f"{what} was already sent without --single-frame-start and picks up under the same key, "
-                "so it carries on the same way. Run it without the flag to finish it."
-            )
+        reference = bool(started.get("reference_mode"))
+        for chosen, sent, flag in (
+            (single_frame_start, trial, "--single-frame-start"),
+            (reference_mode, reference, "--reference-mode"),
+        ):
+            if chosen and not sent:
+                raise CommandStopped(
+                    f"{what} was already sent without {flag} and picks up under the same key, "
+                    "so it carries on the same way. Run it without the flag to finish it."
+                )
     else:
         trial = single_frame_start
+        reference = reference_mode
+        if reference:
+            reference_price = _reference_film_price(
+                desk, state, run, cfg, spine, episode=episode, take_ids=take_ids,
+                take_index=take_index, key=key, what=what, out=out,
+            )  # fmt: skip
     if trial:
         print(stages.SINGLE_FRAME_START_NOTE, file=out)
+    if reference:
+        print(f"[film] {stages.REFERENCE_MODE_NOTE}", file=out)
+        print(f"[film] {stages.REFERENCE_VOICE_NOTE}", file=out)
     body = stages.video_request_body(
         run,
         spine=spine,
@@ -6728,6 +6761,7 @@ def _run_film(
         seed_attempt=seed,
         single_frame_start=trial,
         desk=desk,
+        reference_mode=reference,
     )
     _save_desk_json(desk, f"{unit}-request", body)
     if filmed_before and reason:
@@ -6749,6 +6783,10 @@ def _run_film(
         }
         if trial:
             pending["single_frame_start"] = True
+        if reference:
+            # The choice and its price: a resume sends the same body and books the same.
+            pending["reference_mode"] = True
+            pending.update(reference_price)
         fresh.pending[unit] = pending
         save_production(desk, fresh)
     job_id = pending.get("job_id")
@@ -6762,6 +6800,19 @@ def _run_film(
             job = stages.post_video_generation(
                 run, body, idempotency_key=str(pending["key"]), episode=episode
             )
+        except stages.ReferenceModeRefused as exc:
+            # Nothing was admitted: let the unit go and move to a fresh key, so
+            # a film without the flag never reuses this key with another body.
+            fresh = load_production(desk)
+            fresh.pending.pop(unit, None)
+            fresh.attempts[unit] = fresh.attempts.get(unit, 0) + 1
+            save_production(desk, fresh)
+            _note(
+                desk,
+                episode,
+                f"film {what} refused, nothing charged: reference lane not available",
+            )
+            raise CommandStopped(str(exc.code)) from None
         except stages.SingleFrameStartRefused as exc:
             # Nothing was admitted: let the unit go and move to a fresh key, so
             # a film without the flag never reuses this key with another body.
@@ -6895,6 +6946,13 @@ def book_film_unit(
     spine = run.spine(state.spine_id or "")
     save_spine_snapshot(desk, episode, spine)
     collecting = load_production(desk)
+    unit_record = collecting.pending.get(unit) or {}
+    # A reference-lane film (``--reference-mode``) is booked at its reference estimate.
+    reference_take = (
+        unit_record.get("reference_take_usd")
+        if unit_record.get("reference_mode")
+        else None
+    )
     got = collect_takes(
         desk,
         run,
@@ -6904,6 +6962,9 @@ def book_film_unit(
         clip_seconds=cfg.clip_duration_seconds,
         spine=spine,
         asked=take_ids,
+        reference_take_usd=float(reference_take)
+        if isinstance(reference_take, (int, float))
+        else None,
     )
     fresh = load_production(desk)
     fresh.remember_server_lane(collecting.server_lane())
@@ -6995,6 +7056,78 @@ def _forget_failed_film(
         f"film {what}: video job `{job_id}` failed; nothing collected or booked. "
         "Cleared it: the next film enrols a new job under a fresh key.",
     )
+
+
+def _reference_film_price(
+    desk: Path,
+    state: ProductionState,
+    run: DramaApiRunSession,
+    cfg: Any,
+    spine: dict[str, Any],
+    *,
+    episode: int,
+    take_ids: list[str],
+    take_index: int | None,
+    key: str,
+    what: str,
+    out: Any,
+) -> dict[str, float]:
+    """Ask for, print and record the reference-lane price of a film about to go out (``--reference-mode``).
+
+    The same estimate as :func:`_price_film` with ``reference_mode: true``. It
+    is not kept as the story's lane (a plain film after it is priced as usual).
+    A one-take film records it as the take's estimate.
+
+    Returns
+    -------
+    dict[str, float]
+        ``reference_usd`` (the film) and ``reference_take_usd`` (one take), for the pending unit.
+
+    Raises
+    ------
+    CommandStopped
+        The server would not price the reference lane: nothing is sent.
+    """
+
+    try:
+        estimate = stages.estimate_batch(
+            run,
+            spine_id=state.spine_id or "",
+            episode=episode,
+            reroll_take_index=take_index,
+            reference_mode=True,
+        )
+    except stages.ReferenceModeRefused as exc:
+        _note(
+            desk,
+            episode,
+            f"film {what}: reference lane not priced; nothing sent or charged",
+        )
+        raise CommandStopped(str(exc.code)) from None
+    _save_desk_json(desk, f"film-{key}-reference-estimate", estimate)
+    priced_as = replace(state)
+    priced_as.remember_server_lane(server_lane(estimate))
+    usd, source, warnings = price_estimate(
+        priced_as,
+        cfg,
+        estimate,
+        cast_count=len(drawn_cast_rows(spine)),
+        takes=len(take_ids),
+    )
+    per_take = stages.reference_take_usd(estimate, takes=len(take_ids))
+    if per_take is None:
+        per_take = round(usd / max(1, len(take_ids)), 2)
+    line = (
+        f"Reference price for {what}: about ${usd:.2f} ({source}); the takes are booked at this "
+        "price, not the usual lane's estimate."
+    )
+    for warning in warnings:
+        print(warning, file=out)
+    print(line, file=out)
+    if take_index is not None:
+        record_estimate(desk, episode=episode, take_id=take_ids[0], usd=usd)
+    _note(desk, episode, " ".join([*warnings, f"film {what}: {line}"]))
+    return {"reference_usd": usd, "reference_take_usd": per_take}
 
 
 def _price_film(
@@ -7721,6 +7854,13 @@ def add_episode_parsers(
         "of the storyboard. Off by default; goes with --confirm-spend; a resume keeps what the film was "
         "first sent with.",
     )
+    film.add_argument(
+        "--reference-mode",
+        action="store_true",
+        help="Trial, for face-drift tests only (operator): film on the reference lane (board + cast "
+        "plates) at the reference price, fetched and printed before sending. Off by default; goes with "
+        "--confirm-spend, never with --single-frame-start; a resume keeps what the film was first sent with.",
+    )
 
     collect = sub.add_parser(
         "collect-takes",
@@ -7981,6 +8121,7 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 cause=args.cause,
                 confirm_spend=args.confirm_spend,
                 single_frame_start=args.single_frame_start,
+                reference_mode=args.reference_mode,
             )
             return 0
         if args.command == "collect-takes":

@@ -84,6 +84,10 @@ class ProductionState:
     #: a resume under the same key sends the same body. Left out of the file while empty,
     #: so a desk that never used the trial keeps its ``production.json`` as before.
     single_frame_start_keys: list[str] = field(default_factory=list)
+    #: Film keys ``step`` sends on the operator's reference lane (``--reference-mode``), priced
+    #: at the reference estimate (``estimate_usd``): a resume under the same key sends the same
+    #: body. Left out of the file while empty, like ``single_frame_start_keys``.
+    reference_mode_keys: list[str] = field(default_factory=list)
 
     def server_lane(self) -> tuple[str, str] | None:
         """Return ``(endpoint, resolution)`` the server last named, or ``None``."""
@@ -208,8 +212,9 @@ def save_production(desk: Path, state: ProductionState) -> None:
 
     path = production_path(desk)
     data = asdict(state)
-    if not data["single_frame_start_keys"]:
-        del data["single_frame_start_keys"]
+    for trial in ("single_frame_start_keys", "reference_mode_keys"):
+        if not data[trial]:
+            del data[trial]
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
