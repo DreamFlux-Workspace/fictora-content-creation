@@ -210,6 +210,7 @@ from creation.post.deboard import deboard as deboard_take
 from creation.post.edit import BlurBox, measure_cuts
 from creation.post.finish_record import latest_finish_record, write_finish_record
 from creation.post.hand import (
+    TAKE_UNDER_VOICE_DUCK_DB,
     HandPlan,
     Placed,
     check_hand_plan,
@@ -1617,7 +1618,16 @@ def run_finish(
 
     def do_voice(take: Path) -> StepReport:
         voiced = lay_voice(
-            take, next_versioned_path(takes, f"{base}-voice", ".mp4"), hand
+            take,
+            next_versioned_path(takes, f"{base}-voice", ".mp4"),
+            hand,
+            # The harness's music is in the take and no bed is laid, so nothing else makes room
+            # for the hand-laid line: the take's own audio drops under it (new desks, L-20261004-5).
+            duck_take_db=(
+                TAKE_UNDER_VOICE_DUCK_DB
+                if music_in_take and not legacy_rules()
+                else None
+            ),
         )
         voice_state["path"] = voiced
         parts = [f"muted {a:.2f}-{b:.2f}s" for a, b in hand.mutes]
