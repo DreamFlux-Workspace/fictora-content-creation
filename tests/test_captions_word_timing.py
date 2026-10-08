@@ -455,10 +455,9 @@ def test_finish_makes_a_transcript_and_times_whole_lines_on_it(post_desk: Path) 
     assert asked == [(1, "t1")]
     captions = next(s for s in result.steps if s.step == "captions")  # type: ignore[attr-defined]
     assert captions.status == "ran", out
-    assert (
-        "transcript made on the server: `take-ep01-t1-review-words-v1.json`"
-        in captions.detail
-    )
+    # The model-voice line check asks for it first (once, $0); the captions are timed on that same file.
+    assert "made on the server now, $0" in out, out
+    assert "transcript `take-ep01-t1-review-words-v1.json`" in captions.detail
     # Line 2 starts on its words, not on the stammer at 2.6 s; each line is held to be read (1.2 s).
     assert '3.50-4.70s "I-I\'m sorry." (words)' in captions.detail, captions.detail
     assert "1.00-2.20s 'Wait here for me.' (words)" in captions.detail, captions.detail

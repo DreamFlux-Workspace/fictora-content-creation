@@ -703,7 +703,12 @@ def desk_line_check(
 
     from creation.post.audio_service import AudioServiceError
     from creation.post.desk import saved_spine
-    from creation.post.review import server_transcript, take_lines, take_words
+    from creation.post.review import (
+        raw_take_of,
+        server_transcript,
+        take_lines,
+        take_words,
+    )
     from creation.post.whisper import load_words
     from creation.spine_view import heard_line_ids
 
@@ -725,6 +730,12 @@ def desk_line_check(
         cast_names=names,
         off_screen_ids=sorted(heard_line_ids(spine[0])),
     )
+    if raw_take_of(desk, take) is None:
+        # Which filmed take this file is cannot be known: its words are not compared with any take's.
+        return None, (
+            f"no record of which raw take `{take.name}` was made from, so no transcript of it can be read; "
+            "finish the raw take (or a file made from it on this desk) to have its lines checked"
+        )
     words_path, why = take_words(desk, episode, take_id, take)
     made = False
     if words_path is None:
