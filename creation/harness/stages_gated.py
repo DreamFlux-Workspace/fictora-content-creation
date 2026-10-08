@@ -1077,9 +1077,10 @@ def video_request_body(
     Returns
     -------
     dict[str, Any]
-        ``DramaVideoGenerationCreateRequest`` JSON. On a show whose voice mode
-        is ``model`` it carries ``music_by_finish: true``: the kit lays the
-        show's theme in finish, so the takes are filmed with no music.
+        ``DramaVideoGenerationCreateRequest`` JSON. It always carries
+        ``music_by_finish: true``: the kit lays the show's theme in finish, so
+        a show whose music is laid there (model voices, or a ``finish`` music
+        lock) is filmed with no music in its takes.
     """
 
     extra = film_scope(
@@ -1088,13 +1089,14 @@ def video_request_body(
         reroll_take_index=reroll_take_index,
         seed_attempt=seed_attempt,
     )
-    from creation.voice_mode import show_voices
-
-    if not show_voices(run, spine).locked:
-        # A model-voice show films as its episodes before option C did: the
-        # kit lays the show's theme in finish, so the server asks the video
-        # model for no music (fictora-drama music_by_finish; operator only).
-        extra = {**extra, "music_by_finish": True}
+    # The kit's finish lays the show's theme whenever a take carries no
+    # music, so every kit run says so (fictora-drama music_by_finish;
+    # operator only). The server uses it where the show's music is laid in
+    # finish: a model-voice show (as its episodes before option C were
+    # filmed), and any show whose music lock is ``finish`` (fictora-drama
+    # show music lock; L-20261005-2). A show whose music is in its takes
+    # films exactly as before: the server ignores it there.
+    extra = {**extra, "music_by_finish": True}
     if single_frame_start:
         # Trial only, never a default: the server pins it on the run.
         extra = {**extra, "single_frame_start": True}

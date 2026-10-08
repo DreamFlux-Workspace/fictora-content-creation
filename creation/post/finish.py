@@ -149,6 +149,7 @@ DONE``.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
@@ -186,6 +187,12 @@ from creation.post.ambience import (
 from creation.post.ambience import Maker as AmbienceMaker
 from creation.post.ambience import service_maker as ambience_service_maker
 from creation.post.audio_service import AudioService, AudioServiceError, DramaApiAudio
+from creation.music_lock import (
+    DeskMusicLock,
+    desk_music_lock,
+    store_desk_music_lock,
+    take_music_refusal,
+)
 from creation.post.bed import (
     DEFAULT_BED_DB,
     Maker,
@@ -198,7 +205,7 @@ from creation.post.bed import (
 from creation.post.colour import colour_match
 from creation.post.deboard import deboard as deboard_take
 from creation.post.edit import BlurBox, measure_cuts
-from creation.post.finish_record import write_finish_record
+from creation.post.finish_record import latest_finish_record, write_finish_record
 from creation.post.hand import (
     HandPlan,
     Placed,
@@ -1267,6 +1274,19 @@ def run_finish(
         else ""
     )
     music_in_take = bool(music_why)
+    # The show keeps one source of music all season (founder decision, 8 Oct 2026; creation.music_lock):
+    # a take never finished before that came back with music on a show whose bed is laid here stops,
+    # instead of silently skipping the show's bed (L-20261005-2, L-20261005-22).
+    show_music = desk_music_lock(desk, out=out)
+    refusal = take_music_refusal(
+        show_music,
+        music_in_take=music_in_take,
+        music_why=music_why,
+        finished_before=latest_finish_record(desk, episode, take_id) is not None,
+        desk=desk,
+    )
+    if refusal is not None:
+        raise ValueError(refusal)
     locked = soundtrack.target_audio
     if locked:
         changes = [
@@ -2798,6 +2818,22 @@ def run_finish(
         ],
         letterbox={"letterbox": True, "caption_colour": colour_name} if letterbox else None,
     )  # fmt: skip
+    if show_music is None and result.complete:
+        # The show's first finished take decides where its music comes from, from now on.
+        store_desk_music_lock(
+            desk,
+            DeskMusicLock(
+                kind="in_take" if music_in_take else "finish",
+                origin="first_finish",
+                episode=episode,
+                bed=(
+                    os.path.relpath(bed_state["path"], desk)
+                    if bed_state["path"] is not None and not music_in_take
+                    else None
+                ),
+            ),
+            out=out,
+        )
     handles_note = ""
     server_handles = None
     if result.complete and facts_state["path"] is not None:

@@ -29,6 +29,7 @@ POST_COMMANDS = (
         {
             "voice",
             "voice-mode",
+            "music-lock",
             "caption-style",
             "hook-line",
             "music-blend",
@@ -256,6 +257,27 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         default=None,
         choices=("locked", "model"),
         help="Store this mode for the show (only on the human's say-so).",
+    )
+
+    music_lock = sub.add_parser(
+        "music-lock",
+        help="Where the show's music comes from, kept all season (free): finish (no music in the take; "
+        "finish lays the show's bed) or in-take (the harness's music is in each take; no bed). Read once "
+        "from the show's first finished episode, else set by its first finish. Without --set it prints "
+        "the show's lock and the harness's. Takes already finished keep their music.",
+    )
+    music_lock.add_argument("--desk", type=Path, required=True)
+    music_lock.add_argument(
+        "--set",
+        dest="set_to",
+        default=None,
+        choices=("finish", "in-take"),
+        help="Change the show's music on purpose (only on the human's say-so); needs --reason.",
+    )
+    music_lock.add_argument(
+        "--reason",
+        default=None,
+        help="Why the music changes (logged on the desk and sent to the harness).",
     )
 
     caption_style = sub.add_parser(
@@ -835,6 +857,11 @@ def dispatch_post(args: argparse.Namespace) -> int:
         from creation.voice_mode import run_voice_mode
 
         run_voice_mode(args.desk, set_to=args.set_to)
+        return 0
+    if args.command == "music-lock":
+        from creation.music_lock import run_music_lock
+
+        run_music_lock(args.desk, set_to=args.set_to, reason=args.reason)
         return 0
     if args.command == "caption-style":
         from creation.caption_preview import run_caption_style
