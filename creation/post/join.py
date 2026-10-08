@@ -71,6 +71,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import statistics
 import shutil
 import subprocess
@@ -670,10 +671,87 @@ def seam_dissolves(parts: list[JoinPart], dissolve: float | None) -> list[float]
 # --- sound --------------------------------------------------------------------------------------
 
 
-def match_gains(parts: list[JoinPart]) -> list[float]:
-    """One gain per part to the parts' median integrated loudness (silent parts get 0)."""
+#: Momentary (400 ms) loudness below this is silence, as in EBU R128's absolute gate.
+BODY_ABSOLUTE_GATE_LUFS = -70.0
+#: Momentary loudness this far below the take's gated mean is silence too (R128's relative gate).
+BODY_RELATIVE_GATE_LU = 10.0
+#: The relative gate's mean is read over this quietest share of the moments.
+BODY_GATE_SHARE = 0.75
+#: A moment this far above the take's median moment is a peak (a jumpscare, a scream, a slam),
+#: not the take's level: the gain match leaves it out (L-20261006-6).
+BODY_PEAK_LU = 8.0
 
-    levels = [measure_loudness(part.pre_bed) for part in parts]
+
+def momentary_loudness(path: Path) -> list[float]:
+    """A file's momentary loudness (LUFS, 400 ms windows every 100 ms), from ffmpeg's ``ebur128`` log.
+
+    Raises
+    ------
+    MediaToolError
+        When ffmpeg fails.
+    """
+
+    result = subprocess.run(
+        [ffmpeg_bin(), "-hide_banner", "-nostats", "-i", str(path), "-vn", "-af", "ebur128",
+         "-f", "null", "-"],
+        capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL,
+    )  # fmt: skip
+    if result.returncode != 0:
+        raise MediaToolError(
+            f"loudness scan failed on {path.name}: {result.stderr.strip()[-300:]}"
+        )
+    return [float(v) for v in re.findall(r"\bM:\s*(-?[0-9.]+)", result.stderr)]
+
+
+def _energy_mean(levels: list[float]) -> float:
+    return 10 * math.log10(sum(10 ** (v / 10) for v in levels) / len(levels))
+
+
+def body_loudness(momentary: list[float]) -> float:
+    """A take's loudness without its short loud peaks (LUFS); ``-inf`` for silence.
+
+    The R128 gates first (absolute -70 LUFS, then 10 LU under the mean of the
+    quietest :data:`BODY_GATE_SHARE` of the gated moments),
+    then every moment more than :data:`BODY_PEAK_LU` above the median moment
+    is left out, so one loud jumpscare does not read as the whole take being
+    loud. With no peak it is the take's integrated loudness (within the 100 ms
+    step).
+
+    Parameters
+    ----------
+    momentary
+        Momentary loudness values (:func:`momentary_loudness`).
+
+    Returns
+    -------
+    float
+        The energy mean of the moments kept.
+    """
+
+    gated = [v for v in momentary if v > BODY_ABSOLUTE_GATE_LUFS]
+    if not gated:
+        return -math.inf
+    # The relative gate's mean leaves out the loudest quarter: a jumpscare would lift it over the body.
+    quiet = sorted(gated)[: max(1, math.ceil(len(gated) * BODY_GATE_SHARE))]
+    floor = _energy_mean(quiet) - BODY_RELATIVE_GATE_LU
+    gated = [v for v in gated if v > floor] or gated
+    ceiling = statistics.median(gated) + BODY_PEAK_LU
+    return _energy_mean([v for v in gated if v <= ceiling] or gated)
+
+
+def match_gains(parts: list[JoinPart], *, desk: Path) -> list[float]:
+    """One gain per part to the parts' median loudness (silent parts get 0).
+
+    A legacy desk (made before 6 Oct 2026) matches whole-take integrated
+    loudness, as it always did. A new desk matches each take's
+    :func:`body_loudness`, so a loud jumpscare in one take no longer ducks
+    the whole take (L-20261006-6).
+    """
+
+    if is_legacy(desk):
+        levels = [measure_loudness(part.pre_bed) for part in parts]
+    else:
+        levels = [body_loudness(momentary_loudness(part.pre_bed)) for part in parts]
     heard = [level for level in levels if math.isfinite(level)]
     if not heard:
         return [0.0] * len(parts)
@@ -1529,7 +1607,7 @@ def run_join(
                 "(--gain-match forces it)"
             )
             print(skip_note, file=out, flush=True)
-    gains = match_gains(parts) if gain_match else [0.0] * len(parts)
+    gains = match_gains(parts, desk=desk) if gain_match else [0.0] * len(parts)
     gain_note = gain_match_note(gains) if gain_match else skip_note
     master = next_versioned_path(folder, stem, ".mp4")
     zeros = [0.0] * len(parts)
