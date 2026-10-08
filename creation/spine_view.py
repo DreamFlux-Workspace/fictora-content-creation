@@ -1699,6 +1699,10 @@ def pose_change_at_cut_lines(
     return out
 
 
+#: The one redraw note the board gate offers for a take that may show someone twice.
+EDGE_REDRAW_NOTE = "keep each character on one side within a shot"
+
+
 def edge_duplicate_risk_lines(
     exposure: Mapping[str, Any] | None,
     *,
@@ -1706,15 +1710,17 @@ def edge_duplicate_risk_lines(
     episode: int,
     sets: Collection[int] | None = None,
 ) -> list[str]:
-    """The board gate's ``!!`` lines for one shot that puts the same person at both edges.
+    """The board gate's one line per take whose shots may show a character twice.
 
     Sweet Racket, 6 Oct 2026 (L-20261006-9): the video model drew a character
     twice, facing himself from opposite edges, because the cells of one shot
-    put him left in one and right in the next. The take facts said so only
-    after the paid take. The server (fictora-drama ``board_edge_risks``) now
-    reads the frames' staging across each shot's cells and returns it on the
-    board exposure route; this prints it with the free edit that fixes it.
-    Warnings only. A server without the field prints nothing.
+    put him left in one and right in the next. The server (fictora-drama
+    ``board_edge_risks``) keeps a new show's people on one side before it
+    draws, and returns what is left on the board exposure route, only for
+    boards still awaiting approval. Founder, 8 Oct 2026: calm and rare. One
+    ``!!`` line per take naming the shots, then its redraw command once; a
+    stated walk across (``moves``) is one quiet information line, never
+    ``!!``. Warnings only. A server without the field prints nothing.
 
     Parameters
     ----------
@@ -1740,24 +1746,41 @@ def edge_duplicate_risk_lines(
         set_index = int(board.get("set_index") or 1)
         if sets is not None and set_index not in sets:
             continue
-        for risk in board.get("edge_duplicate_risks") or []:
-            if not isinstance(risk, Mapping) or not risk.get("message"):
-                continue
-            lines.append(f"  !! t{set_index} board: {risk['message']} (warning only)")
-            if risk.get("how_to_fix"):
-                lines.append(f"     {risk['how_to_fix']}")
-            frame, field, value = (
-                risk.get("fix_frame_ordinal"),
-                risk.get("fix_field"),
-                risk.get("fix_value"),
+        risks = [
+            risk
+            for risk in board.get("edge_duplicate_risks") or []
+            if isinstance(risk, Mapping) and risk.get("who") and risk.get("shot_index")
+        ]
+        twice: dict[int, list[str]] = {}
+        walks: dict[int, list[str]] = {}
+        for risk in risks:
+            bucket = walks if risk.get("moves") else twice
+            names = bucket.setdefault(int(risk["shot_index"]), [])
+            if str(risk["who"]) not in names:
+                names.append(str(risk["who"]))
+        if twice:
+            count = len(twice)
+            shots = "; ".join(
+                f"shot {shot}: {', '.join(names)}"
+                for shot, names in sorted(twice.items())
             )
-            if frame and field and value:
-                assignment = f"{field}={json.dumps(str(value))}".replace("'", "'\\''")
-                lines.append(
-                    f"     fictora-produce edit --desk {desk} --episode {episode} --frame {frame} "
-                    f"--set '{assignment}'   then fictora-produce redraw-board --desk {desk} "
-                    f"--episode {episode} --take t{set_index} --cause 'one side per shot'"
-                )
+            lines.append(
+                f"  !! t{set_index} board: {count} shot{'s' if count > 1 else ''} may show a character twice "
+                f'({shots}). Fix: redraw t{set_index} with "{EDGE_REDRAW_NOTE}" (warning only)'
+            )
+            lines.append(
+                f"     fictora-produce redraw-board --desk {desk} --episode {episode} --take t{set_index} "
+                f'--note "{EDGE_REDRAW_NOTE}"'
+            )
+        if walks:
+            shots = "; ".join(
+                f"shot {shot}: {', '.join(names)}"
+                for shot, names in sorted(walks.items())
+            )
+            lines.append(
+                f"  t{set_index} board: a character walks across the frame ({shots}); "
+                "watch that shot in the take. Information only."
+            )
     return lines
 
 
