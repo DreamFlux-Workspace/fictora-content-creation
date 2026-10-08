@@ -361,3 +361,16 @@ def test_a_real_likeness_is_still_flagged_beside_a_cast() -> None:
         CAST_TABLE_BRIEF + "\nDez looks like Park Seo-joon. Ends on Jungkook's face.\n"
     )
     assert so.find_real_people(brief) == ("Park Seo-joon", "Jungkook")
+
+
+def test_the_pause_prints_the_phrase_each_notice_matched() -> None:
+    """L-20261005-16: the operator sees what in the brief set the notice off, not only the message."""
+
+    text = so.pause_text([PERSON_NOTICE, STYLE_NOTICE], desk="D")
+    assert "Matched in the brief: 'looks like Park Seo-joon'." in text
+    assert "Matched in the brief: 'live-action'." in text
+
+
+def test_a_notice_without_a_matched_phrase_prints_no_empty_line() -> None:
+    text = so.pause_text([{**PERSON_NOTICE, "asked_for": ""}], desk="D")
+    assert "Matched in the brief" not in text
