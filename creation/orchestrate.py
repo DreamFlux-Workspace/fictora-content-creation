@@ -1345,6 +1345,7 @@ def run_step(
     narrator_on_screen: Sequence[str] = (),
     ask: Callable[[str], str] | None = None,
     single_frame_start: bool = False,
+    reference_mode: bool = False,
     _spend_yes: bool = False,
 ) -> StepResult:
     """Run the next automated API step for the current phase.
@@ -1384,6 +1385,11 @@ def run_step(
         default): taken with the spend yes (or on a desk waiting to film whose
         film was not sent yet) and kept per film key
         (:func:`_take_single_frame_start`), so a resumed ``step`` sends the same body.
+    reference_mode
+        Reference-lane trial (``--reference-mode``, never a default): same phase
+        rules and per-key record as ``single_frame_start`` (``reference_mode_keys``),
+        and the reference price is fetched, printed and booked before the film is
+        sent (:func:`_take_reference_mode`). Never together with ``single_frame_start``.
     _spend_yes
         Internal: this call follows the spend yes in the same run.
 
@@ -1416,18 +1422,33 @@ def run_step(
     paths: list[str] = []
 
     rerun = f"fictora-produce step --desk {desk}"
-    if single_frame_start and not (
-        (state.phase == "wait_spend" and confirm_spend) or state.phase == "ready_video"
-    ):
+    if reference_mode and single_frame_start:
         run.client.close()
-        raise RuntimeError(
-            "--single-frame-start goes with `step --confirm-spend` at the spend yes "
-            f"(this desk is at {state.phase}); nothing was sent."
-        )
+        raise RuntimeError(stages.REFERENCE_WITH_SINGLE_FRAME)
+    for chosen, flag in (
+        (single_frame_start, "--single-frame-start"),
+        (reference_mode, "--reference-mode"),
+    ):
+        if chosen and not (
+            (state.phase == "wait_spend" and confirm_spend)
+            or state.phase == "ready_video"
+        ):
+            run.client.close()
+            raise RuntimeError(
+                f"{flag} goes with `step --confirm-spend` at the spend yes "
+                f"(this desk is at {state.phase}); nothing was sent."
+            )
     if single_frame_start and state.phase == "ready_video":
         # Recorded under the key `_film` sends (its prefix follows the phase).
         try:
             _take_single_frame_start(desk, state, run, spend_yes=_spend_yes)
+        except RuntimeError:
+            run.client.close()
+            raise
+    if reference_mode and state.phase == "ready_video":
+        # The reference price is fetched and recorded here, before anything is sent.
+        try:
+            _take_reference_mode(desk, state, run, cfg=cfg, spend_yes=_spend_yes)
         except RuntimeError:
             run.client.close()
             raise
@@ -1682,6 +1703,7 @@ def run_step(
                     desk,
                     confirm_spend=False,
                     single_frame_start=single_frame_start,
+                    reference_mode=reference_mode,
                     _spend_yes=True,
                 )
             voices = ""
@@ -2008,6 +2030,7 @@ def collect_takes(
     clip_seconds: int,
     spine: dict[str, Any],
     asked: list[str] | None = None,
+    reference_take_usd: float | None = None,
 ) -> CollectedTakes:
     """Download one episode's filmed takes raw, save their take facts, book spend, mark them filmed.
 
@@ -2033,6 +2056,11 @@ def collect_takes(
     asked
         The takes the film request asked for (default: every take of the episode).
         A clip is filed under a take only by explicit identity (:func:`take_for_clip`).
+    reference_take_usd
+        The film went out on the operator's reference lane (``--reference-mode``),
+        priced at this much a take by the reference estimate: a take without
+        priced facts is booked at it (never the usual lane's table price), and
+        the take facts' lane is not kept as the story's lane.
 
     Returns
     -------
@@ -2102,9 +2130,12 @@ def collect_takes(
                 on_screen += take_soundtrack_lines(take_id, facts)
                 # The server's picture check of the take's stills (warnings only).
                 on_screen += take_picture_check_lines(facts, take_id=take_id)
-                state.remember_server_lane(
-                    server_lane(facts)
-                )  # the caller saves the state
+                if reference_take_usd is None:
+                    state.remember_server_lane(
+                        server_lane(facts)
+                    )  # the caller saves the state
+            if priced is None and reference_take_usd is not None:
+                priced = (reference_take_usd, "reference estimate")
             if priced is None:
                 estimate = lane_take_usd(
                     state.video_lane, clip_seconds, on=today, server=state.server_lane()
@@ -2263,6 +2294,80 @@ def _take_single_frame_start(
     save_production(desk, state)
 
 
+def _take_reference_mode(
+    desk: Path,
+    state: ProductionState,
+    run: DramaApiRunSession,
+    *,
+    cfg: Any,
+    spend_yes: bool = False,
+) -> None:
+    """Price the reference lane and record it on the film key ``step`` is about to send (saved).
+
+    A key already recorded keeps it (its price was recorded when it was taken).
+    Otherwise the same rule as :func:`_take_single_frame_start` (a film this step
+    may have sent without it is never resent with it), then the reference
+    estimate is asked for (``reference_mode: true``), printed, and kept as
+    ``estimate_usd``, the price the film is booked at. A server that will not
+    price it stops with nothing sent; right after the spend yes the desk goes
+    back to it, so a plain ``step --confirm-spend`` films as usual.
+
+    Raises
+    ------
+    RuntimeError
+        The film may already have gone out without it, or the server would not price it.
+    """
+
+    ep = state.episode_ordinal
+    key = stages.video_enrol_key(run.prefix, ep, state.video_idempotency_suffix)
+    if key in state.reference_mode_keys:
+        return
+    sent = api_dir_for_episode(desk, ep) / "16_video_request.json"
+    if (
+        not spend_yes
+        and state.video_enrolled_suffix == state.video_idempotency_suffix
+        and sent.is_file()
+    ):
+        raise RuntimeError(
+            f"Episode {ep}'s film was already sent once without --reference-mode, so `step` carries on "
+            "the same way (a film key never goes out with a different body). The reference lane is taken "
+            "at the spend yes: `step --confirm-spend --reference-mode`."
+        )
+    try:
+        estimate = stages.estimate_batch(
+            run, spine_id=state.spine_id or "", episode=ep, reference_mode=True
+        )
+    except stages.ReferenceModeRefused as exc:
+        if spend_yes:
+            state.phase = "wait_spend"
+            save_production(desk, state)
+        _note(
+            _episode_dir(desk, ep),
+            "Reference lane not priced by the server; nothing sent or charged.",
+        )
+        raise RuntimeError(str(exc.code)) from None
+    spine = run.spine(state.spine_id or "")
+    takes = len(episode_by_ordinal(load_series(desk), ep).takes) or 1
+    # Priced as the reference lane, without making it the story's lane: a plain
+    # film after this one is still priced on what the server films by default.
+    priced_as = replace(state)
+    priced_as.remember_server_lane(server_lane(estimate))
+    usd, source, warnings = price_estimate(
+        priced_as, cfg, estimate, cast_count=len(drawn_cast_rows(spine)), takes=takes
+    )
+    for warning in warnings:
+        print(f"[film] {warning}", file=sys.stderr)
+    line = (
+        f"Reference price ${usd:.2f} for episode {ep} ({source}); the film is booked at this "
+        "price, not the usual lane's estimate."
+    )
+    print(f"[film] {line}", file=sys.stderr)
+    state.estimate_usd = usd
+    state.reference_mode_keys.append(key)
+    save_production(desk, state)
+    _note(_episode_dir(desk, ep), " ".join([*warnings, line]))
+
+
 def _film(
     desk: Path,
     run: DramaApiRunSession,
@@ -2301,6 +2406,10 @@ def _film(
         trial = key in state.single_frame_start_keys
         if trial:
             print(f"[film] {stages.SINGLE_FRAME_START_NOTE}", file=sys.stderr)
+        reference = key in state.reference_mode_keys
+        if reference:
+            print(f"[film] {stages.REFERENCE_MODE_NOTE}", file=sys.stderr)
+            print(f"[film] {stages.REFERENCE_VOICE_NOTE}", file=sys.stderr)
         state.video_enrolled_suffix = state.video_idempotency_suffix
         save_production(desk, state)
         try:
@@ -2321,7 +2430,20 @@ def _film(
                 seed_attempt=seed_attempt_for(desk, episode=ep),
                 expected_clips=expected,
                 single_frame_start=trial,
+                reference_mode=reference,
             )
+        except stages.ReferenceModeRefused as exc:
+            # Nothing was admitted or charged: forget the choice and go back to
+            # the spend yes, so `step --confirm-spend` films on the usual lane.
+            state.reference_mode_keys.remove(key)
+            state.video_enrolled_suffix = None
+            state.phase = "wait_spend"
+            save_production(desk, state)
+            _note(
+                _episode_dir(desk, ep),
+                "Filming refused, nothing charged: reference lane not available.",
+            )
+            raise RuntimeError(str(exc.code)) from None
         except stages.SingleFrameStartRefused as exc:
             # Nothing was admitted or charged: forget the choice and go back to
             # the spend yes, so `step --confirm-spend` films on the storyboard.
@@ -2398,6 +2520,7 @@ def book_filmed_episode(
         episode=ep,
         clip_seconds=cfg.clip_duration_seconds,
         spine=spine,
+        reference_take_usd=_step_reference_take_usd(desk, state),
     )
     if got.first_url is None:
         raise RuntimeError(
@@ -2445,6 +2568,27 @@ def book_filmed_episode(
         + unplaced_warning(got.unplaced),
         tuple(paths),
     )
+
+
+def _step_reference_take_usd(desk: Path, state: ProductionState) -> float | None:
+    """What one take of ``step``'s film is booked at when it went out on the reference lane, else ``None``.
+
+    Read from the film request the desk sent (``16_video_request.json``), so a
+    film collected later (``collect-takes``) is booked the same way: the
+    reference estimate (``estimate_usd``) shared over the episode's takes.
+    """
+
+    sent = api_dir_for_episode(desk, state.episode_ordinal) / "16_video_request.json"
+    try:
+        body = json.loads(sent.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not (isinstance(body, dict) and body.get("reference_mode")):
+        return None
+    if state.estimate_usd is None:
+        return None
+    takes = len(episode_by_ordinal(load_series(desk), state.episode_ordinal).takes)
+    return round(float(state.estimate_usd) / max(1, takes), 2)
 
 
 #: The server's answer when a board or take is asked for while the cast plates are not approved on the story.
