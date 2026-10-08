@@ -577,3 +577,28 @@ def test_a_keep_that_meets_a_newer_spine_reads_it_and_tries_once_more(
         "cast_hana",
         "cast_ren",
     }
+
+
+def test_seven_voices_are_kept_four_then_three_and_every_one_is_kept(
+    desk: Path, voiced: FakeApi
+) -> None:
+    # A series holds up to 50 characters (Noodle24, 8 Oct): the keep route still takes four per call.
+    from creation.voice_gate import KEEP_BATCH, keep_on_server
+
+    for n in range(3, 8):
+        voiced.spine_doc["cast"].append(
+            {
+                "cast_id": f"cast_guest_{n}",
+                "name": f"Guest {n}",
+                "voice_brief": {"provider_voice": f"Voice{n}"},
+            }
+        )
+    wanted = [c["cast_id"] for c in voiced.spine_doc["cast"]]
+    assert len(wanted) == 7 and KEEP_BATCH == 4
+
+    body, note = keep_on_server(voiced, desk, copy.deepcopy(voiced.spine_doc), wanted)
+
+    assert note is None and body is not None
+    assert [b["cast_ids"] for b in voiced.posted(KEEP)] == [wanted[:4], wanted[4:]]
+    # Each call carries the story version the call before it left (no conflict, no retry).
+    assert {r["cast_id"] for r in voiced.spine_doc["voice_approvals"]} == set(wanted)

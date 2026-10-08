@@ -53,7 +53,7 @@ APPROVALS_PATH = Path("shared") / "voices" / "approvals.json"
 AUDITION_USD = 0.30
 #: The server's keep route (fictora-drama #603): records each named card's current voice as kept.
 APPROVALS_ROUTE = "/v1/spines/{spine_id}/voice-approvals"
-#: The keep route takes one to four characters per call.
+#: The keep route takes one to four characters per call; a series holds up to 50, so a long keep goes four at a time.
 KEEP_BATCH = 4
 OLD_SERVER_NOTE = (
     "Note: this Drama API has no voice-approvals route yet (an older deploy, before fictora-drama #603), "

@@ -2618,7 +2618,10 @@ REFUSAL_FIXES: dict[str, str] = {
         "(lines {lines}, frames {frames})"
     ),
     "cast_id_taken": "someone in the cast already has the id {cast_ids}: give them the line with --speaker, or pick another --new-voice name",
-    "cast_limit_reached": "a story holds {limit} characters at most: give the line to someone already in the cast with --speaker",
+    "cast_limit_reached": (
+        "a series holds {limit} named characters at most (unnamed background people never count): give the "
+        "line to someone already in the cast with --speaker"
+    ),
     "line_id_taken": "that line id is used; the kit lets the server name new lines, so re-save the story (`spine --refresh`) and try again",
     "invalid_patch": "an id is not on the story; list the lines with `line --desk D --episode N` and use their numbers",
     "cascade_edit_out_of_scope": "after the script gate one command edits one episode: add and remove lines of episode {episode} only",
@@ -2714,7 +2717,7 @@ def explain_refusal(message: str, spine: Mapping[str, Any], *, episode: int) -> 
         lines=listed("line_ids"),
         frames=listed("frame_ids"),
         cast_ids=listed("cast_ids"),
-        limit=details.get("limit", 4),
+        limit=details.get("limit", 50),
         beats=beats or "the beat moves someone else",
         episode=episode,
     )
@@ -7125,6 +7128,7 @@ EPISODE_COMMANDS = frozenset(
         "expressions",
         "line",
         "cast",
+        "cast-exit",
         "look-frame",
         "look",
         "look-note",
@@ -7532,6 +7536,28 @@ def add_episode_parsers(
         "--preview",
         action="store_true",
         help="Print the change (after the gate, the cascade too) and send nothing.",
+    )
+
+    cast_exit = sub.add_parser(
+        "cast-exit",
+        help="Mark a character as gone after an episode (they died, left, their arc ended): the next "
+        "episodes' writers see one line for them. --clear brings them back. Spends nothing.",
+    )
+    cast_exit.add_argument("--desk", type=Path, required=True)
+    cast_exit.add_argument(
+        "--cast", required=True, help="The character's name or cast id."
+    )
+    gone = cast_exit.add_mutually_exclusive_group(required=True)
+    gone.add_argument(
+        "--after-episode",
+        type=int,
+        metavar="N",
+        help="The last episode they are in (not before the episode they first appear in).",
+    )
+    gone.add_argument(
+        "--clear",
+        action="store_true",
+        help="Bring them back: writers see them in full again.",
     )
 
     frame = sub.add_parser(
@@ -7950,6 +7976,16 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 args.desk, name=args.name, look=args.look, select_regen=args.select_regen,
                 preview_only=args.preview, replace_description=args.replace_description,
             )  # fmt: skip
+            return 0
+        if args.command == "cast-exit":
+            from creation.cast_commands import run_cast_exit
+
+            run_cast_exit(
+                args.desk,
+                cast=args.cast,
+                after_episode=args.after_episode,
+                clear=args.clear,
+            )
             return 0
         if args.command == "look-frame":
             run_look_frame(args.desk, description=args.description, size=args.size)

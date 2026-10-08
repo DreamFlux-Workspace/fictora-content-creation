@@ -41,6 +41,12 @@ Production learnings, 22 Sep to 1 Oct 2026:
   name, and a description line is added to the card's own description unless
   ``--replace-description`` is given. The change prints what was kept, added
   and removed before anything is sent.
+- **A guest who has left** (Noodle24, 8 Oct 2026). A guest-per-arc show hit
+  the old cap of four characters a story. A series now holds up to 50, and
+  ``cast-exit --desk D --cast NAME --after-episode N`` marks someone as gone
+  (``exit_episode_ordinal`` on their card) so the next episode's writers see
+  one line for them instead of their whole card; ``--clear`` brings them back.
+  Same PATCH-or-cascade path as ``cast --look``, paid items always off.
 """
 
 from __future__ import annotations
@@ -534,7 +540,7 @@ def find_card(spine: Mapping[str, Any], who: str) -> Mapping[str, Any]:
     raise ec.CommandStopped(f"no character {who!r} on the story; the cast is: {names}")
 
 
-def _send_look(
+def _send_cast_patch(
     desk: Path,
     patch: dict[str, Any],
     *,
@@ -688,7 +694,7 @@ def run_cast_look(
     for row in changed:
         print(row, file=out)
     episode = int(card.get("intro_episode_ordinal") or 1)
-    fresh, cascade = _send_look(
+    fresh, cascade = _send_cast_patch(
         desk,
         patch,
         episode=episode,
@@ -1002,7 +1008,7 @@ def run_new_character(
             print(f"look for {name} ({cast_id}) (2/{len(plan)}):", file=out)
             for row in changed:
                 print(row, file=out)
-            fresh, ran = _send_look(
+            fresh, ran = _send_cast_patch(
                 desk,
                 patch,
                 episode=episode,
@@ -1115,6 +1121,189 @@ def run_new_character(
     for row in ec.edit_verdict(steps):
         print(row, file=out)
     return desk / "api" / "spine.json"
+
+
+# --- A character who has left the story -------------------------------------------------------
+
+
+def exit_card(spine: Mapping[str, Any], who: str) -> Mapping[str, Any]:
+    """The one cast card ``who`` names: its cast id, or its name when no other card shares it.
+
+    Raises
+    ------
+    CommandStopped
+        No card has that name or id, or two or more cards share the name.
+    """
+
+    wanted = who.strip().casefold()
+    cards = [
+        c
+        for c in spine.get("cast") or []
+        if isinstance(c, Mapping) and c.get("cast_id")
+    ]
+    by_id = [c for c in cards if str(c["cast_id"]).casefold() == wanted]
+    if by_id:
+        return by_id[0]
+    named = [c for c in cards if str(c.get("name") or "").strip().casefold() == wanted]
+    if len(named) == 1:
+        return named[0]
+    if named:
+        ids = ", ".join(str(c["cast_id"]) for c in named)
+        raise ec.CommandStopped(
+            f"{len(named)} characters are called {who!r} ({ids}); nothing was sent. "
+            "Run again with the cast id of the one you mean: --cast <id>"
+        )
+    listed = ", ".join(f"{c.get('name')} ({c['cast_id']})" for c in cards) or "none"
+    raise ec.CommandStopped(
+        f"no character {who!r} on the story; nothing was sent. The cast is: {listed}"
+    )
+
+
+def _speaks_after(spine: Mapping[str, Any], cast_id: str, last: int) -> list[int]:
+    """Episodes after ``last`` where the stored story still gives ``cast_id`` a line."""
+
+    ordinal = {
+        str(e.get("episode_id")): int(e.get("ordinal") or 0)
+        for e in spine.get("episode_summaries") or []
+        if isinstance(e, Mapping)
+    }
+    later: set[int] = set()
+    for beat in spine.get("beats") or []:
+        if not isinstance(beat, Mapping):
+            continue
+        number = ordinal.get(str(beat.get("episode_id")), 0)
+        if number > last and any(
+            isinstance(line, Mapping) and line.get("cast_id") == cast_id
+            for line in beat.get("dialogue_lines") or []
+        ):
+            later.add(number)
+    return sorted(later)
+
+
+def run_cast_exit(
+    desk: Path,
+    *,
+    cast: str,
+    after_episode: int | None = None,
+    clear: bool = False,
+    out: Any = None,
+) -> Path | None:
+    """Mark a character as gone after an episode, or bring them back. Spends nothing.
+
+    A series holds up to 50 characters, and every character still in the story
+    is written out in full for the writers of the next episode. A guest who has
+    left (they died, moved away, their arc ended) is better marked as gone: the
+    writers then see one line for them ("gone after episode 5") and do not
+    bring them back by accident. ``clear`` puts them back in the story.
+
+    The change is the card's ``exit_episode_ordinal``: ``PATCH /v1/spines/{id}``
+    with ``cast[]`` before the script gate, the ``cast_card`` cascade after it
+    (paid items always off). It changes no picture and no voice.
+
+    Parameters
+    ----------
+    desk
+        Series desk with a story.
+    cast
+        The character's name or cast id.
+    after_episode
+        The last episode they are in.
+    clear
+        Bring them back (clear the mark).
+    out
+        Text stream.
+
+    Returns
+    -------
+    Path | None
+        The refreshed ``api/spine.json``; ``None`` when there was nothing to send.
+
+    Raises
+    ------
+    CommandStopped
+        An unknown or shared name, an episode before the character first appears,
+        or a server refusal. Nothing is sent before these checks pass.
+    """
+
+    if (after_episode is None) == (not clear):
+        raise ec.CommandStopped(
+            "pass --after-episode N (the last episode they are in) or --clear (bring them back)"
+        )
+    if after_episode is not None and after_episode < 1:
+        raise ec.CommandStopped("--after-episode is an episode number: 1 or more")
+    out = out or sys.stdout
+    desk = desk.expanduser().resolve()
+    _, state, run = ec._desk_session(desk)
+    try:
+        spine = run.spine(state.spine_id or "")
+    finally:
+        run.client.close()
+    card = exit_card(spine, cast)
+    cast_id = str(card["cast_id"])
+    who = str(card.get("name") or cast_id)
+    intro = int(card.get("intro_episode_ordinal") or 1)
+    before = card.get("exit_episode_ordinal")
+    if after_episode is not None and after_episode < intro:
+        raise ec.CommandStopped(
+            f"{who} first appears in episode {intro}, so they cannot leave after episode {after_episode}; "
+            f"nothing was sent. The earliest is --after-episode {intro}"
+        )
+    if clear and before is None:
+        print(f"{who} is not marked as leaving; nothing to send.", file=out)
+        return None
+    if after_episode is not None and before == after_episode:
+        print(
+            f"{who} is already marked as leaving after episode {after_episode}; nothing to send.",
+            file=out,
+        )
+        return None
+    patch = {"cast_id": cast_id, "exit_episode_ordinal": after_episode}
+    fresh, cascade = _send_cast_patch(
+        desk, patch, episode=intro, select_regen=False, preview_only=False, out=out
+    )
+    if (
+        fresh is None
+    ):  # only a preview returns no story, and this command never previews
+        return None
+    path = save_spine_snapshot(desk, intro, fresh)
+    kept = exit_card(fresh, cast_id).get("exit_episode_ordinal")
+    if kept != after_episode:
+        print(
+            f"!! the server answered but its story does not show the change for {who} "
+            f"(it shows {kept if kept is not None else 'no leaving episode'}): it may be an older deploy. "
+            "Nothing was charged; run the command again or ask engineering.",
+            file=out,
+        )
+        return path
+    if after_episode is not None:
+        print(
+            f"{who} is marked as leaving after episode {after_episode}. Writers will see one line for them "
+            f"from episode {after_episode + 1}; run with --clear to bring them back.",
+            file=out,
+        )
+        later = _speaks_after(fresh, cast_id, after_episode)
+        if later:
+            listed = ", ".join(str(n) for n in later)
+            word = "episodes" if len(later) > 1 else "episode"
+            print(
+                f"note: {who} still has lines in {word} {listed}. Give those lines to someone else "
+                f"(`line --desk {desk} --episode N`), or mark them as leaving later.",
+                file=out,
+            )
+        what = f"marked as leaving after episode {after_episode}"
+    else:
+        print(
+            f"{who} is back in the story (was leaving after episode {before}). Writers see them in full again.",
+            file=out,
+        )
+        what = f"back in the story (was leaving after episode {before})"
+    ec._note(
+        desk,
+        intro,
+        f"cast-exit: {who} ({cast_id}) {what}"
+        + (" through the cast cascade" if cascade else ""),
+    )
+    return path
 
 
 # --- The spoken language -----------------------------------------------------------------------
@@ -1263,6 +1452,7 @@ __all__ = [
     "STAGING_HELP",
     "declared_language",
     "english_show_pin",
+    "exit_card",
     "find_card",
     "language_code",
     "NEVER_REMOVE",
@@ -1270,6 +1460,7 @@ __all__ = [
     "parse_look",
     "parse_staging",
     "plate_next_step",
+    "run_cast_exit",
     "run_cast_look",
     "run_new_character",
 ]

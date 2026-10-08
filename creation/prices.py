@@ -199,9 +199,10 @@ def reference_images_ceiling(cast_count: int, endpoint_id: str) -> int:
     Parameters
     ----------
     cast_count
-        Cast cards on the story.
+        Cast cards on the story: a ceiling, since one take sends a plate only for the named
+        people in it (at most 8 of a series' up to 50).
     endpoint_id
-        Fal endpoint. R2V sends the board and every plate; Turbo sends the board alone.
+        Fal endpoint. R2V sends the board and the take's people's plates; Turbo sends the board alone.
 
     Returns
     -------
