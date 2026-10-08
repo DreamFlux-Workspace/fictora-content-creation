@@ -369,15 +369,10 @@ def test_film_prices_and_films_in_the_shows_voices(
     )
 
 
-def test_every_kit_film_says_finish_lays_the_theme_on_model_and_locked_shows(
+def test_a_model_show_films_with_music_by_finish_and_a_locked_show_without(
     desk: Path, model_show: FakeApi
 ) -> None:
-    """The kit lays the show's theme in finish: it always says so (the server decides per show).
-
-    A model-voice take is filmed with no music in it; a locked show's takes
-    carry the harness's music unless the show's music lock is ``finish``
-    (fictora-drama show music lock; L-20261005-2).
-    """
+    """The kit lays the show's theme in finish: a model-voice take is filmed with no music in it."""
 
     _board_yes(desk)
     set_phase(desk, "complete", film_estimates={"ep01": 1.2})
@@ -398,7 +393,7 @@ def test_every_kit_film_says_finish_lays_the_theme_on_model_and_locked_shows(
     ]
     set_phase(desk, "complete", film_estimates={"ep01": 1.2})
     run_film(desk, episode=1, cause="locked re-film", confirm_spend=True)
-    assert model_show.posted(VIDEO)[-1]["music_by_finish"] is True
+    assert "music_by_finish" not in model_show.posted(VIDEO)[-1]
 
 
 def test_step_films_a_model_show_with_music_by_finish(
