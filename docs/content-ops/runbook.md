@@ -282,7 +282,8 @@ Repurposing an episode (a new idea on an episode already authored): update its t
 - A line needs its own cell with no competing business.
 - Never write a character speaking with a full mouth.
 - Direct volume as clear and audible. "Barely audible" renders at −50 dB.
-- A gap between spoken lines can render as garbled fake speech, or a line comes out wrong. Do not re-film and do not mute the range: a muted range leaves a hole in the background (the take's own room sound drops out). Drop the take's audio and rebuild it: the voices as dry lines, the effects, an ambience cue and the bed (skill, "Hand sound"). A locked-voice take needs none of this: its audio is only the locked lines, and `finish` lays the ambience and bed.
+- A line missing, said wrong, repeated, invented, or on the wrong shot on a take filmed in the video model's own voices: `finish` stops before making anything and prints the re-film command (founder decision, 8 Oct 2026; L-20260924-10). Re-film that take; do not patch an on-screen line with a laid voice line (it breaks lip sync). Only a line heard off screen may be laid by hand, as the human's choice. `finish --accept-line-mismatch tK` delivers it anyway (logged).
+- A gap between spoken lines can render as garbled fake speech. Do not re-film for that and do not mute the range: a muted range leaves a hole in the background (the take's own room sound drops out). Drop the take's audio and rebuild it: the voices as dry lines, the effects, an ambience cue and the bed (skill, "Hand sound"). A locked-voice take needs none of this: its audio is only the locked lines, and `finish` lays the ambience and bed.
 - A character's first speaking episode needs its own voice audition on their own real lines.
 
 ### Light and sound

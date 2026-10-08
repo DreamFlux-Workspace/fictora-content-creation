@@ -453,6 +453,15 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     fin.add_argument("--episode", type=int, default=1)
     fin.add_argument("--take", dest="take_id", default="t1")
     fin.add_argument(
+        "--accept-line-mismatch",
+        action="append",
+        default=[],
+        metavar="TAKE",
+        help="Deliver this model-voice take (tK, or all) even though its transcript does not match the script "
+        "(a missing, wrong, repeated, extra or wrong-shot line). Without it finish STOPS before making anything "
+        "and prints the re-film command; with it the faults are logged in the run notes.",
+    )
+    fin.add_argument(
         "--take-file",
         type=Path,
         default=None,
@@ -940,6 +949,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             caption_colour=args.caption_colour,
             no_panels=args.no_panels,
             thought_db=args.thought_db,
+            accept_line_mismatch=tuple(args.accept_line_mismatch),
         )
         if args.json:
             print(json.dumps(result.as_json(), indent=2))
