@@ -33,6 +33,14 @@ Production learnings, 22 Sep to 1 Oct 2026:
   on the desk (``shared/spoken-language.json``), sends nothing, and names the
   ``language`` command. ``language`` prints the recorded lines as the
   ``line --spoken`` commands that send them.
+- **An edited look keeps the bans and the description** (L-20261005-13 Last
+  Call, L-20261006-13 Not Home). ``never:`` replaced the card's whole
+  ``forbidden_elements`` (the bans the story was drafted with went), and a
+  description line replaced the card's own. ``never:`` now adds to the list
+  (case-insensitive dedupe, order kept), ``never-remove:`` takes a ban off by
+  name, and a description line is added to the card's own description unless
+  ``--replace-description`` is given. The change prints what was kept, added
+  and removed before anything is sent.
 """
 
 from __future__ import annotations
@@ -117,17 +125,23 @@ LOOK_KEYS: dict[str, str] = {
     "reference_background": "reference_background",
 }
 _DESCRIPTION_KEYS = frozenset({"description", "visual_description", "look"})
+#: ``key:`` words (and the JSON key) that take bans off the card's never-draw list by name.
+NEVER_REMOVE = "never_remove"
+_NEVER_REMOVE_KEYS = frozenset({"never-remove", "never_remove", "unban"})
 
 LOOK_TEMPLATE = (
     "age: 50s\ngender: male\nface: long face; grey stubble\nhair: short grey crew cut\n"
     "silhouette: tall, stooped\nwardrobe: navy uniform jacket; brass badge\n"
-    "[expression: …]\n[gaze: …]\n[posture: …]\n[never: …]\n"
+    "[expression: …]\n[gaze: …]\n[posture: …]\n[never: … (added to the card's bans)]\n"
+    "[never-remove: … (a ban to take off, by its words)]\n"
     "One line of who they are and how they look."
 )
 LOOK_HELP = (
     "How the character looks, as `key: value` lines (age, gender, face, hair, silhouette, wardrobe; optional "
     "expression, gaze, posture, palette, never; lists split on ';'; any other line is the description) or a "
-    "JSON cast visual brief. The drawing style is taken from a cast member who has a look. Text, or @FILE."
+    "JSON cast visual brief. `never:` adds to the card's bans and `never-remove:` takes one off; a description "
+    "line is added to the card's own description (--replace-description replaces it). The drawing style is "
+    "taken from a cast member who has a look. Text, or @FILE."
 )
 STAGING_HELP = (
     "With --new-character on a drawn beat: how they stand in the beat's frame, as JSON or `key=value; …` "
@@ -172,7 +186,8 @@ def parse_look(raw: str, *, flag: str = "--look") -> tuple[str | None, dict[str,
     Returns
     -------
     tuple[str | None, dict[str, Any]]
-        ``visual_description`` (``None`` when the look gives none) and the brief fields it sets.
+        ``visual_description`` (``None`` when the look gives none) and the brief fields it sets, plus
+        :data:`NEVER_REMOVE` (the bans to take off) when the look names any.
 
     Raises
     ------
@@ -195,19 +210,25 @@ def parse_look(raw: str, *, flag: str = "--look") -> tuple[str | None, dict[str,
             raise ec.CommandStopped(f"{flag}: the JSON must be an object")
         description = data.get("visual_description")
         fields = (
-            data.get("visual_brief")
+            dict(data["visual_brief"])
             if isinstance(data.get("visual_brief"), dict)
             else {k: v for k, v in data.items() if k != "visual_description"}
         )
+        if NEVER_REMOVE in data and NEVER_REMOVE not in fields:
+            fields[NEVER_REMOVE] = data[NEVER_REMOVE]
         unknown = sorted(
-            k for k in fields if LOOK_KEYS.get(k) != k and k != "wardrobe_variants"
+            k
+            for k in fields
+            if LOOK_KEYS.get(k) != k and k not in {"wardrobe_variants", NEVER_REMOVE}
         )
         if unknown:
             raise ec.CommandStopped(
                 f"{flag}: not cast visual brief fields: {', '.join(unknown)}"
             )
         brief = {
-            key: (_as_list(value) if key in LIST_FIELDS else value)
+            key: (
+                _as_list(value) if key in LIST_FIELDS or key == NEVER_REMOVE else value
+            )
             for key, value in fields.items()
         }
         return (_one_line(description) if description else None), _with_gender_word(
@@ -220,6 +241,8 @@ def parse_look(raw: str, *, flag: str = "--look") -> tuple[str | None, dict[str,
         field = LOOK_KEYS.get(key.strip().lower()) if sep else None
         if sep and key.strip().lower() in _DESCRIPTION_KEYS:
             prose.append(value)
+        elif sep and key.strip().lower() in _NEVER_REMOVE_KEYS:
+            brief[NEVER_REMOVE] = [*brief.get(NEVER_REMOVE, []), *_as_list(value)]
         elif field is None:
             prose.append(row)
         elif field in LIST_FIELDS:
@@ -286,8 +309,79 @@ def _description_with_age(description: str, before: Any, after: Any) -> str:
     return description[: stated.start()] + new.group(0) + description[stated.end() :]
 
 
+def _ban_key(ban: str) -> str:
+    return _one_line(ban).casefold()
+
+
+def _merged_bans(
+    who: str, current: list[str], added: list[str], removed: list[str]
+) -> tuple[list[str], list[str]]:
+    """The card's bans with ``added`` appended (no repeats, order kept) and ``removed`` taken off.
+
+    Returns
+    -------
+    tuple[list[str], list[str]]
+        The new list and the printable detail rows (kept / added / removed).
+
+    Raises
+    ------
+    ec.CommandStopped
+        A ban to remove is not on the card, or the look both adds and removes the same ban.
+    """
+
+    both = sorted({_ban_key(b) for b in added} & {_ban_key(b) for b in removed})
+    if both:
+        raise ec.CommandStopped(
+            f"the look for {who} both adds and removes: {', '.join(both)}. Nothing was sent."
+        )
+    present = {_ban_key(b) for b in current}
+    missing = [b for b in removed if _ban_key(b) not in present]
+    if missing:
+        has = "; ".join(current) or "no bans"
+        raise ec.CommandStopped(
+            f"never-remove: {'; '.join(missing)} is not on {who}'s never-draw list (it has: {has}). "
+            "Write the ban as the card has it. Nothing was sent."
+        )
+    gone = {_ban_key(b) for b in removed}
+    bans = [b for b in current if _ban_key(b) not in gone]
+    seen = {_ban_key(b) for b in bans}
+    new_bans: list[str] = []
+    for ban in added:
+        if _ban_key(ban) not in seen:
+            seen.add(_ban_key(ban))
+            new_bans.append(ban)
+    rows = []
+    if new_bans:
+        rows.append(f"    never draw, added: {'; '.join(new_bans)}")
+    taken = [b for b in current if _ban_key(b) in gone]
+    if taken:
+        rows.append(f"    never draw, removed (never-remove): {'; '.join(taken)}")
+    kept = [b for b in current if _ban_key(b) not in gone]
+    if kept and (new_bans or taken):
+        rows.append(f"    never draw, kept: {'; '.join(kept)}")
+    return [*bans, *new_bans], rows
+
+
+def _added_description(kept: str, new: str) -> str:
+    """``kept`` with ``new`` added after it; nothing of ``kept`` is lost."""
+
+    def bare(text: str) -> str:
+        return _one_line(text).rstrip(" .!?").casefold()
+
+    if bare(new) in bare(kept):
+        return kept
+    if bare(kept) in bare(new):
+        return new  # the new words already carry the old ones: an edit that only adds
+    joiner = " " if kept.rstrip().endswith((".", "!", "?")) else ". "
+    return f"{kept.rstrip()}{joiner}{new}"
+
+
 def look_patch(
-    spine: Mapping[str, Any], card: Mapping[str, Any], raw: str
+    spine: Mapping[str, Any],
+    card: Mapping[str, Any],
+    raw: str,
+    *,
+    replace_description: bool = False,
 ) -> tuple[dict[str, Any], list[str]]:
     """Build the ``DramaCastCardPatch`` that gives ``card`` the look ``raw`` describes.
 
@@ -297,6 +391,12 @@ def look_patch(
     description left out keeps the card's own (its stated age moved to a new
     ``age``), and is written from the anchors only for a card with none.
 
+    Nothing the card already has is dropped without being asked
+    (L-20261005-13, L-20261006-13): ``never:`` adds to the card's
+    ``forbidden_elements`` (no repeats, order kept), ``never-remove:`` takes a
+    ban off by its words, and a description given for a card that has a look
+    is added to the card's own description unless ``replace_description``.
+
     Parameters
     ----------
     spine
@@ -305,22 +405,35 @@ def look_patch(
         The cast card (``cast_id``, ``name``, maybe ``visual_brief``); it need not be on the spine yet.
     raw
         The ``--look`` value.
+    replace_description
+        ``--replace-description``: the look's description replaces the card's own.
 
     Returns
     -------
     tuple[dict[str, Any], list[str]]
-        ``{cast_id, visual_description, visual_brief}`` and one printable line per changed field.
+        ``{cast_id, visual_description, visual_brief}`` and one printable line per changed field (with
+        indented detail rows: the bans kept, added and removed, the description before and after).
 
     Raises
     ------
     ec.CommandStopped
-        A field the look must give is missing or blank; nothing was sent.
+        A field the look must give is missing or blank, a ban to remove is not on the card, or
+        ``replace_description`` without a description; nothing was sent.
     """
 
     description, fields = parse_look(raw)
+    removed = list(fields.pop(NEVER_REMOVE, []))
+    added = fields.pop("forbidden_elements", None)
     cast_id = str(card["cast_id"])
+    who = str(card.get("name") or cast_id)
     own = card.get("visual_brief")
-    if isinstance(own, Mapping):
+    has_look = isinstance(own, Mapping)
+    if replace_description and not description:
+        raise ec.CommandStopped(
+            f"--replace-description needs the new description for {who} (a look line that is not "
+            "`key: value`). Nothing was sent."
+        )
+    if has_look:
         brief = copy.deepcopy(dict(own))
     else:
         style = _style_source(spine, cast_id)
@@ -334,6 +447,14 @@ def look_patch(
             }
         )
     brief.update(fields)
+    ban_rows: list[str] = []
+    if added is not None or removed:
+        brief["forbidden_elements"], ban_rows = _merged_bans(
+            who,
+            _as_list(brief.get("forbidden_elements") or []),
+            list(added or []),
+            removed,
+        )
     missing = [
         key
         for key in (*OWN_FIELDS, *STYLE_FIELDS)
@@ -349,16 +470,24 @@ def look_patch(
             else ""
         )
         raise ec.CommandStopped(
-            f"the look for {card.get('name') or cast_id} is missing: {named}.{style_note} Nothing was sent. "
+            f"the look for {who} is missing: {named}.{style_note} Nothing was sent. "
             f"A look reads like:\n{LOOK_TEMPLATE}"
         )
     kept = str(card.get("visual_description") or "").strip()
-    if not description and kept and isinstance(own, Mapping):
+    description_note = ""
+    if has_look and kept and not replace_description:
         # A partial look changes only the fields it names (canary 7 Oct: `age: 28` alone rewrote
         # Mina's description and dropped her ethnicity and hair). The description stays the card's;
-        # a new age in digits replaces the one it states.
-        description = _description_with_age(
-            kept, own.get("age_band"), brief.get("age_band")
+        # a new age in digits replaces the one it states, and new words are added after it.
+        aged = _description_with_age(kept, own.get("age_band"), brief.get("age_band"))
+        if description:
+            description = _added_description(aged, description)
+            description_note = "    (the card's description is kept and the new words added; --replace-description replaces it)"
+        else:
+            description = aged
+    elif replace_description and has_look and kept:
+        description_note = (
+            "    (--replace-description: the card's description is replaced)"
         )
     if not description:
         description = _one_line(
@@ -374,7 +503,15 @@ def look_patch(
         "visual_description": card.get("visual_description"),
         "visual_brief": card.get("visual_brief") or {},
     }
-    changed = ec._changes(before, {k: v for k, v in patch.items() if k != "cast_id"})
+    changed: list[str] = []
+    for row in ec._changes(before, {k: v for k, v in patch.items() if k != "cast_id"}):
+        changed.append(row)
+        if row.startswith("  visual_brief.forbidden_elements:"):
+            changed += ban_rows
+        elif row.startswith("  visual_description:") and kept:
+            changed += [f"    was: {kept}", f"    now: {description}"]
+            if description_note:
+                changed.append(description_note)
     return patch, changed
 
 
@@ -496,6 +633,7 @@ def run_cast_look(
     preview_only: bool = False,
     next_step: bool = True,
     verdict: bool = True,
+    replace_description: bool = False,
     out: Any = None,
 ) -> Path | None:
     """Give one cast member a look (``visual_description`` + ``visual_brief``) on the server.
@@ -520,6 +658,8 @@ def run_cast_look(
     verdict
         End on the ``Applied`` / ``Not applied`` line ``edit`` and ``line`` end on (L-20261001-25); off when a
         caller prints its own.
+    replace_description
+        ``--replace-description``: the look's description replaces the card's own instead of being added to it.
     out
         Text stream.
 
@@ -537,7 +677,9 @@ def run_cast_look(
     finally:
         run.client.close()
     card = find_card(spine, name)
-    patch, changed = look_patch(spine, card, look)
+    patch, changed = look_patch(
+        spine, card, look, replace_description=replace_description
+    )
     who = str(card.get("name") or card["cast_id"])
     if not changed:
         print(f"{who} already has this look; nothing to send.", file=out)
@@ -1123,6 +1265,7 @@ __all__ = [
     "english_show_pin",
     "find_card",
     "language_code",
+    "NEVER_REMOVE",
     "look_patch",
     "parse_look",
     "parse_staging",

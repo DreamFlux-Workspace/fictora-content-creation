@@ -7489,6 +7489,11 @@ def add_episode_parsers(
     cast.add_argument("--name", required=True, help="The character's name or cast id.")
     cast.add_argument("--look", required=True, help=LOOK_HELP)
     cast.add_argument(
+        "--replace-description",
+        action="store_true",
+        help="The look's description replaces the card's own (without it, new words are added to it).",
+    )
+    cast.add_argument(
         "--select-regen",
         action="store_true",
         help="After the gate: also run paid regeneration items (the plate; or draw it with redraw-plate).",
@@ -7906,7 +7911,7 @@ def dispatch_episode(args: argparse.Namespace) -> int:
 
             run_cast_look(
                 args.desk, name=args.name, look=args.look, select_regen=args.select_regen,
-                preview_only=args.preview,
+                preview_only=args.preview, replace_description=args.replace_description,
             )  # fmt: skip
             return 0
         if args.command == "look-frame":
