@@ -6727,6 +6727,7 @@ def _run_film(
         reroll_take_index=take_index,
         seed_attempt=seed,
         single_frame_start=trial,
+        desk=desk,
     )
     _save_desk_json(desk, f"{unit}-request", body)
     if filmed_before and reason:

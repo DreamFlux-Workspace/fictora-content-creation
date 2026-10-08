@@ -149,6 +149,7 @@ DONE``.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
@@ -186,6 +187,15 @@ from creation.post.ambience import (
 from creation.post.ambience import Maker as AmbienceMaker
 from creation.post.ambience import service_maker as ambience_service_maker
 from creation.post.audio_service import AudioService, AudioServiceError, DramaApiAudio
+from creation.music_lock import (
+    DeskMusicLock,
+    desk_music_lock,
+    lock_applies,
+    remix_onto_stem,
+    stem_remix_applies,
+    store_desk_music_lock,
+    take_music_refusal,
+)
 from creation.post.bed import (
     DEFAULT_BED_DB,
     Maker,
@@ -198,7 +208,7 @@ from creation.post.bed import (
 from creation.post.colour import colour_match
 from creation.post.deboard import deboard as deboard_take
 from creation.post.edit import BlurBox, measure_cuts
-from creation.post.finish_record import write_finish_record
+from creation.post.finish_record import latest_finish_record, write_finish_record
 from creation.post.hand import (
     HandPlan,
     Placed,
@@ -1032,6 +1042,7 @@ def run_finish(
     voice_audio: AudioService | None = None,
     text_ocr: OcrRunner | None = None,
     over_locked_voices: bool = False,
+    stem_fetcher: Callable[[str, Path], Path] | None = None,
     caption_style: str | None = None,
     spine_fetcher: SpineFetcher | None = None,
     hook_line: str | None = None,
@@ -1129,6 +1140,9 @@ def run_finish(
         ``--thumbnail``: when no cover is on the desk, draw one on the server
         (:data:`creation.post.thumbnail.THUMBNAIL_USD`, printed first). Off by
         default: finish never spends on a cover without the opt-in.
+    stem_fetcher
+        ``(url, dest) -> dest`` for a take's music-free stem (:func:`creation.music_lock.remix_onto_stem`);
+        ``None`` downloads it.
     over_locked_voices
         ``--over-locked-voices``: allow ``--mute``, ``--voice`` or a revoice /
         voice-fx file on a take whose sound is the locked voices (warned, not refused).
@@ -1267,6 +1281,49 @@ def run_finish(
         else ""
     )
     music_in_take = bool(music_why)
+    # The show keeps one source of music all season (founder decision, 8 Oct 2026; creation.music_lock):
+    # a take never finished before that came back with music on a show whose bed is laid here stops,
+    # instead of silently skipping the show's bed (L-20261005-2, L-20261005-22).
+    # Existing shows only (creation.music_lock.lock_applies): a new desk has no lock and finishes as before.
+    show_music = desk_music_lock(desk, out=out)
+    finished_before = latest_finish_record(desk, episode, take_id) is not None
+    refusal = take_music_refusal(
+        show_music,
+        music_in_take=music_in_take,
+        music_why=music_why,
+        finished_before=finished_before,
+        desk=desk,
+        stem_url=soundtrack.music_stem_url,
+    )
+    if refusal is not None:
+        raise ValueError(refusal)
+    if stem_remix_applies(
+        show_music,
+        music_in_take=music_in_take,
+        finished_before=finished_before,
+        stem_url=soundtrack.music_stem_url,
+    ):
+        # Fixed by mixing, not filming: the take's sound becomes its music-free stem (voices, room,
+        # effects) and the show's bed goes on it below, as on the show's earlier episodes.
+        assert soundtrack.music_stem_url is not None
+        source = remix_onto_stem(
+            source,
+            soundtrack.music_stem_url,
+            next_versioned_path(takes, f"{base}-stem", ".mp4"),
+            fetch=stem_fetcher,
+        )
+        append_run_note(
+            run_dir,
+            f"Music lock: the harness's music baked into {take_id} was taken out (its music-free stem "
+            f"`{source.name}`); the show's bed is laid on it, as on its earlier episodes.",
+        )
+        print(
+            f"[music] {take_id}: the baked-in music was swapped for the take's music-free stem; "
+            "the show's bed goes on it (music lock).",
+            file=out,
+            flush=True,
+        )
+        music_why, music_in_take = "", False
     locked = soundtrack.target_audio
     if locked:
         changes = [
@@ -2798,6 +2855,22 @@ def run_finish(
         ],
         letterbox={"letterbox": True, "caption_colour": colour_name} if letterbox else None,
     )  # fmt: skip
+    if show_music is None and result.complete and lock_applies(desk):
+        # The show's first finished take decides where its music comes from, from now on.
+        store_desk_music_lock(
+            desk,
+            DeskMusicLock(
+                kind="in_take" if music_in_take else "finish",
+                origin="first_finish",
+                episode=episode,
+                bed=(
+                    os.path.relpath(bed_state["path"], desk)
+                    if bed_state["path"] is not None and not music_in_take
+                    else None
+                ),
+            ),
+            out=out,
+        )
     handles_note = ""
     server_handles = None
     if result.complete and facts_state["path"] is not None:

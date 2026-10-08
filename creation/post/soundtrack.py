@@ -117,6 +117,9 @@ class Soundtrack:
     ambience_laid: bool = False
     music_laid: bool = False
     sfx_laid: frozenset[str] = frozenset()
+    #: The track as sent minus its music (voices, room and effects), when the server stored it
+    #: (``soundtrack.music.stem_url``): a take's baked-in music can be swapped for the show's bed on it.
+    music_stem_url: str | None = None
 
     @property
     def target_audio(self) -> bool:
@@ -217,6 +220,7 @@ def soundtrack_from(facts: Mapping[str, Any] | None) -> Soundtrack:
         track_url=str(raw["track_url"]) if raw.get("track_url") else None,
         ambience_laid=_laid(raw.get("ambience")),
         music_laid=_laid(raw.get("music")),
+        music_stem_url=_stem_url(raw.get("music")),
         sfx_laid=_sfx_laid(raw.get("sfx")),
     )
 
@@ -256,6 +260,15 @@ def _sfx_laid(block: Any) -> frozenset[str]:
         for cue in cues
         if isinstance(cue, Mapping) and cue.get("laid") is True and cue.get("sound")
     )
+
+
+def _stem_url(block: Any) -> str | None:
+    """A laid music block's music-free stem URL (``https`` only), else ``None``."""
+
+    if not _laid(block):
+        return None
+    url = block.get("stem_url")
+    return url if isinstance(url, str) and url.startswith("https://") else None
 
 
 def _laid(block: Any) -> bool:

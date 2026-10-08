@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from creation.harness.http_util import (
@@ -1049,6 +1050,7 @@ def video_request_body(
     reroll_take_index: int | None = None,
     seed_attempt: int | None = None,
     single_frame_start: bool = False,
+    desk: Path | None = None,
 ) -> dict[str, Any]:
     """Build the ``POST /v1/video-generations`` reuse body that films episode ``episode`` alone.
 
@@ -1073,13 +1075,18 @@ def video_request_body(
         The operator's trial opening (``--single-frame-start``): each take opens
         on one full picture instead of the storyboard (fictora-drama #658).
         Only true adds the field; off, the body is exactly as before.
+    desk
+        The series desk: an existing show's music lock (:mod:`creation.music_lock`)
+        decides ``music_by_finish``. ``None`` reads only the voice mode.
 
     Returns
     -------
     dict[str, Any]
         ``DramaVideoGenerationCreateRequest`` JSON. On a show whose voice mode
-        is ``model`` it carries ``music_by_finish: true``: the kit lays the
-        show's theme in finish, so the takes are filmed with no music.
+        is ``model``, or an existing show (``desk`` created before 6 Oct 2026)
+        whose music lock is ``finish``, it carries ``music_by_finish: true``:
+        the kit lays the show's theme in finish, so the takes are filmed with
+        no music.
     """
 
     extra = film_scope(
@@ -1088,12 +1095,15 @@ def video_request_body(
         reroll_take_index=reroll_take_index,
         seed_attempt=seed_attempt,
     )
+    from creation.music_lock import music_by_finish_wanted
     from creation.voice_mode import show_voices
 
-    if not show_voices(run, spine).locked:
-        # A model-voice show films as its episodes before option C did: the
-        # kit lays the show's theme in finish, so the server asks the video
-        # model for no music (fictora-drama music_by_finish; operator only).
+    if not show_voices(run, spine).locked or music_by_finish_wanted(desk, run, spine):
+        # The kit lays the show's theme in finish, so the server films the
+        # takes with no music (fictora-drama music_by_finish; operator only):
+        # a model-voice show, as its episodes before option C were filmed,
+        # and an existing show whose music lock is ``finish`` (fictora-drama
+        # show music lock; L-20261005-2). A new show's body is as before.
         extra = {**extra, "music_by_finish": True}
     if single_frame_start:
         # Trial only, never a default: the server pins it on the run.
