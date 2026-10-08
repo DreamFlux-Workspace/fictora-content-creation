@@ -110,7 +110,7 @@ def measure_motion(take: Path) -> Trace:
         [ffmpeg_bin(), "-nostdin", "-i", str(take), "-vf",
          f"scale={MOTION_SCALE},format=gray,tblend=all_mode=difference,signalstats,metadata=print:file=-",
          "-an", "-f", "null", "-"],
-        capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
     )  # fmt: skip
     if run.returncode != 0:
         raise RuntimeError(f"ffmpeg motion trace failed: {(run.stderr or '')[-400:]}")
