@@ -1699,6 +1699,68 @@ def pose_change_at_cut_lines(
     return out
 
 
+def edge_duplicate_risk_lines(
+    exposure: Mapping[str, Any] | None,
+    *,
+    desk: str,
+    episode: int,
+    sets: Collection[int] | None = None,
+) -> list[str]:
+    """The board gate's ``!!`` lines for one shot that puts the same person at both edges.
+
+    Sweet Racket, 6 Oct 2026 (L-20261006-9): the video model drew a character
+    twice, facing himself from opposite edges, because the cells of one shot
+    put him left in one and right in the next. The take facts said so only
+    after the paid take. The server (fictora-drama ``board_edge_risks``) now
+    reads the frames' staging across each shot's cells and returns it on the
+    board exposure route; this prints it with the free edit that fixes it.
+    Warnings only. A server without the field prints nothing.
+
+    Parameters
+    ----------
+    exposure
+        ``GET .../boards/exposure`` JSON, or ``None`` when it was unavailable.
+    desk
+        Series desk (for the printed command).
+    episode
+        Episode ordinal.
+    sets
+        Only these boards (default every board in the response).
+
+    Returns
+    -------
+    list[str]
+        Printable lines; empty when no board has a risk.
+    """
+
+    lines: list[str] = []
+    for board in (exposure or {}).get("boards") or []:
+        if not isinstance(board, Mapping):
+            continue
+        set_index = int(board.get("set_index") or 1)
+        if sets is not None and set_index not in sets:
+            continue
+        for risk in board.get("edge_duplicate_risks") or []:
+            if not isinstance(risk, Mapping) or not risk.get("message"):
+                continue
+            lines.append(f"  !! t{set_index} board: {risk['message']} (warning only)")
+            if risk.get("how_to_fix"):
+                lines.append(f"     {risk['how_to_fix']}")
+            frame, field, value = (
+                risk.get("fix_frame_ordinal"),
+                risk.get("fix_field"),
+                risk.get("fix_value"),
+            )
+            if frame and field and value:
+                assignment = f"{field}={json.dumps(str(value))}".replace("'", "'\\''")
+                lines.append(
+                    f"     fictora-produce edit --desk {desk} --episode {episode} --frame {frame} "
+                    f"--set '{assignment}'   then fictora-produce redraw-board --desk {desk} "
+                    f"--episode {episode} --take t{set_index} --cause 'one side per shot'"
+                )
+    return lines
+
+
 def _clip(text: str, size: int = 60) -> str:
     return text if len(text) <= size else text[: size - 1] + "…"
 
@@ -1793,6 +1855,7 @@ __all__ = [
     "board_inputs",
     "covered_placement",
     "dialogue_line_ids",
+    "edge_duplicate_risk_lines",
     "episode_api_id",
     "episode_id_for",
     "episode_summary",
