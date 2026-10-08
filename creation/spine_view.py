@@ -16,6 +16,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any, Collection, Mapping, Sequence
 
+from creation.crowd_lines import beat_rows
 from creation.mood_jump import mood_jump_lines
 from creation.ops.state import SpokenLine
 from creation.shot_plan import plan_lines
@@ -253,6 +254,10 @@ def script_lines(
 ) -> list[str]:
     """The script gate: per take, each beat's shot (``motion_intent``) and its lines.
 
+    A beat's background shouts (``crowd_lines``) print in the order they play,
+    marked ``[background]``; they are not characters and never count toward a
+    take's three lines.
+
     Parameters
     ----------
     spine
@@ -279,9 +284,13 @@ def script_lines(
             out += plan_lines(beat.get("shot_plan"), indent="    ")
             if beat.get("reaction_kind"):
                 out.append(f"    expression: {beat['reaction_kind']}")
-            for line in spoken_lines(spine, beat):
-                gloss = f"  ({line.translation})" if line.translation else ""
-                out.append(f"    {line.speaker}: {line.original}{gloss}")
+            character = [
+                f"{line.speaker}: {line.original}"
+                + (f"  ({line.translation})" if line.translation else "")
+                for line in spoken_lines(spine, beat)
+            ]
+            # Background shouts play beside the beat's line; never characters, never counted below.
+            out += [f"    {row}" for row in beat_rows(beat, character)]
         count = sum(len(spoken_lines(spine, beat)) for beat in beats)
         if count > 3:
             out.append(

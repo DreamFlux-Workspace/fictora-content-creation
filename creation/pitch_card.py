@@ -970,7 +970,8 @@ def _beat_text(spine: Mapping[str, Any], beat: Mapping[str, Any]) -> str:
     for line in spoken_lines(spine, beat):
         parts.append(line.original)
         parts.append(line.translation)
-    for line in beat.get("dialogue_lines") or []:
+    # Background shouts are part of what the beat shows ("the soldiers charge").
+    for line in [*(beat.get("dialogue_lines") or []), *(beat.get("crowd_lines") or [])]:
         if isinstance(line, Mapping):
             parts.append(str(line.get("text") or ""))
             parts.append(str(line.get("spoken_text") or ""))

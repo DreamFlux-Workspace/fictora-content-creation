@@ -618,7 +618,15 @@ def _beat_caption_lines(
     voice_only = _voice_only_cast(body)
     lines: list[CaptionLine] = []
     for beat in beats:
-        for line in beat.get("dialogue_lines") or []:
+        # A beat's background shouts (``crowd_lines``, fictora-drama #682) are captioned like its line,
+        # in the order they play, as the server's captions do; they are never anyone's line.
+        crowd = [c for c in beat.get("crowd_lines") or [] if isinstance(c, dict)]
+        ordered = [
+            *(c for c in crowd if c.get("order") == "before_line"),
+            *(beat.get("dialogue_lines") or []),
+            *(c for c in crowd if c.get("order") != "before_line"),
+        ]
+        for line in ordered:
             # Captions are English subtitles: ``subtitle_text`` when the line has one, else ``text``.
             # Their timing comes from where speech is heard on the take (``silencedetect``), or on a
             # show not spoken in English from the words a transcript matched to ``performed``.
