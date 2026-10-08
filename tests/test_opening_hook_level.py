@@ -73,7 +73,7 @@ def _crash(path: Path, seconds: float) -> Path:
     """A full-scale crash: white noise with a fast decay."""
 
     subprocess.run(
-        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"anoisesrc=d={seconds}:c=white:a=1:r=48000",
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"anoisesrc=d={seconds}:c=white:a=1:r=48000:s=1",
          "-af", "volume='exp(-t/0.25)':eval=frame,alimiter=limit=0.99:level=disabled", str(path)],
         check=True,
     )  # fmt: skip
