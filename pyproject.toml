@@ -28,6 +28,9 @@ test = ["pytest>=8.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# A test still running after 120 s prints every thread's stack (it is not failed),
+# so a real hang names its line in the CI log instead of ending in a bare cancel.
+faulthandler_timeout = 120
 
 [tool.ruff.lint]
 # Pin the rule set so a newer ruff (0.16 widened its defaults) does not change what CI checks.
