@@ -21,7 +21,8 @@ never the idea. The pitch card is that idea, written down and approved first.
   nothing paid runs for an episode whose newest card lacks its yes: ``step``
   (plates, boards, filming), ``redraw-board``, ``redraw-plate`` and
   ``film --confirm-spend`` all stop first (:func:`pitch_gate_refusal`). Older
-  desks are never held.
+  desks are never held, except from their Group B episode on
+  (:func:`creation.rules_epoch.continuing_fix`, ``pitch_card``, founder 7 Oct 2026).
 - The script gate prints the approved card, its world rules ("check every line
   and beat against these") and free warnings that compare the script with it
   (:func:`script_pitch_lines`), on every desk.
@@ -41,7 +42,7 @@ from typing import Any, TextIO
 
 from creation.ops.folder import next_versioned_path
 from creation.patch_refusal import LINE_DELIVERIES
-from creation.rules_epoch import is_legacy
+from creation.rules_epoch import continuing_fix
 
 #: Stored as ``epNN/pitch-vN.json``.
 PITCH_STEM = "pitch"
@@ -914,7 +915,8 @@ def pitch_gate_refusal(
     """
 
     desk = Path(desk).expanduser().resolve()
-    if is_legacy(desk):
+    # A legacy desk is held only from its Group B episode on (``pitch_card``, founder 7 Oct 2026).
+    if not continuing_fix(desk, "pitch_card", episode=episode):
         return None
     if approved_pitch(desk, episode) is not None:
         return None

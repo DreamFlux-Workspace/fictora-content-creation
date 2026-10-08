@@ -66,6 +66,12 @@ class ProductionConfig:
     #: new desk; ``"legacy"`` keeps a desk's original behaviour (created before 6 Oct 2026). ``None``:
     #: classified by the desk's creation date. Set with ``rules-epoch --desk D --set ...``.
     rules_epoch: str | None = None
+    #: On a legacy desk only: the first episode that gets the "Group B" fixes (founder decision,
+    #: 7 Oct 2026; :data:`creation.rules_epoch.CONTINUING_FIXES_FROM_EPISODE`): per-word caption
+    #: timing, captions without dashes and the pitch card. ``None``: Group B off. Set with
+    #: ``continuing-fixes --desk D --apply`` (in step with the server spine's
+    #: ``continuing_fixes_from_episode``), never by hand-editing ``rules_epoch``.
+    continuing_fixes_from_episode: int | None = None
     poll_plan_deadline_seconds: float = 1800.0
     poll_cast_deadline_seconds: float = 3600.0
     poll_boards_deadline_seconds: float = 7200.0

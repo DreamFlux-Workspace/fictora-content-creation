@@ -45,6 +45,7 @@ from creation.rules_epoch import (
     CURRENT_EPOCH,
     EPOCH_CHOICES,
     desk_rules,
+    run_continuing_fixes,
     run_rules_epoch,
 )
 from creation.stylised_only import NOTICE_KINDS
@@ -134,6 +135,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         choices=EPOCH_CHOICES,
         help="Store it in production.config.json: legacy (keep the original behaviour) or "
         f"{CURRENT_EPOCH} (opt the desk in to the current rules). Only on the human's say-so.",
+    )
+
+    continuing = sub.add_parser(
+        "continuing-fixes",
+        help="Turn the Group B fixes on for a desk created before 6 Oct 2026, from its next unstarted "
+        "episode on (free; founder decision 7 Oct 2026). Dry run unless --apply.",
+    )
+    continuing.add_argument("--desk", type=Path, required=True)
+    continuing.add_argument(
+        "--from-episode",
+        dest="from_episode",
+        type=int,
+        default=None,
+        help="The server spine's continuing_fixes_from_episode, to stay in step (the later of it and the desk's wins).",
+    )
+    continuing.add_argument(
+        "--apply",
+        action="store_true",
+        help="Write it (only on the founder's sign-off).",
     )
 
     sub.add_parser("status", help="Show production phase.").add_argument(
@@ -329,7 +349,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(refused, file=sys.stderr)
             return 2
     # Desks created before 6 Oct 2026 keep their original behaviour for the whole command.
-    with desk_rules(desk_arg if isinstance(desk_arg, Path) else None):
+    episode_arg = getattr(args, "episode", None)
+    with desk_rules(
+        desk_arg if isinstance(desk_arg, Path) else None,
+        episode_arg
+        if isinstance(episode_arg, int) and not isinstance(episode_arg, bool)
+        else None,
+    ):
         return _run_command(args)
 
 
@@ -349,6 +375,15 @@ def _run_command(args: argparse.Namespace) -> int:
 
     if args.command == "setup-check":
         return run_setup_check()
+    if args.command == "continuing-fixes":
+        try:
+            run_continuing_fixes(
+                args.desk, from_episode=args.from_episode, apply=args.apply
+            )
+        except (ValueError, FileNotFoundError) as exc:
+            print(exc, file=sys.stderr)
+            return 2
+        return 0
     if args.command == "rules-epoch":
         try:
             run_rules_epoch(args.desk, set_to=args.set_to)
@@ -436,7 +471,9 @@ def _run_command(args: argparse.Namespace) -> int:
             )
             bound = config_from_args(args)
             # Binding never changes which rules a desk runs under (creation.rules_epoch).
-            bound.rules_epoch = load_production_config(args.desk).rules_epoch
+            kept = load_production_config(args.desk)
+            bound.rules_epoch = kept.rules_epoch
+            bound.continuing_fixes_from_episode = kept.continuing_fixes_from_episode
             save_production_config(args.desk, bound)
             print(f"bound session_id={state.session_id} phase={state.phase}")
             narration = narrator_warning(prompt, desk=args.desk)
