@@ -9,6 +9,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any, Callable, Protocol
 
 import httpx
@@ -263,10 +264,73 @@ def describe_job_error(job: dict[str, Any]) -> str:
     for key in ("error", "failure"):
         error = job.get(key)
         if isinstance(error, dict) and (error.get("code") or error.get("message")):
-            return f"{status} {api_error_text(error)}"
+            text = f"{status} {api_error_text(error)}"
+            retry = draft_retry_line(error)
+            return f"{text}\n{retry}" if retry else text
         if error:
             return f"{status} {str(error)[:1200]}"
     return f"{status} (no error detail)"
+
+
+#: What one more draft costs, in the operator's words (L-20261001-12).
+DRAFT_RETRY_COST = "one more writing run, the same cost as a manual retry; no pictures, voices or video are made in a draft"
+
+
+def server_already_retried(job_or_error: Mapping[str, Any]) -> bool:
+    """Whether the server already wrote this failed draft a second time on its own.
+
+    The server redrafts once when a draft fails in a way a fresh draft usually
+    fixes and says so on the job error's ``details.auto_retried``
+    (L-20261001-12). The kit then never retries it on its own again.
+
+    Parameters
+    ----------
+    job_or_error
+        A terminal job body, or its ``error``.
+
+    Returns
+    -------
+    bool
+        ``True`` only when ``details.auto_retried`` is true.
+    """
+    error = job_or_error.get("error")
+    error = error if isinstance(error, Mapping) else job_or_error
+    details = error.get("details")
+    return isinstance(details, Mapping) and details.get("auto_retried") is True
+
+
+def draft_retry_line(error: Mapping[str, Any]) -> str | None:
+    """Say, in one plain line, why a draft failed and whether to send it again.
+
+    Read from the job error's ``details`` (``reason``, ``retry_safe``,
+    ``auto_retried``; fictora-drama #542 and L-20261001-12).
+
+    Parameters
+    ----------
+    error
+        A terminal job's ``error``.
+
+    Returns
+    -------
+    str | None
+        ``Why: … Next: …``, or ``None`` when the error names no reason (a
+        server without causes, or a failure that is not a draft's).
+    """
+    details = error.get("details")
+    if not isinstance(details, Mapping) or not isinstance(details.get("reason"), str):
+        return None
+    why = f"Why: {details['reason']}."
+    if server_already_retried(error):
+        return (
+            f"{why} The server already wrote this draft once more on its own ({DRAFT_RETRY_COST}) "
+            "and it failed again, so the kit does not retry it on its own. "
+            "Next: run the same command once more by hand, or change the brief."
+        )
+    if details.get("retry_safe") is True:
+        return f"{why} Next: one retry is safe; run the same command again ({DRAFT_RETRY_COST})."
+    return (
+        f"{why} Next: a retry as is fails the same way; fix what the reason says first."
+    )
 
 
 def _raise_for_status(response: httpx.Response) -> None:
