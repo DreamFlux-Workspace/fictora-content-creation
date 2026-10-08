@@ -87,10 +87,12 @@ def test_after_tempo_the_raw_takes_words_are_refused(post_desk: Path) -> None:
     slowed = post_desk / "ep01" / "takes" / "take-ep01-t1-tempo-v1.mp4"
     asked: list[str] = []
 
-    result, _ = _finish(post_desk, slowed, asked)
+    result, out = _finish(post_desk, slowed, asked)
 
     detail = _captions(result)
-    assert asked == []
+    # One transcript of the RAW take, for the model-voice line check (its words and the take facts'
+    # shot windows are both on the raw take's timeline); the captions still refuse it after tempo.
+    assert asked == ["t1"] and "[lines] line check:" in out, out
     assert "no transcript timing: `take-ep01-t1-tempo-v1.mp4` came from" in detail
     assert "by tempo: tempo changes the speed" in detail
     assert "(speech)" in detail
@@ -104,9 +106,11 @@ def test_a_file_of_unknown_origin_is_still_refused(post_desk: Path) -> None:
     shutil.copy(takes / "take-ep01-t1-raw-v1.mp4", stranger)
     asked: list[str] = []
 
-    result, _ = _finish(post_desk, stranger, asked)
+    result, out = _finish(post_desk, stranger, asked)
 
+    # No record of which take it is: nothing is transcribed, and the line check says it did not run.
     assert asked == []
+    assert "!! line check NOT RUN: no record of which raw take" in out, out
     assert "is not the raw take the server transcribes (no record of how" in _captions(
         result
     )

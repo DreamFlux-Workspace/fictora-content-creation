@@ -370,6 +370,8 @@ class FinishResult:
     ambience_in_take: bool = False
     #: Music change notes saved on the desk for the harness (`music-note` sends them; applied ones say so).
     music_notes: tuple[str, ...] = ()
+    #: The take stopped on the line check (:mod:`creation.post.line_check`): re-film it.
+    line_faults: bool = False
 
     def _ran(self, name: str) -> bool:
         return any(step.step == name and step.status == "ran" for step in self.steps)
@@ -494,6 +496,7 @@ class FinishResult:
             "soundtrack": self.soundtrack,
             "take_warnings": list(self.take_warnings),
             "stopped": self.stopped or None,
+            "line_faults": self.line_faults,
             "complete": self.complete,
             "missing": list(self.sound_missing),
             "cues_not_laid": list(self.cues_not_laid),
@@ -938,6 +941,62 @@ def finish_hook(
     )  # fmt: skip
 
 
+def _line_check_stop(
+    desk: Path,
+    *,
+    episode: int,
+    take_id: str,
+    source: Path,
+    facts: dict[str, Any] | None,
+    transcriber: Transcriber | None,
+    hand: HandPlan,
+    accept: tuple[str, ...],
+    run_dir: Path,
+    out: TextIO,
+) -> str:
+    """The model-voice line check before ``finish`` makes anything: the stop text, or ``""`` to carry on."""
+
+    from creation.post import line_check as lc
+
+    print(
+        "[lines] Comparing what the take says with its script (model voices)",
+        file=out,
+        flush=True,
+    )
+    check, read = lc.desk_line_check(
+        desk, episode=episode, take_id=take_id, take=source, facts=facts, transcriber=transcriber,
+        muted=hand.mutes, voice_texts=[voice_line_text(line.path) for line, _ in hand.voices],
+    )  # fmt: skip
+    if check is None or check.unread:
+        why = read if check is None else check.unread
+        note = f"!! line check NOT RUN: {why}. Listen to every line before delivering this take"
+        print(f"[lines] {note}", file=out, flush=True)
+        append_run_note(run_dir, f"Finish · lines: {note}")
+        return ""
+    for row in check.notes:
+        print(f"[lines] {row}", file=out, flush=True)
+    print(f"[lines] {check.summary()} ({read})", file=out, flush=True)
+    if check.ok:
+        append_run_note(run_dir, f"Finish · lines: {check.summary()} ({read})")
+        return ""
+    faults = "; ".join(fault.describe() for fault in check.faults)
+    if lc.accepted(take_id, accept):
+        print(
+            f"[lines] !! delivered anyway ({lc.ACCEPT_FLAG} {take_id}): {faults}",
+            file=out,
+            flush=True,
+        )
+        append_run_note(
+            run_dir,
+            f"Finish · lines: ACCEPTED WITH FAULTS ({lc.ACCEPT_FLAG} {take_id}, the operator's call): {faults}",
+        )
+        return ""
+    message = lc.stop_message(check, desk=str(desk), episode=episode, take_id=take_id)
+    print(f"!! STOPPED: {message}", file=out, flush=True)
+    append_run_note(run_dir, f"Finish · STOPPED on the line check ({read}): {faults}")
+    return message
+
+
 @under_desk_rules
 def run_finish(
     desk: Path,
@@ -982,6 +1041,7 @@ def run_finish(
     stream: TextIO | None = None,
     no_panels: bool = False,
     thought_db: float = 0.0,
+    accept_line_mismatch: tuple[str, ...] = (),
 ) -> FinishResult:
     """Run the whole local post chain on one accepted take.
 
@@ -1104,6 +1164,11 @@ def run_finish(
         ``--caption-colour yellow|white``: a letterbox show's caption colour
         (default the desk's ``letterbox_caption_colour``, else the spine's,
         else yellow). Refused on a portrait show.
+    accept_line_mismatch
+        ``--accept-line-mismatch tK``: deliver a model-voice take whose transcript does not
+        match its script anyway (the faults are logged in the run notes). Without it, such a
+        take STOPS before any step runs (:mod:`creation.post.line_check`; founder decision
+        8 Oct 2026: re-film the take).
     stream
         Progress output (stderr by default).
 
@@ -1247,6 +1312,17 @@ def run_finish(
         ambience_in_take=locked and soundtrack.ambience_laid,
         music_notes=tuple(music_notes(desk, episode=episode, take_id=take_id)),
     )
+    # Model voices (founder decision 8 Oct 2026, L-20260924-10): the video model wrote the words itself.
+    # Compare them with the script before anything is made; a fault stops here, nothing spent.
+    if not locked:
+        line_stop = _line_check_stop(
+            desk, episode=episode, take_id=take_id, source=source, facts=facts_payload,
+            transcriber=transcriber, hand=hand, accept=accept_line_mismatch, run_dir=run_dir, out=out,
+        )  # fmt: skip
+        if line_stop:
+            result.stopped = line_stop
+            result.line_faults = True
+            return result
     # A locked-voice take ducks exactly inside its line windows unless --duck-db says otherwise.
     mix_duck_db = duck_db if duck_db is not None or not locked else TARGET_AUDIO_DUCK_DB
     current = source
