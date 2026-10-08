@@ -23,6 +23,7 @@ from typing import Any, Sequence
 
 import httpx
 
+from creation.plate_traits_print import plate_traits_text
 from creation.authoring_warnings import authoring_warnings, for_episode, warning_lines
 from creation.brief_lines import brief_vs_spine_lines
 from creation.new_cast import cast_owing_pictures
@@ -2667,9 +2668,11 @@ def reapprove_plates(desk: Path, *, path: Path | None = None) -> StepResult:
         )
     else:
         follow = "Next: `fictora-produce step`."
+    traits = plate_traits_text(spine)
     return StepResult(
         state.phase,
-        f"Plates approved again on spine_version {version} ($0, nothing drawn). {follow}",
+        f"Plates approved again on spine_version {version} ($0, nothing drawn). {follow}"
+        + (f"\n{traits}" if traits else ""),
         (desk / "api" / "spine.json",),
     )
 
@@ -2814,12 +2817,16 @@ def approve_gate(
         if gate == "plates":
             if state.phase != "wait_plates":
                 raise RuntimeError(f"expected wait_plates, got {state.phase}")
-            stages.approve_cast(
+            approved_spine = stages.approve_cast(
                 run, spine_id=state.spine_id or "", tag=f"ep{ep}" if ep >= 2 else "ep1"
             )
             record = approve_series_gate(
                 desk, "plates", path=str(path) if path else None
             )
+            # What each approved sheet shows, read once on the server, and where
+            # it disagrees with the card (free; plate_traits_print).
+            traits = plate_traits_text(approved_spine)
+            traits = f"\n{traits}" if traits else ""
             # A character a later episode brought in is approved after that
             # episode's script yes: go on to its boards.
             # The voices gate comes after the plates: the human hears each voice before any filming.
@@ -2837,7 +2844,7 @@ def approve_gate(
                 return StepResult(
                     state.phase,
                     f"Plates approved ({record.status}), including episode {ep}'s new character(s). "
-                    f"Next: fictora-produce step (boards).{voices}",
+                    f"Next: fictora-produce step (boards).{traits}{voices}",
                     (),
                 )
             state.phase = "wait_script"
@@ -2854,7 +2861,7 @@ def approve_gate(
             )
             return StepResult(
                 state.phase,
-                f"Plates approved ({record.status}). Human: approve script lines.{voices}{captions}",
+                f"Plates approved ({record.status}). Human: approve script lines.{traits}{voices}{captions}",
                 (),
             )
 
