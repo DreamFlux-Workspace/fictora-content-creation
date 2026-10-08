@@ -298,6 +298,13 @@ from creation.post.sfx import (
     saved_take_facts,
     service_renderer,
 )
+from creation.post.sfx_motion import (
+    MotionMeter,
+    MotionSnaps,
+    measure_motion,
+    names_an_action,
+    snap_to_action,
+)
 from creation.post.story_signs import (
     overlay_ass,
     plan_overlays,
@@ -1042,6 +1049,7 @@ def run_finish(
     facts_fetcher: FactsFetcher = api_facts_fetcher,
     transcriber: Transcriber | None = None,
     cut_meter: Cuts | None = None,
+    motion_meter: MotionMeter | None = None,
     ambience_maker: AmbienceMaker | None = None,
     thumbnail: bool = True,
     draw_thumbnail: bool = False,
@@ -1132,11 +1140,12 @@ def run_finish(
         take facts' ``prop_text``. Never invents words: a request with none is printed and
         skipped (blur the prop instead). Without any, the take facts' writing props are
         printed as a suggestion.
-    sfx_render, bed_maker, facts_fetcher, transcriber, cut_meter, voice_audio, ambience_maker
+    sfx_render, bed_maker, facts_fetcher, transcriber, cut_meter, motion_meter, voice_audio, ambience_maker
         Injected for tests (``bed_maker`` makes the harness bed on the server;
         ``transcriber`` makes a transcript of the take on the server;
         ``ambience_maker`` makes a locked-voice take's location ambience on the server;
         ``cut_meter`` measures the take's hard cuts, :func:`creation.post.edit.measure_cuts`;
+        ``motion_meter`` its frame-difference trace, :func:`creation.post.sfx_motion.measure_motion`;
         ``voice_audio`` makes the inner-voice dry lines, the Drama API by default;
         ``text_ocr`` reads frames for the drawn-text check, the ``tesseract`` command by default).
     thumbnail
@@ -1820,11 +1829,57 @@ def run_finish(
     def on_filmed_cuts(
         plan: SfxPlan, payload: dict[str, Any], take: Path
     ) -> tuple[SfxPlan, str]:
-        """Move the planned cues onto the shots as filmed (fictora-drama #487's placement, done here)."""
+        """Move the planned cues onto the shots as filmed (fictora-drama #487's placement, done here).
+
+        On a desk created since 6 Oct 2026 each action cue then moves onto its action's motion spike
+        inside its filmed shot (:mod:`creation.post.sfx_motion`, L-20260930-10).
+        """
+
+        moved, note, picture = filmed_cut_placement(plan, payload, take)
+        if legacy_rules():
+            return moved, note
+        return on_filmed_action(moved, picture, note)
+
+    def on_filmed_action(
+        plan: SfxPlan,
+        picture: tuple[Path, dict[int, tuple[float, float]], tuple[float, ...]] | None,
+        note: str,
+    ) -> tuple[SfxPlan, str]:
+        """Snap each action cue to its motion spike; every other cue, and a failed trace, keeps its time."""
+
+        if picture is None or not any(
+            names_an_action(c.sound, c.kind, c.source) for c in plan.cues
+        ):
+            return plan, note
+        measured, windows, cuts = picture
+        try:
+            trace = (motion_meter or measure_motion)(measured)
+        except (RuntimeError, OSError, MediaToolError) as exc:
+            return plan, f"{note}; {MotionSnaps(error=str(exc)).one_line()}"
+        cues, snaps = snap_to_action(plan.cues, windows, trace, cuts=cuts)
+        line = snaps.one_line()
+        return replace(plan, cues=cues), f"{note}; {line}" if line else note
+
+    def filmed_cut_placement(
+        plan: SfxPlan, payload: dict[str, Any], take: Path
+    ) -> tuple[
+        SfxPlan,
+        str,
+        tuple[Path, dict[int, tuple[float, float]], tuple[float, ...]] | None,
+    ]:
+        """The cues on the filmed cuts, the note, and ``(measured file, filmed windows, cuts)`` when measured."""
 
         shots = planned_shots(payload)
         if len(shots) < 2 and not locked:
-            return plan, "cues as planned (the take facts plan one shot)"
+            if legacy_rules() or not shots:
+                return plan, "cues as planned (the take facts plan one shot)", None
+            # One planned shot: nothing to follow, but its action can still be found on the picture.
+            only = {shot.index: (shot.start, shot.end) for shot in shots}
+            return (
+                plan,
+                "cues as planned (the take facts plan one shot)",
+                (take, only, ()),
+            )
         # Cuts are measured on the raw take when the finished file keeps its picture timeline: a freeze
         # hold ends in a jump that would read as a cut, and soften fades the real ones.
         lineage = raw_take_behind(desk, source)
@@ -1835,7 +1890,11 @@ def run_finish(
             cuts = (cut_meter or measure_cuts)(measured)
             duration = probe_video(take).duration_seconds
         except (RuntimeError, OSError, MediaToolError) as exc:
-            return plan, f"cues on the planned shots (cuts not measured: {exc})"[:300]
+            return (
+                plan,
+                f"cues on the planned shots (cuts not measured: {exc})"[:300],
+                None,
+            )
         if locked:
             # A locked-voice take: cuts land up to ~1 s+ off the plan (L-20261001-10), so the snap is wider
             # and every measured cut is printed.
@@ -1845,8 +1904,10 @@ def run_finish(
             )  # fmt: skip
         else:
             filmed = filmed_shot_windows(shots, cuts, duration=duration)
-        return follow_filmed_cuts(plan, filmed), (
-            f"cues follow the filmed cuts measured on `{measured.name}`: {filmed.one_line()}"
+        return (
+            follow_filmed_cuts(plan, filmed),
+            f"cues follow the filmed cuts measured on `{measured.name}`: {filmed.one_line()}",
+            (measured, filmed.windows, tuple(cuts)),
         )
 
     def do_sfx(take: Path) -> StepReport:

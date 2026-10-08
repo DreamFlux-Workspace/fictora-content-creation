@@ -76,6 +76,23 @@ def _check(key: str, calls: list[list[str]]) -> None:
     assert calls == golden[key]
 
 
+def _without_action_trace(calls: list[list[str]]) -> list[list[str]]:
+    """The calls with the new desk's one action-cue motion trace taken out (L-20260930-10).
+
+    The golden is shared with the legacy desk's finish (``test_rules_epoch``), which never reads
+    the trace. On a new desk the trace is an analysis pass: it makes no picture or sound, and
+    the commands that lay the effects must still match the golden.
+    """
+
+    from creation.post.sfx_motion import MOTION_SCALE
+
+    traces = [
+        c for c in calls if any(x.startswith(f"scale={MOTION_SCALE},") for x in c)
+    ]
+    assert len(traces) == 1, "a new desk with an action cue reads the motion trace once"
+    return [c for c in calls if c is not traces[0]]
+
+
 @needs_ffmpeg
 def test_finish_without_a_hook_line_runs_the_commands_it_always_ran(
     post_desk: Path, monkeypatch: pytest.MonkeyPatch
@@ -95,4 +112,4 @@ def test_finish_without_a_hook_line_runs_the_commands_it_always_ran(
     captions = (post_desk / "ep01" / "takes" / "take-ep01-t1-cap-v1.ass").read_text(
         encoding="utf-8"
     )
-    _check("finish", [*calls, [captions]])
+    _check("finish", [*_without_action_trace(calls), [captions]])

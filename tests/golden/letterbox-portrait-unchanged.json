@@ -42,6 +42,17 @@
    "-"
   ],
   [
+   "-nostdin",
+   "-i",
+   "<root0>/ep01/takes/take-ep01-t1-raw-v1.mp4",
+   "-vf",
+   "scale=64:112,format=gray,tblend=all_mode=difference,signalstats,metadata=print:file=-",
+   "-an",
+   "-f",
+   "null",
+   "-"
+  ],
+  [
    "-v",
    "error",
    "-y",
@@ -486,6 +497,17 @@
    "rawvideo",
    "-pix_fmt",
    "rgb24",
+   "-"
+  ],
+  [
+   "-nostdin",
+   "-i",
+   "<root0>/ep01/takes/take-ep01-t1-raw-v1.mp4",
+   "-vf",
+   "scale=64:112,format=gray,tblend=all_mode=difference,signalstats,metadata=print:file=-",
+   "-an",
+   "-f",
+   "null",
    "-"
   ],
   [
