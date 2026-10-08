@@ -982,6 +982,22 @@ def dispatch_post(args: argparse.Namespace) -> int:
             print(json.dumps(result.as_json(), indent=2))
         else:
             print(result.final)
+        if result.complete and (args.hook_line or args.no_hook_line):
+            from creation.post.letterbox import keep_finish_hook_line
+
+            # `join` (and the next finish) lays the line this finish burned, not the spine's (L-20261006-5).
+            named = re.search(r"take-ep(\d+)-", Path(str(result.final)).name)
+            kept = keep_finish_hook_line(
+                args.desk,
+                int(named.group(1)) if named else (args.episode or 1),
+                hook_line=args.hook_line,
+                no_hook_line=args.no_hook_line,
+            )
+            if kept is not None:
+                print(
+                    f"[hook-line] kept for join: {kept}",
+                    file=sys.stderr if args.json else sys.stdout,
+                )
         if result.complete and not args.no_reel:
             from creation.post import reel as reel_module
 

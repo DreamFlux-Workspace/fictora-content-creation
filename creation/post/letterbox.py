@@ -192,6 +192,46 @@ def record_desk_hook_line(
     return path
 
 
+def keep_finish_hook_line(
+    desk: Path, episode: int, *, hook_line: str | None, no_hook_line: bool
+) -> Path | None:
+    """Save ``finish --hook-line TEXT`` / ``--no-hook-line`` as the episode's desk pick, so ``join`` lays it too.
+
+    Without this, ``join`` (and the next ``finish``) fell back to the spine's
+    ``hook_line_selected`` and the joined episode opened on a different line
+    than the finished take (L-20261006-5). The pick goes to the same file
+    ``hook-line`` writes on an older server (``shared/hook-line.json``); a later
+    ``hook-line --pick`` the server stores drops it again.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    episode
+        Episode ordinal the finish was for.
+    hook_line
+        ``--hook-line`` as given (blank or ``None``: nothing to keep).
+    no_hook_line
+        ``--no-hook-line`` was given.
+
+    Returns
+    -------
+    Path | None
+        The file written, or ``None`` when neither flag was given.
+    """
+
+    text = " ".join(str(hook_line or "").split())
+    if no_hook_line:
+        choice: dict[str, Any] = {"kind": "off", "text": ""}
+        why = "finish --no-hook-line"
+    elif text:
+        choice = {"kind": "custom", "text": text}
+        why = "finish --hook-line"
+    else:
+        return None
+    return record_desk_hook_line(desk, episode, choice, why=why)
+
+
 def clear_desk_hook_line(desk: Path, episode: int) -> bool:
     """Drop the desk's pick for one episode (the server now holds the creator's pick). True when one was dropped."""
 
@@ -913,6 +953,7 @@ __all__ = [
     "drawn_on_shot",
     "fit_title",
     "is_letterbox_take",
+    "keep_finish_hook_line",
     "italic_overrides",
     "mark_and_title",
     "pad_to_canvas",
