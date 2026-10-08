@@ -71,9 +71,9 @@ def _desk_take(post_desk: Path, facts: dict) -> Path:
 
 
 def no_transcript(*_: object) -> Path:
-    raise AssertionError(
-        "a locked-voice take is captioned from its line windows, never transcribed"
-    )
+    # A new desk asks for a transcript of a locked-voice take (L-20261005-6); this take has no stored URL,
+    # so its captions are timed on its line windows, each moved to where its voice starts.
+    raise ValueError("no stored URL for ep01 t1 to transcribe")
 
 
 # --- reading the contract -------------------------------------------------------------------------------------
@@ -219,8 +219,9 @@ def test_finish_lays_room_tone_bed_ducked_in_line_windows_effects_on_measured_cu
     assert min(measure_rms_windows(raw, window_seconds=0.1)[24:30]) < -100, (
         "the raw gap is digital silence"
     )
-    # (e) captions from the line windows, no transcript.
+    # (e) captions from the line windows (no transcript could be made), each on its voice.
     assert "1.00-" in detail["captions"] and "(lines)" in detail["captions"]
+    assert "each moved to where its voice starts" in detail["captions"]
     assert "3.20-" in detail["captions"]
     # Shown in the summary.
     assert "Soundtrack: locked voices, 2 line(s)" in log

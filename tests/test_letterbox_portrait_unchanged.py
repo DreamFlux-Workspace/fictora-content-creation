@@ -13,7 +13,10 @@ and write the same caption file, on:
 * a join of two finished takes.
 
 The golden file is recorded on origin/main before any letterbox code (now
-ae52d98, which carries #131's join gain-match change). Numbers measured from
+ae52d98, which carries #131's join gain-match change). ``finish-locked`` has one
+command more since #177 (L-20261005-6): a new desk's locked-voice take reads its
+levels once more (0.05 s windows) to find where each voice starts; its captions
+are unchanged here (the test voices start exactly on their windows). Numbers measured from
 the test media may differ by a few milliseconds between ffmpeg builds
 (:data:`NUMBER_TOLERANCE`); everything else must match exactly. Regenerate only on purpose:
 ``UPDATE_GOLDEN=1 uv run pytest tests/test_letterbox_portrait_unchanged.py``.

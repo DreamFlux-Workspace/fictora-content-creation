@@ -1211,6 +1211,10 @@ class LineTiming:
     wording: tuple[str, ...] = ()
 
 
+#: A transcript's line that starts more than this after its voice measured on the take is not trusted.
+WORDS_LATE_SECONDS = 0.3
+
+
 def time_lines(
     lines: Sequence[CaptionLine],
     *,
@@ -1221,6 +1225,8 @@ def time_lines(
     spans: Callable[[], Sequence[Span]] | None = None,
     known: Sequence[Span | None] | None = None,
     per_word: bool = False,
+    known_after_words: bool = False,
+    floors: Sequence[float | None] | None = None,
 ) -> LineTiming:
     """Place every line: known windows first, then transcript words, then speech spans, hand times on top.
 
@@ -1247,6 +1253,16 @@ def time_lines(
         Time each word of a line timed on ``words`` when it was said
         (:func:`heard_word_cues`, on the speech spans), for word flicker:
         ``word_cues`` and ``wording`` are filled. Off for whole lines.
+    known_after_words
+        Time a line on its transcript words when the transcript heard it, and
+        on its ``known`` window only when it did not, or heard it more than
+        :data:`WORDS_LATE_SECONDS` after its ``floors`` voice start (a
+        locked-voice take with a transcript, new desks: L-20261005-6).
+        Default: ``known`` first.
+    floors
+        Per line (same order), where its voice was measured to start
+        (:func:`creation.post.caption_timing.voice_starts`), or ``None``: a
+        line timed automatically never starts before it. Hand starts win.
 
     Returns
     -------
@@ -1273,7 +1289,20 @@ def time_lines(
     by_words: list[Span | None] = [
         word_span(matched, spans) if matched else None for matched in heard
     ]
-    by_words = [k if k is not None else w for k, w in zip(by_known, by_words)]
+    if known_after_words:
+        # A line the transcript heard is timed on its words, not on its window; words heard well
+        # after the voice measured on the take are the transcript's mistake, and the window stays.
+        floor_of = [floors[i] if floors and i < len(floors) else None for i in range(n)]
+        by_words = [
+            None
+            if w is not None and f is not None and w.start > f + WORDS_LATE_SECONDS
+            else w
+            for w, f in zip(by_words, floor_of)
+        ]
+        by_known = [k if w is None else None for k, w in zip(by_known, by_words)]
+        by_words = [w if w is not None else k for k, w in zip(by_known, by_words)]
+    else:
+        by_words = [k if k is not None else w for k, w in zip(by_known, by_words)]
     by_speech: list[Span | None] = [None] * n
     warnings: list[str] = []
     if not line_starts and any(span is None for span in by_words):
@@ -1304,6 +1333,10 @@ def time_lines(
         else:
             assert auto is not None
             start, start_how = auto.start, auto_how
+            floor = floors[i] if floors and i < len(floors) else None
+            if floor is not None and start < floor < auto.end:
+                # Never before the voice (L-20261005-6): a caption goes up when its line is heard.
+                start = floor
         if line_ends:
             end, end_how = float(line_ends[i]), "manual"
         elif auto is not None and auto.end > start:
@@ -2639,6 +2672,8 @@ def caption_take(
     layout: str = "portrait",
     caption_colour: str | None = None,
     italic_overrides: Mapping[str, bool] | None = None,
+    line_spans_after_words: bool = False,
+    voice_floors: Mapping[str, float] | None = None,
 ) -> CaptionResult:
     """Caption the newest raw take on a desk episode.
 
@@ -2684,6 +2719,13 @@ def caption_take(
         ``line_id`` to the window the line plays in, when known exactly (a
         locked-voice take's ``soundtrack.lines``): those lines are timed on it
         (method ``lines``); any other line is timed as usual.
+    line_spans_after_words
+        With ``words_json``: a line the transcript heard is timed on its
+        words, and on its ``line_spans`` window only when it was not heard
+        (``finish`` on a locked-voice take of a new desk, L-20261005-6).
+    voice_floors
+        ``line_id`` to where its voice was measured to start on the take: no
+        automatically timed caption of that line goes up before it.
     style
         ``house`` (yellow; word flicker on a show spoken in English) or
         ``plain`` (white whole lines on any show). ``none`` is the caller's to
@@ -2826,6 +2868,10 @@ def caption_take(
             else None,
             # Each word when it is said (6 Oct 2026); a legacy desk spreads them as before.
             per_word=not whole_lines and not _legacy_desk(desk),
+            known_after_words=line_spans_after_words,
+            floors=[(voice_floors or {}).get(line.line_id) for line in caption_lines]
+            if voice_floors
+            else None,
         )
         if caption_lines
         else LineTiming((), (), (), ())

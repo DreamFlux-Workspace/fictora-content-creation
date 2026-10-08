@@ -752,6 +752,17 @@
    "-"
   ],
   [
+   "-v",
+   "error",
+   "-i",
+   "<root0>/ep01/takes/take-ep01-t1-raw-v1.mp4",
+   "-af",
+   "aresample=48000,pan=mono|c0=c0,asetnsamples=n=2400:p=0,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
+   "-f",
+   "null",
+   "-"
+  ],
+  [
    "-hide_banner",
    "-filters"
   ],
