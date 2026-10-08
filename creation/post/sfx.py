@@ -84,6 +84,9 @@ class SfxCue:
     gain_db: float = SFX_GAIN_DB
     #: The story's sound notes that moved this cue's level (from the take facts), oldest first.
     note_ids: tuple[str, ...] = ()
+    #: Where the take facts say the cue came from: ``sound_line``, ``impact`` (an action the story
+    #: states) or ``note``. Read only by the action snap (:mod:`creation.post.sfx_motion`).
+    source: str = "sound_line"
 
     @property
     def cache_key(self) -> str:
@@ -322,6 +325,7 @@ def plan_from_take_facts(payload: dict[str, Any]) -> SfxPlan:
             seconds=float(cue["duration_seconds"]),
             gain_db=noted_gain_db(cue),
             note_ids=tuple(str(note) for note in cue.get("note_ids") or []),
+            source=str(cue.get("source") or "sound_line"),
         )
         for cue in facts.get("sfx_cues") or []
         if str(cue.get("sound") or "").strip() and _cue_identity(cue) not in dropped_ids
