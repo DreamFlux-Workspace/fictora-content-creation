@@ -18,7 +18,6 @@ from creation import stylised_only
 from creation.harness.video_enrol_errors import server_refused_episode_ordinal_field
 from creation.desk_media_urls import drawn_cast_rows
 from creation.harness.session import DramaApiRunSession
-from creation.prices import H3_MAX_R2V_ENDPOINT
 from creation.spine_view import board_assets, episode_id_for
 from creation.harness.visual_first_ep1 import (
     approve_ep1_boards,
@@ -713,7 +712,6 @@ def estimate_batch(
     spine_id: str,
     episode: int = 1,
     reroll_take_index: int | None = None,
-    reference_mode: bool = False,
 ) -> dict[str, Any]:
     """Price what will be filmed: ``POST /v1/spines/{id}/batches/estimate`` for one episode, or one take of it.
 
@@ -733,22 +731,11 @@ def estimate_batch(
         Episode ordinal (resolved to its API id through ``episode_summaries``).
     reroll_take_index
         One-based take to price alone; ``None`` prices the whole episode.
-    reference_mode
-        Price the operator's reference-lane trial (``--reference-mode``): the
-        body carries ``reference_mode: true`` and the answer must name H3 Max
-        reference-to-video with dollars. Any refusal or other answer stops with
-        :class:`ReferenceModeRefused` (never a skip priced from the table), so
-        nothing is sent at a price nobody saw. Off, the body is exactly as before.
 
     Returns
     -------
     dict[str, Any]
         The estimate, or ``{..., "estimate_skipped": True}``.
-
-    Raises
-    ------
-    ReferenceModeRefused
-        ``reference_mode`` and the server refused it or did not price the reference lane.
     """
 
     spine = run.spine(spine_id)
@@ -762,8 +749,6 @@ def estimate_batch(
     if reroll_take_index is not None:
         body["reroll_take_index"] = reroll_take_index
         name = f"12_ep{episode:02d}_t{reroll_take_index}_estimate.json"
-    if reference_mode:
-        return _reference_estimate(run, spine_id, body, name)
     try:
         estimate = run.post(f"/v1/spines/{spine_id}/batches/estimate", body)
     except SystemExit as exc:
@@ -781,122 +766,6 @@ def estimate_batch(
         raise
     run.save(name, estimate)
     return estimate
-
-
-#: Printed when a film is sent on the reference lane (``--reference-mode``).
-REFERENCE_MODE_NOTE = (
-    "reference mode: this take films on the reference lane (board + cast plates) at the "
-    "reference price — a trial, never a default"
-)
-
-#: Printed with :data:`REFERENCE_MODE_NOTE`: the voices line above it describes the show, not this film.
-REFERENCE_VOICE_NOTE = (
-    "reference mode voices: the reference lane has no dialogue track, so this take speaks in the "
-    "video model's own voice from the cast's voice clips, even on a locked-voice show (its take "
-    "facts will say Soundtrack: native)"
-)
-
-#: The plain stop when the server will not film on the reference lane (operator only, H3 takes only).
-REFERENCE_MODE_REFUSED = (
-    "The reference lane (each take filmed from its board and the cast plates) isn't available for "
-    "this show or account, so nothing was filmed or charged. Film without --reference-mode to film "
-    "on the usual lane."
-)
-
-#: The plain stop when the server will not price the reference lane: nothing is sent.
-REFERENCE_PRICE_REFUSED = (
-    "The server would not price the reference lane for this film, so nothing was sent or charged "
-    "(the deployed API may not have reference mode yet). Film without --reference-mode, or ask "
-    "engineering to deploy it first."
-)
-
-#: Said up front when both trials are asked for: the server refuses the pair too.
-REFERENCE_WITH_SINGLE_FRAME = (
-    "--reference-mode and --single-frame-start cannot go together (the server refuses the pair: the "
-    "reference lane films from the board and the cast plates, not from one opening picture). Pick "
-    "one; nothing was sent."
-)
-
-
-class ReferenceModeRefused(SystemExit):
-    """The server refused ``reference_mode`` (or would not price it); nothing was admitted or charged."""
-
-
-def _reference_estimate(
-    run: DramaApiRunSession, spine_id: str, body: dict[str, Any], name: str
-) -> dict[str, Any]:
-    """Ask for the reference-lane price; anything but an R2V answer with dollars stops."""
-
-    body = {**body, "reference_mode": True}
-    name = name.replace("_estimate.json", "_reference_estimate.json")
-    try:
-        estimate = run.post(f"/v1/spines/{spine_id}/batches/estimate", body)
-    except SystemExit as exc:
-        # An older deploy answers 422 (the request models forbid unknown fields);
-        # any other refusal is the same stop: nothing is sent at an unseen price.
-        run.save(
-            name, {**body, "estimate_refused": True, "detail": str(exc.code)[:800]}
-        )
-        raise ReferenceModeRefused(
-            f"{REFERENCE_PRICE_REFUSED} (server said: {str(exc.code)[:300]})"
-        ) from None
-    run.save(name, estimate)
-    cost = estimate.get("cost_estimate") if isinstance(estimate, dict) else None
-    endpoint = str((cost or {}).get("video_endpoint_id") or "")
-    if (
-        not isinstance(cost, dict)
-        or endpoint != H3_MAX_R2V_ENDPOINT
-        or cost.get("total_usd") in (None, "")
-    ):
-        raise ReferenceModeRefused(
-            f"{REFERENCE_PRICE_REFUSED} (the estimate priced {endpoint or 'no lane'}"
-            + (
-                ""
-                if isinstance(cost, dict) and cost.get("total_usd") not in (None, "")
-                else ", no dollars"
-            )
-            + ")"
-        )
-    return estimate
-
-
-def reference_take_usd(estimate: dict[str, Any], *, takes: int) -> float | None:
-    """Return what one take costs on the reference lane, from the reference estimate.
-
-    The video dollars (seconds at the R2V rate plus the reference images past
-    four) divided over the takes priced; the total when the answer has no
-    video part.
-
-    Parameters
-    ----------
-    estimate
-        The reference estimate (:func:`estimate_batch` with ``reference_mode``).
-    takes
-        Takes the film asks for (used when the answer does not say).
-
-    Returns
-    -------
-    float | None
-        Dollars a take, or ``None`` when the answer carries no dollars.
-    """
-
-    cost = estimate.get("cost_estimate") if isinstance(estimate, dict) else None
-    if not isinstance(cost, dict):
-        return None
-    usd = None
-    for field in ("video_usd", "total_usd"):
-        try:
-            usd = float(cost[field])
-            break
-        except (KeyError, TypeError, ValueError):
-            continue
-    if usd is None:
-        return None
-    try:
-        count = int(cost.get("takes") or takes)
-    except (TypeError, ValueError):
-        count = takes
-    return round(usd / max(1, count), 2)
 
 
 #: Said, and nothing is sent, when the deployed API cannot film one episode alone.
@@ -1017,6 +886,17 @@ SINGLE_FRAME_START_REFUSED = (
 )
 
 
+#: The plain stop when a desk would send again a film first sent with ``--reference-mode``.
+#: The trial was removed (founder, 8 Oct 2026) and the server now refuses that body (422), while
+#: the same key with a different body could start a second paid film. So nothing is sent.
+REFERENCE_MODE_REMOVED_RESUME = (
+    "This film was first sent with --reference-mode, which was removed on 8 Oct 2026; the server "
+    "no longer accepts that request, and sending this film again without it under the same key "
+    "could film it twice. Nothing was sent or charged. Ask engineering whether the server admitted "
+    "the first send (and for its job id) before filming this take again."
+)
+
+
 class SingleFrameStartRefused(SystemExit):
     """The server refused ``single_frame_start``; nothing was admitted or charged."""
 
@@ -1045,13 +925,9 @@ def video_enrol_key(prefix: str, episode: int, suffix: str = "") -> str:
 
 
 def _server_code(text: str) -> str | None:
-    """Return the refusal code the server named, when it is one the trial options meet."""
+    """Return the refusal code the server named, when it is one of the two this option meets."""
 
-    for code in (
-        "single_frame_start_operator_only",
-        "reference_mode_operator_only",
-        "video_generation_invalid",
-    ):
+    for code in ("single_frame_start_operator_only", "video_generation_invalid"):
         if code in text:
             return code
     return None
@@ -1083,15 +959,6 @@ def post_video_generation(
         return run.post("/v1/video-generations", body, idempotency_key=idempotency_key)
     except SystemExit as exc:
         text = str(exc.code)
-        if body.get("reference_mode") and (
-            "reference_mode" in text or "video_generation_invalid" in text
-        ):
-            # 403 on a creator session, 422 on a run that does not film H3 takes,
-            # or an older deploy that does not know the field: nothing admitted.
-            code = _server_code(text)
-            raise ReferenceModeRefused(
-                REFERENCE_MODE_REFUSED + (f" (server code: {code})" if code else "")
-            ) from None
         if body.get("single_frame_start") and "single_frame_start" in text:
             # 403 on a creator session, 422 on a lane or run it does not apply
             # to, or an older deploy that does not know the field: one plain stop.
@@ -1198,7 +1065,6 @@ def video_request_body(
     seed_attempt: int | None = None,
     single_frame_start: bool = False,
     desk: Path | None = None,
-    reference_mode: bool = False,
 ) -> dict[str, Any]:
     """Build the ``POST /v1/video-generations`` reuse body that films episode ``episode`` alone.
 
@@ -1226,10 +1092,6 @@ def video_request_body(
     desk
         The series desk: an existing show's music lock (:mod:`creation.music_lock`)
         decides ``music_by_finish``. ``None`` reads only the voice mode.
-    reference_mode
-        The operator's reference-lane trial (``--reference-mode``): each take
-        films on H3 Max reference-to-video from its board and the cast plates.
-        Only true adds the field; off, the body is exactly as before.
 
     Returns
     -------
@@ -1260,9 +1122,6 @@ def video_request_body(
     if single_frame_start:
         # Trial only, never a default: the server pins it on the run.
         extra = {**extra, "single_frame_start": True}
-    if reference_mode:
-        # Trial only, never a default: the reference lane for this film alone.
-        extra = {**extra, "reference_mode": True}
     return reuse_generation_body(
         prompt=scene_prompt(spine, prompt),
         spine=spine,
@@ -1295,7 +1154,6 @@ def enrol_video(
     seed_attempt: int | None = None,
     expected_clips: int | None = None,
     single_frame_start: bool = False,
-    reference_mode: bool = False,
 ) -> dict[str, Any]:
     """Film episode ``episode``'s takes and collect them raw (hosted delivery only when asked and available).
 
@@ -1320,9 +1178,6 @@ def enrol_video(
     single_frame_start
         Send the trial opening (:func:`video_request_body`); the caller keeps it
         per key so a resume sends the same body.
-    reference_mode
-        Film on the reference lane (:func:`video_request_body`); kept per key
-        by the caller like ``single_frame_start``.
 
     Returns
     -------
@@ -1351,7 +1206,6 @@ def enrol_video(
         episode=episode,
         seed_attempt=seed_attempt,
         single_frame_start=single_frame_start,
-        reference_mode=reference_mode,
     )
     run.save("16_video_request.json", body)
     idem = video_enrol_key(run.prefix, episode, video_idempotency_suffix)
@@ -1385,13 +1239,7 @@ __all__ = [
     "enrol_video",
     "estimate_batch",
     "OLD_SERVER_FILM",
-    "REFERENCE_MODE_NOTE",
-    "REFERENCE_MODE_REFUSED",
-    "REFERENCE_VOICE_NOTE",
-    "REFERENCE_PRICE_REFUSED",
-    "REFERENCE_WITH_SINGLE_FRAME",
-    "ReferenceModeRefused",
-    "reference_take_usd",
+    "REFERENCE_MODE_REMOVED_RESUME",
     "SINGLE_FRAME_START_NOTE",
     "SINGLE_FRAME_START_REFUSED",
     "SingleFrameStartRefused",
