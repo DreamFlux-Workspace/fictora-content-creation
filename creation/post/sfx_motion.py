@@ -271,6 +271,7 @@ __all__ = [
     "MOTION_PEAK_MIN_RISE",
     "MOTION_PEAK_OVER_MEDIAN",
     "MOTION_PEAK_OVER_OTHERS",
+    "MOTION_SCALE",
     "MOTION_SNAP_WINDOW_SECONDS",
     "MotionMeter",
     "MotionSnaps",
