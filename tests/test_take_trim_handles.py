@@ -189,6 +189,73 @@ def test_trim_reset_sends_reset_alone(
     assert _last(capsys.readouterr().out) == "Applied"
 
 
+@pytest.mark.parametrize(
+    ("given", "sent", "kept"),
+    [
+        (
+            ("--end", "10"),
+            {"start_s": 0.417, "end_s": 10.0},
+            "--start not given: the start stays at 0.417 s",
+        ),
+        (
+            ("--start", "0.5"),
+            {"start_s": 0.5, "end_s": 15.0},
+            "--end not given: the end stays at 15.000 s",
+        ),
+    ],
+)
+def test_one_end_alone_keeps_the_other_where_it_is(
+    desk: Path,
+    api: FakeApi,
+    capsys: pytest.CaptureFixture[str],
+    given: tuple[str, str],
+    sent: dict[str, float],
+    kept: str,
+) -> None:
+    """L-20261006-14: ``trim --end E`` (or ``--start S``) alone moves only that end."""
+
+    _desk_with_take(desk)
+    api.routes[("PUT", TRIM)] = _answer(sent["start_s"], sent["end_s"])
+    api.routes[("GET", FACTS_ROUTE)] = {
+        "take_facts": _facts(sent["start_s"], sent["end_s"], source="creator")[
+            "take_facts"
+        ]
+    }
+
+    code = _trim(desk, *given)
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert _puts(api)[0][0] == sent
+    assert kept in out
+    assert _last(out) == "Applied"
+
+
+def test_start_alone_with_no_known_length_is_refused(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    facts = _facts()
+    for key in ("trim", "playable_window"):
+        facts["take_facts"].pop(key)
+    _desk_with_take(desk, facts)
+
+    code = _trim(desk, "--start", "0.5")
+
+    err = capsys.readouterr().err
+    assert code == 2 and "give --end too" in err
+    assert _puts(api) == []
+
+
+def test_an_end_with_reset_is_refused(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _desk_with_take(desk)
+
+    assert _trim(desk, "--end", "10", "--reset") == 2
+    assert "or --reset alone" in capsys.readouterr().err
+    assert _puts(api) == []
+
+
 def test_a_window_under_a_second_is_refused_before_sending(
     desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
 ) -> None:

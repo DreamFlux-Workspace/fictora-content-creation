@@ -282,11 +282,13 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     trim.add_argument(
         "--start", type=float, default=None,
-        help="Handles: where the take starts playing, seconds on the take as filmed (take-facts times).",
+        help="Handles: where the take starts playing, seconds on the take as filmed (take-facts times); "
+        "alone, the end stays where it is.",
     )  # fmt: skip
     trim.add_argument(
         "--end", type=float, default=None,
-        help="Handles: where it stops playing, seconds on the take as filmed (at least 1 s after --start).",
+        help="Handles: where it stops playing, seconds on the take as filmed (at least 1 s after --start); "
+        "alone, the start stays where it is.",
     )  # fmt: skip
     trim.add_argument(
         "--reset", action="store_true",
@@ -588,7 +590,7 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
         )
     if args.command == "trim" and args.cut is None:
         raise ValueError(
-            "trim needs --start S --end E (or --reset) for the take's handles, or --cut A-B with --take-file "
+            "trim needs --start S and/or --end E (or --reset) for the take's handles, or --cut A-B with --take-file "
             "to cut a finished file"
         )
     if args.command == "trim" and args.take_file is None:
