@@ -80,10 +80,14 @@ class ProductionState:
     #: The episode steer `rewrite` last added, per episode id (``{note_id, text}``): the next
     #: `rewrite` of that episode removes it first, so the kit's directions do not pile up.
     rewrite_notes: dict[str, dict[str, str]] = field(default_factory=dict)
-    #: Film keys ``step`` sends with the operator's trial opening (``--single-frame-start``):
+    #: Film keys ``step`` sends with ``--single-frame-start`` (``single_frame_start: true``):
     #: a resume under the same key sends the same body. Left out of the file while empty,
-    #: so a desk that never used the trial keeps its ``production.json`` as before.
+    #: so a desk that never used the flag keeps its ``production.json`` as before.
     single_frame_start_keys: list[str] = field(default_factory=list)
+    #: Film keys ``step`` sends with ``--no-single-frame-start`` (``single_frame_start: false``,
+    #: the storyboard opening instead of the 8 Oct 2026 default). Kept and left out of the file
+    #: while empty exactly like ``single_frame_start_keys``.
+    single_frame_start_off_keys: list[str] = field(default_factory=list)
     #: Legacy, read only: film keys ``step`` sent with the removed ``--reference-mode`` trial
     #: (8 Oct 2026, a copy desk or two). Never added to any more; ``step`` refuses to send such a
     #: key again (the server no longer accepts the body it was first sent with). Left out of the
@@ -213,7 +217,11 @@ def save_production(desk: Path, state: ProductionState) -> None:
 
     path = production_path(desk)
     data = asdict(state)
-    for trial in ("single_frame_start_keys", "reference_mode_keys"):
+    for trial in (
+        "single_frame_start_keys",
+        "single_frame_start_off_keys",
+        "reference_mode_keys",
+    ):
         if not data[trial]:
             del data[trial]
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")

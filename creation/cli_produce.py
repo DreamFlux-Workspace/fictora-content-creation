@@ -169,12 +169,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="After estimate gate, confirm spend and film the take.",
     )
-    step.add_argument(
+    opening = step.add_mutually_exclusive_group()
+    opening.add_argument(
         "--single-frame-start",
         action="store_true",
-        help="Trial, for comparison runs only (operator): open each take on a single full picture instead "
-        "of the storyboard. Off by default; goes with --confirm-spend; a resumed step keeps what the film "
-        "was first sent with.",
+        help="Kept for compatibility: each take opens on a single full picture, which is already the "
+        "server's default (founder, 8 Oct 2026; a continuing series from its next unwritten episode). "
+        "Goes with --confirm-spend; a resumed step keeps what the film was first sent with.",
+    )
+    opening.add_argument(
+        "--no-single-frame-start",
+        action="store_true",
+        help="This film only (operator): open each take on the storyboard instead of the single-picture "
+        "default. Goes with --confirm-spend; a resumed step keeps what the film was first sent with.",
     )
     step.add_argument(
         "--accept-notice",
@@ -495,6 +502,7 @@ def _run_command(args: argparse.Namespace) -> int:
                 narrator_on_screen=args.narrator_on_screen,
                 ask=interactive_ask(),
                 single_frame_start=args.single_frame_start,
+                no_single_frame_start=args.no_single_frame_start,
             )
             print(result.message)
             for path in result.paths:

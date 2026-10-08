@@ -6559,6 +6559,7 @@ def run_film(
     confirm_spend: bool = False,
     out: Any = None,
     single_frame_start: bool = False,
+    no_single_frame_start: bool = False,
 ) -> str:
     """Price, then film episode N alone, or only take K of it. Nothing earlier is filmed or booked again.
 
@@ -6589,11 +6590,16 @@ def run_film(
     out
         Text stream.
     single_frame_start
-        Trial opening for a comparison run (``--single-frame-start``, never a
-        default): each take opens on one full picture instead of the
-        storyboard. Recorded on the film's pending unit, so a resume under the
-        same key sends the same body; a server that will not take it stops
-        the film with nothing charged.
+        ``--single-frame-start``: send ``single_frame_start: true``. Kept for
+        compatibility: the single-picture opening is the server's default
+        since 8 Oct 2026 (new stories; a continuing series from its next
+        unwritten episode), so on a new story it changes nothing.
+    no_single_frame_start
+        ``--no-single-frame-start``: send ``single_frame_start: false``, so
+        this film opens each take on the storyboard. Either choice is recorded
+        on the film's pending unit, so a resume under the same key sends the
+        same body; a server that will not take it stops the film with nothing
+        charged.
 
     Returns
     -------
@@ -6602,9 +6608,16 @@ def run_film(
     """
 
     out = out or sys.stdout
-    if single_frame_start and not confirm_spend:
+    try:
+        choice = stages.single_frame_start_choice(
+            single_frame_start, no_single_frame_start
+        )
+    except ValueError as exc:
+        raise CommandStopped(str(exc)) from None
+    if choice is not None and not confirm_spend:
         raise CommandStopped(
-            "--single-frame-start goes with --confirm-spend (it changes how the takes are filmed, not the price)"
+            f"{stages.single_frame_start_flag(choice)} goes with --confirm-spend "
+            "(it changes how the takes are filmed, not the price)"
         )
     if confirm_spend:
         _hold_for_pitch(desk, "film --confirm-spend", episode=episode)
@@ -6624,7 +6637,7 @@ def run_film(
             cause=cause,
             confirm_spend=confirm_spend,
             out=out,
-            single_frame_start=single_frame_start,
+            single_frame_start=choice,
         )
     finally:
         run.client.close()
@@ -6640,7 +6653,7 @@ def _run_film(
     cause: str | None,
     confirm_spend: bool,
     out: Any,
-    single_frame_start: bool = False,
+    single_frame_start: bool | None = None,
 ) -> str:
     if episode < 1:
         raise CommandStopped("--episode is 1 or more")
@@ -6711,16 +6724,24 @@ def _run_film(
         raise CommandStopped(stages.REFERENCE_MODE_REMOVED_RESUME)
     if started is not None:
         # The same key goes out again: the body must be the one it was first sent with.
-        trial = bool(started.get("single_frame_start"))
-        if single_frame_start and not trial:
+        sent = started.get("single_frame_start")
+        trial = sent if isinstance(sent, bool) else None
+        if single_frame_start is not None and single_frame_start != trial:
+            how = (
+                f"without {stages.single_frame_start_flag(single_frame_start)}"
+                if trial is None
+                else f"with {stages.single_frame_start_flag(trial)}"
+            )
             raise CommandStopped(
-                f"{what} was already sent without --single-frame-start and picks up under the same key, "
+                f"{what} was already sent {how} and picks up under the same key, "
                 "so it carries on the same way. Run it without the flag to finish it."
             )
     else:
         trial = single_frame_start
-    if trial:
+    if trial is True:
         print(stages.SINGLE_FRAME_START_NOTE, file=out)
+    elif trial is False:
+        print(stages.SINGLE_FRAME_START_OFF_NOTE, file=out)
     body = stages.video_request_body(
         run,
         spine=spine,
@@ -6756,8 +6777,8 @@ def _run_film(
             "key": f"{fresh.idempotency_prefix}-{unit}-a{fresh.attempts.get(unit, 0) + 1}",
             "job_id": None,
         }
-        if trial:
-            pending["single_frame_start"] = True
+        if trial is not None:
+            pending["single_frame_start"] = trial
         fresh.pending[unit] = pending
         save_production(desk, fresh)
     job_id = pending.get("job_id")
@@ -6773,7 +6794,7 @@ def _run_film(
             )
         except stages.SingleFrameStartRefused as exc:
             # Nothing was admitted: let the unit go and move to a fresh key, so
-            # a film without the flag never reuses this key with another body.
+            # a film with another choice never reuses this key with another body.
             fresh = load_production(desk)
             fresh.pending.pop(unit, None)
             fresh.attempts[unit] = fresh.attempts.get(unit, 0) + 1
@@ -6781,7 +6802,7 @@ def _run_film(
             _note(
                 desk,
                 episode,
-                f"film {what} refused, nothing charged: trial opening not available",
+                f"film {what} refused, nothing charged: opening choice not available",
             )
             raise CommandStopped(str(exc.code)) from None
         except SystemExit as exc:
@@ -7728,12 +7749,19 @@ def add_episode_parsers(
         action="store_true",
         help="The human said yes to the printed number.",
     )
-    film.add_argument(
+    opening = film.add_mutually_exclusive_group()
+    opening.add_argument(
         "--single-frame-start",
         action="store_true",
-        help="Trial, for comparison runs only (operator): open each take on a single full picture instead "
-        "of the storyboard. Off by default; goes with --confirm-spend; a resume keeps what the film was "
-        "first sent with.",
+        help="Kept for compatibility: each take opens on a single full picture, which is already the "
+        "server's default (founder, 8 Oct 2026; a continuing series from its next unwritten episode). "
+        "Goes with --confirm-spend; a resume keeps what the film was first sent with.",
+    )
+    opening.add_argument(
+        "--no-single-frame-start",
+        action="store_true",
+        help="This film only (operator): open each take on the storyboard instead of the single-picture "
+        "default. Goes with --confirm-spend; a resume keeps what the film was first sent with.",
     )
 
     collect = sub.add_parser(
@@ -7995,6 +8023,7 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 cause=args.cause,
                 confirm_spend=args.confirm_spend,
                 single_frame_start=args.single_frame_start,
+                no_single_frame_start=args.no_single_frame_start,
             )
             return 0
         if args.command == "collect-takes":
