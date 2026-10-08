@@ -1,9 +1,11 @@
-"""``--single-frame-start``: the operator's trial opening on ``film`` and ``step`` (fictora-drama #658).
+"""``--single-frame-start`` / ``--no-single-frame-start`` on ``film`` and ``step`` (fictora-drama #658).
 
-Off by default, the film body is exactly as before. With the flag the body
-carries ``single_frame_start: true``; the choice is kept per film key so a
-resume sends the same body; a server refusal stops with a plain message and
-nothing charged.
+Since 8 Oct 2026 the single-picture opening is the server's default (founder,
+option B), so with no flag the film body is exactly as before and carries no
+field. ``--single-frame-start`` is kept for compatibility and sends ``true``;
+``--no-single-frame-start`` sends ``false`` (this film opens on the
+storyboard). Either choice is kept per film key so a resume sends the same
+body; a server refusal stops with a plain message and nothing charged.
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ desk30 = film_tests.desk30  # the 30s desk fixture, pointed at episode 2
 api30 = film_tests.api30
 
 UNIT = "film-ep02-t2-s2"
-NOTE = "Opening each take on a single full picture instead of the storyboard (trial)"
+NOTE = stages.SINGLE_FRAME_START_NOTE
 OPERATOR_ONLY = SystemExit(
     "HTTP 403 POST https://drama.example/v1/video-generations: single_frame_start_operator_only: "
     "single_frame_start is an operator setting and is not accepted on a creator session."
@@ -233,8 +235,16 @@ def test_film_and_step_take_the_flag_off_by_default(
     for argv in (film, step):
         assert main(argv) == 0
         assert seen.pop("single_frame_start") is False
+        assert seen.pop("no_single_frame_start") is False
         assert main([*argv, "--single-frame-start"]) == 0
         assert seen.pop("single_frame_start") is True
+        assert seen.pop("no_single_frame_start") is False
+        assert main([*argv, "--no-single-frame-start"]) == 0
+        assert seen.pop("single_frame_start") is False
+        assert seen.pop("no_single_frame_start") is True
+        with pytest.raises(SystemExit) as caught:
+            main([*argv, "--single-frame-start", "--no-single-frame-start"])
+        assert caught.value.code == 2
 
 
 # --- step -------------------------------------------------------------------------------------------
@@ -353,3 +363,292 @@ def test_a_refused_trial_step_stops_plainly_and_goes_back_to_the_spend_yes(
     orchestrate.run_step(desk, confirm_spend=True)
     first, second = api.posted(VIDEO)
     assert first["single_frame_start"] is True and "single_frame_start" not in second
+
+
+# --- --no-single-frame-start (8 Oct 2026: the single picture is the default) ------------------------
+
+OFF_NOTE = stages.SINGLE_FRAME_START_OFF_NOTE
+
+
+def test_the_choice_helper_is_tri_state_and_refuses_both() -> None:
+    assert stages.single_frame_start_choice() is None
+    assert stages.single_frame_start_choice(on=True) is True
+    assert stages.single_frame_start_choice(off=True) is False
+    with pytest.raises(ValueError, match="cannot go together"):
+        stages.single_frame_start_choice(on=True, off=True)
+
+
+def test_the_body_sends_false_only_when_asked(desk30: Path, api30: FakeApi) -> None:
+    built = {
+        "spine": api30.spine("sp1"),
+        "prompt": "A shop at closing time.",
+        "preset_id": "modern-romance",
+        "preset_version": "2",
+        "episode": 2,
+    }
+    plain = stages.video_request_body(api30, **built)
+    off = stages.video_request_body(api30, **built, single_frame_start=False)
+    assert "single_frame_start" not in plain
+    assert off.pop("single_frame_start") is False
+    assert json.dumps(off, sort_keys=True) == json.dumps(plain, sort_keys=True)
+
+
+def test_film_with_no_single_frame_start_sends_false_and_keeps_it_on_the_unit(
+    desk30: Path, api30: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _priced_take_two(desk30, api30)
+    api30.routes[("POST", VIDEO)] = SystemExit("HTTP 502: bad gateway")
+
+    with pytest.raises(SystemExit):
+        run_film(
+            desk30,
+            episode=2,
+            take_id="t2",
+            cause=CAUSE,
+            confirm_spend=True,
+            no_single_frame_start=True,
+        )
+
+    assert OFF_NOTE in capsys.readouterr().out
+    pending = load_production(desk30).pending[UNIT]
+    assert pending["single_frame_start"] is False and pending["job_id"] is None
+    _take_two_of_episode_two(api30)
+    # Resumed with no flag: the same key goes out with the same body.
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+    first, second = api30.posted(VIDEO)
+    assert first == second and second["single_frame_start"] is False
+    one, two = _video_keys(api30)
+    assert one == two
+
+
+def test_film_with_both_flags_sends_nothing(desk30: Path, api30: FakeApi) -> None:
+    _priced_take_two(desk30, api30)
+    with pytest.raises(CommandStopped, match="cannot go together"):
+        run_film(
+            desk30,
+            episode=2,
+            take_id="t2",
+            cause=CAUSE,
+            confirm_spend=True,
+            single_frame_start=True,
+            no_single_frame_start=True,
+        )
+    assert api30.posted(VIDEO) == []
+
+
+def test_the_off_flag_without_the_spend_yes_sends_nothing(
+    desk30: Path, api30: FakeApi
+) -> None:
+    _filmed_once(desk30)
+    with pytest.raises(
+        CommandStopped, match="--no-single-frame-start goes with --confirm-spend"
+    ):
+        run_film(
+            desk30, episode=2, take_id="t2", cause=CAUSE, no_single_frame_start=True
+        )
+    assert api30.calls == []
+
+
+@pytest.mark.parametrize(
+    ("first", "asked", "match"),
+    [
+        (
+            None,
+            {"no_single_frame_start": True},
+            "already sent without --no-single-frame-start",
+        ),
+        (
+            True,
+            {"no_single_frame_start": True},
+            "already sent with --single-frame-start",
+        ),
+        (
+            False,
+            {"single_frame_start": True},
+            "already sent with --no-single-frame-start",
+        ),
+    ],
+)
+def test_a_resumed_film_never_changes_its_opening(
+    desk30: Path, api30: FakeApi, first: bool | None, asked: dict[str, bool], match: str
+) -> None:
+    _priced_take_two(desk30, api30)
+    state = load_production(desk30)
+    unit: dict[str, object] = {"key": "k-1", "job_id": None}
+    if first is not None:
+        unit["single_frame_start"] = first
+    state.pending[UNIT] = unit
+    save_production(desk30, state)
+
+    with pytest.raises(CommandStopped, match=match):
+        run_film(
+            desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True, **asked
+        )
+
+    assert api30.posted(VIDEO) == []
+
+
+def test_an_old_pending_unit_without_the_field_resends_the_plain_body(
+    desk30: Path, api30: FakeApi
+) -> None:
+    _priced_take_two(desk30, api30)
+    state = load_production(desk30)
+    state.pending[UNIT] = {"key": "k-1", "job_id": None}
+    save_production(desk30, state)
+
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+
+    (body,) = api30.posted(VIDEO)
+    assert "single_frame_start" not in body
+    assert _video_keys(api30) == ["k-1"]
+
+
+def test_a_refused_off_film_stops_plainly_on_a_fresh_key(
+    desk30: Path, api30: FakeApi
+) -> None:
+    _priced_take_two(desk30, api30)
+    good = api30.routes[("POST", VIDEO)]
+    api30.routes[("POST", VIDEO)] = WRONG_LANE
+
+    with pytest.raises(CommandStopped, match="nothing was filmed or charged"):
+        run_film(
+            desk30,
+            episode=2,
+            take_id="t2",
+            cause=CAUSE,
+            confirm_spend=True,
+            no_single_frame_start=True,
+        )
+
+    assert UNIT not in load_production(desk30).pending
+    api30.routes[("POST", VIDEO)] = good
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+    first, second = api30.posted(VIDEO)
+    assert first["single_frame_start"] is False and "single_frame_start" not in second
+    one, two = _video_keys(api30)
+    assert one != two
+
+
+def test_step_with_no_single_frame_start_sends_false_and_keeps_it_on_the_key(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    set_phase(desk, "wait_spend", estimate_usd=1.2)
+    _ep1_take(api)
+
+    orchestrate.run_step(desk, confirm_spend=True, no_single_frame_start=True)
+
+    (body,) = api.posted(VIDEO)
+    assert body["single_frame_start"] is False
+    state = load_production(desk)
+    assert state.single_frame_start_off_keys == _video_keys(api)
+    assert state.single_frame_start_keys == []
+    assert OFF_NOTE in capsys.readouterr().err
+
+
+def test_a_resumed_step_sends_the_off_body_again_without_the_flag(
+    desk: Path, api: FakeApi
+) -> None:
+    set_phase(desk, "ready_video")
+    key = f"{load_production(desk).idempotency_prefix}-step-video"
+    set_phase(desk, "ready_video", single_frame_start_off_keys=[key])
+    _ep1_take(api)
+
+    orchestrate.run_step(desk)
+
+    (body,) = api.posted(VIDEO)
+    assert body["single_frame_start"] is False
+    assert _video_keys(api) == [key]
+
+
+@pytest.mark.parametrize(
+    ("kept", "asked", "match"),
+    [
+        (
+            "single_frame_start_off_keys",
+            {"single_frame_start": True},
+            "already sent with --no-single-frame-start",
+        ),
+        (
+            "single_frame_start_keys",
+            {"no_single_frame_start": True},
+            "already sent with --single-frame-start",
+        ),
+    ],
+)
+def test_a_resumed_step_never_changes_its_opening(
+    desk: Path, api: FakeApi, kept: str, asked: dict[str, bool], match: str
+) -> None:
+    set_phase(desk, "ready_video")
+    key = f"{load_production(desk).idempotency_prefix}-step-video"
+    set_phase(desk, "ready_video", **{kept: [key]})
+    _ep1_take(api)
+
+    with pytest.raises(RuntimeError, match=match):
+        orchestrate.run_step(desk, **asked)
+
+    assert api.posted(VIDEO) == []
+
+
+def test_a_plain_step_film_already_sent_is_not_resent_with_the_off_flag(
+    desk: Path, api: FakeApi
+) -> None:
+    set_phase(desk, "ready_video", video_enrolled_suffix="")
+    (desk / "ep01" / "api" / "16_video_request.json").write_text("{}", encoding="utf-8")
+    _ep1_take(api)
+
+    with pytest.raises(
+        RuntimeError, match="already sent once without --no-single-frame-start"
+    ):
+        orchestrate.run_step(desk, no_single_frame_start=True)
+
+    assert api.posted(VIDEO) == []
+
+
+def test_step_with_both_flags_sends_nothing(desk: Path, api: FakeApi) -> None:
+    set_phase(desk, "wait_spend", estimate_usd=1.2)
+    with pytest.raises(RuntimeError, match="cannot go together"):
+        orchestrate.run_step(
+            desk,
+            confirm_spend=True,
+            single_frame_start=True,
+            no_single_frame_start=True,
+        )
+    assert api.posted(VIDEO) == []
+
+
+def test_the_off_flag_on_another_step_sends_nothing(desk: Path, api: FakeApi) -> None:
+    set_phase(desk, "wait_spend", estimate_usd=1.2)
+    with pytest.raises(
+        RuntimeError, match="--no-single-frame-start goes with `step --confirm-spend`"
+    ):
+        orchestrate.run_step(desk, no_single_frame_start=True)
+    assert api.posted(VIDEO) == []
+
+
+def test_a_refused_off_step_goes_back_to_the_spend_yes(
+    desk: Path, api: FakeApi
+) -> None:
+    set_phase(desk, "wait_spend", estimate_usd=1.2)
+    _ep1_take(api)
+    api.routes[("POST", VIDEO)] = WRONG_LANE
+
+    with pytest.raises(RuntimeError, match="isn't available for this show or account"):
+        orchestrate.run_step(desk, confirm_spend=True, no_single_frame_start=True)
+
+    state = load_production(desk)
+    assert state.phase == "wait_spend"
+    assert state.single_frame_start_off_keys == []
+
+
+def test_an_old_production_file_loads_and_keeps_its_bytes(desk: Path) -> None:
+    path = production_path(desk)
+    save_production(desk, load_production(desk))  # settle what loading fills in
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw.pop("single_frame_start_off_keys", None)
+    path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    before = path.read_text(encoding="utf-8")
+
+    state = load_production(desk)
+    assert state.single_frame_start_off_keys == []
+    save_production(desk, state)
+    assert path.read_text(encoding="utf-8") == before

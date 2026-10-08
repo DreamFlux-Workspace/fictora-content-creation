@@ -873,17 +873,63 @@ def film_scope(
     return extra
 
 
-#: Printed when a film is sent with the trial opening (``--single-frame-start``).
+#: Printed when a film is sent with ``--single-frame-start`` (kept for compatibility: the
+#: single-picture opening is the server's default since 8 Oct 2026, so on a new story this is
+#: what the film does anyway; on a continuing series it opens every episode that way).
 SINGLE_FRAME_START_NOTE = (
-    "Opening each take on a single full picture instead of the storyboard (trial)"
+    "Opening each take on a single full picture instead of the storyboard"
 )
 
-#: The plain stop when the server will not take the trial opening (operator only, one filming lane).
+#: Printed when a film is sent with ``--no-single-frame-start`` (this film only).
+SINGLE_FRAME_START_OFF_NOTE = "Opening each take on the storyboard, not the single-picture default (--no-single-frame-start)"
+
+#: The plain stop when the server will not take an explicit opening choice (operator only).
 SINGLE_FRAME_START_REFUSED = (
-    "The trial opening (each take starting on a single full picture) isn't available for this show "
-    "or account, so nothing was filmed or charged. Film without --single-frame-start to open on the "
-    "storyboard as usual."
+    "The opening choice (--single-frame-start / --no-single-frame-start) isn't available for this "
+    "show or account, so nothing was filmed or charged. Film without the flag to use the server's "
+    "default opening."
 )
+
+
+def single_frame_start_choice(on: bool = False, off: bool = False) -> bool | None:
+    """Return the opening a film asks the server for: ``True``, ``False`` or ``None`` (the default).
+
+    Parameters
+    ----------
+    on
+        ``--single-frame-start`` (kept for compatibility; the default already opens on one picture
+        for a new story).
+    off
+        ``--no-single-frame-start``: this film opens on the storyboard.
+
+    Returns
+    -------
+    bool | None
+        ``None`` sends no field, so the server decides (founder decision, 8 Oct 2026).
+
+    Raises
+    ------
+    ValueError
+        Both flags were given.
+    """
+
+    if on and off:
+        raise ValueError(
+            "--single-frame-start and --no-single-frame-start cannot go together; nothing was sent"
+        )
+    if on:
+        return True
+    if off:
+        return False
+    return None
+
+
+def single_frame_start_flag(choice: bool | None) -> str:
+    """Return the flag that sends ``choice`` (empty for the default)."""
+
+    if choice is None:
+        return "no opening flag"
+    return "--single-frame-start" if choice else "--no-single-frame-start"
 
 
 #: The plain stop when a desk would send again a film first sent with ``--reference-mode``.
@@ -959,7 +1005,7 @@ def post_video_generation(
         return run.post("/v1/video-generations", body, idempotency_key=idempotency_key)
     except SystemExit as exc:
         text = str(exc.code)
-        if body.get("single_frame_start") and "single_frame_start" in text:
+        if "single_frame_start" in body and "single_frame_start" in text:
             # 403 on a creator session, 422 on a lane or run it does not apply
             # to, or an older deploy that does not know the field: one plain stop.
             code = _server_code(text)
@@ -1063,7 +1109,7 @@ def video_request_body(
     episode: int = 1,
     reroll_take_index: int | None = None,
     seed_attempt: int | None = None,
-    single_frame_start: bool = False,
+    single_frame_start: bool | None = None,
     desk: Path | None = None,
 ) -> dict[str, Any]:
     """Build the ``POST /v1/video-generations`` reuse body that films episode ``episode`` alone.
@@ -1086,9 +1132,11 @@ def video_request_body(
     reroll_take_index, seed_attempt
         A single-take re-film with a fresh seed.
     single_frame_start
-        The operator's trial opening (``--single-frame-start``): each take opens
-        on one full picture instead of the storyboard (fictora-drama #658).
-        Only true adds the field; off, the body is exactly as before.
+        The operator's opening choice (:func:`single_frame_start_choice`). ``None``
+        (no flag) sends no field: the server's default opens each take on one
+        full picture (fictora-drama #658; default since 8 Oct 2026), and the
+        body is exactly as before. ``True`` (``--single-frame-start``) or
+        ``False`` (``--no-single-frame-start``) is sent as given.
     desk
         The series desk: an existing show's music lock (:mod:`creation.music_lock`)
         decides ``music_by_finish``. ``None`` reads only the voice mode.
@@ -1119,9 +1167,9 @@ def video_request_body(
         # and an existing show whose music lock is ``finish`` (fictora-drama
         # show music lock; L-20261005-2). A new show's body is as before.
         extra = {**extra, "music_by_finish": True}
-    if single_frame_start:
-        # Trial only, never a default: the server pins it on the run.
-        extra = {**extra, "single_frame_start": True}
+    if single_frame_start is not None:
+        # Only an explicit flag sends it; the server pins the run's opening at admission.
+        extra = {**extra, "single_frame_start": bool(single_frame_start)}
     return reuse_generation_body(
         prompt=scene_prompt(spine, prompt),
         spine=spine,
@@ -1153,7 +1201,7 @@ def enrol_video(
     episode: int = 1,
     seed_attempt: int | None = None,
     expected_clips: int | None = None,
-    single_frame_start: bool = False,
+    single_frame_start: bool | None = None,
 ) -> dict[str, Any]:
     """Film episode ``episode``'s takes and collect them raw (hosted delivery only when asked and available).
 
@@ -1176,7 +1224,7 @@ def enrol_video(
     expected_clips
         How many takes the episode films (the desk's takes); the clips count only when the job lists that many.
     single_frame_start
-        Send the trial opening (:func:`video_request_body`); the caller keeps it
+        The opening choice (:func:`video_request_body`); the caller keeps it
         per key so a resume sends the same body.
 
     Returns
@@ -1241,6 +1289,7 @@ __all__ = [
     "OLD_SERVER_FILM",
     "REFERENCE_MODE_REMOVED_RESUME",
     "SINGLE_FRAME_START_NOTE",
+    "SINGLE_FRAME_START_OFF_NOTE",
     "SINGLE_FRAME_START_REFUSED",
     "SingleFrameStartRefused",
     "fetch_delivery_optional",
@@ -1248,6 +1297,8 @@ __all__ = [
     "finish_video_job",
     "measure_ep1_board_exposure",
     "post_video_generation",
+    "single_frame_start_choice",
+    "single_frame_start_flag",
     "server_films_one_episode",
     "spoken_language_tag",
     "start_draft",

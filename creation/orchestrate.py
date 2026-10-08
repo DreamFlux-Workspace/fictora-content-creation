@@ -1351,6 +1351,7 @@ def run_step(
     narrator_on_screen: Sequence[str] = (),
     ask: Callable[[str], str] | None = None,
     single_frame_start: bool = False,
+    no_single_frame_start: bool = False,
     _spend_yes: bool = False,
 ) -> StepResult:
     """Run the next automated API step for the current phase.
@@ -1386,10 +1387,15 @@ def run_step(
         Prompt function for the narrator question, or ``None`` when nobody
         can answer.
     single_frame_start
-        Trial opening for a comparison run (``--single-frame-start``, never a
-        default): taken with the spend yes (or on a desk waiting to film whose
-        film was not sent yet) and kept per film key
-        (:func:`_take_single_frame_start`), so a resumed ``step`` sends the same body.
+        ``--single-frame-start`` (kept for compatibility: the single-picture
+        opening is the server's default since 8 Oct 2026, so on a new story it
+        changes nothing): sends ``single_frame_start: true``.
+    no_single_frame_start
+        ``--no-single-frame-start``: this film opens each take on the
+        storyboard (``single_frame_start: false``). Either choice is taken with
+        the spend yes (or on a desk waiting to film whose film was not sent
+        yet) and kept per film key (:func:`_take_single_frame_start`), so a
+        resumed ``step`` sends the same body.
     _spend_yes
         Internal: this call follows the spend yes in the same run.
 
@@ -1422,18 +1428,29 @@ def run_step(
     paths: list[str] = []
 
     rerun = f"fictora-produce step --desk {desk}"
-    if single_frame_start and not (
+    try:
+        choice = stages.single_frame_start_choice(
+            single_frame_start, no_single_frame_start
+        )
+    except ValueError:
+        run.client.close()
+        raise RuntimeError(
+            "--single-frame-start and --no-single-frame-start cannot go together; nothing was sent."
+        ) from None
+    if choice is not None and not (
         (state.phase == "wait_spend" and confirm_spend) or state.phase == "ready_video"
     ):
         run.client.close()
         raise RuntimeError(
-            "--single-frame-start goes with `step --confirm-spend` at the spend yes "
+            f"{stages.single_frame_start_flag(choice)} goes with `step --confirm-spend` at the spend yes "
             f"(this desk is at {state.phase}); nothing was sent."
         )
-    if single_frame_start and state.phase == "ready_video":
+    if choice is not None and state.phase == "ready_video":
         # Recorded under the key `_film` sends (its prefix follows the phase).
         try:
-            _take_single_frame_start(desk, state, run, spend_yes=_spend_yes)
+            _take_single_frame_start(
+                desk, state, run, spend_yes=_spend_yes, choice=choice
+            )
         except RuntimeError:
             run.client.close()
             raise
@@ -1688,6 +1705,7 @@ def run_step(
                     desk,
                     confirm_spend=False,
                     single_frame_start=single_frame_start,
+                    no_single_frame_start=no_single_frame_start,
                     _spend_yes=True,
                 )
             voices = ""
@@ -2236,24 +2254,42 @@ def _take_single_frame_start(
     run: DramaApiRunSession,
     *,
     spend_yes: bool = False,
+    choice: bool = True,
 ) -> None:
-    """Record the operator's trial opening on the film key ``step`` is about to send (saved).
+    """Record the operator's opening choice on the film key ``step`` is about to send (saved).
 
-    A key already recorded keeps it. Right after the spend yes the film is new,
-    so the key is recorded. On a desk already waiting to film, a film this step
-    may have sent without it (its request is on the desk under the same retry
-    suffix) is never sent again with a different body under its key.
+    ``choice`` ``True`` is ``--single-frame-start`` (kept in
+    ``single_frame_start_keys``), ``False`` is ``--no-single-frame-start``
+    (kept in ``single_frame_start_off_keys``). A key already recorded with the
+    same choice keeps it; one recorded with the other choice is refused. Right
+    after the spend yes the film is new, so the key is recorded. On a desk
+    already waiting to film, a film this step may have sent without the choice
+    (its request is on the desk under the same retry suffix) is never sent
+    again with a different body under its key.
 
     Raises
     ------
     RuntimeError
-        The film may already have gone out without the trial opening.
+        The film may already have gone out with another opening.
     """
 
     ep = state.episode_ordinal
     key = stages.video_enrol_key(run.prefix, ep, state.video_idempotency_suffix)
-    if key in state.single_frame_start_keys:
+    flag = stages.single_frame_start_flag(choice)
+    keys = (
+        state.single_frame_start_keys if choice else state.single_frame_start_off_keys
+    )
+    others = (
+        state.single_frame_start_off_keys if choice else state.single_frame_start_keys
+    )
+    if key in keys:
         return
+    if key in others:
+        raise RuntimeError(
+            f"Episode {ep}'s film was already sent with {stages.single_frame_start_flag(not choice)}, so "
+            "`step` carries on the same way (a film key never goes out with a different body). "
+            "Run `step` without the flag to finish it."
+        )
     sent = api_dir_for_episode(desk, ep) / "16_video_request.json"
     if (
         not spend_yes
@@ -2261,11 +2297,11 @@ def _take_single_frame_start(
         and sent.is_file()
     ):
         raise RuntimeError(
-            f"Episode {ep}'s film was already sent once without --single-frame-start, so `step` carries on "
-            "the same way (a film key never goes out with a different body). The trial opening is taken at "
-            "the spend yes: `step --confirm-spend --single-frame-start`."
+            f"Episode {ep}'s film was already sent once without {flag}, so `step` carries on "
+            "the same way (a film key never goes out with a different body). The opening choice is taken at "
+            f"the spend yes: `step --confirm-spend {flag}`."
         )
-    state.single_frame_start_keys.append(key)
+    keys.append(key)
     save_production(desk, state)
 
 
@@ -2307,10 +2343,15 @@ def _film(
             # Legacy: this key was sent with the removed --reference-mode trial and no admitted
             # job is on the desk to pick up. Never send it again with another body.
             raise RuntimeError(stages.REFERENCE_MODE_REMOVED_RESUME)
-        # Only a key the operator chose it for (kept across a resume); never a default.
-        trial = key in state.single_frame_start_keys
-        if trial:
+        # Only a key the operator chose a flag for (kept across a resume); no flag sends no
+        # field and the server's default opening applies (single picture, 8 Oct 2026).
+        trial: bool | None = None
+        if key in state.single_frame_start_keys:
+            trial = True
             print(f"[film] {stages.SINGLE_FRAME_START_NOTE}", file=sys.stderr)
+        elif key in state.single_frame_start_off_keys:
+            trial = False
+            print(f"[film] {stages.SINGLE_FRAME_START_OFF_NOTE}", file=sys.stderr)
         state.video_enrolled_suffix = state.video_idempotency_suffix
         save_production(desk, state)
         try:
@@ -2334,14 +2375,19 @@ def _film(
             )
         except stages.SingleFrameStartRefused as exc:
             # Nothing was admitted or charged: forget the choice and go back to
-            # the spend yes, so `step --confirm-spend` films on the storyboard.
-            state.single_frame_start_keys.remove(key)
+            # the spend yes, so `step --confirm-spend` films with the server's default.
+            for kept in (
+                state.single_frame_start_keys,
+                state.single_frame_start_off_keys,
+            ):
+                if key in kept:
+                    kept.remove(key)
             state.video_enrolled_suffix = None
             state.phase = "wait_spend"
             save_production(desk, state)
             _note(
                 _episode_dir(desk, ep),
-                "Filming refused, nothing charged: trial opening not available.",
+                "Filming refused, nothing charged: opening choice not available.",
             )
             raise RuntimeError(str(exc.code)) from None
         raw = result["raw_scenes"]
