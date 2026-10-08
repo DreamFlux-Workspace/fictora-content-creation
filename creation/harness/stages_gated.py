@@ -12,6 +12,7 @@ from creation.harness.http_util import (
     HOSTED_POST_OFF_HINT,
     api_error_text,
     describe_job_error,
+    server_already_retried,
 )
 from creation import stylised_only
 from creation.harness.video_enrol_errors import server_refused_episode_ordinal_field
@@ -447,6 +448,8 @@ def _retryable_stall(plan: Mapping[str, Any]) -> bool:
         plan.get("status") not in {"completed", "queued", "running", None, ""}
         and _terminal_error_code(dict(plan)) == "authoring_stalled"
         and error.get("retryable") is True
+        # The server already wrote it twice (L-20261001-12): never a third on our own.
+        and not server_already_retried(plan)
     )
 
 
