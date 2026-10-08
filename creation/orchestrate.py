@@ -1344,6 +1344,8 @@ def run_step(
     narrator_heard_only: Sequence[str] = (),
     narrator_on_screen: Sequence[str] = (),
     ask: Callable[[str], str] | None = None,
+    single_frame_start: bool = False,
+    _spend_yes: bool = False,
 ) -> StepResult:
     """Run the next automated API step for the current phase.
 
@@ -1377,6 +1379,13 @@ def run_step(
     ask
         Prompt function for the narrator question, or ``None`` when nobody
         can answer.
+    single_frame_start
+        Trial opening for a comparison run (``--single-frame-start``, never a
+        default): taken with the spend yes (or on a desk waiting to film whose
+        film was not sent yet) and kept per film key
+        (:func:`_take_single_frame_start`), so a resumed ``step`` sends the same body.
+    _spend_yes
+        Internal: this call follows the spend yes in the same run.
 
     Returns
     -------
@@ -1407,6 +1416,21 @@ def run_step(
     paths: list[str] = []
 
     rerun = f"fictora-produce step --desk {desk}"
+    if single_frame_start and not (
+        (state.phase == "wait_spend" and confirm_spend) or state.phase == "ready_video"
+    ):
+        run.client.close()
+        raise RuntimeError(
+            "--single-frame-start goes with `step --confirm-spend` at the spend yes "
+            f"(this desk is at {state.phase}); nothing was sent."
+        )
+    if single_frame_start and state.phase == "ready_video":
+        # Recorded under the key `_film` sends (its prefix follows the phase).
+        try:
+            _take_single_frame_start(desk, state, run, spend_yes=_spend_yes)
+        except RuntimeError:
+            run.client.close()
+            raise
     try:
         if state.spine_id and (
             state.phase in PAID_DRAWING_PHASES
@@ -1654,7 +1678,12 @@ def run_step(
                     raise RuntimeError(refused)
                 state.phase = "ready_video"
                 save_production(desk, state)
-                return run_step(desk, confirm_spend=False)
+                return run_step(
+                    desk,
+                    confirm_spend=False,
+                    single_frame_start=single_frame_start,
+                    _spend_yes=True,
+                )
             voices = ""
             if state.phase == "wait_script" and state.spine_id:
                 voices = voices_gate_text(
@@ -2195,6 +2224,45 @@ def foreign_warning(foreign: list[str]) -> str:
     )
 
 
+def _take_single_frame_start(
+    desk: Path,
+    state: ProductionState,
+    run: DramaApiRunSession,
+    *,
+    spend_yes: bool = False,
+) -> None:
+    """Record the operator's trial opening on the film key ``step`` is about to send (saved).
+
+    A key already recorded keeps it. Right after the spend yes the film is new,
+    so the key is recorded. On a desk already waiting to film, a film this step
+    may have sent without it (its request is on the desk under the same retry
+    suffix) is never sent again with a different body under its key.
+
+    Raises
+    ------
+    RuntimeError
+        The film may already have gone out without the trial opening.
+    """
+
+    ep = state.episode_ordinal
+    key = stages.video_enrol_key(run.prefix, ep, state.video_idempotency_suffix)
+    if key in state.single_frame_start_keys:
+        return
+    sent = api_dir_for_episode(desk, ep) / "16_video_request.json"
+    if (
+        not spend_yes
+        and state.video_enrolled_suffix == state.video_idempotency_suffix
+        and sent.is_file()
+    ):
+        raise RuntimeError(
+            f"Episode {ep}'s film was already sent once without --single-frame-start, so `step` carries on "
+            "the same way (a film key never goes out with a different body). The trial opening is taken at "
+            "the spend yes: `step --confirm-spend --single-frame-start`."
+        )
+    state.single_frame_start_keys.append(key)
+    save_production(desk, state)
+
+
 def _film(
     desk: Path,
     run: DramaApiRunSession,
@@ -2228,25 +2296,44 @@ def _film(
         ):
             print(warning, file=sys.stderr)
         print(f"[film] {next_take_voices_line(desk, run, before)}", file=sys.stderr)
+        key = stages.video_enrol_key(run.prefix, ep, state.video_idempotency_suffix)
+        # Only a key the operator chose it for (kept across a resume); never a default.
+        trial = key in state.single_frame_start_keys
+        if trial:
+            print(f"[film] {stages.SINGLE_FRAME_START_NOTE}", file=sys.stderr)
         state.video_enrolled_suffix = state.video_idempotency_suffix
         save_production(desk, state)
-        result = stages.enrol_video(
-            run,
-            spine_id=state.spine_id or "",
-            prompt=state.prompt,
-            preset_id=state.preset_id,
-            preset_version=state.preset_version,
-            caption_style=cfg.caption_style,
-            api_captions=cfg.api_captions,
-            video_lane=state.video_lane,
-            clip_duration_seconds=cfg.clip_duration_seconds,
-            cut_tempo=cfg.cut_tempo,
-            video_idempotency_suffix=state.video_idempotency_suffix,
-            poll_deadline_seconds=cfg.poll_video_deadline_seconds,
-            episode=ep,
-            seed_attempt=seed_attempt_for(desk, episode=ep),
-            expected_clips=expected,
-        )
+        try:
+            result = stages.enrol_video(
+                run,
+                spine_id=state.spine_id or "",
+                prompt=state.prompt,
+                preset_id=state.preset_id,
+                preset_version=state.preset_version,
+                caption_style=cfg.caption_style,
+                api_captions=cfg.api_captions,
+                video_lane=state.video_lane,
+                clip_duration_seconds=cfg.clip_duration_seconds,
+                cut_tempo=cfg.cut_tempo,
+                video_idempotency_suffix=state.video_idempotency_suffix,
+                poll_deadline_seconds=cfg.poll_video_deadline_seconds,
+                episode=ep,
+                seed_attempt=seed_attempt_for(desk, episode=ep),
+                expected_clips=expected,
+                single_frame_start=trial,
+            )
+        except stages.SingleFrameStartRefused as exc:
+            # Nothing was admitted or charged: forget the choice and go back to
+            # the spend yes, so `step --confirm-spend` films on the storyboard.
+            state.single_frame_start_keys.remove(key)
+            state.video_enrolled_suffix = None
+            state.phase = "wait_spend"
+            save_production(desk, state)
+            _note(
+                _episode_dir(desk, ep),
+                "Filming refused, nothing charged: trial opening not available.",
+            )
+            raise RuntimeError(str(exc.code)) from None
         raw = result["raw_scenes"]
         delivery = result.get("delivery")
     elif cfg.api_captions:

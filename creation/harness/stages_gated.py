@@ -869,6 +869,55 @@ def film_scope(
     return extra
 
 
+#: Printed when a film is sent with the trial opening (``--single-frame-start``).
+SINGLE_FRAME_START_NOTE = (
+    "Opening each take on a single full picture instead of the storyboard (trial)"
+)
+
+#: The plain stop when the server will not take the trial opening (operator only, one filming lane).
+SINGLE_FRAME_START_REFUSED = (
+    "The trial opening (each take starting on a single full picture) isn't available for this show "
+    "or account, so nothing was filmed or charged. Film without --single-frame-start to open on the "
+    "storyboard as usual."
+)
+
+
+class SingleFrameStartRefused(SystemExit):
+    """The server refused ``single_frame_start``; nothing was admitted or charged."""
+
+
+def video_enrol_key(prefix: str, episode: int, suffix: str = "") -> str:
+    """Return the idempotency key ``step`` films episode ``episode`` under.
+
+    Parameters
+    ----------
+    prefix
+        The run's key prefix.
+    episode
+        Episode ordinal.
+    suffix
+        The desk's retry suffix (``retry-video --new-paid-take``), or empty.
+
+    Returns
+    -------
+    str
+        ``<prefix>-video`` for episode 1, ``<prefix>-epNN-video`` after, plus the suffix.
+    """
+
+    base = f"{prefix}-video" if episode == 1 else f"{prefix}-ep{episode:02d}-video"
+    tail = (suffix or "").strip()
+    return f"{base}{tail}" if tail else base
+
+
+def _server_code(text: str) -> str | None:
+    """Return the refusal code the server named, when it is one of the two this option meets."""
+
+    for code in ("single_frame_start_operator_only", "video_generation_invalid"):
+        if code in text:
+            return code
+    return None
+
+
 def post_video_generation(
     run: DramaApiRunSession, body: dict[str, Any], *, idempotency_key: str, episode: int
 ) -> dict[str, Any]:
@@ -895,6 +944,13 @@ def post_video_generation(
         return run.post("/v1/video-generations", body, idempotency_key=idempotency_key)
     except SystemExit as exc:
         text = str(exc.code)
+        if body.get("single_frame_start") and "single_frame_start" in text:
+            # 403 on a creator session, 422 on a lane or run it does not apply
+            # to, or an older deploy that does not know the field: one plain stop.
+            code = _server_code(text)
+            raise SingleFrameStartRefused(
+                SINGLE_FRAME_START_REFUSED + (f" (server code: {code})" if code else "")
+            ) from None
         if server_refused_episode_ordinal_field(text, request_body=body):
             raise SystemExit(
                 f"{OLD_SERVER_FILM.format(episode=episode)} (server said: {text[:400]})"
@@ -992,6 +1048,7 @@ def video_request_body(
     episode: int = 1,
     reroll_take_index: int | None = None,
     seed_attempt: int | None = None,
+    single_frame_start: bool = False,
 ) -> dict[str, Any]:
     """Build the ``POST /v1/video-generations`` reuse body that films episode ``episode`` alone.
 
@@ -1012,6 +1069,10 @@ def video_request_body(
         Episode being filmed.
     reroll_take_index, seed_attempt
         A single-take re-film with a fresh seed.
+    single_frame_start
+        The operator's trial opening (``--single-frame-start``): each take opens
+        on one full picture instead of the storyboard (fictora-drama #658).
+        Only true adds the field; off, the body is exactly as before.
 
     Returns
     -------
@@ -1034,6 +1095,9 @@ def video_request_body(
         # kit lays the show's theme in finish, so the server asks the video
         # model for no music (fictora-drama music_by_finish; operator only).
         extra = {**extra, "music_by_finish": True}
+    if single_frame_start:
+        # Trial only, never a default: the server pins it on the run.
+        extra = {**extra, "single_frame_start": True}
     return reuse_generation_body(
         prompt=scene_prompt(spine, prompt),
         spine=spine,
@@ -1065,6 +1129,7 @@ def enrol_video(
     episode: int = 1,
     seed_attempt: int | None = None,
     expected_clips: int | None = None,
+    single_frame_start: bool = False,
 ) -> dict[str, Any]:
     """Film episode ``episode``'s takes and collect them raw (hosted delivery only when asked and available).
 
@@ -1086,6 +1151,9 @@ def enrol_video(
         A whole-episode re-film's compile attempt (the previous plus one); ``None`` on the first film.
     expected_clips
         How many takes the episode films (the desk's takes); the clips count only when the job lists that many.
+    single_frame_start
+        Send the trial opening (:func:`video_request_body`); the caller keeps it
+        per key so a resume sends the same body.
 
     Returns
     -------
@@ -1113,13 +1181,10 @@ def enrol_video(
         cut_tempo=cut_tempo,
         episode=episode,
         seed_attempt=seed_attempt,
+        single_frame_start=single_frame_start,
     )
     run.save("16_video_request.json", body)
-    idem_suffix = (video_idempotency_suffix or "").strip()
-    base = (
-        f"{run.prefix}-video" if episode == 1 else f"{run.prefix}-ep{episode:02d}-video"
-    )
-    idem = f"{base}{idem_suffix}" if idem_suffix else base
+    idem = video_enrol_key(run.prefix, episode, video_idempotency_suffix)
     job = post_video_generation(run, body, idempotency_key=idem, episode=episode)
     run.save("16_video_enrol.json", job)
     job_id = str(job["job_id"])
@@ -1150,6 +1215,9 @@ __all__ = [
     "enrol_video",
     "estimate_batch",
     "OLD_SERVER_FILM",
+    "SINGLE_FRAME_START_NOTE",
+    "SINGLE_FRAME_START_REFUSED",
+    "SingleFrameStartRefused",
     "fetch_delivery_optional",
     "film_scope",
     "finish_video_job",
@@ -1158,5 +1226,6 @@ __all__ = [
     "server_films_one_episode",
     "spoken_language_tag",
     "start_draft",
+    "video_enrol_key",
     "video_request_body",
 ]
