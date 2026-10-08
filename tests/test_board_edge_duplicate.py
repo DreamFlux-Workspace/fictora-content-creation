@@ -1,9 +1,11 @@
-"""The board gate prints the server's same-person-at-both-edges warning, with the free edit (L-20261006-9).
+"""The board gate prints the server's same-person-at-both-edges warning, calmly (L-20261006-9).
 
 Sweet Racket, 6 Oct 2026: the video model drew a character twice, facing
 himself from opposite edges; the take facts said so only after the paid take.
-The server now returns the risk on the board exposure route (fictora-drama
-``board_edge_risks``) and the kit prints it at the board gate. Warnings only.
+The server keeps a new show's people on one side before it draws and returns
+what is left on the board exposure route (fictora-drama ``board_edge_risks``,
+only on boards awaiting approval). Founder, 8 Oct 2026: one ``!!`` line per
+take with its redraw once; a stated walk across is one quiet information line.
 """
 
 from __future__ import annotations
@@ -43,36 +45,43 @@ def _exposure(*risks: dict) -> dict:
     }
 
 
-def test_a_risk_prints_the_message_the_fix_and_the_exact_edit() -> None:
-    lines = edge_duplicate_risk_lines(_exposure(RISK), desk="desks/sr", episode=3)
+def test_one_take_prints_one_line_and_its_redraw_once() -> None:
+    mira = {**RISK, "shot_index": 3, "who": "Mira", "cast_id": "cast_03"}
+    dev_again = {
+        **RISK,
+        "fix_frame_ordinal": 3,
+    }  # a second picture of shot 1: still one shot
+
+    lines = edge_duplicate_risk_lines(
+        _exposure(RISK, dev_again, mira), desk="desks/sr", episode=3
+    )
 
     assert lines == [
-        f"  !! t1 board: {RISK['message']} (warning only)",
-        f"     {RISK['how_to_fix']}",
-        "     fictora-produce edit --desk desks/sr --episode 3 --frame 2 "
-        "--set 'subject_blocking.1.frame_position=\"middle plane at frame right\"'   "
-        "then fictora-produce redraw-board --desk desks/sr --episode 3 --take t1 --cause 'one side per shot'",
+        "  !! t1 board: 2 shots may show a character twice (shot 1: Dev; shot 3: Mira). "
+        'Fix: redraw t1 with "keep each character on one side within a shot" (warning only)',
+        "     fictora-produce redraw-board --desk desks/sr --episode 3 --take t1 "
+        '--note "keep each character on one side within a shot"',
     ]
 
 
-def test_a_risk_with_no_single_field_prints_no_command() -> None:
-    risk = {**RISK, "fix_frame_ordinal": None, "fix_field": None, "fix_value": None}
+def test_one_shot_reads_in_the_singular() -> None:
+    (line, _command) = edge_duplicate_risk_lines(_exposure(RISK), desk="d", episode=1)
 
-    lines = edge_duplicate_risk_lines(_exposure(risk), desk="d", episode=1)
+    assert line.startswith(
+        "  !! t1 board: 1 shot may show a character twice (shot 1: Dev)."
+    )
 
-    assert len(lines) == 2 and "edit --desk" not in "\n".join(lines)
 
+def test_a_stated_walk_is_one_quiet_information_line() -> None:
+    walk = {**RISK, "shot_index": 2, "who": "The statue", "moves": True}
 
-def test_a_quote_in_the_value_stays_one_shell_word() -> None:
-    risk = {**RISK, "fix_value": "by Mara's door, frame right"}
-
-    (command,) = [
-        line
-        for line in edge_duplicate_risk_lines(_exposure(risk), desk="d", episode=1)
-        if "edit" in line
+    assert edge_duplicate_risk_lines(_exposure(walk), desk="d", episode=1) == [
+        "  t1 board: a character walks across the frame (shot 2: The statue); watch that shot in the take. Information only."
     ]
-
-    assert "by Mara'\\''s door" in command
+    assert not any(
+        "!!" in line
+        for line in edge_duplicate_risk_lines(_exposure(walk), desk="d", episode=1)
+    )
 
 
 def test_only_the_boards_just_drawn_and_nothing_from_an_older_server() -> None:
@@ -101,6 +110,9 @@ def test_the_board_gate_prints_it_after_the_shot_list(desk: Path, api: FakeApi) 
 
     result = orchestrate.run_step(desk, confirm_spend=True)
 
-    assert f"!! t1 board: {RISK['message']} (warning only)" in result.message
-    assert "--frame 2 --set 'subject_blocking.1.frame_position=" in result.message
-    assert result.message.index("row 1:") < result.message.index("!! t1 board: Shot 1")
+    assert (
+        "!! t1 board: 1 shot may show a character twice (shot 1: Dev)."
+        in result.message
+    )
+    assert result.message.count("redraw-board --desk") >= 1
+    assert result.message.index("row 1:") < result.message.index("!! t1 board: 1 shot")
