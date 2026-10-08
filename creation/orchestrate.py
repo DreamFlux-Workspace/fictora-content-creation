@@ -23,7 +23,7 @@ from typing import Any, Sequence
 
 import httpx
 
-from creation.plate_traits_print import plate_traits_text
+from creation.plate_traits_print import plate_traits_text, wait_for_plate_traits
 from creation.authoring_warnings import authoring_warnings, for_episode, warning_lines
 from creation.brief_lines import brief_vs_spine_lines
 from creation.new_cast import cast_owing_pictures
@@ -2599,6 +2599,16 @@ def reapprove_plates_hint(desk: Path | str = "<desk>") -> str:
     )
 
 
+def _with_sheet_traits(
+    desk: Path, run: Any, spine_id: str, spine: dict[str, Any]
+) -> dict[str, Any]:
+    """The story once the server's background sheet read has landed, or after a short wait (reads only)."""
+
+    if is_legacy(desk):
+        return spine
+    return dict(wait_for_plate_traits(lambda: run.spine(spine_id), spine))
+
+
 def reapprove_plates(desk: Path, *, path: Path | None = None) -> StepResult:
     """Send the plates approval again on the story's current version, outside ``wait_plates``.
 
@@ -2646,6 +2656,7 @@ def reapprove_plates(desk: Path, *, path: Path | None = None) -> StepResult:
     run = _open_run(desk, state)
     try:
         spine = stages.approve_cast(run, spine_id=state.spine_id or "", tag=tag)
+        spine = _with_sheet_traits(desk, run, state.spine_id or "", spine)
     finally:
         run.client.close()
     save_spine_snapshot(desk, ep, spine)
@@ -2668,7 +2679,7 @@ def reapprove_plates(desk: Path, *, path: Path | None = None) -> StepResult:
         )
     else:
         follow = "Next: `fictora-produce step`."
-    traits = plate_traits_text(spine)
+    traits = plate_traits_text(spine, wait_note=not is_legacy(desk))
     return StepResult(
         state.phase,
         f"Plates approved again on spine_version {version} ($0, nothing drawn). {follow}"
@@ -2823,9 +2834,13 @@ def approve_gate(
             record = approve_series_gate(
                 desk, "plates", path=str(path) if path else None
             )
-            # What each approved sheet shows, read once on the server, and where
-            # it disagrees with the card (free; plate_traits_print).
-            traits = plate_traits_text(approved_spine)
+            # What each approved sheet shows, read once on the server in the
+            # background, and where it disagrees with the card (free;
+            # plate_traits_print). A short wait for the read, never a hold.
+            approved_spine = _with_sheet_traits(
+                desk, run, state.spine_id or "", approved_spine
+            )
+            traits = plate_traits_text(approved_spine, wait_note=not is_legacy(desk))
             traits = f"\n{traits}" if traits else ""
             # A character a later episode brought in is approved after that
             # episode's script yes: go on to its boards.
