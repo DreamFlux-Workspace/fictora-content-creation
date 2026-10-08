@@ -516,3 +516,29 @@ def test_a_refused_trial_step_stops_plainly_and_goes_back_to_the_spend_yes(
     orchestrate.run_step(desk, confirm_spend=True)
     first, second = api.posted(VIDEO)
     assert first["reference_mode"] is True and "reference_mode" not in second
+
+
+# --- finish: a reference take on a locked show speaks in model voices, so its lines are checked ---
+
+
+def test_a_reference_take_on_a_locked_show_is_line_checked_and_the_stop_says_why() -> (
+    None
+):
+    """The server films a reference run with the model's voices (no dialogue track): the take facts say
+    ``native``, so ``finish`` runs the #169 line check on it, and the stop names the reason per take."""
+
+    from creation.post import line_check as lc
+    from creation.post.soundtrack import soundtrack_from
+
+    facts = {
+        "take_facts": {
+            "soundtrack": {"mode": "native", "reason": "reference lane", "lines": []}
+        }
+    }
+    assert soundtrack_from(facts).target_audio is False
+
+    check = lc.LineCheck(take_id="t2", faults=[lc.LineFault(kind="missing", line=None)])
+    message = lc.stop_message(check, desk="D", episode=1, take_id="t2")
+    assert "on this show (model voices)" not in message
+    assert "--reference-mode trial take" in message
+    assert "fictora-produce film --desk D --episode 1 --take t2" in message

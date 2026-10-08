@@ -788,8 +788,9 @@ def stop_message(check: LineCheck, *, desk: str, episode: int, take_id: str) -> 
     """The plain stop: the take, each fault, what was heard, and the re-film command."""
 
     rows = [
-        f"ep{episode:02d} {take_id}: the take does not say its script. The video model writes the words "
-        "itself on this show (model voices), and this take got them wrong:"
+        f"ep{episode:02d} {take_id}: the take does not say its script. This take was filmed in the video "
+        "model's own voices (model voices: a model-voice show, or a --reference-mode trial take on a show "
+        "with locked voices), so the model wrote the words itself, and it got them wrong:"
     ]
     rows += [f"  - {fault.describe()}" for fault in check.faults]
     cause = "; ".join(fault.describe() for fault in check.faults)[:180].replace(
