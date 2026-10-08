@@ -42,7 +42,7 @@ from typing import Any, TextIO
 
 from creation.ops.folder import next_versioned_path
 from creation.patch_refusal import LINE_DELIVERIES
-from creation.rules_epoch import continuing_fix
+from creation.rules_epoch import continuing_fix, is_legacy
 
 #: Stored as ``epNN/pitch-vN.json``.
 PITCH_STEM = "pitch"
@@ -911,7 +911,8 @@ def pitch_gate_refusal(
     ``redraw-plate`` and ``film --confirm-spend`` ask it before they send
     anything, so a pitch rewritten mid-episode holds every paid draw until its
     new yes. ``stage`` names what is held, ``rerun`` what to run after the yes.
-    Desks created before 6 Oct 2026 are never held (rules epoch).
+    Desks created before 6 Oct 2026 are never held: from their Group B episode
+    on they get a reminder on stderr instead (rules epoch; founder 8 Oct 2026).
     """
 
     desk = Path(desk).expanduser().resolve()
@@ -927,6 +928,17 @@ def pitch_gate_refusal(
         why = f"Episode {episode}'s pitch v{newest.version} changed after its yes."
     else:
         why = f"Episode {episode}'s pitch v{newest.version} has no yes yet."
+    if is_legacy(desk):
+        # A continuing desk is reminded, never held (founder decision 8 Oct 2026:
+        # "fixes apply but don't make it blocking").
+        print(
+            f"Reminder before {stage}: {why} The producer approves the idea before any picture is paid "
+            f"for: `fictora-produce pitch --desk {desk} --episode {episode} --file pitch.md`, then "
+            f"`fictora-produce approve --desk {desk} --gate pitch --episode {episode}`. Going ahead "
+            "(this show started before 6 Oct 2026, so the pitch card does not hold it).",
+            file=sys.stderr,
+        )
+        return None
     return (
         f"Stopped before {stage}. Nothing was sent.\n{why} The producer approves the idea before any "
         "picture is paid for: write the pitch card with them (throughline, the one charged situation, world "

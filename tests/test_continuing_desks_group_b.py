@@ -135,19 +135,24 @@ def test_per_word_timing_from_the_boundary_episode_only(
     )
 
 
-def test_the_pitch_card_holds_a_continuing_desk_from_the_boundary_episode_only(
-    tmp_path: Path,
+def test_the_pitch_card_reminds_a_continuing_desk_from_the_boundary_episode_only(
+    tmp_path: Path, capsys: Any
 ) -> None:
     desk = _old_desk(tmp_path, start=3)
     assert pitch_gate_refusal(desk, episode=2, stage="the plates") is None
-    refusal = pitch_gate_refusal(desk, episode=3, stage="the plates")
-    assert refusal is not None and "Episode 3 has no pitch card." in refusal
-    assert (
-        pitch_gate_refusal(
-            _old_desk(tmp_path, name="2026-09-26-off"), episode=3, stage="the plates"
-        )
-        is None
-    )
+    assert "Reminder" not in capsys.readouterr().err
+    # From the boundary: reminded, never held (founder decision 8 Oct 2026).
+    assert pitch_gate_refusal(desk, episode=3, stage="the plates") is None
+    err = capsys.readouterr().err
+    assert "Reminder before the plates: Episode 3 has no pitch card." in err
+    assert "Going ahead" in err
+    off = _old_desk(tmp_path, name="2026-09-26-off")
+    assert pitch_gate_refusal(off, episode=3, stage="the plates") is None
+    assert "Reminder" not in capsys.readouterr().err
+    # A new desk is still held.
+    new = init_series_desk(tmp_path / "new", "New", band="30s", episode_count=1)
+    refusal = pitch_gate_refusal(new, episode=1, stage="the plates")
+    assert refusal is not None and refusal.startswith("Stopped before the plates.")
 
 
 def test_the_command_proposes_past_every_started_episode_and_writes_only_with_apply(
