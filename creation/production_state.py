@@ -84,9 +84,10 @@ class ProductionState:
     #: a resume under the same key sends the same body. Left out of the file while empty,
     #: so a desk that never used the trial keeps its ``production.json`` as before.
     single_frame_start_keys: list[str] = field(default_factory=list)
-    #: Film keys ``step`` sends on the operator's reference lane (``--reference-mode``), priced
-    #: at the reference estimate (``estimate_usd``): a resume under the same key sends the same
-    #: body. Left out of the file while empty, like ``single_frame_start_keys``.
+    #: Legacy, read only: film keys ``step`` sent with the removed ``--reference-mode`` trial
+    #: (8 Oct 2026, a copy desk or two). Never added to any more; ``step`` refuses to send such a
+    #: key again (the server no longer accepts the body it was first sent with). Left out of the
+    #: file while empty, like ``single_frame_start_keys``.
     reference_mode_keys: list[str] = field(default_factory=list)
 
     def server_lane(self) -> tuple[str, str] | None:

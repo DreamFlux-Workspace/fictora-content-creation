@@ -157,13 +157,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         "was first sent with.",
     )
     step.add_argument(
-        "--reference-mode",
-        action="store_true",
-        help="Trial, for face-drift tests only (operator): film on the reference lane (board + cast plates) "
-        "at the reference price, fetched and printed before sending. Off by default; goes with "
-        "--confirm-spend, never with --single-frame-start; a resumed step keeps what the film was first sent with.",
-    )
-    step.add_argument(
         "--accept-notice",
         action="append",
         default=[],
@@ -465,7 +458,6 @@ def _run_command(args: argparse.Namespace) -> int:
                 narrator_on_screen=args.narrator_on_screen,
                 ask=interactive_ask(),
                 single_frame_start=args.single_frame_start,
-                reference_mode=args.reference_mode,
             )
             print(result.message)
             for path in result.paths:
