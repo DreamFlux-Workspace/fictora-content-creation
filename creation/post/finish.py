@@ -92,8 +92,10 @@ laid it under the voices, ``soundtrack.ambience.laid``), then ``room-tone`` (roo
 only when no ambience could be made, and a free check that each line is heard
 in its window), the bed ducked ``TARGET_AUDIO_DUCK_DB`` exactly in each line window,
 the effects snapped to cuts measured up to 2 s from the plan (each measured cut
-printed) and ducked under the line windows, captions timed on the line windows
-(no transcript). Its voices are never muted or replaced without
+printed) and ducked under the line windows, captions timed on the take's
+transcript (new desks; else on the line windows), each moved to where its voice
+starts (:mod:`creation.post.caption_timing`; legacy desks: the line windows,
+no transcript). Its voices are never muted or replaced without
 ``--over-locked-voices``. With no bed or no room tone the chain STOPS before
 the mix (``!! STOPPED``, exit 5): a voice-only take is never made deliverable.
 Facts without ``soundtrack`` (an older server) and native takes finish as before.
@@ -813,7 +815,10 @@ def _cut_held_head(
     master = loaded.resolve(desk, "master")
     if master is not None and master.with_suffix(".ass").is_file():
         known = True
-        cues = parse_ass_cues(master.with_suffix(".ass").read_text(encoding="utf-8"))
+        # Every event, the hook card and panels kept beside the captions included, as before (L-20261006-8).
+        cues = parse_ass_cues(
+            master.with_suffix(".ass").read_text(encoding="utf-8"), overlays=True
+        )
         starts += [c.start for c in cues]
     cut, why = head_cut(
         frames, fps, first_speech=min(starts) if starts else None, known=known
@@ -2290,10 +2295,13 @@ def run_finish(
         if spine is None:
             return None, ""
         if locked and not treated_voice(source):
-            return (
-                None,
-                "timed on the take facts' line windows (the locked-voice dialogue track; no transcript)",
-            )
+            if legacy_rules():
+                # Frozen for desks created before 2026-10-06: timed on the planned windows, as it always was.
+                return (
+                    None,
+                    "timed on the take facts' line windows (the locked-voice dialogue track; no transcript)",
+                )
+            return locked_caption_words()
         if treated_voice(source):
             words = newest_versioned(takes, f"{base}-revoice-words") or saved_words(
                 desk, episode, take_id
@@ -2363,6 +2371,41 @@ def run_finish(
             return None, f"no transcript ({type(exc).__name__}: {exc})"[:300]
         return made, f"transcript made on the server: `{made.name}`{via}"
 
+    def locked_caption_words() -> tuple[Path | None, str]:
+        """A locked-voice take's transcript (new desks, L-20261005-6): saved, else made once on the server.
+
+        The take facts' windows are where the server placed each line, not where
+        its voice is; the transcript says where each word was heard. Made once
+        per take (``/v1/transcripts``, $0, cached by the take's content), the
+        same transcript the line check and ``review`` read. With none, the lines
+        are timed on their windows, each moved to where its voice starts.
+        """
+
+        from creation.post.review import server_transcript, take_words
+
+        words, why = take_words(desk, episode, take_id, source)
+        if words is None:
+            try:
+                words = (transcriber or server_transcript)(desk, episode, take_id)
+            except (
+                ValueError, RuntimeError, OSError, KeyError, httpx.HTTPError, SystemExit,
+            ) as exc:  # fmt: skip
+                # No stored URL, no server, no token (SystemExit from the credentials): said, never a crash.
+                return None, (
+                    "timed on the take facts' line windows, each moved to where its voice starts "
+                    f"(no transcript: {why}; none could be made: {type(exc).__name__}: {exc})"
+                )[:300]
+            how = f"transcript made on the server: `{words.name}`"
+        else:
+            how = f"transcript `{words.name}`"
+        if hand.voices or hand.mutes:
+            merged = with_hand_lines(
+                words, hand, next_versioned_path(takes, f"{base}-cap-timing", ".json")
+            )
+            how = f"{how} with the hand lines (`{merged.name}`)"
+            words = merged
+        return words, f"{how}; a line it did not hear keeps its take-facts window"
+
     def laid_voice_lines() -> tuple[list[tuple[CaptionLine, Span]], list[str]]:
         """Each ``--voice`` line with its words and where it plays, and a ``!!`` note per one with no words."""
 
@@ -2386,6 +2429,27 @@ def run_finish(
 
     # The captions this run burned (their .ass), for the hook line to stay clear of.
     burned_captions: dict[str, Path] = {}
+
+    def keep_captions_beside(drawn: Path, overlay_ass: Path) -> None:
+        """``drawn``'s .ass: the captions under it plus the overlay just burned (a re-burn keeps both)."""
+
+        from creation.post.master_captions import write_beside
+
+        under = burned_captions.get("beside") or burned_captions.get("ass")
+        try:
+            burned_captions["beside"] = write_beside(
+                drawn, captions=under, overlay=overlay_ass
+            )
+        except ValueError as exc:
+            # Never a master without its captions: keep them alone beside it, said.
+            if under is not None:
+                drawn.with_suffix(".ass").write_text(
+                    under.read_text(encoding="utf-8"), encoding="utf-8"
+                )
+                burned_captions["beside"] = drawn.with_suffix(".ass")
+            note = f"!! `{drawn.name}`'s .ass keeps the captions without `{overlay_ass.name}`: {exc}"
+            print(f"[captions] {note}", file=out, flush=True)
+            append_run_note(run_dir, f"Finish · captions: {note}")
 
     def do_captions(take: Path) -> StepReport:
         if style == "none":
@@ -2414,6 +2478,16 @@ def run_finish(
             )  # fmt: skip
             for note in letterbox_notes:
                 print(f"[captions] {note}", file=out, flush=True)
+        floors: dict[str, float] = {}
+        if spans is not None and not legacy_rules():
+            # New desks (L-20261005-6): each line goes up where its voice starts, never on the plan alone.
+            from creation.post import caption_timing
+
+            starts = caption_timing.voice_starts(source, soundtrack.lines)
+            spans = caption_timing.moved_spans(spans, starts)
+            floors = caption_timing.voice_floors(starts)
+            letterbox_notes.append(caption_timing.summary(starts))
+            print(f"[captions] {letterbox_notes[-1]}", file=out, flush=True)
         try:
             captioned = caption_take(
                 desk,
@@ -2446,6 +2520,8 @@ def run_finish(
                 take_index=thoughts.take_number(take_id),
                 line_spans=spans,
                 style=style,
+                line_spans_after_words=spans is not None and words_json is not None,
+                voice_floors=floors or None,
                 **(
                     {"layout": "letterbox", "caption_colour": colour_name,
                      "italic_overrides": overrides}
@@ -2580,7 +2656,8 @@ def run_finish(
 
             pic = layout().picture
             picture = (pic.x, pic.y, pic.width, pic.height)
-        ass = next_versioned_path(takes, f"{base}-panels", ".ass")
+        # Burned from its own -overlay file: the .ass beside the video keeps the captions too (L-20261006-8).
+        ass = next_versioned_path(takes, f"{base}-panels-overlay", ".ass")
         drawn = burn_panels(
             panels,
             take,
@@ -2588,6 +2665,7 @@ def run_finish(
             next_versioned_path(takes, f"{base}-panels", ".mp4"),
             picture=picture,
         )
+        keep_captions_beside(drawn, ass)
         detail = f"{len(panels)} panel(s): " + "; ".join(
             panel.describe() for _, _, panel in panels
         )
@@ -2606,10 +2684,12 @@ def run_finish(
 
             cues = parse_ass_cues(burned_captions["ass"].read_text(encoding="utf-8"))
             overlay = clear_of_captions(overlay, [(c.start, c.end) for c in cues])
-        ass = next_versioned_path(takes, f"{base}-hook", ".ass")
+        # Burned from its own -overlay file: the .ass beside the video keeps the captions too (L-20261006-8).
+        ass = next_versioned_path(takes, f"{base}-hook-overlay", ".ass")
         drawn = burn(
             overlay, take, ass, next_versioned_path(takes, f"{base}-hook", ".mp4")
         )
+        keep_captions_beside(drawn, ass)
         append_run_note(
             run_dir,
             f"Hook line -> `{drawn.name}` (`{ass.name}`): {overlay.describe()}",

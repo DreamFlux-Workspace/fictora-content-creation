@@ -281,7 +281,8 @@ def test_finish_keeps_a_lowered_hook_line_off_the_captions_it_burned(
     hook = next(s for s in result.steps if s.step == "hook-line")
     assert hook.status == "ran"
     assert "kept at the top: a caption is on screen under it" in hook.detail
-    drawn = sorted((post_desk / "ep01" / "takes").glob("*-hook-v*.ass"))[-1]
+    # The hook card's own burn file (the .ass beside the hook video also holds the captions, L-20261006-8).
+    drawn = sorted((post_desk / "ep01" / "takes").glob("*-hook-overlay-v*.ass"))[-1]
     assert _pos(drawn.read_text(encoding="utf-8"))[0] == "8"
 
 

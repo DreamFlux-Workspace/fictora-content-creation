@@ -83,6 +83,7 @@ from creation.captions import (
 )
 from creation.post.faces import Detector, detector_for, face_track, nearest_scores
 from creation.post.finish_record import FinishRecord, finish_records, record_for_file
+from creation.post.master_captions import is_overlay_event
 from creation.post.hook_overlay import (
     HookDecision,
     HookOverlay,
@@ -178,7 +179,7 @@ class TakeSource:
         return body
 
 
-def parse_ass_cues(text: str) -> list[Cue]:
+def parse_ass_cues(text: str, *, overlays: bool = False) -> list[Cue]:
     """The caption events of an ASS file as cues (style ``Italic`` -> italic; override tags dropped).
 
     A Bold caption (:mod:`creation.caption_bold`) is read as what it shows:
@@ -189,11 +190,15 @@ def parse_ass_cues(text: str) -> list[Cue]:
     ----------
     text
         The ``.ass`` file text.
+    overlays
+        Also read the events drawn over the captions (a finished master's hook
+        card or panels, :mod:`creation.post.master_captions`). Default: the
+        captions only.
 
     Returns
     -------
     list[Cue]
-        Every ``Dialogue`` event, in file order.
+        Every caption ``Dialogue`` event, in file order.
     """
 
     def seconds(stamp: str) -> float:
@@ -206,6 +211,9 @@ def parse_ass_cues(text: str) -> list[Cue]:
             continue
         fields_ = line.split(":", 1)[1].split(",", 9)
         if len(fields_) < 10:
+            continue
+        if not overlays and is_overlay_event(fields_):
+            # The hook card or a panel kept beside the master's captions: drawn, but not a caption.
             continue
         raw = fields_[9]
         # A Bold caption lays its whole chunk out and hides the words not yet said: keep what shows.
