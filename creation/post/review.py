@@ -309,7 +309,7 @@ def measure_true_peak(path: Path) -> float:
     result = subprocess.run(
         [ffmpeg_bin(), "-hide_banner", "-nostats", "-i", str(path), "-vn", "-af", "ebur128=peak=true",
          "-f", "null", "-"],
-        capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
     )  # fmt: skip
     if result.returncode != 0:
         raise MediaToolError(
@@ -797,7 +797,7 @@ def _iter_frames(
     proc = subprocess.Popen(
         [ffmpeg_bin(), "-nostdin", "-v", "error", "-i", str(take), "-vf", f"{region}scale={width}:{height}",
          "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )  # fmt: skip
     size = width * height * 3
     assert proc.stdout is not None

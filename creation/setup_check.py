@@ -125,7 +125,11 @@ def check_uv(which: Callable[[str], str | None] = shutil.which) -> Check:
         )
     try:
         version = subprocess.run(
-            [path, "--version"], capture_output=True, text=True, timeout=30
+            [path, "--version"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=30,
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError) as exc:
         return Check("uv", False, f"{path} does not run ({exc})")
@@ -156,6 +160,7 @@ def check_tools(which: Callable[[str], str | None] = shutil.which) -> list[Check
     try:
         listing = subprocess.run(
             [ffmpeg, "-hide_banner", "-filters"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=60,

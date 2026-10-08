@@ -200,7 +200,7 @@ def render_caption_preview(
         result = subprocess.run(
             [ffmpeg_bin, "-v", "error", "-y", "-i", str(image), "-filter_complex", graph,
              "-frames:v", "1", str(out)],
-            capture_output=True, text=True,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
         )  # fmt: skip
         if result.returncode != 0:
             raise RuntimeError(

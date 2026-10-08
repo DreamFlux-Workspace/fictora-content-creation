@@ -268,7 +268,7 @@ def _pcm(path: Path) -> npt.NDArray[np.float64]:
     run = subprocess.run(
         [ffmpeg_bin(), "-v", "error", "-i", str(path), "-t", f"{_COMPARE_SECONDS + _MAX_LAG_SECONDS:.3f}",
          "-ac", "1", "-ar", str(_RATE), "-f", "f32le", "-"],
-        capture_output=True, check=False,
+        stdin=subprocess.DEVNULL, capture_output=True, check=False,
     )  # fmt: skip
     if run.returncode != 0:
         raise ValueError(
@@ -634,7 +634,7 @@ def fetch_original(
             [ffmpeg_bin(), "-v", "error", "-i", str(held_take), "-i", str(out), "-filter_complex",
              f"[0:v]{side}[a];[1:v]{side}[b];[a][b]hstack=inputs=2[v]", "-map", "[v]", "-an",
              "-c:v", "libx264", "-pix_fmt", "yuv420p", str(compare)],
-            capture_output=True, check=False,
+            stdin=subprocess.DEVNULL, capture_output=True, check=False,
         )  # fmt: skip
         if run.returncode != 0:
             raise ValueError(

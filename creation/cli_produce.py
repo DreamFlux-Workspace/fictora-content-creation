@@ -588,7 +588,9 @@ def _run_command(args: argparse.Namespace) -> int:
                 "Human QC: watch the captioned take. Wrong timing? Re-run with --line-start / --line-end per line."
             )
             if not args.no_open and sys.platform == "darwin":
-                subprocess.run(["open", str(result.video)], check=False)
+                subprocess.run(
+                    ["open", str(result.video)], stdin=subprocess.DEVNULL, check=False
+                )
             return 0
         if args.command == "cancel-job":
             payload, lines = cancel_video_job(args.desk, args.job_id)

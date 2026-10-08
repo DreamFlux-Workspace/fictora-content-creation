@@ -12,7 +12,7 @@ window subtracts ``trim.start_s`` and drops what falls outside it.
 
 The kit does the same as the server's join:
 
-- ``trim --start S --end E`` / ``--reset`` sets the handles (preview first,
+- ``trim --start S --end E`` (or one end alone) / ``--reset`` sets the handles (preview first,
   ``--preview`` sends nothing), then saves the take facts again so ``finish``
   reads the new ``trim`` (:func:`run_take_trim`).
 - ``finish`` lays every effect, line duck and caption on the take as filmed,
@@ -693,7 +693,8 @@ def run_take_trim(
     take_id
         ``t1`` ...
     start_s, end_s
-        The handles, seconds on the take as filmed (both, or neither with ``reset``).
+        The handles, seconds on the take as filmed (either or both; neither with
+        ``reset``). The one not given stays where the take's handles are now.
     reset
         Back to the automatic handles.
     preview
@@ -722,10 +723,8 @@ def run_take_trim(
 
     desk = desk.expanduser().resolve()
     label = f"ep{episode:02d} {take_id}"
-    if reset == (start_s is not None or end_s is not None) or (
-        not reset and (start_s is None or end_s is None)
-    ):
-        return refused("give --start and --end together, or --reset alone")
+    if reset == (start_s is not None or end_s is not None):
+        return refused("give --start and/or --end, or --reset alone")
     where = take_coordinate(desk, episode, take_id)
     if where is None:
         return refused(f"{label}: no filmed clip on the desk (no video job to trim)")
@@ -756,7 +755,19 @@ def run_take_trim(
         print(f"  new:  the automatic handles ({auto})", file=out)
         body: dict[str, Any] = {"reset": True}
     else:
-        assert start_s is not None and end_s is not None
+        # One end alone moves only that end: the other stays where the take's handles are now
+        # (L-20261006-14), or the take's own start / end when the take facts carry no handles.
+        if start_s is None:
+            start_s = now.start_s if now is not None else 0.0
+            print(f"  --start not given: the start stays at {start_s:.3f} s", file=out)
+        if end_s is None:
+            end_s = now.end_s if now is not None else length
+            if end_s is None:
+                return refused(
+                    f"{label}: the take's length is unknown (no take facts, no raw take on the desk); "
+                    "give --end too"
+                )
+            print(f"  --end not given: the end stays at {end_s:.3f} s", file=out)
         start, end = _snap(start_s, rate), _snap(end_s, rate)
         if length is not None and abs(end_s - length) < 0.5 / rate:
             end = round(length, 3)

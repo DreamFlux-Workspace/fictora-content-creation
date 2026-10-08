@@ -412,6 +412,11 @@ def pause_text(
     for notice in notices:
         kind = str(notice.get("kind"))
         lines.append(f"  - {notice.get('message')}")
+        asked = " ".join(str(notice.get("asked_for") or "").split())
+        if asked:
+            # What in the brief set the notice off, so the operator can tell a made-up name
+            # from a real person (L-20261005-16).
+            lines.append(f"    Matched in the brief: {asked!r}.")
         if kind == STYLE_NOT_AVAILABLE:
             styles = notice.get("styles") or []
             listed = ", ".join(

@@ -42,6 +42,11 @@ from creation.post.sfx import SFX_GAIN_DB, SFX_SPEECH_DUCK_DB, SILENCE_DB
 MUTE_FADE_SECONDS = 0.03
 #: A dry voice line is levelled to this before it is laid in (unless ``@DB`` is given).
 VOICE_TARGET_LUFS = -18.0
+#: With the harness's music in the take, the take's own audio drops this much under a hand-laid line
+#: (L-20261004-5: the mix ducks only a bed the kit lays, so nothing else made room for the line).
+TAKE_UNDER_VOICE_DUCK_DB = 10.0
+#: The take's own audio ramps down and back up over this, either side of a hand-laid line.
+TAKE_UNDER_VOICE_RAMP_SECONDS = 0.25
 #: A hand cue ends at least this long before its take does.
 CUE_TAKE_END_MARGIN_SECONDS = 0.15
 #: The shortest stretch of cue worth laying once it is clamped.
@@ -337,7 +342,31 @@ def mute_expression(
     return f"volume='{'*'.join(terms)}':eval=frame"
 
 
-def lay_voice(take: Path, out: Path, plan: HandPlan) -> Path:
+def duck_expression(
+    windows: tuple[tuple[float, float], ...],
+    depth_db: float,
+    ramp: float = TAKE_UNDER_VOICE_RAMP_SECONDS,
+) -> str:
+    """An ffmpeg ``volume`` filter ``-depth_db`` inside each window, 1 outside, ramped over ``ramp`` either side."""
+
+    if not windows:
+        return "anull"
+    floor = 10 ** (-abs(depth_db) / 20)
+    terms = []
+    for start, end in windows:
+        rise = f"min(1\\,max(0\\,(t-({start - ramp:.3f}))/{ramp:.3f}))"
+        fall = f"min(1\\,max(0\\,({end + ramp:.3f}-t)/{ramp:.3f}))"
+        terms.append(f"(1-{1 - floor:.4f}*{rise}*{fall})")
+    gain = terms[0]
+    for term in terms[1:]:
+        # The deepest duck wins where lines overlap (never a double duck).
+        gain = f"min({gain}\\,{term})"
+    return f"volume='{gain}':eval=frame"
+
+
+def lay_voice(
+    take: Path, out: Path, plan: HandPlan, *, duck_take_db: float | None = None
+) -> Path:
     """Mute ``plan.mutes`` in the take's own audio and lay ``plan.voices`` in (picture copied).
 
     Parameters
@@ -348,6 +377,10 @@ def lay_voice(take: Path, out: Path, plan: HandPlan) -> Path:
         New file; must not exist.
     plan
         Checked hand plan.
+    duck_take_db
+        Drop the take's own audio this many dB under each laid line (ramped over
+        :data:`TAKE_UNDER_VOICE_RAMP_SECONDS`); ``None`` leaves it as filmed.
+        ``finish`` sets it on a new desk whose take carries the harness's music.
 
     Returns
     -------
@@ -364,7 +397,13 @@ def lay_voice(take: Path, out: Path, plan: HandPlan) -> Path:
         raise FileExistsError(f"{out} exists; local post never overwrites")
     # 1 ms audio frames so the mute gain moves sample-accurately enough that the window itself is silent.
     graph = [
-        f"[0:a]aresample=48000,asetnsamples=n=48:p=0,{mute_expression(plan.mutes)}[take]"
+        f"[0:a]aresample=48000,asetnsamples=n=48:p=0,{mute_expression(plan.mutes)}"
+        + (
+            f",{duck_expression(plan.voice_windows, duck_take_db)}"
+            if duck_take_db is not None and plan.voices
+            else ""
+        )
+        + "[take]"
     ]
     labels = ["[take]"]
     inputs: list[str] = ["-i", str(take)]

@@ -92,7 +92,7 @@ def range_rms_db(
     graph = f"aresample=48000,pan=mono|c0=c0,{chain + ',' if chain else ''}{trim},astats=metadata=0"
     result = subprocess.run(
         [ffmpeg_bin(), "-hide_banner", "-nostats", "-i", str(source), "-vn", "-af", graph, "-f", "null", "-"],
-        capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
     )  # fmt: skip
     found = re.findall(r"RMS level dB:\s*(-?[0-9.]+|-inf)", result.stderr)
     if result.returncode != 0 or not found:
