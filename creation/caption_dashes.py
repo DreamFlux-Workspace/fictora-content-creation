@@ -91,9 +91,11 @@ def drawn_text(text: str) -> str:
     desks, do not change); every other desk gets :func:`caption_text`.
     """
 
-    from creation.rules_epoch import legacy_rules
+    from creation.rules_epoch import continuing_fix_now
 
-    return text if legacy_rules() else caption_text(text)
+    # A legacy desk's episode from its Group B episode on loses its dashes too
+    # (``caption_dashes``, founder decision 7 Oct 2026).
+    return caption_text(text) if continuing_fix_now("caption_dashes") else text
 
 
 __all__ = ["DASH_IN_CAPTION", "ELLIPSIS", "caption_text", "drawn_text"]

@@ -79,8 +79,27 @@ CONTINUING_FIXES: frozenset[str] = frozenset(
     }
 )
 
+#: "Group B" (founder decision, 7 Oct 2026): fixes a legacy desk gets only from one episode on, so no
+#: episode is half old, half new. The episode is ``continuing_fixes_from_episode`` in
+#: ``production.config.json`` (``continuing-fixes --desk D --apply``, in step with the server spine's
+#: field of the same name); unset, the desk gets none of them. Mirrors fictora-drama
+#: ``rules_epoch.CONTINUING_FIXES_FROM_EPISODE`` (kit side).
+CONTINUING_FIXES_FROM_EPISODE: frozenset[str] = frozenset(
+    {
+        # Each caption word appears when it is said (#135). Whole episodes.
+        "per_word_captions",
+        # No em or en dash on burned captions, hook lines and covers (#137). New episodes.
+        "caption_dashes",
+        # The pitch card gates paid drawing for the episode (#155). New episodes.
+        "pitch_card",
+    }
+)
+
 _FOLDER_DATE = re.compile(r"^(\d{4}-\d{2}-\d{2})-")
 _ACTIVE: ContextVar[bool] = ContextVar("fictora_legacy_rules", default=False)
+#: The desk and episode the command running now makes (:func:`desk_rules`).
+_DESK: ContextVar[Path | None] = ContextVar("fictora_rules_desk", default=None)
+_EPISODE: ContextVar[int | None] = ContextVar("fictora_rules_episode", default=None)
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -177,22 +196,64 @@ def is_legacy(desk: Path | None) -> bool:
     return desk is not None and desk_epoch(desk).legacy
 
 
-def continuing_fix(desk: Path | None, name: str) -> bool:
-    """True when the 6 Oct fix ``name`` applies to this desk.
+def continuing_fixes_from_episode(desk: Path | None) -> int | None:
+    """The first episode a legacy desk gets the Group B fixes from, or ``None`` (Group B off)."""
+
+    if desk is None:
+        return None
+    path = Path(desk).expanduser().resolve() / "production.config.json"
+    if not path.is_file():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    value = raw.get("continuing_fixes_from_episode") if isinstance(raw, dict) else None
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 1
+        else None
+    )
+
+
+def continuing_fix(desk: Path | None, name: str, *, episode: int | None = None) -> bool:
+    """True when the 6 Oct fix ``name`` applies to this desk (and episode).
 
     Always True for a new desk (and for no desk); for a desk created before
-    6 Oct 2026 only while ``name`` is in :data:`CONTINUING_FIXES` (founder
-    decision, 7 Oct 2026).
+    6 Oct 2026 while ``name`` is in :data:`CONTINUING_FIXES` (Group A), or, for
+    a name in :data:`CONTINUING_FIXES_FROM_EPISODE` (Group B), only when the
+    desk carries ``continuing_fixes_from_episode`` and ``episode`` is at or
+    after it (founder decisions, 7 Oct 2026). No episode never turns a Group B
+    fix on.
 
     Parameters
     ----------
     desk
         Series desk, or ``None``.
     name
-        The fix's name, as listed in :data:`CONTINUING_FIXES`.
+        The fix's name.
+    episode
+        The episode being made.
     """
 
-    return not is_legacy(desk) or name in CONTINUING_FIXES
+    if not is_legacy(desk) or name in CONTINUING_FIXES:
+        return True
+    if name not in CONTINUING_FIXES_FROM_EPISODE or episode is None:
+        return False
+    start = continuing_fixes_from_episode(desk)
+    return start is not None and episode >= start
+
+
+def continuing_fix_now(name: str) -> bool:
+    """:func:`continuing_fix` for the desk and episode the running command makes (:func:`desk_rules`).
+
+    For helpers that never see the desk (dash removal): True outside a legacy
+    desk's command, as :func:`legacy_rules` is False there.
+    """
+
+    if not _ACTIVE.get():
+        return True
+    return continuing_fix(_DESK.get(), name, episode=_EPISODE.get())
 
 
 def legacy_rules() -> bool:
@@ -202,13 +263,16 @@ def legacy_rules() -> bool:
 
 
 @contextlib.contextmanager
-def desk_rules(desk: Path | None) -> Iterator[bool]:
+def desk_rules(desk: Path | None, episode: int | None = None) -> Iterator[bool]:
     """Run the block under ``desk``'s rules (:func:`legacy_rules` answers for it).
 
     Parameters
     ----------
     desk
         Series desk; ``None`` (a command with no desk) runs today's rules.
+    episode
+        The episode the block makes, when it is one (:func:`continuing_fix_now`);
+        ``None`` keeps the episode an outer block set.
 
     Yields
     ------
@@ -218,14 +282,22 @@ def desk_rules(desk: Path | None) -> Iterator[bool]:
 
     legacy = is_legacy(desk)
     token = _ACTIVE.set(legacy)
+    desk_token = _DESK.set(Path(desk) if desk is not None else None)
+    episode_token = _EPISODE.set(episode if episode is not None else _EPISODE.get())
     try:
         yield legacy
     finally:
+        _EPISODE.reset(episode_token)
+        _DESK.reset(desk_token)
         _ACTIVE.reset(token)
 
 
 def under_desk_rules(func: F) -> F:
-    """Decorator: run ``func`` under the rules of its ``desk`` argument (first positional or ``desk=``)."""
+    """Decorator: run ``func`` under the rules of its ``desk`` argument (first positional or ``desk=``).
+
+    Its ``episode`` or ``episode_ordinal`` argument, when it has one, is the
+    episode the block makes (:func:`continuing_fix_now`).
+    """
 
     signature = inspect.signature(func)
 
@@ -233,7 +305,20 @@ def under_desk_rules(func: F) -> F:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         bound = signature.bind_partial(*args, **kwargs)
         desk = bound.arguments.get("desk")
-        with desk_rules(Path(desk) if desk is not None else None):
+        episode = bound.arguments.get("episode", bound.arguments.get("episode_ordinal"))
+        if episode is None:
+            default = signature.parameters.get("episode") or signature.parameters.get(
+                "episode_ordinal"
+            )
+            episode = (
+                default.default
+                if default is not None and isinstance(default.default, int)
+                else None
+            )
+        with desk_rules(
+            Path(desk) if desk is not None else None,
+            episode if isinstance(episode, int) else None,
+        ):
             return func(*args, **kwargs)
 
     return wrapper  # type: ignore[return-value]
@@ -293,14 +378,97 @@ def run_rules_epoch(desk: Path, *, set_to: str | None = None, out: Any = None) -
     return found.epoch
 
 
+_EPISODE_DIR = re.compile(r"^ep(\d+)$")
+
+
+def last_worked_episode(desk: Path) -> int:
+    """The last ``epNN`` folder with any file in it (``0`` for none): pitch, script, boards, takes or finish."""
+
+    found = 0
+    for child in Path(desk).expanduser().resolve().iterdir():
+        match = _EPISODE_DIR.match(child.name)
+        if (
+            match
+            and child.is_dir()
+            and any(path.is_file() for path in child.rglob("*"))
+        ):
+            found = max(found, int(match.group(1)))
+    return found
+
+
+def run_continuing_fixes(
+    desk: Path, *, from_episode: int | None = None, apply: bool = False, out: Any = None
+) -> int | None:
+    """``continuing-fixes --desk D [--from-episode N] [--apply]``: turn Group B on for a legacy desk (free).
+
+    Dry run by default: prints the episode it would set. The episode is one
+    past the last ``epNN`` folder with anything in it, or ``--from-episode``
+    (the server spine's ``continuing_fixes_from_episode``) when that is later,
+    so no episode already started is half old, half new. ``--apply`` stores it
+    in ``production.config.json``. A new desk, or one already set, is left as
+    it is. Never ``rules-epoch --set``.
+
+    Returns
+    -------
+    int | None
+        The episode set (or that would be set); ``None`` when nothing changes.
+    """
+
+    import sys
+
+    from creation.production_config import (
+        load_production_config,
+        save_production_config,
+    )
+
+    out = out or sys.stdout
+    desk = Path(desk).expanduser().resolve()
+    if not desk.is_dir():
+        raise FileNotFoundError(f"{desk} is not a desk folder")
+    if not is_legacy(desk):
+        print("This desk runs the current rules already: nothing to turn on.", file=out)
+        return None
+    already = continuing_fixes_from_episode(desk)
+    if already is not None:
+        print(f"Group B is already on from episode {already}: unchanged.", file=out)
+        return None
+    if from_episode is not None and from_episode < 1:
+        raise ValueError("--from-episode must be 1 or more")
+    worked = last_worked_episode(desk)
+    episode = max(worked + 1, from_episode or 1)
+    names = ", ".join(sorted(CONTINUING_FIXES_FROM_EPISODE))
+    verb = "Set" if apply else "Would set"
+    print(
+        f"{verb} continuing_fixes_from_episode={episode} (last episode with work: {worked or 'none'}"
+        + (f"; server says {from_episode}" if from_episode is not None else "")
+        + f"). From episode {episode} on: {names}. Earlier episodes keep their original behaviour.",
+        file=out,
+    )
+    if apply:
+        config = load_production_config(desk)
+        config.continuing_fixes_from_episode = episode
+        save_production_config(desk, config)
+    else:
+        print(
+            "Dry run: nothing written. Add --apply after the founder signs off.",
+            file=out,
+        )
+    return episode
+
+
 __all__ = [
     "CONTINUING_FIXES",
+    "CONTINUING_FIXES_FROM_EPISODE",
     "CURRENT_EPOCH",
     "EPOCH_CHOICES",
     "EPOCH_DATE",
     "LEGACY",
     "DeskEpoch",
     "continuing_fix",
+    "continuing_fix_now",
+    "continuing_fixes_from_episode",
+    "last_worked_episode",
+    "run_continuing_fixes",
     "desk_epoch",
     "desk_rules",
     "is_legacy",

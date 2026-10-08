@@ -169,6 +169,14 @@ def _legacy_desk(desk: Path) -> bool:
     return is_legacy(desk)
 
 
+def _per_word_desk(desk: Path, episode: int) -> bool:
+    """Whether this episode's captions show each word when it is said (new desks; Group B episodes)."""
+
+    from creation.rules_epoch import continuing_fix
+
+    return continuing_fix(desk, "per_word_captions", episode=episode)
+
+
 def show_caption_style(desk: Path) -> tuple[str, str]:
     """The desk's caption style and where it came from, before any per-run flag.
 
@@ -2866,8 +2874,9 @@ def caption_take(
             known=[(line_spans or {}).get(line.line_id) for line in caption_lines]
             if line_spans
             else None,
-            # Each word when it is said (6 Oct 2026); a legacy desk spreads them as before.
-            per_word=not whole_lines and not _legacy_desk(desk),
+            # Each word when it is said (6 Oct 2026); a legacy desk spreads them as before,
+            # except from its Group B episode on (``per_word_captions``, founder 7 Oct 2026).
+            per_word=not whole_lines and _per_word_desk(desk, episode_ordinal),
             known_after_words=line_spans_after_words,
             floors=[(voice_floors or {}).get(line.line_id) for line in caption_lines]
             if voice_floors
