@@ -120,6 +120,7 @@ from creation.spine_view import (
     named_cast_stop,
     frames_digest,
     script_lines,
+    edge_duplicate_risk_lines,
     shot_list_lines,
     spoken_lines,
 )
@@ -1110,6 +1111,7 @@ def board_report(
     slot = episode_by_ordinal(series, episode)
     desk_takes = {take.take_id for take in slot.takes}
     brightness: dict[int, float] = {}
+    exposure: dict[str, Any] | None = None
     try:
         exposure = measure_board_exposure(
             run, spine_id=state.spine_id or "", episode=episode
@@ -1156,6 +1158,10 @@ def board_report(
             f"{take_id} board {path.name}: brightness {luma:.1f}% ({source}). Information only."
         )
     lines += shot_list_lines(spine, episode=episode, sets=[index for index, _ in made])
+    # One shot putting the same person at both edges (fictora-drama board_edge_risks; warnings only).
+    lines += edge_duplicate_risk_lines(
+        exposure, desk=str(desk), episode=episode, sets=[index for index, _ in made]
+    )
     # The server's picture check of each board (warnings only; fictora-drama picture_checks).
     lines += board_picture_check_lines(
         spine, episode=episode, sets=[index for index, _ in made]
