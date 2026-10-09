@@ -86,15 +86,15 @@ def caption_text(text: str) -> str:
 def drawn_text(text: str) -> str:
     """``text`` as the picture draws it under the running desk's rules.
 
-    A desk created before 6 Oct 2026 keeps its dashes, as its captions always
-    had them (:func:`creation.rules_epoch.legacy_rules`; frozen for those
-    desks, do not change); every other desk gets :func:`caption_text`.
+    Every desk gets :func:`caption_text`: ``caption_dashes`` is in
+    :data:`creation.rules_epoch.CONTINUING_FIXES` since 9 Oct 2026 (it was
+    Group B), so a desk created before 6 Oct 2026 loses its dashes too.
+    Taking the name off that list brings back the old behaviour: a legacy
+    desk's text unchanged (:func:`creation.rules_epoch.legacy_rules`).
     """
 
     from creation.rules_epoch import continuing_fix_now
 
-    # A legacy desk's episode from its Group B episode on loses its dashes too
-    # (``caption_dashes``, founder decision 7 Oct 2026).
     return caption_text(text) if continuing_fix_now("caption_dashes") else text
 
 

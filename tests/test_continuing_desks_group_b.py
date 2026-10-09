@@ -45,9 +45,10 @@ def _old_desk(
 
 
 def test_the_allow_lists_are_group_a_and_group_b_only() -> None:
-    assert CONTINUING_FIXES == frozenset({"seam_bed"})
+    # caption_dashes moved to Group A on 9 Oct 2026 (captions only), in step with the server.
+    assert CONTINUING_FIXES == frozenset({"seam_bed", "caption_dashes"})
     assert CONTINUING_FIXES_FROM_EPISODE == frozenset(
-        {"per_word_captions", "caption_dashes", "pitch_card"}
+        {"per_word_captions", "pitch_card"}
     )
 
 
@@ -72,21 +73,17 @@ def test_continuing_fix_reads_the_desks_boundary_and_fails_closed(
     assert continuing_fix(off, "seam_bed") is True  # Group A unchanged
 
 
-def test_dashes_go_from_the_boundary_episode_only(tmp_path: Path) -> None:
+def test_dashes_go_on_every_episode_of_a_legacy_desk(tmp_path: Path) -> None:
+    # Group A since 9 Oct 2026 (captions only): before the boundary, after it, and with Group B off.
     desk = _old_desk(tmp_path, start=2)
-    kept = ["Please—", "Please— no", "Please— no no—"]
     dropped = ["Please…", "Please, no", "Please, no no…"]
-    for episode, expected in ((None, kept), (1, kept), (2, dropped), (3, dropped)):
+    for episode in (None, 1, 2, 3):
         with desk_rules(desk, episode):
             (cues,) = build_line_cues(["Please— no no—"], [Span(0.0, 2.0)])
-            assert [c.text for c in cues] == expected, episode
-    # An inner command block without an episode keeps the outer one.
-    with desk_rules(desk, 2), desk_rules(desk):
-        (cues,) = build_line_cues(["Please— no no—"], [Span(0.0, 2.0)])
-        assert [c.text for c in cues] == dropped
+            assert [c.text for c in cues] == dropped, episode
     with desk_rules(_old_desk(tmp_path, name="2026-09-26-off"), 5):
         (cues,) = build_line_cues(["Please— no no—"], [Span(0.0, 2.0)])
-        assert [c.text for c in cues] == kept
+        assert [c.text for c in cues] == dropped
 
 
 def test_per_word_timing_from_the_boundary_episode_only(
@@ -195,23 +192,30 @@ def test_a_decorated_command_runs_under_its_episodes_rules(tmp_path: Path) -> No
     """``under_desk_rules`` reads ``episode`` / ``episode_ordinal`` (run_finish, run_reel, caption_take)."""
 
     from creation.caption_dashes import drawn_text
-    from creation.rules_epoch import under_desk_rules
+    from creation.rules_epoch import continuing_fix_now, under_desk_rules
 
     @under_desk_rules
-    def finish(desk: Path, *, episode: int = 1) -> str:
-        return drawn_text("Please—")
+    def finish(desk: Path, *, episode: int = 1) -> bool:
+        return continuing_fix_now("per_word_captions")
 
     @under_desk_rules
-    def caption(desk: Path, *, episode_ordinal: int = 1) -> str:
+    def caption(desk: Path, *, episode_ordinal: int = 1) -> bool:
+        return continuing_fix_now("per_word_captions")
+
+    @under_desk_rules
+    def dashes(desk: Path, *, episode: int = 1) -> str:
         return drawn_text("Please—")
 
     desk = _old_desk(tmp_path, start=2)
     assert [finish(desk, episode=1), finish(desk, episode=2), finish(desk)] == [
-        "Please—",
-        "Please…",
-        "Please—",
+        False,
+        True,
+        False,
     ]
     assert [caption(desk, episode_ordinal=1), caption(desk, episode_ordinal=3)] == [
-        "Please—",
-        "Please…",
+        False,
+        True,
     ]
+    # caption_dashes is Group A since 9 Oct 2026: every episode, Group B on or off.
+    assert [dashes(desk, episode=1), dashes(desk, episode=2)] == ["Please…", "Please…"]
+    assert dashes(_old_desk(tmp_path, name="2026-09-26-nob"), episode=1) == "Please…"
