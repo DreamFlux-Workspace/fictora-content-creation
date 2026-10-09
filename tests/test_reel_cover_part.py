@@ -127,10 +127,22 @@ def _shape(layout: object) -> tuple[object, ...]:
     )
 
 
-def test_portrait_covers_are_laid_out_exactly_as_before() -> None:
-    # Measured on origin/main (08f057a) before this change.
+def test_portrait_covers_are_laid_out_exactly_as_before(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Widths come from whatever font the machine has (Arial on a Mac, the fallback on CI),
+    # so a hard-coded box differs between a laptop and CI. Measure with the fixed Arial
+    # Bold advance table instead; the expected tuples are origin/main run under this same
+    # table, so this compares the old and new code paths, not machines.
+    import creation.captions as captions_module
+    import creation.post.hook_overlay as hook_overlay_module
+    import creation.post.reel_cover as reel_cover_module
+    from creation.post.delivery_geometry import arial_bold_width
+
+    for module in (captions_module, hook_overlay_module, reel_cover_module):
+        monkeypatch.setattr(module, "text_width", arial_bold_width)
     assert _shape(cover_layout(series="Noclip", part=3, width=1080, height=1920)) == (
-        "lower", "PART 3", 75, ("Noclip",), 150, 475, 1260, 1432, (0.2496, 0.6562, 0.63, 0.7849),
+        "lower", "PART 3", 75, ("Noclip",), 150, 475, 1260, 1432, (0.2499, 0.6562, 0.6298, 0.7849),
     )  # fmt: skip
     assert _shape(
         cover_layout(
@@ -139,7 +151,7 @@ def test_portrait_covers_are_laid_out_exactly_as_before() -> None:
         )
     ) == (
         "upper", "PART 12", 62, ("The Very Long", "Title Of A Show"), 125, 475, 269, 538,
-        (0.0566, 0.1401, 0.8231, 0.3125),
+        (0.0571, 0.1401, 0.8225, 0.3125),
     )  # fmt: skip
 
 
