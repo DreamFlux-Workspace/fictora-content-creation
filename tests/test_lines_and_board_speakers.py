@@ -384,3 +384,27 @@ def test_step_prints_the_brief_against_the_draft(desk: Path, api: FakeApi) -> No
     result = orchestrate.run_step(desk)
 
     assert "brief 2 -> script 2 (kept 1, rewritten 1, cut 0, added 0)" in result.message
+
+
+def test_the_shot_list_says_rows_written_before_a_script_edit_are_rewritten_before_the_first_draw() -> (
+    None
+):
+    """Gallery Heiress L-20261008-19: 12 hand frame edits because the rows looked current."""
+
+    spine = _board_spine()
+    spine["media_assets"] = [
+        asset for asset in spine.get("media_assets") or [] if asset.get("relation_type") != "episode"
+    ]
+    for frame in spine["frames"]:
+        frame["edited_beat_ids"] = [spine["beats"][0]["beat_id"]]
+
+    lines = "\n".join(shot_list_lines(spine, episode=1))
+
+    assert "rewritten from the script as it is now before this board is first drawn" in lines
+    assert "don't hand-edit them" in lines
+
+
+def test_a_current_take_says_nothing_about_script_edits() -> None:
+    lines = "\n".join(shot_list_lines(_board_spine(), episode=1))
+
+    assert "script changed" not in lines
