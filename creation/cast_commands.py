@@ -574,7 +574,7 @@ def _send_cast_patch(
                             "patch": {"cast": [patch]},
                         },
                     )
-                    ec.say_patch_warnings(spine, answer, out=out)
+                    ec.say_patch_warnings(spine, answer, out=out, desk=desk)
                 except SystemExit as exc:
                     if "cascade_required" not in str(exc.code):
                         raise ec.CommandStopped(str(exc.code)) from None

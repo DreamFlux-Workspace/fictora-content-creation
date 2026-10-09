@@ -23,6 +23,8 @@ A code it does not know is shown by its ``message``.
 from __future__ import annotations
 
 import re
+import json
+from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 #: The field name on spine responses, job results and cascade answers.
@@ -30,6 +32,15 @@ FIELD = "authoring_warnings"
 
 #: The header every block opens with: what the notes are and that nothing was held.
 HEADER = "authoring notes (nudges: nothing was blocked or changed)"
+#: Pacing nudges (fictora-drama, 9 Oct 2026; Hana L-20260930-9, Gallery
+#: L-20261008-23): a silent, still moment of about 2.5 s or more, or a pause of
+#: about 1.5 s or more before the next line. The server sends at most one an
+#: episode. Founder decision: subtle, never annoying, never blocking, so the
+#: kit prints it as ONE line (``epNN pace: …``, no header) and only once per
+#: episode on a desk (:data:`PACING_SAID_FILE`), whichever step says it first.
+PACING_CODES = frozenset({"silent_hold_long", "line_gap_long"})
+#: The desk file that remembers which episodes' pacing note was already said.
+PACING_SAID_FILE = ".pacing-notes-said.json"
 
 _EPISODE_IN_PATH = re.compile(r"episodes\[([^\]]+)\]")
 
@@ -247,7 +258,8 @@ def warning_line(
     Returns
     -------
     str
-        The line. An unknown code, or one without a word count, is ``note: <message>``.
+        The line. A pacing nudge (:data:`PACING_CODES`) is ``pace: <message>``; an
+        unknown code, or one without a word count, is ``note: <message>``.
     """
 
     code = str(warning.get("code") or "")
@@ -271,14 +283,77 @@ def warning_line(
         )
     elif counted and code == "first_line_long":
         what = f"the first line runs {counted}"
+    if code in PACING_CODES:
+        # Read to the producer before boards: trim the pause or give it an action, or keep it.
+        return f"pace: {message}"
     if code in SCRIPT_CONTRACT_CODES:
         # Ask the human: put the approved line back, or keep the draft's. Never fixed silently.
         return f"SCRIPT: {message} To put it back: {script_fix_command(warning, spine)}"
     return f"note: {what} — {message}" if what else f"note: {message}"
 
 
+def _pacing_said(desk: Path | None) -> set[str]:
+    if desk is None:
+        return set()
+    try:
+        value = json.loads((desk / PACING_SAID_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    return {str(item) for item in value} if isinstance(value, list) else set()
+
+
+def pacing_lines(
+    warnings: Sequence[Mapping[str, Any]],
+    spine: Mapping[str, Any] | None = None,
+    *,
+    desk: Path | None = None,
+) -> list[str]:
+    """The pacing note as one line an episode, never one already said on this desk.
+
+    Parameters
+    ----------
+    warnings
+        Warning dicts (only :data:`PACING_CODES` are read).
+    spine
+        The spine, to name the episode by number (optional).
+    desk
+        The desk. When given, an episode whose pacing note was said by any
+        step before is skipped, and the ones said now are remembered.
+
+    Returns
+    -------
+    list[str]
+        ``epNN pace: <message>``, at most one an episode.
+    """
+
+    said = _pacing_said(desk)
+    lines: list[str] = []
+    fresh: list[str] = []
+    for warning in warnings:
+        if str(warning.get("code") or "") not in PACING_CODES:
+            continue
+        episode_id = warning_episode_id(warning, spine)
+        if episode_id in said or episode_id in fresh:
+            continue
+        fresh.append(episode_id)
+        lines.append(
+            f"{_episode_label(episode_id, spine)} {warning_line(warning, spine)}"
+        )
+    if desk is not None and fresh:
+        try:
+            (desk / PACING_SAID_FILE).write_text(
+                json.dumps(sorted(said | set(fresh))), encoding="utf-8"
+            )
+        except OSError:
+            pass
+    return lines
+
+
 def warning_lines(
-    warnings: Sequence[Mapping[str, Any]], spine: Mapping[str, Any] | None = None
+    warnings: Sequence[Mapping[str, Any]],
+    spine: Mapping[str, Any] | None = None,
+    *,
+    desk: Path | None = None,
 ) -> list[str]:
     """The warnings grouped per episode, then per take, under :data:`HEADER`. Empty when there are none.
 
@@ -288,15 +363,20 @@ def warning_lines(
         Warning dicts.
     spine
         The spine, to name episodes and beats by number (optional).
+    desk
+        The desk, so a pacing note already said is not said again (optional).
 
     Returns
     -------
     list[str]
-        Printable lines (indented under one header per episode).
+        Printable lines (indented under one header per episode), then the
+        pacing note as one line of its own (:func:`pacing_lines`).
     """
 
+    pace = pacing_lines(warnings, spine, desk=desk)
+    warnings = [w for w in warnings if str(w.get("code") or "") not in PACING_CODES]
     if not warnings:
-        return []
+        return pace
     groups: dict[str, list[tuple[int, int, Mapping[str, Any]]]] = {}
     for index, warning in enumerate(warnings):
         take = warning.get("take")
@@ -310,7 +390,7 @@ def warning_lines(
             named = warning.get("code") == "take_words_over_target"
             prefix = f"t{take} " if take and not named else ""
             lines.append(f"  {prefix}{warning_line(warning, spine)}")
-    return lines
+    return lines + pace
 
 
 def say_warnings(
@@ -318,6 +398,7 @@ def say_warnings(
     *,
     spine: Mapping[str, Any] | None = None,
     out: Any,
+    desk: Path | None = None,
 ) -> list[str]:
     """Print the warnings (:func:`warning_lines`) and return the lines, for the run notes. Never raises on content.
 
@@ -329,6 +410,8 @@ def say_warnings(
         The spine, to name episodes and beats by number (optional).
     out
         Text stream.
+    desk
+        The desk, so a pacing note already said is not said again (optional).
 
     Returns
     -------
@@ -336,13 +419,16 @@ def say_warnings(
         What was printed.
     """
 
-    lines = warning_lines(warnings, spine)
+    lines = warning_lines(warnings, spine, desk=desk)
     for line in lines:
         print(line, file=out)
     return lines
 
 
 __all__ = [
+    "PACING_CODES",
+    "PACING_SAID_FILE",
+    "pacing_lines",
     "FIELD",
     "HEADER",
     "SCRIPT_CONTRACT_CODES",
