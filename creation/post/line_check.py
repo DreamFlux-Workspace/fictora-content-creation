@@ -52,7 +52,9 @@ the same take reads the saved file on the desk and asks nothing.
 
 from __future__ import annotations
 
+import math
 import re
+import subprocess
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -221,8 +223,11 @@ class LineFault:
     heard: str = ""
     at: tuple[float, float] | None = None
     detail: str = ""
+    #: The part of the take to listen to for this fault (take seconds; ``end`` ``None`` = to the end).
+    listen: tuple[float, float | None] | None = None
 
     LABELS = {
+        "unclear": "CHECK BY EAR",
         "missing": "MISSING LINE",
         "wrong": "WRONG WORDS",
         "repeated": "REPEATED LINE",
@@ -244,6 +249,11 @@ class LineFault:
             return f"{label}: {what} was not heard anywhere in the take" + (
                 f" ({self.detail})" if self.detail else ""
             )
+        if self.kind == "unclear":
+            return (
+                f"{label}: {what} was not made out by the transcript, but there is sound where it "
+                "should be; listen (never a re-film on this alone)"
+            )
         if self.kind == "wrong":
             return f'{label}: {what} was heard as "{self.heard}"{when}' + (
                 f" ({self.detail})" if self.detail else ""
@@ -264,6 +274,9 @@ class LineCheck:
     faults: list[LineFault] = field(default_factory=list)
     #: Notes that are never a stop (a short line to check by ear, a patched off-screen line).
     notes: list[str] = field(default_factory=list)
+    #: Lines the transcript did not make out but that may well be there (a short line, or sound where
+    #: the line should be): never a stop, each with the part of the take to listen to.
+    by_ear: list[LineFault] = field(default_factory=list)
     #: Why the lines could not be compared (a transcript in another language); empty when they were.
     unread: str = ""
     #: Each line heard: ``(line, start, end, score)``.
@@ -355,6 +368,216 @@ def _is_extra(words: Sequence[Word], run: Sequence[int], language: str) -> bool:
     return not _is_noise(_text_of(words, run), language)
 
 
+#: Seconds of take played either side of where a fault was heard.
+LISTEN_PAD_SECONDS = 0.4
+
+
+def listen_window(
+    fault: LineFault, *, gap: tuple[float, float | None] | None = None
+) -> tuple[float, float | None] | None:
+    """The part of the take to play for one fault, so the human hears it before choosing.
+
+    Where it was heard, padded :data:`LISTEN_PAD_SECONDS` either side; for a
+    line not heard at all, the shot the take facts put it in (not over the
+    lines heard either side of it), else the gap between the lines heard
+    before and after it (``end`` ``None``: to the end of the take). The
+    server's twin is ``model_voice_line_check.listen_window``.
+
+    Parameters
+    ----------
+    fault
+        What the check found.
+    gap
+        For a line not heard: take seconds between its neighbours.
+
+    Returns
+    -------
+    tuple[float, float | None] | None
+        ``(start, end)`` in take seconds, or ``None`` when nothing places it.
+    """
+
+    if fault.at is not None:
+        return (
+            round(max(0.0, fault.at[0] - LISTEN_PAD_SECONDS), 2),
+            round(fault.at[1] + LISTEN_PAD_SECONDS, 2),
+        )
+    if fault.line is not None and fault.line.window is not None:
+        low = fault.line.window[0] - LISTEN_PAD_SECONDS
+        high = fault.line.window[1] + LISTEN_PAD_SECONDS
+        if gap is not None:
+            inner_low = max(low, gap[0])
+            inner_high = high if gap[1] is None else min(high, gap[1])
+            if inner_high - inner_low >= 0.3:
+                low, high = inner_low, inner_high
+        return (round(max(0.0, low), 2), round(high, 2))
+    if gap is not None:
+        gap_low, gap_high = gap
+        return (
+            round(max(0.0, gap_low), 2),
+            round(gap_high, 2) if gap_high is not None else None,
+        )
+    return None
+
+
+#: Seconds per level frame the quiet-line check reads.
+LEVEL_STEP_SECONDS = 0.05
+#: Sound must hold this long (seconds) to count: a click or a door is not a line.
+LEVEL_HOLD_SECONDS = 0.2
+#: A line the transcript did not hear is CHECK BY EAR, not MISSING, when the place it should be holds
+#: voice-band sound at least this far over the take's quiet floor ...
+UNHEARD_OVER_FLOOR_DB = 12.0
+#: ... and at least this loud (dBFS). Near-silence is never a line.
+UNHEARD_MIN_DBFS = -45.0
+#: Speech band the quiet-line check listens in (Hz): voices, not rumble or hiss.
+VOICE_BAND_HZ = (300, 3400)
+
+
+def grade_unheard_lines(
+    check: LineCheck, levels: Sequence[float], *, step: float = LEVEL_STEP_SECONDS
+) -> int:
+    """Move a MISSING line to CHECK BY EAR (never a stop) when there is voice where it should be.
+
+    Noodle24 ep 6 (L-20261008-38): a quiet "…行ってきます。" was audible at
+    9.0-9.6 s, but the transcript left it out, so the check stopped the
+    finish. A transcript misses quiet or soft lines; a dropped line leaves no
+    voice. So a line the transcript did not hear at all is only MISSING when
+    its window is quiet; with voice-band sound held :data:`LEVEL_HOLD_SECONDS`
+    at :data:`UNHEARD_OVER_FLOOR_DB` over the take's quiet floor (and over
+    :data:`UNHEARD_MIN_DBFS`) it goes to ``check.by_ear``. The server's twin is
+    ``model_voice_line_check.grade_unheard_lines``.
+
+    Parameters
+    ----------
+    check
+        The take's check; its ``missing`` faults are moved in place.
+    levels
+        The take's voice-band level (dBFS) per ``step`` seconds, from the start.
+    step
+        Seconds per level.
+
+    Returns
+    -------
+    int
+        How many lines were moved.
+    """
+
+    if not levels:
+        return 0
+    ordered = sorted(levels)
+    floor = ordered[int(0.1 * (len(ordered) - 1))]
+    need = max(floor + UNHEARD_OVER_FLOOR_DB, UNHEARD_MIN_DBFS)
+    hold = max(1, math.ceil(LEVEL_HOLD_SECONDS / step - 1e-9))
+    kept: list[LineFault] = []
+    moved = 0
+    for fault in check.faults:
+        if fault.kind == "missing" and fault.listen is not None:
+            start, end = fault.listen
+            first = max(0, int(start / step))
+            last = (
+                len(levels) if end is None else min(len(levels), math.ceil(end / step))
+            )
+            frames = list(levels[first:last])
+            if (
+                len(frames) >= hold
+                and max(
+                    min(frames[i : i + hold]) for i in range(len(frames) - hold + 1)
+                )
+                >= need
+            ):
+                check.by_ear.append(replace(fault, kind="unclear"))
+                moved += 1
+                continue
+        kept.append(fault)
+    check.faults[:] = kept
+    return moved
+
+
+def take_voice_levels(
+    take: Path, *, step: float = LEVEL_STEP_SECONDS
+) -> list[float] | None:
+    """A take's voice-band RMS level (dBFS, floor -120) per ``step`` seconds; ``None`` when unreadable."""
+
+    import numpy as np
+
+    from creation.post.media import ffmpeg_bin
+
+    low, high = VOICE_BAND_HZ
+    try:
+        run = subprocess.run(
+            [ffmpeg_bin(), "-v", "error", "-i", str(take), "-vn", "-ac", "1", "-ar", "16000",
+             "-af", f"highpass=f={low},lowpass=f={high}", "-f", "s16le", "-"],
+            stdin=subprocess.DEVNULL, capture_output=True, check=False, timeout=120,
+        )  # fmt: skip
+    except (
+        OSError,
+        RuntimeError,
+        subprocess.TimeoutExpired,
+    ):  # RuntimeError: no ffmpeg (MediaToolError)
+        return None
+    data = run.stdout[: len(run.stdout) - len(run.stdout) % 2]
+    if run.returncode != 0 or not data:
+        return None
+    samples = np.frombuffer(data, dtype="<i2").astype(np.float64) / 32768.0
+    size = max(1, round(16000 * step))
+    frames = len(samples) // size
+    if frames == 0:
+        return None
+    blocks = samples[: frames * size].reshape(frames, size)
+    rms = np.sqrt(np.mean(blocks * blocks, axis=1))
+    return [
+        max(-120.0, 20.0 * math.log10(v)) if v > 0 else -120.0 for v in rms.tolist()
+    ]
+
+
+def write_listen_clip(take: Path, fault: LineFault, out: Path) -> Path | None:
+    """Cut the part of ``take`` to hear for ``fault`` to ``out`` (a short WAV); ``None`` when it cannot."""
+
+    if fault.listen is None:
+        return None
+    start, end = fault.listen
+    args = ["-y", "-v", "error", "-ss", f"{start:.2f}", "-i", str(take)]
+    if end is not None:
+        args += ["-t", f"{max(0.1, end - start):.2f}"]
+    from creation.post.media import ffmpeg_bin
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        run = subprocess.run(
+            [ffmpeg_bin(), *args, "-vn", "-ac", "1", "-ar", "48000", str(out)],
+            stdin=subprocess.DEVNULL, capture_output=True, check=False, timeout=60,
+        )  # fmt: skip
+    except (
+        OSError,
+        RuntimeError,
+        subprocess.TimeoutExpired,
+    ):  # RuntimeError: no ffmpeg (MediaToolError)
+        return None
+    return out if run.returncode == 0 and out.exists() else None
+
+
+def listen_clips(
+    take: Path, check: LineCheck, *, episode: int, take_id: str
+) -> list[tuple[LineFault, Path]]:
+    """One clip per fault and per CHECK BY EAR line, in a ``listen/`` folder beside the take.
+
+    Named ``ep06-t2-line3.wav`` (``extra`` for speech nobody wrote, by its start).
+    """
+
+    folder = take.parent / "listen"
+    made: list[tuple[LineFault, Path]] = []
+    for fault in [*check.faults, *check.by_ear]:
+        what = (
+            f"line{fault.line.number}"
+            if fault.line is not None
+            else f"extra-{fault.listen[0] if fault.listen else 0:.1f}s"
+        )
+        name = f"ep{episode:02d}-{take_id}-{what}-{fault.kind}.wav"
+        clip = write_listen_clip(take, fault, folder / name)
+        if clip is not None:
+            made.append((fault, clip))
+    return made
+
+
 def check_take_lines(
     lines: Sequence[ScriptLine],
     words: Sequence[Word],
@@ -443,7 +666,13 @@ def check_take_lines(
         )
         return [i for i in range(before + 1, after) if i not in claimed]
 
-    def fault(kind: str, line: ScriptLine | None, **kw: Any) -> None:
+    def fault(
+        kind: str,
+        line: ScriptLine | None,
+        *,
+        gap: tuple[float, float | None] | None = None,
+        **kw: Any,
+    ) -> None:
         if (
             line is not None
             and line.line_id in patched
@@ -459,7 +688,21 @@ def check_take_lines(
                 f"!! line {line.number} is laid by hand (finish --voice) but it is spoken ON screen: a laid "
                 "line breaks lip sync, so it does not clear the fault (re-film the take)"
             )
-        check.faults.append(LineFault(kind, line, **kw))
+        found = LineFault(kind, line, **kw)
+        check.faults.append(replace(found, listen=listen_window(found, gap=gap)))
+
+    def gap_times(position: int) -> tuple[float, float | None]:
+        """Take seconds between the line heard before ``position`` and the line heard after it."""
+
+        before = max((s[-1] for _l, s, _r in placed[:position] if s), default=-1)
+        after = min(
+            (s[0] for _l, s, _r in placed[position + 1 :] if s),
+            default=len(heard_words),
+        )
+        return (
+            heard_words[before].end if before >= 0 else 0.0,
+            heard_words[after].start if after < len(heard_words) else None,
+        )
 
     for position, (line, span, ratio) in enumerate(placed):
         short = _short(line.performed)
@@ -471,6 +714,12 @@ def check_take_lines(
                     f'CHECK BY EAR: line {line.number} "{line.performed}" is too short to judge on the transcript '
                     "alone and it was not found; listen before deciding (never a re-film on this alone)"
                 )
+                unheard = LineFault("unclear", line)
+                check.by_ear.append(
+                    replace(
+                        unheard, listen=listen_window(unheard, gap=gap_times(position))
+                    )
+                )
                 continue
             if said and _speech_size(heard_words, said) >= max(
                 2, round(0.4 * word_count(line.performed))
@@ -481,7 +730,7 @@ def check_take_lines(
                     "wrong", line, heard=_text_of(words, [kept[i] for i in said]), at=at
                 )
             else:
-                fault("missing", line)
+                fault("missing", line, gap=gap_times(position))
             continue
         at = (heard_words[span[0]].start, heard_words[span[-1]].end)
         size = sum(tokens_of[i] for i in span)
@@ -804,6 +1053,12 @@ def desk_line_check(
         muted=muted,
         patched=patched_line_ids(lines, voice_texts, language),
     )
+    if any(fault.kind == "missing" for fault in check.faults):
+        # The transcript misses quiet lines: listen where the line should be before calling it missing.
+        raw = raw_take_of(desk, take)
+        levels = take_voice_levels(raw) if raw is not None and raw.exists() else None
+        if levels:
+            grade_unheard_lines(check, levels)
     source = f"transcript `{words_path.name}`" + (
         " (made on the server now, $0, cached per take)" if made else ""
     )
@@ -816,8 +1071,15 @@ def accepted(take_id: str, accept: Sequence[str]) -> bool:
     return any(value.strip().lower() in (take_id.lower(), "all") for value in accept)
 
 
-def stop_message(check: LineCheck, *, desk: str, episode: int, take_id: str) -> str:
-    """The plain stop: the take, each fault, what was heard, and the re-film command."""
+def stop_message(
+    check: LineCheck,
+    *,
+    desk: str,
+    episode: int,
+    take_id: str,
+    clips: Sequence[tuple[LineFault, Path]] = (),
+) -> str:
+    """The plain stop: the take, each fault, what was heard, a clip of each to hear, and the re-film command."""
 
     rows = [
         f"ep{episode:02d} {take_id}: the take does not say its script. This take was filmed in the video "
@@ -825,6 +1087,9 @@ def stop_message(check: LineCheck, *, desk: str, episode: int, take_id: str) -> 
         "native), so the model wrote the words itself, and it got them wrong:"
     ]
     rows += [f"  - {fault.describe()}" for fault in check.faults]
+    if clips:
+        rows.append("Listen before choosing (the part of the take each one is about):")
+        rows += [f"  - {fault.LABELS[fault.kind]}: {clip}" for fault, clip in clips]
     cause = "; ".join(fault.describe() for fault in check.faults)[:180].replace(
         '"', "'"
     )
@@ -847,7 +1112,11 @@ __all__ = [
     "ACCEPT_FLAG",
     "EXTRA_MIN_CHARS",
     "EXTRA_MIN_WORDS",
+    "LEVEL_STEP_SECONDS",
     "LINE_OK_RATIO",
+    "LISTEN_PAD_SECONDS",
+    "UNHEARD_MIN_DBFS",
+    "UNHEARD_OVER_FLOOR_DB",
     "SHORT_LINE_CHARS",
     "SHORT_LINE_WORDS",
     "SHOT_SLACK_SECONDS",
@@ -857,6 +1126,11 @@ __all__ = [
     "accepted",
     "check_take_lines",
     "desk_line_check",
+    "grade_unheard_lines",
+    "listen_clips",
+    "listen_window",
+    "take_voice_levels",
+    "write_listen_clip",
     "patched_line_ids",
     "normalise",
     "script_lines_for_take",

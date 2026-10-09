@@ -998,6 +998,31 @@ def _line_check_stop(
         return ""
     for row in check.notes:
         print(f"[lines] {row}", file=out, flush=True)
+    # A clip of each fault and each CHECK BY EAR line, cut from the raw take the transcript was made of,
+    # so the human hears it before choosing (Noodle24 L-20261008-38).
+    from creation.post.review import raw_take_of
+
+    raw = raw_take_of(desk, source)
+    clips = (
+        lc.listen_clips(raw, check, episode=episode, take_id=take_id)
+        if raw is not None and raw.exists()
+        else []
+    )
+    clip_of = {id(fault): clip for fault, clip in clips}
+    for fault in check.by_ear:
+        if (
+            fault.kind == "unclear"
+            and fault.line is not None
+            and not lc._short(fault.line.performed)
+        ):
+            print(f"[lines] {fault.describe()}", file=out, flush=True)
+            append_run_note(run_dir, f"Finish · lines: {fault.describe()}")
+        if id(fault) in clip_of:
+            print(
+                f"[lines] listen: line {fault.line.number if fault.line else '?'} -> {clip_of[id(fault)]}",
+                file=out,
+                flush=True,
+            )
     print(f"[lines] {check.summary()} ({read})", file=out, flush=True)
     if check.ok:
         append_run_note(run_dir, f"Finish · lines: {check.summary()} ({read})")
@@ -1014,7 +1039,13 @@ def _line_check_stop(
             f"Finish · lines: ACCEPTED WITH FAULTS ({lc.ACCEPT_FLAG} {take_id}, the operator's call): {faults}",
         )
         return ""
-    message = lc.stop_message(check, desk=str(desk), episode=episode, take_id=take_id)
+    message = lc.stop_message(
+        check,
+        desk=str(desk),
+        episode=episode,
+        take_id=take_id,
+        clips=[(fault, clip) for fault, clip in clips if fault in check.faults],
+    )
     print(f"!! STOPPED: {message}", file=out, flush=True)
     append_run_note(run_dir, f"Finish · STOPPED on the line check ({read}): {faults}")
     return message

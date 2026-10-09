@@ -322,12 +322,22 @@ MODEL_SPINE["beats"][0]["dialogue_lines"] = [
 
 
 def _model_take(
-    desk: Path, heard: list[tuple[str, float, float]], facts: dict = LINE_FACTS
+    desk: Path,
+    heard: list[tuple[str, float, float]],
+    facts: dict = LINE_FACTS,
+    *,
+    tones: tuple[tuple[float, float, int], ...] | None = None,
 ) -> Path:
+    """A model-voice take whose audio holds a "voice" (a tone) wherever ``heard`` has words."""
+
     (desk / "ep01" / "api" / "03_spine.json").write_text(json.dumps(MODEL_SPINE))
     raw = make_take(
         desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4",
-        tones=((0.2, 2.0, 440), (2.8, 4.5, 880)),
+        tones=tones
+        if tones is not None
+        else tuple(
+            (start, end, 440 + 220 * i) for i, (_t, start, end) in enumerate(heard)
+        ),
     )
     (desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(json.dumps(facts))
     body = {
@@ -533,3 +543,91 @@ def test_the_cli_passes_the_override(
             ]
         )
     assert seen["accept_line_mismatch"] == ("t2",)
+
+
+# --- a clip to hear the line, and a quiet line the transcript missed (Noodle24 L-20261008-38) --------------
+
+
+def _levels(voice: tuple[float, float] | None, *, seconds: float = 5.0) -> list[float]:
+    """A take's levels: a quiet room (-60 dBFS), Kenji at 0.2-2.0 s, and ``voice`` (a quiet line) if given."""
+
+    out = []
+    for frame in range(int(seconds / lc.LEVEL_STEP_SECONDS)):
+        t = frame * lc.LEVEL_STEP_SECONDS
+        loud = 0.2 <= t < 2.0 or (voice is not None and voice[0] <= t < voice[1])
+        out.append(-30.0 if loud else -60.0)
+    return out
+
+
+def test_a_missing_line_is_heard_in_its_own_shot_not_over_the_line_before() -> None:
+    check = check_take_lines(LINES, words((KENJI, 0.2, 2.4)), take_id="t1")
+    (fault,) = check.faults
+    # Aya's shot is 2.5-5.0 s (2.1-5.4 s padded); Kenji runs to 2.4 s, so the clip starts after him.
+    assert fault.kind == "missing" and fault.listen == (2.4, 5.4)
+
+
+def test_a_fault_heard_somewhere_is_played_a_little_either_side() -> None:
+    check = check_take_lines(
+        LINES,
+        words(
+            (KENJI, 0.2, 2.0), ("The cat ate my homework yesterday morning.", 2.8, 4.5)
+        ),
+        take_id="t1",
+    )
+    (fault,) = check.faults
+    assert fault.kind == "wrong" and fault.listen == (2.4, 4.9)
+
+
+def test_a_quiet_line_the_transcript_missed_is_check_by_ear_not_a_stop() -> None:
+    check = check_take_lines(LINES, words((KENJI, 0.2, 2.0)), take_id="t1")
+    assert lc.grade_unheard_lines(check, _levels((3.0, 3.6))) == 1
+    assert check.ok and check.faults == []
+    (by_ear,) = check.by_ear
+    assert (
+        by_ear.kind == "unclear"
+        and by_ear.line is not None
+        and by_ear.line.line_id == "l2"
+    )
+    assert by_ear.describe().startswith('CHECK BY EAR: line 2 (Aya) "You never listen')
+
+
+def test_a_line_that_was_really_dropped_stays_missing() -> None:
+    check = check_take_lines(LINES, words((KENJI, 0.2, 2.0)), take_id="t1")
+    assert lc.grade_unheard_lines(check, _levels(None)) == 0
+    assert kinds(check) == ["missing"]
+
+
+def test_a_click_is_not_a_line() -> None:
+    check = check_take_lines(LINES, words((KENJI, 0.2, 2.0)), take_id="t1")
+    levels = _levels(None)
+    levels[70] = -20.0  # 50 ms at 3.5 s: a door, not a voice
+    assert lc.grade_unheard_lines(check, levels) == 0
+    assert kinds(check) == ["missing"]
+
+
+@needs_ffmpeg
+def test_a_stop_cuts_a_clip_of_each_fault_to_hear_before_choosing(
+    post_desk: Path,
+) -> None:
+    _model_take(post_desk, [(KENJI, 0.2, 2.0)])
+    result, _printed = _finish(post_desk)
+    assert result.line_faults
+    clip = post_desk / "ep01" / "takes" / "listen" / "ep01-t1-line2-missing.wav"
+    assert clip.exists() and clip.stat().st_size > 1000
+    assert "Listen before choosing" in result.stopped and str(clip) in result.stopped
+
+
+@needs_ffmpeg
+def test_a_quiet_line_the_transcript_missed_does_not_stop_finish(
+    post_desk: Path,
+) -> None:
+    # Aya is audible at 2.8-4.5 s, but the transcript did not write her line down.
+    _model_take(
+        post_desk, [(KENJI, 0.2, 2.0)], tones=((0.2, 2.0, 440), (2.8, 4.5, 880))
+    )
+    result, printed = _finish(post_desk)
+    assert not result.line_faults and not result.stopped and result.steps
+    assert 'CHECK BY EAR: line 2 (Aya) "You never listen' in printed
+    clip = post_desk / "ep01" / "takes" / "listen" / "ep01-t1-line2-unclear.wav"
+    assert clip.exists() and f"listen: line 2 -> {clip}" in printed
+    assert "CHECK BY EAR: line 2" in _notes(post_desk)
