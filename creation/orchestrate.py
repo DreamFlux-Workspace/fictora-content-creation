@@ -1576,6 +1576,7 @@ def run_step(
                         spine,
                     ),
                     spine,
+                    desk=desk,
                 )
             )
             if notes:

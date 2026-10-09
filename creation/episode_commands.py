@@ -1209,6 +1209,7 @@ def _show_authored(
         ),
         spine=spine,
         out=out,
+        desk=desk,
     )
     if arrived:
         steer += " " + " ".join(arrived)
@@ -2780,7 +2781,7 @@ def explain_refusal(message: str, spine: Mapping[str, Any], *, episode: int) -> 
 
 
 def say_patch_warnings(
-    before: Mapping[str, Any], answer: Any, *, out: Any
+    before: Mapping[str, Any], answer: Any, *, out: Any, desk: Path | None = None
 ) -> list[str]:
     """Print the authoring warnings a ``PATCH /v1/spines/{id}`` answer has that the spine before it did not.
 
@@ -2808,6 +2809,7 @@ def say_patch_warnings(
         introduced(authoring_warnings(before), authoring_warnings(after)),
         spine=after if after.get("beats") else before,
         out=out,
+        desk=desk,
     )
 
 
@@ -2848,7 +2850,7 @@ def _send_story_edit(
                         f"/v1/spines/{state.spine_id}",
                         {"spine_version": spine["spine_version"], "patch": patch},
                     )
-                    notes = say_patch_warnings(spine, answer, out=out)
+                    notes = say_patch_warnings(spine, answer, out=out, desk=desk)
                 except SystemExit as exc:
                     if "cascade_required" not in str(exc.code):
                         raise CommandStopped(str(exc.code)) from None
@@ -4096,7 +4098,7 @@ def _run_cascade(
     for warning in preview.get("warnings") or []:
         if " ".join(str(warning).split()) not in shown:
             print(f"  warning: {_short(warning)}", file=out)
-    notes = say_warnings(nudges, spine=spine, out=out)
+    notes = say_warnings(nudges, spine=spine, out=out, desk=desk)
     if preview_only:
         print("(preview only: nothing was changed)", file=out)
         return notes
@@ -4148,7 +4150,9 @@ def _run_cascade(
     save_production(desk, marked)
     if not nudges:
         # Execute carries the same introduced warnings; said here only when the preview had none.
-        notes = say_warnings(authoring_warnings(answer), spine=spine, out=out)
+        notes = say_warnings(
+            authoring_warnings(answer), spine=spine, out=out, desk=desk
+        )
     return notes
 
 
@@ -5540,7 +5544,7 @@ def note_to_shot_edits(
                         f"/v1/spines/{spine_id}",
                         {"spine_version": fresh["spine_version"], "patch": patch},
                     )
-                    say_patch_warnings(fresh, answer, out=out)
+                    say_patch_warnings(fresh, answer, out=out, desk=desk)
                 except SystemExit as exc:
                     if "cascade_required" not in str(exc.code):
                         raise CommandStopped(str(exc.code)) from None

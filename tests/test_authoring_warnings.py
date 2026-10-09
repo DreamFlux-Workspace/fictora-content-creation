@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,8 @@ from creation import episode_commands as ec
 from creation import orchestrate
 from creation.authoring_warnings import (
     HEADER,
+    PACING_SAID_FILE,
+    say_warnings,
     authoring_warnings,
     introduced,
     warning_line,
@@ -403,20 +406,31 @@ def _pacing(
     }
 
 
-def test_pacing_nudges_read_as_pace_under_their_take_and_never_stop_a_command() -> None:
-    # Gallery L-20261008-23: a 3.5 s silent cry after a line read slow.
-    hold = _pacing(
-        "silent_hold_long",
-        2,
-        "Take 2, beat 3: a silent moment with no movement plays for about 3.5 seconds.",
-    )
+def test_the_pacing_note_is_one_line_said_once_per_episode_across_steps(
+    tmp_path: Path,
+) -> None:
+    # Founder decision 9 Oct 2026: subtle, one line, never repeated across steps.
     gap = _pacing(
         "line_gap_long",
         2,
-        "Take 2: about 3.5 seconds pass between the line on beat 2 and the next one on beat 4.",
+        "Take 2: about 2.4 seconds pass before the line on beat 4, which may feel slow. "
+        "You can keep it as it is.",
     )
 
-    assert warning_line(hold) == f"pace: {hold['message']}"
-    lines = warning_lines([gap, hold])
-    assert lines[1:] == [f"  pace: {gap['message']}", f"  pace: {hold['message']}"]
-    assert not any(line.lstrip().startswith("t2 ") for line in lines)
+    # Alone: one line, no header, no take prefix.
+    assert warning_lines([gap]) == [f"ep_02 pace: {gap['message']}"]
+
+    # With a desk: the draft says it, then author / line / cascade never say it again.
+    first = warning_lines([_line_long(), gap], desk=tmp_path)
+    assert first[-1] == f"ep_02 pace: {gap['message']}"
+    assert sum("pace:" in line for line in first) == 1
+    again = warning_lines([_line_long(), gap], desk=tmp_path)
+    assert not any("pace:" in line for line in again)
+    assert any("line runs" in line for line in again)  # the other notes still print
+    out = io.StringIO()
+    assert say_warnings([gap], out=out, desk=tmp_path) == [] and out.getvalue() == ""
+
+    # Another episode still gets its one line.
+    other = {**gap, "episode_id": "ep_03", "path": "episodes[ep_03].takes[1]"}
+    assert warning_lines([other], desk=tmp_path) == [f"ep_03 pace: {other['message']}"]
+    assert json.loads((tmp_path / PACING_SAID_FILE).read_text()) == ["ep_02", "ep_03"]
