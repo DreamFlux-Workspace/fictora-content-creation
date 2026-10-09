@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 
 from creation.ops.state import LETTERBOX_TAKE_SECONDS_FOR_BAND
 from creation.production_config import ProductionConfig
@@ -129,4 +130,71 @@ def config_from_args(args: argparse.Namespace) -> ProductionConfig:
             if args.fallback_estimate_usd is not None
             else None
         ),
+    )
+
+
+def merge_config_from_args(
+    saved: ProductionConfig, args: argparse.Namespace
+) -> ProductionConfig:
+    """Return the desk's saved config with only the flags the operator passed laid over it.
+
+    ``bind`` used to rebuild ``production.config.json`` from its own flags, so a
+    re-bind with just ``--prompt`` silently dropped the desk's language, voice
+    mode, caption style, tempo and format (Back from the Sea L-20261008-2: the
+    show was drafted in English). A flag left unset now keeps the saved value;
+    a flag given replaces it. Rules epoch, Group B marker, posting fields and
+    poll deadlines are never touched by flags, so they always survive.
+    """
+
+    fresh = config_from_args(args)  # validates --caption-style / --api-captions
+    merged = ProductionConfig(**asdict(saved))
+    if getattr(args, "cut_tempo", None):
+        merged.cut_tempo = fresh.cut_tempo
+    if getattr(args, "language", None):
+        merged.spoken_language = fresh.spoken_language
+    if getattr(args, "voice_mode", None):
+        merged.voice_mode = fresh.voice_mode
+    format_changed = bool(getattr(args, "delivery_format", None)) and (
+        fresh.delivery_format != saved.delivery_format
+    )
+    if getattr(args, "delivery_format", None):
+        merged.delivery_format = fresh.delivery_format
+    if getattr(args, "clip_seconds", None) is not None or format_changed:
+        merged.clip_duration_seconds = fresh.clip_duration_seconds
+    if getattr(args, "caption_style", None) or getattr(args, "api_captions", False):
+        merged.caption_style = fresh.caption_style
+    if getattr(args, "api_captions", False):
+        merged.api_captions = True
+    if getattr(args, "fallback_estimate_usd", None) is not None:
+        merged.fallback_estimate_usd = fresh.fallback_estimate_usd
+    return merged
+
+
+#: Art-style preset and video lane a desk that was never bound gets from ``bind``.
+DEFAULT_PRESET_ID = "modern-dark-fantasy"
+DEFAULT_VIDEO_LANE = "minimax-h3"
+
+
+def bound_preset_and_lane(
+    desk, *, preset_id: str | None, video_lane: str | None
+) -> tuple[str, str]:
+    """Return the preset and lane ``bind`` should use: the flag when given, else the desk's saved ones.
+
+    ``bind`` defaulted ``--preset-id`` to modern-dark-fantasy and ``--video-lane``
+    to minimax-h3, so re-binding a desk to change only its brief silently
+    switched its art style and lane, the same family as L-20261008-2.
+    """
+
+    from creation.production_state import load_production, production_path
+
+    saved = (
+        load_production(desk)
+        if production_path(desk.expanduser().resolve()).is_file()
+        else None
+    )
+    return (
+        preset_id
+        or (saved.preset_id if saved and saved.preset_id else DEFAULT_PRESET_ID),
+        video_lane
+        or (saved.video_lane if saved and saved.video_lane else DEFAULT_VIDEO_LANE),
     )

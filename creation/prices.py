@@ -443,3 +443,40 @@ __all__ = [
     "take_usd",
     "video_usd_per_second",
 ]
+
+
+#: Eleven v3 text-to-speech per 1,000 characters: the rate the server books an
+#: audition at (fictora-drama ``prices.eleven_v3_tts_usd``, one charge per candidate).
+ELEVEN_V3_USD_PER_1000_CHARS: Final = Decimal("0.10")
+#: Voices one audition set renders when ``voice --count`` is not given.
+AUDITION_DEFAULT_COUNT: Final = 8
+#: Lines one audition reads (``creation.post.voice.AUDITION_MAX_LINES``).
+AUDITION_LINES: Final = 3
+#: The server's longest new audition wording, in characters (``MAX_AUDITION_TEXT_CHARS``).
+AUDITION_MAX_TEXT_CHARS: Final = 300
+
+
+def audition_usd(
+    lines: list[str] | tuple[str, ...], count: int = AUDITION_DEFAULT_COUNT
+) -> Decimal:
+    """What one audition set costs: every candidate reads the same lines, priced per character.
+
+    The kit used to quote a flat $0.30 a character (a runbook figure) while the
+    server booked about $0.015-0.035 (Gallery L-20261008-25, Dead Heat). This is
+    the server's own formula, so the quote and the ledger agree. With no lines
+    known it prices the longest audition the server accepts, so it never under-quotes.
+    """
+
+    spoken = [str(line).strip() for line in lines if str(line).strip()][:AUDITION_LINES]
+    chars = len(" ".join(spoken)) if spoken else AUDITION_MAX_TEXT_CHARS
+    per_voice = Decimal(chars) * ELEVEN_V3_USD_PER_1000_CHARS / 1000
+    return (per_voice * max(1, int(count))).quantize(Decimal("0.001"))
+
+
+def audition_quote(
+    lines: list[str] | tuple[str, ...], count: int = AUDITION_DEFAULT_COUNT
+) -> str:
+    """The audition price as the desk says it: ``about $0.05`` (never below a cent)."""
+
+    usd = max(audition_usd(lines, count), Decimal("0.01"))
+    return f"about ${usd:.2f}"

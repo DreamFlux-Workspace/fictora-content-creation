@@ -50,7 +50,6 @@ from creation.harness.http_util import api_error_text
 from creation.post.desk import episode_dialogue, spine_body
 
 APPROVALS_PATH = Path("shared") / "voices" / "approvals.json"
-AUDITION_USD = 0.30
 #: The server's keep route (fictora-drama #603): records each named card's current voice as kept.
 APPROVALS_ROUTE = "/v1/spines/{spine_id}/voice-approvals"
 #: The keep route takes one to four characters per call; a series holds up to 50, so a long keep goes four at a time.
@@ -95,6 +94,16 @@ class CastVoice:
     description: str | None = None
     #: ``voice_brief.reference_audio_url``: a sample of the locked voice, when one was rendered.
     sample_url: str | None = None
+    #: The character's first spoken lines: what an audition reads, so its price is quoted from them.
+    lines: tuple[str, ...] = ()
+
+    @property
+    def audition_price(self) -> str:
+        """``about $0.05``: one audition set at the server's own per-character rate (L-20261008-25)."""
+
+        from creation.prices import audition_quote
+
+        return audition_quote(self.lines)
 
 
 def speaking_voices(
@@ -117,15 +126,19 @@ def speaking_voices(
 
     body = spine_body(spine)
     if episode is not None:
-        speakers = [line["cast_id"] for line in episode_dialogue(body, episode)]
+        spoken = [
+            (line["cast_id"], str(line.get("text") or ""))
+            for line in episode_dialogue(body, episode)
+        ]
     else:
-        speakers = [
-            str(line.get("cast_id") or "")
+        spoken = [
+            (str(line.get("cast_id") or ""), str(line.get("text") or ""))
             for beat in body.get("beats") or []
             if isinstance(beat, Mapping)
             for line in beat.get("dialogue_lines") or []
             if isinstance(line, Mapping) and str(line.get("text") or "").strip()
         ]
+    speakers = [cast_id for cast_id, _text in spoken]
     wanted = [cast_id for cast_id in dict.fromkeys(speakers) if cast_id]
     cards = {
         str(card.get("cast_id") or ""): card
@@ -147,6 +160,13 @@ def speaking_voices(
                 description=str(brief.get("seedance_vocal_signature") or "").strip()
                 or None,
                 sample_url=str(brief.get("reference_audio_url") or "").strip() or None,
+                lines=tuple(
+                    dict.fromkeys(
+                        text.strip()
+                        for who, text in spoken
+                        if who == cast_id and text.strip()
+                    )
+                )[:3],
             )
         )
     return rows
@@ -443,7 +463,7 @@ def _commands(desk: Path, pending: list[CastVoice]) -> list[str]:
             f"  {voice.name}: keep it: fictora-produce voice --desk {desk} --cast {voice.cast_id} --keep"
         )
         lines.append(
-            f"  {voice.name}: hear others (${AUDITION_USD:.2f}, only after the human's yes): "
+            f"  {voice.name}: hear others ({voice.audition_price}, only after the human's yes): "
             f"fictora-produce voice --desk {desk} --cast {voice.cast_id} --audition, "
             f"then fictora-produce voice --desk {desk} --cast {voice.cast_id} --pick N"
         )
@@ -521,7 +541,7 @@ def _listen_first_commands(desk: Path, pending: list[CastVoice]) -> list[str]:
     for voice in pending:
         audition = (
             f"fictora-produce voice --desk {desk} --cast {voice.cast_id} --audition "
-            f"(${AUDITION_USD:.2f}), then --pick N"
+            f"({voice.audition_price}), then --pick N"
         )
         if voice.sample_url:
             lines.append(
@@ -583,7 +603,7 @@ def keep_unheard_refusal(
                 + " (no free sample, no audition). Audition first:",
                 *(
                     f"  fictora-produce voice --desk {desk} --cast {v.cast_id} --audition "
-                    f"(${AUDITION_USD:.2f}), then --pick N or --keep --heard"
+                    f"({v.audition_price}), then --pick N or --keep --heard"
                     for v in silent
                 ),
             ]

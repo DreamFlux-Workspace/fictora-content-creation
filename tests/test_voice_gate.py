@@ -119,9 +119,9 @@ def test_the_plates_yes_shows_each_speaking_voice_and_what_to_run(
     # Listen first: the sample or an audition, and a keep only once the human heard it.
     assert "Hear each voice with the human first" in text
     assert f"voice --desk {desk} --cast cast_hana --keep --heard" in text
-    assert (
-        f"voice --desk {desk} --cast cast_ren --audition ($0.30), then --pick N" in text
-    )
+    # Quoted from Ren's own lines at the server's per-character rate, not a flat $0.30 (L-20261008-25).
+    assert f"voice --desk {desk} --cast cast_ren --audition (about $" in text
+    assert "$0.30" not in text
     assert f"voice --desk {desk} --keep-all --heard" in text
     assert load_production(desk).phase == "wait_script"
 

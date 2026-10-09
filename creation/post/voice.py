@@ -61,6 +61,7 @@ from creation.post.desk import (
 from creation.post.finish import book
 from creation.post.media import media_duration, probe_video, run_ffmpeg
 from creation.post.whisper import line_windows, load_words, transcribe
+from creation.prices import audition_quote, audition_usd
 from creation.production_state import load_production
 from creation.voice_gate import (
     OLD_SERVER_NOTE,
@@ -78,8 +79,6 @@ from creation.voice_gate import (
     voice_name,
 )
 
-AUDITION_SET_USD = 0.30
-"""One audition set, as the runbook prices it."""
 AUDITION_MAX_LINES = 3
 MIN_CANDIDATES, MAX_CANDIDATES = 4, 10
 ELEVEN_V3_USD_PER_1000_CHARS = 0.10
@@ -395,7 +394,8 @@ def run_voice_audition(
         if finished and not (cause and cause.strip()):
             raise ValueError(
                 f"{name} already has an audition set ({finished[-1].name}); pick from it with --pick N, "
-                f'or pass --cause "..." to pay for a second set (${AUDITION_SET_USD:.2f})'
+                f'or pass --cause "..." to pay for a second set '
+                f"({audition_quote([wording] if wording else lines, len(wanted) or count)})"
             )
     finally:
         run.client.close()
@@ -423,7 +423,10 @@ def run_voice_audition(
         path = download(url, folder / f"{number:02d}-{cast_slug(voice)}.mp3")
         seconds = float(candidate.get("seconds") or 0) or round(media_duration(path), 3)
         made.append(Candidate(number, voice, path, url, seconds))
-    cost = float(answer.get("cost_usd") or AUDITION_SET_USD)
+    cost = float(
+        answer.get("cost_usd")
+        or audition_usd([wording] if wording else lines, len(wanted) or count)
+    )
     listing = {
         "cast_id": cast_id,
         "name": name,
