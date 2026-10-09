@@ -605,10 +605,11 @@ def test_a_legacy_reel_never_draws_system_panels(
 
 
 def test_the_allow_list_is_group_a_only() -> None:
-    """The seam bed (#156), sound only (the silent-head trim cuts picture: new desks only), and caption
-    dashes (#137, captions only; moved from Group B on 9 Oct 2026)."""
+    """The seam bed (#156), sound only (the silent-head trim cuts picture: new desks only), caption
+    dashes (#137, captions only) and the pitch card (#155, a reminder on a continuing desk), both moved
+    from Group B on 9 Oct 2026."""
 
-    assert CONTINUING_FIXES == frozenset({"seam_bed", "caption_dashes"})
+    assert CONTINUING_FIXES == frozenset({"seam_bed", "caption_dashes", "pitch_card"})
 
 
 def test_continuing_fix_reaches_a_legacy_desk_only_while_listed(

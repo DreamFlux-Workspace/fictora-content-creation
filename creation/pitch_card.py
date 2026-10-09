@@ -21,8 +21,9 @@ never the idea. The pitch card is that idea, written down and approved first.
   nothing paid runs for an episode whose newest card lacks its yes: ``step``
   (plates, boards, filming), ``redraw-board``, ``redraw-plate`` and
   ``film --confirm-spend`` all stop first (:func:`pitch_gate_refusal`). Older
-  desks are never held, except from their Group B episode on
-  (:func:`creation.rules_epoch.continuing_fix`, ``pitch_card``, founder 7 Oct 2026).
+  desks are never held: before each of those they get a reminder and go ahead,
+  on every episode (``pitch_card`` is in :data:`creation.rules_epoch.CONTINUING_FIXES`
+  since 9 Oct 2026, founder; reminder-only since 8 Oct 2026, #185).
 - The script gate prints the approved card, its world rules ("check every line
   and beat against these") and free warnings that compare the script with it
   (:func:`script_pitch_lines`), on every desk.
@@ -911,12 +912,13 @@ def pitch_gate_refusal(
     ``redraw-plate`` and ``film --confirm-spend`` ask it before they send
     anything, so a pitch rewritten mid-episode holds every paid draw until its
     new yes. ``stage`` names what is held, ``rerun`` what to run after the yes.
-    Desks created before 6 Oct 2026 are never held: from their Group B episode
-    on they get a reminder on stderr instead (rules epoch; founder 8 Oct 2026).
+    Desks created before 6 Oct 2026 are never held: they get a reminder on
+    stderr instead, on every episode (founder 8 Oct 2026, reminder-only; every
+    episode since 9 Oct 2026, ``pitch_card`` in Group A).
     """
 
     desk = Path(desk).expanduser().resolve()
-    # A legacy desk is held only from its Group B episode on (``pitch_card``, founder 7 Oct 2026).
+    # Every desk since 9 Oct 2026 (``pitch_card`` in Group A); off the allow-list a legacy desk skips it.
     if not continuing_fix(desk, "pitch_card", episode=episode):
         return None
     if approved_pitch(desk, episode) is not None:
