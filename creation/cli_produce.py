@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Sequence
 
 from creation.captions import caption_take, find_ffmpeg, take_index_from_name
-from creation.cli_config import add_production_config_args, config_from_args
+from creation.cli_config import (
+    add_production_config_args,
+    bound_preset_and_lane,
+    config_from_args,
+    merge_config_from_args,
+)
 from creation.cli_post import (
     POST_COMMANDS,
     add_caption_style_arg,
@@ -105,10 +110,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     bind.add_argument("--prompt", required=True, help=f"The premise. {HELP_SUFFIX}")
     bind.add_argument(
         "--preset-id",
-        default="modern-dark-fantasy",
-        help="Published art-style preset (list them: fictora-produce presets).",
+        default=None,
+        help="Published art-style preset (list them: fictora-produce presets). "
+        "Default: the desk's saved preset (modern-dark-fantasy on a desk never bound).",
     )
-    bind.add_argument("--video-lane", default="minimax-h3")
+    bind.add_argument(
+        "--video-lane",
+        default=None,
+        help="Video lane. Default: the desk's saved lane (minimax-h3 on a desk never bound).",
+    )
     bind.add_argument("--episode", type=int, default=1)
     add_production_config_args(bind)
 
@@ -469,18 +479,20 @@ def _run_command(args: argparse.Namespace) -> int:
             return 0
         if args.command == "bind":
             prompt = text_or_file(args.prompt, flag="--prompt")
+            preset_id, video_lane = bound_preset_and_lane(
+                args.desk, preset_id=args.preset_id, video_lane=args.video_lane
+            )
             state = bind_desk(
                 args.desk,
                 prompt=prompt,
-                preset_id=args.preset_id,
-                video_lane=args.video_lane,
+                preset_id=preset_id,
+                video_lane=video_lane,
                 episode_ordinal=args.episode,
             )
-            bound = config_from_args(args)
-            # Binding never changes which rules a desk runs under (creation.rules_epoch).
-            kept = load_production_config(args.desk)
-            bound.rules_epoch = kept.rules_epoch
-            bound.continuing_fixes_from_episode = kept.continuing_fixes_from_episode
+            # Re-binding keeps the desk's saved settings (language, voice mode,
+            # caption style, tempo, format, rules epoch, ...); only flags given
+            # here replace them (L-20261008-2).
+            bound = merge_config_from_args(load_production_config(args.desk), args)
             save_production_config(args.desk, bound)
             print(f"bound session_id={state.session_id} phase={state.phase}")
             narration = narrator_warning(prompt, desk=args.desk)
