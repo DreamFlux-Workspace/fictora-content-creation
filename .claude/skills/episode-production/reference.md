@@ -491,6 +491,7 @@ uv run fictora-produce look-frame --desk D --description TEXT|@FILE [--size 1088
 uv run fictora-produce approve --desk D --gate look [--path shared/look/look-frame-vN.png | --url https://…]   # the look yes: records series.look and pins the frame (default: the newest look frame); idempotent; spends nothing
 uv run fictora-produce look --desk D --url https://…          # pin a frame only (a URL the human picked); not the yes: prints that the look gate is still open; spends nothing
 uv run fictora-produce look-note --desk D (--add TEXT | --remove ID|N)   # at most five; the next drawing uses them
+uv run fictora-produce look-note --desk D --add "bean paste on his left sleeve" --on Ren --from-episode 8 [--until-episode 9]   # a mark picked up in the story: every shot of those episodes that shows Ren keeps it (own-side words, "only there"); never the style or a portrait. New stories, and continuing shows from their Group B episode
 uv run fictora-produce sound-note --desk D [--episode N] [--take tK [--shot S | --row R]] "add a dry stone crack at the end"   # adds to one take; "no purring" drops/levels on every take; free
 uv run fictora-produce sound-note --desk D [--remove ID|N]      # list the story's sound notes, or remove one
 uv run fictora-produce take-facts --desk D --episode N --take tK [--refresh]   # show the saved SFX plan; --refresh reads it again (new version) and prints what changed
