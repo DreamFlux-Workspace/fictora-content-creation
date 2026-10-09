@@ -283,9 +283,11 @@ def test_a_legacy_reel_rebuilds_captions_as_before(tmp_path: Path) -> None:
     assert "speech timestamps `words.json`" in notes[-1]
 
 
-def test_a_legacy_finish_spreads_flicker_words_over_the_line(
+def test_a_legacy_finish_times_each_flicker_word_like_a_new_desk(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """``per_word_captions`` is Group A since 9 Oct 2026 (founder): a legacy desk is timed per word too."""
+
     from creation import captions
 
     seen: list[bool] = []
@@ -296,6 +298,8 @@ def test_a_legacy_finish_spreads_flicker_words_over_the_line(
         return real(*args, **kwargs)
 
     monkeypatch.setattr(captions, "time_lines", spy)
+    # This machine's ffmpeg may lack libass; the timing call is what counts.
+    monkeypatch.setattr(captions, "find_ffmpeg", lambda: ("ffmpeg", "ffprobe"))
     for name, legacy in (("2026-09-26-old", True), ("2026-10-06-new", False)):
         desk = tmp_path / name
         (desk / "ep01" / "api").mkdir(parents=True)
@@ -309,7 +313,7 @@ def test_a_legacy_finish_spreads_flicker_words_over_the_line(
             captions.caption_take(desk, words_json=words, style="house")
         except (RuntimeError, ValueError):
             pass  # only the timing call matters here
-        assert seen[-1] is (not legacy)
+        assert seen[-1] is True, legacy
 
 
 # --- #141: Bold (legacy desks keep house and are never asked) --------------------------------------
@@ -609,7 +613,9 @@ def test_the_allow_list_is_group_a_only() -> None:
     dashes (#137, captions only) and the pitch card (#155, a reminder on a continuing desk), both moved
     from Group B on 9 Oct 2026."""
 
-    assert CONTINUING_FIXES == frozenset({"seam_bed", "caption_dashes", "pitch_card"})
+    assert CONTINUING_FIXES == frozenset(
+        {"seam_bed", "caption_dashes", "pitch_card", "per_word_captions"}
+    )
 
 
 def test_continuing_fix_reaches_a_legacy_desk_only_while_listed(

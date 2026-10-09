@@ -192,7 +192,7 @@ def _legacy_desk(desk: Path) -> bool:
 
 
 def _per_word_desk(desk: Path, episode: int) -> bool:
-    """Whether this episode's captions show each word when it is said (new desks; Group B episodes)."""
+    """Whether this episode's captions show each word when it is said (every desk since 9 Oct 2026)."""
 
     from creation.rules_epoch import continuing_fix
 
@@ -3102,8 +3102,8 @@ def caption_take(
             known=[(line_spans or {}).get(line.line_id) for line in caption_lines]
             if line_spans
             else None,
-            # Each word when it is said (6 Oct 2026); a legacy desk spreads them as before,
-            # except from its Group B episode on (``per_word_captions``, founder 7 Oct 2026).
+            # Each word when it is said (6 Oct 2026), on every desk since 9 Oct 2026
+            # (``per_word_captions``, Group A, founder); off the allow-list a legacy desk spreads them.
             per_word=not whole_lines and _per_word_desk(desk, episode_ordinal),
             known_after_words=line_spans_after_words,
             floors=[(voice_floors or {}).get(line.line_id) for line in caption_lines]
