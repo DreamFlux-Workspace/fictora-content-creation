@@ -262,12 +262,36 @@ def _beat_rows(beat: Mapping[str, Any]) -> list[tuple[str, str]]:
     ]
 
 
+def _short_name(card: Mapping[str, Any]) -> str:
+    """The server's ``cast[].short_name`` (fictora-drama #734), else the full name: the kit never guesses."""
+
+    return str(card.get("short_name") or card.get("name"))
+
+
 def _cast_names(spine: Mapping[str, Any]) -> dict[str, str]:
     return {
-        str(card.get("cast_id")): str(card.get("name"))
+        str(card.get("cast_id")): _short_name(card)
         for card in spine.get("cast") or []
         if isinstance(card, Mapping) and card.get("cast_id") and card.get("name")
     }
+
+
+def _full_to_short(spine: Mapping[str, Any]) -> list[tuple[str, str]]:
+    pairs = [
+        (str(card.get("name")), _short_name(card))
+        for card in spine.get("cast") or []
+        if isinstance(card, Mapping) and card.get("name")
+    ]
+    return sorted(
+        ((full, short) for full, short in pairs if full != short),
+        key=lambda pair: -len(pair[0]),
+    )
+
+
+def _shorten_names(text: str, pairs: Sequence[tuple[str, str]]) -> str:
+    for full, short in pairs:
+        text = re.sub(rf"\b{re.escape(full)}\b", short, text)
+    return text
 
 
 def _beat_line(
@@ -329,6 +353,8 @@ def beat_expression(
     tag = _EXPRESSION_TAIL.search(intent)
     kind = beat.get("reaction_kind") or frame_kind
     tag_face = _clean(tag.group("face")) if tag and tag.group("face") else None
+    if tag_face:
+        tag_face = _shorten_names(tag_face, _full_to_short(spine))
     if kind is None and tag is not None:
         kind = tag.group("kind").lower()
     if kind not in EXPRESSION_DIRECTIONS:
@@ -397,6 +423,7 @@ def pitch_takes(spine: Mapping[str, Any], episode_id: str) -> list[dict[str, Any
     if not beats:
         return []
     names = _cast_names(spine)
+    pairs = _full_to_short(spine)
     takes: list[dict[str, Any]] = []
     number = 0
     pattern = spine.get("beats_per_storyboard_set") or []
@@ -416,7 +443,7 @@ def pitch_takes(spine: Mapping[str, Any], episode_id: str) -> list[dict[str, Any
                     {
                         "shot": number,
                         "camera": camera[:80],
-                        "scene": scene[:400],
+                        "scene": _shorten_names(scene, pairs)[:400],
                         "line": _beat_line(beat, names) if first else None,
                         "expression": beat_expression(spine, beat, names)
                         if first

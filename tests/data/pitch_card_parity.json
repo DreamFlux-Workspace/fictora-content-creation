@@ -1,5 +1,5 @@
 {
- "_source": "fictora-drama tests/drama_generation/fixtures/pitch_card_parity.json: the same story slice must give the same card on the server (drama_generation.pitch_card) and the kit (creation/pitch_shots.py). Built from hanakaze_ep07_take1.json plus one planned beat. Regenerate with the server, then copy to the kit.",
+ "_source": "fictora-drama tests/drama_generation/fixtures/pitch_card_parity.json: the same story slice must give the same card on the server (drama_generation.pitch_card) and the kit (creation/pitch_shots.py). Built from hanakaze_ep07_take1.json plus one planned beat. short_names is what GET /v1/spines/{id} sends as cast[].short_name. Regenerate with the server, then copy to the kit.",
  "episode_id": "episode_07",
  "beats_per_storyboard_set": [
   2,
@@ -1099,6 +1099,11 @@
    ]
   }
  ],
+ "spoken_language": "en-US",
+ "short_names": {
+  "cast_mitsu-hanakaze": "Mitsu",
+  "cast_ren-kurosawa": "Ren"
+ },
  "expected": {
   "takes": [
    {
@@ -1107,19 +1112,19 @@
      {
       "shot": 1,
       "camera": "Extreme close-up",
-      "scene": "Already mid-slam on Mitsu Hanakaze’s face: both palms strike the glass wagashi case before she refuses service to her rival.",
+      "scene": "Already mid-slam on Mitsu’s face: both palms strike the glass wagashi case before she refuses service to her rival.",
       "line": {
-       "speaker": "Mitsu Hanakaze",
+       "speaker": "Mitsu",
        "text": "I don't sell to my rival!"
       },
-      "expression": "Mitsu Hanakaze fumes",
+      "expression": "Mitsu fumes",
       "opens": true,
       "ends_on": false
      },
      {
       "shot": 2,
       "camera": "Wide",
-      "scene": "Ren Kurosawa calmly offering coins across the counter, with both shopfronts and arcade signs behind him.",
+      "scene": "Ren calmly offering coins across the counter, with both shopfronts and arcade signs behind him.",
       "line": null,
       "expression": null,
       "opens": false,
@@ -1128,12 +1133,12 @@
      {
       "shot": 3,
       "camera": "Two-shot",
-      "scene": "Across the wagashi case: Ren Kurosawa keeps the coins offered and calmly asks for Mitsu Hanakaze’s method instead of buying; Mitsu’s raised refusal finger falters.",
+      "scene": "Across the wagashi case: Ren keeps the coins offered and calmly asks for Mitsu’s method instead of buying; Mitsu’s raised refusal finger falters.",
       "line": {
-       "speaker": "Ren Kurosawa",
+       "speaker": "Ren",
        "text": "Please teach me how to make it."
       },
-      "expression": "Mitsu Hanakaze's eye twitches behind a polite smile",
+      "expression": "Mitsu's eye twitches behind a polite smile",
       "opens": false,
       "ends_on": false
      }
@@ -1145,21 +1150,21 @@
      {
       "shot": 4,
       "camera": "Two-shot",
-      "scene": "Mitsu Hanakaze rejects Ren Kurosawa, but her outburst collapses when her gaze catches pink bean paste smeared on his white cuff—the irreversible hint that he has already been making wagashi.",
+      "scene": "Mitsu rejects Ren, but her outburst collapses when her gaze catches pink bean paste smeared on his white cuff—the irreversible hint that he has already been making wagashi.",
       "line": {
-       "speaker": "Mitsu Hanakaze",
+       "speaker": "Mitsu",
        "text": "Absolutely not!"
       },
-      "expression": "Mitsu Hanakaze stares, stunned",
+      "expression": "Mitsu stares, stunned",
       "opens": false,
       "ends_on": false
      },
      {
       "shot": 5,
       "camera": "Close-up · high angle",
-      "scene": "Ren Kurosawa slides a single wrapped sakura mochi across the glass and walks out into the arcade.",
+      "scene": "Ren slides a single wrapped sakura mochi across the glass and walks out into the arcade.",
       "line": null,
-      "expression": "Mitsu Hanakaze's eyes fill with tears",
+      "expression": "Mitsu's eyes fill with tears",
       "opens": false,
       "ends_on": false
      },
@@ -1175,6 +1180,6 @@
     ]
    }
   ],
-  "pitch_digest": "sha256:a487a2857ae4af8c56434afae065726032926ecb2251dc48af2058540c3fb31c"
+  "pitch_digest": "sha256:fa7344e9bccae9d8cfa3e1b90dc28c2f80776ea4393ea0e20e5c864339ddc808"
  }
 }

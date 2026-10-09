@@ -33,8 +33,16 @@ def _case() -> dict[str, Any]:
 
 
 def _spine(case: dict[str, Any]) -> dict[str, Any]:
+    # What GET /v1/spines/{id} sends: each card with the server's short_name.
+    names = case.get("short_names") or {}
+    cast = [
+        {**card, "short_name": names[card["cast_id"]]}
+        if card["cast_id"] in names
+        else card
+        for card in case["cast"]
+    ]
     return {
-        "cast": case["cast"],
+        "cast": cast,
         "frames": case["frames"],
         "beats": case["beats"],
         "beats_per_storyboard_set": case["beats_per_storyboard_set"],
@@ -86,7 +94,7 @@ def test_pitch_prints_the_episode_shots_from_the_desk_story(desk: Path) -> None:
     assert "Shots, by take (6; what an app creator approves):" in text
     assert "1. Extreme close-up [opens]:" in text
     assert '"I don\'t sell to my rival!"' in text
-    assert "(Mitsu Hanakaze stares, stunned)" in text
+    assert "(Mitsu stares, stunned)" in text
 
 
 def test_pitch_without_a_desk_story_prints_no_shots(desk: Path) -> None:
@@ -97,3 +105,18 @@ def test_pitch_without_a_desk_story_prints_no_shots(desk: Path) -> None:
     run_pitch(desk, episode=1, file=path, out=out)
 
     assert "Shots, by take" not in out.getvalue()
+
+
+def test_without_the_servers_short_name_the_full_name_is_shown() -> None:
+    case = _case()
+    spine = _spine(case)
+    for entry in spine["cast"]:
+        entry.pop("short_name", None)
+
+    shots = [
+        shot
+        for take in pitch_takes(spine, case["episode_id"])
+        for shot in take["shots"]
+    ]
+
+    assert shots[0]["line"]["speaker"] == "Mitsu Hanakaze"
