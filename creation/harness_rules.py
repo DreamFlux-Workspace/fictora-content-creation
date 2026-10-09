@@ -64,6 +64,34 @@ _HOLD = re.compile(
     r"\b(?:hold|holds|holding|grip|grips|gripping|catch|catches|grasp|grasps)\b",
     re.IGNORECASE,
 )
+#: A "hold" that is the camera, the light or a look, never a hand: "lamplight holds on her",
+#: "the camera holds", "holding his profile", "holds her gaze" (Gallery L-20261008-18).
+_NOT_A_HAND_BEFORE = re.compile(
+    r"\b(?:light|lamplight|candlelight|moonlight|sunlight|glow|shadow|shadows|camera|shot|frame|lens|"
+    r"cut|close-up|closeup|angle|beat|silence|moment|gaze|look|eyes|stare|focus|music|score|note|pause)"
+    r"\s+(?:\w+\s+)?$",
+    re.IGNORECASE,
+)
+_NOT_A_HAND_AFTER = re.compile(
+    r"^\s+(?:on|for|still|steady|tight|wide|close|there|a\s+beat|a\s+moment|"
+    r"(?:his|her|their|its|the)\s+(?:gaze|stare|breath|profile|look|eyes|ground|position|pose|frame|"
+    r"shot|moment|silence|focus|nerve|tongue|composure|line))\b",
+    re.IGNORECASE,
+)
+
+
+def _stages_a_hand_hold(text: str) -> bool:
+    """Whether staging text holds something in a hand (a camera, light or look "hold" is not one)."""
+
+    for match in _HOLD.finditer(text):
+        before = text[max(0, match.start() - 40) : match.start()]
+        after = text[match.end() : match.end() + 40]
+        if _NOT_A_HAND_BEFORE.search(before) or _NOT_A_HAND_AFTER.search(after):
+            continue
+        return True
+    return False
+
+
 _FORBID_HOLD = re.compile(
     # A hyphenated compound ("no face-touching") is a standing contact rule,
     # not a ban on holding the prop the frame stages.
@@ -813,7 +841,7 @@ def staging_contradiction_lines(spine: Mapping[str, Any], *, episode: int) -> li
         forbidden: list[str] = []
         _strings(brief.get("forbidden_elements"), forbidden)
         if (
-            _HOLD.search(" ".join(staged)) is None
+            not _stages_a_hand_hold(" ".join(staged))
             or _FORBID_HOLD.search(" ".join(forbidden)) is None
         ):
             continue
@@ -970,7 +998,7 @@ def word_age_lines(spine: Mapping[str, Any]) -> list[str]:
         if not isinstance(card, Mapping):
             continue
         found = sorted(
-            {match.group(0).lower() for match in _WORD_AGE.finditer(_card_text(card))}
+            {match.group(0).lower() for match in _WORD_AGE.finditer(_age_text(card))}
         )
         if found:
             name = card.get("name") or card.get("cast_id")
@@ -985,18 +1013,75 @@ def word_age_lines(spine: Mapping[str, Any]) -> list[str]:
     return lines
 
 
+def _age_text(card: Mapping[str, Any]) -> str:
+    """Where a card states its character's age: its age fields, else the look the plate is drawn from.
+
+    The words-age check scanned the whole card (role, backstory, persona), so a
+    number word anywhere ("twenty years at the gallery") flagged every card of a
+    show whose ages were all digits (Gallery L-20261008-30). The server reads the
+    age from the age fields and the look; a backstory is not drawn.
+    """
+
+    brief = card.get("visual_brief")
+    fields: list[str] = []
+    for holder in (card, brief if isinstance(brief, Mapping) else {}):
+        for key in _AGE_FIELDS:
+            value = holder.get(key)
+            if isinstance(value, str) and value.strip():
+                fields.append(value)
+    if fields:
+        return " ".join(fields)
+    look: list[str] = []
+    _strings(brief, look)
+    return " ".join(look)
+
+
 def _card_text(card: Mapping[str, Any]) -> str:
     blobs: list[str] = []
     _strings(card, blobs)
     return " ".join(blobs)
 
 
-def _adult_age(text: str) -> int | None:
+#: An age written as a decade: "late 80s", "in his 40s", "mid-30s" (Noodle24 L-20261007-4).
+_DECADE_AGE = re.compile(r"\b(?:(early|mid|late)[- ]?)?([1-9]0)'?s\b", re.IGNORECASE)
+#: A number that is part of a name ("Noodle 24", "Studio 54", "Apartment 12"): a capitalised word
+#: right before it, no comma between.
+_NAMED_NUMBER = re.compile(
+    r"(?<![.!?]\s)(?<!^)\b(?!(?:Age|Aged|Ages)\b)[A-Z][A-Za-z'-]*[ -]?(\d{1,3})\b"
+)
+
+
+def _adult_age(text: str, *, names: tuple[str, ...] = ()) -> int | None:
+    """The first age (18+) a text states: ``31``, ``late 80s`` (88), ``in her 40s`` (45).
+
+    A number inside a name is never an age: the show's title or a place
+    ("works at Noodle 24" read as 24, L-20261007-4).
+    """
+
+    for name in names:
+        if name and any(ch.isdigit() for ch in name):
+            text = _name_pattern(name).sub(" ", text)
+    text = _NAMED_NUMBER.sub(lambda m: m.group(0).replace(m.group(1), " "), text)
+    for match in _DECADE_AGE.finditer(text):
+        decade = int(match.group(2))
+        band = (match.group(1) or "mid").lower()
+        age = decade + _BAND_YEARS[band]
+        if age >= 18:
+            return age
     for raw in _ADULT_AGE.findall(text):
         age = int(raw)
         if 18 <= age <= 80:
             return age
     return None
+
+
+def _name_pattern(name: str) -> re.Pattern[str]:
+    """``Noodle24`` matches "Noodle24", "Noodle 24" and "Noodle-24" (letters and digits may be split)."""
+
+    parts = re.findall(r"[A-Za-z]+|\d+", name)
+    return re.compile(
+        r"\b" + r"[\s-]?".join(map(re.escape, parts)) + r"\b", re.IGNORECASE
+    )
 
 
 #: The card fields that state a character's age: read before any free text.
@@ -1022,6 +1107,10 @@ def _card_age(
     Jun-ho is 26" was read out of his role text about Seo-yeon (L-20261006-27).
     """
 
+    titles = tuple(
+        str((spine or {}).get(key) or "")
+        for key in ("title", "series_title", "show_title")
+    )
     brief = card.get("visual_brief")
     for holder in (card, brief if isinstance(brief, Mapping) else {}):
         for key in _AGE_FIELDS:
@@ -1029,7 +1118,7 @@ def _card_age(
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 value = str(int(value))
             if isinstance(value, str):
-                age = _adult_age(value)
+                age = _adult_age(value, names=titles)
                 if age is not None:
                     return age
     own = _name_words(str(card.get("name") or ""))
@@ -1042,7 +1131,7 @@ def _card_age(
         words = clause.casefold()
         if any(re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", words) for n in others):
             continue
-        age = _adult_age(clause)
+        age = _adult_age(clause, names=titles)
         if age is not None:
             return age
     return None
