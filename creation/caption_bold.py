@@ -24,8 +24,9 @@ like the house style:
   from its own start (:data:`BOLD_LEAD_SECONDS` early at most, here 0), the
   words not yet said fully transparent.
 
-A voice heard, not seen (an off-screen line, inner voice) keeps Georgia italic
-at Bold's size, place, colours and chunking. A show spoken in Japanese or
+A voice heard, not seen (an off-screen line, inner voice) is the same face in
+italic (Arial Bold Italic, :data:`creation.captions.ITALIC_FONT_NAME`) at Bold's
+size, place, colours and chunking: one episode never mixes caption fonts. A show spoken in Japanese or
 Korean (English words cannot be timed against its speech) shows each whole
 English line in Bold's face, size and place, wrapped to at most two lines,
 with one yellow word. A letterbox show keeps its own caption layout.
@@ -46,6 +47,7 @@ from creation.captions import (
     _PHRASE_END,
     FONT_NAME,
     HOUSE_CANVAS_HEIGHT,
+    ITALIC_BOLD_FLAG,
     ITALIC_FONT_NAME,
     LAST_WORD_HOLD_SECONDS,
     OUTLINE_COLOUR,
@@ -498,19 +500,25 @@ def _event_text(cue: Cue, size: int, width: int, *, platform: str | None) -> str
 
 
 def build_bold_ass(
-    cues: Sequence[Cue], *, width: int, height: int, platform: str | None = None
+    cues: Sequence[Cue],
+    *,
+    width: int,
+    height: int,
+    platform: str | None = None,
+    size_scale: float = 1.0,
 ) -> str:
     """The Bold caption ASS for a frame of ``width`` x ``height`` (see the module notes).
 
     Cues that are not Bold yet (house flicker cues, cues read back from a
     file) are turned into Bold first (:func:`bold_from_flicker`). Every cue's
     words go through :func:`creation.caption_dashes.caption_text`.
+    ``size_scale`` (``--caption-scale``) multiplies Bold's size and edge.
     """
 
     if any(not (c.chunk and c.shown) for c in cues):
         cues = bold_from_flicker(cues)
-    scale = height / HOUSE_CANVAS_HEIGHT
-    size = bold_font_size(height)
+    scale = height / HOUSE_CANVAS_HEIGHT * size_scale
+    size = max(8, round(bold_font_size(height) * size_scale))
     margin_x = side_margin(width)
     outline = max(1, round(BOLD_OUTLINE * scale))
     shadow = max(1, round(BOLD_SHADOW * scale))
@@ -529,7 +537,7 @@ def build_bold_ass(
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: Bold,{FONT_NAME},{size},{BOLD_COLOUR},{BOLD_COLOUR},{tail},-1,0,0,0,{place}\n"
-        f"Style: Italic,{ITALIC_FONT_NAME},{italic_size(size)},{BOLD_COLOUR},{BOLD_COLOUR},{tail},0,-1,0,0,{place}\n"
+        f"Style: Italic,{ITALIC_FONT_NAME},{italic_size(size)},{BOLD_COLOUR},{BOLD_COLOUR},{tail},{ITALIC_BOLD_FLAG},-1,0,0,{place}\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"

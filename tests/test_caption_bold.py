@@ -99,13 +99,16 @@ def test_bold_is_about_1_44_times_subtle() -> None:
     assert bold_font_size(1920) / house == pytest.approx(1.44, abs=0.01)
 
 
-def test_inner_voice_keeps_georgia_italic_at_bold_size_and_place() -> None:
+def test_inner_voice_is_bolds_own_face_in_italic_at_bold_size_and_place() -> None:
+    """One face per episode (9 Oct 2026): the heard-not-seen line is Arial Bold Italic, not Georgia."""
+
     ass = build_bold_ass(
         [Cue(0, 1, "Run", italic=True, chunk="Run", shown=1)], width=768, height=1344
     )
     italic = _style(ass, "Italic")
-    assert italic[0] == "Georgia" and italic[1] == str(italic_size(64))
-    assert italic[7] == "-1" and italic[2] == "&H00FFFFFF"
+    assert italic[0] == _style(ass, "Bold")[0] == "Arial"
+    assert italic[1] == str(italic_size(64)) == "64"
+    assert italic[6] == "-1" and italic[7] == "-1" and italic[2] == "&H00FFFFFF"
     assert italic[15:] == _style(ass, "Bold")[15:]
     assert _events(ass)[0][3] == "Italic"
 
@@ -248,7 +251,7 @@ SUBTLE_GOLDEN = (
     "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
     "MarginL, MarginR, MarginV, Encoding\n"
     "Style: House,Arial,45,&H0000E5FF,&H0000E5FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,1,2,43,43,511,1\n"
-    "Style: Italic,Georgia,46,&H0000E5FF,&H0000E5FF,&H00000000,&H80000000,0,-1,0,0,100,100,0,0,1,4,1,2,43,43,511,1\n\n"
+    "Style: Italic,Arial,45,&H0000E5FF,&H0000E5FF,&H00000000,&H80000000,-1,-1,0,0,100,100,0,0,1,4,1,2,43,43,511,1\n\n"
     "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     "Dialogue: 0,0:00:00.50,0:00:00.87,House,,0,0,0,,Open\n"
     "Dialogue: 0,0:00:00.87,0:00:01.17,House,,0,0,0,,Open the\n"

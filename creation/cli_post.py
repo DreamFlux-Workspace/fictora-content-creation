@@ -103,6 +103,20 @@ def add_caption_style_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_caption_scale_arg(parser: argparse.ArgumentParser) -> None:
+    """``--caption-scale X`` on ``finish`` and ``caption``: the captions bigger or smaller, kit-placed."""
+
+    parser.add_argument(
+        "--caption-scale",
+        type=float,
+        default=1.0,
+        metavar="X",
+        help="Every caption line at the style's size times X (0.5-2; default 1, the house size). "
+        "The kit wraps and places the bigger lines itself (the hook card keeps its own size) and "
+        "the master's .ass keeps every line, so never re-burn captions by hand. 45 on a 1344-high take already IS the house 64 on 1920.",
+    )
+
+
 def add_caption_colour_arg(parser: argparse.ArgumentParser) -> None:
     """``--caption-colour yellow|white`` on ``finish`` and ``join`` (a letterbox show's 4:3 takes only)."""
 
@@ -613,6 +627,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "while takes are still to finish or when nothing changed).",
     )
     add_caption_style_arg(fin)
+    add_caption_scale_arg(fin)
     add_caption_colour_arg(fin)
     add_hook_line_args(fin)
     fin.add_argument(
@@ -977,6 +992,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             draw_thumbnail=args.thumbnail,
             over_locked_voices=args.over_locked_voices,
             caption_style=args.caption_style,
+            caption_scale=args.caption_scale,
             hook_line=args.hook_line,
             no_hook_line=args.no_hook_line,
             hook_line_position=args.hook_line_position,

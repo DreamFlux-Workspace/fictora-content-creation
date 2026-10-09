@@ -289,6 +289,21 @@ def real_ocr() -> str:
 
 
 @pytest.fixture(autouse=True)
+def _house_face_installed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Burns behave as on a laptop with Arial, whatever fonts the test machine has.
+
+    CI has no Arial, so the bundled-face burn (``captions.burnable_ass``) would
+    rename the burned file and the golden "runs the commands it always ran"
+    tests would compare machines, not code paths. A test of a laptop without
+    Arial passes ``house_face=False`` itself (``test_caption_one_face.py``).
+    """
+
+    from creation import captions
+
+    monkeypatch.setattr(captions, "house_face_on_this_laptop", lambda: True)
+
+
+@pytest.fixture(autouse=True)
 def _no_spine_read_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """finish and caption read the current spine from the server; tests stay offline and use the desk's copy.
 

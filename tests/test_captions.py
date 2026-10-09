@@ -303,7 +303,7 @@ def test_caption_take_reads_the_spoken_language_from_the_spine(
         assert [c.text for c in result.cues][:2] == ["Wait", "Wait here"]
 
 
-# --- Heard-not-seen voices in Georgia italic; lines that are not English left uncaptioned ---
+# --- Heard-not-seen voices in the house face's italic; lines that are not English left uncaptioned ---
 
 #: Four lines on one English show: an on-screen line (a Japanese line with an
 #: English subtitle), a Japanese line with no English, an off-screen line, and
@@ -373,7 +373,9 @@ def test_is_english(text: str, english: bool) -> None:
     assert is_english(text) is english
 
 
-def test_ass_sets_italic_cues_in_georgia_italic_and_the_rest_in_house() -> None:
+def test_ass_sets_italic_cues_in_the_house_face_italic_and_the_rest_in_house() -> None:
+    """Sweet Racket ep 5 (9 Oct 2026): one face per episode; only the slant tells a heard voice."""
+
     ass = build_ass(
         [Cue(1.0, 1.5, "Hi"), Cue(2.0, 2.5, "Behind", italic=True)],
         width=768,
@@ -381,12 +383,12 @@ def test_ass_sets_italic_cues_in_georgia_italic_and_the_rest_in_house() -> None:
     )
     house = ass.split("Style: House,")[1].split("\n")[0].split(",")
     italic = ass.split("Style: Italic,")[1].split("\n")[0].split(",")
-    assert italic[0] == "Georgia"
-    # Bold off, Italic on; size, colours, spacing, edge, shadow, alignment and margins as House.
-    assert (italic[6], italic[7]) == ("0", "-1")
+    assert italic[0] == house[0] == "Arial"
+    # Bold on, Italic on; size, colours, spacing, edge, shadow, alignment and margins as House.
+    assert (italic[6], italic[7]) == ("-1", "-1")
     assert (house[6], house[7]) == ("-1", "0")
-    # libass sizes a face by winAscent + winDescent: Georgia's Fontsize is scaled so both draw at the same em.
-    assert (house[1], italic[1]) == ("45", "46") and italic[1] == str(italic_size(45))
+    # The same face draws at the same em: the same Fontsize.
+    assert (house[1], italic[1]) == ("45", "45") and italic[1] == str(italic_size(45))
     assert italic[2:6] == house[2:6] and italic[8:] == house[8:]
     assert "Dialogue: 0,0:00:01.00,0:00:01.50,House,,0,0,0,,Hi" in ass
     assert "Dialogue: 0,0:00:02.00,0:00:02.50,Italic,,0,0,0,,Behind" in ass
@@ -519,7 +521,7 @@ def test_finish_summary_shows_not_english(post_desk: Path) -> None:
 
 
 @needs_ffmpeg
-def test_caption_command_warns_when_georgia_italic_falls_back(
+def test_caption_command_warns_when_the_italic_face_falls_back(
     post_desk: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -534,6 +536,6 @@ def test_caption_command_warns_when_georgia_italic_falls_back(
     _mixed_desk(post_desk)
     assert produce_main(["caption", "--desk", str(post_desk), "--no-open"]) == 0
     err = capsys.readouterr().err
-    assert "WARNING FONT: Georgia not found" in err and "Arial (/a/Arial.ttf)" in err
+    assert "WARNING FONT: Arial Bold Italic not found" in err
     notes = (post_desk / "ep01" / "run-notes.md").read_text(encoding="utf-8")
-    assert "FONT: Georgia not found" in notes
+    assert "FONT: Arial Bold Italic not found" in notes

@@ -31,6 +31,7 @@ from creation.captions import (
     CONTINUING_SHOW_CAPTION_STYLE,
     FONTS_DIR,
     NEW_SHOW_CAPTION_STYLE,
+    ass_for_this_laptop,
     Span,
     build_ass,
     build_line_cues,
@@ -185,7 +186,10 @@ def render_caption_preview(
                 [_first_chunk_cue(line, style)], width=width, height=height, style=style
             )
             path = scratch / f"{style}.ass"
-            path.write_text(_labelled(ass, label, width, height), encoding="utf-8")
+            path.write_text(
+                ass_for_this_laptop(_labelled(ass, label, width, height)),
+                encoding="utf-8",
+            )
             files.append(path)
 
         def esc(p: Path) -> str:

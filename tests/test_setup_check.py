@@ -37,7 +37,7 @@ def tools(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
 
     listing = {"filters": ALL_FILTERS}
     monkeypatch.setattr(sc, "find_ffmpeg", lambda: ("/x/ffmpeg", "/x/ffprobe"))
-    monkeypatch.setattr(sc, "find_italic_font", lambda: GEORGIA_PRESENT)
+    monkeypatch.setattr(sc, "find_italic_font", lambda: ITALIC_PRESENT)
     monkeypatch.setattr(sc, "find_house_font", lambda: ARIAL_PRESENT)
 
     def run(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
@@ -49,9 +49,9 @@ def tools(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
 
 
 ARIAL_PRESENT = HouseFont(Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"))
-GEORGIA_PRESENT = ItalicFont(
-    Path("/System/Library/Fonts/Supplemental/Georgia Italic.ttf"),
-    Path("/System/Library/Fonts/Supplemental/Georgia.ttf"),
+ITALIC_PRESENT = ItalicFont(
+    Path("/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf"),
+    Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
 )
 
 
@@ -88,8 +88,8 @@ def test_everything_present_and_accepted_prints_ticks_and_exits_0(
     assert "✓ API token accepted" in printed and "✓ libass (captions)" in printed
     assert "✓ tesseract (drawn text)" in printed
     assert (
-        "✓ Georgia Italic (heard-not-seen captions): "
-        "/System/Library/Fonts/Supplemental/Georgia Italic.ttf" in printed
+        "✓ Arial Bold Italic (heard-not-seen captions): "
+        "/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf" in printed
     )
     assert TOKEN not in printed
 
@@ -180,7 +180,7 @@ def test_an_old_python_is_a_cross() -> None:
     assert sc.check_python((3, 12, 0)).ok
 
 
-def test_missing_georgia_is_a_warning_naming_the_fallback_not_a_failure(
+def test_missing_arial_italic_is_a_warning_naming_the_bundled_twin_not_a_failure(
     env: Path, tools: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
@@ -197,11 +197,13 @@ def test_missing_georgia_is_a_warning_naming_the_fallback_not_a_failure(
     printed = out.getvalue()
     assert code == 0, printed  # a warning never blocks setup
     assert "✗" not in printed
-    line = next(row for row in printed.splitlines() if "Georgia Italic (" in row)
+    line = next(row for row in printed.splitlines() if "Arial Bold Italic (" in row)
     assert line.startswith(
-        "⚠ Georgia Italic (heard-not-seen captions): Georgia not found"
+        "⚠ Arial Bold Italic (heard-not-seen captions): Arial Bold Italic not found"
     )
-    assert "/usr/share/fonts/dejavu/DejaVuSans.ttf" in line  # names the fallback file
+    assert (
+        "bundled Liberation Sans Bold Italic" in line
+    )  # one face, never a silent fallback
     assert "ttf-mscorefonts-installer" in line and "Restore Standard Fonts" in line
     assert printed.rstrip().endswith("Ready (1 warning(s) above).")
 
@@ -226,7 +228,11 @@ def test_missing_tesseract_is_a_warning_not_a_failure(
     assert printed.rstrip().endswith("Ready (1 warning(s) above).")
 
 
-def test_georgia_regular_without_the_italic_is_a_warning() -> None:
-    check = sc.check_italic_font(lambda: ItalicFont(None, Path("/fonts/Georgia.ttf")))
+def test_arial_bold_without_the_italic_is_a_warning() -> None:
+    check = sc.check_italic_font(
+        lambda: ItalicFont(None, Path("/fonts/Arial Bold.ttf"))
+    )
     assert check.ok and check.warn
-    assert check.line().startswith("⚠ ") and "only /fonts/Georgia.ttf" in check.line()
+    assert (
+        check.line().startswith("⚠ ") and "only /fonts/Arial Bold.ttf" in check.line()
+    )

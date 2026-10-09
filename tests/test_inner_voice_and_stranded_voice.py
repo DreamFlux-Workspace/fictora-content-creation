@@ -390,7 +390,7 @@ def test_a_thought_goes_on_the_character_with_the_whole_list_and_no_cast_place(
     assert "Hana (thinks): Don't look at him." in text
     assert "script approval: unchanged" in text
     assert "Heard in `finish`" in text and "3.2s on the episode" in text
-    assert "lays it at the cue and captions it in Georgia italic" in text
+    assert "lays it at the cue and captions it in italic" in text
     assert "--episode 1 --take tK" in text
     assert "does not lay" not in text
     assert "no --until: 1.60s from the word count" in text

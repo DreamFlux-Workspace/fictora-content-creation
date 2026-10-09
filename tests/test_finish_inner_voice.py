@@ -213,7 +213,7 @@ def test_finish_makes_the_dry_line_lays_it_at_the_cue_and_captions_it_in_georgia
     after = measure_rms_windows(step.output, window_seconds=0.1)
     assert before[44] < -60 and after[44] > -40
     assert after[26] < -60, "nothing else moves"
-    # Captioned where it plays, in the heard-not-seen Georgia italic; the script lines keep their timing.
+    # Captioned where it plays, in the heard-not-seen italic; the script lines keep their timing.
     ass = sorted(takes.glob("take-ep01-t1-cap-v*.ass"))[-1].read_text()
     thought = [
         row

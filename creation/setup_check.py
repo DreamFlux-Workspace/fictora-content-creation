@@ -3,7 +3,7 @@
 Checks what the kit needs and nothing else: the Drama API token is present and
 accepted (one cheap authenticated read, ``GET /v1/art-style-presets``), ffmpeg
 and ffprobe are installed, ffmpeg has libass (captions) and the filters the
-local finish and edits use, Arial Bold (the house caption face) and Georgia
+local finish and edits use, Arial Bold (the house caption face) and Arial Bold
 Italic (the heard-not-seen caption face) are where libass will look for them,
 tesseract (the drawn-text check) is on PATH, and the Python and uv the repo
 runs on. Prints
@@ -217,8 +217,9 @@ def check_house_font(find: Callable[[], HouseFont] | None = None) -> Check:
     """Arial Bold, the house caption face, resolves where libass looks for it (warns, never fails).
 
     Arial is a system font (macOS ships it; it cannot be bundled). Without it
-    every caption quietly comes out in another face and width, so this is a
-    ``⚠`` naming the fallback and how to install Arial.
+    every caption line is set in the kit's bundled Liberation Sans Bold (Arial's
+    metric twin, the face the app's captions use), so this is a ``⚠`` saying
+    so and how to install Arial.
 
     Parameters
     ----------
@@ -235,11 +236,11 @@ def check_house_font(find: Callable[[], HouseFont] | None = None) -> Check:
 
 
 def check_italic_font(find: Callable[[], ItalicFont] | None = None) -> Check:
-    """Georgia Italic resolves where libass looks for it (warns, never fails).
+    """Arial Bold Italic, the heard-not-seen caption face, resolves where libass looks for it (warns, never fails).
 
-    Arial and Georgia are system fonts.
-    Without it, heard-not-seen captions quietly come out in another face, so
-    this is a ``⚠`` naming the fallback and how to install Georgia.
+    Arial is a system font; without it every caption line, italic ones too,
+    is set in the bundled Liberation Sans (never a mix of faces), so this is
+    a ``⚠`` naming what is used instead and how to install Arial.
 
     Parameters
     ----------
@@ -247,7 +248,7 @@ def check_italic_font(find: Callable[[], ItalicFont] | None = None) -> Check:
         Font lookup (default :func:`creation.captions.find_italic_font`); tests pass a fake.
     """
 
-    name = "Georgia Italic (heard-not-seen captions)"
+    name = "Arial Bold Italic (heard-not-seen captions)"
     font = (find or find_italic_font)()
     warning = font.warning()
     if warning is None:

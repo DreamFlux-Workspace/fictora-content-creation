@@ -48,7 +48,13 @@ from pathlib import Path
 from typing import Any
 
 from creation.caption_dashes import drawn_text as no_dash_text
-from creation.captions import FONT_NAME, FONTS_DIR, _ass_escape, text_width
+from creation.captions import (
+    FONT_NAME,
+    FONTS_DIR,
+    _ass_escape,
+    ass_for_this_laptop,
+    text_width,
+)
 from creation.ops.folder import next_versioned_path
 from creation.post.hook_overlay import (
     BAND_GAP,
@@ -441,7 +447,7 @@ def draw_cover(
     if out.exists():
         raise FileExistsError(f"{out} exists; the cover never overwrites")
     ass = scratch / "cover.ass"
-    ass.write_text(cover_ass(layout), encoding="utf-8")
+    ass.write_text(ass_for_this_laptop(cover_ass(layout)), encoding="utf-8")
     seek = ["-ss", f"{max(0.0, at):.3f}"] if at is not None else []
     run_ffmpeg(
         [*seek, "-i", str(picture), "-frames:v", "1",
