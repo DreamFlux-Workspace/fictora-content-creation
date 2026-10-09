@@ -516,7 +516,9 @@ def level_hand_cues(
 
     if bed is None or not plan.cues:
         return plan, ()
-    meter = measure or (lambda path: measure_rms_windows(path, window_seconds=bed.window_seconds))
+    meter = measure or (
+        lambda path: measure_rms_windows(path, window_seconds=bed.window_seconds)
+    )
     cues: list[tuple[Placed, float]] = []
     notes: list[str] = []
     for cue, seconds in plan.cues:

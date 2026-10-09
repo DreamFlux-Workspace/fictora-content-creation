@@ -2266,7 +2266,14 @@ def run_finish(
         except AmbienceUnusable as exc:
             # Both renders were paid for: booked, then room tone goes in (the step fails, said).
             if exc.cost_usd:
-                book(desk, episode=episode, usd=exc.cost_usd, take_id=take_id, stream=out, unit="ambience")
+                book(
+                    desk,
+                    episode=episode,
+                    usd=exc.cost_usd,
+                    take_id=take_id,
+                    stream=out,
+                    unit="ambience",
+                )
             raise
         if found.cost_usd:
             book(

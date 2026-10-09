@@ -136,7 +136,9 @@ def test_the_description_comes_from_the_frame_location_and_the_planned_ambience(
         episode=1,
     )
     assert brief is not None and brief.location == PLACE
-    assert brief.description.startswith(f"Continuous background ambience of {PLACE[:60]}")
+    assert brief.description.startswith(
+        f"Continuous background ambience of {PLACE[:60]}"
+    )
     assert "; soft crowd murmur under the arcade roof; " in brief.description
     assert brief.description.endswith(DESCRIPTION_TAIL)
     assert "a door slams" not in brief.description, (
@@ -166,42 +168,65 @@ def test_the_description_never_asks_for_silence_and_never_loops_a_one_off() -> N
     words the request the way the server words the app's own beds (show_ambience.ambience_prompt).
     """
 
-    facts = locked_facts(sustained="a quiet rolling simmer from the oden pot; the cook says nothing")
+    facts = locked_facts(
+        sustained="a quiet rolling simmer from the oden pot; the cook says nothing"
+    )
     spine = spine_with_place("A quiet, hushed noodle stall at night")
     spine["beats"][0]["motion_direction"] = {"sound_cue": "a door slams shut"}
     brief = ambience_brief(facts, spine, episode=1)
     assert brief is not None
     text = brief.description.casefold()
-    assert "quiet" not in text and "hush" not in text and "says nothing" not in text, brief.description
+    assert "quiet" not in text and "hush" not in text and "says nothing" not in text, (
+        brief.description
+    )
     assert "rolling simmer from the oden pot" in text
-    assert "door slams" not in text, "a beat's one-off sound is the sfx step's, never looped"
+    assert "door slams" not in text, (
+        "a beat's one-off sound is the sfx step's, never looped"
+    )
     assert brief.description.endswith(DESCRIPTION_TAIL)
-    assert "even level" in DESCRIPTION_TAIL and "no single loud events" in DESCRIPTION_TAIL
-    assert brief.retry_description.startswith(RETRY_HEAD + "A noodle stall at night"), brief.retry_description
+    assert (
+        "even level" in DESCRIPTION_TAIL and "no single loud events" in DESCRIPTION_TAIL
+    )
+    assert brief.retry_description.startswith(RETRY_HEAD + "A noodle stall at night"), (
+        brief.retry_description
+    )
     assert "simmer" not in brief.retry_description, "the re-make names the place alone"
 
-    spine["beats"][0]["motion_direction"] = {"sound_cue": "the oden pot keeps simmering"}
-    assert "oden pot keeps simmering" in ambience_brief(locked_facts(), spine, episode=1).description
+    spine["beats"][0]["motion_direction"] = {
+        "sound_cue": "the oden pot keeps simmering"
+    }
+    assert (
+        "oden pot keeps simmering"
+        in ambience_brief(locked_facts(), spine, episode=1).description
+    )
 
     assert room_sound_phrase("the room holds; a held breath at most; no line") == ""
-    assert room_sound_phrase("steady rain on the tin roof, the listener makes no sound") == (
-        "steady rain on the tin roof"
-    )
+    assert room_sound_phrase(
+        "steady rain on the tin roof, the listener makes no sound"
+    ) == ("steady rain on the tin roof")
     assert len(describe("x " * 400, ["rain " * 80])) <= DESCRIPTION_LIMIT
 
 
 @needs_ffmpeg
-def test_an_unusable_ambience_is_re_made_once_as_a_steady_room_tone(post_desk: Path) -> None:
+def test_an_unusable_ambience_is_re_made_once_as_a_steady_room_tone(
+    post_desk: Path,
+) -> None:
     """The first render collapsed: one re-make with the server's retry wording, then it is laid."""
 
-    _desk(post_desk, locked_facts(sustained="a quiet rolling simmer"), spine_with_place())
+    _desk(
+        post_desk, locked_facts(sustained="a quiet rolling simmer"), spine_with_place()
+    )
     calls: list[tuple[str, float]] = []
     good = fake_maker(calls)
 
-    def collapses_first(description: str, seconds: float, target: Path) -> tuple[Path, float]:
+    def collapses_first(
+        description: str, seconds: float, target: Path
+    ) -> tuple[Path, float]:
         if not description.startswith(RETRY_HEAD):
             calls.append((description, seconds))
-            raise CueUnusable("sustained cue collapses after its first half second", 0.01)
+            raise CueUnusable(
+                "sustained cue collapses after its first half second", 0.01
+            )
         return good(description, seconds, target)
 
     out = io.StringIO()
@@ -211,15 +236,21 @@ def test_an_unusable_ambience_is_re_made_once_as_a_steady_room_tone(post_desk: P
     assert step.status == "ran", step.detail
     assert "re-made once as a steady room tone" in step.detail
     assert step.cost_usd == pytest.approx(0.02), "both renders are booked"
-    assert _step(result, ROOM_TONE_STEP).output is None, "the ambience fills the gaps, no room tone"
-    assert json.loads(record_path(post_desk, 1).read_text())["description"].startswith(RETRY_HEAD)
+    assert _step(result, ROOM_TONE_STEP).output is None, (
+        "the ambience fills the gaps, no room tone"
+    )
+    assert json.loads(record_path(post_desk, 1).read_text())["description"].startswith(
+        RETRY_HEAD
+    )
 
     calls.clear()
     second = _finish(post_desk, collapses_first)
     assert calls == [], "a re-finish reuses the re-made cue and pays nothing"
     assert _step(second, AMBIENCE_STEP).cost_usd == 0.0
 
-    def always_collapses(description: str, seconds: float, target: Path) -> tuple[Path, float]:
+    def always_collapses(
+        description: str, seconds: float, target: Path
+    ) -> tuple[Path, float]:
         calls.append((description, seconds))
         raise CueUnusable("silent", 0.01)
 

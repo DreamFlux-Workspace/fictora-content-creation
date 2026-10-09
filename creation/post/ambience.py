@@ -145,7 +145,9 @@ def _one_line(text: Any) -> str:
 
 
 #: Words that make an effects model render dead air (the server's ``opening_sound._HUSH_WORDS``).
-_HUSH_WORDS = re.compile(r"\b(?:silence|silent|silently|quiet|quietly|quieter|hush|hushed)\b", re.IGNORECASE)
+_HUSH_WORDS = re.compile(
+    r"\b(?:silence|silent|silently|quiet|quietly|quieter|hush|hushed)\b", re.IGNORECASE
+)
 #: A clause that is not something to hear: it asks for nothing or directs the actors
 #: (the server's ``show_ambience._NOT_HEARD``).
 _NOT_HEARD = re.compile(
@@ -179,7 +181,9 @@ def scrub_hush_words(text: str) -> str:
     """``text`` without "quiet", "silence", "hush" and their kin (they render dead air)."""
 
     # A hush word takes its own comma with it: "A quiet, hushed stall" is "A stall", never "A , stall".
-    return " ".join(re.sub(rf"{_HUSH_WORDS.pattern},?", " ", text, flags=re.IGNORECASE).split()).strip(" ,;.")
+    return " ".join(
+        re.sub(rf"{_HUSH_WORDS.pattern},?", " ", text, flags=re.IGNORECASE).split()
+    ).strip(" ,;.")
 
 
 def goes_on(sound: str) -> bool:
@@ -351,7 +355,10 @@ def describe(
     def suffix(parts: list[str]) -> str:
         return "".join(f"; {part}" for part in [*parts, tail])
 
-    while sounds and len(head) + min(len(place), 40) + len(suffix(sounds)) > DESCRIPTION_LIMIT:
+    while (
+        sounds
+        and len(head) + min(len(place), 40) + len(suffix(sounds)) > DESCRIPTION_LIMIT
+    ):
         sounds.pop()
     end = suffix(sounds)
     space = DESCRIPTION_LIMIT - len(head) - len(end)

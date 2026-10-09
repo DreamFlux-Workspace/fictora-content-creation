@@ -280,19 +280,23 @@ def test_a_buried_hand_cue_is_raised_like_a_planned_effect(tmp_path: Path) -> No
     cue.write_bytes(b"")  # never read: the meter is passed in
     plan = HandPlan(cues=((Placed(cue, 1.0), 1.0),))
     levelled, notes = level_hand_cues(plan, BED, measure=lambda _p: (-29.0, -30.0))
-    (placed, seconds), = levelled.cues
+    ((placed, seconds),) = levelled.cues
     # The same answer the planned effect gets at the same level (the Noodle24 clink case).
     want, _why = bed_levelled_gain(_cue(), -29.0, BED)
     assert placed.gain_db == pytest.approx(want) == pytest.approx(SFX_GAIN_DB + 11.0)
-    assert (placed.path, placed.start, seconds) == (cue, 1.0, 1.0), "only the level changes"
-    assert len(notes) == 1 and notes[0].startswith("cue-oden-simmer-v1.mp3 @1.00s +11 dB")
+    assert (placed.path, placed.start, seconds) == (cue, 1.0, 1.0), (
+        "only the level changes"
+    )
+    assert len(notes) == 1 and notes[0].startswith(
+        "cue-oden-simmer-v1.mp3 @1.00s +11 dB"
+    )
 
     heard, notes = level_hand_cues(plan, BED, measure=lambda _p: (-12.0,))
     assert heard == plan and notes == (), "a cue already heard is never lowered"
     assert level_hand_cues(plan, None) == (plan, ()), "no bed: nothing changes"
 
     asked = HandPlan(cues=((Placed(cue, 1.0, gain_db=SFX_GAIN_DB - 6.0), 1.0),))
-    (lowered, _s), = level_hand_cues(asked, BED, measure=lambda _p: (-29.0,))[0].cues
+    ((lowered, _s),) = level_hand_cues(asked, BED, measure=lambda _p: (-29.0,))[0].cues
     # The operator's @-14 dB is a deliberate cut: heard at -43, raised to sit 12 dB under (-32), not 6.
     assert lowered.gain_db == pytest.approx(SFX_GAIN_DB - 6.0 + 11.0)
 
@@ -317,4 +321,6 @@ def test_finish_levels_a_buried_hand_cue_over_the_bed(post_desk: Path) -> None:
                         cues=(Placed(quiet, 3.4),), stream=out)  # fmt: skip
     cues = next(s for s in result.steps if s.step == "cues")
     assert cues.status == "ran", cues.detail
-    assert "levelled over the music bed: cue-oden-simmer-v1.mp3 @3.40s +" in cues.detail, cues.detail
+    assert (
+        "levelled over the music bed: cue-oden-simmer-v1.mp3 @3.40s +" in cues.detail
+    ), cues.detail
