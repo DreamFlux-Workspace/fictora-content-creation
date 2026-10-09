@@ -362,16 +362,28 @@ def _script_notice(code: str, **extra: Any) -> dict[str, Any]:
     }
 
 
-def test_a_changed_script_line_prints_as_a_question_with_the_command_that_puts_it_back() -> None:
+def test_a_changed_script_line_prints_as_a_question_with_the_command_that_puts_it_back() -> (
+    None
+):
     spine = {"episode_summaries": [{"episode_id": "ep_02", "ordinal": 2}]}
 
-    changed = warning_line(_script_notice("script_line_changed", line_id="line_ep_02_01"), spine)
-    speaker = warning_line(_script_notice("script_line_speaker_changed", line_id="line_ep_02_01"), spine)
+    changed = warning_line(
+        _script_notice("script_line_changed", line_id="line_ep_02_01"), spine
+    )
+    speaker = warning_line(
+        _script_notice("script_line_speaker_changed", line_id="line_ep_02_01"), spine
+    )
     missing = warning_line(_script_notice("script_line_missing"), spine)
 
     assert changed.startswith("SCRIPT: Your approved script has Mina say")
-    assert changed.endswith('line --desk D --episode 2 --line line_ep_02_01 --text "Komugi is missing."')
-    assert speaker.endswith('line --desk D --episode 2 --line line_ep_02_01 --speaker "Mina"')
-    assert missing.endswith('line --desk D --episode 2 --add --beat N --speaker "Mina" --text "Komugi is missing."')
+    assert changed.endswith(
+        'line --desk D --episode 2 --line line_ep_02_01 --text "Komugi is missing."'
+    )
+    assert speaker.endswith(
+        'line --desk D --episode 2 --line line_ep_02_01 --speaker "Mina"'
+    )
+    assert missing.endswith(
+        'line --desk D --episode 2 --add --beat N --speaker "Mina" --text "Komugi is missing."'
+    )
     # Any other code prints as before.
     assert warning_line(_line_long()).startswith("note: ")
