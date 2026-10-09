@@ -30,6 +30,11 @@ FIELD = "authoring_warnings"
 
 #: The header every block opens with: what the notes are and that nothing was held.
 HEADER = "authoring notes (nudges: nothing was blocked or changed)"
+#: Pacing nudges (fictora-drama, 9 Oct 2026; Hana L-20260930-9, Gallery
+#: L-20261008-23): a silent moment with no movement held past about 1.5 s, and
+#: a pause of more than about a second before the next line. One of each a
+#: take at most; each message names its take and beats.
+PACING_CODES = frozenset({"silent_hold_long", "line_gap_long"})
 
 _EPISODE_IN_PATH = re.compile(r"episodes\[([^\]]+)\]")
 
@@ -247,7 +252,8 @@ def warning_line(
     Returns
     -------
     str
-        The line. An unknown code, or one without a word count, is ``note: <message>``.
+        The line. A pacing nudge (:data:`PACING_CODES`) is ``pace: <message>``; an
+        unknown code, or one without a word count, is ``note: <message>``.
     """
 
     code = str(warning.get("code") or "")
@@ -271,6 +277,9 @@ def warning_line(
         )
     elif counted and code == "first_line_long":
         what = f"the first line runs {counted}"
+    if code in PACING_CODES:
+        # Read to the producer before boards: trim the pause or give it an action, or keep it.
+        return f"pace: {message}"
     if code in SCRIPT_CONTRACT_CODES:
         # Ask the human: put the approved line back, or keep the draft's. Never fixed silently.
         return f"SCRIPT: {message} To put it back: {script_fix_command(warning, spine)}"
@@ -307,7 +316,11 @@ def warning_lines(
     for episode_id, rows in groups.items():
         lines.append(f"{_episode_label(episode_id, spine)} {HEADER}:")
         for take, _, warning in sorted(rows, key=lambda row: (row[0], row[1])):
-            named = warning.get("code") == "take_words_over_target"
+            # These name their take in their own words.
+            named = (
+                warning.get("code") == "take_words_over_target"
+                or warning.get("code") in PACING_CODES
+            )
             prefix = f"t{take} " if take and not named else ""
             lines.append(f"  {prefix}{warning_line(warning, spine)}")
     return lines
@@ -343,6 +356,7 @@ def say_warnings(
 
 
 __all__ = [
+    "PACING_CODES",
     "FIELD",
     "HEADER",
     "SCRIPT_CONTRACT_CODES",

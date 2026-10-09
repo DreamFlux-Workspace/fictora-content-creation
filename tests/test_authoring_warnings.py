@@ -387,3 +387,36 @@ def test_a_changed_script_line_prints_as_a_question_with_the_command_that_puts_i
     )
     # Any other code prints as before.
     assert warning_line(_line_long()).startswith("note: ")
+
+
+def _pacing(
+    code: str, take: int, message: str, episode_id: str = "ep_02"
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA,
+        "path": f"episodes[{episode_id}].takes[{take}]",
+        "code": code,
+        "message": message,
+        "episode_id": episode_id,
+        "beat_id": f"beat_{episode_id}_03",
+        "take": take,
+    }
+
+
+def test_pacing_nudges_read_as_pace_under_their_take_and_never_stop_a_command() -> None:
+    # Gallery L-20261008-23: a 3.5 s silent cry after a line read slow.
+    hold = _pacing(
+        "silent_hold_long",
+        2,
+        "Take 2, beat 3: a silent moment with no movement plays for about 3.5 seconds.",
+    )
+    gap = _pacing(
+        "line_gap_long",
+        2,
+        "Take 2: about 3.5 seconds pass between the line on beat 2 and the next one on beat 4.",
+    )
+
+    assert warning_line(hold) == f"pace: {hold['message']}"
+    lines = warning_lines([gap, hold])
+    assert lines[1:] == [f"  pace: {gap['message']}", f"  pace: {hold['message']}"]
+    assert not any(line.lstrip().startswith("t2 ") for line in lines)
