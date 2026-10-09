@@ -77,6 +77,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
@@ -149,6 +150,17 @@ EPISODE_DISSOLVE_SECONDS = 0.25
 SEAM_STEP_DB = 5.0
 #: Seconds measured either side of a seam.
 SEAM_WINDOW_SECONDS = 2.0
+#: Where two EPISODES meet in a series cut, the last seconds of the one and the first seconds of the
+#: next are levelled toward each other (L-20260930-12, Noodle24: a quiet music ending into a food
+#: opening stepped 5-9 dB). Each side moves half the step, held over the seam window and ramped (in dB)
+#: back to the take's own level over the ramp, so the rest of each episode is untouched.
+EPISODE_SEAM_HOLD_SECONDS = 2.0
+EPISODE_SEAM_RAMP_SECONDS = 2.0
+#: Steps this small are left as they are.
+EPISODE_SEAM_LEVEL_FLOOR_DB = 1.0
+#: The most an episode seam is levelled (both sides together); a bigger step is levelled this far and
+#: then still stops the join (a real loud seam).
+EPISODE_SEAM_LEVEL_MAX_DB = 10.0
 #: Speech is left out of the room level with this much margin either side (word times are rough,
 #: and the bed's duck ramps back up after a line).
 SPEECH_PAD_SECONDS = 0.3
@@ -156,8 +168,6 @@ SPEECH_PAD_SECONDS = 0.3
 #: the search reaches out this far for them before falling back to every window.
 SEAM_QUIET_WINDOWS = 5
 SEAM_SEARCH_SECONDS = 6.0
-#: Edits after finish that keep the take's sound timeline (its words and lines still line up).
-TIMELINE_KEEPING_EDITS = frozenset({"soften", "blur"})
 #: Loop points in the bed are crossfaded over this long (at most a quarter of the bed).
 BED_LOOP_CROSSFADE_SECONDS = 1.0
 #: A bed's head and tail quieter than this are cut before it is looped.
@@ -1010,6 +1020,53 @@ def seam_loudness_steps(
     ]
 
 
+def windows_through_edits(
+    windows: list[tuple[float, float]], edits: Sequence[Mapping[str, Any]]
+) -> tuple[list[tuple[float, float]], list[str]]:
+    """Move speech windows on the take as filmed through a finish record's edits, oldest first.
+
+    The same re-timing the captions get (:func:`creation.post.edit_captions.span_map`):
+    the trim handles keep ``start_s..end_s``, a ``trim`` removes its cut (later
+    words move earlier, words inside it go), a ``tempo`` divides the time in its
+    window by the factor; ``freeze``, ``soften`` and ``blur`` keep every time.
+
+    Parameters
+    ----------
+    windows
+        ``(start, end)`` seconds on the take as filmed.
+    edits
+        The finish record's ``edits``; every one must be one :func:`span_map` can re-time.
+
+    Returns
+    -------
+    tuple[list[tuple[float, float]], list[str]]
+        The windows on the edited file (empty ones dropped), and one note per
+        edit that moved them (``"to the trim handles"``, ``"through trim …"``).
+    """
+
+    from creation.post.edit_captions import SAME_TIMING, span_map
+
+    moved = list(windows)
+    how: list[str] = []
+    for edit in edits:
+        op = str(edit.get("op") or "")
+        if op in SAME_TIMING:
+            continue
+        mapper, why = span_map(edit)
+        if mapper is None:
+            raise ValueError(f"cannot re-time `{op}`: {why}")
+        after: list[tuple[float, float]] = []
+        for a, b in moved:
+            span = mapper(a, b)
+            if span is not None and span[1] > span[0]:
+                after.append((round(span[0], 3), round(span[1], 3)))
+        moved = after
+        how.append(
+            "to the trim handles" if op == "handles" else f"through {op} ({why})"
+        )
+    return moved, how
+
+
 def part_speech(
     desk: Path, part: JoinPart, seconds: float
 ) -> tuple[list[tuple[float, float]], str]:
@@ -1023,18 +1080,19 @@ def part_speech(
         finish moved the sound timeline).
     """
 
-    from creation.post.take_handles import HANDLES_OP, windows_on_handled_file
+    from creation.post.edit_captions import span_map
 
-    # A take cut to its trim handles (finish, fictora-drama #563) keeps its times minus start_s: moved below.
-    moved = [
-        str(edit.get("op"))
-        for edit in part.record.edits
-        if edit.get("op") not in TIMELINE_KEEPING_EDITS and edit.get("op") != HANDLES_OP
-    ]
-    if moved:
+    # Every edit after finish (the trim handles, trim, tempo, freeze, soften, blur) is replayed on the
+    # words below, in the order it was made (L-20261008-10). Only an edit the kit cannot re-time stops it.
+    unknown: list[str] = []
+    for edit in part.record.edits:
+        mapper, why = span_map(edit)
+        if mapper is None:
+            unknown.append(f"{edit.get('op') or '?'} ({why})")
+    if unknown:
         return (
             [],
-            f"{part.label}: speech not left out (edited after finish: {', '.join(moved)})",
+            f"{part.label}: speech not left out (edited after finish: {', '.join(unknown)})",
         )
     from creation.post.review import saved_words
     from creation.post.sfx import saved_take_facts
@@ -1063,13 +1121,140 @@ def part_speech(
                 payload = None
             windows = line_windows(payload if isinstance(payload, dict) else None)
             source = f"line windows `{facts.name}`"
-    handled = windows_on_handled_file(windows, part.record.edits)
-    if handled != windows:
-        source += " moved to the trim handles"
-    windows = [(a, min(b, seconds)) for a, b in handled if 0 <= a < seconds]
+    moved, how = windows_through_edits(windows, part.record.edits)
+    if how:
+        source += " moved " + "; ".join(how)
+    windows = [(a, min(b, seconds)) for a, b in moved if 0 <= a < seconds]
     if not windows:
         return [], f"{part.label}: speech not left out (no saved words or take facts)"
     return windows, f"{part.label}: speech from {source}"
+
+
+def _window_levels(sound: np.ndarray) -> np.ndarray:
+    """RMS level (dB, first channel, as :func:`creation.post.media.measure_rms_windows`) per 0.1 s window."""
+
+    step = int(round(0.1 * BED_RATE))
+    count = len(sound) // step
+    if count == 0:
+        return np.zeros(0)
+    mono = sound[: count * step, 0].reshape(count, step)
+    rms = np.sqrt(np.mean(mono**2, axis=1))
+    with np.errstate(divide="ignore"):
+        levels = 20 * np.log10(rms)
+    return np.maximum(np.nan_to_num(levels, nan=-120.0, neginf=-120.0), -120.0)
+
+
+def _edge_level(
+    sound: np.ndarray, speech: list[tuple[float, float]], *, tail: bool
+) -> float | None:
+    """Room level of a part's last (``tail``) or first seconds, speech left out as at a seam."""
+
+    levels = _window_levels(sound)
+    n = len(levels)
+    span = int(round(SEAM_WINDOW_SECONDS / 0.1))
+    reach = int(round(SEAM_SEARCH_SECONDS / 0.1))
+    if tail:
+        side = _side(levels, range(max(0, n - span), n),
+                     range(n - span - 1, max(0, n - reach) - 1, -1), sorted(speech))  # fmt: skip
+    else:
+        side = _side(
+            levels, range(0, min(n, span)), range(span, min(n, reach)), sorted(speech)
+        )
+    return None if side is None else side[0]
+
+
+@dataclass(frozen=True)
+class SeamRide:
+    """How far the end of one episode and the start of the next are levelled toward each other (dB)."""
+
+    index: int
+    tail_db: float
+    head_db: float
+    step_db: float
+
+    def text(self, parts: list[JoinPart]) -> str:
+        """One line for the run notes."""
+
+        a, b = parts[self.index], parts[self.index + 1]
+        left = self.step_db - (self.head_db - self.tail_db)
+        rest = (
+            f"; {left:+.1f} dB left (levelled at most {EPISODE_SEAM_LEVEL_MAX_DB:g} dB)"
+            if abs(left) > 0.05
+            else ""
+        )
+        return (
+            f"episode seam {a.label} | {b.label} stepped {self.step_db:+.1f} dB: levelled, "
+            f"{a.label}'s last {EPISODE_SEAM_HOLD_SECONDS + EPISODE_SEAM_RAMP_SECONDS:g} s {self.tail_db:+.1f} dB, "
+            f"{b.label}'s first {EPISODE_SEAM_HOLD_SECONDS + EPISODE_SEAM_RAMP_SECONDS:g} s {self.head_db:+.1f} dB"
+            f"{rest}"
+        )
+
+
+def episode_seam_rides(
+    parts: list[JoinPart],
+    sounds: list[np.ndarray],
+    speech: list[list[tuple[float, float]]],
+) -> list[SeamRide]:
+    """The level ride for each seam where two episodes meet (L-20260930-12).
+
+    Each part's room level is read on its own sound (the 2 s at the edge,
+    speech left out, reaching up to 6 s for pauses, as :func:`seam_levels`);
+    the step is split between the two sides, capped at
+    :data:`EPISODE_SEAM_LEVEL_MAX_DB`. Takes of one episode are never ridden.
+
+    Parameters
+    ----------
+    parts
+        The parts in order.
+    sounds
+        Each part's sound as it goes into the join (gained, trimmed).
+    speech
+        Each part's speech windows, seconds on that sound.
+
+    Returns
+    -------
+    list[SeamRide]
+        One per episode seam that steps more than :data:`EPISODE_SEAM_LEVEL_FLOOR_DB`.
+    """
+
+    rides: list[SeamRide] = []
+    for index in range(len(parts) - 1):
+        if parts[index].episode == parts[index + 1].episode:
+            continue
+        before = _edge_level(sounds[index], speech[index], tail=True)
+        after = _edge_level(sounds[index + 1], speech[index + 1], tail=False)
+        if before is None or after is None or min(before, after) <= -119.0:
+            continue
+        step = after - before
+        if abs(step) <= EPISODE_SEAM_LEVEL_FLOOR_DB:
+            continue
+        levelled = max(-EPISODE_SEAM_LEVEL_MAX_DB, min(EPISODE_SEAM_LEVEL_MAX_DB, step))
+        rides.append(
+            SeamRide(
+                index, round(levelled / 2, 2), round(-levelled / 2, 2), round(step, 1)
+            )
+        )
+    return rides
+
+
+def _ride(sound: np.ndarray, db: float, *, tail: bool) -> np.ndarray:
+    """``sound`` with ``db`` held over its edge and ramped (in dB) back to 0 over the ramp before it."""
+
+    hold = int(round(EPISODE_SEAM_HOLD_SECONDS * BED_RATE))
+    ramp = int(round(EPISODE_SEAM_RAMP_SECONDS * BED_RATE))
+    n = len(sound)
+    if not db or not n:
+        return sound
+    hold, ramp = min(hold, n // 2), min(ramp, max(0, n // 2 - min(hold, n // 2)))
+    curve = np.zeros(n)
+    edge = np.concatenate(
+        [np.linspace(0.0, db, ramp, endpoint=False), np.full(hold, db)]
+    )
+    if tail:
+        curve[n - len(edge) :] = edge
+    else:
+        curve[: len(edge)] = edge[::-1]
+    return sound * (10 ** (curve / 20))[:, None]
 
 
 def join_sound(
@@ -1078,23 +1263,38 @@ def join_sound(
     gains: list[float],
     dissolves: list[float],
     heads: list[float] | None = None,
+    speech: list[list[tuple[float, float]]] | None = None,
+    rides_out: list[SeamRide] | None = None,
 ) -> np.ndarray:
     """Each part's pre-bed sound, cut or padded to its picture, gained, then butted or crossfaded (linear).
 
     On the samples, so every part starts exactly where its picture does (ffmpeg's
     ``acrossfade`` / ``concat`` chain lost a part's sound at random in testing).
     ``heads``: seconds cut off each part's start (a silent-head trim; ``lengths``
-    are then the parts' lengths after the cut).
+    are then the parts' lengths after the cut). Where two episodes meet, the
+    end of one and the start of the next are levelled toward each other
+    (:func:`episode_seam_rides`; ``speech``: each part's speech windows on its
+    kept sound, left out of the level); the rides are appended to ``rides_out``.
     """
 
-    joined = np.zeros((0, 2))
+    sounds: list[np.ndarray] = []
     for index, (part, seconds, gain) in enumerate(
         zip(parts, lengths, gains, strict=True)
     ):
         size = int(round(seconds * BED_RATE))
         skip = int(round(heads[index] * BED_RATE)) if heads else 0
         sound = decode_stereo(part.pre_bed)[skip : skip + size]
-        sound = np.pad(sound, ((0, size - len(sound)), (0, 0))) * 10 ** (gain / 20)
+        sounds.append(
+            np.pad(sound, ((0, size - len(sound)), (0, 0))) * 10 ** (gain / 20)
+        )
+    rides = episode_seam_rides(parts, sounds, speech or [[] for _ in parts])
+    for ride in rides:
+        sounds[ride.index] = _ride(sounds[ride.index], ride.tail_db, tail=True)
+        sounds[ride.index + 1] = _ride(sounds[ride.index + 1], ride.head_db, tail=False)
+    if rides_out is not None:
+        rides_out.extend(rides)
+    joined = np.zeros((0, 2))
+    for index, sound in enumerate(sounds):
         overlap = int(round(dissolves[index - 1] * BED_RATE)) if index else 0
         if overlap:
             ramp = ((np.arange(overlap) + 0.5) / overlap)[:, None]
@@ -1114,10 +1314,13 @@ def _join_bedless(
     dissolves: list[float],
     out: Path,
     heads: list[float] | None = None,
+    speech: list[list[tuple[float, float]]] | None = None,
+    rides_out: list[SeamRide] | None = None,
 ) -> list[float]:
     """Captioned pictures + pre-bed sound, gain-matched, cut or dissolved; no bed, no limiter (float sound).
 
     ``heads``: seconds cut off each part's start (a silent-head trim on a filmed cut).
+    ``speech`` / ``rides_out``: episode seams are levelled (:func:`join_sound`).
     """
 
     first = probe_video(parts[0].picture)
@@ -1155,7 +1358,7 @@ def _join_bedless(
             elapsed += lengths[index]
         video = f"[vx{index}]"
     sound = write_wav(
-        join_sound(parts, lengths, gains, dissolves, heads),
+        join_sound(parts, lengths, gains, dissolves, heads, speech, rides_out),
         out.with_name(f"{out.stem}-sound.wav"),
     )
     run_ffmpeg(
@@ -1612,6 +1815,20 @@ def run_join(
     master = next_versioned_path(folder, stem, ".mp4")
     zeros = [0.0] * len(parts)
 
+    def part_windows(
+        index: int, heads: list[float], tails: list[float]
+    ) -> list[tuple[float, float]]:
+        """Part ``index``'s speech on its kept sound (after a silent-head trim)."""
+
+        windows, _ = part_speech(desk, parts[index], lengths[index])
+        head = heads[index]
+        length = lengths[index] - head - tails[index]
+        return [
+            (max(0.0, a - head), min(b - head, length))
+            for a, b in windows
+            if a - head < length and b - head > 0
+        ]
+
     def joined_speech(
         heads: list[float], tails: list[float]
     ) -> tuple[list[tuple[float, float]], list[str]]:
@@ -1656,7 +1873,14 @@ def run_join(
         total = sum(kept) - sum(dissolves)
         work.mkdir(parents=True, exist_ok=True)
         bedless = work / "joined-no-bed.mkv"
-        seams = _join_bedless(parts, kept, gains, dissolves, bedless, heads)
+        rides: list[SeamRide] = []
+        seams = _join_bedless(
+            parts, kept, gains, dissolves, bedless, heads,
+            speech=[part_windows(i, heads, tails) for i in range(len(parts))]
+            if len(episode_set) > 1
+            else None,
+            rides_out=rides,
+        )  # fmt: skip
         looped = (
             loop_bed(bed, total + 1.0, work / "bed-looped.wav")
             if bed is not None
@@ -1672,6 +1896,7 @@ def run_join(
         )
         fps = assert_house_fps(target)
         speech, notes = joined_speech(heads, tails)
+        notes += [ride.text(parts) for ride in rides]
         return seams, mixed, fps, speech, notes, (bedless, looped)
 
     def render(base: Joined, beds: list[SeamBed], target: Path) -> Path:
