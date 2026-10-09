@@ -81,6 +81,11 @@ CONTINUING_FIXES: frozenset[str] = frozenset(
         # script, the voice and the timing never see it. Moved to Group A on 9 Oct 2026 (rollout rule:
         # captions only), in step with fictora-drama. To narrow it again, move it back to Group B.
         "caption_dashes",
+        # The pitch card before paid drawing (#155; was Group B). On a continuing desk it reminds and never
+        # holds (#185, founder 8 Oct 2026: :func:`creation.pitch_card.pitch_gate_refusal` prints the reminder
+        # and goes ahead); a new desk is still held until the yes. Founder-approved for every episode of every
+        # desk on 9 Oct 2026. To narrow it again, move it back to Group B.
+        "pitch_card",
     }
 )
 
@@ -93,8 +98,6 @@ CONTINUING_FIXES_FROM_EPISODE: frozenset[str] = frozenset(
     {
         # Each caption word appears when it is said (#135). Whole episodes.
         "per_word_captions",
-        # The pitch card gates paid drawing for the episode (#155). New episodes.
-        "pitch_card",
     }
 )
 

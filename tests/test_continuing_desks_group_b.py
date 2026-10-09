@@ -46,10 +46,9 @@ def _old_desk(
 
 def test_the_allow_lists_are_group_a_and_group_b_only() -> None:
     # caption_dashes moved to Group A on 9 Oct 2026 (captions only), in step with the server.
-    assert CONTINUING_FIXES == frozenset({"seam_bed", "caption_dashes"})
-    assert CONTINUING_FIXES_FROM_EPISODE == frozenset(
-        {"per_word_captions", "pitch_card"}
-    )
+    # pitch_card moved to Group A on 9 Oct 2026 (founder): a reminder on every continuing desk.
+    assert CONTINUING_FIXES == frozenset({"seam_bed", "caption_dashes", "pitch_card"})
+    assert CONTINUING_FIXES_FROM_EPISODE == frozenset({"per_word_captions"})
 
 
 def test_continuing_fix_reads_the_desks_boundary_and_fails_closed(
@@ -132,24 +131,39 @@ def test_per_word_timing_from_the_boundary_episode_only(
     )
 
 
-def test_the_pitch_card_reminds_a_continuing_desk_from_the_boundary_episode_only(
-    tmp_path: Path, capsys: Any
+def test_the_pitch_card_reminds_every_continuing_desk_on_every_episode_and_never_holds(
+    tmp_path: Path, capsys: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    desk = _old_desk(tmp_path, start=3)
-    assert pitch_gate_refusal(desk, episode=2, stage="the plates") is None
-    assert "Reminder" not in capsys.readouterr().err
-    # From the boundary: reminded, never held (founder decision 8 Oct 2026).
-    assert pitch_gate_refusal(desk, episode=3, stage="the plates") is None
-    err = capsys.readouterr().err
-    assert "Reminder before the plates: Episode 3 has no pitch card." in err
-    assert "Going ahead" in err
+    """``pitch_card`` is Group A since 9 Oct 2026 (founder): before the boundary, after it, Group B off."""
+
+    from creation import rules_epoch
+
+    on = _old_desk(tmp_path, start=3)
     off = _old_desk(tmp_path, name="2026-09-26-off")
-    assert pitch_gate_refusal(off, episode=3, stage="the plates") is None
-    assert "Reminder" not in capsys.readouterr().err
+    for desk, episode in ((on, 2), (on, 3), (off, 1), (off, 3)):
+        # Reminded, never held (founder decision 8 Oct 2026, #185).
+        assert pitch_gate_refusal(desk, episode=episode, stage="the plates") is None
+        err = capsys.readouterr().err
+        assert (
+            f"Reminder before the plates: Episode {episode} has no pitch card." in err
+        )
+        assert "Going ahead" in err
     # A new desk is still held.
     new = init_series_desk(tmp_path / "new", "New", band="30s", episode_count=1)
     refusal = pitch_gate_refusal(new, episode=1, stage="the plates")
     assert refusal is not None and refusal.startswith("Stopped before the plates.")
+    # Off the allow-list, the old behaviour: no reminder before a desk's Group B episode, or with it unset.
+    monkeypatch.setattr(
+        rules_epoch, "CONTINUING_FIXES", rules_epoch.CONTINUING_FIXES - {"pitch_card"}
+    )
+    monkeypatch.setattr(
+        rules_epoch,
+        "CONTINUING_FIXES_FROM_EPISODE",
+        rules_epoch.CONTINUING_FIXES_FROM_EPISODE | {"pitch_card"},
+    )
+    for desk, episode in ((on, 2), (off, 3)):
+        assert pitch_gate_refusal(desk, episode=episode, stage="the plates") is None
+        assert "Reminder" not in capsys.readouterr().err
 
 
 def test_the_command_proposes_past_every_started_episode_and_writes_only_with_apply(
