@@ -186,6 +186,7 @@ from creation.post.ambience import (
     episode_offset,
     lay_ambience,
 )
+from creation.post.ambience import CueUnusable as AmbienceUnusable
 from creation.post.ambience import Maker as AmbienceMaker
 from creation.post.ambience import service_maker as ambience_service_maker
 from creation.post.audio_service import AudioService, AudioServiceError, DramaApiAudio
@@ -219,6 +220,7 @@ from creation.post.hand import (
     check_hand_plan,
     lay_cues,
     lay_voice,
+    level_hand_cues,
     voice_gain,
 )
 from creation.post.lineage import CHAIN_FILE, raw_take_behind, record_edit
@@ -1868,13 +1870,16 @@ def run_finish(
             speech += plan_from_take_facts(
                 json.loads(facts.read_text(encoding="utf-8"))
             ).speech
+        # Hand cues are levelled against the bed like the planned effects (only the level changes).
+        placed, levelled = level_hand_cues(hand, bed_reference(take))
         laid = lay_cues(
             take,
             next_versioned_path(takes, f"{base}-cues", ".mp4"),
-            hand,
+            placed,
             speech=tuple(speech),
         )
-        parts = [f"{cue.one_line()} for {seconds:.2f}s" for cue, seconds in hand.cues]
+        parts = [f"{cue.one_line()} for {seconds:.2f}s" for cue, seconds in placed.cues]
+        parts += [f"levelled over the music bed: {line}" for line in levelled]
         clashes = duplicate_cue_warnings(
             tuple((cue_description(cue.path), cue.start) for cue, _ in hand.cues),
             tuple((c.sound, c.start) for c in bed_state["cues"]),
@@ -2258,6 +2263,11 @@ def run_finish(
             )
         except httpx.HTTPError as exc:
             raise RuntimeError(f"the ambience cue could not be fetched: {exc}") from exc
+        except AmbienceUnusable as exc:
+            # Both renders were paid for: booked, then room tone goes in (the step fails, said).
+            if exc.cost_usd:
+                book(desk, episode=episode, usd=exc.cost_usd, take_id=take_id, stream=out, unit="ambience")
+            raise
         if found.cost_usd:
             book(
                 desk,
@@ -2300,6 +2310,8 @@ def run_finish(
             mix_gain = pick_gain(measure_loudness(laid.output))
         take_gain = mix_gain
         where = "made now" if found.made else "on the desk, free"
+        if found.remade:
+            where += f"; the first render came back unusable ({found.remade}), re-made once as a steady room tone"
         detail = (
             f'ambience: "{found.description}", {AMBIENCE_GAP_DB:.0f} dB between the lines in the mix '
             f"({laid.laid_db:+.1f} dB before the mix's {take_gain:+.1f} dB take gain), ducked "

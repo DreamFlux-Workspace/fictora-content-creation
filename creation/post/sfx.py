@@ -879,7 +879,7 @@ def bed_levelled_gain(
     )
 
 
-def _rendered_peak_db(
+def rendered_peak_db(
     levels: tuple[float, ...], seconds: float, window_seconds: float = 0.5
 ) -> float:
     """The loudest window of a render over the part that is laid (its first ``seconds``)."""
@@ -1130,7 +1130,7 @@ def lay_sfx(
         for cue, path in kept:
             if not is_opening_cue(cue.sound):
                 gain, why = bed_levelled_gain(
-                    cue, _rendered_peak_db(measure(path), cue.seconds), bed
+                    cue, rendered_peak_db(measure(path), cue.seconds), bed
                 )
                 if why:
                     levelled.append(f"{cue.sound} {why}")
