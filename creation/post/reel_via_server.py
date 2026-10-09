@@ -298,6 +298,8 @@ class ReelResult:
     metrics: Path | None = None
     #: Named ``…-draft-vN``: the episode still had takes to finish.
     draft: bool = False
+    #: The series episode number "PART N" shows (:func:`creation.post.reel_cover.series_part`).
+    part: int | None = None
     #: The reel's files by role (``video``, ``ass``, ``plan``, ``post``) and what they were cut from.
     paths: dict[str, Path] = field(default_factory=dict)
     sources: dict[str, Any] = field(default_factory=dict)
@@ -494,8 +496,15 @@ def operator_body(
     no_cover: bool,
     cover_frame: float | None,
     plan: Mapping[str, Any] | None,
+    part: int | None = None,
 ) -> dict[str, Any]:
-    """The reel route's request in operator mode (``fictora.drama-episode-reel.v1``)."""
+    """The reel route's request in operator mode (``fictora.drama-episode-reel.v1``).
+
+    ``part`` is the series episode number for the cover's and post text's "PART N", sent
+    only when the desk says one other than its own ordinal (``reel --part``, the desk's
+    ``first_part``, a one-episode desk's name): a desk with every episode on it sends
+    nothing and the server numbers it as before (NOCLIP, L-20261008-9).
+    """
 
     operator: dict[str, Any] = {
         "takes": list(takes),
@@ -507,6 +516,8 @@ def operator_body(
     }
     if bands_in_source:
         operator["bands_in_source"] = True
+    if part is not None:
+        operator["part"] = int(part)
     if watermark_y is not None:
         operator["watermark_y"] = max(0, int(watermark_y))
     if no_panels:
@@ -673,8 +684,14 @@ def make_reel(
     from creation.post.desk import saved_spine
     from creation.spine_view import episode_id_for
 
+    from creation.post.reel_cover import series_part
+
     out = stream or sys.stdout
     desk = desk.expanduser().resolve()
+    part_found = series_part(desk, episode)
+    sent_part = None if part_found.from_desk_ordinal else part_found.number
+    if sent_part is not None:
+        print(f"Cover: {part_found.note()}", file=out, flush=True)
     found = saved_spine(desk, episode)
     if found is None:
         raise ValueError(
@@ -862,6 +879,7 @@ def make_reel(
                 pov=pov, seconds=seconds, ending=ending, hook_line=hook_line, no_hook_line=no_hook_line,
                 hook_line_position=hook_line_position, no_cover=no_cover, cover_frame=cover_frame, plan=body,
                 bands_in_source=finals is not None, watermark_y=watermark_y, no_panels=no_panels,
+                part=sent_part,
             )  # fmt: skip
             if clips is not None:
                 # Clip mode: the engine picks 2-3 straight windows; a reel's length and plan do not apply.
@@ -925,6 +943,7 @@ def make_reel(
             plan=plan, plan_path=paths["plan"], draft=draft, paths=dict(paths),
             sources=sources_fingerprint(desk, srcs), series=series,
             hook_text=str(hook.get("text") or "") if hook and hook.get("mode") else "", server=answer,
+            part=part_found.number,
         )  # fmt: skip
         if plan_only:
             print(
@@ -1017,7 +1036,7 @@ def record_reel(
         desk / REELS_DIR / METRICS_FILE,
         {
             "reel_file": result.video.name, "cover_file": result.cover.name if result.cover else "",
-            "series": result.series, "part": episode, "account": posting["account"],
+            "series": result.series, "part": result.part or episode, "account": posting["account"],
             "lane": posting["lane"], "planned_post_slot": posting["posting_slot"],
             "cold_open_role": str(strongest.get("beat_role") or "") if strongest and cold else "",
             "cold_open_time": (

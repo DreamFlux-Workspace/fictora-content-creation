@@ -799,6 +799,9 @@ class ReelResult:
     series: str = ""
     hook_text: str = ""
     posting_notes: list[str] = field(default_factory=list)
+    #: The number "PART N" shows on the cover, in the post text and in ``metrics.csv``: the series
+    #: episode number (:func:`creation.post.reel_cover.series_part`); ``None`` before it is worked out.
+    part: int | None = None
     #: Made for a desk created before 6 Oct 2026 (:mod:`creation.rules_epoch`): flat ``reels/``,
     #: no cover, no draft names, no books, the post text as it was.
     legacy: bool = False
@@ -1488,6 +1491,36 @@ def _cover_picture(
     )
 
 
+def _letterbox_cover_picture(
+    picture: Path, at: float | None, width: int, height: int, scratch: Path
+) -> tuple[Path, float | None, int, int, tuple[int, int]]:
+    """A letterbox cover's picture on the 9:16 canvas, and the rows the 4:3 picture fills.
+
+    A 4:3 picture (a take before captions) is scaled into the letterbox picture box on
+    the black 1080x1920 canvas, as finish delivers it; a picture already 9:16 (the
+    accepted letterbox file, a saved still) is used as it is. Either way the cover is the
+    canvas's size, so it lies on the reel's frame 0 without the 4:3 picture being cropped.
+    """
+
+    from creation.post.delivery_geometry import layout as letterbox_layout
+    from creation.post.media import run_ffmpeg
+
+    if abs(width / height - 4 / 3) > 0.02:
+        place = letterbox_layout(width, height)
+        return picture, at, width, height, (place.picture.y, place.picture.bottom)
+    place = letterbox_layout()
+    box = place.picture
+    canvas = scratch / "cover-letterbox.png"
+    seek = ["-ss", f"{max(0.0, at):.3f}"] if at is not None else []
+    run_ffmpeg(
+        [*seek, "-i", str(picture), "-frames:v", "1", "-vf",
+         f"scale={box.width}:{box.height},setsar=1,"
+         f"pad={place.canvas.width}:{place.canvas.height}:{box.x}:{box.y}:color=black",
+         str(canvas)]
+    )  # fmt: skip
+    return canvas, None, place.canvas.width, place.canvas.height, (box.y, box.bottom)
+
+
 def make_cover(
     desk: Path,
     *,
@@ -1500,13 +1533,20 @@ def make_cover(
     series: str,
     detector: Detector | None,
     cover_frame: float | None = None,
+    part: int | None = None,
+    letterbox: bool = False,
 ) -> tuple[Path | None, str, list[str]]:
     """Draw the reel's free cover image beside ``video`` (:mod:`creation.post.reel_cover`).
 
     Parameters
     ----------
     desk, episode
-        The desk and episode ordinal ("PART N").
+        The desk and episode ordinal.
+    part
+        The number "PART N" shows (:func:`creation.post.reel_cover.series_part`); ``None``: the ordinal.
+    letterbox
+        A letterbox reel: a 4:3 picture is put on the 9:16 letterbox canvas (black, the picture at
+        y 555-1365) and the text stays inside the picture, clear of the title and caption bands.
     plan, sources, takes, patches
         The reel's plan and its takes (the picture comes from the take before captions,
         with the plan's blur patches for that take applied).
@@ -1558,13 +1598,19 @@ def make_cover(
                     f"cover: {source.take_id} is cut from the accepted file, so its burned captions and mark "
                     "are on the cover's picture; pick a frame between lines with --cover-frame S"
                 )
+        rows: tuple[int, int] | None = None
+        if letterbox:
+            picture, at, width, height, rows = _letterbox_cover_picture(
+                picture, at, width, height, scratch
+            )
         faces = face_boxes(picture, at, detector, scratch=scratch)
         missing = face_note(faces)
         if missing is not None:
             warnings.append(missing.removeprefix("⚠ "))
         layout = cover_layout(
-            series=series, part=episode, width=width, height=height, faces=faces or ()
-        )
+            series=series, part=episode if part is None else part, width=width, height=height,
+            faces=faces or (), picture_rows=rows,
+        )  # fmt: skip
         if layout.face_overlap:
             warnings.append(
                 "cover: a face sits under the text wherever it goes; look at the cover, or pick "
@@ -1574,9 +1620,17 @@ def make_cover(
             picture, cover_path(video), layout=layout, at=at, scratch=scratch
         )
     where = (
-        "low, above the bottom band"
+        (
+            "low in the picture, above the caption band"
+            if rows
+            else "low, above the bottom band"
+        )
         if layout.placement == "lower"
-        else "high, under the top strip"
+        else (
+            "high in the picture, under the title band"
+            if rows
+            else "high, under the top strip"
+        )
     )
     faces_said = (
         "faces not read (no face detector)"
@@ -1608,8 +1662,12 @@ def make_reel(
     no_cover: bool = False,
     cover_frame: float | None = None,
     no_panels: bool = False,
+    part: int | None = None,
 ) -> ReelResult:
     """The renderer: plan the reel and make its files (video, captions, plan, cover, post text).
+
+    ``part`` is ``reel --part N`` (the series episode number "PART N" shows); ``None``
+    works it out from the desk (:func:`creation.post.reel_cover.series_part`).
 
     Everything the episode's folder keeps about its reels (``latest.json``,
     the hand-edited plans, ``metrics.csv``) is :func:`record_reel`'s, outside
@@ -1626,8 +1684,11 @@ def make_reel(
     from creation.post.desk import saved_spine
     from creation.spine_view import episode_summary
 
+    from creation.post.reel_cover import series_part
+
     out = stream or sys.stdout
     desk = desk.expanduser().resolve()
+    part_found = series_part(desk, episode, part)
     found = saved_spine(desk, episode)
     if found is None:
         raise ValueError(
@@ -1832,8 +1893,10 @@ def make_reel(
         sources=sources_fingerprint(desk, srcs), series=str(spine.get("title") or desk.name),
         hook_text=hook.overlay.text if hook.overlay is not None
         else boxed.title.hook if boxed is not None and boxed.title is not None else "",
-        legacy=legacy,
+        legacy=legacy, part=part_found.number,
     )  # fmt: skip
+    if not part_found.from_desk_ordinal:
+        print(f"Cover: {part_found.note()}", file=out, flush=True)
     if plan_only:
         print(
             f"Plan: {paths['plan']} (edit it, then: reel --desk D --episode {episode} --plan FILE)",
@@ -1867,6 +1930,7 @@ def make_reel(
             cover, cover_note, cover_warnings = make_cover(
                 desk, episode=episode, plan=plan, sources=srcs, takes=takes, patches=patches,
                 video=paths["video"], series=series, detector=detector, cover_frame=cover_frame,
+                part=part_found.number, letterbox=boxed is not None,
             )  # fmt: skip
         except (MediaToolError, OSError, ValueError) as exc:
             cover_note = f"no cover image: {type(exc).__name__}: {exc}"
@@ -1888,7 +1952,7 @@ def make_reel(
     posting_notes += cover_warnings
     caption = post_text(
         series=series,
-        episode=episode,
+        episode=part_found.number,
         title=str(summary.get("title") or ""),
         question=str(summary.get("hook_question") or ""),
         genre=str(spine.get("microdrama_genre") or ""),
@@ -2007,7 +2071,7 @@ def record_reel(
         desk / REELS_DIR / METRICS_FILE,
         {
             "reel_file": result.video.name, "cover_file": result.cover.name if result.cover else "",
-            "series": result.series, "part": episode, "account": posting["account"],
+            "series": result.series, "part": result.part or episode, "account": posting["account"],
             "lane": posting["lane"], "planned_post_slot": posting["posting_slot"],
             "cold_open_role": plan.strongest.role if plan.strongest and cold else "",
             "cold_open_time": f"{cold.take} {cold.start:.2f}-{cold.end:.2f} s" if cold else "",

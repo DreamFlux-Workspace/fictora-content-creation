@@ -777,6 +777,13 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "PART N and the series title, free, for Instagram's Edit cover).",
     )  # fmt: skip
     reel.add_argument(
+        "--part", type=int, default=None, metavar="N",
+        help="The series episode number the cover's PART N and the post text show (a show made one desk per "
+        "episode: every desk's episode is 1). Saved on the desk (production.config.json first_part), so "
+        "finish, join and later reels keep it. Default: the saved number, else a one-episode desk's name "
+        "(noclip-ep03 is PART 3), else the desk's own episode number.",
+    )  # fmt: skip
+    reel.add_argument(
         "--cover-frame", type=float, default=None, metavar="S",
         help="Draw the cover on the reel's picture at S seconds (default: a saved server cover, "
         "else the strongest frame).",
@@ -1029,6 +1036,18 @@ def dispatch_post(args: argparse.Namespace) -> int:
             unreachable_message,
         )
 
+        if args.part is not None:
+            from creation.post.reel_cover import remember_part
+
+            try:
+                saved = remember_part(args.desk, args.episode, args.part)
+            except ValueError as exc:
+                print(f"Reel not made: {exc}", file=sys.stderr)
+                return 1
+            print(
+                f"PART {args.part}: saved on the desk ({saved.name} first_part); finish, join and "
+                "later reels use it"
+            )
         if args.clips is not None or args.clip_seconds is not None:
             from creation.post.clips_via_server import (
                 clips_need_server_message,
