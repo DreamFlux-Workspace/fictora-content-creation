@@ -77,7 +77,7 @@ import json
 import math
 import re
 import subprocess
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass, field
 from io import StringIO
 from pathlib import Path
@@ -1123,13 +1123,20 @@ def lines_section(
 
 
 def take_lines(
-    desk: Path, episode: int, take_id: str
+    desk: Path, episode: int, take_id: str, *, shouts_asked: Collection[str] = ()
 ) -> tuple[list[dict[str, str]], str] | None:
-    """The take's approved lines (with every spelling) and the show's language, from the saved spine."""
+    """The take's approved lines (with every spelling) and the show's language, from the saved spine.
 
+    ``shouts_asked``: background shouts (``crowd_lines``) the take was asked to say (its take facts'
+    ``lines[]`` with a count); those on the take's beats join the lines in the order they play, with
+    ``cast_id`` ``crowd:<line id>`` (never a cast member) and ``speaker`` their crowd label. Left
+    empty, only the characters' lines come back, as before.
+    """
+
+    from creation.crowd_lines import beat_shouts
     from creation.ops.state import episode_by_ordinal, load_series
     from creation.post.desk import episode_dialogue, saved_spine, show_language
-    from creation.spine_view import dialogue_line_ids
+    from creation.spine_view import beats_by_take, dialogue_line_ids
 
     found = saved_spine(desk, episode)
     if found is None:
@@ -1145,7 +1152,38 @@ def take_lines(
     wanted = [line_id for line_id, _ in ids]
     by_id = {line["line_id"]: line for line in episode_dialogue(spine, episode)}
     lines = [by_id[line_id] for line_id in wanted if line_id in by_id]
-    return lines, show_language(spine)
+    if not shouts_asked:
+        return lines, show_language(spine)
+    grouped = beats_by_take(spine, episode=episode, take_count=len(takes) or 1)
+    beats = grouped[index - 1] if 1 <= index <= len(grouped) else []
+    kept = {line["line_id"] for line in lines}
+    ordered: list[dict[str, str]] = []
+    for beat in beats:
+        shouts = [s for s in beat_shouts(beat) if s.line_id in set(shouts_asked)]
+        rows = {
+            s.line_id: {
+                "line_id": s.line_id,
+                "cast_id": f"crowd:{s.line_id}",
+                "speaker": f"{s.who}, background",
+                "text": s.text,
+                "spoken_text": s.spoken,
+                "subtitle": s.subtitle or s.text,
+                "performed": s.performed,
+            }
+            for s in shouts
+        }
+        own = [
+            by_id[str(raw.get("line_id"))]
+            for raw in beat.get("dialogue_lines") or []
+            if isinstance(raw, Mapping) and str(raw.get("line_id")) in kept
+        ]
+        ordered += [rows[s.line_id] for s in shouts if s.before_line]
+        ordered += own
+        ordered += [rows[s.line_id] for s in shouts if not s.before_line]
+    placed = {line["line_id"] for line in ordered}
+    # A character line the beats did not place (never expected) keeps its place at the end.
+    ordered += [line for line in lines if line["line_id"] not in placed]
+    return ordered, show_language(spine)
 
 
 def _heard_rows(

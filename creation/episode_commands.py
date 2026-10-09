@@ -15,7 +15,8 @@ desk with a versioned name, and never approves (the human's yes goes through
 - ``expressions [--episode N]``: the expressions the deploy offers (``GET /v1/capabilities``) and what each beat asks for.
 - ``line``: change one line's words, performed line, speaker or seen/heard, add a line to a beat, remove one,
   or add a voice that is only heard with its line, on the server and the desk in one step, and say what that
-  does to the script approval (``line`` with no change lists the lines).
+  does to the script approval (``line`` with no change lists the lines). ``line --shout N --text "..."`` and
+  ``line --remove-shout N`` edit or drop a background shout (never a character; who shouts it stays).
 - ``look-frame``: draw our own style frame on the server from a written description (one still).
 - ``look`` / ``look-note``: pin the style frame by URL, add or remove look notes.
 - ``sound-note``: add a sound to one take, or drop / level one on every take; ``--remove``; list.
@@ -217,6 +218,13 @@ from creation.shot_plan import (
     same_plan,
 )
 from creation.touch_and_side import touch_owner_heads_up
+from creation.crowd_lines import (
+    MAX_SHOUT_WORDS,
+    episode_shouts,
+    shout_ids,
+    shout_listing,
+    take_shouts,
+)
 from creation.spine_view import (
     BOARD_INPUT_NAMES,
     beats_by_take,
@@ -1733,6 +1741,11 @@ def _find_line(
                 found.append(str(line.get("line_id")))
                 if str(line.get("line_id")) == line_id:
                     return line
+    if line_id in shout_ids(spine):
+        raise CommandStopped(
+            f"{line_id} is a background shout, not a character's line: change its words with "
+            f'`line --episode {episode} --shout {line_id} --text "..."`'
+        )
     raise CommandStopped(
         f"no line {line_id!r} on {episode_id}; there are: {', '.join(found) or 'none'}"
     )
@@ -1837,6 +1850,11 @@ def resolve_line_id(spine: Mapping[str, Any], ref: str, *, episode: int) -> str:
             return ref
     if ref.isdigit() and 1 <= int(ref) <= len(pairs):
         return str(pairs[int(ref) - 1][1]["line_id"])
+    if ref in shout_ids(spine):
+        raise CommandStopped(
+            f"{ref} is a background shout, not a character's line: change its words with "
+            f'`line --shout {ref} --text "..."`, drop it with `line --remove-shout {ref}`'
+        )
     listing = "\n".join(line_listing(spine, episode=episode)) or "  (none)"
     raise CommandStopped(
         f"no line {ref!r} in episode {episode}; its lines are:\n{listing}"
@@ -2638,6 +2656,9 @@ def _invalid_patch_fix(message: str) -> str:
     """
 
     details = _refusal_details(message)
+    shout = _shout_refusal_fix(details)
+    if shout:
+        return shout
     unknown = details.get("unknown_frame_cast_ids") or details.get("unknown_ids")
     named = server_named_rules(message)
     if unknown:
@@ -2653,6 +2674,36 @@ def _invalid_patch_fix(message: str) -> str:
             hints.append(f"{field}: {rule}")
     rows = "; ".join(named)
     return f"the server named: {rows}" + "".join(f"\n  rule: {hint}" for hint in hints)
+
+
+def _shout_refusal_fix(details: Mapping[str, Any]) -> str | None:
+    """The fix for a background-shout ``invalid_patch`` (fictora-drama #682), or ``None`` for any other.
+
+    The server names an unknown shout id, a performed shout pinned on an English show, or a shout over
+    :data:`creation.crowd_lines.MAX_SHOUT_WORDS` words (in ``violations``).
+    """
+
+    def listed(key: str) -> str:
+        return ", ".join(str(v) for v in details.get(key) or [])
+
+    if details.get("unknown_crowd_line_ids"):
+        return (
+            f"the story has no background shout {listed('unknown_crowd_line_ids')}: list the shouts with "
+            "`line --desk D --episode N` (numbered s1, s2, ...) and use their numbers or ids"
+        )
+    if details.get("spoken_text_on_english_show_crowd_line_ids"):
+        return (
+            f"this show is performed in English, so a shout has no separate performed words "
+            f"({listed('spoken_text_on_english_show_crowd_line_ids')}): change it with --text"
+        )
+    rows = [str(row) for row in details.get("violations") or []]
+    if any("crowd line" in row or "background shout" in row for row in rows):
+        return (
+            f"a background shout carries at most {MAX_SHOUT_WORDS} words. Shorten it; someone who really talks "
+            "is a character: drop the shout (`line --remove-shout N`) and give the words to someone in the cast "
+            'with `line --add --beat B --speaker NAME --text "..."`'
+        )
+    return None
 
 
 def _refusal_details(message: str) -> dict[str, Any]:
@@ -3046,6 +3097,8 @@ def run_line(
     new_character: str | None = None,
     staging: str | None = None,
     language: str | None = None,
+    shout: str | None = None,
+    remove_shout: str | None = None,
     out: Any = None,
 ) -> Path | None:
     """Change, add or remove a line on the server and on the desk in one step; with no change, list the lines.
@@ -3086,6 +3139,9 @@ def run_line(
     language
         With ``spoken`` on a show the server holds as English: the language it is really performed in
         (:func:`creation.cast_commands.english_show_pin`).
+    shout, remove_shout
+        A background shout to change (with ``text`` / ``spoken`` / ``subtitle``) or drop
+        (:func:`run_shout`). Who shouts it never changes.
     out
         Text stream.
 
@@ -3097,6 +3153,23 @@ def run_line(
 
     out = out or sys.stdout
     from creation import cast_commands
+
+    if shout is not None or remove_shout is not None:
+        stray = {"--line": line, "--speaker": speaker, "--off-screen/--on-screen": off_screen, "--add": add or None,
+                 "--beat": beat, "--remove": remove, "--speaker-moves": speaker_moves or None, "--new-voice": new_voice,
+                 "--role": role, "--voice-description": voice_description, "--provider-voice": provider_voice,
+                 "--look": look, "--new-character": new_character, "--staging": staging, "--language": language}  # fmt: skip
+        named = [key for key, value in stray.items() if value is not None]
+        if named:
+            raise CommandStopped(
+                f"{', '.join(named)} cannot go with a background shout: only its words change (--text, or --spoken "
+                "on a show not in English). Who shouts it, and that it is background people, stay as written; "
+                "to give the words to a character, drop the shout (--remove-shout) and `line --add` them."
+            )
+        return run_shout(
+            desk, episode=episode, shout=shout, text=text, spoken=spoken, subtitle=subtitle,
+            remove_shout=remove_shout, select_regen=select_regen, preview_only=preview_only, out=out,
+        )  # fmt: skip
 
     if new_character is not None:
         stray = {"--new-voice": new_voice, "--speaker": speaker, "--remove": remove, "--line": line,
@@ -3276,6 +3349,15 @@ def run_line(
         )
         for row in line_listing(spine, episode=episode) or ["  (none)"]:
             print(row, file=out)
+        shouts = shout_listing(spine, episode=episode)
+        if shouts:
+            print(
+                'background shouts (not characters; change the words with --shout sN --text "...", '
+                "drop one with --remove-shout sN):",
+                file=out,
+            )
+            for row in shouts:
+                print(row, file=out)
         return None
     _, state, run = _desk_session(desk)
     try:
@@ -3298,6 +3380,240 @@ def run_line(
         strand_voice=strand_voice,
         out=out,
     )
+
+
+def resolve_shout_id(spine: Mapping[str, Any], ref: str, *, episode: int) -> str:
+    """Turn ``--shout`` / ``--remove-shout`` (a shout id, its number ``s2`` or ``2``) into the shout id.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    ref
+        ``crowd_episode_01_03_1``, ``s1`` or ``1``.
+    episode
+        Episode ordinal.
+
+    Returns
+    -------
+    str
+        The shout id.
+    """
+
+    shouts = episode_shouts(spine, episode=episode)
+    for shout in shouts:
+        if shout.line_id == ref:
+            return ref
+    number = ref[1:] if ref[:1].lower() == "s" else ref
+    if number.isdigit() and 1 <= int(number) <= len(shouts):
+        return shouts[int(number) - 1].line_id
+    listing = "\n".join(shout_listing(spine, episode=episode)) or "  (none)"
+    raise CommandStopped(
+        f"no background shout {ref!r} in episode {episode}; its shouts are:\n{listing}"
+    )
+
+
+def build_shout_patch(
+    spine: Mapping[str, Any],
+    *,
+    episode: int,
+    shout: str | None = None,
+    text: str | None = None,
+    spoken: str | None = None,
+    subtitle: str | None = None,
+    remove_shout: str | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """Build the spine patch that changes a background shout's words, or drops one (fictora-drama #682).
+
+    Only the words change: who shouts it, how many, and where it plays stay as
+    written. The kit stops what the server would refuse by name before
+    anything is sent (over :data:`creation.crowd_lines.MAX_SHOUT_WORDS` words,
+    ``--spoken`` on an English show, ``--subtitle`` without ``--spoken``).
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+    shout
+        The shout to change: its id or number in the episode.
+    text, spoken, subtitle
+        The new English shout, the pinned performed shout (a show not in English), its subtitle.
+    remove_shout
+        The shout to drop: its id or number.
+
+    Returns
+    -------
+    tuple[dict[str, Any], list[str]]
+        ``{"crowd_lines": [...]}`` or ``{"remove_crowd_line_ids": [...]}`` and one printable row per change.
+    """
+
+    if (shout is None) == (remove_shout is None):
+        raise CommandStopped(
+            "pass --shout N (with --text/--spoken) or --remove-shout N, not both"
+        )
+    if remove_shout is not None:
+        if any(value is not None for value in (text, spoken, subtitle)):
+            raise CommandStopped(
+                "--remove-shout drops the shout; --text/--spoken/--subtitle go with --shout"
+            )
+        shout_id = resolve_shout_id(spine, remove_shout, episode=episode)
+        found = next(
+            s for s in episode_shouts(spine, episode=episode) if s.line_id == shout_id
+        )
+        return {"remove_crowd_line_ids": [shout_id]}, [f"  - {shout_id}  {found.row()}"]
+    if all(value is None for value in (text, spoken, subtitle)):
+        raise CommandStopped(
+            "say what to change on the shout: --text (or --spoken on a show not in English)"
+        )
+    if subtitle is not None and spoken is None:
+        raise CommandStopped(
+            "--subtitle describes a pinned shout: send it with --spoken"
+        )
+    if spoken is not None and _spoken_language(spine) == "en-US":
+        raise CommandStopped(
+            "--spoken pins the performed shout of a show not spoken in English; this show is en-US: use --text"
+        )
+    if text is not None:
+        words = len(text.split())
+        if words < 1:
+            raise CommandStopped(
+                "--text is empty; to drop the shout use --remove-shout"
+            )
+        if words > MAX_SHOUT_WORDS:
+            raise CommandStopped(
+                f"a background shout carries at most {MAX_SHOUT_WORDS} words; this one has {words}. Shorten it. "
+                "Someone who really talks is a character: drop the shout (--remove-shout) and give the words to "
+                'someone in the cast with `line --add --beat B --speaker NAME --text "..."`. Nothing was sent.'
+            )
+    shout_id = resolve_shout_id(spine, shout or "", episode=episode)
+    found = next(
+        s for s in episode_shouts(spine, episode=episode) if s.line_id == shout_id
+    )
+    entry: dict[str, Any] = {"line_id": shout_id}
+    current = {
+        "text": found.text,
+        "spoken_text": found.spoken,
+        "subtitle_text": found.subtitle,
+    }
+    changed: list[str] = []
+    for key, value in (
+        ("text", text),
+        ("spoken_text", spoken),
+        ("subtitle_text", subtitle),
+    ):
+        if value is None:
+            continue
+        entry[key] = value
+        if (current[key] or None) != value:
+            changed.append(
+                f"  {key}: {_short(current[key] or '-')}  ->  {_short(value)}"
+            )
+    if not changed:
+        raise CommandStopped(f"nothing to change on {shout_id}")
+    # The shout as it stands, for context (four spaces: not a change of its own, :func:`change_items`).
+    changed.insert(0, f"    {found.row()}")
+    return {"crowd_lines": [entry]}, changed
+
+
+def run_shout(
+    desk: Path,
+    *,
+    episode: int,
+    shout: str | None = None,
+    text: str | None = None,
+    spoken: str | None = None,
+    subtitle: str | None = None,
+    remove_shout: str | None = None,
+    select_regen: bool = False,
+    preview_only: bool = False,
+    out: Any = None,
+) -> Path:
+    """Change a background shout's words, or drop it, on the server and the desk in one step.
+
+    Sent like a character line edit (``PATCH /v1/spines/{id}`` before the
+    script gate, the cascade after it) as ``crowd_lines`` /
+    ``remove_crowd_line_ids``. The story is saved again and the edit ends on
+    the same verdict line as any ``line`` edit; a named refusal is said in
+    plain words (:func:`explain_refusal`).
+
+    Parameters
+    ----------
+    desk
+        Series desk with a story.
+    episode
+        Episode ordinal.
+    shout, text, spoken, subtitle, remove_shout
+        As :func:`build_shout_patch`.
+    select_regen, preview_only
+        As :func:`run_edit`.
+    out
+        Text stream.
+
+    Returns
+    -------
+    Path
+        The refreshed ``api/spine.json``.
+    """
+
+    out = out or sys.stdout
+    sent: dict[str, str] = {}
+
+    def build(spine: Mapping[str, Any]) -> tuple[dict[str, Any], list[str], str]:
+        patch, changed = build_shout_patch(
+            spine, episode=episode, shout=shout, text=text, spoken=spoken, subtitle=subtitle,
+            remove_shout=remove_shout,
+        )  # fmt: skip
+        removing = bool(patch.get("remove_crowd_line_ids"))
+        sent["id"] = (patch.get("remove_crowd_line_ids") or [""])[0] or patch[
+            "crowd_lines"
+        ][0]["line_id"]
+        return (
+            patch,
+            changed,
+            (
+                "remove a background shout"
+                if removing
+                else f"background shout {sent['id']}"
+            ),
+        )
+
+    desk, path, fresh, cascade, what, changed = _send_story_edit(
+        desk,
+        episode=episode,
+        build=build,
+        select_regen=select_regen,
+        preview_only=preview_only,
+        out=out,
+    )
+    if not preview_only:
+        relocalized = (
+            text is not None and spoken is None and _spoken_language(fresh) != "en-US"
+        )
+        _after_line_edit(
+            desk, fresh, episode=episode, line_id=sent["id"], after_gate=cascade, relocalized=relocalized,
+            out=out,
+        )  # fmt: skip
+        if remove_shout is None:
+            now = next(
+                (
+                    s
+                    for s in episode_shouts(fresh, episode=episode)
+                    if s.line_id == sent["id"]
+                ),
+                None,
+            )
+            if now is not None:
+                print(f"now: {now.row()}", file=out)
+        _note(
+            desk,
+            episode,
+            f"line: {what}: " + "; ".join(item.strip() for item in changed),
+        )
+    for row in edit_verdict(change_items(changed), preview=preview_only):
+        print(row, file=out)
+    return path
 
 
 def _guard_strand(
@@ -6499,8 +6815,68 @@ def run_check_lines(
         )
         for line in placed:
             print(line, file=out)
+        for row in shout_check_rows(
+            spine, facts, episode=episode, take_index=index, take_count=len(slot.takes),
+            label=f"ep{episode:02d} {current}",
+        ):  # fmt: skip
+            print(row, file=out)
         missing_total += len(missing)
     return missing_total
+
+
+def shout_check_rows(
+    spine: Mapping[str, Any],
+    facts: Mapping[str, Any],
+    *,
+    episode: int,
+    take_index: int,
+    take_count: int,
+    label: str,
+) -> list[str]:
+    """Say whether each background shout on a take was in its instructions, and on which shot.
+
+    Shouts are never characters' lines: they are not in the approved-line
+    count above and never change the command's result.
+
+    Parameters
+    ----------
+    spine
+        The desk's spine snapshot.
+    facts
+        The take facts (``lines`` lists every line id the prompt carries, shouts among them).
+    episode, take_index, take_count
+        Which take.
+    label
+        ``ep01 t1``.
+
+    Returns
+    -------
+    list[str]
+        One row per shout on the take's beats; empty when it has none.
+    """
+
+    rows = {
+        str(row.get("line_id")): row
+        for row in facts.get("lines") or []
+        if isinstance(row, Mapping) and row.get("line_id")
+    }
+    out: list[str] = []
+    for shout in take_shouts(
+        spine, episode=episode, take_index=take_index, take_count=take_count
+    ):
+        row = rows.get(shout.line_id) or {}
+        if int(row.get("count") or 0) >= 1:
+            shot = (
+                f" on shot {row['shot_index']}"
+                if row.get("shot_index") is not None
+                else ""
+            )
+            out.append(f"{label}: {shout.row()} asked{shot}")
+        else:
+            out.append(
+                f"{label}: {shout.row()} was not in the take's instructions (a background shout; not counted above)"
+            )
+    return out
 
 
 # --- Film one episode, or one take of it ---------------------------------------------------------
@@ -7393,7 +7769,9 @@ def add_episode_parsers(
             "Change a line: --line N with --text/--spoken/--speaker/--off-screen. Add one: --add --beat N --speaker "
             'NAME --text "..." [--off-screen]; a beat holds one line, so to replace it add --remove OLD in the same '
             "command. Drop one: --remove N. A new voice that is heard and never drawn comes with its line: --add --beat "
-            'N --text "..." --new-voice NAME --role "..." --voice-description "..." [--provider-voice X].'
+            'N --text "..." --new-voice NAME --role "..." --voice-description "..." [--provider-voice X]. '
+            'A background shout (never a character): --shout sN --text "..." [--spoken "..." --subtitle "..."] '
+            "to change its words, --remove-shout sN to drop it."
         ),
     )
     line.add_argument("--desk", type=Path, required=True)
@@ -7445,6 +7823,17 @@ def add_episode_parsers(
         "--remove",
         default=None,
         help="Drop a line: its id or number (with --add, replaces it).",
+    )
+    line.add_argument(
+        "--shout",
+        default=None,
+        help="A background shout to change: its id or number (s1, s2 ... as `line` lists them), with --text "
+        "(at most 6 words) or --spoken/--subtitle. Who shouts it does not change.",
+    )
+    line.add_argument(
+        "--remove-shout",
+        default=None,
+        help="Drop a background shout: its id or number (s1).",
     )
     line.add_argument(
         "--speaker-moves",
@@ -7967,6 +8356,8 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 new_character=args.new_character,
                 staging=args.staging,
                 language=args.language,
+                shout=args.shout,
+                remove_shout=args.remove_shout,
             )
             return 0
         if args.command == "cast":

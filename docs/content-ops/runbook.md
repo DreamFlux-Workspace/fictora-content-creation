@@ -228,6 +228,10 @@ Repurposing an episode (a new idea on an episode already authored): update its t
 - Declare an off-screen voice in the brief's cast table as voice only. It is never drawn. With every line off screen and no frame showing them, the server flags the card `voice_only` and draws no plate; `plates/` and the plate count leave them out. If a plate for them turns up, a frame puts them on screen: fix the frame or accept the plate before the spend.
 - An off-screen voice that plays over another character's face is heard as that face speaking. Give it a source in frame (a wall grille, a phone in a hand) or a source treatment in post (band-limited intercom).
 
+### Background shouts
+
+- Background people (a soldier, kids, a vendor) may shout one short line: at most 6 words, at most 2 per beat, in a generic crowd voice. They are never characters: no card, no plate, no voice to approve, never counted as speakers or toward the three lines a take holds. The script gate prints them beside the beat's line as `[background] Soldier: "Charge!"`. Change one with `line --shout sN --text "..."`, drop one with `line --remove-shout sN` (`line` lists the numbers). Who shouts cannot be changed: someone who really talks is a character, so drop the shout and `line --add` the words to someone in the cast.
+
 ### Language
 
 - A Japanese or Korean line must sound like a native speaker in that situation. The situation picks the set phrase (staff to customer: 申し訳ございません / 정말 죄송합니다, not ごめんなさい). No English quip carried word for word. No notice-board noun stack in speech (「逆襲中止！」 "counterattack cancelled!") unless the character really is announcing.

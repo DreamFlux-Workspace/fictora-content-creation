@@ -316,7 +316,12 @@ def soundtrack_lines(
     names = cast_names or {}
     rows = [soundtrack.one_line()]
     for line in soundtrack.lines:
-        who = names.get(line.cast_id, line.cast_id) or "?"
+        # A background shout (``crowd:<line id>``) is no one in the cast (fictora-drama #682).
+        who = (
+            "background shout"
+            if line.cast_id.startswith("crowd:")
+            else names.get(line.cast_id, line.cast_id) or "?"
+        )
         where = ", off screen" if line.off_screen else ""
         rows.append(
             f"  {line.line_id or '?'} ({who}{where}) {line.start:.2f}-{line.end:.2f}s"

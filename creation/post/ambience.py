@@ -161,7 +161,11 @@ def ambience_brief(
         for beat in beats
         if any(
             isinstance(line, Mapping) and str(line.get("line_id")) in lines
-            for line in beat.get("dialogue_lines") or []
+            # A beat whose only spoken line is a background shout is the take's too.
+            for line in [
+                *(beat.get("dialogue_lines") or []),
+                *(beat.get("crowd_lines") or []),
+            ]
         )
     ]
     take_beats = own or beats

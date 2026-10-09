@@ -406,14 +406,31 @@ def brief_vs_spine_lines(
             else m
             for m in matches
         ]
+    # A brief line the writers gave to background people is a shout now, not cut (fictora-drama #682).
+    from creation.crowd_lines import episode_shouts
+
+    shouts = {
+        key: shout
+        for shout in episode_shouts(spine, episode=episode)
+        for key in {_norm(shout.text), _norm(shout.spoken)}
+        if key
+    }
+    shouted = {
+        id(m): shouts[_norm(m.brief.text)]
+        for m in matches
+        if m.verdict == "cut" and m.brief and _norm(m.brief.text) in shouts
+    }
     count = {
         verdict: sum(1 for m in matches if m.verdict == verdict)
         for verdict in ("kept", "rewritten", "changed", "cut", "added")
     }
+    count["cut"] -= len(shouted)
     out = [
         f"brief lines vs the drafted script: brief {len(brief)} -> script {len(drafted)} "
         f"(kept {count['kept']}, rewritten {count['rewritten'] + count['changed']}, cut {count['cut']}, "
-        f"added {count['added']})"
+        f"added {count['added']}"
+        + (f", shouted by background people {len(shouted)}" if shouted else "")
+        + ")"
     ]
     out.append(
         f"  spoken: {said_count['locked']} {'locked' if locked else 'as written'}"
@@ -437,6 +454,12 @@ def brief_vs_spine_lines(
             out.append(
                 f'             script {match.spine.speaker}: "{match.spine.text}"  [{match.spine.line_id}]'
             )
+        elif id(match) in shouted and match.brief:
+            shout = shouted[id(match)]
+            out.append(
+                f'  shouted    brief {match.brief.speaker}: "{match.brief.text}"  ->  {shout.row()}  '
+                f"[{shout.line_id}] (background people, not a character)"
+            )
         elif match.verdict == "cut" and match.brief:
             out.append(
                 f'  cut        {match.brief.speaker}: "{match.brief.text}" (no line in the script says this)'
@@ -446,7 +469,7 @@ def brief_vs_spine_lines(
                 f'  added      {match.spine.speaker}: "{match.spine.text}"  [{match.spine.line_id}] (not in the brief)'
             )
     out += said
-    if count["kept"] != len(brief) or count["added"]:
+    if count["kept"] + len(shouted) != len(brief) or count["added"]:
         out.append(
             "  !! The writers changed the brief's lines. Before the script gate: keep theirs, or put yours back with "
             '`fictora-produce line --desk D --episode N --line ID --text "..."` (or `--speaker`). Put a cut line '

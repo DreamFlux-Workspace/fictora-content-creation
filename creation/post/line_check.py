@@ -568,6 +568,37 @@ def check_take_lines(
     return check
 
 
+def shouts_asked_of(facts: Mapping[str, Any] | None) -> list[str]:
+    """The line ids a take was asked to say: its take facts' ``lines[]`` with a count.
+
+    The server lists every line of the take's prompt there, background shouts
+    (``crowd_lines``, fictora-drama #682) among them. A model-voice take says
+    them, so the line check hears them as script, not as invented speech. Only
+    ids listed with ``count`` >= 1 count: a shout the take was never asked for
+    is never expected. :func:`creation.post.review.take_lines` keeps only the
+    ids that are shouts on the spine.
+
+    Parameters
+    ----------
+    facts
+        The saved take facts (``{"take_facts": {...}}`` or the facts alone), or ``None``.
+
+    Returns
+    -------
+    list[str]
+        Line ids the take's prompt carries.
+    """
+
+    body = (facts or {}).get("take_facts", facts or {})
+    return [
+        str(row["line_id"])
+        for row in body.get("lines") or []
+        if isinstance(row, Mapping)
+        and row.get("line_id")
+        and int(row.get("count") or 0) >= 1
+    ]
+
+
 def script_lines_for_take(
     lines: Sequence[Mapping[str, str]],
     facts: Mapping[str, Any] | None,
@@ -628,7 +659,8 @@ def script_lines_for_take(
                 line_id=str(line.get("line_id") or ""),
                 performed=performed,
                 spellings=spellings,
-                speaker=names.get(cast_id, ""),
+                # A background shout is named by its crowd label, never looked up in the cast.
+                speaker=names.get(cast_id, "") or str(line.get("speaker") or ""),
                 off_screen=str(line.get("line_id")) in set(off_screen_ids),
                 shot_index=int(row["shot_index"])
                 if row.get("shot_index") is not None
@@ -712,7 +744,7 @@ def desk_line_check(
     from creation.post.whisper import load_words
     from creation.spine_view import heard_line_ids
 
-    found = take_lines(desk, episode, take_id)
+    found = take_lines(desk, episode, take_id, shouts_asked=shouts_asked_of(facts))
     spine = saved_spine(desk, episode)
     if found is None or spine is None:
         return None, "no spine snapshot on the desk (run `spine --refresh`)"
@@ -828,5 +860,6 @@ __all__ = [
     "patched_line_ids",
     "normalise",
     "script_lines_for_take",
+    "shouts_asked_of",
     "stop_message",
 ]
