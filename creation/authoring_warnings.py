@@ -177,6 +177,61 @@ def _counted(words: Any, target: Any) -> str:
     return ""
 
 
+#: The server's script-contract notices (fictora-drama, 9 Oct 2026): a line of
+#: the creator's approved script (the brief's Lines section) that a draft still
+#: says differently, gives to someone else, or leaves out.
+SCRIPT_CONTRACT_CODES = frozenset(
+    {"script_line_changed", "script_line_speaker_changed", "script_line_missing"}
+)
+
+
+def _episode_number(episode_id: str, spine: Mapping[str, Any] | None) -> str:
+    for summary in (spine or {}).get("episode_summaries") or []:
+        if isinstance(summary, Mapping) and summary.get("episode_id") == episode_id:
+            ordinal = summary.get("ordinal")
+            if isinstance(ordinal, int):
+                return str(ordinal)
+    return "N"
+
+
+def _quoted(text: Any) -> str:
+    return '"' + " ".join(str(text or "").split()).replace('"', '\\"') + '"'
+
+
+def script_fix_command(
+    warning: Mapping[str, Any], spine: Mapping[str, Any] | None = None
+) -> str:
+    """The ``line`` command that puts an approved script line back, for a script-contract notice.
+
+    Parameters
+    ----------
+    warning
+        One ``script_line_*`` warning dict.
+    spine
+        The spine, to number the episode (optional).
+
+    Returns
+    -------
+    str
+        The command, or empty for another code.
+    """
+
+    code = str(warning.get("code") or "")
+    if code not in SCRIPT_CONTRACT_CODES:
+        return ""
+    episode = _episode_number(warning_episode_id(warning, spine), spine)
+    line_id = warning.get("line_id")
+    if code == "script_line_changed" and line_id:
+        return f"line --desk D --episode {episode} --line {line_id} --text {_quoted(warning.get('script_text'))}"
+    if code == "script_line_speaker_changed" and line_id:
+        return f"line --desk D --episode {episode} --line {line_id} --speaker {_quoted(warning.get('script_speaker'))}"
+    speaker = warning.get("script_speaker") or "NAME"
+    return (
+        f"line --desk D --episode {episode} --add --beat N --speaker {_quoted(speaker)} "
+        f"--text {_quoted(warning.get('script_text'))}"
+    )
+
+
 def warning_line(
     warning: Mapping[str, Any], spine: Mapping[str, Any] | None = None
 ) -> str:
@@ -216,6 +271,9 @@ def warning_line(
         )
     elif counted and code == "first_line_long":
         what = f"the first line runs {counted}"
+    if code in SCRIPT_CONTRACT_CODES:
+        # Ask the human: put the approved line back, or keep the draft's. Never fixed silently.
+        return f"SCRIPT: {message} To put it back: {script_fix_command(warning, spine)}"
     return f"note: {what} — {message}" if what else f"note: {message}"
 
 
@@ -287,6 +345,8 @@ def say_warnings(
 __all__ = [
     "FIELD",
     "HEADER",
+    "SCRIPT_CONTRACT_CODES",
+    "script_fix_command",
     "authoring_warnings",
     "for_episode",
     "introduced",
