@@ -247,8 +247,19 @@ from creation.post.system_panels import (
     show_takes_panels,
     take_panels,
 )
-from creation.post.media import MediaToolError, measure_loudness, probe_video
-from creation.post.mix import CueLevel, check_duck_db, mix_take, pick_gain
+from creation.post.media import (
+    MediaToolError,
+    measure_loudness,
+    measure_rms_windows,
+    probe_video,
+)
+from creation.post.mix import (
+    BED_WINDOW_SECONDS,
+    CueLevel,
+    check_duck_db,
+    mix_take,
+    pick_gain,
+)
 from creation.post.take_facts import (
     save_take_facts,
     stale_facts_reason,
@@ -286,6 +297,7 @@ from creation.harness_rules import (
 )
 from creation.post.sfx import (
     Adjustment,
+    BedReference,
     Cuts,
     Renderer,
     duplicate_cue_warnings,
@@ -1051,6 +1063,14 @@ def _line_check_stop(
     print(f"!! STOPPED: {message}", file=out, flush=True)
     append_run_note(run_dir, f"Finish · STOPPED on the line check ({read}): {faults}")
     return message
+
+
+def _left_out_for_its_sound(item: str) -> bool:
+    """Whether a NOT LAID cue was left out for its sound (silent / wrong shape after a re-make, or past the take)."""
+
+    return "re-made once, then left out" in item or item.endswith(
+        "(starts past the take)"
+    )
 
 
 @under_desk_rules
@@ -2065,6 +2085,7 @@ def run_finish(
                 output=next_versioned_path(takes, f"{base}-sfx", ".mp4"),
                 adjustments=sfx_adjust,
                 render=sfx_render,
+                bed=bed_reference(take),
             )
         except NothingLaid as failed:
             # Every effect left for the kit failed to render. When the take still has its effects (the
@@ -2080,7 +2101,15 @@ def run_finish(
                     for cue, _ in hand.cues
                 ),
             ]
-            if not on_take:
+            # A planned effect that came back silent (or the wrong shape) was re-made once by
+            # lay_sfx; if it is still unusable it is left out with a warning and the take goes on
+            # without it (Gallery L-20261008-20: the episode's only effect came back silent and
+            # stopped the finish). Only a render the server could not do at all (unreachable,
+            # refused) still stops the step: running finish again can fix that.
+            unusable = bool(failed.skipped) and all(
+                _left_out_for_its_sound(item) for item in failed.skipped
+            )
+            if not on_take and not unusable:
                 raise
             if failed.cost_usd:
                 book(
@@ -2100,8 +2129,15 @@ def run_finish(
                     if failed.dropped
                     else ""
                 )
-                + f"; the take's effects: {'; '.join(on_take)}{dropped}; {filmed_note}"
+                + (
+                    f"; the take's effects: {'; '.join(on_take)}"
+                    if on_take
+                    else "; the take goes on with no planned effect (each was re-made once and still unusable)"
+                )
+                + f"{dropped}; {filmed_note}"
             )
+            if not on_take:
+                print(f"[sfx] !! {detail}", file=out, flush=True)
             append_run_note(run_dir, f"SFX: {detail}")
             return StepReport(
                 "sfx", "ran", detail, None, failed.cost_usd, not_laid=failed.skipped
@@ -2132,6 +2168,7 @@ def run_finish(
         note += "".join(f"\n- skipped: {s}" for s in sfx.skipped)
         note += "".join(f"\n- dropped by a sound note: {d}" for d in plan.dropped)
         note += "".join(f"\n- left out: {d}" for d in sfx.dropped)
+        note += "".join(f"\n- levelled over the music bed: {d}" for d in sfx.levelled)
         append_run_note(run_dir, note)
         older = (
             f"; laid from facts older than the sound notes ({stale})" if stale else ""
@@ -2146,10 +2183,15 @@ def run_finish(
         left_out = (
             f"; left out on purpose: {'; '.join(sfx.dropped)}" if sfx.dropped else ""
         )
+        levelled = (
+            f"; levelled over the music bed: {'; '.join(sfx.levelled)}"
+            if sfx.levelled
+            else ""
+        )
         return StepReport(
             "sfx",
             "ran",
-            f"{len(sfx.mixed)} cue(s): {cues}{not_laid}{left_out}{dropped}{older}; {filmed_note}",
+            f"{len(sfx.mixed)} cue(s): {cues}{levelled}{not_laid}{left_out}{dropped}{older}; {filmed_note}",
             sfx.output,
             sfx.cost_usd,
             not_laid=sfx.skipped,
@@ -2321,12 +2363,46 @@ def run_finish(
         )
         return StepReport(ROOM_TONE_STEP, "ran", detail, toned)
 
+    def the_bed() -> Any:
+        """The show's bed, found (or made) once per finish: the effects are levelled against it."""
+
+        if "found" not in bed_state:
+            bed_state["found"] = resolve_bed(desk, spine=spine, maker=bed_maker)
+        return bed_state["found"]
+
+    def bed_reference(take: Path) -> BedReference | None:
+        """The bed the mix will lay, measured, so each kit-laid effect is heard over it (all shows).
+
+        ``None`` when there is no bed to sit against (the music is in the take) or it cannot be
+        found or measured: the effects then keep their planned levels and the mix still warns.
+        """
+
+        if music_in_take:
+            return None
+        try:
+            found = the_bed()
+            level = bed_level(desk, found.path, flag=bed_db)
+            levels = measure_rms_windows(found.path, window_seconds=BED_WINDOW_SECONDS)
+            take_gain = pick_gain(measure_loudness(take))
+            voice = measure_rms_windows(take, window_seconds=BED_WINDOW_SECONDS)
+        except (MediaToolError, OSError, ValueError, RuntimeError) as exc:
+            print(f"[sfx] effects not levelled against the bed ({str(exc)[:120]}): planned levels kept",
+                  file=out, flush=True)  # fmt: skip
+            return None
+        return BedReference(
+            levels=tuple(levels),
+            bed_db=level.db,
+            take_gain_db=take_gain,
+            voice_peak_db=max(voice, default=None),
+            window_seconds=BED_WINDOW_SECONDS,
+        )
+
     def do_bed(_take: Path) -> StepReport:
         if music_in_take:
             # The harness's music is already on the take: a bed under it would double the music.
             append_run_note(run_dir, f"Bed: none, {music_why}")
             return StepReport("bed", "skipped", f"no bed: {music_why}")
-        bed = resolve_bed(desk, spine=spine, maker=bed_maker)
+        bed = the_bed()
         bed_state["path"] = bed.path
         if bed.cost_usd:
             book(desk, episode=episode, usd=bed.cost_usd, stream=out, unit="bed")
