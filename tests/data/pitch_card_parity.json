@@ -1,0 +1,1180 @@
+{
+ "_source": "fictora-drama tests/drama_generation/fixtures/pitch_card_parity.json: the same story slice must give the same card on the server (drama_generation.pitch_card) and the kit (creation/pitch_shots.py). Built from hanakaze_ep07_take1.json plus one planned beat. Regenerate with the server, then copy to the kit.",
+ "episode_id": "episode_07",
+ "beats_per_storyboard_set": [
+  2,
+  2
+ ],
+ "cast": [
+  {
+   "cast_id": "cast_mitsu-hanakaze",
+   "name": "Mitsu Hanakaze",
+   "role": "Lead; a 20-year-old confectionery-college graduate running her grandfather’s 90-year-old wagashi shop.",
+   "persona": "Hot-tempered, industrious, and fiercely proud of traditional sweets, Mitsu wants to prove she can save Hanakaze Sweets without pity or compromise. Her emotions arrive first on her large expressive face, but every comic flare-up conceals genuine craft discipline and fear of failing her family.",
+   "backstory": "Mitsu grew up behind the Hanakaze Sweets counter and returned after confectionery college to run the shop while her grandfather recovers upstairs. She knows modern techniques but feels responsible for preserving the recipes, tools, and neighborhood trust handed down through four generations.",
+   "visual_description": "A 20-year-old Japanese woman with a big expressive face, short dark-brown bob tied back under a white tenugui headband, cream T-shirt, indigo apron, loose work trousers, and canvas shoes.",
+   "visual_brief": {
+    "age_band": "young adult, age 20",
+    "face_anchors": [
+     "round expressive face",
+     "wide dark-brown eyes",
+     "strong mobile eyebrows",
+     "small rounded nose",
+     "broad mouth built for exaggerated grins and clenched comic reactions"
+    ],
+    "hair_anchors": [
+     "short dark-brown bob",
+     "short side strands framing the cheeks",
+     "bob tied back beneath the headband"
+    ],
+    "gender_presentation": "female",
+    "silhouette": "compact energetic build with rolled sleeves, a waist-tied apron, and an alert forward lean",
+    "wardrobe_anchors": [
+     "white tenugui headband tied at the back",
+     "plain cream short-sleeve cotton T-shirt",
+     "indigo cotton shop apron tied at the waist",
+     "loose muted-slate work trousers",
+     "off-white canvas shoes"
+    ],
+    "wardrobe_variants": [],
+    "default_expression": "determined customer-service smile with visibly impatient eyebrows",
+    "default_gaze": "direct and challenging, constantly checking the shop entrance",
+    "default_posture": "feet planted behind the counter, shoulders pitched forward, hands ready to work",
+    "visual_medium": "TV slice-of-life anime with clean thin brown-black linework and flat cel color",
+    "surface_treatment": "soft two-tone cel shading, visible soft brushwork in backgrounds, simple fabric fold strokes, warm whites, no material sheen",
+    "palette": [
+     "indigo",
+     "cream",
+     "dark brown",
+     "muted slate blue",
+     "warm faded wood",
+     "soft leaf green"
+    ],
+    "reference_lighting": "Morning sun passes through the covered arcade’s overhead skylight panels, falling diagonally across the wooden counter and glass wagashi case; softer daylight enters through the open shopfront and catches flour dust in the air.",
+    "reference_background": "A narrow morning view inside Hanakaze Sweets: faded wooden posts, a cream noren, shallow shelves, a glass case filled with pastel wagashi, a hanging wooden 営業中 sign, and the covered arcade visible beyond the open doorway; half-closed metal shutters recede into soft blur.",
+    "forbidden_elements": [
+     "school uniform",
+     "high heels",
+     "tailored businesswear",
+     "jewelry",
+     "glossy fabric",
+     "photorealistic rendering",
+     "revealing clothing",
+     "extra head accessories"
+    ]
+   },
+   "voice_brief": {
+    "provider_voice": "Aria",
+    "seedance_vocal_signature": "Bright young Japanese alto with quick breath, explosive comic energy, and a rough clenched edge when pride is wounded.",
+    "reference_audio_url": "https://pub-fdcc7692092d4c2eb7137a44f7937138.r2.dev/casts/cast_mitsu-hanakaze/voice-reference/fcd7575273e40320e55e8de9ce714e0c25cf92aa96fc76aa1cad76fc0b8e0180.mp3",
+    "reference_audio_seconds": 4.392,
+    "reference_locked_at": "2026-09-26T13:22:35.266481Z"
+   },
+   "creator_notes": [],
+   "intro_episode_ordinal": 1
+  },
+  {
+   "cast_id": "cast_ren-kurosawa",
+   "name": "Ren Kurosawa",
+   "role": "Mitsu’s 21-year-old rival, a Paris-trained patissier running the new shop directly across the arcade.",
+   "persona": "Calm, precise, and maddeningly courteous, Ren wants his new patisserie to become the arcade’s destination shop because success will validate the exacting craft he trained for abroad. He respects Mitsu’s skill more than his composed manner admits and competes through immaculate work rather than open taunts.",
+   "backstory": "Ren returned from pastry training in Paris to open a compact French patisserie opposite Hanakaze Sweets. His polished launch attracts an immediate queue, placing him in direct competition with Mitsu even as his interest in local ingredients draws him toward her traditional methods.",
+   "visual_description": "A poised 21-year-old Japanese man with a narrow composed face, neat black hair, a matte white double-breasted chef jacket, charcoal trousers, a cream apron, and practical dark shoes.",
+   "visual_brief": {
+    "age_band": "young adult, age 21",
+    "face_anchors": [
+     "narrow oval face",
+     "straight dark eyebrows",
+     "almond-shaped dark eyes",
+     "straight nose",
+     "small composed mouth"
+    ],
+    "hair_anchors": [
+     "neat short black hair",
+     "soft side part",
+     "clean tapered nape"
+    ],
+    "gender_presentation": "male",
+    "silhouette": "tall slim frame with straight shoulders, close-set elbows, and economical hand movements",
+    "wardrobe_anchors": [
+     "matte white cotton double-breasted chef jacket",
+     "plain cream waist apron",
+     "charcoal wide work trousers",
+     "dark brown leather work shoes",
+     "slim brown watch on left wrist"
+    ],
+    "wardrobe_variants": [],
+    "default_expression": "calm professional half-smile",
+    "default_gaze": "steady and observant without appearing confrontational",
+    "default_posture": "upright behind the pastry counter with hands held neatly at waist level",
+    "visual_medium": "TV slice-of-life anime with clean thin brown-black linework and flat cel color",
+    "surface_treatment": "soft two-tone cel shading, flat-filled cotton garments, restrained gold accents, softly painted background depth, no reflective gloss",
+    "palette": [
+     "warm white",
+     "cream",
+     "charcoal",
+     "dark brown",
+     "muted gold",
+     "soft sky blue"
+    ],
+    "reference_lighting": "Morning skylight from the arcade roof enters through the open storefront and spreads across the pale counter; warm pendant bulbs above the pastry display add small pools of amber light without creating shine.",
+    "reference_background": "A compact French patisserie across the covered arcade, with warm-white plaster, narrow muted-gold trim, a pale stone-look counter, pastry boxes stacked on open shelves, and a long customer queue extending past neighboring half-closed shutters in the morning.",
+    "forbidden_elements": [
+     "toque",
+     "ornate medals",
+     "black formal suit",
+     "jewelry beyond the plain watch",
+     "glossy chef fabric",
+     "luxury chandelier",
+     "photorealistic rendering",
+     "aggressive scowl"
+    ]
+   },
+   "voice_brief": {
+    "provider_voice": "Callum",
+    "seedance_vocal_signature": "Smooth young Japanese tenor with measured pacing, low breath noise, restrained warmth, and an unhurried professional cadence.",
+    "reference_audio_url": "https://pub-fdcc7692092d4c2eb7137a44f7937138.r2.dev/casts/cast_ren-kurosawa/voice-reference/aa3cb2caae68a2fb693c2e409a1396ed86437289b78c3e3077aac59388173b3c.mp3",
+    "reference_audio_seconds": 3.672,
+    "reference_locked_at": "2026-09-30T12:47:56.683488Z"
+   },
+   "creator_notes": [],
+   "intro_episode_ordinal": 1
+  }
+ ],
+ "frames": [
+  {
+   "frame_id": "frame_episode_07_01",
+   "episode_id": "episode_07",
+   "ordinal": 1,
+   "beat_label": "Refusal slam",
+   "beat_prompt": "Mitsu slams the intact wagashi case before refusing Ren.",
+   "cast_refs": [
+    "cast_mitsu-hanakaze"
+   ],
+   "scene_type": null,
+   "media_asset_ids": [
+    "asset_plan_frame_frame_episode_07_01"
+   ],
+   "storyboard_group_id": "asset_plan_board_spine_video_eb80913d3f694d23af491b5637786d50_episode_07_set01",
+   "visual_brief": {
+    "location": "Hanakaze Sweets at the glass wagashi case, facing the covered morning arcade and Ren’s patisserie opposite.",
+    "story_moment": "Mitsu drives both open palms down onto the glass case as her eyebrows flare.",
+    "story_objects": [
+     "intact glass wagashi case",
+     "pastel wagashi trays",
+     "blank or pictorial arcade signs"
+    ],
+    "subject_blocking": [
+     {
+      "cast_id": "cast_mitsu-hanakaze",
+      "frame_position": "face in the upper-left safe third, open palms entering mid-frame below her chin",
+      "pose": "eyes sharply narrowed, brows slanted down, cross-shaped vein at her temple, red comic aura beginning behind her head; mouth fully unobstructed",
+      "gaze": "locked straight across the case at Ren",
+      "interaction": "both palms strike the intact glass case before her refusal",
+      "wardrobe_variant": null
+     }
+    ],
+    "shot_scale": "extreme close-up",
+    "viewpoint": "near-frontal from Ren’s side of the case",
+    "camera_angle": "slightly above eye level",
+    "depth_order": "Mitsu’s open palms foreground, her readable face midground, faded wooden shop interior behind.",
+    "ui_safe_zone": "Mitsu’s face sits upper-left below the top strip; her palms and the case occupy mid-frame, with the bottom fifth and lower-right rail clear of her face and hands.",
+    "lighting": "Soft morning skylight crosses Mitsu’s face and catches a narrow reflection on the intact case.",
+    "palette": [
+     "indigo",
+     "cream",
+     "faded wood brown",
+     "muted slate blue",
+     "soft leaf green"
+    ],
+    "visual_medium": "TV slice-of-life anime with clean thin brown-black linework and flat cel color",
+    "surface_treatment": "Soft two-tone cel shading, simple fabric folds, brushed wood backgrounds, warm whites, no glossy finish.",
+    "forbidden_elements": [
+     "no kissing",
+     "no embracing",
+     "no face-touching",
+     "no suggestive pose",
+     "no visible Genzō Hanakaze",
+     "no readable lettering",
+     "no folding screen",
+     "no fan art",
+     "no shipping imagery",
+     "no broken glass",
+     "no romantic contact",
+     "no costume changes",
+     "no photorealistic rendering",
+     "no readable or garbled text on signs; signs are blank or pictured, never lettered"
+    ],
+    "cell_role": "anchor",
+    "reaction_kind": "comic_anger",
+    "reaction_cast_id": null,
+    "row_direction": {
+     "starts": "Mitsu’s shoulders pitch forward, both open palms descending toward the intact glass case.",
+     "chain": [
+      "Mitsu Hanakaze says the line on camera, face in frame, lips readable",
+      "both palms land flat and the case gives a small visible shudder",
+      "Mitsu delivers her refusal with her head level and her hands planted away from her face",
+      "after the words, a cross-shaped vein pulses and her teeth set into a sharp comic grimace"
+     ],
+     "ends": "Mitsu’s palms remain splayed on the intact glass while her glare lifts beyond the counter.",
+     "camera": "locked near-frontal extreme close-up holding Mitsu’s eyes and both palms",
+     "camera_move": "locked",
+     "sound": "two palms striking glass with a flat boom"
+    }
+   },
+   "board_row": 1,
+   "take_shot": 1,
+   "take_fight": null
+  },
+  {
+   "frame_id": "frame_episode_07_02",
+   "episode_id": "episode_07",
+   "ordinal": 2,
+   "beat_label": "Refusal lands",
+   "beat_prompt": "Mitsu finishes the refusal and notices someone waiting beyond the case.",
+   "cast_refs": [
+    "cast_mitsu-hanakaze"
+   ],
+   "scene_type": null,
+   "media_asset_ids": [
+    "asset_plan_frame_frame_episode_07_02"
+   ],
+   "storyboard_group_id": "asset_plan_board_spine_video_eb80913d3f694d23af491b5637786d50_episode_07_set01",
+   "visual_brief": {
+    "location": "Hanakaze Sweets at the glass wagashi case, facing the covered morning arcade and Ren’s patisserie opposite.",
+    "story_moment": "Mitsu lifts her glare past the case as one eyebrow begins to twitch.",
+    "story_objects": [
+     "intact glass wagashi case",
+     "pastel wagashi trays",
+     "blank or pictorial arcade signs"
+    ],
+    "subject_blocking": [
+     {
+      "cast_id": "cast_mitsu-hanakaze",
+      "frame_position": "face in the upper-left safe third, fingers spread across the case at mid-frame",
+      "pose": "narrow eyes, one twitching brow, cross-shaped temple vein, sharp comic teeth visible after the outburst, faint red aura behind her head",
+      "gaze": "shifts from the glass to Ren beyond the counter",
+      "interaction": "keeps both palms planted as her attention rises",
+      "wardrobe_variant": null
+     }
+    ],
+    "shot_scale": "extreme close-up",
+    "viewpoint": "near-frontal from Ren’s side of the case",
+    "camera_angle": "slightly above eye level",
+    "depth_order": "Mitsu’s spread fingers foreground, her readable face midground, faded wooden shop interior behind.",
+    "ui_safe_zone": "Mitsu’s face remains upper-left below the top strip; her fingers stay mid-frame, leaving the bottom fifth and lower-right rail clear of her face and the case contact point.",
+    "lighting": "Soft morning skylight holds across her eyes and the intact case reflection.",
+    "palette": [
+     "indigo",
+     "cream",
+     "faded wood brown",
+     "muted slate blue",
+     "soft leaf green"
+    ],
+    "visual_medium": "TV slice-of-life anime with clean thin brown-black linework and flat cel color",
+    "surface_treatment": "Soft two-tone cel shading, simple fabric folds, brushed wood backgrounds, warm whites, no glossy finish.",
+    "forbidden_elements": [
+     "no kissing",
+     "no embracing",
+     "no face-touching",
+     "no suggestive pose",
+     "no visible Genzō Hanakaze",
+     "no readable lettering",
+     "no folding screen",
+     "no fan art",
+     "no shipping imagery",
+     "no broken glass",
+     "no romantic contact",
+     "no costume changes",
+     "no photorealistic rendering",
+     "no readable or garbled text on signs; signs are blank or pictured, never lettered"
+    ],
+    "cell_role": "action",
+    "reaction_kind": "comic_anger",
+    "reaction_cast_id": null,
+    "row_direction": null
+   },
+   "board_row": 1,
+   "take_shot": 1,
+   "take_fight": null
+  },
+  {
+   "frame_id": "frame_episode_07_03",
+   "episode_id": "episode_07",
+   "ordinal": 3,
+   "beat_label": "Rival revealed",
+   "beat_prompt": "The view widens to reveal Ren already offering payment.",
+   "cast_refs": [
+    "cast_mitsu-hanakaze",
+    "cast_ren-kurosawa"
+   ],
+   "scene_type": null,
+   "media_asset_ids": [
+    "asset_plan_frame_frame_episode_07_03"
+   ],
+   "storyboard_group_id": "asset_plan_board_spine_video_eb80913d3f694d23af491b5637786d50_episode_07_set01",
+   "visual_brief": {
+    "location": "Hanakaze Sweets at the glass wagashi case, facing the covered morning arcade and Ren’s patisserie opposite.",
+    "story_moment": "Mitsu turns toward Ren as his open palm extends a few unmarked coins across the case.",
+    "story_objects": [
+     "intact glass wagashi case",
+     "pastel wagashi trays",
+     "unmarked coins on Ren’s open palm",
+     "small pink bean-paste smear on Ren’s white cuff",
+     "Hanakaze wooden shopfront",
+     "white-and-muted-gold patisserie opposite",
+     "half-closed arcade shutters",
+     "blank or pictorial arcade signs"
+    ],
+    "subject_blocking": [
+     {
+      "cast_id": "cast_mitsu-hanakaze",
+      "frame_position": "full figure at frame left behind the case, face readable in the upper-left safe area",
+      "pose": "shoulders pitched forward, narrowed eyes, angled brows, cross-shaped temple vein, sharp comic grimace after her outburst",
+      "gaze": "fixed on Ren’s offered coins",
+      "interaction": "pulls one palm slightly back from the glass while the other remains planted",
+      "wardrobe_variant": null
+     },
+     {
+      "cast_id": "cast_ren-kurosawa",
+      "frame_position": "full figure at frame right across the case, face inside the upper-right safe interior away from the app rail",
+      "pose": "upright shoulders, composed eyes, neutral brows, small professional half-smile",
+      "gaze": "steady on Mitsu",
+      "interaction": "offers unmarked coins on an open palm, free hand relaxed beside his cuff",
+      "wardrobe_variant": null
+     }
+    ],
+    "shot_scale": "wide establishing shot",
+    "viewpoint": "side-on arcade view spanning both sides of the counter",
+    "camera_angle": "eye level",
+    "depth_order": "Mitsu left foreground, intact case center midground, Ren right midground, opposing patisserie and shuttered arcade depth behind.",
+    "ui_safe_zone": "Mitsu’s face is upper-left and Ren’s face upper-center-right inside the safe interior; coins sit just left of center, with the top strip, bottom fifth and lower-right rail clear of faces and coins.",
+    "lighting": "Morning skylight washes both shopfronts; warm patisserie pendants form small amber pools behind Ren.",
+    "palette": [
+     "indigo",
+     "cream",
+     "faded wood brown",
+     "warm white",
+     "muted gold",
+     "soft sky blue"
+    ],
+    "visual_medium": "TV slice-of-life anime with clean thin brown-black linework and flat cel color",
+    "surface_treatment": "Soft two-tone cel shading, gently brushed arcade depth, restrained gold accents, warm whites, no reflective gloss.",
+    "forbidden_elements": [
+     "no kissing",
+     "no embracing",
+     "no face-touching",
+     "no suggestive pose",
+     "no visible Genzō Hanakaze",
+     "no readable lettering",
+     "no folding screen",
+     "no fan art",
+     "no shipping imagery",
+     "no broken glass",
+     "no romantic contact",
+     "no costume changes",
+     "no photorealistic rendering",
+     "no readable or garbled text on signs; signs are blank or pictured, never lettered"
+    ],
+    "cell_role": "action",
+    "reaction_kind": "comic_anger",
+    "reaction_cast_id": "cast_mitsu-hanakaze",
+    "row_direction": {
+     "starts": "Mitsu remains behind the intact case with one palm planted; Ren waits opposite with coins already resting on his open hand.",
+     "chain": [
+      "the wide view exposes both shopfronts and the quiet arcade between them",
+      "Mitsu turns her head toward Ren and her planted fingers spread wider",
+      "Ren advances his open palm only to the case edge while keeping his other hand relaxed"
+     ],
+     "ends": "Ren’s coins hover over the case edge as Mitsu’s furious stare fixes on them.",
+     "camera": "dolly out from Mitsu’s side to reveal Ren, both shopfronts and the covered arcade",
+     "camera_move": "dolly_out",
+     "sound": "soft arcade ventilation humming overhead"
+    }
+   },
+   "board_row": 2,
+   "take_shot": 2,
+   "take_fight": null
+  },
+  {
+   "frame_id": "frame_episode_07_04",
+   "episode_id": "episode_07",
+   "ordinal": 4,
+   "beat_label": "Coins at the counter",
+   "beat_prompt": "Ren waits calmly while Mitsu’s anger catches on his unexpected visit.",
+   "cast_refs": [
+    "cast_mitsu-hanakaze",
+    "cast_ren-kurosawa"
+   ],
+   "scene_type": null,
+   "media_asset_ids": [
+    "asset_plan_frame_frame_episode_07_04"
+   ],
+   "storyboard_group_id": "asset_plan_board_spine_video_eb80913d3f694d23af491b5637786d50_episode_07_set01",
+   "visual_brief": {
+    "location": "Hanakaze Sweets at the glass wagashi case, facing the covered morning arcade and Ren’s patisserie opposite.",
+    "story_moment": "Ren steadies his offered coins while Mitsu’s fingers splay harder against the glass.",
+    "story_objects": [
+     "intact glass wagashi case",
+     "pastel wagashi trays",
+     "unmarked coins on Ren’s open palm",
+     "small pink bean-paste smear on Ren’s white cuff",
+     "Hanakaze wooden shopfront",
+     "white-and-muted-gold patisserie opposite",
+     "half-closed arcade shutters",
+     "blank or pictorial arcade signs"
+    ],
+    "subject_blocking": [
+     {
+      "cast_id": "cast_mitsu-hanakaze",
+      "frame_position": "full figure at frame left behind the case, face readable in the upper-left safe area",
+      "pose": "narrow eyes, one twitching eyebrow, cross-shaped temple vein, sharp comic grimace, fading red aura",
+      "gaze": "moves from the coins to Ren’s calm face",
+      "interaction": "presses spread fingers against the intact glass without cracking it",
+      "wardrobe_variant": null
+     },
+     {
+      "cast_id": "cast_ren-kurosawa",
+      "frame_position": "full figure at frame right across the case, face inside the upper-right safe interior away from the app rail",
+      "pose": "composed eyes, straight brows, restrained half-smile, relaxed shoulders",
+      "gaze": "meets Mitsu’s stare",
+      "interaction": "keeps the unmarked coins balanced on his open palm",
+      "wardrobe_variant": null
+     }
+    ],
+    "shot_scale": "wide establishing shot",
+    "viewpoint": "side-on arcade view spanning both sides of the counter",
+    "camera_angle": "eye level",
+    "depth_order": "Mitsu left foreground, intact case center midground, Ren right midground, opposing patisserie and shuttered arcade depth behind.",
+    "ui_safe_zone": "Both faces remain above mid-height and inside the left two-thirds; the coins sit left of center, leaving the top strip, bottom fifth and lower-right rail clear of faces and the key prop.",
+    "lighting": "Morning skylight stays soft over the wooden shop and pale patisserie; amber pendant light edges Ren’s jacket.",
+    "palette": [
+     "indigo",
+     "cream",
+     "faded wood brown",
+     "warm white",
+     "muted gold",
+     "soft sky blue"
+    ],
+    "visual_medium": "TV slice-of-life anime with clean thin brown-black linework and flat cel color",
+    "surface_treatment": "Soft two-tone cel shading, gently brushed arcade depth, restrained gold accents, warm whites, no reflective gloss.",
+    "forbidden_elements": [
+     "no kissing",
+     "no embracing",
+     "no face-touching",
+     "no suggestive pose",
+     "no visible Genzō Hanakaze",
+     "no readable lettering",
+     "no folding screen",
+     "no fan art",
+     "no shipping imagery",
+     "no broken glass",
+     "no romantic contact",
+     "no costume changes",
+     "no photorealistic rendering",
+     "no readable or garbled text on signs; signs are blank or pictured, never lettered"
+    ],
+    "cell_role": "action",
+    "reaction_kind": "comic_anger",
+    "reaction_cast_id": "cast_mitsu-hanakaze",
+    "row_direction": null
+   },
+   "board_row": 2,
+   "take_shot": 2,
+   "take_fight": null
+  },
+  {
+   "frame_id": "frame_episode_07_05",
+   "episode_id": "episode_07",
+   "ordinal": 5,
+   "beat_label": "Ren’s request",
+   "beat_prompt": "Ren calmly asks Mitsu to teach him her wagashi method.",
+   "cast_refs": [
+    "cast_mitsu-hanakaze",
+    "cast_ren-kurosawa"
+   ],
+   "scene_type": null,
+   "media_asset_ids": [
+    "asset_plan_frame_frame_episode_07_05"
+   ],
+   "storyboard_group_id": "asset_plan_board_spine_video_eb80913d3f694d23af491b5637786d50_episode_07_set01",
+   "visual_brief": {
+    "location": "Hanakaze Sweets at the glass wagashi case, facing the covered morning arcade and Ren’s patisserie opposite.",
+    "story_moment": "Ren lifts his free hand in a small open gesture while the coins rest on his other palm.",
+    "story_objects": [
+     "intact glass wagashi case",
+     "pastel wagashi trays",
+     "unmarked coins on Ren’s open palm",
+     "small pink bean-paste smear on Ren’s white cuff",
+     "white-and-muted-gold patisserie opposite",
+     "blank or pictorial arcade signs"
+    ],
+    "subject_blocking": [
+     {
+      "cast_id": "cast_mitsu-hanakaze",
+      "frame_position": "waist-up at frame left behind the case, face in the upper-left safe third",
+      "pose": "polite smile held too tightly, one eye twitching twice, brows beginning to climb, mouth clear of her hands",
+      "gaze": "fixed suspiciously on Ren’s face",
+      "interaction": "holds one refusal finger raised between shoulder and chest height",
+      "wardrobe_variant": null
+     },
+     {
+      "cast_id": "cast_ren-kurosawa",
+      "frame_position": "waist-up at frame right across the case, face inside the upper-right safe interior",
+      "pose": "steady almond-shaped eyes, relaxed brows, composed mouth fully unobstructed, upright shoulders",
+      "gaze": "direct and calm toward Mitsu",
+      "interaction": "keeps coins on his open left palm and gestures lightly with his free hand beside the marked cuff",
+      "wardrobe_variant": null
+     }
+    ],
+    "shot_scale": "medium two-shot",
+    "viewpoint": "frontal across the length of the glass case",
+    "camera_angle": "eye level",
+    "depth_order": "Mitsu left foreground, coins and case center, Ren right foreground, pale patisserie softly behind him.",
+    "ui_safe_zone": "Mitsu’s face sits upper-left and Ren’s face upper-center-right away from the app rail; the coins remain mid-frame, with top strip and bottom fifth clear of faces and coins.",
+    "lighting": "Diffuse skylight models both faces; a soft amber pendant edge separates Ren from the pale shop behind.",
+    "palette": [
+     "indigo",
+     "cream",
+     "warm white",
+     "charcoal",
+     "muted gold",
+     "pastel pink"
+    ],
+    "visual_medium": "TV slice-of-life anime with clean thin brown-black linework and flat cel color",
+    "surface_treatment": "Soft two-tone cel shading, flat cotton garments, simple facial marks, softly painted background depth, no material sheen.",
+    "forbidden_elements": [
+     "no kissing",
+     "no embracing",
+     "no face-touching",
+     "no suggestive pose",
+     "no visible Genzō Hanakaze",
+     "no readable lettering",
+     "no folding screen",
+     "no fan art",
+     "no shipping imagery",
+     "no broken glass",
+     "no romantic contact",
+     "no Ren touching Mitsu",
+     "no costume changes",
+     "no photorealistic rendering",
+     "no readable or garbled text on signs; signs are blank or pictured, never lettered"
+    ],
+    "cell_role": "anchor",
+    "reaction_kind": "eye_twitch",
+    "reaction_cast_id": "cast_mitsu-hanakaze",
+    "row_direction": {
+     "starts": "Ren’s coins rest on his open palm; Mitsu faces him with one refusal finger raised and a taut customer-service smile.",
+     "chain": [
+      "Ren Kurosawa says the line on camera, face in frame, lips readable",
+      "Ren draws a quiet breath and opens his free hand beside his cuff",
+      "Ren makes his request with his head steady and his mouth unobstructed",
+      "after the question, Ren lowers the coins toward the glass and Mitsu’s raised finger begins to bend"
+     ],
+     "ends": "The coins settle near the case as Mitsu’s eyebrow climbs and her refusal finger falters.",
+     "camera": "locked eye-level medium two-shot across the case, holding both readable faces",
+     "camera_move": "locked",
+     "sound": "unmarked coins giving a light clink above the glass"
+    }
+   },
+   "board_row": 3,
+   "take_shot": 3,
+   "take_fight": null
+  },
+  {
+   "frame_id": "frame_episode_07_06",
+   "episode_id": "episode_07",
+   "ordinal": 6,
+   "beat_label": "Finger falters",
+   "beat_prompt": "Mitsu’s prepared refusal falters under Ren’s calm request.",
+   "cast_refs": [
+    "cast_mitsu-hanakaze",
+    "cast_ren-kurosawa"
+   ],
+   "scene_type": null,
+   "media_asset_ids": [
+    "asset_plan_frame_frame_episode_07_06"
+   ],
+   "storyboard_group_id": "asset_plan_board_spine_video_eb80913d3f694d23af491b5637786d50_episode_07_set01",
+   "visual_brief": {
+    "location": "Hanakaze Sweets at the glass wagashi case, facing the covered morning arcade and Ren’s patisserie opposite.",
+    "story_moment": "Mitsu’s raised finger curls inward as Ren lowers the coins toward the counter.",
+    "story_objects": [
+     "intact glass wagashi case",
+     "pastel wagashi trays",
+     "unmarked coins lowered near the glass",
+     "small pink bean-paste smear on Ren’s white cuff",
+     "white-and-muted-gold patisserie opposite",
+     "blank or pictorial arcade signs"
+    ],
+    "subject_blocking": [
+     {
+      "cast_id": "cast_mitsu-hanakaze",
+      "frame_position": "waist-up at frame left behind the case, face in the upper-left safe third",
+      "pose": "tight smile, one eyelid twitching, brows lifted unevenly, mouth free and beginning to flatten",
+      "gaze": "holds on Ren while briefly dipping toward his hands",
+      "interaction": "lets her raised finger bend at the knuckle without touching him",
+      "wardrobe_variant": null
+     },
+     {
+      "cast_id": "cast_ren-kurosawa",
+      "frame_position": "waist-up at frame right across the case, face inside the upper-right safe interior",
+      "pose": "calm eyes, neutral brows, small professional half-smile, shoulders relaxed",
+      "gaze": "watches Mitsu’s faltering hand",
+      "interaction": "lowers his open palm and coins toward the case",
+      "wardrobe_variant": null
+     }
+    ],
+    "shot_scale": "medium two-shot",
+    "viewpoint": "frontal across the length of the glass case",
+    "camera_angle": "eye level",
+    "depth_order": "Mitsu left foreground, lowered coins and case center, Ren right foreground, pale patisserie softly behind him.",
+    "ui_safe_zone": "Both faces remain in the upper safe interior, Mitsu left and Ren center-right; her bent finger and the coins sit mid-frame, clear of the bottom fifth and lower-right rail.",
+    "lighting": "Diffuse morning skylight keeps both faces evenly readable with a restrained amber edge behind Ren.",
+    "palette": [
+     "indigo",
+     "cream",
+     "warm white",
+     "charcoal",
+     "muted gold",
+     "pastel pink"
+    ],
+    "visual_medium": "TV slice-of-life anime with clean thin brown-black linework and flat cel color",
+    "surface_treatment": "Soft two-tone cel shading, flat cotton garments, simple facial marks, softly painted background depth, no material sheen.",
+    "forbidden_elements": [
+     "no kissing",
+     "no embracing",
+     "no face-touching",
+     "no suggestive pose",
+     "no visible Genzō Hanakaze",
+     "no readable lettering",
+     "no folding screen",
+     "no fan art",
+     "no shipping imagery",
+     "no broken glass",
+     "no romantic contact",
+     "no Ren touching Mitsu",
+     "no costume changes",
+     "no photorealistic rendering",
+     "no readable or garbled text on signs; signs are blank or pictured, never lettered"
+    ],
+    "cell_role": "reaction",
+    "reaction_kind": "eye_twitch",
+    "reaction_cast_id": "cast_mitsu-hanakaze",
+    "row_direction": null
+   },
+   "board_row": 3,
+   "take_shot": 3,
+   "take_fight": null
+  },
+  {
+   "frame_id": "frame_episode_07_07",
+   "episode_id": "episode_07",
+   "ordinal": 7,
+   "beat_label": "Absolute refusal",
+   "beat_prompt": "Mitsu throws up an open palm and rejects Ren again.",
+   "cast_refs": [
+    "cast_mitsu-hanakaze",
+    "cast_ren-kurosawa"
+   ],
+   "scene_type": null,
+   "media_asset_ids": [
+    "asset_plan_frame_frame_episode_07_07"
+   ],
+   "storyboard_group_id": "asset_plan_board_spine_video_eb80913d3f694d23af491b5637786d50_episode_07_set01",
+   "visual_brief": {
+    "location": "Hanakaze Sweets at the glass wagashi case, facing the covered morning arcade and Ren’s patisserie opposite.",
+    "story_moment": "Mitsu snaps one open palm upright between them as her pupils begin to contract.",
+    "story_objects": [
+     "intact glass wagashi case",
+     "pastel wagashi trays",
+     "unmarked coins near the glass",
+     "pink bean-paste smear on Ren’s white cuff",
+     "white-and-muted-gold patisserie opposite",
+     "blank or pictorial arcade signs"
+    ],
+    "subject_blocking": [
+     {
+      "cast_id": "cast_mitsu-hanakaze",
+      "frame_position": "waist-up at frame left behind the case, face in the upper-left safe third",
+      "pose": "eyes widening out of focus, pupils shrinking, brows lifting, mouth fully unobstructed; raised palm stays at chest height away from her face",
+      "gaze": "initially fixed on Ren’s eyes before beginning to drop toward his cuff",
+      "interaction": "throws one open palm up at arm’s length without touching Ren",
+      "wardrobe_variant": null
+     },
+     {
+      "cast_id": "cast_ren-kurosawa",
+      "frame_position": "waist-up at frame right across the case, face inside the upper-right safe interior",
+      "pose": "composed eyes, neutral brows, restrained mouth, right shoulder beginning to rotate forward",
+      "gaze": "calmly follows Mitsu’s shifting gaze",
+      "interaction": "keeps his marked cuff beside the lowered coins",
+      "wardrobe_variant": null
+     }
+    ],
+    "shot_scale": "medium two-shot",
+    "viewpoint": "oblique counter-end view preserving Mitsu left and Ren right",
+    "camera_angle": "slightly above eye level",
+    "depth_order": "Mitsu left foreground, open palm and case center, Ren right midground with marked cuff visible, patisserie beyond.",
+    "ui_safe_zone": "Mitsu’s face stays upper-left and Ren’s face upper-center-right; the raised palm and marked cuff sit mid-frame left of the app rail, with the top strip and bottom fifth clear.",
+    "lighting": "Soft skylight catches the pink smear against Ren’s matte white cuff while both faces remain evenly lit.",
+    "palette": [
+     "indigo",
+     "cream",
+     "warm white",
+     "charcoal",
+     "muted gold",
+     "pastel pink"
+    ],
+    "visual_medium": "TV slice-of-life anime with clean thin brown-black linework and flat cel color",
+    "surface_treatment": "Soft two-tone cel shading, flat cotton garments, simple fabric strokes, softly painted arcade depth, no reflective gloss.",
+    "forbidden_elements": [
+     "no kissing",
+     "no embracing",
+     "no face-touching",
+     "no suggestive pose",
+     "no visible Genzō Hanakaze",
+     "no readable lettering",
+     "no folding screen",
+     "no fan art",
+     "no shipping imagery",
+     "no broken glass",
+     "no romantic contact",
+     "no Mitsu touching Ren",
+     "no costume changes",
+     "no photorealistic rendering",
+     "no readable or garbled text on signs; signs are blank or pictured, never lettered"
+    ],
+    "cell_role": "anchor",
+    "reaction_kind": "stunned_blank",
+    "reaction_cast_id": "cast_mitsu-hanakaze",
+    "row_direction": {
+     "starts": "Mitsu faces Ren with one open palm rising between them; Ren’s coins rest near the intact case and his marked cuff hangs beside them.",
+     "chain": [
+      "Mitsu Hanakaze says the line on camera, face in frame, lips readable",
+      "Mitsu snaps her palm upright before delivering her short refusal",
+      "Mitsu refuses with her head steady, her mouth unobstructed and her raised hand held away from her face",
+      "after the words, Ren calmly rotates his cuff into clearer view",
+      "Mitsu’s gaze drops to the pink smear, her pupils shrink and her raised elbow folds"
+     ],
+     "ends": "Mitsu stares blankly at the exposed pink smear while Ren holds his cuff in view.",
+     "camera": "locked slightly high medium two-shot from the counter end, holding Mitsu left and Ren right",
+     "camera_move": "locked",
+     "sound": "soft cotton cuff rustling in the quiet shop",
+     "hold": true
+    }
+   },
+   "board_row": 4,
+   "take_shot": 4,
+   "take_fight": null
+  },
+  {
+   "frame_id": "frame_episode_07_08",
+   "episode_id": "episode_07",
+   "ordinal": 8,
+   "beat_label": "Bean-paste clue",
+   "beat_prompt": "The pink smear on Ren’s cuff collapses Mitsu’s outburst.",
+   "cast_refs": [
+    "cast_mitsu-hanakaze",
+    "cast_ren-kurosawa"
+   ],
+   "scene_type": null,
+   "media_asset_ids": [
+    "asset_plan_frame_frame_episode_07_08"
+   ],
+   "storyboard_group_id": "asset_plan_board_spine_video_eb80913d3f694d23af491b5637786d50_episode_07_set01",
+   "visual_brief": {
+    "location": "Hanakaze Sweets at the glass wagashi case, facing the covered morning arcade and Ren’s patisserie opposite.",
+    "story_moment": "Ren turns his white cuff outward as Mitsu redirects her bent finger toward the pink smear.",
+    "story_objects": [
+     "intact glass wagashi case",
+     "pastel wagashi trays",
+     "unmarked coins resting near the glass",
+     "pink bean-paste smear clearly exposed on Ren’s white cuff",
+     "white-and-muted-gold patisserie opposite",
+     "blank or pictorial arcade signs"
+    ],
+    "subject_blocking": [
+     {
+      "cast_id": "cast_mitsu-hanakaze",
+      "frame_position": "waist-up at frame left behind the case, face in the upper-left safe third",
+      "pose": "wide unfocused eyes, tiny pupils, raised brows, slack mouth, shoulders dropping from the outburst",
+      "gaze": "locked on the pink bean-paste smear",
+      "interaction": "folds her raised arm and points toward the cuff without touching Ren",
+      "wardrobe_variant": null
+     },
+     {
+      "cast_id": "cast_ren-kurosawa",
+      "frame_position": "waist-up at frame right across the case, face inside the upper-right safe interior",
+      "pose": "calm almond-shaped eyes, straight brows, composed mouth, relaxed shoulders",
+      "gaze": "looks from Mitsu’s face to his own cuff",
+      "interaction": "rotates his forearm so the pink smear faces Mitsu while his coins rest near the glass",
+      "wardrobe_variant": null
+     }
+    ],
+    "shot_scale": "medium two-shot",
+    "viewpoint": "oblique counter-end view preserving Mitsu left and Ren right",
+    "camera_angle": "slightly above eye level",
+    "depth_order": "Mitsu left foreground, bent pointing hand and marked cuff center, Ren right midground, pale patisserie beyond.",
+    "ui_safe_zone": "Mitsu’s stunned face remains upper-left and Ren’s face upper-center-right; the pink cuff smear sits near center, clear of the top strip, bottom fifth and lower-right rail.",
+    "lighting": "A soft skylight highlight isolates the pink smear without adding gloss; warm reflected wood light holds on Mitsu’s blank face.",
+    "palette": [
+     "indigo",
+     "cream",
+     "warm white",
+     "charcoal",
+     "muted gold",
+     "pastel pink"
+    ],
+    "visual_medium": "TV slice-of-life anime with clean thin brown-black linework and flat cel color",
+    "surface_treatment": "Soft two-tone cel shading, flat cotton garments, restrained texture, softly painted arcade depth, no material sheen.",
+    "forbidden_elements": [
+     "no kissing",
+     "no embracing",
+     "no face-touching",
+     "no suggestive pose",
+     "no visible Genzō Hanakaze",
+     "no readable lettering",
+     "no folding screen",
+     "no fan art",
+     "no shipping imagery",
+     "no broken glass",
+     "no romantic contact",
+     "no Mitsu touching Ren",
+     "no costume changes",
+     "no photorealistic rendering",
+     "no readable or garbled text on signs; signs are blank or pictured, never lettered"
+    ],
+    "cell_role": "action",
+    "reaction_kind": "stunned_blank",
+    "reaction_cast_id": "cast_mitsu-hanakaze",
+    "row_direction": null
+   },
+   "board_row": 4,
+   "take_shot": 4,
+   "take_fight": null
+  }
+ ],
+ "beats": [
+  {
+   "beat_id": "beat_episode_07_01",
+   "episode_id": "episode_07",
+   "ordinal": 1,
+   "frame_id": "frame_episode_07_01",
+   "motion_intent": "Row 1 extreme close-up, already mid-slam on Mitsu Hanakaze’s face: both palms strike the glass wagashi case before she refuses service to her rival. Row 2 widens to reveal Ren Kurosawa calmly offering coins across the counter, with both shopfronts and blank or pictorial arcade signs behind him. Expression: Mitsu Hanakaze — comic_anger",
+   "motion_direction": {
+    "subject_cast_id": "cast_mitsu-hanakaze",
+    "subject_action": "Mitsu sucks in a blink-fast breath, slams both palms onto the glass case, and shouts her refusal with her head level; after the last word, she lifts her glare and discovers Ren already waiting across the counter with coins extended.",
+    "action_amplitude": "large double-palm slam before the line; restrained planted hands and steady head during the words",
+    "end_state": "Her fingers splay against the glass and one eyebrow twitches as Ren’s outstretched coins enter her view; the case remains intact.",
+    "camera": {
+     "move": "locked",
+     "intensity": "moderate",
+     "end_framing": "locked extreme close-up opening into a wide establishing row"
+    },
+    "environmental_motion": null,
+    "sound_cue": null,
+    "delivery": "shouted",
+    "presence_trajectory": null,
+    "continuity_invariants": [
+     "Mitsu wears her white tenugui headband, cream T-shirt, indigo apron, slate work trousers, and canvas shoes.",
+     "Ren wears his matte white chef jacket, cream apron, charcoal trousers, brown work shoes, and slim brown watch.",
+     "The action remains at Hanakaze Sweets’ glass wagashi case in the morning covered arcade, directly opposite Ren’s patisserie.",
+     "Arcade shop signs are blank or pictorial and contain no readable lettering."
+    ],
+    "duration_seconds": 15,
+    "single_take": true,
+    "forbidden_elements": [
+     "visible Genzō Hanakaze",
+     "folding screen",
+     "fan art",
+     "shipping imagery",
+     "readable sign or coin text",
+     "face touching",
+     "romantic contact",
+     "broken glass",
+     "location change",
+     "costume changes",
+     "photorealistic rendering"
+    ]
+   },
+   "dialogue_lines": [
+    {
+     "line_id": "line_episode_07_01",
+     "cast_id": "cast_mitsu-hanakaze",
+     "text": "I don't sell to my rival!",
+     "tier": "standard",
+     "spoken_text": "ライバルには売らないから！",
+     "subtitle_text": "I don't sell to my rival!",
+     "spoken_back_gloss": null,
+     "brief_subtitle_text": null,
+     "off_screen": null
+    }
+   ],
+   "vocalization": null,
+   "satisfaction_type": "none",
+   "satisfaction_intensity": 1,
+   "media_asset_ids": []
+  },
+  {
+   "beat_id": "beat_episode_07_02",
+   "episode_id": "episode_07",
+   "ordinal": 2,
+   "frame_id": "frame_episode_07_05",
+   "motion_intent": "Locked medium two-shot across the wagashi case: Ren Kurosawa keeps the coins offered and calmly asks for Mitsu Hanakaze’s method instead of buying; Mitsu’s raised refusal finger falters. Expression: Mitsu Hanakaze — eye_twitch",
+   "motion_direction": {
+    "subject_cast_id": "cast_ren-kurosawa",
+    "subject_action": "Ren draws a quiet breath, keeps the coins resting on his open palm, and asks Mitsu for instruction with his head steady and his free hand beside his white cuff.",
+    "action_amplitude": "restrained open palm and small free-hand gesture during the words",
+    "end_state": "Ren lowers the coins toward the counter after the question while Mitsu’s pointing finger bends and her brows climb.",
+    "camera": {
+     "move": "locked",
+     "intensity": "restrained",
+     "end_framing": "locked medium two-shot"
+    },
+    "environmental_motion": null,
+    "sound_cue": null,
+    "delivery": null,
+    "presence_trajectory": null,
+    "continuity_invariants": [
+     "Ren retains his matte white chef jacket, cream apron, charcoal trousers, brown shoes, and slim brown watch.",
+     "Mitsu retains her white headband, cream T-shirt, indigo apron, slate trousers, and canvas shoes.",
+     "Both remain on opposite sides of Hanakaze Sweets’ glass wagashi case in the same morning arcade.",
+     "A small pink bean-paste smear remains on Ren’s chef-jacket cuff but is not yet Mitsu’s focus."
+    ],
+    "duration_seconds": 15,
+    "single_take": true,
+    "forbidden_elements": [
+     "visible Genzō Hanakaze",
+     "folding screen",
+     "fan art",
+     "shipping imagery",
+     "readable sign or coin text",
+     "face touching",
+     "romantic contact",
+     "Ren touching Mitsu",
+     "location change",
+     "costume changes",
+     "photorealistic rendering"
+    ]
+   },
+   "dialogue_lines": [
+    {
+     "line_id": "line_episode_07_02",
+     "cast_id": "cast_ren-kurosawa",
+     "text": "作り方、教えてくれませんか？",
+     "tier": "standard",
+     "spoken_text": "作り方、教えてください。",
+     "subtitle_text": "Please teach me how to make it.",
+     "spoken_back_gloss": "Please teach me how to make it.",
+     "brief_subtitle_text": null,
+     "off_screen": null
+    }
+   ],
+   "vocalization": null,
+   "satisfaction_type": "none",
+   "satisfaction_intensity": 1,
+   "media_asset_ids": []
+  },
+  {
+   "beat_id": "beat_episode_07_03",
+   "episode_id": "episode_07",
+   "ordinal": 3,
+   "frame_id": "frame_episode_07_07",
+   "motion_intent": "Locked medium two-shot with both faces readable: Mitsu Hanakaze rejects Ren Kurosawa, but her outburst collapses when her gaze catches pink bean paste smeared on his white cuff—the irreversible hint that he has already been making wagashi. Expression: Mitsu Hanakaze — stunned_blank",
+   "motion_direction": {
+    "subject_cast_id": "cast_mitsu-hanakaze",
+    "subject_action": "Mitsu drags in a sharp breath, throws one palm up between them, and shouts her refusal; after the last word, her gaze drops to the pink bean paste on Ren’s cuff and her raised arm folds at the elbow.",
+    "action_amplitude": "restrained raised palm and steady head during the short refusal",
+    "end_state": "Mitsu’s pupils shrink, her mouth falls open, and her pointing hand redirects toward the pink smear while Ren calmly turns his marked cuff into view.",
+    "camera": {
+     "move": "locked",
+     "intensity": "restrained",
+     "end_framing": "locked medium two-shot"
+    },
+    "environmental_motion": null,
+    "sound_cue": null,
+    "delivery": "shouted",
+    "presence_trajectory": null,
+    "continuity_invariants": [
+     "Mitsu retains her white headband, cream T-shirt, indigo apron, slate trousers, and canvas shoes.",
+     "Ren retains his matte white chef jacket, with one clearly visible pink bean-paste smear on the cuff.",
+     "Both faces remain readable across the glass wagashi case inside Hanakaze Sweets.",
+     "The opposing patisserie and covered morning arcade remain visible behind Ren."
+    ],
+    "duration_seconds": 15,
+    "single_take": true,
+    "forbidden_elements": [
+     "visible Genzō Hanakaze",
+     "folding screen",
+     "fan art",
+     "shipping imagery",
+     "readable sign or coin text",
+     "face touching",
+     "romantic contact",
+     "Mitsu touching Ren",
+     "early reveal of Ren’s secret",
+     "location change",
+     "costume changes",
+     "photorealistic rendering"
+    ]
+   },
+   "dialogue_lines": [
+    {
+     "line_id": "line_episode_07_03",
+     "cast_id": "cast_mitsu-hanakaze",
+     "text": "絶対イヤ！",
+     "tier": "micro",
+     "spoken_text": "絶対イヤ！",
+     "subtitle_text": "Absolutely not!",
+     "spoken_back_gloss": "Absolutely not!",
+     "brief_subtitle_text": null,
+     "off_screen": null
+    }
+   ],
+   "vocalization": null,
+   "satisfaction_type": "face_slap",
+   "satisfaction_intensity": 2,
+   "media_asset_ids": []
+  },
+  {
+   "beat_id": "beat_episode_07_04",
+   "episode_id": "episode_07",
+   "ordinal": 4,
+   "frame_id": null,
+   "motion_intent": "Ren Kurosawa slides a single wrapped sakura mochi across the glass and walks out into the arcade.",
+   "motion_direction": {
+    "subject_cast_id": "cast_mitsu-hanakaze",
+    "subject_action": "Mitsu drags in a sharp breath, throws one palm up between them, and shouts her refusal; after the last word, her gaze drops to the pink bean paste on Ren’s cuff and her raised arm folds at the elbow.",
+    "action_amplitude": "restrained raised palm and steady head during the short refusal",
+    "end_state": "Mitsu’s pupils shrink, her mouth falls open, and her pointing hand redirects toward the pink smear while Ren calmly turns his marked cuff into view.",
+    "camera": {
+     "move": "locked",
+     "intensity": "restrained",
+     "end_framing": "locked medium two-shot"
+    },
+    "environmental_motion": null,
+    "sound_cue": null,
+    "delivery": "shouted",
+    "presence_trajectory": null,
+    "continuity_invariants": [
+     "Mitsu retains her white headband, cream T-shirt, indigo apron, slate trousers, and canvas shoes.",
+     "Ren retains his matte white chef jacket, with one clearly visible pink bean-paste smear on the cuff.",
+     "Both faces remain readable across the glass wagashi case inside Hanakaze Sweets.",
+     "The opposing patisserie and covered morning arcade remain visible behind Ren."
+    ],
+    "duration_seconds": 15,
+    "single_take": true,
+    "forbidden_elements": [
+     "visible Genzō Hanakaze",
+     "folding screen",
+     "fan art",
+     "shipping imagery",
+     "readable sign or coin text",
+     "face touching",
+     "romantic contact",
+     "Mitsu touching Ren",
+     "early reveal of Ren’s secret",
+     "location change",
+     "costume changes",
+     "photorealistic rendering"
+    ]
+   },
+   "dialogue_lines": [],
+   "vocalization": null,
+   "satisfaction_type": "face_slap",
+   "satisfaction_intensity": 2,
+   "media_asset_ids": [],
+   "reaction_kind": "tear_up",
+   "shot_plan": [
+    {
+     "size": "close-up",
+     "subject": "the wrapped sakura mochi on the glass",
+     "angle": "high angle"
+    },
+    {
+     "size": "wide",
+     "subject": "Mitsu alone behind the counter as Ren leaves",
+     "camera": "slow dolly in"
+    }
+   ]
+  }
+ ],
+ "expected": {
+  "takes": [
+   {
+    "take": 1,
+    "shots": [
+     {
+      "shot": 1,
+      "camera": "Extreme close-up",
+      "scene": "Already mid-slam on Mitsu Hanakaze’s face: both palms strike the glass wagashi case before she refuses service to her rival.",
+      "line": {
+       "speaker": "Mitsu Hanakaze",
+       "text": "I don't sell to my rival!"
+      },
+      "expression": "Mitsu Hanakaze fumes",
+      "opens": true,
+      "ends_on": false
+     },
+     {
+      "shot": 2,
+      "camera": "Wide",
+      "scene": "Ren Kurosawa calmly offering coins across the counter, with both shopfronts and arcade signs behind him.",
+      "line": null,
+      "expression": null,
+      "opens": false,
+      "ends_on": false
+     },
+     {
+      "shot": 3,
+      "camera": "Two-shot",
+      "scene": "Across the wagashi case: Ren Kurosawa keeps the coins offered and calmly asks for Mitsu Hanakaze’s method instead of buying; Mitsu’s raised refusal finger falters.",
+      "line": {
+       "speaker": "Ren Kurosawa",
+       "text": "Please teach me how to make it."
+      },
+      "expression": "Mitsu Hanakaze's eye twitches behind a polite smile",
+      "opens": false,
+      "ends_on": false
+     }
+    ]
+   },
+   {
+    "take": 2,
+    "shots": [
+     {
+      "shot": 4,
+      "camera": "Two-shot",
+      "scene": "Mitsu Hanakaze rejects Ren Kurosawa, but her outburst collapses when her gaze catches pink bean paste smeared on his white cuff—the irreversible hint that he has already been making wagashi.",
+      "line": {
+       "speaker": "Mitsu Hanakaze",
+       "text": "Absolutely not!"
+      },
+      "expression": "Mitsu Hanakaze stares, stunned",
+      "opens": false,
+      "ends_on": false
+     },
+     {
+      "shot": 5,
+      "camera": "Close-up · high angle",
+      "scene": "Ren Kurosawa slides a single wrapped sakura mochi across the glass and walks out into the arcade.",
+      "line": null,
+      "expression": "Mitsu Hanakaze's eyes fill with tears",
+      "opens": false,
+      "ends_on": false
+     },
+     {
+      "shot": 6,
+      "camera": "Wide",
+      "scene": "Mitsu alone behind the counter as Ren leaves",
+      "line": null,
+      "expression": null,
+      "opens": false,
+      "ends_on": true
+     }
+    ]
+   }
+  ],
+  "pitch_digest": "sha256:a487a2857ae4af8c56434afae065726032926ecb2251dc48af2058540c3fb31c"
+ }
+}

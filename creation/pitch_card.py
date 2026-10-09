@@ -791,6 +791,22 @@ def _desk_spine(desk: Path) -> dict[str, Any] | None:
     return raw if isinstance(raw, dict) else None
 
 
+def _desk_shot_lines(desk: Path, episode: int) -> list[str]:
+    """The episode's shots by take from the desk's story, as the app's card shows them (none without a story)."""
+
+    from creation.pitch_shots import pitch_takes, shot_lines
+    from creation.spine_view import episode_id_for
+
+    spine = _desk_spine(desk)
+    if spine is None:
+        return []
+    try:
+        episode_id = episode_id_for(spine, episode)
+    except (KeyError, ValueError, LookupError):
+        return []
+    return shot_lines(pitch_takes(spine, str(episode_id)))
+
+
 def pitch_text(
     desk: Path,
     stored: StoredPitch,
@@ -836,6 +852,7 @@ def pitch_text(
         out.extend(gate_hook_line_lines(desk, _desk_spine(desk), stored.episode))
     out.append("  World rules:")
     out.extend(f"    - {rule}" for rule in pitch.get("world_rules") or [])
+    out.extend(_desk_shot_lines(desk, stored.episode))
     if with_voices:
         voices = pitch.get("voices") or {}
         out.append("  Voices (the operator confirms with the producer):")
