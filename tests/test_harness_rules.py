@@ -266,7 +266,11 @@ def test_the_age_warning_never_reads_another_characters_age_from_a_role() -> Non
     lines = adult_face_lines(_gallery_heiress())
 
     assert not any(line.startswith("Kang Jun-ho is 26") for line in lines), lines
-    assert [line.split(" and ")[0] for line in lines] == ["Han Seo-yeon is 26"]
+    # His own band "early 30s" is read as his age since 9 Oct (decades, L-20261007-4).
+    assert [line.split(" and ")[0] for line in lines] == [
+        "Kang Jun-ho is 33",
+        "Han Seo-yeon is 26",
+    ]
 
 
 def test_the_cards_own_age_field_answers_before_its_text() -> None:
