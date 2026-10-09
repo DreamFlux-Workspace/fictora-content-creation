@@ -59,7 +59,7 @@ Story (ep1 only — no series arc yet):
 Desk:
 - `uv run fictora-produce start` with series "…" and your premise.
 - Use `--clip-seconds 15`, `--cut-tempo punchy` (or `one_shot` for a monologue or a walk), `--caption-style house`. Episode 1 is drafted alone.
-- Do NOT pass `--api-captions` (default: raw clip on server, captions on laptop).
+- Server captions are on by default (`api_captions: true`). Use `--no-api-captions` only if you want raw-only enrol (captions on the laptop only).
 
 Workflow:
 - One `fictora-produce step` per turn until I approve gates.
@@ -149,13 +149,13 @@ uv run fictora-produce step --desk <desk> --confirm-spend
 
 **Episode 2 on:** `arc --desk <desk> --list --episodes N`, `arc --pick K`, then `author --desk <desk> --episode 2 --direction K` (or `--line "…"`), and the same gates.
 
-**Do not use `--api-captions`** unless engineering asks — it slows post and waits on server burn-in.
+**`--no-api-captions`** skips server episode finish and house captions (raw clip only, faster tail). Default is server finish on.
 
 ---
 
 ## After the raw take (local finish)
 
-Default config: **`api_captions: false`**. Filming finishes when the **raw** scene MP4 is downloaded (often within a minute after MiniMax returns). Hosted post is off, so the raw take has the model's sound only: no music, no effects, no captions.
+Default config: **`api_captions: true`**. The desk always gets the **raw** take in `epNN/takes/`. The server also finishes the episode (concat + house captions), which adds about **30–60 s** after MiniMax in prod. Hosted post is still off, so the raw take has the model's sound only: no music, no effects. **`finish` on the laptop** adds music, SFX, mix, the show's Bold/Subtle captions, and the mark.
 
 One command, after you say Use it:
 
@@ -183,7 +183,7 @@ A character's voice feels off? Never regenerate: `voice --audition`, you pick, `
 ```
 2026-09-22-my-series/
   production.json          ← phase, spine_id, session (agent)
-  production.config.json   ← 15s, one_shot, house, api_captions false
+  production.config.json   ← 15s, one_shot, house, api_captions true (default)
   QUEUE.md                 ← what episode is waiting on
   ep01/
     plates/                ← gate 1
@@ -223,7 +223,7 @@ A **second** take needs a **named cause** (brief/board issue), not “try again.
 | --- | --- |
 | Empty `plates/` or `boards/` right after step | Pull latest `main`; re-run `step` on same desk if phase allows, or ask agent to download from `ep01/api/06_*cast_terminal*.json` / `09_*boards_terminal*.json`. |
 | Network error while polling | Same desk, run `step` again — job may still be running server-side. |
-| Stuck at 50% on **video** with **local captions** | Often post-prod you can ignore; with `api_captions: false` the harness should already stop at raw clip. Check for `17_raw_scene_clips.json`. |
+| Stuck at 50% on **video** | Often server episode finish (concat + captions on Modal). Wait or re-run `step`; raw clips land in `17_raw_scene_clips.json`. With `--no-api-captions`, the step stops once the raw clip is ready. |
 | Dark board (~14–24% luma) | Information only. Approve it if the mosaic looks right on screen. |
 | Draft or author failed | The message names the rule that failed; fix the brief or the direction, do not re-run blind. |
 | Token / 503 / billing | Engineering — do not rotate token in chat. |

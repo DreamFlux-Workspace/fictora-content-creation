@@ -48,7 +48,7 @@ New rules apply to new desks (user decision, 6 Oct 2026, "only for new desks"). 
 - Clone or read `fictora-drama`. Edit product code or settings to get a different look.
 - Print or commit `FICTORA_DRAMA_GENERATION_SERVICE_TOKEN`.
 - Retry a video job stuck in post. `cancel-job` it.
-- Call hosted post-production, or pass `--api-captions`. Hosted post is off.
+- Call `POST /v1/video-generations/{id}/post-production-runs` (hosted post is off). Do not use `--no-api-captions` unless the human wants raw-only enrol (server captions are on by default).
 - Regenerate the story or re-film every take to change a voice.
 - Hand over a raw take. A take is not done until the local finish ran.
 - Copy a desk folder to try something. A copy keeps the same `spine_id`, so it is the same server story: an edit, redraw or film on the copy changes the producer's real story. The kit stops such a command and names the other desk (`Stopped: this desk's story (spine …) is also the story of: …`); pass `--shared-spine-ok` only when the human says both desks are meant to share it. Reads and local post (`status`, `spine`, `review`, `join`, `trim`, `reel`, `set-bed` …) are never stopped.
@@ -210,7 +210,7 @@ Compiled prompts are proprietary and stay on the server. Never fetch, save, prin
 
 ## A take is not done until finish ran; hosted post is off
 
-The take step stops at the raw clip: the model's sound only, no music, no effects, no captions. Hosted post-production is switched off on the API, so the finish runs on this laptop. As soon as the human says Use it, run it without being asked:
+The take step always downloads the **raw** clip to `epNN/takes/take-epNN-tK-raw-vN.mp4` (model sound only, no music, no effects). With **`api_captions: true`** (default since Oct 2026), the server also **finishes the episode** after filming: concat, optional **house** caption burn on the delivered episode (~30–60 s after Fal in prod on the Modal media worker). That server burn is not the deliverable; **`finish` still runs on the laptop** for music, SFX, mix, the show's Bold/Subtle captions on the raw take, and the mark. Hosted post-production (`FICTORA_DRAMA_HOSTED_POST`) stays off, so music and effects never run on Railway. As soon as the human says Use it, run `finish` without being asked:
 
 ```bash
 uv run fictora-produce finish --desk D [--episode N] [--take tK] [--take-file F] [--bed-db N] [--duck-db N] [--sfx-adjust "door=-6"] [--line-start S ...] [--line-end S ...] [--no-colour-match] \

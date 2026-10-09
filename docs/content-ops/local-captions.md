@@ -1,6 +1,8 @@
 # Local captions (house recipe)
 
-Use this when `production.config.json` has **`api_captions: false`** (default). The API returns a **raw scene MP4** (`ep01/api/17_raw_scene_clips.json`, downloaded to `ep01/takes/take-ep01-t1-raw-vN.mp4`). Captions are burned on the operator's laptop. ffmpeg never runs on Railway for this.
+**Default desks** (`api_captions: true`) still run **`finish`** / **`caption`** on the **raw** take: the show's Bold or Subtle style on the laptop is the deliverable. The server may also burn **house** captions on the finished episode asset (Modal in prod); that does not replace local finish.
+
+Use this doc for timing and style when captions run **only on the laptop**: `api_captions: false`, `--no-api-captions`, or the `caption` command alone. The API always downloads a **raw scene MP4** (`ep01/api/17_raw_scene_clips.json` → `ep01/takes/take-ep01-t1-raw-vN.mp4`).
 
 ## One command
 
@@ -53,7 +55,7 @@ The house style the content team delivers (runbook rule 1): **Arial Bold 64 on a
 | `plain` | White whole-line captions on any show: same face, size, edge, wrapping and safe band; heard-not-seen lines still in Georgia italic (white) |
 | `none` | No captions. `finish` still mixes and marks the take, which is complete; its sound line reads `captions off (--caption-style none)` |
 
-Set it per run with `--caption-style` on `finish`, `caption` or `reel`, or for the show with `fictora-produce caption-style --desk D --set bold|subtle|plain|none` (or `start --caption-style …`; `caption_style` in `production.config.json`). Unset, it is chosen once at the look approval: a new show gets a free preview still (`shared/look/caption-preview-vN.png`, Bold left, Subtle right, on the approved look frame with the first dialogue line) and `bold` is saved; a continuing show is saved `subtle` without asking (`creation/caption_preview.py`). It is the same setting as before: `caption_style` was already the desk's local caption recipe, and the server only sees it with `--api-captions`, so `--api-captions` with `plain` or `none` is refused (the server does not burn those). A desk whose `caption_style` is a server recipe name (e.g. `viral_karaoke`) is captioned as an unset show is (Bold new, Subtle continuing) locally, with a note.
+Set it per run with `--caption-style` on `finish`, `caption` or `reel`, or for the show with `fictora-produce caption-style --desk D --set bold|subtle|plain|none` (or `start --caption-style …`; `caption_style` in `production.config.json`). Unset, it is chosen once at the look approval: a new show gets a free preview still (`shared/look/caption-preview-vN.png`, Bold left, Subtle right, on the approved look frame with the first dialogue line) and `bold` is saved; a continuing show is saved `subtle` without asking (`creation/caption_preview.py`). It is the same setting as before: `caption_style` is the desk's local caption recipe. With server captions on (default), local styles map to server **house** burn; `caption_style: none` turns server captions off. `--api-captions` with `plain` or `none` on the CLI is refused (use `--no-api-captions` instead). A desk whose `caption_style` is a server recipe name (e.g. `viral_karaoke`) is captioned as an unset show is (Bold new, Subtle continuing) locally, with a note.
 
 ## How timing works
 

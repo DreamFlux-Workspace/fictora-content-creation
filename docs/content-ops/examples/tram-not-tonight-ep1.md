@@ -17,7 +17,7 @@ uv run fictora-produce start \
   --caption-style house
 ```
 
-Do **not** pass `--api-captions`; burn house captions locally after the raw take lands.
+Default server captions are on; local **`finish`** still burns the show's Bold/Subtle captions on the raw take. Use `--no-api-captions` only for a raw-only enrol test.
 
 ## Outcomes (2026-09-22 prod run)
 
