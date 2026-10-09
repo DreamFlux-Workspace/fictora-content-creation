@@ -344,3 +344,34 @@ def test_cascade_execute_warnings_are_said_when_the_preview_had_none(
 
     assert "note: take 1 speaks 26 words (22 recommended)" in out.getvalue()
     assert "take 1 speaks 26 words" in _notes(desk, 1)
+
+
+# --- the script contract (fictora-drama, 9 Oct 2026) ------------------------------------------
+
+
+def _script_notice(code: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA,
+        "path": "beats[b].dialogue_lines[line_ep_02_01].text",
+        "code": code,
+        "message": 'Your approved script has Mina say "Komugi is missing."; this draft says "The cat is gone.".',
+        "episode_id": "ep_02",
+        "script_text": "Komugi is missing.",
+        "script_speaker": "Mina",
+        **extra,
+    }
+
+
+def test_a_changed_script_line_prints_as_a_question_with_the_command_that_puts_it_back() -> None:
+    spine = {"episode_summaries": [{"episode_id": "ep_02", "ordinal": 2}]}
+
+    changed = warning_line(_script_notice("script_line_changed", line_id="line_ep_02_01"), spine)
+    speaker = warning_line(_script_notice("script_line_speaker_changed", line_id="line_ep_02_01"), spine)
+    missing = warning_line(_script_notice("script_line_missing"), spine)
+
+    assert changed.startswith("SCRIPT: Your approved script has Mina say")
+    assert changed.endswith('line --desk D --episode 2 --line line_ep_02_01 --text "Komugi is missing."')
+    assert speaker.endswith('line --desk D --episode 2 --line line_ep_02_01 --speaker "Mina"')
+    assert missing.endswith('line --desk D --episode 2 --add --beat N --speaker "Mina" --text "Komugi is missing."')
+    # Any other code prints as before.
+    assert warning_line(_line_long()).startswith("note: ")
