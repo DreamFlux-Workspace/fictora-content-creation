@@ -32,8 +32,13 @@ from typing import Any, TextIO
 
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
-from creation.post.deboard import BOARD_LEAK_MAX_FRAMES, deboard
-from creation.post.desk import approved_board, latest_raw_take
+from creation.post.deboard import (
+    BOARD_LEAK_MAX_FRAMES,
+    deboard,
+    opened_on_earlier_drawing,
+    pick_board,
+)
+from creation.post.desk import approved_board, board_versions, latest_raw_take
 from creation.post.edit import (
     BLUR_SIGMA,
     SLOW_TEMPO,
@@ -624,12 +629,33 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
                 f"no board for {args.take_id} on the desk; pass --board"
             )
         doubt = unsure_head(_saved_facts(desk, args.episode, args.take_id))
+        # Without --board, every drawing of the take's board on the desk is
+        # measured: a take compiled before a redraw opens on the earlier one
+        # (L-20261009-1). A start the server was unsure of is held without
+        # --hold-unsure only when it surely is an earlier drawing.
+        versions = (
+            [] if args.board else board_versions(desk, args.episode, args.take_id)
+        )
+        earlier_note = None
         if doubt is not None and not args.hold_unsure:
-            raise ValueError(unsure_refusal(doubt, args.episode, args.take_id))
+            earlier = opened_on_earlier_drawing(
+                source, versions, max_frames=args.max_frames
+            )
+            if earlier is None:
+                raise ValueError(unsure_refusal(doubt, args.episode, args.take_id))
+            earlier_note = (
+                f"- held although the server was unsure of the start ({doubt.reason}): the take opens on an "
+                f"earlier drawing of its board, `{earlier.name}`, not the approved `{board.name}`"
+            )
+            board, doubt = earlier, None
+        elif len(versions) > 1:
+            board = pick_board(source, versions, max_frames=args.max_frames)[0]
         result = deboard(source, board, target("deboard"), max_frames=args.max_frames)
         if result.output is not None:
             record_edit(desk, op="deboard", source=source, output=result.output)
         lines = [f"Deboard `{source.name}` against `{board.name}`: {result.one_line()}"]
+        if earlier_note is not None:
+            lines.append(earlier_note)
         if doubt is not None:
             lines.append(
                 f"- held although the server left {doubt.frames} possible board frame(s) at the start as filmed "
