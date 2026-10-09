@@ -47,18 +47,27 @@ def _old_desk(
 def test_the_allow_lists_are_group_a_and_group_b_only() -> None:
     # caption_dashes moved to Group A on 9 Oct 2026 (captions only), in step with the server.
     # pitch_card moved to Group A on 9 Oct 2026 (founder): a reminder on every continuing desk.
-    assert CONTINUING_FIXES == frozenset({"seam_bed", "caption_dashes", "pitch_card"})
-    assert CONTINUING_FIXES_FROM_EPISODE == frozenset({"per_word_captions"})
+    # per_word_captions moved to Group A on 9 Oct 2026 (founder): Group B is empty in the kit.
+    assert CONTINUING_FIXES == frozenset(
+        {"seam_bed", "caption_dashes", "pitch_card", "per_word_captions"}
+    )
+    assert CONTINUING_FIXES_FROM_EPISODE == frozenset()
 
 
 def test_continuing_fix_reads_the_desks_boundary_and_fails_closed(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from creation import rules_epoch
+
+    # Group B is empty since 9 Oct 2026; the boundary logic stays for any fix added later.
+    monkeypatch.setattr(
+        rules_epoch, "CONTINUING_FIXES_FROM_EPISODE", frozenset({"a_later_fix"})
+    )
     off = _old_desk(tmp_path, name="2026-09-26-off")
     on = _old_desk(tmp_path, start=3, name="2026-09-26-on")
     new = init_series_desk(tmp_path / "new", "New", band="30s", episode_count=1)
     assert is_legacy(on) and continuing_fixes_from_episode(on) == 3
-    for name in CONTINUING_FIXES_FROM_EPISODE:
+    for name in rules_epoch.CONTINUING_FIXES_FROM_EPISODE:
         assert continuing_fix(new, name, episode=1) is True
         assert continuing_fix(off, name, episode=9) is False
         assert [continuing_fix(on, name, episode=n) for n in (1, 2, 3, 4)] == [
@@ -85,12 +94,14 @@ def test_dashes_go_on_every_episode_of_a_legacy_desk(tmp_path: Path) -> None:
         assert [c.text for c in cues] == dropped
 
 
-def test_per_word_timing_from_the_boundary_episode_only(
+def test_per_word_timing_on_every_episode_of_every_desk(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """``per_word_captions`` is Group A since 9 Oct 2026 (founder): Group B on, off, before or after."""
+
     from test_rules_epoch import SOURCES_SPINE, _words
 
-    from creation import captions
+    from creation import captions, rules_epoch
 
     seen: list[bool] = []
     real = captions.time_lines
@@ -102,11 +113,8 @@ def test_per_word_timing_from_the_boundary_episode_only(
     monkeypatch.setattr(captions, "time_lines", spy)
     # This machine's ffmpeg may lack libass; the burn after the timing may fail, the timing call is what counts.
     monkeypatch.setattr(captions, "find_ffmpeg", lambda: ("ffmpeg", "ffprobe"))
-    for name, start, expected in (
-        ("2026-09-26-a", None, False),
-        ("2026-09-26-b", 2, False),
-        ("2026-09-26-c", 1, True),
-    ):
+
+    def timed(name: str, start: int | None) -> bool:
         desk = _old_desk(tmp_path, start=start, name=name)
         (desk / "ep01" / "api").mkdir(parents=True)
         (desk / "ep01" / "api" / "03_spine.json").write_text(json.dumps(SOURCES_SPINE))
@@ -120,15 +128,24 @@ def test_per_word_timing_from_the_boundary_episode_only(
             )
         except (RuntimeError, ValueError):
             pass  # only the timing call matters here
-        assert seen[-1] is expected, name
-    assert (
-        captions._per_word_desk(_old_desk(tmp_path, start=2, name="2026-09-26-d"), 1)
-        is False
+        return seen[-1]
+
+    for name, start in (
+        ("2026-09-26-a", None),
+        ("2026-09-26-b", 2),
+        ("2026-09-26-c", 1),
+    ):
+        assert timed(name, start) is True, name
+    for start, episode in ((2, 1), (2, 2), (None, 5)):
+        desk = _old_desk(tmp_path, start=start, name=f"2026-09-26-d{start}{episode}")
+        assert captions._per_word_desk(desk, episode) is True
+    # Off the allow-list, a legacy desk spreads the words over the line again.
+    monkeypatch.setattr(
+        rules_epoch,
+        "CONTINUING_FIXES",
+        rules_epoch.CONTINUING_FIXES - {"per_word_captions"},
     )
-    assert (
-        captions._per_word_desk(_old_desk(tmp_path, start=2, name="2026-09-26-e"), 2)
-        is True
-    )
+    assert timed("2026-09-26-z", None) is False
 
 
 def test_the_pitch_card_reminds_every_continuing_desk_on_every_episode_and_never_holds(
@@ -202,19 +219,27 @@ def test_the_cli_runs_it_and_passes_the_commands_episode(tmp_path: Path) -> None
     assert continuing_fixes_from_episode(desk) == 1
 
 
-def test_a_decorated_command_runs_under_its_episodes_rules(tmp_path: Path) -> None:
+def test_a_decorated_command_runs_under_its_episodes_rules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """``under_desk_rules`` reads ``episode`` / ``episode_ordinal`` (run_finish, run_reel, caption_take)."""
 
+    from creation import rules_epoch
     from creation.caption_dashes import drawn_text
     from creation.rules_epoch import continuing_fix_now, under_desk_rules
 
+    # Group B is empty since 9 Oct 2026; a stand-in name checks the episode reading.
+    monkeypatch.setattr(
+        rules_epoch, "CONTINUING_FIXES_FROM_EPISODE", frozenset({"a_later_fix"})
+    )
+
     @under_desk_rules
     def finish(desk: Path, *, episode: int = 1) -> bool:
-        return continuing_fix_now("per_word_captions")
+        return continuing_fix_now("a_later_fix")
 
     @under_desk_rules
     def caption(desk: Path, *, episode_ordinal: int = 1) -> bool:
-        return continuing_fix_now("per_word_captions")
+        return continuing_fix_now("a_later_fix")
 
     @under_desk_rules
     def dashes(desk: Path, *, episode: int = 1) -> str:

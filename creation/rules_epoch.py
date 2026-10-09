@@ -86,6 +86,12 @@ CONTINUING_FIXES: frozenset[str] = frozenset(
         # and goes ahead); a new desk is still held until the yes. Founder-approved for every episode of every
         # desk on 9 Oct 2026. To narrow it again, move it back to Group B.
         "pitch_card",
+        # Each flicker caption word appears when it is actually said, on the transcript's word times, and
+        # shows what was said (#135; was Group B). Caption TIMING inside a line only: the font, style,
+        # colour, size and place of the captions are untouched, and a line with no transcript words is
+        # spread over the line as before. Founder-approved for every episode of every desk on 9 Oct 2026.
+        # To narrow it again, move it back to Group B.
+        "per_word_captions",
     }
 )
 
@@ -94,12 +100,9 @@ CONTINUING_FIXES: frozenset[str] = frozenset(
 #: ``production.config.json`` (``continuing-fixes --desk D --apply``, in step with the server spine's
 #: field of the same name); unset, the desk gets none of them. Mirrors fictora-drama
 #: ``rules_epoch.CONTINUING_FIXES_FROM_EPISODE`` (kit side).
-CONTINUING_FIXES_FROM_EPISODE: frozenset[str] = frozenset(
-    {
-        # Each caption word appears when it is said (#135). Whole episodes.
-        "per_word_captions",
-    }
-)
+#: Empty since 9 Oct 2026: every kit fix that was here now reaches every desk (founder). The marker
+#: and ``continuing-fixes`` stay, in step with the server spine's field, for any fix added here later.
+CONTINUING_FIXES_FROM_EPISODE: frozenset[str] = frozenset()
 
 _FOLDER_DATE = re.compile(r"^(\d{4}-\d{2}-\d{2})-")
 _ACTIVE: ContextVar[bool] = ContextVar("fictora_legacy_rules", default=False)
@@ -442,7 +445,10 @@ def run_continuing_fixes(
         raise ValueError("--from-episode must be 1 or more")
     worked = last_worked_episode(desk)
     episode = max(worked + 1, from_episode or 1)
-    names = ", ".join(sorted(CONTINUING_FIXES_FROM_EPISODE))
+    names = ", ".join(sorted(CONTINUING_FIXES_FROM_EPISODE)) or (
+        "nothing extra in the kit (every kit fix reaches every desk since 9 Oct 2026); the marker keeps "
+        "the desk in step with the server"
+    )
     verb = "Set" if apply else "Would set"
     print(
         f"{verb} continuing_fixes_from_episode={episode} (last episode with work: {worked or 'none'}"
