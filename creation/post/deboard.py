@@ -211,6 +211,89 @@ def measure_board_leak(
     )
 
 
+def pick_board(
+    take: Path,
+    boards: list[Path],
+    *,
+    max_frames: int = BOARD_LEAK_MAX_FRAMES,
+) -> tuple[Path, BoardLeak]:
+    """The drawing of the board the take opens on, of every drawing on the desk.
+
+    A take compiled before its board was redrawn opens on the earlier drawing
+    (Sweet Racket ep 4 t2, L-20261009-1: twelve frames of board v1, measured
+    against the approved v2 only). Each drawing is measured; the one with the
+    most board frames at the head wins, and on a tie the earlier one in
+    ``boards`` (the approved board comes first) is kept.
+
+    Parameters
+    ----------
+    take
+        Video.
+    boards
+        Board images, the approved one first (:func:`creation.post.desk.board_versions`).
+    max_frames
+        Cap on leading frames counted.
+
+    Returns
+    -------
+    tuple[Path, BoardLeak]
+        The chosen board and its measurement.
+
+    Raises
+    ------
+    ValueError
+        When ``boards`` is empty.
+    """
+
+    if not boards:
+        raise ValueError("no board to measure the take against")
+    best: tuple[Path, BoardLeak] | None = None
+    for board in boards:
+        leak = measure_board_leak(take, board, max_frames=max_frames)
+        if best is None or leak.frames > best[1].frames:
+            best = (board, leak)
+    assert best is not None
+    return best
+
+
+def opened_on_earlier_drawing(
+    take: Path, boards: list[Path], *, max_frames: int = BOARD_LEAK_MAX_FRAMES
+) -> Path | None:
+    """The earlier drawing a take surely opens on, when it is not the approved board (``boards[0]``).
+
+    Used when the server left the start as filmed because it was not sure it
+    was the board: it measured against the board the take was compiled with
+    or the current one, and a grid of an earlier drawing reads only partly
+    like it (likeness 0.57-0.82 in L-20261009-1). The earlier drawing counts
+    only when it measures more board frames than the approved board and frame
+    0 is closer to it than to the approved board.
+
+    Parameters
+    ----------
+    take
+        Video.
+    boards
+        Board images, the approved one first.
+    max_frames
+        Cap on leading frames counted.
+
+    Returns
+    -------
+    Path | None
+        The earlier drawing, or ``None`` (the doubt stands).
+    """
+
+    if len(boards) < 2:
+        return None
+    approved = measure_board_leak(take, boards[0], max_frames=max_frames)
+    chosen, leak = pick_board(take, boards[1:], max_frames=max_frames)
+    if leak.frames <= approved.frames or not leak.psnr_db or not approved.psnr_db:
+        return None
+    if leak.psnr_db[0] <= approved.psnr_db[0]:
+        return None
+    return chosen
+
+
 #: A cut at the head stays this far before the first line's onset (a frame at 24 fps).
 SPEECH_GUARD_SECONDS = 0.042
 #: The ``handles`` edit's source for the kit's own head cut.

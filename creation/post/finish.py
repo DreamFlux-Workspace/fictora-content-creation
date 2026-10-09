@@ -209,6 +209,7 @@ from creation.post.bed import (
 )
 from creation.post.colour import colour_match
 from creation.post.deboard import deboard as deboard_take
+from creation.post.deboard import opened_on_earlier_drawing, pick_board
 from creation.post.edit import BlurBox, measure_cuts
 from creation.post.finish_record import latest_finish_record, write_finish_record
 from creation.post.hand import (
@@ -223,6 +224,7 @@ from creation.post.hand import (
 from creation.post.lineage import CHAIN_FILE, raw_take_behind, record_edit
 from creation.post.desk import (
     approved_board,
+    board_versions,
     current_cast_cards,
     latest_raw_take,
     open_api,
@@ -1635,6 +1637,23 @@ def run_finish(
             if facts_state["path"] is not None
             else None
         )
+        # Every drawing of this take's board on the desk, the approved one first:
+        # a take compiled before a redraw opens on the earlier one (L-20261009-1).
+        versions = board_versions(desk, episode, take_id) or [board]
+        measured_against = board
+        if doubt is not None:
+            earlier = opened_on_earlier_drawing(take, versions)
+            if earlier is not None:
+                measured_against = earlier
+                append_run_note(
+                    run_dir,
+                    f"Finish · deboard: the server was unsure of the start ({doubt.reason}); the take opens on "
+                    f"an earlier drawing of its board, `{earlier.name}`, not the approved `{board.name}`, so it "
+                    "is held against that drawing",
+                )
+                doubt = None
+        elif len(versions) > 1:
+            measured_against = pick_board(take, versions)[0]
         if doubt is not None:
             # The server would not hold this start; holding it here would bring the guess back. Ask instead.
             ask = (
@@ -1645,10 +1664,13 @@ def run_finish(
             append_run_note(run_dir, f"Finish · deboard: {ask}")
             return StepReport("deboard", "skipped", ask)
         trimmed = deboard_take(
-            take, board, next_versioned_path(takes, f"{base}-deboard", ".mp4")
+            take,
+            measured_against,
+            next_versioned_path(takes, f"{base}-deboard", ".mp4"),
         )
         append_run_note(
-            run_dir, f"Finish · deboard against `{board.name}`: {trimmed.one_line()}"
+            run_dir,
+            f"Finish · deboard against `{measured_against.name}`: {trimmed.one_line()}",
         )
         if trimmed.output is None:
             return StepReport(

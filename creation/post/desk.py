@@ -311,6 +311,45 @@ def approved_board(desk: Path, episode: int, take_id: str) -> Path | None:
     return max(found, key=lambda p: p.stat().st_mtime) if found else None
 
 
+def board_versions(desk: Path, episode: int, take_id: str) -> list[Path]:
+    """Every drawing of this take's board on the desk: the approved one first, then the rest, newest first.
+
+    A take compiled before its board was redrawn can open on the earlier
+    drawing (Sweet Racket ep 4 t2, L-20261009-1), so ``deboard`` measures the
+    take against each of them, not only the approved one.
+
+    Parameters
+    ----------
+    desk
+        The desk.
+    episode
+        Episode ordinal.
+    take_id
+        ``t1``, ``t2`` ...
+
+    Returns
+    -------
+    list[Path]
+        Board images, :func:`approved_board` first; empty when the desk has none.
+    """
+
+    first = approved_board(desk, episode, take_id)
+    boards = desk / f"ep{episode:02d}" / "boards"
+    own = re.compile(rf"^board-ep{episode:02d}-{re.escape(take_id)}(?:-.*)?$")
+    found = sorted(
+        (
+            p
+            for p in boards.glob(f"board-ep{episode:02d}-{take_id}*.png")
+            if p.is_file() and own.match(p.stem)
+        ),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    ordered = [first] if first is not None else []
+    ordered += [p for p in found if first is None or p.resolve() != first.resolve()]
+    return ordered
+
+
 def take_clip(desk: Path, episode: int, take_id: str) -> dict[str, Any] | None:
     """The take's newest clip (``job_id`` and the stored ``url``) in the episode's clip records.
 
