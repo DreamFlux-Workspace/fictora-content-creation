@@ -154,9 +154,12 @@ def test_finish_warns_when_a_cue_is_buried_under_the_bed(post_desk: Path) -> Non
         return make_tone(target, seconds=cue.seconds, freq=300, volume=0.05)
 
     out = io.StringIO()
-    result = run_finish(post_desk, sfx_render=faint, bed_maker=fake_bed, bed_db=0.0,
+    # A bed this loud: the cue is raised as far as levelling goes (+18 dB) and is still buried.
+    result = run_finish(post_desk, sfx_render=faint, bed_maker=fake_bed, bed_db=12.0,
                         facts_fetcher=lambda *a: None, stream=out)  # fmt: skip
 
+    sfx = next(s for s in result.steps if s.step == "sfx")
+    assert "levelled over the music bed: a door slams +" in sfx.detail, sfx.detail
     mix = next(s for s in result.steps if s.step == "mix")
     assert mix.status == "ran" and "!! cue 'a door slams' @3.00s peaks" in mix.detail
     assert "!! cue 'a door slams'" in out.getvalue()
@@ -510,7 +513,8 @@ def test_finish_names_every_planned_cue_it_does_not_lay_with_the_reason(
 
     sfx = next(s for s in result.steps if s.step == "sfx")
     assert sfx.status == "ran" and calls == ["a door slams"]
-    gasp = "a hushed crowd gasp as he bites (render failed: wrong shape: sustained cue collapses after its first half second)"
+    # The server's wrong shape is re-made once (the same sound), then left out with the reason.
+    gasp = "a hushed crowd gasp as he bites (sustained cue collapses after its first half second twice: re-made once, then left out)"
     assert result.cues_not_laid == (gasp,)
     assert f"!! NOT LAID 1 of 3 planned: {gasp}" in sfx.detail, sfx.detail
     assert (

@@ -67,6 +67,8 @@ OPENING_HOOK_REFERENCE_PEAK_DBTP = -6.0
 #: How far the hook's loudest 400 ms may sit over the take's loudness: none.
 OPENING_HOOK_OVER_TAKE_LU = 0.0
 SILENCE_DB = -50.0
+#: How much longer a re-made cue is asked for (the server caches cues by content).
+REMAKE_NUDGE_SECONDS = 0.1
 
 Renderer = Callable[["SfxCue", Path], Path]
 Meter = Callable[[Path], tuple[float, ...]]
@@ -87,6 +89,9 @@ class SfxCue:
     #: Where the take facts say the cue came from: ``sound_line``, ``impact`` (an action the story
     #: states) or ``note``. Read only by the action snap (:mod:`creation.post.sfx_motion`).
     source: str = "sound_line"
+    #: 0 for the first render; 1 when a render came back silent or the wrong shape and the SAME
+    #: cue (same sound label, same placement) is asked for once more. Never part of the cache key.
+    remake: int = 0
 
     @property
     def cache_key(self) -> str:
@@ -675,11 +680,24 @@ def service_renderer(audio: AudioService, spine_id: str) -> Renderer:
 
     def render(cue: SfxCue, target: Path) -> Path:
         seconds = round(max(SFX_MIN_SECONDS, min(SFX_MAX_SECONDS, cue.seconds)), 2)
+        key = f"sfx-{cue.cache_key}"
+        if cue.remake:
+            # The server caches a cue by its content (sound, seconds), so asking again for the same
+            # content returns the same silent file. A re-make asks for the SAME sound label a hair
+            # longer; it is trimmed back to the cue's length when laid (placement unchanged).
+            seconds = round(
+                min(
+                    SFX_MAX_SECONDS + REMAKE_NUDGE_SECONDS,
+                    seconds + REMAKE_NUDGE_SECONDS * cue.remake,
+                ),
+                2,
+            )
+            key += f"-remake{cue.remake}"
         answer = audio.sfx_cue(
             spine_id=spine_id,
             sound=cue.sound,
             seconds=seconds,
-            key=f"sfx-{cue.cache_key}",
+            key=key,
         )
         if answer.get("shape_problem"):
             raise ValueError(f"wrong shape: {answer['shape_problem']}")
@@ -720,6 +738,115 @@ class SfxResult:
     peaks_db: tuple[float, ...] = ()
     #: Planned cues left out on purpose by ``--sfx-adjust ... drop``, each ``sound (reason)``.
     dropped: tuple[str, ...] = ()
+    #: Cues raised against the music bed (:func:`bed_levelled_gain`), each ``sound +N dB (why)``.
+    levelled: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class BedReference:
+    """The music bed a take's effects will play under, as the mix will lay it.
+
+    ``levels`` is the bed file's RMS per ``window_seconds`` (it loops under the
+    picture), ``bed_db`` its gain in the mix, ``take_gain_db`` the gain the mix
+    will give the take (and so the effects on it), ``voice_peak_db`` the take's
+    loudest spoken window before any effect (an effect is never set over it).
+    """
+
+    levels: tuple[float, ...]
+    bed_db: float
+    take_gain_db: float
+    voice_peak_db: float | None = None
+    window_seconds: float = 0.5
+
+
+#: Where a levelled effect's loudest window sits under the bed's over the same stretch: the mix's
+#: ``AUDIBLE_CUE_DB`` and the server's ``sfx_bed_level.SFX_UNDER_BED_LU`` (fictora-drama #646).
+SFX_UNDER_BED_DB = 6.0
+#: The most a quiet render is raised (the server's ``SFX_BED_GAIN_CEILING_DB``).
+SFX_BED_RAISE_CEILING_DB = 18.0
+#: The highest gain levelling sets. Renders are not loudness-normalised, so a quiet one needs gain
+#: over 0 dB (the planned range stops at 0 dB); the finish's one limiter still holds peaks at -1 dBFS
+#: and the voice cap keeps every effect under the take's loudest spoken window.
+SFX_LEVELLED_MAX_GAIN_DB = 10.0
+
+
+def bed_levelled_gain(
+    cue: "SfxCue", rendered_peak_db: float, bed: BedReference
+) -> tuple[float, str]:
+    """The gain a kit-laid effect is laid at so it is heard over the music bed, and why.
+
+    The same rule as the server's dialogue-track effects (fictora-drama #646,
+    ``sfx_bed_level``), for the effects the kit lays itself (model-voice takes,
+    and any cue the server did not lay): an effect whose loudest window would
+    sit more than :data:`SFX_UNDER_BED_DB` under the bed where it plays is
+    raised to that, never past :data:`SFX_LEVELLED_MAX_GAIN_DB`, never more than
+    :data:`SFX_BED_RAISE_CEILING_DB`, and never over the take's loudest spoken
+    window. A cue a sound note or ``--sfx-adjust`` lowered stays that much
+    further under. An effect already heard is never lowered. Only the level
+    changes: the cue, its sound and its placement are the plan's.
+
+    Before this, operators raised buried effects by hand (Hana L-20261001-5,
+    ten times; Noodle24's clink 17 dB under the music).
+
+    Returns
+    -------
+    tuple[float, str]
+        The gain, and ``""`` when unchanged or a short reason when raised.
+    """
+
+    if (
+        not bed.levels
+        or not math.isfinite(rendered_peak_db)
+        or rendered_peak_db <= SILENCE_DB
+    ):
+        return cue.gain_db, ""
+    count = len(bed.levels)
+    first = int(cue.start / bed.window_seconds)
+    last = max(
+        first,
+        math.ceil(
+            (cue.start + max(cue.seconds, bed.window_seconds)) / bed.window_seconds
+        )
+        - 1,
+    )
+    bed_db = (
+        max(bed.levels[index % count] for index in range(first, last + 1)) + bed.bed_db
+    )
+    heard = rendered_peak_db + cue.gain_db + bed.take_gain_db
+    lowered = min(
+        0.0, cue.gain_db - SFX_GAIN_DB
+    )  # a note's or --sfx-adjust's cut stays on top
+    target_gap = SFX_UNDER_BED_DB - lowered
+    gap = bed_db - heard
+    if gap <= target_gap:
+        return cue.gain_db, ""
+    gain = cue.gain_db + min(gap - target_gap, SFX_BED_RAISE_CEILING_DB)
+    capped = ""
+    if gain > SFX_LEVELLED_MAX_GAIN_DB:
+        gain, capped = (
+            SFX_LEVELLED_MAX_GAIN_DB,
+            f"; held at {SFX_LEVELLED_MAX_GAIN_DB:+.0f} dB gain",
+        )
+    if bed.voice_peak_db is not None and math.isfinite(bed.voice_peak_db):
+        voice_cap = bed.voice_peak_db - rendered_peak_db
+        if gain > voice_cap:
+            gain, capped = max(cue.gain_db, voice_cap), "; held under the voice"
+    gain = round(gain, 1)
+    if gain <= cue.gain_db:
+        return cue.gain_db, ""
+    return gain, (
+        f"{gain - cue.gain_db:+.0f} dB: it sat {gap:.0f} dB under the music bed, now about "
+        f"{max(target_gap, gap - (gain - cue.gain_db)):.0f} dB under{capped}"
+    )
+
+
+def _rendered_peak_db(
+    levels: tuple[float, ...], seconds: float, window_seconds: float = 0.5
+) -> float:
+    """The loudest window of a render over the part that is laid (its first ``seconds``)."""
+
+    used = levels[: max(1, math.ceil(seconds / window_seconds))]
+    return max(used, default=-120.0)
 
 
 def _cue_chain(
@@ -849,6 +976,7 @@ def lay_sfx(
     render: Renderer,
     measure: Meter = measure_rms_windows,
     levels: Levels = measure_levels,
+    bed: BedReference | None = None,
 ) -> SfxResult:
     """Render (or reuse) each cue and mix the usable ones under the take into ``output``.
 
@@ -870,6 +998,9 @@ def lay_sfx(
         Shape meter (also gives each mixed cue's placed peak, for the mix's quiet-cue check).
     levels
         Level meter for the opening hook and the take it is levelled under (:func:`level_opening_hooks`).
+    bed
+        The music bed the mix will lay under the take: each buried effect is raised against it
+        (:func:`bed_levelled_gain`). ``None`` (no bed, or the music is in the take): planned gains.
 
     Returns
     -------
@@ -904,23 +1035,41 @@ def lay_sfx(
         cue = replace(cue, seconds=round(min(cue.seconds, room), 3))
         cached = cache_dir / f"{cue.cache_key}.mp3"
         if cached.is_file():
-            kept.append((cue, cached))
-            continue
+            if shape_problem(cue.kind, measure(cached)) is None:
+                kept.append((cue, cached))
+                continue
+            # A cached render that is silent (or the wrong shape) is never laid again: re-made below.
+            cached.unlink()
         good: Path | None = None
-        for _attempt in (1, 2):
+        problem = ""
+        # The first render, then ONE re-make of the same cue (same sound label, same placement):
+        # a cue that comes back silent or the wrong shape is re-made once, else left out with a
+        # warning. It never stops the finish (Gallery L-20261008-20).
+        for remake in (0, 1):
+            asked = replace(cue, remake=remake)
             try:
-                path = render(cue, cached)
+                path = render(asked, cached)
             except (RuntimeError, OSError, KeyError, ValueError) as exc:
-                skipped.append(f"{cue.sound} (render failed: {str(exc)[:120]})")
-                break
+                text = str(exc)
+                if not text.startswith("wrong shape"):
+                    skipped.append(f"{cue.sound} (render failed: {text[:120]})")
+                    problem = ""
+                    break
+                rendered += 1
+                cost += max(SFX_MIN_SECONDS, cue.seconds) * SFX_USD_PER_SECOND
+                problem = text.removeprefix("wrong shape: ").removeprefix("wrong shape")
+                continue
             rendered += 1
             cost += max(SFX_MIN_SECONDS, cue.seconds) * SFX_USD_PER_SECOND
-            if shape_problem(cue.kind, measure(path)) is None:
+            problem = shape_problem(cue.kind, measure(path)) or ""
+            if not problem:
                 good = path
                 break
             path.unlink(missing_ok=True)
-        else:
-            skipped.append(f"{cue.sound} (wrong shape twice)")
+        if good is None and problem:
+            skipped.append(
+                f"{cue.sound} ({problem} twice: re-made once, then left out)"
+            )
         if good is not None:
             kept.append((cue, good))
     if not kept:
@@ -934,6 +1083,21 @@ def lay_sfx(
             skipped=tuple(skipped), dropped=tuple(dropped), rendered=rendered,
             cost_usd=round(cost, 4),
         )  # fmt: skip
+    # Every other effect is levelled against the music bed it plays under (all shows: only the
+    # level changes, never which cue or which sound).
+    levelled: list[str] = []
+    if bed is not None:
+        placed: list[tuple[SfxCue, Path]] = []
+        for cue, path in kept:
+            if not is_opening_cue(cue.sound):
+                gain, why = bed_levelled_gain(
+                    cue, _rendered_peak_db(measure(path), cue.seconds), bed
+                )
+                if why:
+                    levelled.append(f"{cue.sound} {why}")
+                    cue = replace(cue, gain_db=gain)
+            placed.append((cue, path))
+        kept = placed
     # The episode's opening hook: heard clearly, never over the take.
     kept = level_opening_hooks(kept, take, levels=levels)
     inputs: list[str] = ["-i", str(take)]
@@ -961,4 +1125,5 @@ def lay_sfx(
         round(cost, 4),
         peaks,
         tuple(dropped),
+        tuple(levelled),
     )

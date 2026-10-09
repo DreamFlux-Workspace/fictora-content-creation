@@ -105,9 +105,15 @@ def test_a_hand_cue_at_the_opening_completes_a_take_whose_other_effects_are_in_t
 
 
 @needs_ffmpeg
-def test_with_no_effect_on_the_take_at_all_it_stays_not_done_and_says_what_is_missing(
+def test_an_effect_silent_after_its_re_make_is_left_out_with_a_warning_and_the_take_is_done(
     post_desk: Path,
 ) -> None:
+    """Gallery L-20261008-20: the only planned effect came back silent and stopped the finish.
+
+    It is now re-made once (the same sound) and, still silent, left out with a
+    warning: the take finishes. (Before: ``SFX ✗`` / NOT DONE.)
+    """
+
     _desk(post_desk)
     facts = _facts()
     facts["take_facts"]["soundtrack"]["sfx"] = {
@@ -117,21 +123,56 @@ def test_with_no_effect_on_the_take_at_all_it_stays_not_done_and_says_what_is_mi
         json.dumps(facts)
     )
     out = io.StringIO()
+    calls: list[str] = []
 
     result = run_finish(
-        post_desk, sfx_render=silent_sfx([]), bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+        post_desk, sfx_render=silent_sfx(calls), bed_maker=fake_bed, facts_fetcher=lambda *a: None,
         cut_meter=lambda _take: (2.5,), thumbnail=False, stream=out,
     )  # fmt: skip
 
-    assert not result.complete
-    assert result.sound_missing == ("SFX",)
-    assert "opening_sound_flat" in out.getvalue()
+    log = out.getvalue()
+    assert result.complete, log
+    assert result.sound_missing == ()
+    # Each planned cue asked for twice (the render and one re-make of the SAME sound), never more.
+    assert sorted(calls) == sorted(
+        ["a door slams", "a door slams", "a glass breaks", "a glass breaks"]
+    )
+    sfx = next(s for s in result.steps if s.step == "sfx")
+    assert sfx.status == "ran" and "!! NOT LAID 2 of 2 planned" in sfx.detail, (
+        sfx.detail
+    )
+    assert "silent twice: re-made once, then left out" in sfx.detail
+    assert "[sfx] !!" in log
+    assert "opening_sound_flat" in log
     record = json.loads(
         next(
             (post_desk / "ep01" / "takes").glob("take-ep01-t1-finish-v*.json")
         ).read_text()
     )
-    assert record["complete"] is False and record["missing"] == ["SFX"]
+    assert record["complete"] is True
+
+
+@needs_ffmpeg
+def test_a_render_the_server_could_not_do_still_stops_the_take(post_desk: Path) -> None:
+    """Only an effect left out for its SOUND is dropped; a server that did not answer is retried by re-running."""
+
+    _desk(post_desk)
+    facts = _facts()
+    facts["take_facts"]["soundtrack"]["sfx"] = {"cues": []}
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+        json.dumps(facts)
+    )
+
+    def down(cue: SfxCue, target: Path) -> Path:
+        raise RuntimeError("HTTP 503")
+
+    result = run_finish(
+        post_desk, sfx_render=down, bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+        cut_meter=lambda _take: (2.5,), thumbnail=False, stream=io.StringIO(),
+    )  # fmt: skip
+
+    assert not result.complete
+    assert result.sound_missing == ("SFX",)
 
 
 def test_join_names_what_an_unfinished_take_is_missing(post_desk: Path) -> None:
