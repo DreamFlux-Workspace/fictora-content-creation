@@ -146,7 +146,7 @@ Then watch the file in `takes/`. A take that will be re-filmed gets no `finish`,
 - [ ] No loudnorm anywhere; per-take gain and one limiter
 - [ ] Wrong take dialogue (stray or garbled speech, a wrong line): take audio dropped and rebuilt (voices, effects, ambience, bed), no muted ranges; every hand cue answers a visible action, inside its own take, and audible
 - [ ] Captions are English, in the 55–70% band, on screen only while the line is spoken; no `NOT ENGLISH` in the finish summary
-- [ ] Off-screen and voice-only lines are in Georgia italic; every on-screen line is upright
+- [ ] Off-screen and voice-only lines are in italic (the same face as the rest); every on-screen line is upright; one caption face in the whole episode
 - [ ] Any `trim` / `tempo` done after `finish`, on the finished file, with the producer's yes; what was cut shown; first frame after a cut checked; new length stated (shorter than the band is fine). `deboard` holds board frames and never cuts
 - [ ] No post overlay covers the key reveal (test frames of the key shots looked at)
 - [ ] Previews, rough cuts and "just combine" files carry the house captions too

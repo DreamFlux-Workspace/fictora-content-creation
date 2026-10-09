@@ -4737,7 +4737,7 @@ def run_sound_note(
 INNER_VOICE_IN_FINISH = (
     "Heard in `finish`: the take its start falls in (take N starts where the raw takes before it end, "
     "{at:g}s on the episode) makes it dry in {name}'s locked voice on the server (about $0.10 per 1,000 "
-    "characters, once: a re-run reuses the line on the desk), lays it at the cue and captions it in Georgia "
+    "characters, once: a re-run reuses the line on the desk), lays it at the cue and captions it in "
     "italic: `fictora-produce finish --desk {desk} --episode {episode} --take tK`. {name} needs a locked voice "
     "(`voice --audition`, then `--pick N`); without one, finish names the cue and the take is NOT DONE."
 )
@@ -8019,7 +8019,7 @@ def add_episode_parsers(
             "episode as filmed; take 1 starts at 0; --text is the caption, --spoken-text the words said when "
             "they differ). For someone heard and never seen (an intercom, a phone, a narrator) use `line --add "
             "--new-voice` instead. `finish` makes each cue dry in the thinker's locked voice on the take it falls "
-            "in, lays it and captions it in Georgia italic."
+            "in, lays it and captions it in italic."
         ),
     )
     thought.add_argument("--desk", type=Path, required=True)

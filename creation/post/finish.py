@@ -140,7 +140,7 @@ right after the hand voice step, on every take that has a cue:
 - **Laid** like ``--voice``: into the take's own audio at the cue's start,
   levelled to -18 LUFS, so the bed ducks under it; the SFX and hand cues duck
   under it like speech. Script captions stay timed on the take without it.
-- **Captioned** in Georgia italic (heard, not seen) where it plays.
+- **Captioned** in italic (the house face slanted: heard, not seen) where it plays.
 
 A cue that cannot go on (no locked voice, a refusal from the route, a line that
 runs past the take, an earlier take not on the desk, a start after the last
@@ -172,6 +172,7 @@ from creation.captions import (
     find_ffmpeg,
     is_english,
     caption_style_word,
+    check_caption_scale,
     resolve_caption_style,
 )
 from creation.harness.raw_video import fetch_take_facts
@@ -901,8 +902,6 @@ def letterbox_caption_facts(
         italic overrides, and the lines to print.
     """
 
-    from types import SimpleNamespace
-
     from creation.post.review import saved_words
     from creation.post.whisper import load_words
 
@@ -927,7 +926,47 @@ def letterbox_caption_facts(
             if trimmed
             else "captions end with their line windows (the voice runs to each window's end)"
         )
-    elif facts:
+    overrides, italic_notes = caption_italic_overrides(spine, facts, take_lines)
+    notes += italic_notes
+    return spans, overrides, notes
+
+
+def caption_italic_overrides(
+    spine: dict[str, Any] | None,
+    facts: dict[str, Any] | None,
+    soundtrack_lines: Sequence[Any] = (),
+) -> tuple[dict[str, bool], list[str]]:
+    """Lines flagged ``off_screen`` whose speaker the take draws, set upright; portrait and letterbox alike.
+
+    A stale ``off_screen`` flag (the speaker IS on the shot the line plays
+    over) set that line in the heard-not-seen italic among upright captions;
+    letterbox takes were corrected since #132, portrait takes were not until
+    9 Oct 2026 (Sweet Racket ep 5 "Ransom"). The evidence is
+    :func:`creation.post.letterbox.italic_overrides` (the take facts' shot
+    people, the board frames' ``cast_refs``, the redrawn board's note).
+
+    Parameters
+    ----------
+    spine
+        The spine the captions come from.
+    facts
+        The take facts payload, or None.
+    soundtrack_lines
+        The locked-voice soundtrack's lines (``line_id``, ``cast_id``,
+        ``start``, ``end``); empty on a native take, whose lines come from the
+        take facts.
+
+    Returns
+    -------
+    tuple[dict[str, bool], list[str]]
+        ``line_id`` -> ``False`` for each line set upright, and one
+        ``italics: …`` note per flagged line.
+    """
+
+    from types import SimpleNamespace
+
+    take_lines: list[Any] = list(soundtrack_lines)
+    if not take_lines and facts:
         body = facts.get("take_facts", facts)
         for item in body.get("lines") or [] if isinstance(body, dict) else []:
             if isinstance(item, dict) and item.get("count"):
@@ -938,9 +977,19 @@ def letterbox_caption_facts(
                         end=item.get("end_seconds"),
                     )
                 )
-    overrides, italic_notes = lb.italic_overrides(spine, facts, take_lines)
-    notes += [f"italics: {n}" for n in italic_notes]
-    return spans, overrides, notes
+    if not take_lines and isinstance(spine, dict):
+        # No timed lines (a native take whose facts list none): the spine's own lines, so the
+        # board frames and the take facts' shots can still say who is drawn.
+        body = spine.get("spine", spine)
+        take_lines = [
+            SimpleNamespace(line_id=str(item.get("line_id")), start=None, end=None)
+            for beat in body.get("beats") or []
+            if isinstance(beat, dict)
+            for item in beat.get("dialogue_lines") or []
+            if isinstance(item, dict) and item.get("line_id")
+        ]
+    overrides, notes = lb.italic_overrides(spine, facts, take_lines)
+    return overrides, [f"italics: {n}" for n in notes]
 
 
 def finish_hook(
@@ -1113,6 +1162,7 @@ def run_finish(
     over_locked_voices: bool = False,
     stem_fetcher: Callable[[str, Path], Path] | None = None,
     caption_style: str | None = None,
+    caption_scale: float = 1.0,
     spine_fetcher: SpineFetcher | None = None,
     hook_line: str | None = None,
     no_hook_line: bool = False,
@@ -1224,6 +1274,11 @@ def run_finish(
         the desk's ``production.config.json``, else ``bold`` for a new show and
         ``subtle`` for one with finished episodes). A letterbox take keeps its
         own caption band whichever is chosen.
+    caption_scale
+        ``--caption-scale``: every caption line of this take (not the hook card) at the style's size
+        times this (0.5-2; 1 is the house size, already 64 on 1920 scaled to the
+        take), wrapped and placed by the kit, so a bigger caption never needs a
+        hand re-burn (Sweet Racket L-20261006-8, L-20261008-5).
     spine_fetcher
         Reads the current spine for the captions (default: the server, saved on
         the desk; :func:`creation.captions.current_spine`). The desk's copy is
@@ -1290,6 +1345,7 @@ def run_finish(
             flush=True,
         )
     style, style_note = resolve_caption_style(desk, caption_style)
+    check_caption_scale(caption_scale)
     run_dir = desk / f"ep{episode:02d}"
     source = (
         take_file.expanduser().resolve()
@@ -2685,8 +2741,14 @@ def run_finish(
                 desk, episode=episode, take_id=take_id, source=source, spine=caption_spine or spine,
                 facts=facts_payload, soundtrack=soundtrack if spans is not None else None,
             )  # fmt: skip
-            for note in letterbox_notes:
-                print(f"[captions] {note}", file=out, flush=True)
+        else:
+            # Portrait too (9 Oct 2026): a stale off_screen flag never slants a line the take draws.
+            overrides, letterbox_notes = caption_italic_overrides(
+                caption_spine or spine, facts_payload,
+                soundtrack.lines if spans is not None else (),
+            )  # fmt: skip
+        for note in letterbox_notes:
+            print(f"[captions] {note}", file=out, flush=True)
         floors: dict[str, float] = {}
         if spans is not None and not legacy_rules():
             # New desks (L-20261005-6): each line goes up where its voice starts, never on the plan alone.
@@ -2729,11 +2791,12 @@ def run_finish(
                 take_index=thoughts.take_number(take_id),
                 line_spans=spans,
                 style=style,
+                caption_scale=caption_scale,
                 line_spans_after_words=spans is not None and words_json is not None,
                 voice_floors=floors or None,
+                italic_overrides=overrides,
                 **(
-                    {"layout": "letterbox", "caption_colour": colour_name,
-                     "italic_overrides": overrides}
+                    {"layout": "letterbox", "caption_colour": colour_name}
                     if letterbox
                     else {}
                 ),
@@ -2765,7 +2828,7 @@ def run_finish(
         if words_note:
             treatment += f", {words_note}"
         # A line that is not English is left uncaptioned, and an italic line may miss
-        # Georgia Italic on this laptop; the summary line says which.
+        # the italic face on this laptop; the summary line says which.
         warnings = "".join(
             f" · {w}"
             for w in (

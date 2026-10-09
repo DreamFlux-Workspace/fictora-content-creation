@@ -20,6 +20,7 @@ from creation.cli_config import (
 )
 from creation.cli_post import (
     POST_COMMANDS,
+    add_caption_scale_arg,
     add_caption_style_arg,
     add_post_parsers,
     dispatch_post,
@@ -333,6 +334,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "default: the newest take-epNN-t1-*words-vN.json when captioning the raw take.",
     )
     add_caption_style_arg(cap)
+    add_caption_scale_arg(cap)
     cap.add_argument(
         "--no-open", action="store_true", help="Do not open the captioned file."
     )
@@ -600,6 +602,7 @@ def _run_command(args: argparse.Namespace) -> int:
                 take_index=take_index_from_name(args.take) if args.take else None,
                 style=style,
                 spine=spine,
+                caption_scale=args.caption_scale,
             )
             ep_dir = args.desk.expanduser().resolve() / f"ep{args.episode:02d}"
             timing = "; ".join(result.timing_lines())

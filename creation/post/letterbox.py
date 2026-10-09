@@ -48,6 +48,7 @@ from creation.captions import (
     FONTS_DIR,
     FONT_NAME,
     Span,
+    burnable_ass,
     _ass_escape,
     _ass_time,
     text_width,
@@ -603,13 +604,16 @@ def mark_and_title(
     x, y = place.mark
     fitted: FittedTitle | None = None
     first = "[0:v]null[t]"
+    scratch: Path | None = None
     if title is not None:
         text, fitted = title_ass(
             title, width=info.width, height=info.height, duration=info.duration_seconds
         )
         ass = ass_path or out.with_name(f"{out.stem}-title.ass")
         ass.write_text(text, encoding="utf-8")
-        first = f"[0:v]ass='{_esc(ass)}':fontsdir='{_esc(FONTS_DIR)}'[t]"
+        # One named face (the bundled twin when Arial is missing); the copy is removed below.
+        burned, scratch = burnable_ass(ass)
+        first = f"[0:v]ass='{_esc(burned)}':fontsdir='{_esc(FONTS_DIR)}'[t]"
     graph = f"{first};[1:v]format=rgba,colorchannelmixer=aa={MARK_ALPHA}[m];[t][m]overlay={x}:{y}[v]"
     inputs = ["-i", str(video), "-i", str(mark)]
     picture = "[v]"
@@ -628,9 +632,13 @@ def mark_and_title(
     args = [*inputs, "-filter_complex", graph, "-map", picture]
     if info.has_audio:
         args += ["-map", "0:a", "-c:a", "copy"]
-    run_ffmpeg(
-        [*args, "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", str(out)]
-    )
+    try:
+        run_ffmpeg(
+            [*args, "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", str(out)]
+        )
+    finally:
+        if scratch is not None:
+            scratch.unlink(missing_ok=True)
     return out, fitted
 
 

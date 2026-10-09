@@ -27,9 +27,12 @@ only forward, never into the next line. ``--line-start`` / ``--line-end``
 override either end by hand.
 
 A voice that is heard, not seen (a line marked ``off_screen``, or any line of a
-cast member the server flags ``voice_only``) is captioned in Georgia italic:
-same size, colour, edge and place as the house caption, only the face changes
-(the retired internal kit's convention for a remembered or off-screen voice).
+cast member the server flags ``voice_only``) is captioned in the house face's
+italic (Arial Bold Italic): same face, size, colour, edge and place as the house
+caption, only the slant changes, so one episode never mixes caption fonts (9 Oct
+2026, Sweet Racket ep 5; it was Georgia italic before, :data:`ITALIC_FONT_NAME`).
+A laptop without Arial Bold burns every line in the bundled Liberation Sans, its
+metric twin (:func:`burnable_ass`), and says so, instead of a silent fallback.
 
 Captions are English only: the caption font has no Japanese, Chinese or Korean
 glyphs. A line whose caption text (``subtitle_text``, else ``text``) is not
@@ -74,6 +77,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import sys
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
@@ -101,12 +105,29 @@ CAPTION_BAND = (0.55, 0.70)
 #: A caption wraps onto at most this many lines (balanced), never more.
 MAX_CAPTION_LINES = 2
 FONT_NAME = "Arial"
-#: Face for a voice heard, not seen (off-screen line or voice-only cast), set in italic.
-ITALIC_FONT_NAME = "Georgia"
+#: The face a voice heard, not seen (off-screen line, voice-only cast, inner voice) is set in,
+#: slanted. THE ONE SWITCH for that look: since 9 Oct 2026 it is the house face itself (Arial
+#: Bold Italic), so one episode never mixes caption fonts (Sweet Racket ep 5 "Ransom": a
+#: Georgia italic serif line among Arial Bold captions). ``"Georgia"`` brings back the old
+#: serif italic exactly (its files, em and install hint follow below).
+ITALIC_FONT_NAME = FONT_NAME
+#: True when heard-not-seen lines share the house face (bold and italic), False for Georgia.
+ITALIC_IS_HOUSE_FACE = ITALIC_FONT_NAME == FONT_NAME
 #: libass sets an ASS ``Fontsize`` as the face's OS/2 winAscent + winDescent, not its em.
-#: Em per Fontsize unit: Arial Bold 2048 / (1854 + 434); Georgia Italic 2048 / (1878 + 449).
+#: Em per Fontsize unit: Arial Bold (and Bold Italic, and their metric twin Liberation Sans)
+#: 2048 / (1854 + 434); Georgia Italic 2048 / (1878 + 449).
 HOUSE_EM_PER_SIZE = 2048 / (1854 + 434)
-ITALIC_EM_PER_SIZE = 2048 / (1878 + 449)
+ITALIC_EM_PER_SIZE = HOUSE_EM_PER_SIZE if ITALIC_IS_HOUSE_FACE else 2048 / (1878 + 449)
+#: ASS ``Bold`` flag of the italic style: the house face's italic is its bold italic.
+ITALIC_BOLD_FLAG = -1 if ITALIC_IS_HOUSE_FACE else 0
+#: The open, metric-identical twin of Arial the kit ships (assets/fonts, SIL OFL; the same face
+#: fictora-drama's images draw the app's captions in). Captions are set in it, every line of
+#: them, when this laptop has no Arial Bold, instead of whatever libass would fall back to.
+SUBSTITUTE_FONT_NAME = "Liberation Sans"
+SUBSTITUTE_FONT_FILES: tuple[str, ...] = (
+    "LiberationSans-Bold.ttf",
+    "LiberationSans-BoldItalic.ttf",
+)
 #: Caption styles: ``bold`` (one short white line at a time, one yellow word; the default for a new
 #: show, :mod:`creation.caption_bold`), ``subtle`` (yellow word flicker; ``house`` is its older name and
 #: still works), ``plain`` (white whole lines), ``none``.
@@ -257,6 +278,22 @@ def resolve_caption_style(desk: Path, given: str | None = None) -> tuple[str, st
     )
 
 
+#: ``--caption-scale`` bounds: half to twice the style's own size.
+CAPTION_SCALE_RANGE = (0.5, 2.0)
+
+
+def check_caption_scale(scale: float) -> float:
+    """``scale`` when it is inside :data:`CAPTION_SCALE_RANGE`, else a plain ValueError (nothing burned)."""
+
+    low, high = CAPTION_SCALE_RANGE
+    if not low <= scale <= high:
+        raise ValueError(
+            f"--caption-scale {scale:g} is outside {low:g}-{high:g} (1 is the house size; "
+            f"1.25 is a quarter bigger); nothing was burned"
+        )
+    return scale
+
+
 def house_font_size(height: int) -> int:
     """ASS ``Fontsize`` of the house caption on a frame ``height`` px high (64 on 1920, 45 on 1344)."""
 
@@ -270,10 +307,11 @@ def side_margin(width: int) -> int:
 
 
 def italic_size(size: int) -> int:
-    """ASS ``Fontsize`` that draws Georgia italic at the same em as Arial Bold at ``size``.
+    """ASS ``Fontsize`` that draws the italic face at the same em as Arial Bold at ``size``.
 
-    Same em is how the retired internal kit set its italic caption (one font
-    size for both faces); cap heights then match within a few percent.
+    ``size`` itself while the italic face is the house face's italic; for
+    Georgia (:data:`ITALIC_FONT_NAME` set back) the same em, as the retired
+    internal kit set it.
     """
 
     return max(1, round(size * HOUSE_EM_PER_SIZE / ITALIC_EM_PER_SIZE))
@@ -365,7 +403,7 @@ class Cue:
     start: float
     end: float
     text: str
-    #: Set in Georgia italic (a voice heard, not seen).
+    #: Set in italic (a voice heard, not seen).
     italic: bool = False
     #: Bold only (:mod:`creation.caption_bold`): the whole chunk this cue belongs to ("" otherwise) ...
     chunk: str = ""
@@ -1596,7 +1634,7 @@ def build_line_cues(
 ) -> list[list[Cue]]:
     """Cues for every line on its anchor span, grouped per line (empty for a skipped line).
 
-    ``italic[i]`` sets line ``i``'s cues in Georgia italic; ``skip[i]`` leaves
+    ``italic[i]`` sets line ``i``'s cues in italic; ``skip[i]`` leaves
     line ``i`` uncaptioned (not English) while its span still bounds the hold
     of the line before it. Missing entries mean False. ``holds[i]`` is how
     long line ``i`` holds after its span (default 0.15 s). ``fixed_ends[i]``
@@ -1782,12 +1820,12 @@ _MEASURE_EM = 100
 
 @functools.cache
 def _measuring_font() -> Any:
-    """Arial Bold when this laptop has it, else the bundled Poppins Bold (wider: wraps a little early)."""
+    """Arial Bold when this laptop has it, else the bundled Liberation Sans Bold (the same widths)."""
 
     from PIL import ImageFont
 
     found = find_house_font().path
-    path = found if found is not None else FONTS_DIR / "Poppins-Bold.ttf"
+    path = found if found is not None else FONTS_DIR / SUBSTITUTE_FONT_FILES[0]
     return ImageFont.truetype(str(path), _MEASURE_EM)
 
 
@@ -1796,8 +1834,8 @@ def text_width(text: str, size: int) -> float:
 
     libass draws a ``Fontsize`` at :data:`HOUSE_EM_PER_SIZE` ems, so the width
     is measured at that em. A CJK character counts one em (a CJK face's full
-    width); the rest is measured in Arial Bold (or the bundled Poppins Bold,
-    which is wider, when Arial is missing).
+    width); the rest is measured in Arial Bold (or the bundled Liberation Sans
+    Bold, the same widths, when Arial is missing).
     """
 
     em = size * HOUSE_EM_PER_SIZE
@@ -1977,16 +2015,17 @@ def build_ass(
     platform: str | None = None,
     band: LetterboxBand | None = None,
     colour: str | None = None,
+    size_scale: float = 1.0,
 ) -> str:
     """Render the caption ASS for a frame of ``width`` x ``height``.
 
     The house style (runbook rule 1) is Arial Bold 64 on a 1920-high canvas,
     yellow, outline 5; every number is scaled to this frame by height
     (:func:`house_font_size`). Two styles: ``House`` (Arial Bold; ``Plain``
-    and white for ``style="plain"``) and ``Italic`` (Georgia italic, not
-    bold; same drawn size, colour, edge, shadow and place) for a cue with
-    ``italic``. The italic ``Fontsize`` is :func:`italic_size`, so both
-    faces draw at the same em.
+    and white for ``style="plain"``) and ``Italic`` (the house face's bold
+    italic, :data:`ITALIC_FONT_NAME`; same drawn size, colour, edge, shadow
+    and place) for a cue with ``italic``. The italic ``Fontsize`` is
+    :func:`italic_size`, so both draw at the same em.
 
     No cue draws an em or en dash: a cut-off ("Please—") shows "Please…",
     a dash between words a comma (:func:`creation.caption_dashes.caption_text`).
@@ -2015,6 +2054,10 @@ def build_ass(
         each cue placed with ``\\pos``); ``None`` is the house band.
     colour
         The text colour (``&HAABBGGRR``); ``None`` is the style's own.
+    size_scale
+        ``finish`` / ``caption --caption-scale``: the style's own size (and its
+        edge) times this, so a bigger caption is still wrapped and placed by
+        the kit (never a hand re-burn). 1 is the house size.
 
     Returns
     -------
@@ -2031,7 +2074,9 @@ def build_ass(
     if style == "bold" and band is None:
         from creation.caption_bold import build_bold_ass
 
-        return build_bold_ass(cues, width=width, height=height, platform=platform)
+        return build_bold_ass(
+            cues, width=width, height=height, platform=platform, size_scale=size_scale
+        )
     if style == "bold":
         style = "house"  # a letterbox band keeps its own layout
     if style not in ("house", "plain"):
@@ -2040,12 +2085,18 @@ def build_ass(
         )
     # No em or en dash on the picture (6 Oct 2026): every cue, after timing (creation.caption_dashes).
     cues = [replace(c, text=no_dash_text(c.text)) for c in cues]
-    scale = height / HOUSE_CANVAS_HEIGHT
-    size = house_font_size(height)
+    scale = height / HOUSE_CANVAS_HEIGHT * size_scale
+    size = max(8, round(house_font_size(height) * size_scale))
     margin_v = caption_margin_v(height)
     margin_x = side_margin(width)
     margin_l, margin_r = margin_x, margin_x
     if band is not None:
+        if size_scale != 1.0:
+            band = replace(
+                band,
+                size=max(8, round(band.size * size_scale)),
+                min_size=max(8, round(band.min_size * size_scale)),
+            )
         size = band.size
     outline = max(1, round(HOUSE_OUTLINE * scale))
     shadow = max(1, round(HOUSE_SHADOW * scale))
@@ -2066,7 +2117,7 @@ def build_ass(
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: {main},{FONT_NAME},{size},{colour},{colour},{tail},-1,0,0,0,{place}\n"
-        f"Style: Italic,{ITALIC_FONT_NAME},{italic_size(size)},{colour},{colour},{tail},0,-1,0,0,{place}\n"
+        f"Style: Italic,{ITALIC_FONT_NAME},{italic_size(size)},{colour},{colour},{tail},{ITALIC_BOLD_FLAG},-1,0,0,{place}\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -2116,7 +2167,7 @@ def find_ffmpeg() -> tuple[str, str]:
     )
 
 
-#: Where CoreText (libass's font provider on macOS) finds Georgia, after the bundled fonts dir.
+#: Where CoreText (libass's font provider on macOS) finds Arial and Georgia, after the bundled fonts dir.
 MAC_FONT_DIRS: tuple[Path, ...] = (
     Path("/System/Library/Fonts/Supplemental"),
     Path("/System/Library/Fonts"),
@@ -2146,10 +2197,19 @@ def system_font_dirs(platform: str) -> tuple[Path, ...]:
     return ()
 
 
-#: Georgia Italic's file name: macOS, then the Microsoft core fonts package on Linux.
-ITALIC_FONT_FILES: tuple[str, ...] = ("Georgia Italic.ttf", "georgiai.ttf")
-#: Georgia regular's file name (libass slants it when there is no italic face).
-REGULAR_FONT_FILES: tuple[str, ...] = ("Georgia.ttf", "georgia.ttf")
+#: The italic caption face's file name: Arial Bold Italic (macOS, then the Microsoft core fonts
+#: on Linux and Windows), or Georgia Italic when :data:`ITALIC_FONT_NAME` is set back to Georgia.
+ITALIC_FONT_FILES: tuple[str, ...] = (
+    ("Arial Bold Italic.ttf", "Arial_Bold_Italic.ttf", "arialbi.ttf")
+    if ITALIC_IS_HOUSE_FACE
+    else ("Georgia Italic.ttf", "georgiai.ttf")
+)
+#: The upright face libass slants when there is no italic file: Arial Bold, or Georgia.
+REGULAR_FONT_FILES: tuple[str, ...] = (
+    ("Arial Bold.ttf", "Arial_Bold.ttf", "arialbd.ttf")
+    if ITALIC_IS_HOUSE_FACE
+    else ("Georgia.ttf", "georgia.ttf")
+)
 GEORGIA_INSTALL_HINT = (
     "install Georgia: macOS ships it in /System/Library/Fonts/Supplemental "
     "(Font Book > File > Restore Standard Fonts brings it back); Linux: "
@@ -2200,16 +2260,16 @@ def fc_match(pattern: str) -> tuple[str, str, str] | None:
 
 @dataclass(frozen=True)
 class ItalicFont:
-    """Where the italic caption face (Georgia Italic) resolves on this machine.
+    """Where the italic caption face (Arial Bold Italic, :data:`ITALIC_FONT_FILES`) resolves here.
 
     Parameters
     ----------
     italic
-        The Georgia Italic file libass will draw with, or None.
+        The italic file libass will draw with, or None.
     regular
-        The Georgia regular file, or None (libass slants it when ``italic`` is None).
+        The upright file of the same face, or None (libass slants it when ``italic`` is None).
     fallback
-        The face libass would use instead when Georgia is missing, as fontconfig
+        The face libass would use instead when the face is missing, as fontconfig
         names it (``file``), or None when that cannot be told.
     """
 
@@ -2219,25 +2279,39 @@ class ItalicFont:
 
     @property
     def ok(self) -> bool:
-        """Georgia Italic itself is installed."""
+        """The italic face itself is installed."""
 
         return self.italic is not None
 
     def warning(self) -> str | None:
-        """The operator warning when captions will not be set in Georgia Italic, else None."""
+        """The operator warning when captions will not be set in the real italic face, else None."""
 
         if self.italic is not None:
             return None
+        face, hint = _italic_face_words()
         if self.regular is not None:
             return (
-                f"Georgia Italic not found (only {self.regular}); heard-not-seen captions "
-                f"will be Georgia slanted by libass, not the real italic. To fix, {GEORGIA_INSTALL_HINT}"
+                f"{face} not found (only {self.regular}); heard-not-seen captions "
+                f"will be slanted by libass, not the real italic. To fix, {hint}"
+            )
+        if ITALIC_IS_HOUSE_FACE:
+            return (
+                f"{face} not found; heard-not-seen captions are set in the bundled "
+                f"{SUBSTITUTE_FONT_NAME} Bold Italic, like every other caption line. To fix, {hint}"
             )
         instead = self.fallback or "whatever face libass falls back to"
         return (
-            f"Georgia not found; heard-not-seen captions will fall back to {instead}. "
-            f"To fix, {GEORGIA_INSTALL_HINT}"
+            f"{face} not found; heard-not-seen captions will fall back to {instead}. "
+            f"To fix, {hint}"
         )
+
+
+def _italic_face_words() -> tuple[str, str]:
+    """The italic caption face's name and install hint, as the operator reads them."""
+
+    if ITALIC_IS_HOUSE_FACE:
+        return f"{FONT_NAME} Bold Italic", ARIAL_INSTALL_HINT
+    return f"{ITALIC_FONT_NAME} Italic", GEORGIA_INSTALL_HINT
 
 
 def _first_file(dirs: Sequence[Path], names: Sequence[str]) -> Path | None:
@@ -2255,13 +2329,13 @@ def find_italic_font(
     font_dirs: Sequence[Path] | None = None,
     match: FcMatch | None = None,
 ) -> ItalicFont:
-    """Resolve Georgia Italic the way libass does when captions are burned.
+    """Resolve the italic caption face the way libass does when captions are burned.
 
     ``burn_ass`` passes the bundled fonts dir to libass, so that is searched
     first. After it, libass asks the system font provider: CoreText on macOS
     (the standard font folders, :data:`MAC_FONT_DIRS`), DirectWrite on Windows
     (:func:`windows_font_dirs`) and fontconfig on Linux
-    (``fc-match Georgia:italic``).
+    (``fc-match Arial:bold:italic``).
 
     Parameters
     ----------
@@ -2276,7 +2350,7 @@ def find_italic_font(
     Returns
     -------
     ItalicFont
-        What was found; ``warning()`` says what to do when it is not Georgia Italic.
+        What was found; ``warning()`` says what to do when it is not the italic face.
     """
 
     platform = platform or sys.platform
@@ -2287,23 +2361,27 @@ def find_italic_font(
     regular = _first_file(font_dirs, REGULAR_FONT_FILES)
     if italic is not None:
         return ItalicFont(italic, regular)
-    found = match(f"{ITALIC_FONT_NAME}:italic")
+    found = match(
+        f"{ITALIC_FONT_NAME}:bold:italic"
+        if ITALIC_IS_HOUSE_FACE
+        else f"{ITALIC_FONT_NAME}:italic"
+    )
     fallback: str | None = None
     if found is not None:
         family, style, file = found
-        is_georgia = ITALIC_FONT_NAME.lower() in family.lower()
+        is_face = ITALIC_FONT_NAME.lower() in family.lower().split(",")[0]
         # On macOS CoreText, not fontconfig, draws the caption: fontconfig only names the fallback.
-        if is_georgia and platform != "darwin":
+        if is_face and platform != "darwin":
             if "italic" in style.lower():
                 return ItalicFont(Path(file), regular)
             regular = regular or Path(file)
-        elif not is_georgia:
+        elif not is_face:
             fallback = f"{family} ({file})"
     return ItalicFont(None, regular, fallback)
 
 
 def italic_font_warning(cues: Sequence[Cue]) -> str:
-    """Warn (on stderr, and returned) when an italic cue will not be set in Georgia Italic.
+    """Warn (on stderr, and returned) when an italic cue will not be set in the italic face.
 
     Parameters
     ----------
@@ -2313,7 +2391,7 @@ def italic_font_warning(cues: Sequence[Cue]) -> str:
     Returns
     -------
     str
-        ``FONT: …`` warning, or ``""`` when every italic cue gets Georgia Italic.
+        ``FONT: …`` warning, or ``""`` when every italic cue gets the italic face.
     """
 
     if not any(cue.italic for cue in cues):
@@ -2365,10 +2443,13 @@ class HouseFont:
 
         if self.path is not None:
             return None
-        instead = self.fallback or "whatever face libass falls back to"
+        instead = (
+            f" (libass alone would have used {self.fallback})" if self.fallback else ""
+        )
         return (
-            f"Arial Bold not found; captions will fall back to {instead} (house style is "
-            f"Arial Bold). To fix, {ARIAL_INSTALL_HINT}"
+            f"Arial Bold not found{instead}; every caption line is set in the kit's bundled "
+            f"{SUBSTITUTE_FONT_NAME} Bold, Arial's metric twin and the face the app's captions use, "
+            f"never a mix of faces. To use Arial itself, {ARIAL_INSTALL_HINT}"
         )
 
 
@@ -2417,6 +2498,117 @@ def find_house_font(
     return HouseFont(None, f"{family} ({file})")
 
 
+@functools.cache
+def house_face_on_this_laptop() -> bool:
+    """True when Arial Bold resolves where libass looks for it (asked once per run)."""
+
+    return find_house_font().ok
+
+
+_FACE_STYLE = re.compile(
+    r"^(Style:[^,\n]*,)" + re.escape(FONT_NAME) + r"(?=,)", re.MULTILINE
+)
+_FACE_TAG = re.compile(r"\\fn" + re.escape(FONT_NAME) + r"(?=[\\}])")
+_substitute_said: list[bool] = []
+
+
+def one_face_ass(text: str) -> str:
+    """``text`` with every house-face name (styles and ``\\fn`` tags) set to the bundled twin.
+
+    Parameters
+    ----------
+    text
+        An ASS file's text.
+
+    Returns
+    -------
+    str
+        The same text with :data:`FONT_NAME` replaced by :data:`SUBSTITUTE_FONT_NAME`
+        wherever it names a face; nothing else changes.
+    """
+
+    text = _FACE_STYLE.sub(lambda m: m.group(1) + SUBSTITUTE_FONT_NAME, text)
+    return _FACE_TAG.sub(lambda m: "\\fn" + SUBSTITUTE_FONT_NAME, text)
+
+
+def ass_for_this_laptop(text: str, *, fonts_dir: Path = FONTS_DIR) -> str:
+    """ASS text to hand libass on this laptop: ``text``, or :func:`one_face_ass` when Arial is missing.
+
+    For a scratch file that is burned once and thrown away (the caption preview,
+    the reel cover). Same rule and same loud warning as :func:`burnable_ass`.
+    """
+
+    if house_face_on_this_laptop():
+        return text
+    with tempfile.TemporaryDirectory() as tmp:
+        probe = Path(tmp) / "probe.ass"
+        probe.write_text(text, encoding="utf-8")
+        burned, _ = burnable_ass(probe, fonts_dir=fonts_dir, house_face=False)
+        return burned.read_text(encoding="utf-8")
+
+
+def burnable_ass(
+    ass: Path, *, fonts_dir: Path = FONTS_DIR, house_face: bool | None = None
+) -> tuple[Path, Path | None]:
+    """The ASS file libass should burn so every line is drawn in ONE named face.
+
+    With Arial Bold on this laptop that is ``ass`` itself. Without it, libass
+    would quietly pick a fallback per style (one face for the house lines,
+    another for the italic ones: the mixed-font episode), so a copy naming the
+    kit's bundled :data:`SUBSTITUTE_FONT_NAME` (Arial's metric twin, the face
+    the app's captions use) is burned instead, with a loud ``WARNING FONT:``
+    once per run. The ``.ass`` on the desk keeps the house face's name.
+
+    Parameters
+    ----------
+    ass
+        The ASS file about to be burned.
+    fonts_dir
+        The folder handed to libass as ``fontsdir`` (the kit's bundled fonts).
+    house_face
+        Whether Arial Bold is installed (default :func:`house_face_on_this_laptop`); tests pass one.
+
+    Returns
+    -------
+    tuple[Path, Path | None]
+        The file to burn, and the temporary copy to delete afterwards (None when it is ``ass``).
+
+    Raises
+    ------
+    RuntimeError
+        Arial Bold is missing and so is the bundled face: nothing is burned
+        rather than captions in whatever face libass finds.
+    """
+
+    if house_face is None:
+        house_face = house_face_on_this_laptop()
+    if house_face:
+        return ass, None
+    text = ass.read_text(encoding="utf-8")
+    swapped = one_face_ass(text)
+    if swapped == text:
+        return ass, None
+    missing = [
+        name for name in SUBSTITUTE_FONT_FILES if not (fonts_dir / name).is_file()
+    ]
+    if missing:
+        raise RuntimeError(
+            f"FONT: Arial Bold is not on this laptop and the kit's own {SUBSTITUTE_FONT_NAME} "
+            f"({', '.join(missing)}) is missing from {fonts_dir}, so nothing was burned rather than "
+            f"captions in whatever face libass finds. Restore assets/fonts (git pull), or {ARIAL_INSTALL_HINT}"
+        )
+    copy = ass.with_name(f"{ass.stem}.{SUBSTITUTE_FONT_NAME.replace(' ', '')}.burn.ass")
+    copy.write_text(swapped, encoding="utf-8")
+    if not _substitute_said:
+        _substitute_said.append(True)
+        said = find_house_font().warning() or (
+            f"Arial Bold is not available to libass here; every caption line is set in the kit's "
+            f"bundled {SUBSTITUTE_FONT_NAME} Bold, never a mix of faces. To use Arial itself, {ARIAL_INSTALL_HINT}"
+        )
+        print(f"WARNING FONT: {said}", file=sys.stderr)
+    return copy, copy
+
+
 def house_font_warning(cues: Sequence[Cue]) -> str:
     """Warn (on stderr, and returned) when the house cues will not be set in Arial Bold.
 
@@ -2438,6 +2630,7 @@ def house_font_warning(cues: Sequence[Cue]) -> str:
         return ""
     warning = f"FONT: {problem}"
     print(f"WARNING {warning}", file=sys.stderr)
+    _substitute_said.append(True)  # burnable_ass need not say it again this run
     return warning
 
 
@@ -2507,6 +2700,24 @@ def burn_ass(
     def esc(p: Path) -> str:
         return str(p).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
 
+    # One named face for every line (Sweet Racket ep 5): the bundled twin when Arial is missing.
+    ass, scratch = burnable_ass(ass, fonts_dir=fonts_dir)
+    try:
+        _burn(ffmpeg, take, ass, out, esc=esc, fonts_dir=fonts_dir)
+    finally:
+        if scratch is not None:
+            scratch.unlink(missing_ok=True)
+
+
+def _burn(
+    ffmpeg: str,
+    take: Path,
+    ass: Path,
+    out: Path,
+    *,
+    esc: Callable[[Path], str],
+    fonts_dir: Path,
+) -> None:
     result = subprocess.run(
         [
             ffmpeg,
@@ -2563,11 +2774,11 @@ class CaptionResult:
     lines: tuple[str, ...]
     #: True when each line was shown whole (show spoken in Japanese or Korean), False for word flicker.
     whole_lines: bool = False
-    #: Per line (same order as ``lines``): set in Georgia italic (heard, not seen).
+    #: Per line (same order as ``lines``): set in italic (heard, not seen).
     italic: tuple[bool, ...] = ()
     #: One ``NOT ENGLISH: …`` warning per line left uncaptioned because it is not English.
     not_english: tuple[str, ...] = ()
-    #: ``FONT: …`` when an italic line falls back from Georgia Italic (also printed on stderr), else "".
+    #: ``FONT: …`` when a line falls back from the house face (also printed on stderr), else "".
     font_warning: str = ""
     #: Per line: what timed it (``words``, ``speech``, ``manual``, or a mix; see :class:`LineTiming`).
     methods: tuple[str, ...] = ()
@@ -2691,6 +2902,7 @@ def caption_take(
     italic_overrides: Mapping[str, bool] | None = None,
     line_spans_after_words: bool = False,
     voice_floors: Mapping[str, float] | None = None,
+    caption_scale: float = 1.0,
 ) -> CaptionResult:
     """Caption the newest raw take on a desk episode.
 
@@ -2724,7 +2936,7 @@ def caption_take(
         inner-voice lines (a character's thoughts), each with the span its dry
         line plays. They follow the script lines in the result, are drawn like
         them (flicker, or whole lines on a show not spoken in English; heard, not
-        seen, so Georgia italic when ``italic``) and are left uncaptioned with
+        seen, so italic when ``italic``) and are left uncaptioned with
         ``NOT ENGLISH`` when not English. Their method is ``laid``.
     take_index
         The take ``take`` is (``t2`` is 2): only the lines of the beats that take
@@ -2756,7 +2968,7 @@ def caption_take(
         plays. One whose words are one of the take's script lines is that
         line (a replacement read): it is captioned once, as the script line,
         timed on the take. Any other (narration, a line not in the script) is
-        captioned where it is laid, like ``fixed_lines``, in Georgia italic
+        captioned where it is laid, like ``fixed_lines``, in italic
         when ``italic``, and its window is left out of the take's speech
         stretches so the script lines stay on their own speech.
     layout
@@ -2770,6 +2982,12 @@ def caption_take(
         ``line_id`` to italic or not, decided by the caller from what the take
         draws (a stale ``off_screen`` flag on a speaker the take shows). Lines
         not named keep the spine's flag.
+    caption_scale
+        ``--caption-scale``: the style's size times this
+        (:data:`CAPTION_SCALE_RANGE`), wrapped and placed by the kit, every
+        line in the file (dialogue and laid lines alike). 1 is the house size:
+        45 on a 1344-high take IS the house 64 on 1920, so a bigger caption is
+        a choice, never a fix.
 
     Returns
     -------
@@ -2779,6 +2997,7 @@ def caption_take(
     """
 
     style = canonical_caption_style(style)
+    check_caption_scale(caption_scale)
     if style not in ("bold", "house", "plain"):
         raise ValueError(
             f"caption style {style!r} burns no captions; use bold, subtle (house) or plain "
@@ -2957,13 +3176,15 @@ def caption_take(
 
         text = build_ass(
             cues, width=width, height=height, style=style,
-            band=letterbox_band(width, height),
+            band=letterbox_band(width, height), size_scale=caption_scale,
             colour=caption_colour_code(caption_colour)
             if caption_colour or style != "plain"
             else None,
         )  # fmt: skip
     else:
-        text = build_ass(cues, width=width, height=height, style=style)
+        text = build_ass(
+            cues, width=width, height=height, style=style, size_scale=caption_scale
+        )
     ass.write_text(text, encoding="utf-8")
     video = next_versioned_path(takes, stem or f"{base}-captioned", ".mp4")
     font_warning = "; ".join(

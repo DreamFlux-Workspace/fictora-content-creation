@@ -30,7 +30,7 @@ cp .env.example .env
 # Set FICTORA_DRAMA_GENERATION_SERVICE_TOKEN in .env (never commit it)
 
 uv sync
-uv run fictora-produce setup-check   # token accepted, ffmpeg + libass + filters, Georgia Italic (⚠ only), Python, uv; exit 1 on any ✗
+uv run fictora-produce setup-check   # token accepted, ffmpeg + libass + filters, Arial Bold / Bold Italic (⚠ only), Python, uv; exit 1 on any ✗
 ```
 
 Open the repo in **Cursor**. A new chat fast-forwards `main`. You do not run `git pull`. For production work, the agent should read `.cursor/skills/episode-production/SKILL.md` (Claude Code: `.claude/skills/episode-production/SKILL.md`).
