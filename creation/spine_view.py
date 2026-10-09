@@ -1797,6 +1797,59 @@ def _clip(text: str, size: int = 60) -> str:
     return text if len(text) <= size else text[: size - 1] + "…"
 
 
+def behind_script_edit_lines(
+    frames: Sequence[Mapping[str, Any]], *, episode: int, set_index: int, drawn: bool
+) -> list[str]:
+    """Say when a take's rows were written before a script edit, and what happens to them.
+
+    The server marks every frame of a take whose script changed after its rows
+    were written (``edited_beat_ids`` for staging, ``wording_edited_beat_ids``
+    for a line's words only). Before 9 Oct 2026 the shot list printed those
+    rows as if they were current, so operators hand-edited them to match the
+    script before paying for boards (Gallery Heiress: 12 frame edits on one
+    episode, L-20261008-19). The rows above are what the server rewrites, not
+    what it draws.
+
+    Parameters
+    ----------
+    frames
+        The take's frames.
+    episode
+        Episode ordinal.
+    set_index
+        Take index.
+    drawn
+        Whether the take already has a board.
+
+    Returns
+    -------
+    list[str]
+        One line, or none when the take is current.
+    """
+
+    staging = any(frame.get("edited_beat_ids") for frame in frames)
+    wording = any(frame.get("wording_edited_beat_ids") for frame in frames)
+    if not staging and not wording:
+        return []
+    if not drawn:
+        return [
+            "  ** the script changed after these rows were written. They are rewritten from the "
+            "script as it is now before this board is first drawn (no extra charge), so the rows "
+            "below are not what will be drawn: don't hand-edit them to match."
+        ]
+    if staging:
+        return [
+            "  !! the script changed after this board was drawn. "
+            f"`redraw-board --episode {episode} --take t{set_index}` rewrites the rows from the "
+            "script first, then draws."
+        ]
+    return [
+        "  ** only a line's words changed after this board was drawn: the board doesn't show "
+        "the words, so approve it again to film it as it is, or redraw it if the new line changes "
+        "what the take should show."
+    ]
+
+
 def shot_list_lines(
     spine: Mapping[str, Any], *, episode: int, sets: Sequence[int] | None = None
 ) -> list[str]:
@@ -1824,11 +1877,15 @@ def shot_list_lines(
     cast_names = spine_cast_names(spine)
     boards = frames_by_set(spine, episode=episode)
     planned = beats_by_take(spine, episode=episode, take_count=max(boards, default=1))
+    drawn = {index for index, _ in board_assets(spine, episode=episode)}
     for set_index, frames in sorted(boards.items()):
         if sets is not None and set_index not in sets:
             continue
         rows = shot_rows(frames)
         lines.append(f"ep{episode:02d} t{set_index} board, row by row:")
+        lines += behind_script_edit_lines(
+            frames, episode=episode, set_index=set_index, drawn=set_index in drawn
+        )
         take_beats = planned[set_index - 1] if set_index <= len(planned) else []
         for beat in take_beats:
             if beat.get("shot_plan"):
@@ -1883,6 +1940,7 @@ __all__ = [
     "SAFE_ZONE_BOARD_CHECK",
     "ShotRow",
     "beats_by_take",
+    "behind_script_edit_lines",
     "board_assets",
     "board_inputs",
     "covered_placement",
