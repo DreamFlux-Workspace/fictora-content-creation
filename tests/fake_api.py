@@ -288,6 +288,9 @@ class FakeApi:
     ) -> dict[str, Any]:
         """Return the job's terminal payload."""
         self.polled.append((job_id, video_route))
+        if video_route and job_id not in self.jobs:
+            # Server captions are on by default, so a film waits for the episode the server finished.
+            return {"job_id": job_id, "status": "completed"}
         return copy.deepcopy(self.jobs[job_id])
 
     def posted(self, path: str) -> list[dict[str, Any] | None]:

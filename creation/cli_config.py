@@ -59,12 +59,14 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
         "at a time, one yellow word; a new show's default), subtle (yellow Arial Bold word flicker; house is "
         "its older name), plain (white whole lines) or none (no captions). Unset: the look approval shows "
         "both on a still and saves bold unless the human picks subtle. finish/caption/reel --caption-style "
-        "overrides it per run. Sent to the API as its caption_style only with --api-captions.",
+        "overrides it per run. The server burns its own house captions; none turns them off there too.",
     )
     parser.add_argument(
         "--api-captions",
-        action="store_true",
-        help="Burn captions on the Drama API (slow post-production). Default: raw clip only.",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="The server burns captions on the episode it finishes (on by default; the raw take still "
+        "comes back for finish). --no-api-captions: raw clip only.",
     )
     parser.add_argument(
         "--fallback-estimate-usd",
@@ -103,12 +105,10 @@ def config_from_args(args: argparse.Namespace) -> ProductionConfig:
     """Build ``ProductionConfig`` from parsed CLI namespace."""
 
     style = str(args.caption_style) if args.caption_style else None
-    if args.api_captions and style is None:
-        style = "house"  # the server's own house captions, as before
-    if args.api_captions and style in ("bold", "subtle", "plain", "none"):
+    if args.api_captions is True and style == "none":
         raise ValueError(
-            f"--caption-style {style} is a local caption style: the server does not burn it. "
-            "Drop --api-captions (captions are burned locally by finish), or name a server caption style"
+            "--caption-style none asks for no captions, and --api-captions asks the server to burn them. "
+            "Drop one of the two"
         )
     return ProductionConfig(
         draft_episode_count=int(args.draft_episodes),
@@ -124,7 +124,7 @@ def config_from_args(args: argparse.Namespace) -> ProductionConfig:
             str(args.voice_mode) if getattr(args, "voice_mode", None) else None
         ),
         caption_style=style,
-        api_captions=bool(args.api_captions),
+        api_captions=args.api_captions is not False,
         fallback_estimate_usd=(
             float(args.fallback_estimate_usd)
             if args.fallback_estimate_usd is not None
@@ -161,10 +161,10 @@ def merge_config_from_args(
         merged.delivery_format = fresh.delivery_format
     if getattr(args, "clip_seconds", None) is not None or format_changed:
         merged.clip_duration_seconds = fresh.clip_duration_seconds
-    if getattr(args, "caption_style", None) or getattr(args, "api_captions", False):
+    if getattr(args, "caption_style", None):
         merged.caption_style = fresh.caption_style
-    if getattr(args, "api_captions", False):
-        merged.api_captions = True
+    if getattr(args, "api_captions", None) is not None:
+        merged.api_captions = bool(args.api_captions)
     if getattr(args, "fallback_estimate_usd", None) is not None:
         merged.fallback_estimate_usd = fresh.fallback_estimate_usd
     return merged

@@ -105,7 +105,12 @@ from creation.prices import (
     take_usd,
     video_usd_per_second,
 )
-from creation.production_config import load_production_config, save_production_config
+from creation.production_config import (
+    SERVER_HOUSE_CAPTION_STYLE,
+    load_production_config,
+    save_production_config,
+    server_caption_style,
+)
 from creation.production_state import (
     ProductionState,
     api_dir_for_episode,
@@ -2371,6 +2376,7 @@ def _film(
             print(f"[film] {stages.SINGLE_FRAME_START_OFF_NOTE}", file=sys.stderr)
         state.video_enrolled_suffix = state.video_idempotency_suffix
         save_production(desk, state)
+        server_style = server_caption_style(cfg)
         try:
             result = stages.enrol_video(
                 run,
@@ -2378,8 +2384,8 @@ def _film(
                 prompt=state.prompt,
                 preset_id=state.preset_id,
                 preset_version=state.preset_version,
-                caption_style=cfg.caption_style,
-                api_captions=cfg.api_captions,
+                caption_style=server_style or SERVER_HOUSE_CAPTION_STYLE,
+                api_captions=server_style is not None,
                 video_lane=state.video_lane,
                 clip_duration_seconds=cfg.clip_duration_seconds,
                 cut_tempo=cfg.cut_tempo,

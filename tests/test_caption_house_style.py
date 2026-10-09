@@ -182,19 +182,43 @@ def _config_args(*argv: str) -> argparse.Namespace:
     return parser.parse_args(list(argv))
 
 
-def test_desk_config_takes_plain_and_none_and_refuses_them_for_server_captions() -> (
-    None
-):
-    assert (
-        config_from_args(_config_args("--caption-style", "plain")).caption_style
-        == "plain"
-    )
-    assert (
-        config_from_args(_config_args("--caption-style", "none")).caption_style
-        == "none"
-    )
-    with pytest.raises(ValueError, match="local caption style"):
+def test_desk_config_takes_plain_and_none_and_none_turns_server_captions_off() -> None:
+    from creation.production_config import server_caption_style
+
+    plain = config_from_args(_config_args("--caption-style", "plain"))
+    assert plain.caption_style == "plain"
+    assert server_caption_style(plain) == "house"
+    silent = config_from_args(_config_args("--caption-style", "none"))
+    assert silent.caption_style == "none"
+    assert server_caption_style(silent) is None
+    with pytest.raises(ValueError, match="no captions"):
         config_from_args(_config_args("--caption-style", "none", "--api-captions"))
+
+
+def test_server_captions_are_on_by_default_and_off_with_the_flag() -> None:
+    from creation.production_config import ProductionConfig, server_caption_style
+
+    assert config_from_args(_config_args()).api_captions is True
+    off = config_from_args(_config_args("--no-api-captions"))
+    assert off.api_captions is False
+    assert server_caption_style(off) is None
+    assert server_caption_style(ProductionConfig(caption_style="viral_karaoke")) == (
+        "viral_karaoke"
+    )
+
+
+def test_bind_keeps_the_saved_server_captions_unless_a_flag_is_given() -> None:
+    from creation.cli_config import merge_config_from_args
+    from creation.production_config import ProductionConfig
+
+    saved = ProductionConfig(api_captions=False, caption_style="subtle")
+    assert merge_config_from_args(saved, _config_args()).api_captions is False
+    assert merge_config_from_args(saved, _config_args("--api-captions")).api_captions
+    kept = merge_config_from_args(
+        ProductionConfig(caption_style="subtle"), _config_args("--no-api-captions")
+    )
+    assert kept.api_captions is False
+    assert kept.caption_style == "subtle"
 
 
 @pytest.mark.parametrize("command", ["finish", "caption"])

@@ -362,17 +362,18 @@ def test_caption_takes_subtle_and_none_burns_nothing(
 
 def test_start_leaves_the_style_unchosen_and_server_captions_keep_house() -> None:
     from creation.cli_config import add_production_config_args, config_from_args
+    from creation.production_config import server_caption_style
 
     parser = argparse.ArgumentParser()
     add_production_config_args(parser)
-    assert config_from_args(parser.parse_args([])).caption_style is None
-    assert (
-        config_from_args(parser.parse_args(["--api-captions"])).caption_style == "house"
+    unchosen = config_from_args(parser.parse_args([]))
+    assert unchosen.caption_style is None
+    assert server_caption_style(unchosen) == "house"
+    bold = config_from_args(
+        parser.parse_args(["--caption-style", "bold", "--api-captions"])
     )
-    with pytest.raises(ValueError, match="local caption style"):
-        config_from_args(
-            parser.parse_args(["--caption-style", "bold", "--api-captions"])
-        )
+    assert bold.caption_style == "bold"
+    assert server_caption_style(bold) == "house"
 
 
 # --- asked once at the look approval -------------------------------------------------------------

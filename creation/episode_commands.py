@@ -153,7 +153,11 @@ from creation.orchestrate import (
     sync_spine_lines,
 )
 from creation.prices import STILL_USD, server_lane
-from creation.production_config import load_production_config
+from creation.production_config import (
+    SERVER_HOUSE_CAPTION_STYLE,
+    load_production_config,
+    server_caption_style,
+)
 from creation.production_state import (
     ProductionState,
     load_production,
@@ -7121,14 +7125,15 @@ def _run_film(
         print(stages.SINGLE_FRAME_START_NOTE, file=out)
     elif trial is False:
         print(stages.SINGLE_FRAME_START_OFF_NOTE, file=out)
+    server_style = server_caption_style(cfg)
     body = stages.video_request_body(
         run,
         spine=spine,
         prompt=state.prompt,
         preset_id=state.preset_id,
         preset_version=state.preset_version,
-        caption_style=cfg.caption_style,
-        api_captions=False,
+        caption_style=server_style or SERVER_HOUSE_CAPTION_STYLE,
+        api_captions=server_style is not None,
         video_lane=state.video_lane,
         clip_duration_seconds=cfg.clip_duration_seconds,
         cut_tempo=cfg.cut_tempo,
