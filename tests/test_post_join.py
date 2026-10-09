@@ -6,6 +6,7 @@ import functools
 import hashlib
 import io
 import json
+import math
 import subprocess
 from pathlib import Path
 
@@ -636,11 +637,60 @@ def test_part_speech_reads_saved_words_then_take_facts_and_skips_moved_timelines
     windows, note = join_module.part_speech(
         join_desk, part("t1", ({"op": "trim"},)), 5.0
     )
-    assert windows == [] and "edited after finish: trim" in note
+    assert windows == [] and "edited after finish: trim" in note, "a trim with no cut cannot be re-timed"
     windows, _ = join_module.part_speech(
         join_desk, part("t1", ({"op": "soften"},)), 5.0
     )
     assert windows == [(0.2, 0.6)], "soften keeps the sound timeline"
+
+
+def test_part_speech_follows_the_words_through_a_trim_and_a_tempo_after_finish(
+    join_desk: Path,
+) -> None:
+    """Hana L-20261008-10: a trim or tempo on a finished take no longer drops its speech from the seam check."""
+
+    from creation.post.finish_record import FinishRecord
+
+    def part(edits: tuple[dict, ...]) -> join_module.JoinPart:
+        record = FinishRecord(episode=1, take_id="t1", complete=True, pre_bed="a", master="b",
+                              final="c", bed=None, bed_db=-16.5, duck_db=None, edits=edits)  # fmt: skip
+        return join_module.JoinPart(1, "t1", Path("p.mp4"), Path("q.mp4"), record)
+
+    takes = join_desk / "ep01" / "takes"
+    takes.mkdir(parents=True, exist_ok=True)
+    (takes / "take-ep01-t1-words-v1.json").write_text(
+        json.dumps(
+            {
+                "words": [
+                    {"word": "hi", "start": 0.2, "end": 0.6},
+                    {"word": "gone", "start": 2.1, "end": 2.4},
+                    {"word": "late", "start": 6.0, "end": 6.5},
+                ]
+            }
+        )
+    )
+    trim = {"op": "trim", "cut": [2.0, 3.0], "frames": [48, 72], "fps": 24.0}
+    windows, note = join_module.part_speech(join_desk, part((trim,)), 10.0)
+    assert windows == [(0.2, 0.6), (5.0, 5.5)], "the word in the cut goes; the later one moves 1 s earlier"
+    assert "through trim" in note and "edited after finish" not in note
+
+    windows, note = join_module.part_speech(
+        join_desk, part((trim, {"op": "tempo", "factor": 0.8})), 10.0
+    )
+    assert windows == [(0.25, 0.75), (6.25, 6.875)], "a whole-take tempo divides every time by the factor"
+    assert "through tempo" in note
+
+    windows, _ = join_module.part_speech(
+        join_desk, part(({"op": "tempo", "factor": 2.0, "from": 1.0, "to": 3.0},)), 10.0
+    )
+    assert windows == [(0.2, 0.6), (1.55, 1.7), (5.0, 5.5)], "a windowed tempo moves only what is in and after it"
+
+    windows, _ = join_module.part_speech(
+        join_desk, part(({"op": "handles", "start_s": 0.5, "end_s": 7.0}, trim)), 10.0
+    )
+    assert windows == [(0.0, 0.1), (1.6, 1.9), (4.5, 5.0)], (
+        "handles first (minus 0.5 s), then the trim on that file"
+    )
 
 
 @needs_ffmpeg
@@ -738,3 +788,82 @@ def test_join_cli_passes_the_gain_match_choice(
     for flag in ([], ["--gain-match"], ["--no-gain-match"]):
         main(["join", "--desk", str(tmp_path), "--episode", "1", "--json", *flag])
     assert seen == [None, True, False]
+
+
+# --- episode seams in a series cut are levelled (Noodle24 L-20260930-12) ---------------------------
+
+
+def _tone(seconds: float, amplitude: float) -> np.ndarray:
+    t = np.arange(int(round(seconds * 48000))) / 48000
+    wave = amplitude * np.sin(2 * np.pi * 440 * t)
+    return np.stack([wave, wave], axis=1)
+
+
+def _part(episode: int, take_id: str) -> join_module.JoinPart:
+    from creation.post.finish_record import FinishRecord
+
+    record = FinishRecord(episode=episode, take_id=take_id, complete=True, pre_bed="a", master="b",
+                          final="c", bed=None, bed_db=-16.5, duck_db=None)  # fmt: skip
+    return join_module.JoinPart(episode, take_id, Path(f"{episode}{take_id}.mp4"), Path(f"{episode}{take_id}.wav"),
+                                record)  # fmt: skip
+
+
+def _db(sound: np.ndarray, start: float, end: float) -> float:
+    chunk = sound[int(start * 48000) : int(end * 48000), 0]
+    return 20 * math.log10(float(np.sqrt(np.mean(chunk**2))))
+
+
+def test_an_episode_seam_is_levelled_and_a_take_seam_is_not(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A quiet episode ending into a louder opening no longer steps 8 dB; the bodies keep their level."""
+
+    sounds = {
+        "1t1.wav": _tone(8.0, 0.1),
+        "2t1.wav": _tone(8.0, 0.25),  # +8.0 dB over ep01's end
+        "2t2.wav": _tone(8.0, 0.1),  # same episode: a take seam, never ridden
+    }
+    monkeypatch.setattr(join_module, "decode_stereo", lambda path: sounds[Path(path).name])
+    parts = [_part(1, "t1"), _part(2, "t1"), _part(2, "t2")]
+    rides: list[join_module.SeamRide] = []
+
+    joined = join_module.join_sound(parts, [8.0, 8.0, 8.0], [0.0, 0.0, 0.0], [0.25, 0.0], rides_out=rides)
+
+    assert [r.index for r in rides] == [0], "only the episode seam is levelled"
+    assert rides[0].step_db == pytest.approx(8.0, abs=0.1)
+    assert rides[0].tail_db == pytest.approx(4.0, abs=0.1) and rides[0].head_db == pytest.approx(-4.0, abs=0.1)
+    seam = 8.0 - 0.125
+    step = _db(joined, seam + 0.3, seam + 2.0) - _db(joined, seam - 2.0, seam - 0.3)
+    assert abs(step) < 1.0, f"the episode seam still steps {step:+.1f} dB"
+    # The bodies away from the seam keep their own level.
+    assert _db(joined, 1.0, 3.0) == pytest.approx(_db(sounds["1t1.wav"], 1.0, 3.0), abs=0.05)
+    assert _db(joined, 12.5, 15.0) == pytest.approx(_db(sounds["2t1.wav"], 1.0, 3.0), abs=0.05)
+    assert "levelled" in rides[0].text(parts) and "ep01 t1" in rides[0].text(parts)
+
+
+def test_an_episode_seam_levels_at_most_the_cap_so_a_real_loud_seam_still_shows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sounds = {"1t1.wav": _tone(8.0, 0.01), "2t1.wav": _tone(8.0, 0.3)}  # +29.5 dB
+    monkeypatch.setattr(join_module, "decode_stereo", lambda path: sounds[Path(path).name])
+    parts = [_part(1, "t1"), _part(2, "t1")]
+    rides: list[join_module.SeamRide] = []
+
+    joined = join_module.join_sound(parts, [8.0, 8.0], [0.0, 0.0], [0.0], rides_out=rides)
+
+    assert rides[0].tail_db - rides[0].head_db == pytest.approx(join_module.EPISODE_SEAM_LEVEL_MAX_DB)
+    step = _db(joined, 8.3, 10.0) - _db(joined, 6.0, 7.7)
+    assert step > join_module.SEAM_STEP_DB, "a seam the cap cannot reach still steps (and join stops)"
+    assert "left" in rides[0].text(parts)
+
+
+@needs_ffmpeg
+def test_a_series_cut_with_a_quiet_ending_into_a_louder_opening_is_marked(join_desk: Path) -> None:
+    for take_id in ("t1", "t2"):
+        finished_take(join_desk, 1, take_id, seconds=4.0, tone=0.1)
+        finished_take(join_desk, 2, take_id, seconds=4.0, tone=0.25)
+    noise_bed(join_desk)
+
+    result = run_join(join_desk, episodes=(1, 2), gain_match=False, seam_fix=False, stream=io.StringIO())
+
+    assert result.complete and result.marked is not None, result.notes
+    assert all(abs(step) <= join_module.SEAM_STEP_DB for step in result.seam_steps_db)
+    assert any("episode seam ep01 t2 | ep02 t1" in note for note in result.notes)
