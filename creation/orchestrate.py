@@ -1388,9 +1388,9 @@ def run_step(
         Prompt function for the narrator question, or ``None`` when nobody
         can answer.
     single_frame_start
-        ``--single-frame-start`` (kept for compatibility: the single-picture
-        opening is the server's default since 8 Oct 2026, so on a new story it
-        changes nothing): sends ``single_frame_start: true``.
+        ``--single-frame-start`` (tests only: the single-picture opening is off
+        by default since 9 Oct 2026, fictora-drama #694): sends
+        ``single_frame_start: true``.
     no_single_frame_start
         ``--no-single-frame-start``: this film opens each take on the
         storyboard (``single_frame_start: false``). Either choice is taken with
@@ -2345,7 +2345,7 @@ def _film(
             # job is on the desk to pick up. Never send it again with another body.
             raise RuntimeError(stages.REFERENCE_MODE_REMOVED_RESUME)
         # Only a key the operator chose a flag for (kept across a resume); no flag sends no
-        # field and the server's default opening applies (single picture, 8 Oct 2026).
+        # field and the server's default opening applies (the storyboard since 9 Oct 2026, #694).
         trial: bool | None = None
         if key in state.single_frame_start_keys:
             trial = True

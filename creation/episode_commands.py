@@ -6969,10 +6969,9 @@ def run_film(
     out
         Text stream.
     single_frame_start
-        ``--single-frame-start``: send ``single_frame_start: true``. Kept for
-        compatibility: the single-picture opening is the server's default
-        since 8 Oct 2026 (new stories; a continuing series from its next
-        unwritten episode), so on a new story it changes nothing.
+        ``--single-frame-start``: send ``single_frame_start: true``, for tests
+        only: the single-picture opening is off by default again since 9 Oct
+        2026 (fictora-drama #694), so this turns it on for this one film.
     no_single_frame_start
         ``--no-single-frame-start``: send ``single_frame_start: false``, so
         this film opens each take on the storyboard. Either choice is recorded
@@ -8168,15 +8167,15 @@ def add_episode_parsers(
     opening.add_argument(
         "--single-frame-start",
         action="store_true",
-        help="Kept for compatibility: each take opens on a single full picture, which is already the "
-        "server's default (founder, 8 Oct 2026; a continuing series from its next unwritten episode). "
+        help="Tests only: open each take on a single full picture instead of the storyboard (off by "
+        "default since 9 Oct 2026, fictora-drama #694: it changed continuing shows' art style). "
         "Goes with --confirm-spend; a resume keeps what the film was first sent with.",
     )
     opening.add_argument(
         "--no-single-frame-start",
         action="store_true",
-        help="This film only (operator): open each take on the storyboard instead of the single-picture "
-        "default. Goes with --confirm-spend; a resume keeps what the film was first sent with.",
+        help="This film only (operator): open each take on the storyboard, said explicitly (the same as "
+        "no flag since 9 Oct 2026). Goes with --confirm-spend; a resume keeps what the film was first sent with.",
     )
 
     collect = sub.add_parser(

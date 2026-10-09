@@ -1,10 +1,10 @@
 """``--single-frame-start`` / ``--no-single-frame-start`` on ``film`` and ``step`` (fictora-drama #658).
 
-Since 8 Oct 2026 the single-picture opening is the server's default (founder,
-option B), so with no flag the film body is exactly as before and carries no
-field. ``--single-frame-start`` is kept for compatibility and sends ``true``;
-``--no-single-frame-start`` sends ``false`` (this film opens on the
-storyboard). Either choice is kept per film key so a resume sends the same
+Since 9 Oct 2026 the single-picture opening is off by default again
+(fictora-drama #694), so with no flag the film body is exactly as before and
+carries no field, and the server opens on the storyboard.
+``--single-frame-start`` sends ``true`` (tests only);
+``--no-single-frame-start`` sends ``false`` (the storyboard, said explicitly). Either choice is kept per film key so a resume sends the same
 body; a server refusal stops with a plain message and nothing charged.
 """
 
@@ -652,3 +652,47 @@ def test_an_old_production_file_loads_and_keeps_its_bytes(desk: Path) -> None:
     assert state.single_frame_start_off_keys == []
     save_production(desk, state)
     assert path.read_text(encoding="utf-8") == before
+
+
+# --- the words (9 Oct 2026, fictora-drama #694: off by default again) -------------------------------
+
+
+def _help(capsys: pytest.CaptureFixture[str], command: str) -> str:
+    from creation.cli_produce import main as produce_main
+
+    with pytest.raises(SystemExit):
+        produce_main([command, "--help"])
+    return capsys.readouterr().out
+
+
+def test_no_help_or_skill_text_calls_the_single_picture_opening_the_default(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Kit #183's wording said the single picture was the server default; #694 turned it off."""
+
+    root = Path(__file__).resolve().parents[1]
+    texts = {
+        str(path.relative_to(root)): path.read_text(encoding="utf-8")
+        for path in (
+            root / ".cursor/skills/episode-production/reference.md",
+            root / ".claude/skills/episode-production/reference.md",
+            root / "docs/content-ops/backlog.md",
+        )
+    }
+    texts["film --help"] = _help(capsys, "film")
+    texts["step --help"] = _help(capsys, "step")
+
+    stale = (
+        "is the default (changed 2026-10-08)",
+        "already the server's default",
+        "single-picture default",
+    )
+    for name, text in texts.items():
+        flat = " ".join(text.split())
+        for phrase in stale:
+            assert phrase not in flat, f"{name} still says {phrase!r}"
+    for command in ("film --help", "step --help"):
+        assert "Tests only" in " ".join(texts[command].split()), texts[command]
+    skill = " ".join(texts[".cursor/skills/episode-production/reference.md"].split())
+    assert "OFF by default again" in skill and "tests only" in skill
+    assert stages.SINGLE_FRAME_START_OFF_NOTE == "Opening each take on the storyboard (--no-single-frame-start)"
