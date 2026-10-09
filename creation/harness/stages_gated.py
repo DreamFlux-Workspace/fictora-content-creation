@@ -881,7 +881,9 @@ SINGLE_FRAME_START_NOTE = (
 )
 
 #: Printed when a film is sent with ``--no-single-frame-start`` (this film only).
-SINGLE_FRAME_START_OFF_NOTE = "Opening each take on the storyboard (--no-single-frame-start)"
+SINGLE_FRAME_START_OFF_NOTE = (
+    "Opening each take on the storyboard (--no-single-frame-start)"
+)
 
 #: The plain stop when the server will not take an explicit opening choice (operator only).
 SINGLE_FRAME_START_REFUSED = (

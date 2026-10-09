@@ -695,4 +695,7 @@ def test_no_help_or_skill_text_calls_the_single_picture_opening_the_default(
         assert "Tests only" in " ".join(texts[command].split()), texts[command]
     skill = " ".join(texts[".cursor/skills/episode-production/reference.md"].split())
     assert "OFF by default again" in skill and "tests only" in skill
-    assert stages.SINGLE_FRAME_START_OFF_NOTE == "Opening each take on the storyboard (--no-single-frame-start)"
+    assert (
+        stages.SINGLE_FRAME_START_OFF_NOTE
+        == "Opening each take on the storyboard (--no-single-frame-start)"
+    )

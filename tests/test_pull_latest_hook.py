@@ -189,10 +189,14 @@ def test_a_running_kit_command_keeps_the_checkout_where_it_is(tmp_path: Path) ->
     _behind(repo)
 
     message = _message(
-        _run(repo, cwd=repo, running="uv run fictora-produce finish --desk d --episode 3")
+        _run(
+            repo, cwd=repo, running="uv run fictora-produce finish --desk d --episode 3"
+        )
     )
 
-    assert message.startswith("Pull skipped: a kit command (fictora-produce) is still running"), message
+    assert message.startswith(
+        "Pull skipped: a kit command (fictora-produce) is still running"
+    ), message
     assert "uv run --no-sync" in message, message
     assert _git(repo, "rev-parse", "HEAD") == before
 
@@ -223,8 +227,14 @@ def test_windows_finds_the_running_launcher_with_tasklist(tmp_path: Path) -> Non
         'echo \'"fictora-ops.exe","200","Console","1","40,000 K"\'\n'
     )
     stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
-    env = {k: v for k, v in os.environ.items() if k not in {"CLAUDE_PROJECT_DIR", "CURSOR_PROJECT_DIR"}}
-    env["PATH"] = f"{fake}{os.pathsep}{_fake_pgrep(tmp_path, None)}{os.pathsep}{env['PATH']}"
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in {"CLAUDE_PROJECT_DIR", "CURSOR_PROJECT_DIR"}
+    }
+    env["PATH"] = (
+        f"{fake}{os.pathsep}{_fake_pgrep(tmp_path, None)}{os.pathsep}{env['PATH']}"
+    )
     done = subprocess.run(
         ["bash", str(repo / ".cursor" / "hooks" / HOOK.name)],
         input=json.dumps({"hook_event_name": "SessionStart"}),
@@ -238,5 +248,7 @@ def test_windows_finds_the_running_launcher_with_tasklist(tmp_path: Path) -> Non
 
     message = _message(json.loads(done.stdout))
 
-    assert message.startswith("Pull skipped: a kit command (fictora-ops.exe) is still running"), message
+    assert message.startswith(
+        "Pull skipped: a kit command (fictora-ops.exe) is still running"
+    ), message
     assert _git(repo, "rev-parse", "HEAD") == before
