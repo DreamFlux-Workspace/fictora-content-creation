@@ -14,7 +14,7 @@ the plates gate again after its script yes, draws only the newcomer's picture
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Collection, Mapping
 
 from creation.desk_media_urls import drawn_cast_rows
 
@@ -112,4 +112,77 @@ def new_cast_notice(found: list[tuple[str, str]]) -> list[str]:
     ]
 
 
-__all__ = ["cast_owing_pictures", "new_cast_notice", "newcomers"]
+def cast_without_pictures(
+    spine: Mapping[str, Any], cast_ids: Collection[str]
+) -> list[tuple[str, str]]:
+    """The characters of ``cast_ids`` the plates step came back without a picture for.
+
+    Noodle24 ep 4 (L-20261007-5) and Gallery Heiress ep 2 (L-20261008-17): the
+    server answered a new character's plates step with episode 1's finished
+    cast run, nothing was drawn, and the kit still printed "Cast drawn".
+
+    Parameters
+    ----------
+    spine
+        Spine JSON after the plates step.
+    cast_ids
+        The characters the step was meant to draw.
+
+    Returns
+    -------
+    list[tuple[str, str]]
+        ``(cast_id, name)`` in cast order of each character with no current
+        picture (any review state); empty when every one has one.
+    """
+
+    drawn = {
+        str(asset.get("relation_id"))
+        for asset in spine.get("media_assets") or []
+        if isinstance(asset, Mapping)
+        and asset.get("relation_type") == "cast_card"
+        and asset.get("url")
+        and not asset.get("stale")
+    }
+    wanted = {str(cast_id) for cast_id in cast_ids}
+    return [
+        (str(card["cast_id"]), str(card.get("name") or card["cast_id"]))
+        for card in _cast(spine)
+        if str(card["cast_id"]) in wanted and str(card["cast_id"]) not in drawn
+    ]
+
+
+def no_picture_message(missing: list[tuple[str, str]], *, desk: str) -> str:
+    """The stop the plates step prints when a character it owed got no picture.
+
+    Parameters
+    ----------
+    missing
+        From :func:`cast_without_pictures`.
+    desk
+        The desk path, for the commands it prints.
+
+    Returns
+    -------
+    str
+        Who has no picture and how to draw each one.
+    """
+
+    names = ", ".join(name for _, name in missing)
+    draws = "\n".join(
+        f'  fictora-produce redraw-plate --desk {desk} --cast "{name}"  (one picture, ~$0.30)'
+        for _, name in missing
+    )
+    return (
+        f"No picture came back for {names}: the server answered with an earlier cast run "
+        "and drew nothing new. The plates step is not done.\n"
+        f"Draw each one, then run `step` again:\n{draws}"
+    )
+
+
+__all__ = [
+    "cast_owing_pictures",
+    "cast_without_pictures",
+    "new_cast_notice",
+    "newcomers",
+    "no_picture_message",
+]

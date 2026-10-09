@@ -26,7 +26,11 @@ import httpx
 from creation.plate_traits_print import plate_traits_text, wait_for_plate_traits
 from creation.authoring_warnings import authoring_warnings, for_episode, warning_lines
 from creation.brief_lines import brief_vs_spine_lines
-from creation.new_cast import cast_owing_pictures
+from creation.new_cast import (
+    cast_owing_pictures,
+    cast_without_pictures,
+    no_picture_message,
+)
 from creation.desk_media_urls import (
     board_urls_for_episode,
     cast_plate_urls,
@@ -1638,6 +1642,18 @@ def run_step(
                 tag=f"ep{ep}" if ep >= 2 else "ep1",
             )
             spine = run.spine(state.spine_id)
+            # Every character this step owed must have come back with a
+            # picture; otherwise say so, not "Cast drawn" (L-20261008-17).
+            missing = cast_without_pictures(
+                spine,
+                owing
+                if owing is not None
+                else [str(row["cast_id"]) for row in drawn_cast_rows(spine)],
+            )
+            if missing:
+                stop = no_picture_message(missing, desk=str(desk))
+                _note(ep_dir, stop)
+                return StepResult(state.phase, stop, ())
             api_dir = api_dir_for_episode(desk, ep)
             (ep_dir / "plates").mkdir(parents=True, exist_ok=True)
             fetch = httpx.Client(timeout=120.0)
