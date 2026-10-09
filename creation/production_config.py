@@ -32,8 +32,10 @@ class ProductionConfig:
     #: ``subtle`` (:func:`creation.captions.show_caption_style`); the look approval saves the choice
     #: (:mod:`creation.caption_preview`). Sent to the API as its ``caption_style`` only with ``api_captions``.
     caption_style: str | None = None
-    #: When false, video enrol omits ``captions_enabled`` (faster API tail; caption locally).
-    api_captions: bool = False
+    #: When true (the default), video enrol sets ``captions_enabled`` and the server burns its own
+    #: captions on the episode it finishes (:func:`server_caption_style`). The raw take still comes
+    #: back, and ``finish`` captions it locally in the desk's style. False: raw clip only.
+    api_captions: bool = True
     locale: str = "en-US"
     #: Language the cast speaks when not English: ``ja`` / ``ko`` (or ``ja-JP`` / ``ko-KR``). Captions stay English.
     spoken_language: str | None = None
@@ -76,6 +78,34 @@ class ProductionConfig:
     poll_cast_deadline_seconds: float = 3600.0
     poll_boards_deadline_seconds: float = 7200.0
     poll_video_deadline_seconds: float = 7200.0
+
+
+#: Caption styles only ``finish``, ``caption`` and ``reel`` burn; the server does not know them.
+LOCAL_CAPTION_STYLES = frozenset({"bold", "subtle", "plain", "none"})
+#: The server's caption recipe a desk with a local (or unchosen) style is captioned in.
+SERVER_HOUSE_CAPTION_STYLE = "house"
+
+
+def server_caption_style(config: ProductionConfig) -> str | None:
+    """Return the caption style the server burns on the episode, or ``None`` for no server captions.
+
+    Parameters
+    ----------
+    config
+        The desk's config.
+
+    Returns
+    -------
+    str | None
+        ``None`` when ``api_captions`` is off or the desk asks for no captions; the desk's style when
+        it is a server recipe; otherwise the server's ``house`` recipe.
+    """
+
+    if not config.api_captions or config.caption_style == "none":
+        return None
+    if config.caption_style is None or config.caption_style in LOCAL_CAPTION_STYLES:
+        return SERVER_HOUSE_CAPTION_STYLE
+    return config.caption_style
 
 
 def config_path(desk: Path) -> Path:
