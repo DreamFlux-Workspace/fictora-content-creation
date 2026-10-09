@@ -46,8 +46,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --group test
       - name: Run tests
-        # The suite runs in 8-12 min here; 15 min bounds a test that truly hangs.
-        timeout-minutes: 15
+        # The suite runs in 10-15 min here (9 Oct: 582-906 s on main and PR runs, 2,290 tests);
+        # 15 min cut a fully passing run at 906 s (run 37950093846). 25 min still bounds a
+        # test that truly hangs, inside the job's 30.
+        timeout-minutes: 25
         # The suite talks to a fake Drama API and needs no secrets or network.
         # -rs prints the reason for any skipped test so a missing ffmpeg can't hide;
         # --durations=15 lists the slowest tests, so a test drifting toward the limit is seen early.

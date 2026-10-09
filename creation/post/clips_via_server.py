@@ -305,7 +305,10 @@ def record_clips(
     out = stream or sys.stdout
     if not result.clips:
         return result
+    from creation.post.reel_cover import series_part
+
     posting, _ = _posting(desk)
+    part = series_part(desk, episode).number
     folder = episode_clips(desk, episode)
     latest = {
         "episode": episode,
@@ -337,7 +340,7 @@ def record_clips(
             desk / REELS_DIR / METRICS_FILE,
             {
                 "reel_file": clip.video.name, "cover_file": clip.cover.name if clip.cover else "",
-                "series": result.series, "part": episode, "kind": "clip", "clip": clip.index,
+                "series": result.series, "part": part, "kind": "clip", "clip": clip.index,
                 "account": posting["account"], "lane": posting["lane"],
                 "planned_post_slot": posting["posting_slot"],
             },

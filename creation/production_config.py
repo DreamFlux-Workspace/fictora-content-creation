@@ -74,6 +74,11 @@ class ProductionConfig:
     #: ``continuing-fixes --desk D --apply`` (in step with the server spine's
     #: ``continuing_fixes_from_episode``), never by hand-editing ``rules_epoch``.
     continuing_fixes_from_episode: int | None = None
+    #: The series episode number of this desk's episode 1, for "PART N" on the reel cover, the post
+    #: text and ``reels/metrics.csv`` (NOCLIP, L-20261008-9: one desk per episode made every cover
+    #: "PART 1"). Set by ``reel --part N``; ``None``: read from a one-episode desk's name
+    #: (``…-ep03``), else the desk's own episode ordinal (:func:`creation.post.reel_cover.series_part`).
+    first_part: int | None = None
     poll_plan_deadline_seconds: float = 1800.0
     poll_cast_deadline_seconds: float = 3600.0
     poll_boards_deadline_seconds: float = 7200.0

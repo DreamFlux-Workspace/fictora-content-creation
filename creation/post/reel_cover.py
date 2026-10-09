@@ -41,6 +41,7 @@ operator fills from Instagram's insights (:data:`METRICS_COLUMNS`).
 from __future__ import annotations
 
 import csv
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -124,6 +125,118 @@ class CoverLayout:
     face_overlap: bool = False
 
 
+#: A desk's name naming its one episode: ``noclip-ep03``, ``2026-10-08-show-episode-4``, ``show_part_2``.
+_DESK_PART = re.compile(
+    r"(?:^|[^a-z0-9])(?:ep|episode|part)[-_ ]?0*(\d{1,3})(?:$|[^0-9])"
+)
+
+
+@dataclass(frozen=True)
+class SeriesPart:
+    """The number "PART N" shows for one episode of a desk, and where it came from."""
+
+    number: int
+    #: ``--part``, ``desk setting``, ``desk name`` or ``desk ordinal``.
+    source: str
+
+    @property
+    def from_desk_ordinal(self) -> bool:
+        """True when nothing said otherwise: the desk's own episode ordinal."""
+
+        return self.source == "desk ordinal"
+
+    def note(self) -> str:
+        """One line for the reel's report."""
+
+        if self.from_desk_ordinal:
+            return f"PART {self.number} (the desk's episode ordinal; reel --part N sets the series number)"
+        return f"PART {self.number} (from the {self.source}; reel --part N changes it)"
+
+
+def series_part(desk: Path, episode: int, override: int | None = None) -> SeriesPart:
+    """The series episode number of ``episode`` on ``desk``, for "PART N" (NOCLIP, L-20261008-9).
+
+    A show made one desk per episode has episode 1 on every desk, so the
+    desk's ordinal is the wrong number. First that answers:
+
+    1. ``override`` (``reel --part N``);
+    2. the desk's ``first_part`` setting (``production.config.json``, saved by
+       ``reel --part``): ``first_part + episode - 1``;
+    3. a one-episode desk whose folder name says its number (``noclip-ep03``);
+    4. the desk's own episode ordinal (every multi-episode desk, as before).
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    episode
+        Episode ordinal on the desk.
+    override
+        ``--part N``.
+
+    Returns
+    -------
+    SeriesPart
+        The number and its source.
+
+    Raises
+    ------
+    ValueError
+        When ``override`` is under 1.
+    """
+
+    if override is not None:
+        if override < 1:
+            raise ValueError(f"--part must be 1 or more, not {override}")
+        return SeriesPart(override, "--part")
+    from creation.production_config import load_production_config
+
+    try:
+        first = load_production_config(desk).first_part
+    except (OSError, ValueError, TypeError):
+        first = None
+    if isinstance(first, int) and first >= 1:
+        return SeriesPart(first + episode - 1, "desk setting")
+    if episode == 1:
+        try:
+            from creation.ops.state import load_series
+
+            slots = len(load_series(desk).episodes)
+        except (OSError, ValueError, KeyError, TypeError):
+            slots = 0
+        found = _DESK_PART.search(desk.expanduser().resolve().name.lower())
+        if slots == 1 and found and int(found.group(1)) >= 1:
+            return SeriesPart(int(found.group(1)), "desk name")
+    return SeriesPart(episode, "desk ordinal")
+
+
+def remember_part(desk: Path, episode: int, part: int) -> Path:
+    """Save ``reel --part N`` on the desk so ``finish``, ``join`` and later reels keep it.
+
+    Stored as ``first_part`` (the series number of the desk's episode 1) in
+    ``production.config.json``.
+
+    Raises
+    ------
+    ValueError
+        When ``part`` is lower than ``episode`` would allow (``first_part`` under 1).
+    """
+
+    from creation.production_config import (
+        load_production_config,
+        save_production_config,
+    )
+
+    first = part - episode + 1
+    if first < 1:
+        raise ValueError(
+            f"--part {part} on the desk's episode {episode} would put its episode 1 before part 1"
+        )
+    config = load_production_config(desk)
+    config.first_part = first
+    return save_production_config(desk, config)
+
+
 def _overlap(box: Box, face: tuple[float, float, float, float]) -> float:
     """Area shared by ``box`` (left, top, right, bottom) and ``face`` (x, y, w, h), as frame fractions."""
 
@@ -141,6 +254,7 @@ def cover_layout(
     width: int,
     height: int,
     faces: Sequence[tuple[float, float, float, float]] = (),
+    picture_rows: tuple[int, int] | None = None,
 ) -> CoverLayout:
     """Lay out "PART N" and the series title on a ``width`` x ``height`` picture.
 
@@ -149,11 +263,16 @@ def cover_layout(
     series
         The series title (empty: only "PART N").
     part
-        The episode ordinal.
+        The number "PART N" shows: the series episode number (:func:`series_part`).
     width, height
         The picture's size in pixels.
     faces
         Detected face boxes as frame fractions ``(x, y, w, h)``; empty when unknown.
+    picture_rows
+        A letterbox cover only: the rows ``(top, bottom)`` the 4:3 picture fills on the
+        9:16 canvas. The text block then stays inside them, clear of the title band
+        above and the caption band below (NOCLIP, L-20261008-9), shrinking if it must.
+        ``None`` (every portrait cover): the portrait zones, exactly as before.
 
     Returns
     -------
@@ -183,6 +302,17 @@ def cover_layout(
     title_h = title_size * len(title_lines)
     gap = round(PART_GAP * part_size) if title_lines else 0
     block_h = title_h + gap + part_size
+    margin = round(BAND_GAP * height)
+    if picture_rows is not None:
+        room_h = max(1, picture_rows[1] - picture_rows[0] - 2 * margin)
+        if block_h > room_h:
+            # A tall title on a short 4:3 picture: shrink the whole block to fit between the bands.
+            scale = room_h / block_h
+            title_size = max(8, int(title_size * scale))
+            part_size = max(8, int(part_size * scale))
+            title_h = title_size * len(title_lines)
+            gap = round(PART_GAP * part_size) if title_lines else 0
+            block_h = title_h + gap + part_size
     widest = max(
         [text_width(part_text, part_size)]
         + [text_width(line, title_size) for line in title_lines]
@@ -190,7 +320,14 @@ def cover_layout(
     half = min(widest, room) / 2
 
     def placed(name: str) -> tuple[int, Box]:
-        if name == "upper":
+        if picture_rows is not None:
+            # Letterbox: inside the picture, never on the title band or the caption band.
+            top_px = (
+                picture_rows[0] + margin
+                if name == "upper"
+                else picture_rows[1] - margin - block_h
+            )
+        elif name == "upper":
             top_px = round((max(TOP_STRIP, GRID_TOP) + BAND_GAP) * height)
         else:
             bottom = (min(BOTTOM_BAND, GRID_BOTTOM) - BAND_GAP) * height
@@ -502,7 +639,10 @@ __all__ = [
     "METRICS_COLUMNS",
     "METRICS_FILE",
     "CoverLayout",
+    "SeriesPart",
     "record_metrics_row",
+    "remember_part",
+    "series_part",
     "cover_ass",
     "cover_layout",
     "cover_path",
