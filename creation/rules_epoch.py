@@ -76,6 +76,11 @@ CONTINUING_FIXES: frozenset[str] = frozenset(
     {
         # Seam bed: join lays a steady sound bed under a loud seam (#156). Approved 2026-10-07, bed only: the silent-head trim stays new desks.
         "seam_bed",
+        # No em or en dash on burned captions, hook lines and covers (#137; was Group B): a dash at a
+        # cut-off is drawn as an ellipsis, one between words as a comma. Only the drawn text changes; the
+        # script, the voice and the timing never see it. Moved to Group A on 9 Oct 2026 (rollout rule:
+        # captions only), in step with fictora-drama. To narrow it again, move it back to Group B.
+        "caption_dashes",
     }
 )
 
@@ -88,8 +93,6 @@ CONTINUING_FIXES_FROM_EPISODE: frozenset[str] = frozenset(
     {
         # Each caption word appears when it is said (#135). Whole episodes.
         "per_word_captions",
-        # No em or en dash on burned captions, hook lines and covers (#137). New episodes.
-        "caption_dashes",
         # The pitch card gates paid drawing for the episode (#155). New episodes.
         "pitch_card",
     }

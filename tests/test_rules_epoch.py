@@ -172,16 +172,38 @@ def test_the_command_runs_under_its_desks_rules(tmp_path: Path) -> None:
         assert not legacy_rules()
 
 
-# --- #137: no dashes (legacy keeps them) -----------------------------------------------------------
+# --- #137: no dashes (every desk since 9 Oct 2026; Group A) -----------------------------------------
 
 
-def test_a_legacy_desk_keeps_its_dashes_and_a_new_desk_drops_them(
-    tmp_path: Path,
+def test_a_legacy_desk_drops_its_dashes_like_a_new_desk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from creation import rules_epoch
     from creation.post.hook_overlay import HookOverlay, overlay_ass
     from creation.post.letterbox import TitleBlock, title_ass
 
     desk = _old_desk(tmp_path)
+    with desk_rules(desk):
+        (cues,) = build_line_cues(["Please— no no—"], [Span(0.0, 2.0)])
+        assert [c.text for c in cues] == ["Please…", "Please, no", "Please, no no…"]
+        assert "again" in (
+            ass := build_ass(
+                [Cue(0.0, 0.9, "She lied — again—")], width=1080, height=1920
+            )
+        )
+        assert "—" not in ass
+        assert "—" not in overlay_ass(
+            HookOverlay("hook", "She lied — again—", "top", 0.0, 3.0),
+            width=1080,
+            height=1920,
+        )
+        assert "—" not in title_ass(TitleBlock("POV: your roommate — texted", "x"))[0]
+    # Off the allow-list, the legacy branch still keeps every dash, byte for byte.
+    monkeypatch.setattr(
+        rules_epoch,
+        "CONTINUING_FIXES",
+        rules_epoch.CONTINUING_FIXES - {"caption_dashes"},
+    )
     with desk_rules(desk):
         (cues,) = build_line_cues(["Please— no no—"], [Span(0.0, 2.0)])
         assert [c.text for c in cues] == ["Please—", "Please— no", "Please— no no—"]
@@ -583,9 +605,10 @@ def test_a_legacy_reel_never_draws_system_panels(
 
 
 def test_the_allow_list_is_group_a_only() -> None:
-    """The seam bed (#156), sound only (the silent-head trim cuts picture: new desks only)."""
+    """The seam bed (#156), sound only (the silent-head trim cuts picture: new desks only), and caption
+    dashes (#137, captions only; moved from Group B on 9 Oct 2026)."""
 
-    assert CONTINUING_FIXES == frozenset({"seam_bed"})
+    assert CONTINUING_FIXES == frozenset({"seam_bed", "caption_dashes"})
 
 
 def test_continuing_fix_reaches_a_legacy_desk_only_while_listed(
