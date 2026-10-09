@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import math
 import tempfile
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from creation.post.media import (
@@ -36,7 +37,14 @@ from creation.post.media import (
     probe_video,
     run_ffmpeg,
 )
-from creation.post.sfx import SFX_GAIN_DB, SFX_SPEECH_DUCK_DB, SILENCE_DB
+from creation.post.sfx import (
+    SFX_GAIN_DB,
+    SFX_SPEECH_DUCK_DB,
+    SILENCE_DB,
+    BedReference,
+    bed_levelled_gain,
+    rendered_peak_db,
+)
 
 #: Fades just outside a mute window (seconds), so the edges do not click.
 MUTE_FADE_SECONDS = 0.03
@@ -465,6 +473,63 @@ def silent_cues(layer: Path, plan: HandPlan) -> list[str]:
         if not span or max(span) < CUE_SILENT_DB:
             silent.append(f"{cue.one_line()} came out SILENT in the cue layer")
     return silent
+
+
+@dataclass(frozen=True)
+class _CueSpan:
+    """What :func:`creation.post.sfx.bed_levelled_gain` reads of a cue: where, how long, at what gain."""
+
+    start: float
+    seconds: float
+    gain_db: float
+
+
+def level_hand_cues(
+    plan: HandPlan,
+    bed: BedReference | None,
+    *,
+    measure: Callable[[Path], tuple[float, ...]] | None = None,
+) -> tuple[HandPlan, tuple[str, ...]]:
+    """Each hand cue (``--cue``) levelled against the music bed it plays under, like the planned effects.
+
+    The same rule as the sfx step (:func:`creation.post.sfx.bed_levelled_gain`,
+    kit #190): a cue whose loudest window would sit more than 6 dB under the bed
+    where it plays is raised to that, at most +18 dB, never past +10 dB gain and
+    never over the take's loudest spoken window. A cue given a lower ``@DB`` than
+    the default stays that much further under; a cue already heard is never
+    lowered. Only the level changes: same file, same start, same length.
+
+    Parameters
+    ----------
+    plan
+        The checked hand plan.
+    bed
+        The measured bed (``None``: no bed to sit against, every cue keeps its level).
+    measure
+        RMS per 0.5 s window of a cue file (default :func:`creation.post.media.measure_rms_windows`).
+
+    Returns
+    -------
+    tuple[HandPlan, tuple[str, ...]]
+        The plan with each raised cue's ``gain_db`` set, and one ``name +N dB (why)`` per raised cue.
+    """
+
+    if bed is None or not plan.cues:
+        return plan, ()
+    meter = measure or (
+        lambda path: measure_rms_windows(path, window_seconds=bed.window_seconds)
+    )
+    cues: list[tuple[Placed, float]] = []
+    notes: list[str] = []
+    for cue, seconds in plan.cues:
+        gain = SFX_GAIN_DB if cue.gain_db is None else cue.gain_db
+        peak = rendered_peak_db(tuple(meter(cue.path)), seconds, bed.window_seconds)
+        raised, why = bed_levelled_gain(_CueSpan(cue.start, seconds, gain), peak, bed)  # type: ignore[arg-type]
+        if why:
+            notes.append(f"{cue.path.name} @{cue.start:.2f}s {why}")
+            cue = replace(cue, gain_db=raised)
+        cues.append((cue, seconds))
+    return replace(plan, cues=tuple(cues)), tuple(notes)
 
 
 def lay_cues(

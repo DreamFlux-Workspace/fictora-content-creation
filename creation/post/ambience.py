@@ -32,8 +32,25 @@ slice of the one episode ambience that starts at the sum of the raw lengths of
 ``t1`` .. ``tN-1``, so takes joined on a straight cut carry one continuous
 ambience across the seam (L-20260929-23).
 
+The description is worded the way the server words the app's own ambience
+beds (fictora-drama ``show_ambience.ambience_prompt``, since Beach Court ep 4,
+5 Oct): "Continuous background ambience of <place>; <what is heard>; steady
+natural room tone, ... even level, loopable; no speech, no voices, no music,
+no single loud events". Before 9 Oct the kit quoted the take's sound lines
+whole ("a quiet rolling simmer") under a tail that never asked for an even,
+unbroken sound. An effects model asked for "quiet" (or "silence", "a hush")
+renders dead air or a few bubbles and a decay, which the server's shape check
+then rejects as a sustained cue that collapses, so room tone went in instead
+(Noodle24 ep 4, Back from the Sea on both takes; L-20261006-21). Now hush
+words and the clauses that ask for nothing to be heard are dropped
+(:func:`room_sound_phrase`), only a sound that goes on is quoted (a door slam
+in a beat's ``sound_cue`` is the sfx step's, never looped), and a render
+that still comes back silent or the wrong shape is re-made once with the
+server's retry wording: a steady continuous room tone of the place alone
+(:data:`RETRY_HEAD`). Only when that also fails does room tone go in.
+
 When no cue can be made (no location and no planned ambience, a refusal, a
-wrong shape, no answer), ``finish`` falls back to room tone and says why.
+wrong shape twice, no answer), ``finish`` falls back to room tone and says why.
 Native takes never get an ambience: the model's own is on them.
 """
 
@@ -42,6 +59,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -70,13 +88,45 @@ AMBIENCE_USD_PER_SECOND = 0.002
 DESCRIPTION_LIMIT = 300
 #: Loop points are crossfaded over this long (at most a quarter of the cue).
 LOOP_CROSSFADE_SECONDS = 1.0
-#: Every description ends with this: an ambience is never music or words.
-DESCRIPTION_TAIL = "steady natural background sound of the place, distant activity and air; no music, no speech"
+#: Every description ends with this: an ambience is never words, music or a hit, and it holds an even
+#: level (the server's ``show_ambience.AMBIENCE_PROMPT_TAIL``, word for word).
+DESCRIPTION_TAIL = (
+    "steady natural room tone, distant activity and air, even level, loopable; "
+    "no speech, no voices, no music, no single loud events"
+)
+#: How a description opens (the server's first-attempt head).
+DESCRIPTION_HEAD = "Continuous background ambience of "
+#: The re-make's wording when the first render came back silent or the wrong shape: a held,
+#: unbroken room tone of the place alone (the server's ``AMBIENCE_RETRY_HEAD`` / ``_TAIL``).
+RETRY_HEAD = "Steady continuous room tone of "
+RETRY_TAIL = (
+    "one unbroken sustained hum and air at an even level from the first second to the last, never fading "
+    "or stopping; no speech, no voices, no music, no single loud events"
+)
+#: Most planned sounds a description quotes (the server quotes two room lines).
+PLANNED_SOUNDS = 2
 _RATE = 48000
 _SILENCE = 10 ** (-60.0 / 20)
 
 Maker = Callable[[str, float, Path], tuple[Path, float]]
 """``(description, seconds, target) -> (rendered file, cost in USD)``; raises when nothing usable came back."""
+
+
+class CueUnusable(ValueError):
+    """The route rendered a cue but it is unusable (silent, or collapses after its start): it was paid for.
+
+    Parameters
+    ----------
+    problem
+        The server's ``shape_problem``.
+    cost_usd
+        What the unusable render cost.
+    """
+
+    def __init__(self, problem: str, cost_usd: float = 0.0) -> None:
+        super().__init__(f"wrong shape: {problem}")
+        self.problem = problem
+        self.cost_usd = cost_usd
 
 
 @dataclass(frozen=True)
@@ -86,10 +136,82 @@ class AmbienceBrief:
     description: str
     location: str | None
     planned: tuple[str, ...]
+    #: The re-make's wording (:data:`RETRY_HEAD`): asked only when the first render is unusable.
+    retry_description: str = ""
 
 
 def _one_line(text: Any) -> str:
     return " ".join(str(text or "").split())
+
+
+#: Words that make an effects model render dead air (the server's ``opening_sound._HUSH_WORDS``).
+_HUSH_WORDS = re.compile(
+    r"\b(?:silence|silent|silently|quiet|quietly|quieter|hush|hushed)\b", re.IGNORECASE
+)
+#: A clause that is not something to hear: it asks for nothing or directs the actors
+#: (the server's ``show_ambience._NOT_HEARD``).
+_NOT_HEARD = re.compile(
+    r"\b(?:no|not|never|nothing|without|none|makes? no|stops?|stopped|stopping|holds?|holding|held|"
+    r"breath\w*|lines?|voices?|speech|silen\w*|hush\w*|mute[sd]?|stillness|dead air|"
+    r"freezes?|frozen|pauses?|paused)\b",
+    re.IGNORECASE,
+)
+_CLAUSE_BREAK = re.compile(r"\s*(?:[;,:]|\s[-\u2013\u2014]\s|\u2014|\bthen\b)\s*")
+_PLACEHOLDER = re.compile(r"\{[^}]*\}")
+#: Where a location stops naming the place and starts staging it (the server's ``_STAGING_BREAK``).
+_STAGING_BREAK = re.compile(r"[;,(]|\s[-\u2013\u2014]\s")
+#: Sounds that go on rather than happen (the server's ``sfx_layer._SUSTAINED`` / ``sfx_kind``).
+_GOES_ON = re.compile(
+    r"\b(?:wind|winds|breeze|rain|raining|drizzle|downpour|storm|thunder|hum|humming|hums|drone|droning|"
+    r"groan|groans|groaning|rumble|rumbling|ambience|ambient|murmur|murmuring|buzz|buzzing|"
+    r"static|waves|surf|purr|purrs|purring|whir|whirring|crackle|crackling|sizzle|sizzling|simmer|simmering|"
+    r"ticking|steady|constant|continuous|throughout|ongoing|all the while|keeps going|carries on)\b",
+    re.IGNORECASE,
+)
+_SOURCE_ONLY = re.compile(r"\b(?:crowd|crowds|traffic)\b", re.IGNORECASE)
+_ONE_OFF = re.compile(
+    r"\b(?:gasp|gasps|gasped|sigh|sighs|sighed|bite|bites|crunch|crunches|breath|exhale|exhales|inhale|gulp|"
+    r"cough|coughs|clap|claps|clink|clinks|snap|snaps|pop|pops|slam|slams|thud|thuds|bang|bangs|knock|knocks|"
+    r"crack|cracks|click|shout|shouts|yelp|yelps|laugh|laughs|burst|horn|honk|honks|screech|screeches)\b",
+    re.IGNORECASE,
+)
+
+
+def scrub_hush_words(text: str) -> str:
+    """``text`` without "quiet", "silence", "hush" and their kin (they render dead air)."""
+
+    # A hush word takes its own comma with it: "A quiet, hushed stall" is "A stall", never "A , stall".
+    return " ".join(
+        re.sub(rf"{_HUSH_WORDS.pattern},?", " ", text, flags=re.IGNORECASE).split()
+    ).strip(" ,;.")
+
+
+def goes_on(sound: str) -> bool:
+    """Whether a sound line names a sound that goes on (a simmer, rain, a crowd), not one that happens once."""
+
+    if _GOES_ON.search(sound):
+        return True
+    return bool(_SOURCE_ONLY.search(sound)) and not _ONE_OFF.search(sound)
+
+
+def room_sound_phrase(line: str) -> str:
+    """The audible part of one sound line for the ambience description; empty when nothing is heard.
+
+    Clauses that ask for nothing or direct the actors ("no line", "the room
+    holds", "a held breath") are dropped and hush words scrubbed, so "a quiet
+    rolling simmer; the cook says nothing" becomes "a rolling simmer"
+    (the server's ``show_ambience.room_sound_phrase``).
+    """
+
+    kept: list[str] = []
+    for clause in _CLAUSE_BREAK.split(_PLACEHOLDER.sub(" ", line)):
+        text = " ".join(clause.split()).strip(" .,;")
+        if not text or _NOT_HEARD.search(text):
+            continue
+        text = scrub_hush_words(text)
+        if len(text.split()) >= 2 and text not in kept:
+            kept.append(text)
+    return ", ".join(kept)
 
 
 def _episode_id(spine: Mapping[str, Any], episode: int) -> str:
@@ -182,49 +304,67 @@ def ambience_brief(
     places = [place for place in places if place]
     location = Counter(places).most_common(1)[0][0] if places else None
     planned: list[str] = []
+    # The take facts' sustained cues are classed by the server; a beat's sound_cue is not, and can be
+    # a one-off (a door slam) that the sfx step lays: only a sound that goes on is looped.
     sounds = [
         _one_line(cue.get("sound"))
         for cue in body.get("sfx_cues") or []
         if isinstance(cue, Mapping) and cue.get("kind") == "sustained"
     ] + [
-        _one_line(beat["motion_direction"].get("sound_cue"))
+        cue
         for beat in take_beats
         if isinstance(beat.get("motion_direction"), Mapping)
         and isinstance(beat["motion_direction"].get("sound_cue"), str)
+        and goes_on(cue := _one_line(beat["motion_direction"].get("sound_cue")))
     ]
     for sound in sounds:
-        if sound and sound.casefold() not in {p.casefold() for p in planned}:
-            planned.append(sound.rstrip("."))
-    planned = planned[:3]
+        heard = room_sound_phrase(sound) if sound else ""
+        if heard and heard.casefold() not in {p.casefold() for p in planned}:
+            planned.append(heard)
+    planned = planned[:PLANNED_SOUNDS]
     if not location and not planned:
         return None
-    return AmbienceBrief(describe(location, tuple(planned)), location, tuple(planned))
+    return AmbienceBrief(
+        describe(location, tuple(planned)),
+        location,
+        tuple(planned),
+        describe(location, (), retry=True),
+    )
 
 
-def describe(location: str | None, planned: Sequence[str]) -> str:
-    """``Location ambience: <place>; <planned sounds>; <tail>`` cut to :data:`DESCRIPTION_LIMIT` characters.
+def describe(
+    location: str | None, planned: Sequence[str], *, retry: bool = False
+) -> str:
+    """``Continuous background ambience of <place>; <planned sounds>; <tail>``, at most :data:`DESCRIPTION_LIMIT`.
 
-    The tail (no music, no speech) is always kept whole; the place is shortened first.
+    The tail (even level, no speech, no music, no single loud events) is always
+    kept whole; planned sounds go first, then the place is shortened. The place
+    loses its hush words, so nothing before the tail asks for silence.
+    ``retry`` is the re-make's wording: a steady continuous room tone of the
+    place alone, with no planned sound (one of them may be what made the first
+    render unusable).
     """
 
-    middle = "; ".join(planned)
-    head = "Location ambience"
-    fixed = (
-        len(head)
-        + len("; ")
-        + len(DESCRIPTION_TAIL)
-        + (len(middle) + 2 if middle else 0)
-    )
-    room = DESCRIPTION_LIMIT - fixed - len(": ")
-    if location and room > 20:
-        place = (
-            location
-            if len(location) <= room
-            else location[: room - 1].rstrip(" ,;") + "…"
-        )
-        head = f"{head}: {place}"
-    text = "; ".join(part for part in (head, middle, DESCRIPTION_TAIL) if part)
-    return text[:DESCRIPTION_LIMIT]
+    head = RETRY_HEAD if retry else DESCRIPTION_HEAD
+    tail = RETRY_TAIL if retry else DESCRIPTION_TAIL
+    sounds = [] if retry else [p for p in planned if p]
+    place = scrub_hush_words(" ".join((location or "the room").split())) or "the room"
+    if retry:
+        place = _STAGING_BREAK.split(place, maxsplit=1)[0].strip() or place
+
+    def suffix(parts: list[str]) -> str:
+        return "".join(f"; {part}" for part in [*parts, tail])
+
+    while (
+        sounds
+        and len(head) + min(len(place), 40) + len(suffix(sounds)) > DESCRIPTION_LIMIT
+    ):
+        sounds.pop()
+    end = suffix(sounds)
+    space = DESCRIPTION_LIMIT - len(head) - len(end)
+    if len(place) > space:
+        place = place[: max(1, space - 1)].rstrip(" ,;") + "…"
+    return f"{head}{place}{end}"
 
 
 def cue_key(description: str, seconds: float) -> str:
@@ -252,15 +392,16 @@ def service_maker(audio: AudioService, spine_id: str) -> Maker:
             seconds=seconds,
             key=f"ambience-{cue_key(description, seconds)}",
         )
-        if answer.get("shape_problem"):
-            raise ValueError(f"wrong shape: {answer['shape_problem']}")
-        path = download(str(answer["audio_url"]), target)
         cost = answer.get("cost_usd")
         if answer.get("cached"):
-            return path, 0.0
-        if isinstance(cost, (int, float)) and not isinstance(cost, bool):
-            return path, float(cost)
-        return path, round(seconds * AMBIENCE_USD_PER_SECOND, 4)
+            paid = 0.0
+        elif isinstance(cost, (int, float)) and not isinstance(cost, bool):
+            paid = float(cost)
+        else:
+            paid = round(seconds * AMBIENCE_USD_PER_SECOND, 4)
+        if answer.get("shape_problem"):
+            raise CueUnusable(str(answer["shape_problem"]), paid)
+        return download(str(answer["audio_url"]), target), paid
 
     return make
 
@@ -291,6 +432,8 @@ class EpisodeAmbience:
     #: True when this run made it (paid); False when it was on the desk already.
     made: bool = False
     cost_usd: float = 0.0
+    #: Why the first render was unusable when this is the re-make (steady room tone wording); else "".
+    remade: str = ""
 
 
 def saved_ambience(desk: Path, episode: int) -> EpisodeAmbience | None:
@@ -367,16 +510,37 @@ def episode_ambience(
     target = folder / f"ambience-{key}.mp3"
     cost = 0.0
     made = False
+    description = brief.description
+    remade = ""
     if not target.is_file():
-        target, cost = make(brief.description, seconds, target)
+        try:
+            target, cost = make(description, seconds, target)
+        except CueUnusable as first:
+            # Silent or collapsing (L-20261006-21): re-made once as a steady room tone of the place
+            # alone, the server's own retry. Still unusable: the caller lays room tone and says why.
+            retry = brief.retry_description or describe(brief.location, (), retry=True)
+            again = folder / f"ambience-{cue_key(retry, seconds)}.mp3"
+            try:
+                if again.is_file():
+                    target, cost = again, 0.0
+                else:
+                    target, cost = make(retry, seconds, again)
+            except CueUnusable as second:
+                raise CueUnusable(
+                    f"{first.problem}, and again as a steady room tone ({second.problem})",
+                    first.cost_usd + second.cost_usd,
+                ) from second
+            cost += first.cost_usd
+            description = retry
+            remade = first.problem
         made = True
     found = EpisodeAmbience(
-        brief.description, brief.location, target, seconds, made, cost
+        description, brief.location, target, seconds, made, round(cost, 4), remade
     )
     if saved is None:
         record_path(desk, episode).write_text(
             json.dumps(
-                {"description": brief.description, "location": brief.location,
+                {"description": description, "location": brief.location,
                  "planned": list(brief.planned), "file": target.name, "seconds": seconds},
                 ensure_ascii=False, indent=2,
             ),
