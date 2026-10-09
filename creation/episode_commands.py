@@ -4462,10 +4462,74 @@ def run_look_frame(
     return path
 
 
+def _look_note_cast_id(spine: Mapping[str, Any], who: str) -> str:
+    """Resolve ``--on`` (a cast id, a full name or a first name) to one cast id, or stop naming the cast."""
+
+    names = _cast_names(spine)
+    wanted = who.strip().casefold()
+    if who.strip() in names:
+        return who.strip()
+    matches = [
+        cast_id
+        for cast_id, name in names.items()
+        if name.casefold() == wanted or name.split()[0].casefold() == wanted
+    ]
+    if len(matches) != 1:
+        raise CommandStopped(
+            f"--on {who!r} names {'nobody' if not matches else 'more than one person'} in this story; "
+            f"the cast is: {', '.join(names.values()) or 'none'}"
+        )
+    return matches[0]
+
+
+def look_note_scope(note: Mapping[str, Any], spine: Mapping[str, Any]) -> str:
+    """Return who and which episodes a mark covers ("on Ren, episodes 8-9"), or "" for a look note.
+
+    Parameters
+    ----------
+    note
+        One of the spine's ``look_notes``.
+    spine
+        Spine JSON, for the person's name.
+
+    Returns
+    -------
+    str
+        The scope in plain words; empty for a story-wide look note.
+    """
+
+    start = note.get("from_episode_ordinal")
+    if not isinstance(start, int):
+        return ""
+    end = note.get("until_episode_ordinal")
+    if not isinstance(end, int):
+        episodes = f"episode {start} on"
+    elif end == start:
+        episodes = f"episode {start}"
+    else:
+        episodes = f"episodes {start}-{end}"
+    cast_id = note.get("cast_id")
+    if not cast_id:
+        return episodes
+    return f"on {_cast_names(spine).get(str(cast_id), str(cast_id))}, {episodes}"
+
+
 def run_look_note(
-    desk: Path, *, add: str | None = None, remove: str | None = None, out: Any = None
+    desk: Path,
+    *,
+    add: str | None = None,
+    remove: str | None = None,
+    on: str | None = None,
+    from_episode: int | None = None,
+    until_episode: int | None = None,
+    out: Any = None,
 ) -> list[str]:
     """Add or remove one look note (at most five, 160 characters each); the next drawing uses them. Spends nothing.
+
+    With ``from_episode`` the note is a mark someone picks up in the story (a
+    smear, a bandage, a torn sleeve): the server prints it on every board cell
+    and take shot of those episodes (with ``on``, only where that person is on
+    screen) and never puts it in the style or a portrait.
 
     Parameters
     ----------
@@ -4475,6 +4539,12 @@ def run_look_note(
         A note in the creator's words.
     remove
         A note id, or its 1-based number.
+    on
+        A mark only: whose it is (cast id, full name or first name).
+    from_episode
+        A mark only: the first episode it is on.
+    until_episode
+        A mark only: the last episode it is on (unset: until removed).
     out
         Text stream.
 
@@ -4486,6 +4556,20 @@ def run_look_note(
 
     if (add is None) == (remove is None):
         raise CommandStopped("pass exactly one of --add or --remove")
+    if remove is not None and (
+        on or from_episode is not None or until_episode is not None
+    ):
+        raise CommandStopped("--on, --from-episode and --until-episode go with --add")
+    if from_episode is None and (on or until_episode is not None):
+        raise CommandStopped(
+            "a mark on one person or with a last episode needs --from-episode N (the first episode it is on)"
+        )
+    if (
+        from_episode is not None
+        and until_episode is not None
+        and until_episode < from_episode
+    ):
+        raise CommandStopped("--until-episode can't come before --from-episode")
     out = out or sys.stdout
     desk, state, run = _desk_session(desk)
     try:
@@ -4506,7 +4590,17 @@ def run_look_note(
             if warning:
                 print(warning, file=out)
                 _note(desk, state.episode_ordinal, f"look-note {warning}")
-            run.post(f"/v1/spines/{state.spine_id}/look-notes", {**body, "text": text})
+            scope: dict[str, Any] = {}
+            if from_episode is not None:
+                scope["from_episode_ordinal"] = from_episode
+            if until_episode is not None:
+                scope["until_episode_ordinal"] = until_episode
+            if on:
+                scope["cast_id"] = _look_note_cast_id(spine, on)
+            run.post(
+                f"/v1/spines/{state.spine_id}/look-notes",
+                {**body, "text": text, **scope},
+            )
         else:
             wanted = str(remove)
             ids = [str(note.get("note_id")) for note in notes]
@@ -4530,7 +4624,12 @@ def run_look_note(
         if isinstance(note, Mapping)
     ]
     for number, note in enumerate(fresh.get("look_notes") or [], start=1):
-        print(f"{number}. {note.get('note_id')}  {note.get('text')}", file=out)
+        scope = look_note_scope(note, fresh) if isinstance(note, Mapping) else ""
+        print(
+            f"{number}. {note.get('note_id')}  {note.get('text')}"
+            + (f"  (mark {scope})" if scope else ""),
+            file=out,
+        )
     return listed
 
 
@@ -7985,6 +8084,26 @@ def add_episode_parsers(
     change = note.add_mutually_exclusive_group(required=True)
     change.add_argument("--add", default=None)
     change.add_argument("--remove", default=None, metavar="ID|N")
+    note.add_argument(
+        "--from-episode",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Make the note a mark picked up in the story (a smear, a bandage), on every shot from episode N",
+    )
+    note.add_argument(
+        "--until-episode",
+        type=int,
+        default=None,
+        metavar="M",
+        help="The mark's last episode (default: until removed)",
+    )
+    note.add_argument(
+        "--on",
+        default=None,
+        metavar="NAME",
+        help="Whose mark it is (only the shots that show them carry it)",
+    )
 
     sound = sub.add_parser(
         "sound-note",
@@ -8389,7 +8508,14 @@ def dispatch_episode(args: argparse.Namespace) -> int:
             run_look(args.desk, url=args.url)
             return 0
         if args.command == "look-note":
-            run_look_note(args.desk, add=args.add, remove=args.remove)
+            run_look_note(
+                args.desk,
+                add=args.add,
+                remove=args.remove,
+                on=args.on,
+                from_episode=args.from_episode,
+                until_episode=args.until_episode,
+            )
             return 0
         if args.command == "sound-note":
             run_sound_note(
@@ -8529,6 +8655,7 @@ __all__ = [
     "run_approve_look",
     "run_look",
     "run_look_frame",
+    "look_note_scope",
     "run_look_note",
     "run_inner_voice",
     "run_sound_note",

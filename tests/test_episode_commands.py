@@ -333,6 +333,60 @@ def test_look_note_add_is_capped_at_five(desk: Path, api: FakeApi) -> None:
     ]
 
 
+def test_look_note_mark_sends_whose_and_which_episodes(
+    desk: Path, api: FakeApi
+) -> None:
+    cast = api.spine_doc.get("cast") or []
+    assert cast, "the fake spine has a cast"
+    person = cast[0]
+    api.routes[("POST", "/v1/spines/sp1/look-notes")] = {}
+    api.spine_doc["look_notes"] = []
+    first = str(person["name"]).split()[0]
+    ec.run_look_note(
+        desk,
+        add="bean paste on his left sleeve",
+        on=first,
+        from_episode=2,
+        until_episode=3,
+        out=io.StringIO(),
+    )
+    assert api.posted("/v1/spines/sp1/look-notes")[-1] == {
+        "spine_version": api.spine_doc["spine_version"],
+        "text": "bean paste on his left sleeve",
+        "from_episode_ordinal": 2,
+        "until_episode_ordinal": 3,
+        "cast_id": person["cast_id"],
+    }
+    note = {
+        "note_id": "m",
+        "text": "x",
+        "cast_id": person["cast_id"],
+        "from_episode_ordinal": 2,
+        "until_episode_ordinal": 3,
+    }
+    assert (
+        ec.look_note_scope(note, api.spine_doc) == f"on {person['name']}, episodes 2-3"
+    )
+    assert ec.look_note_scope({"note_id": "d", "text": "darker"}, api.spine_doc) == ""
+
+
+def test_look_note_mark_stops_before_sending_a_scope_the_server_would_refuse(
+    desk: Path, api: FakeApi
+) -> None:
+    api.spine_doc["look_notes"] = []
+    with pytest.raises(ec.CommandStopped, match="needs --from-episode"):
+        ec.run_look_note(desk, add="x", on="anyone", out=io.StringIO())
+    with pytest.raises(ec.CommandStopped, match="can't come before"):
+        ec.run_look_note(
+            desk, add="x", from_episode=4, until_episode=3, out=io.StringIO()
+        )
+    with pytest.raises(ec.CommandStopped, match="names nobody"):
+        ec.run_look_note(
+            desk, add="x", on="Nobody Here", from_episode=2, out=io.StringIO()
+        )
+    assert not api.posted("/v1/spines/sp1/look-notes")
+
+
 def test_redraw_board_uses_the_regenerate_route_rerolls_on_request_and_reopens_the_gate(
     desk: Path, api: FakeApi
 ) -> None:
