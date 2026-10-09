@@ -238,3 +238,33 @@ def test_finish_levels_a_buried_cue_over_the_bed_on_its_own(post_desk: Path) -> 
     assert "levelled over the music bed: a door slams +" in sfx.detail, sfx.detail
     mix = next(s for s in result.steps if s.step == "mix")
     assert "!! cue 'a door slams'" not in mix.detail, mix.detail
+
+
+# --- A wanted hit then a quiet tail is not a broken sound (Sweet Racket L-20261007-1) -------------
+
+
+def test_a_hit_then_a_bed_is_checked_as_that_shape() -> None:
+    from creation.post.sfx import HIT_THEN_TAIL, checked_shape, shape_problem
+
+    slam = _cue(kind="sustained", sound="a car door slams, then a low engine idle")
+    assert checked_shape(slam) == HIT_THEN_TAIL
+    hit_then_low = (-10.0, -14.0, -30.0, -31.0, -30.0, -32.0, -31.0, -30.0)
+    assert (
+        shape_problem("sustained", hit_then_low, legacy=False) is not None
+    )  # the old false warning
+    assert shape_problem(checked_shape(slam), hit_then_low) is None
+    assert (
+        shape_problem(HIT_THEN_TAIL, (-10.0, -14.0, -90.0, -90.0, -90.0))
+        == "the tail after the hit is silent"
+    )
+    # A plain bed, and an event, keep their own checks.
+    assert (
+        checked_shape(_cue(kind="sustained", sound="rain on the window")) == "sustained"
+    )
+    assert (
+        checked_shape(_cue(kind="sustained", sound="an engine idles, then dies"))
+        == "sustained"
+    )
+    assert (
+        checked_shape(_cue(kind="event", sound="a door slams then rattles")) == "event"
+    )

@@ -651,6 +651,15 @@ def shape_problem(
         return "silent"
     if kind == "event":
         return None if max(levels[:2]) >= peak - 12.0 else "event starts late"
+    if kind == HIT_THEN_TAIL:
+        # A hit then a quieter bed ("a car door slams, then the engine idles"): the hit must land
+        # early and the tail must be heard, but it may sit well under the hit (L-20261007-1).
+        if max(levels[:2]) < peak - 12.0:
+            return "the hit starts late"
+        tail = levels[2:]
+        if tail and sum(1 for level in tail if level > SILENCE_DB) / len(tail) < 0.5:
+            return "the tail after the hit is silent"
+        return None
     tail = levels[1:]
     if not tail:
         return None
@@ -670,6 +679,36 @@ def shape_problem(
             f"{median:.0f} dB; a constant sound holds within {SUSTAINED_HOLD_DB:g} dB)"
         )
     return None
+
+
+#: The shape of a sustained cue whose words describe a hit followed by a bed (L-20261007-1).
+HIT_THEN_TAIL = "hit_then_tail"
+_HIT_WORDS = re.compile(
+    r"\b(slam|slams|slammed|bang|bangs|crash|crashes|thud|thuds|clang|clangs|knock|knocks|"
+    r"smash|smashes|shut|shuts|snap|snaps|hit|hits|crack|cracks|pop|pops|click|clicks|clinks?)\b",
+    re.IGNORECASE,
+)
+_THEN = re.compile(
+    r"\b(then|followed by|before|into|and then|giving way to)\b|,\s*then\b",
+    re.IGNORECASE,
+)
+
+
+def checked_shape(cue: "SfxCue") -> str:
+    """The shape a cue is checked against: its kind, or :data:`HIT_THEN_TAIL` for a wanted hit then a bed.
+
+    A sustained cue whose words put a hit before a following sound ("a car door slams, then a
+    low engine idle") was flagged "sustained sound collapses/fades" though that is the shape
+    asked for. Only the check changes: the cue, its words and its placement do not.
+    """
+
+    if cue.kind != "sustained":
+        return cue.kind
+    words = cue.sound
+    then = _THEN.search(words)
+    if then and _HIT_WORDS.search(words[: then.start()]):
+        return HIT_THEN_TAIL
+    return cue.kind
 
 
 def service_renderer(audio: AudioService, spine_id: str) -> Renderer:
@@ -1035,7 +1074,7 @@ def lay_sfx(
         cue = replace(cue, seconds=round(min(cue.seconds, room), 3))
         cached = cache_dir / f"{cue.cache_key}.mp3"
         if cached.is_file():
-            if shape_problem(cue.kind, measure(cached)) is None:
+            if shape_problem(checked_shape(cue), measure(cached)) is None:
                 kept.append((cue, cached))
                 continue
             # A cached render that is silent (or the wrong shape) is never laid again: re-made below.
@@ -1061,7 +1100,7 @@ def lay_sfx(
                 continue
             rendered += 1
             cost += max(SFX_MIN_SECONDS, cue.seconds) * SFX_USD_PER_SECOND
-            problem = shape_problem(cue.kind, measure(path)) or ""
+            problem = shape_problem(checked_shape(cue), measure(path)) or ""
             if not problem:
                 good = path
                 break
