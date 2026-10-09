@@ -183,15 +183,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     opening.add_argument(
         "--single-frame-start",
         action="store_true",
-        help="Kept for compatibility: each take opens on a single full picture, which is already the "
-        "server's default (founder, 8 Oct 2026; a continuing series from its next unwritten episode). "
+        help="Tests only: open each take on a single full picture instead of the storyboard (off by "
+        "default since 9 Oct 2026, fictora-drama #694: it changed continuing shows' art style). "
         "Goes with --confirm-spend; a resumed step keeps what the film was first sent with.",
     )
     opening.add_argument(
         "--no-single-frame-start",
         action="store_true",
-        help="This film only (operator): open each take on the storyboard instead of the single-picture "
-        "default. Goes with --confirm-spend; a resumed step keeps what the film was first sent with.",
+        help="This film only (operator): open each take on the storyboard, said explicitly (the same as "
+        "no flag since 9 Oct 2026). Goes with --confirm-spend; a resumed step keeps what the film was first sent with.",
     )
     step.add_argument(
         "--accept-notice",

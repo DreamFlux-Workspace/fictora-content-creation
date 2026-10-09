@@ -873,15 +873,17 @@ def film_scope(
     return extra
 
 
-#: Printed when a film is sent with ``--single-frame-start`` (kept for compatibility: the
-#: single-picture opening is the server's default since 8 Oct 2026, so on a new story this is
-#: what the film does anyway; on a continuing series it opens every episode that way).
+#: Printed when a film is sent with ``--single-frame-start`` (tests only: the single-picture
+#: opening is off by default again since 9 Oct 2026, fictora-drama #694, because it changed
+#: continuing shows' art style; the flag turns it on for that one film).
 SINGLE_FRAME_START_NOTE = (
     "Opening each take on a single full picture instead of the storyboard"
 )
 
 #: Printed when a film is sent with ``--no-single-frame-start`` (this film only).
-SINGLE_FRAME_START_OFF_NOTE = "Opening each take on the storyboard, not the single-picture default (--no-single-frame-start)"
+SINGLE_FRAME_START_OFF_NOTE = (
+    "Opening each take on the storyboard (--no-single-frame-start)"
+)
 
 #: The plain stop when the server will not take an explicit opening choice (operator only).
 SINGLE_FRAME_START_REFUSED = (
@@ -897,8 +899,8 @@ def single_frame_start_choice(on: bool = False, off: bool = False) -> bool | Non
     Parameters
     ----------
     on
-        ``--single-frame-start`` (kept for compatibility; the default already opens on one picture
-        for a new story).
+        ``--single-frame-start`` (tests only: the single-picture opening is off by default
+        since 9 Oct 2026, fictora-drama #694).
     off
         ``--no-single-frame-start``: this film opens on the storyboard.
 
@@ -1133,9 +1135,9 @@ def video_request_body(
         A single-take re-film with a fresh seed.
     single_frame_start
         The operator's opening choice (:func:`single_frame_start_choice`). ``None``
-        (no flag) sends no field: the server's default opens each take on one
-        full picture (fictora-drama #658; default since 8 Oct 2026), and the
-        body is exactly as before. ``True`` (``--single-frame-start``) or
+        (no flag) sends no field: the server's default opens each take on the
+        storyboard (single picture off by default again since 9 Oct 2026,
+        fictora-drama #694), and the body is exactly as before. ``True`` (``--single-frame-start``) or
         ``False`` (``--no-single-frame-start``) is sent as given.
     desk
         The series desk: an existing show's music lock (:mod:`creation.music_lock`)

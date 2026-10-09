@@ -85,7 +85,7 @@ class ProductionState:
     #: so a desk that never used the flag keeps its ``production.json`` as before.
     single_frame_start_keys: list[str] = field(default_factory=list)
     #: Film keys ``step`` sends with ``--no-single-frame-start`` (``single_frame_start: false``,
-    #: the storyboard opening instead of the 8 Oct 2026 default). Kept and left out of the file
+    #: the storyboard opening, said explicitly; the default again since 9 Oct 2026). Kept and left out of the file
     #: while empty exactly like ``single_frame_start_keys``.
     single_frame_start_off_keys: list[str] = field(default_factory=list)
     #: Legacy, read only: film keys ``step`` sent with the removed ``--reference-mode`` trial

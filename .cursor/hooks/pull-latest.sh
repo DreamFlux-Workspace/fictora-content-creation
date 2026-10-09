@@ -57,6 +57,27 @@ if [[ "$branch" != "main" ]]; then
   exit 0
 fi
 
+# A kit command still running (another session's fictora-produce / fictora-ops) keeps this
+# checkout as it is: pulling now swaps the kit's files under that command, and the next
+# `uv run` reinstalls the kit's launchers, which Windows refuses while one is running
+# ("failed to remove file ... fictora-produce.exe: Access is denied", NOCLIP L-20261008-8).
+running_kit() {
+  local found=""
+  if command -v tasklist.exe >/dev/null 2>&1; then
+    found=$(tasklist.exe //FO CSV //NH 2>/dev/null | grep -io -E '"fictora-(produce|ops)\.exe"' | head -n 1 | tr -d '"')
+  elif command -v pgrep >/dev/null 2>&1; then
+    found=$(pgrep -fl 'fictora-(produce|ops)|creation[.]cli_(produce|ops)' 2>/dev/null | grep -v -E '^[0-9]+ (pgrep|grep)( |$)' | head -n 1 | grep -o -E 'fictora-(produce|ops)|creation[.]cli_(produce|ops)' | head -n 1)
+  fi
+  printf '%s' "$found"
+}
+
+busy=$(running_kit)
+if [[ -n "$busy" ]]; then
+  sha=$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  emit "Pull skipped: a kit command (${busy}) is still running, so this checkout stayed at ${sha}. Pulling under it could change the kit mid-command, and the next uv run could fail to replace the kit's launcher. Start a new session after it finishes to pull. If uv run says 'failed to remove file ... Access is denied', run the same command with uv run --no-sync."
+  exit 0
+fi
+
 export GIT_TERMINAL_PROMPT=0
 status=0
 pull_log=$(git -C "$root" pull --ff-only --no-rebase origin main 2>&1) || status=$?
