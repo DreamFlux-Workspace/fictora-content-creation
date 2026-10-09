@@ -182,9 +182,7 @@ def _config_args(*argv: str) -> argparse.Namespace:
     return parser.parse_args(list(argv))
 
 
-def test_desk_config_takes_plain_and_none_and_none_turns_server_captions_off() -> (
-    None
-):
+def test_desk_config_takes_plain_and_none_and_none_turns_server_captions_off() -> None:
     from creation.production_config import server_caption_style
 
     plain = config_from_args(_config_args("--caption-style", "plain"))
