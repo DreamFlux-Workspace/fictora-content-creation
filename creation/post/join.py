@@ -1061,7 +1061,9 @@ def windows_through_edits(
             if span is not None and span[1] > span[0]:
                 after.append((round(span[0], 3), round(span[1], 3)))
         moved = after
-        how.append("to the trim handles" if op == "handles" else f"through {op} ({why})")
+        how.append(
+            "to the trim handles" if op == "handles" else f"through {op} ({why})"
+        )
     return moved, how
 
 
@@ -1155,7 +1157,9 @@ def _edge_level(
         side = _side(levels, range(max(0, n - span), n),
                      range(n - span - 1, max(0, n - reach) - 1, -1), sorted(speech))  # fmt: skip
     else:
-        side = _side(levels, range(0, min(n, span)), range(span, min(n, reach)), sorted(speech))
+        side = _side(
+            levels, range(0, min(n, span)), range(span, min(n, reach)), sorted(speech)
+        )
     return None if side is None else side[0]
 
 
@@ -1226,7 +1230,9 @@ def episode_seam_rides(
             continue
         levelled = max(-EPISODE_SEAM_LEVEL_MAX_DB, min(EPISODE_SEAM_LEVEL_MAX_DB, step))
         rides.append(
-            SeamRide(index, round(levelled / 2, 2), round(-levelled / 2, 2), round(step, 1))
+            SeamRide(
+                index, round(levelled / 2, 2), round(-levelled / 2, 2), round(step, 1)
+            )
         )
     return rides
 
@@ -1241,7 +1247,9 @@ def _ride(sound: np.ndarray, db: float, *, tail: bool) -> np.ndarray:
         return sound
     hold, ramp = min(hold, n // 2), min(ramp, max(0, n // 2 - min(hold, n // 2)))
     curve = np.zeros(n)
-    edge = np.concatenate([np.linspace(0.0, db, ramp, endpoint=False), np.full(hold, db)])
+    edge = np.concatenate(
+        [np.linspace(0.0, db, ramp, endpoint=False), np.full(hold, db)]
+    )
     if tail:
         curve[n - len(edge) :] = edge
     else:
@@ -1276,7 +1284,9 @@ def join_sound(
         size = int(round(seconds * BED_RATE))
         skip = int(round(heads[index] * BED_RATE)) if heads else 0
         sound = decode_stereo(part.pre_bed)[skip : skip + size]
-        sounds.append(np.pad(sound, ((0, size - len(sound)), (0, 0))) * 10 ** (gain / 20))
+        sounds.append(
+            np.pad(sound, ((0, size - len(sound)), (0, 0))) * 10 ** (gain / 20)
+        )
     rides = episode_seam_rides(parts, sounds, speech or [[] for _ in parts])
     for ride in rides:
         sounds[ride.index] = _ride(sounds[ride.index], ride.tail_db, tail=True)
