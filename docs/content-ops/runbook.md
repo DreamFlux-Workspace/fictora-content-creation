@@ -311,7 +311,7 @@ Repurposing an episode (a new idea on an episode already authored): update its t
 
 ### Hosted post is off
 
-Hosted post-production is switched off on the service. Never call `POST /v1/video-generations/{id}/post-production-runs` and never pass `--api-captions`. An answer of `409 hosted_post_off`, or the older `503 restate_unavailable` from a post-production call, means finish the take locally with `fictora-produce finish --desk D`. It does not mean the service is down; do not retry it and do not report an outage. `finish` ends with `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`; `NOT DONE` (exit 5) is not a deliverable.
+Hosted post-production is switched off on the service. Never call `POST /v1/video-generations/{id}/post-production-runs`. New desks default to **`api_captions: true`**: the server finishes each episode (concat + house captions) after filming; prod runs that step on the Modal media worker (~30–60 s). The desk still downloads the **raw** take; **`fictora-produce finish`** on the laptop remains mandatory for music, SFX, mix, the show's Bold/Subtle captions, and the mark. Use **`--no-api-captions`** at `start` or `bind` only when the human wants raw-only enrol. An answer of `409 hosted_post_off`, or the older `503 restate_unavailable` from a post-production call, means finish the take locally with `fictora-produce finish --desk D`. It does not mean the service is down; do not retry it and do not report an outage. `finish` ends with `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`; `NOT DONE` (exit 5) is not a deliverable.
 
 ### Change a character's voice (never regenerate the story)
 

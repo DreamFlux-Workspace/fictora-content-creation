@@ -1,7 +1,8 @@
 """Local house captions: time spine lines on a raw take and burn them with ffmpeg.
 
-The raw take from the Drama API has no burn-in (``api_captions: false``). This
-module finishes it on the operator's laptop:
+The raw take from the Drama API has no local burn-in. This module finishes it on
+the operator's laptop (Bold/Subtle/Plain), whether or not the server also burned
+house captions on the episode asset (``api_captions``, default true):
 
 1. Read episode dialogue from the desk spine snapshot (``ep01/api/*spine*.json``):
    for one take of a two- or four-take episode, only the lines of the beats that
