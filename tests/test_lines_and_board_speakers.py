@@ -393,14 +393,19 @@ def test_the_shot_list_says_rows_written_before_a_script_edit_are_rewritten_befo
 
     spine = _board_spine()
     spine["media_assets"] = [
-        asset for asset in spine.get("media_assets") or [] if asset.get("relation_type") != "episode"
+        asset
+        for asset in spine.get("media_assets") or []
+        if asset.get("relation_type") != "episode"
     ]
     for frame in spine["frames"]:
         frame["edited_beat_ids"] = [spine["beats"][0]["beat_id"]]
 
     lines = "\n".join(shot_list_lines(spine, episode=1))
 
-    assert "rewritten from the script as it is now before this board is first drawn" in lines
+    assert (
+        "rewritten from the script as it is now before this board is first drawn"
+        in lines
+    )
     assert "don't hand-edit them" in lines
 
 
