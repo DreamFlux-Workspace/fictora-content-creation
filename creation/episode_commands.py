@@ -78,6 +78,7 @@ from creation.narrator_cast import (
 from creation.narrator_cast import question as narrator_question
 from creation.cli_text import TextArgError, text_or_file
 from creation.new_cast import new_cast_notice, newcomers
+from creation.story_objects import new_objects, new_objects_notice
 from creation.desk_media_urls import drawn_cast_rows
 from creation.post.desk import name_matches
 from creation.harness import stages_gated as stages
@@ -1199,7 +1200,9 @@ def _show_authored(
     if summary.get("summary"):
         print(f"  {summary['summary']}", file=out)
     print(script_gate_text(desk, spine, episode=episode), file=out)
-    arrived = new_cast_notice(newcomers(before, spine))
+    arrived = new_cast_notice(newcomers(before, spine)) + new_objects_notice(
+        new_objects(before, spine)
+    )
     for line in arrived:
         print(line, file=out)
     # Nudges only (fictora-drama #538): the job's own list, else the spine's for this episode.

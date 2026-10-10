@@ -26,6 +26,11 @@ import httpx
 from creation.plate_traits_print import plate_traits_text, wait_for_plate_traits
 from creation.authoring_warnings import authoring_warnings, for_episode, warning_lines
 from creation.brief_lines import brief_vs_spine_lines
+from creation.story_objects import (
+    object_picture_urls,
+    objects_owing_approval,
+    objects_to_draw,
+)
 from creation.new_cast import (
     cast_owing_pictures,
     cast_without_pictures,
@@ -1621,6 +1626,9 @@ def run_step(
                 owing = {
                     cast_id for cast_id, _ in cast_owing_pictures(spine_now, episode=ep)
                 }
+            # Story objects owed a picture (fictora-drama story_props) are drawn by the
+            # same step, one still each, never per take.
+            objects_owed = objects_to_draw(spine_now, episode=ep)
             if not is_legacy(desk):
                 voices_first = voices_first_refusal(
                     desk, spine_now, episode=ep, run=run, stage="the plates"
@@ -1631,9 +1639,10 @@ def run_step(
                 desk,
                 state,
                 kind="plates",
-                count=len(owing)
-                if owing is not None
-                else len(drawn_cast_rows(spine_now)),
+                count=(
+                    len(owing) if owing is not None else len(drawn_cast_rows(spine_now))
+                )
+                + len(objects_owed),
                 confirm_spend=confirm_spend,
             )
             if priced is not None:
@@ -1662,6 +1671,7 @@ def run_step(
                 return StepResult(state.phase, stop, ())
             api_dir = api_dir_for_episode(desk, ep)
             (ep_dir / "plates").mkdir(parents=True, exist_ok=True)
+            object_paths: list[str] = []
             fetch = httpx.Client(timeout=120.0)
             try:
                 for index, url in enumerate(
@@ -1671,15 +1681,31 @@ def run_step(
                         fetch, url, ep_dir / "plates", f"plate-ep{ep:02d}-{index}"
                     )
                     paths.append(str(path))
+                # Each story object's picture waiting for the yes, beside the plates.
+                for stem, url in object_picture_urls(
+                    spine,
+                    only={
+                        prop_id
+                        for prop_id, _ in objects_owing_approval(spine, episode=ep)
+                    },
+                ):
+                    path = download_to_versioned(
+                        fetch, url, ep_dir / "plates", f"{stem}-ep{ep:02d}"
+                    )
+                    object_paths.append(str(path))
             finally:
                 fetch.close()
-            if paths:
+            # Paid: the plates, and each object picture this step drew (once each).
+            drawn_objects = len(objects_owed) - len(objects_to_draw(spine, episode=ep))
+            if paths or drawn_objects:
                 record_spend(
                     desk,
                     episode=ep,
-                    usd=round(float(STILL_USD) * len(paths), 2),
-                    unit=f"plates x{len(paths)}",
+                    usd=round(float(STILL_USD) * (len(paths) + drawn_objects), 2),
+                    unit=f"plates x{len(paths)}"
+                    + (f" + object pictures x{drawn_objects}" if drawn_objects else ""),
                 )
+            paths.extend(object_paths)
             state.phase = "wait_plates"
             state.drawing_estimates.pop(f"plates-ep{ep:02d}", None)
             save_production(desk, state)
@@ -2912,16 +2938,29 @@ def approve_gate(
             save_spine_snapshot(desk, ep, spine)
             record = record_script_gate(desk, episode=ep)
             owing = cast_owing_pictures(spine, episode=ep) if ep >= 2 else []
-            if owing:
+            # A story object whose picture is owed or waits for its yes holds the
+            # boards the same way (fictora-drama story_props).
+            objects = objects_owing_approval(spine, episode=ep) if ep >= 2 else []
+            if owing or objects:
                 # Boards are drawn from the characters' pictures; the server
                 # refuses them (cast_not_approved) until a newcomer's is approved.
                 state.phase = "ready_cast_enrol"
                 save_production(desk, state)
-                who = ", ".join(name for _, name in owing)
+                parts = []
+                if owing:
+                    parts.append(
+                        f"New character(s) {', '.join(name for _, name in owing)}"
+                    )
+                if objects:
+                    parts.append(
+                        f"story object(s) {', '.join(name for _, name in objects)}"
+                    )
+                drawn = len(owing) + len(objects_to_draw(spine, episode=ep))
+                who = " and ".join(parts)
                 return StepResult(
                     state.phase,
-                    f"Episode {ep} script approved on the API. New character(s) {who} need a picture before "
-                    f"boards: `fictora-produce step` draws it (~${float(STILL_USD) * len(owing):.2f}), then "
+                    f"Episode {ep} script approved on the API. {who[0].upper()}{who[1:]} need a picture before "
+                    f"boards: `fictora-produce step` draws it (~${float(STILL_USD) * drawn:.2f}), then "
                     "the human approves it with `fictora-produce approve --gate plates`.",
                     (),
                 )
