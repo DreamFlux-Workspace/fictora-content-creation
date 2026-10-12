@@ -7547,8 +7547,22 @@ def _price_film(
     usd, source, warnings = price_estimate(
         state, cfg, estimate, cast_count=cast_count, takes=len(take_ids)
     )
+    from creation.post.speaker_screen import film_speaker_warnings
+
     warnings = [
         *stranded_preflight(spine, unit=key, desk=desk, episode=episode),
+        # A line on a board row without its speaker, or off screen over one face, lands in the wrong
+        # mouth (Dead Heat ep 2, Don't Look, Hana ep 6). Read from the desk's rows: the server returns
+        # no per-shot people before a film. Warning only.
+        *film_speaker_warnings(
+            spine,
+            episode=episode,
+            take_ids=take_ids,
+            all_take_ids=[
+                take.take_id
+                for take in episode_by_ordinal(load_series(desk), episode).takes
+            ],
+        ),
         *warnings,
     ]
     if (

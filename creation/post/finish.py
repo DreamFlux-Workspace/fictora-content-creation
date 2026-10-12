@@ -1041,20 +1041,36 @@ def _line_check_stop(
     accept: tuple[str, ...],
     run_dir: Path,
     out: TextIO,
+    locked: bool = False,
 ) -> str:
-    """The model-voice line check before ``finish`` makes anything: the stop text, or ``""`` to carry on."""
+    """The line check before ``finish`` makes anything: the stop text, or ``""`` to carry on.
+
+    A model-voice take is compared word for word with its script, then each line with who is on
+    screen under it; a locked-voice take (``locked``) only with who is on screen (``SPEAKER NOT ON
+    SCREEN``, :mod:`creation.post.speaker_screen`): its words are the track's.
+    """
 
     from creation.post import line_check as lc
 
-    print(
-        "[lines] Comparing what the take says with its script (model voices)",
-        file=out,
-        flush=True,
-    )
-    check, read = lc.desk_line_check(
-        desk, episode=episode, take_id=take_id, take=source, facts=facts, transcriber=transcriber,
-        muted=hand.mutes, voice_texts=[voice_line_text(line.path) for line, _ in hand.voices],
-    )  # fmt: skip
+    if locked:
+        print(
+            "[lines] Checking each line plays over its own speaker (locked voices)",
+            file=out,
+            flush=True,
+        )
+        check, read = lc.locked_speaker_check(
+            desk, episode=episode, take_id=take_id, facts=facts
+        )
+    else:
+        print(
+            "[lines] Comparing what the take says with its script (model voices)",
+            file=out,
+            flush=True,
+        )
+        check, read = lc.desk_line_check(
+            desk, episode=episode, take_id=take_id, take=source, facts=facts, transcriber=transcriber,
+            muted=hand.mutes, voice_texts=[voice_line_text(line.path) for line, _ in hand.voices],
+        )  # fmt: skip
     if check is None or check.unread:
         why = read if check is None else check.unread
         note = f"!! line check NOT RUN: {why}. Listen to every line before delivering this take"
@@ -1307,7 +1323,9 @@ def run_finish(
         ``--accept-line-mismatch tK``: deliver a model-voice take whose transcript does not
         match its script anyway (the faults are logged in the run notes). Without it, such a
         take STOPS before any step runs (:mod:`creation.post.line_check`; founder decision
-        8 Oct 2026: re-film the take).
+        8 Oct 2026: re-film the take). The same flag delivers a take of either voice mode
+        with a ``SPEAKER NOT ON SCREEN`` fault (:mod:`creation.post.speaker_screen`; founder
+        decision 12 Oct 2026).
     stream
         Progress output (stderr by default).
 
@@ -1497,15 +1515,17 @@ def run_finish(
     )
     # Model voices (founder decision 8 Oct 2026, L-20260924-10): the video model wrote the words itself.
     # Compare them with the script before anything is made; a fault stops here, nothing spent.
-    if not locked:
-        line_stop = _line_check_stop(
-            desk, episode=episode, take_id=take_id, source=source, facts=facts_payload,
-            transcriber=transcriber, hand=hand, accept=accept_line_mismatch, run_dir=run_dir, out=out,
-        )  # fmt: skip
-        if line_stop:
-            result.stopped = line_stop
-            result.line_faults = True
-            return result
+    # Both voice modes (founder decision 12 Oct 2026): a line over a shot without its speaker, but with
+    # other named faces, is mouthed by one of them (SPEAKER NOT ON SCREEN); locked takes check only that.
+    line_stop = _line_check_stop(
+        desk, episode=episode, take_id=take_id, source=source, facts=facts_payload,
+        transcriber=transcriber, hand=hand, accept=accept_line_mismatch, run_dir=run_dir, out=out,
+        locked=locked,
+    )  # fmt: skip
+    if line_stop:
+        result.stopped = line_stop
+        result.line_faults = True
+        return result
     # A locked-voice take ducks exactly inside its line windows unless --duck-db says otherwise.
     mix_duck_db = duck_db if duck_db is not None or not locked else TARGET_AUDIO_DUCK_DB
     current = source

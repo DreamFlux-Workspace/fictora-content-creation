@@ -448,7 +448,7 @@ def test_an_override_for_another_take_does_not_deliver_this_one(
 
 
 @needs_ffmpeg
-def test_a_locked_voice_take_is_not_line_checked(post_desk: Path) -> None:
+def test_a_locked_voice_take_is_not_word_checked(post_desk: Path) -> None:
     locked = copy.deepcopy(LINE_FACTS)
     locked["take_facts"]["soundtrack"] = {
         "mode": "target_audio",
@@ -470,10 +470,15 @@ def test_a_locked_voice_take_is_not_line_checked(post_desk: Path) -> None:
             },
         ],
     }
-    # The transcript (of a take that dropped a line) is never read on a locked-voice take.
+    # The transcript (of a take that dropped a line) is never read on a locked-voice take: only who
+    # mouths each line is checked (SPEAKER NOT ON SCREEN), and these facts name nobody per shot.
     _model_take(post_desk, [(KENJI, 0.2, 2.0)], facts=locked)
     result, printed = _finish(post_desk)
-    assert not result.line_faults and "[lines]" not in printed and result.steps
+    assert not result.line_faults and result.steps
+    assert (
+        "Comparing what the take says" not in printed and "line check:" not in printed
+    )
+    assert "[lines] !! speaker check NOT RUN" in printed
 
 
 @needs_ffmpeg

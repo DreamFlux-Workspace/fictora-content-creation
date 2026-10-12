@@ -1169,6 +1169,7 @@ def take_lines(
                 "spoken_text": s.spoken,
                 "subtitle": s.subtitle or s.text,
                 "performed": s.performed,
+                **({"off_screen": "true"} if s.off_screen else {}),
             }
             for s in shouts
         }

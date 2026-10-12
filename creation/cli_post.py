@@ -493,9 +493,10 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         action="append",
         default=[],
         metavar="TAKE",
-        help="Deliver this model-voice take (tK, or all) even though its transcript does not match the script "
-        "(a missing, wrong, repeated, extra or wrong-shot line). Without it finish STOPS before making anything "
-        "and prints the re-film command; with it the faults are logged in the run notes.",
+        help="Deliver this take (tK, or all) even though its line check found a fault: on a model-voice take a "
+        "missing, wrong, repeated, extra or wrong-shot line; on either voice mode a line played over a shot "
+        "that shows other people and not its speaker (SPEAKER NOT ON SCREEN). Without it finish STOPS before "
+        "making anything and prints the re-film command; with it the faults are logged in the run notes.",
     )
     fin.add_argument(
         "--take-file",
