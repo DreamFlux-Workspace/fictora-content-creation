@@ -7174,7 +7174,7 @@ def _run_film(
         )
     if not confirm_spend:
         return _price_film(desk, state, run, cfg, episode=episode, take_ids=take_ids, take_index=take_index, key=key,
-                           what=what, reason=reason, out=out)  # fmt: skip
+                           what=what, reason=reason, out=out, refilm=filmed_before)  # fmt: skip
     priced = load_production(desk).film_estimates.get(key)
     if priced is None:
         raise CommandStopped(
@@ -7529,6 +7529,7 @@ def _price_film(
     what: str,
     reason: str | None,
     out: Any,
+    refilm: bool = False,
 ) -> str:
     estimate = stages.estimate_batch(
         run,
@@ -7585,6 +7586,11 @@ def _price_film(
     ]
     if reason:
         lines.append(f"Cause: {reason}")
+    if refilm:
+        # Salvage before re-filming (Gallery Heiress review, 12 Oct 2026): a free edit first.
+        from creation.post.salvage import refilm_cause_lines
+
+        lines += refilm_cause_lines(reason)
     flag = f" --take {take_ids[0]}" if take_index is not None else ""
     cause_flag = f' --cause "{reason}"' if reason else ""
     lines.append(

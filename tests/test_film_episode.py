@@ -794,3 +794,23 @@ def test_take_for_clip_uses_explicit_identity_only(
         for position, clip in enumerate(clips, start=1)
     ]  # fmt: skip
     assert got == wanted
+
+
+def test_a_refilm_price_names_the_free_edit_first_when_the_cause_reads_like_one(
+    desk30: Path, api30: FakeApi
+) -> None:
+    """Salvage before re-filming (Gallery Heiress review, 12 Oct 2026): a double for a moment is a trim, not a re-film."""
+
+    _filmed_once(desk30)
+    api30.routes[("POST", ESTIMATE)] = {
+        "cost_estimate": {"total_usd": "0.60", "priced_on": "2026-10-12", "takes": 1}
+    }
+
+    text = run_film(
+        desk30, episode=2, take_id="t2", cause="same person rendered twice at shot 2"
+    )
+
+    assert "!! salvage first" in text and "trim --cut" in text, text
+    assert api30.posted(VIDEO) == []
+    plain = run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
+    assert "Salvage first:" in plain and "!! salvage first" not in plain

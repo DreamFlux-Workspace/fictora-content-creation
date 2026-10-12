@@ -1,4 +1,4 @@
-"""``fictora-produce`` local edit commands: deboard, trim, freeze, tempo, soften, blur.
+"""``fictora-produce`` local edit commands: deboard, trim, freeze, tempo, soften, blur, zoom.
 
 Each reads one take on the desk (``--take-file``, else the newest raw take),
 writes ``epNN/takes/take-epNN-tK-<step>-vN.mp4`` (never overwriting), appends
@@ -18,6 +18,12 @@ the un-marked master (``take-epNN-tK-<step>-prebed-vN.mp4``,
 finish record names the edited three with the edit chain, so ``join`` still
 lays one bed across the edited take and marks once. ``freeze``, ``soften`` and
 ``blur`` leave the sound alone, so the record keeps the same pre-bed take.
+
+``zoom`` (a punch-in, the free salvage for a jump cut or a stray element at the
+edge of the frame) runs BEFORE ``finish``, like ``soften``: on a finished file it
+would enlarge the burned captions and the mark too, so a file a finish record
+names is refused. It keeps the raw take's timeline, so ``finish --take-file``
+lays everything at the filmed times.
 """
 
 from __future__ import annotations
@@ -42,6 +48,7 @@ from creation.post.desk import approved_board, board_versions, latest_raw_take
 from creation.post.edit import (
     BLUR_SIGMA,
     SLOW_TEMPO,
+    ZOOM_FACTOR,
     BlurResult,
     TrimResult,
     blur_boxes,
@@ -51,7 +58,9 @@ from creation.post.edit import (
     measure_cuts,
     parse_box,
     parse_cut,
+    parse_point,
     plan_trim,
+    punch_in,
     shift_json_file,
     soften_seams,
 )
@@ -65,7 +74,9 @@ from creation.post.lineage import record_edit
 from creation.post.media import probe_video, video_streams
 from creation.post.take_timeline import UnsureRun, unsure_head
 
-EDIT_COMMANDS = frozenset({"deboard", "trim", "freeze", "tempo", "soften", "blur"})
+EDIT_COMMANDS = frozenset(
+    {"deboard", "trim", "freeze", "tempo", "soften", "blur", "zoom"}
+)
 #: Edits that carry a finish record onto their output.
 CARRIED = frozenset({"trim", "tempo", "freeze", "soften", "blur"})
 #: Edits that leave the sound as it was: the record keeps the same pre-bed take.
@@ -395,6 +406,36 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     blur.add_argument(
         "--feather", type=int, default=0,
         help="Pixels of soft edge OUTSIDE each box (default 0, a hard edge). The box itself stays fully blurred.",
+    )  # fmt: skip
+
+    zoom = sub.add_parser(
+        "zoom",
+        help="Punch-in (free): show the picture closer, cropped around --center and scaled back to the full "
+        "frame, from --from to --to seconds (the whole take without them). Hides a jump cut (punch in on the "
+        "shot after it) or crops a stray element out of the edge of the frame, instead of a paid re-film. "
+        "Same length, sound copied. Run it BEFORE finish (on the raw or deboarded take), then finish "
+        "--take-file the zoomed file: a finished file is refused (its captions and mark would zoom too).",
+    )
+    _take_args(
+        zoom,
+        take_file_help="The take to zoom (raw or deboarded, not finished). Default: the newest raw take.",
+    )
+    zoom.add_argument(
+        "--factor", type=float, default=ZOOM_FACTOR,
+        help=f"How much closer, more than 1.0 and at most 2.0 (default {ZOOM_FACTOR:g}).",
+    )  # fmt: skip
+    zoom.add_argument(
+        "--center", type=parse_point, default=None,
+        help="x,y in pixels of the take to zoom on (frame-grab the moment to measure); default the middle. "
+        "Near an edge the window slides inward.",
+    )  # fmt: skip
+    zoom.add_argument(
+        "--from", dest="start", type=float, default=None,
+        help="Seconds: the punch-in starts (put it on the jump cut). Requires --to.",
+    )  # fmt: skip
+    zoom.add_argument(
+        "--to", dest="end", type=float, default=None,
+        help="Seconds: the punch-in ends. Requires --from.",
     )  # fmt: skip
 
 
@@ -804,6 +845,26 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
             "- PATCH, not a fix: this hides text the video invented; report it (learnings / the PR) so the "
             "source stops making it.",
             *carry.lines(record),
+        ]
+    elif args.command == "zoom":
+        if record_for_file(desk, source) is not None:
+            raise ValueError(
+                f"zoom `{source.name}`: this is a finished file, and a punch-in on it would enlarge its captions "
+                "and mark too. Zoom the raw (or deboarded) take, then `finish --take-file` the zoomed file."
+            )
+        zoomed = punch_in(source, target("zoom"), factor=args.factor, center=args.center,
+                          start=args.start, end=args.end)  # fmt: skip
+        detail = {
+            "factor": zoomed.factor,
+            "crop": zoomed.crop.as_list(),
+            "from": zoomed.start_seconds,
+            "to": zoomed.end_seconds,
+        }
+        record_edit(desk, op="zoom", source=source, output=zoomed.output, **detail)
+        lines = [
+            f"Zoom `{source.name}`: {zoomed.one_line()}",
+            "- Free salvage: watch the window at full size (a punch-in past ~1.3x on a 768p take can look soft).",
+            f"Next: `fictora-produce finish --desk {desk} --take-file {zoomed.output}`",
         ]
     else:
         raise ValueError(f"unknown command {args.command}")

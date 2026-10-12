@@ -546,7 +546,8 @@ def take_warning_lines(
     if lines:
         lines.append(
             f"   Check {', '.join(shots)} at full size before finishing (the server flagged "
-            f"{'it' if len(shots) == 1 else 'them'}); re-film the take if it shows what the warning says"
+            f"{'it' if len(shots) == 1 else 'them'}). If it shows what the warning says, try a free edit first "
+            "(cut a short stretch, speed up the shot, zoom past it); re-film only if none hides it"
         )
     return lines
 
