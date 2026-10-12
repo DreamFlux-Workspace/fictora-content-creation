@@ -80,6 +80,50 @@ from creation.post.reel_server import (
 )
 
 
+#: How a reel opens (the server's recipes, founder 12 Oct 2026): ``flash-forward`` (the default, the
+#: app's one reel: the strongest 2-3 s first, a reverse cymbal into the cut back) or ``straight``. The kit
+#: makes both of one episode for our own trial posts; ``reel-results`` tallies them by recipe.
+SERVER_OPENINGS = ("flash-forward", "straight")
+DEFAULT_RECIPE = "flash-forward"
+#: ``reel --recipes trial``: both openings.
+TRIAL_RECIPES = SERVER_OPENINGS
+
+
+def parse_recipe(text: str) -> str:
+    """A recipe name: the opening (``flash-forward`` or ``straight``).
+
+    Raises
+    ------
+    ValueError
+        Anything else (``face`` and the ``cliff`` close were tried on 12 Oct 2026 and dropped).
+    """
+
+    name = text.strip()
+    if name not in SERVER_OPENINGS:
+        raise ValueError(f"recipe {text!r}: one of {', '.join(SERVER_OPENINGS)}")
+    return name
+
+
+def recipe_list(text: str) -> list[str]:
+    """``--recipes``: ``trial`` (both openings) or a comma list of openings, no repeats."""
+
+    items = (
+        TRIAL_RECIPES
+        if text.strip() == "trial"
+        else [t for t in text.split(",") if t.strip()]
+    )
+    names = list(dict.fromkeys(parse_recipe(t) for t in items))
+    if not names:
+        raise ValueError("--recipes: name at least one recipe, or `trial`")
+    return names
+
+
+#: The endings the server's reel engine cuts (reel-rules-v6): ``push-hold`` (its default: the last frame
+#: holds while the camera eases in), ``hard`` and ``freeze-black``. The local engine (legacy desks and
+#: the fallback) cuts ``hard`` and ``freeze-black`` only.
+SERVER_ENDING_STYLES = ("push-hold", "hard", "freeze-black")
+
+
 def legacy_desk(desk: Path) -> bool:
     """Whether the desk was made before the rules epoch (6 Oct 2026): it keeps the local reel.
 
@@ -113,7 +157,12 @@ def plan_lines(plan: Mapping[str, Any], warnings: Sequence[str] = ()) -> list[st
             f"face by {str(strongest.get('face_source') or 'none').replace('_', ' ')})"
         )
     ending = plan.get("ending")
-    if isinstance(ending, Mapping) and ending.get("style") not in (None, "hard"):
+    if isinstance(ending, Mapping) and ending.get("style") == "push-hold":
+        rows.append(
+            f"Ending: push-hold (the last frame holds {float(ending.get('hold_s') or 0.6):g} s while the camera "
+            "eases in)"
+        )
+    elif isinstance(ending, Mapping) and ending.get("style") not in (None, "hard"):
         rows.append(
             f"Ending: {ending.get('style')} (freeze {FREEZE_SECONDS:g} s on the last frame, then "
             f"{BLACK_SECONDS:g} s black)"
@@ -497,6 +546,7 @@ def operator_body(
     cover_frame: float | None,
     plan: Mapping[str, Any] | None,
     part: int | None = None,
+    recipe: str | None = None,
 ) -> dict[str, Any]:
     """The reel route's request in operator mode (``fictora.drama-episode-reel.v1``).
 
@@ -504,6 +554,9 @@ def operator_body(
     only when the desk says one other than its own ordinal (``reel --part``, the desk's
     ``first_part``, a one-episode desk's name): a desk with every episode on it sends
     nothing and the server numbers it as before (NOCLIP, L-20261008-9).
+
+    ``recipe`` (the opening) is sent only when it is not the default, so a server
+    from before recipes still takes every default reel.
     """
 
     operator: dict[str, Any] = {
@@ -522,17 +575,22 @@ def operator_body(
         operator["watermark_y"] = max(0, int(watermark_y))
     if no_panels:
         operator["no_panels"] = True
+    if recipe is not None and recipe != DEFAULT_RECIPE:
+        operator["opening"] = parse_recipe(recipe)
     if bed_upload is not None:
         operator["bed_url"], operator["bed_sha256"] = bed_upload
     if still_upload is not None:
         operator["cover_still_url"], operator["cover_still_sha256"] = still_upload
     body: dict[str, Any] = {
         "seconds": seconds,
-        "ending": ending or "hard",
         "no_hook_line": no_hook_line,
         "no_cover": no_cover,
         "operator": operator,
     }
+    if ending:
+        # Only an ending the operator picked: the server's own default applies otherwise
+        # (push-hold since reel-rules-v6; an older server's is hard).
+        body["ending"] = ending
     if hook_line:
         body["hook_line"] = hook_line
     if hook_line_position in ("top", "lower"):
@@ -569,6 +627,7 @@ def run_reel(
     server: ReelServer | None = None,
     watermark_y: int | None = None,
     no_panels: bool = False,
+    recipe: str | None = None,
 ) -> ReelResult:
     """Make the episode's reel on the server and keep the books. Writes only under ``<desk>/reels/``.
 
@@ -606,6 +665,8 @@ def run_reel(
         What made it, for ``latest.json``: ``reel`` (this command), ``finish`` or an edit's name.
     server
         The server client (tests pass a stand-in); default the desk's.
+    recipe
+        The opening (``reel --recipes``); ``None`` is the default, the app's one reel.
 
     Returns
     -------
@@ -620,10 +681,10 @@ def run_reel(
         A refusal, or the desk has no finished take.
     """
 
-    if ending is not None:
-        from creation.post.ending import check_ending
-
-        check_ending(ending)
+    if ending is not None and ending not in SERVER_ENDING_STYLES:
+        raise ValueError(
+            f"--ending {ending!r}: one of {', '.join(SERVER_ENDING_STYLES)}"
+        )
     desk = desk.expanduser().resolve()
     # Edited copies of an inferred source and patched pictures live in a scratch folder, never on the desk.
     with tempfile.TemporaryDirectory(prefix="fictora-reel-") as tmp:
@@ -632,7 +693,7 @@ def run_reel(
             take_files=take_files, sources=sources, captions=captions, caption_style=caption_style,
             ending=ending, stream=stream, scratch=Path(tmp), hook_line=hook_line, no_hook_line=no_hook_line,
             hook_line_position=hook_line_position, no_cover=no_cover, cover_frame=cover_frame, server=server,
-            watermark_y=watermark_y, no_panels=no_panels,
+            watermark_y=watermark_y, no_panels=no_panels, recipe=recipe,
         )  # fmt: skip
     assert isinstance(result, ReelResult)
     return record_reel(desk, episode, result, made_by=made_by, stream=stream)
@@ -661,6 +722,7 @@ def make_reel(
     watermark_y: int | None = None,
     no_panels: bool = False,
     clips: ClipsAsk | None = None,
+    recipe: str | None = None,
 ) -> ReelResult | ClipsResult:
     """The renderer: send the desk's takes to the server's reel engine and download what it made.
 
@@ -879,7 +941,7 @@ def make_reel(
                 pov=pov, seconds=seconds, ending=ending, hook_line=hook_line, no_hook_line=no_hook_line,
                 hook_line_position=hook_line_position, no_cover=no_cover, cover_frame=cover_frame, plan=body,
                 bands_in_source=finals is not None, watermark_y=watermark_y, no_panels=no_panels,
-                part=sent_part,
+                part=sent_part, recipe=recipe,
             )  # fmt: skip
             if clips is not None:
                 # Clip mode: the engine picks 2-3 straight windows; a reel's length and plan do not apply.
@@ -989,6 +1051,17 @@ def make_reel(
     return result
 
 
+def plan_recipe(plan: Mapping[str, Any]) -> str:
+    """The recipe a server plan says it was cut with; a plan from before recipes is the default."""
+
+    raw = plan.get("recipe")
+    return (
+        str(raw.get("name") or DEFAULT_RECIPE)
+        if isinstance(raw, Mapping)
+        else DEFAULT_RECIPE
+    )
+
+
 def record_reel(
     desk: Path,
     episode: int,
@@ -1045,6 +1118,7 @@ def record_reel(
                 else ""
             ),
             "hook_text": result.hook_text,
+            "recipe": plan_recipe(result.plan),
         },
     )  # fmt: skip
     print(f"latest: {episode_reels(desk, episode) / LATEST_FILE}", file=out)

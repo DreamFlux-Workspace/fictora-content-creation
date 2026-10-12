@@ -245,7 +245,8 @@ def test_operator_body_carries_only_what_is_set() -> None:
         no_cover=False, cover_frame=None, plan=None,
     )  # fmt: skip
 
-    assert body["ending"] == "hard" and body["no_hook_line"] is True
+    # No ending picked: none is sent, so the server's default applies (push-hold since reel-rules-v6).
+    assert "ending" not in body and body["no_hook_line"] is True
     assert (
         "hook_line" not in body and "plan" not in body and "cover_frame_s" not in body
     )
@@ -254,6 +255,27 @@ def test_operator_body_carries_only_what_is_set() -> None:
         "bed_url" not in body["operator"] and body["operator"]["music_in_take"] is True
     )
     assert body["operator"]["cover_still_url"] == "https://assets.test/still.jpg"
+
+
+@pytest.mark.parametrize("ending", ["push-hold", "hard", "freeze-black"])
+def test_an_ending_the_operator_picks_is_sent(ending: str) -> None:
+    from creation.post.reel_via_server import BedChoice, operator_body
+
+    body = operator_body(
+        takes=[{"take_id": "t1"}], bed=BedChoice(None, -20.0, None, True, "no bed"), bed_upload=None,
+        still_upload=None, caption_style="house", pov=False, seconds=15.0, ending=ending, hook_line=None,
+        no_hook_line=False, hook_line_position=None, no_cover=False, cover_frame=None, plan=None,
+    )  # fmt: skip
+
+    assert body["ending"] == ending
+
+
+def test_the_reel_command_takes_the_servers_endings() -> None:
+    from creation.post.reel_via_server import SERVER_ENDING_STYLES, run_reel
+
+    assert SERVER_ENDING_STYLES[0] == "push-hold"
+    with pytest.raises(ValueError, match="--ending 'fade'"):
+        run_reel(Path("/nonexistent-desk"), episode=1, ending="fade")
 
 
 # --- the automatic reel ----------------------------------------------------------------------

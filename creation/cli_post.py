@@ -42,6 +42,7 @@ POST_COMMANDS = (
             "finish",
             "join",
             "reel",
+            "reel-results",
         }
     )
     | EDIT_COMMANDS
@@ -129,11 +130,22 @@ def add_caption_colour_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def add_ending_arg(parser: argparse.ArgumentParser) -> None:
-    """``--ending hard|freeze-black`` on ``reel`` and ``join`` (default ``hard``)."""
+def add_ending_arg(parser: argparse.ArgumentParser, *, reel: bool = False) -> None:
+    """``--ending`` on ``reel`` (push-hold|hard|freeze-black) and ``join`` (hard|freeze-black)."""
 
     from creation.post.reel_plan import BLACK_SECONDS, ENDING_STYLES, FREEZE_SECONDS
+    from creation.post.reel_via_server import SERVER_ENDING_STYLES
 
+    if reel:
+        parser.add_argument(
+            "--ending",
+            choices=SERVER_ENDING_STYLES,
+            default=None,
+            help="push-hold (the server's default): the last frame holds 0.6 s while the camera eases in. "
+            f"hard: end on the last frame. freeze-black: hold the last frame {FREEZE_SECONDS:g} s (the sound "
+            f"stops on it), then {BLACK_SECONDS:g} s of black. A legacy desk's local reel: hard or freeze-black.",
+        )
+        return
     parser.add_argument(
         "--ending",
         choices=ENDING_STYLES,
@@ -785,7 +797,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     add_caption_style_arg(reel)
     add_hook_line_args(reel)
     reel.add_argument("--watermark-y", type=int, default=None)
-    add_ending_arg(reel)
+    add_ending_arg(reel, reel=True)
     reel.add_argument(
         "--no-cover", action="store_true",
         help="Write no cover image (by default every reel writes reels/<reel>-cover-vN.jpg: "
@@ -803,6 +815,19 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Draw the cover on the reel's picture at S seconds (default: a saved server cover, "
         "else the strongest frame).",
     )  # fmt: skip
+
+    reel.add_argument(
+        "--recipes", default=None, metavar="LIST",
+        help="Make one reel per recipe for trial posts (our accounts only; the app always makes the one "
+        "default reel): `trial` (both: flash-forward, with its reverse cymbal into the cut back, and "
+        "straight) or a comma list of flash-forward|straight. Each is its own reel and its own row in "
+        "reels/metrics.csv; `reel-results` adds the posted ones up. $0.",
+    )  # fmt: skip
+    results = sub.add_parser(
+        "reel-results",
+        help="The posted reels' numbers by recipe, from reels/metrics.csv of the given desks (or folders of desks).",
+    )
+    results.add_argument("paths", type=Path, nargs="+", metavar="DESK")
 
     add_edit_parsers(sub)
     add_review_parser(sub)
@@ -1099,6 +1124,61 @@ def dispatch_post(args: argparse.Namespace) -> int:
                 print(f"Clips not made: {exc}", file=sys.stderr)
                 return 1
             return 0
+        if args.recipes is not None:
+            from creation.post.reel_via_server import recipe_list
+
+            if args.plan is not None or args.plan_only:
+                print(
+                    "Reel not made: --recipes plans each reel itself (no --plan / --plan-only)",
+                    file=sys.stderr,
+                )
+                return 1
+            try:
+                recipes = recipe_list(args.recipes)
+            except ValueError as exc:
+                print(f"Reel not made: {exc}", file=sys.stderr)
+                return 1
+            made_names: list[str] = []
+            cuts: dict[str, tuple[object, ...]] = {}
+            for recipe in recipes:
+                print(f"== recipe {recipe} ==")
+                try:
+                    one = run_reel(
+                        args.desk, episode=args.episode, seconds=args.seconds,
+                        take_files=tuple(args.take_file or ()), sources=tuple(args.source or ()),
+                        captions=tuple(args.captions or ()), caption_style=args.caption_style,
+                        watermark_y=args.watermark_y, ending=args.ending, hook_line=args.hook_line,
+                        no_hook_line=args.no_hook_line, hook_line_position=args.hook_line_position,
+                        no_cover=args.no_cover, cover_frame=args.cover_frame, no_panels=args.no_panels,
+                        recipe=recipe,
+                    )  # fmt: skip
+                except ReelServerUnreachable as exc:
+                    print(
+                        f"{unreachable_message(args.desk, args.episode)} ({exc})",
+                        file=sys.stderr,
+                    )
+                    return 1
+                except (ReelServerError, ValueError) as exc:
+                    print(f"Reel {recipe} not made: {exc}", file=sys.stderr)
+                    return 1
+                cut = tuple(
+                    (g.get("take"), g.get("start_s"), g.get("end_s"))
+                    for g in one.plan.get("segments") or []
+                )
+                twin = next((r for r, c in cuts.items() if c == cut), None)
+                cuts[recipe] = cut
+                name = one.video.name if one.video else "(plan only)"
+                # Two recipes can land on the same cut (no flash-forward window found): post one.
+                made_names.append(
+                    f"{recipe}: {name}"
+                    + (f" (the same cut as {twin}: post only one)" if twin else "")
+                )
+            print(
+                "Trial reels (post each as an Instagram trial reel; fill its metrics row after):"
+            )
+            for line in made_names:
+                print(f"  {line}")
+            return 0
         try:
             made = run_reel(
                 args.desk,
@@ -1133,6 +1213,13 @@ def dispatch_post(args: argparse.Namespace) -> int:
         except ReelServerError as exc:
             print(f"Reel not made: {exc}", file=sys.stderr)
             return 1
+        return 0
+    if args.command == "reel-results":
+        from creation.post.reel_results import metrics_sheets, results_lines, tally
+
+        sheets = metrics_sheets(args.paths)
+        for line in results_lines(tally(sheets), sheets=len(sheets)):
+            print(line)
         return 0
     if args.command == "join":
         joined = run_join(
