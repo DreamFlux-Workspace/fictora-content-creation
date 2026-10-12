@@ -1322,7 +1322,7 @@ def run_reel(
         unreachable, can't take uploads (``operator_upload_unavailable``) or has no operator
         reel route (:data:`creation.post.reel_server.SERVER_UNUSABLE`).
     recipe
-        ``opening+close`` (``reel --recipes``): the server's engine only; ``None`` is the default.
+        The opening (``reel --recipes``): the server's engine only; ``None`` is the default.
 
     Returns
     -------

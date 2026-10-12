@@ -80,47 +80,39 @@ from creation.post.reel_server import (
 )
 
 
-#: How a reel opens and where it stops (the server's reel-rules recipes, 12 Oct 2026). The app's
-#: reel is always the default; the kit makes several of one episode for our own trial posts and the
-#: results sheet tallies them by recipe (``reel-results``).
-SERVER_OPENINGS = ("flash-forward", "face", "straight")
-SERVER_CLOSES = ("payoff", "cliff")
-DEFAULT_RECIPE = "flash-forward+payoff"
-#: ``reel --recipes trial``: one recipe per opening, the payoff kept, so a round tests one thing.
-TRIAL_RECIPES = ("flash-forward+payoff", "face+payoff", "straight+payoff")
+#: How a reel opens (the server's recipes, founder 12 Oct 2026): ``flash-forward`` (the default, the
+#: app's one reel: the strongest 2-3 s first, a reverse cymbal into the cut back) or ``straight``. The kit
+#: makes both of one episode for our own trial posts; ``reel-results`` tallies them by recipe.
+SERVER_OPENINGS = ("flash-forward", "straight")
+DEFAULT_RECIPE = "flash-forward"
+#: ``reel --recipes trial``: both openings.
+TRIAL_RECIPES = SERVER_OPENINGS
 
 
-def parse_recipe(text: str) -> tuple[str, str]:
-    """``opening+close`` (either half may be left out: ``face`` is ``face+payoff``) as its two halves.
+def parse_recipe(text: str) -> str:
+    """A recipe name: the opening (``flash-forward`` or ``straight``).
 
     Raises
     ------
     ValueError
-        An unknown opening or close.
+        Anything else (``face`` and the ``cliff`` close were tried on 12 Oct 2026 and dropped).
     """
 
-    opening, _, close = text.strip().partition("+")
-    opening, close = opening or "flash-forward", close or "payoff"
-    if opening not in SERVER_OPENINGS:
-        raise ValueError(
-            f"recipe {text!r}: the opening is one of {', '.join(SERVER_OPENINGS)}"
-        )
-    if close not in SERVER_CLOSES:
-        raise ValueError(
-            f"recipe {text!r}: the close is one of {', '.join(SERVER_CLOSES)}"
-        )
-    return opening, close
+    name = text.strip()
+    if name not in SERVER_OPENINGS:
+        raise ValueError(f"recipe {text!r}: one of {', '.join(SERVER_OPENINGS)}")
+    return name
 
 
 def recipe_list(text: str) -> list[str]:
-    """``--recipes``: ``trial`` (:data:`TRIAL_RECIPES`) or a comma list, each as ``opening+close``, no repeats."""
+    """``--recipes``: ``trial`` (both openings) or a comma list of openings, no repeats."""
 
     items = (
         TRIAL_RECIPES
         if text.strip() == "trial"
         else [t for t in text.split(",") if t.strip()]
     )
-    names = list(dict.fromkeys("+".join(parse_recipe(t)) for t in items))
+    names = list(dict.fromkeys(parse_recipe(t) for t in items))
     if not names:
         raise ValueError("--recipes: name at least one recipe, or `trial`")
     return names
@@ -563,7 +555,7 @@ def operator_body(
     ``first_part``, a one-episode desk's name): a desk with every episode on it sends
     nothing and the server numbers it as before (NOCLIP, L-20261008-9).
 
-    ``recipe`` (``opening+close``) is sent only when it is not the default, so a server
+    ``recipe`` (the opening) is sent only when it is not the default, so a server
     from before recipes still takes every default reel.
     """
 
@@ -584,7 +576,7 @@ def operator_body(
     if no_panels:
         operator["no_panels"] = True
     if recipe is not None and recipe != DEFAULT_RECIPE:
-        operator["opening"], operator["close"] = parse_recipe(recipe)
+        operator["opening"] = parse_recipe(recipe)
     if bed_upload is not None:
         operator["bed_url"], operator["bed_sha256"] = bed_upload
     if still_upload is not None:
@@ -674,7 +666,7 @@ def run_reel(
     server
         The server client (tests pass a stand-in); default the desk's.
     recipe
-        ``opening+close`` (``reel --recipes``); ``None`` is the default, the app's one reel.
+        The opening (``reel --recipes``); ``None`` is the default, the app's one reel.
 
     Returns
     -------

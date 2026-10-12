@@ -39,8 +39,7 @@ def _body(recipe: str | None) -> dict:
 def test_a_picked_recipe_rides_in_the_operator_block_and_the_default_sends_nothing() -> (
     None
 ):
-    assert _body("face+cliff")["operator"]["opening"] == "face"
-    assert _body("face+cliff")["operator"]["close"] == "cliff"
+    assert _body("straight")["operator"]["opening"] == "straight"
     # The default (or none) sends nothing: a server from before recipes still takes it.
     for recipe in (None, DEFAULT_RECIPE):
         body = _body(recipe)
@@ -49,21 +48,26 @@ def test_a_picked_recipe_rides_in_the_operator_block_and_the_default_sends_nothi
 
 
 def test_recipe_lists() -> None:
-    assert recipe_list("trial") == list(TRIAL_RECIPES)
-    assert recipe_list("face, straight+cliff,face+payoff") == [
-        "face+payoff",
-        "straight+cliff",
+    assert recipe_list("trial") == ["flash-forward", "straight"]
+    assert recipe_list("straight, flash-forward,straight") == [
+        "straight",
+        "flash-forward",
     ]
-    assert parse_recipe("+cliff") == ("flash-forward", "cliff")
-    with pytest.raises(ValueError):
-        recipe_list("montage")
+    assert parse_recipe(" straight ") == "straight"
+    for retired in (
+        "montage",
+        "face",
+        "flash-forward+cliff",
+    ):  # face and cliff were dropped on 12 Oct
+        with pytest.raises(ValueError):
+            recipe_list(retired)
     with pytest.raises(ValueError):
         recipe_list(" , ")
 
 
 def test_a_plan_from_before_recipes_is_the_default() -> None:
     assert plan_recipe({}) == DEFAULT_RECIPE
-    assert plan_recipe({"recipe": {"name": "straight+payoff"}}) == "straight+payoff"
+    assert plan_recipe({"recipe": {"name": "straight"}}) == "straight"
 
 
 def test_each_recipe_of_a_part_keeps_its_own_metrics_row(tmp_path: Path) -> None:
@@ -74,16 +78,14 @@ def test_each_recipe_of_a_part_keeps_its_own_metrics_row(tmp_path: Path) -> None
         )
     # A re-cut of one recipe replaces only that recipe's unposted row.
     record_metrics_row(
-        sheet, {"reel_file": "reel-ep01-v4.mp4", "part": 1, "recipe": "face+payoff"}
+        sheet, {"reel_file": "reel-ep01-v4.mp4", "part": 1, "recipe": "straight"}
     )
 
     rows = list(csv.DictReader(sheet.open(encoding="utf-8")))
     assert [r["recipe"] for r in rows] == list(TRIAL_RECIPES)
-    face = next(r for r in rows if r["recipe"] == "face+payoff")
-    assert (
-        face["reel_file"] == "reel-ep01-v4.mp4"
-        and face["superseded"] == "reel-ep01-v2.mp4"
-    )
+    straight = next(r for r in rows if r["recipe"] == "straight")
+    assert straight["reel_file"] == "reel-ep01-v4.mp4"
+    assert straight["superseded"] == "reel-ep01-v2.mp4"
 
 
 def _posted(desk: Path, rows: list[dict]) -> None:
@@ -110,9 +112,9 @@ def test_results_add_posted_reels_up_by_recipe_and_call_a_leader_only_with_enoug
     tmp_path: Path,
 ) -> None:
     rows = [
-        *({"part": i, "recipe": "face+payoff", "posted_at": "x", "views": "1,000", "hold_3s_pct": "60%"} for i in range(MIN_POSTS_TO_CALL)),
+        *({"part": i, "recipe": "straight", "posted_at": "x", "views": "1,000", "hold_3s_pct": "60%"} for i in range(MIN_POSTS_TO_CALL)),
         *({"part": i, "recipe": "", "posted_at": "x", "views": "500", "hold_3s_pct": "40"} for i in range(MIN_POSTS_TO_CALL)),
-        {"part": 99, "recipe": "straight+payoff"},  # made, not posted
+        {"part": 99, "recipe": "straight"},  # made, not posted
         {"part": 98, "kind": "clip", "posted_at": "x", "views": "9"},  # a clip
     ]  # fmt: skip
     _posted(tmp_path / "desk-a", rows)
@@ -120,13 +122,13 @@ def test_results_add_posted_reels_up_by_recipe_and_call_a_leader_only_with_enoug
     sheets = metrics_sheets([tmp_path])
     got = {t.recipe: t for t in tally(sheets)}
 
-    assert set(got) == {"face+payoff", DEFAULT_RECIPE}
+    assert set(got) == {"straight", DEFAULT_RECIPE}
     assert (
-        got["face+payoff"].mean("views") == 1000
-        and got["face+payoff"].mean("hold_3s_pct") == 60
+        got["straight"].mean("views") == 1000
+        and got["straight"].mean("hold_3s_pct") == 60
     )
     assert any(
-        "Leads on the 3-second hold: face+payoff" in line
+        "Leads on the 3-second hold: straight" in line
         for line in results_lines(list(got.values()), sheets=1)
     )
 

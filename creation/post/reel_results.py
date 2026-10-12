@@ -17,7 +17,7 @@ from creation.post.reel_cover import METRICS_FILE
 
 #: Below this many posted reels a recipe's numbers are noise: shown, never called a winner.
 MIN_POSTS_TO_CALL = 10
-DEFAULT_RECIPE = "flash-forward+payoff"
+DEFAULT_RECIPE = "flash-forward"
 #: The numbers summed per recipe (the operator's columns), in print order.
 NUMBERS = ("views", "hold_3s_pct", "avg_watch_pct", "follows")
 

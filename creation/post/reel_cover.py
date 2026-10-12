@@ -602,7 +602,7 @@ def record_metrics_row(sheet: Path, row: Mapping[str, Any]) -> Path:
             str(r.get("part") or ""),
             str(r.get("kind") or "reel"),
             str(r.get("clip") or ""),
-            str(r.get("recipe") or "flash-forward+payoff"),
+            str(r.get("recipe") or "flash-forward"),
         )
 
     open_row = next(

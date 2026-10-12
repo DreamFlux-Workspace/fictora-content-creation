@@ -819,9 +819,9 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     reel.add_argument(
         "--recipes", default=None, metavar="LIST",
         help="Make one reel per recipe for trial posts (our accounts only; the app always makes the one "
-        "default reel): `trial` (flash-forward, face and straight openings, each ending on the payoff) or a "
-        "comma list of opening+close, openings flash-forward|face|straight, closes payoff|cliff. Each is "
-        "its own reel and its own row in reels/metrics.csv; `reel-results` adds the posted ones up. $0.",
+        "default reel): `trial` (both: flash-forward, with its reverse cymbal into the cut back, and "
+        "straight) or a comma list of flash-forward|straight. Each is its own reel and its own row in "
+        "reels/metrics.csv; `reel-results` adds the posted ones up. $0.",
     )  # fmt: skip
     results = sub.add_parser(
         "reel-results",
@@ -1168,7 +1168,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
                 twin = next((r for r, c in cuts.items() if c == cut), None)
                 cuts[recipe] = cut
                 name = one.video.name if one.video else "(plan only)"
-                # Two recipes can land on the same cut (no closer face than the flash-forward): post one.
+                # Two recipes can land on the same cut (no flash-forward window found): post one.
                 made_names.append(
                     f"{recipe}: {name}"
                     + (f" (the same cut as {twin}: post only one)" if twin else "")
