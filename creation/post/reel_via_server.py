@@ -80,6 +80,12 @@ from creation.post.reel_server import (
 )
 
 
+#: The endings the server's reel engine cuts (reel-rules-v6): ``push-hold`` (its default: the last frame
+#: holds while the camera eases in), ``hard`` and ``freeze-black``. The local engine (legacy desks and
+#: the fallback) cuts ``hard`` and ``freeze-black`` only.
+SERVER_ENDING_STYLES = ("push-hold", "hard", "freeze-black")
+
+
 def legacy_desk(desk: Path) -> bool:
     """Whether the desk was made before the rules epoch (6 Oct 2026): it keeps the local reel.
 
@@ -113,7 +119,12 @@ def plan_lines(plan: Mapping[str, Any], warnings: Sequence[str] = ()) -> list[st
             f"face by {str(strongest.get('face_source') or 'none').replace('_', ' ')})"
         )
     ending = plan.get("ending")
-    if isinstance(ending, Mapping) and ending.get("style") not in (None, "hard"):
+    if isinstance(ending, Mapping) and ending.get("style") == "push-hold":
+        rows.append(
+            f"Ending: push-hold (the last frame holds {float(ending.get('hold_s') or 0.6):g} s while the camera "
+            "eases in)"
+        )
+    elif isinstance(ending, Mapping) and ending.get("style") not in (None, "hard"):
         rows.append(
             f"Ending: {ending.get('style')} (freeze {FREEZE_SECONDS:g} s on the last frame, then "
             f"{BLACK_SECONDS:g} s black)"
@@ -528,11 +539,14 @@ def operator_body(
         operator["cover_still_url"], operator["cover_still_sha256"] = still_upload
     body: dict[str, Any] = {
         "seconds": seconds,
-        "ending": ending or "hard",
         "no_hook_line": no_hook_line,
         "no_cover": no_cover,
         "operator": operator,
     }
+    if ending:
+        # Only an ending the operator picked: the server's own default applies otherwise
+        # (push-hold since reel-rules-v6; an older server's is hard).
+        body["ending"] = ending
     if hook_line:
         body["hook_line"] = hook_line
     if hook_line_position in ("top", "lower"):
@@ -620,10 +634,8 @@ def run_reel(
         A refusal, or the desk has no finished take.
     """
 
-    if ending is not None:
-        from creation.post.ending import check_ending
-
-        check_ending(ending)
+    if ending is not None and ending not in SERVER_ENDING_STYLES:
+        raise ValueError(f"--ending {ending!r}: one of {', '.join(SERVER_ENDING_STYLES)}")
     desk = desk.expanduser().resolve()
     # Edited copies of an inferred source and patched pictures live in a scratch folder, never on the desk.
     with tempfile.TemporaryDirectory(prefix="fictora-reel-") as tmp:

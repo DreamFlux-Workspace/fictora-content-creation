@@ -129,11 +129,22 @@ def add_caption_colour_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def add_ending_arg(parser: argparse.ArgumentParser) -> None:
-    """``--ending hard|freeze-black`` on ``reel`` and ``join`` (default ``hard``)."""
+def add_ending_arg(parser: argparse.ArgumentParser, *, reel: bool = False) -> None:
+    """``--ending`` on ``reel`` (push-hold|hard|freeze-black) and ``join`` (hard|freeze-black)."""
 
     from creation.post.reel_plan import BLACK_SECONDS, ENDING_STYLES, FREEZE_SECONDS
+    from creation.post.reel_via_server import SERVER_ENDING_STYLES
 
+    if reel:
+        parser.add_argument(
+            "--ending",
+            choices=SERVER_ENDING_STYLES,
+            default=None,
+            help="push-hold (the server's default): the last frame holds 0.6 s while the camera eases in. "
+            f"hard: end on the last frame. freeze-black: hold the last frame {FREEZE_SECONDS:g} s (the sound "
+            f"stops on it), then {BLACK_SECONDS:g} s of black. A legacy desk's local reel: hard or freeze-black.",
+        )
+        return
     parser.add_argument(
         "--ending",
         choices=ENDING_STYLES,
@@ -785,7 +796,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     add_caption_style_arg(reel)
     add_hook_line_args(reel)
     reel.add_argument("--watermark-y", type=int, default=None)
-    add_ending_arg(reel)
+    add_ending_arg(reel, reel=True)
     reel.add_argument(
         "--no-cover", action="store_true",
         help="Write no cover image (by default every reel writes reels/<reel>-cover-vN.jpg: "
