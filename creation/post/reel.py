@@ -1274,6 +1274,7 @@ def run_reel(
     made_by: str = "reel",
     no_panels: bool = False,
     server_refused: Exception | None = None,
+    recipe: str | None = None,
 ) -> ReelResult:
     """Plan (and unless ``plan_only``, render) the episode's reel. Writes only under ``<desk>/reels/``.
 
@@ -1320,6 +1321,8 @@ def run_reel(
         the desk's same rules and say so in one line. Set by itself when the server is
         unreachable, can't take uploads (``operator_upload_unavailable``) or has no operator
         reel route (:data:`creation.post.reel_server.SERVER_UNUSABLE`).
+    recipe
+        ``opening+close`` (``reel --recipes``): the server's engine only; ``None`` is the default.
 
     Returns
     -------
@@ -1330,9 +1333,15 @@ def run_reel(
     from creation.post import reel_via_server
     from creation.post.reel_server import SERVER_UNUSABLE
 
-    if server_refused is None and not reel_via_server.legacy_desk(
-        desk.expanduser().resolve()
-    ):
+    legacy = reel_via_server.legacy_desk(desk.expanduser().resolve())
+    picked = recipe is not None and recipe != reel_via_server.DEFAULT_RECIPE
+    if picked and (legacy or server_refused is not None):
+        # A recipe is only the server's: never cut the default here and file it under another name.
+        raise ValueError(
+            f"recipe {recipe}: only the server's reel engine cuts recipes"
+            + (" (this desk is from before 6 Oct 2026)" if legacy else "")
+        )
+    if server_refused is None and not legacy:
         # A desk made on or after 6 Oct 2026: the server's reel engine. Older desks keep this
         # local reel exactly as it was (rules epoch, 6 Oct 2026).
         try:
@@ -1342,8 +1351,11 @@ def run_reel(
                 ending=ending, hook_line=hook_line, no_hook_line=no_hook_line,
                 hook_line_position=hook_line_position, stream=stream, no_cover=no_cover,
                 cover_frame=cover_frame, made_by=made_by, watermark_y=watermark_y, no_panels=no_panels,
+                recipe=recipe,
             )  # fmt: skip
         except SERVER_UNUSABLE as exc:
+            if picked:
+                raise
             # The server can't take this run (no uploads on this deploy, no answer, no operator
             # route): this desk's same rules, cut here. A refusal about the content still stops.
             server_refused = exc

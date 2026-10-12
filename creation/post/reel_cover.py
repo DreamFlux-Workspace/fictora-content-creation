@@ -87,7 +87,7 @@ PART_COLOUR = "&H00FFFFFF"
 #: it replaced); the last eight are the operator's, from Instagram.
 METRICS_COLUMNS: tuple[str, ...] = (
     "reel_file", "cover_file", "series", "part", "account", "lane", "planned_post_slot",
-    "cold_open_role", "cold_open_time", "hook_text", "superseded",
+    "recipe", "cold_open_role", "cold_open_time", "hook_text", "superseded",
     "posted_at", "views", "hold_3s_pct", "avg_watch_pct", "follows", "saves", "shares", "notes",
 )  # fmt: skip
 METRICS_FILE = "metrics.csv"
@@ -596,11 +596,13 @@ def record_metrics_row(sheet: Path, row: Mapping[str, Any]) -> Path:
         for r in rows:
             r["kind"] = r.get("kind") or "reel"
 
-    def key(r: Mapping[str, Any]) -> tuple[str, str, str]:
+    def key(r: Mapping[str, Any]) -> tuple[str, str, str, str]:
+        # Each recipe of a part is its own row (trial posts); blank (an older row or a clip) is the default.
         return (
             str(r.get("part") or ""),
             str(r.get("kind") or "reel"),
             str(r.get("clip") or ""),
+            str(r.get("recipe") or "flash-forward+payoff"),
         )
 
     open_row = next(

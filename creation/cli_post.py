@@ -42,6 +42,7 @@ POST_COMMANDS = (
             "finish",
             "join",
             "reel",
+            "reel-results",
         }
     )
     | EDIT_COMMANDS
@@ -815,6 +816,19 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "else the strongest frame).",
     )  # fmt: skip
 
+    reel.add_argument(
+        "--recipes", default=None, metavar="LIST",
+        help="Make one reel per recipe for trial posts (our accounts only; the app always makes the one "
+        "default reel): `trial` (flash-forward, face and straight openings, each ending on the payoff) or a "
+        "comma list of opening+close, openings flash-forward|face|straight, closes payoff|cliff. Each is "
+        "its own reel and its own row in reels/metrics.csv; `reel-results` adds the posted ones up. $0.",
+    )  # fmt: skip
+    results = sub.add_parser(
+        "reel-results",
+        help="The posted reels' numbers by recipe, from reels/metrics.csv of the given desks (or folders of desks).",
+    )
+    results.add_argument("paths", type=Path, nargs="+", metavar="DESK")
+
     add_edit_parsers(sub)
     add_review_parser(sub)
 
@@ -1110,6 +1124,51 @@ def dispatch_post(args: argparse.Namespace) -> int:
                 print(f"Clips not made: {exc}", file=sys.stderr)
                 return 1
             return 0
+        if args.recipes is not None:
+            from creation.post.reel_via_server import recipe_list
+
+            if args.plan is not None or args.plan_only:
+                print(
+                    "Reel not made: --recipes plans each reel itself (no --plan / --plan-only)",
+                    file=sys.stderr,
+                )
+                return 1
+            try:
+                recipes = recipe_list(args.recipes)
+            except ValueError as exc:
+                print(f"Reel not made: {exc}", file=sys.stderr)
+                return 1
+            made_names: list[str] = []
+            for recipe in recipes:
+                print(f"== recipe {recipe} ==")
+                try:
+                    one = run_reel(
+                        args.desk, episode=args.episode, seconds=args.seconds,
+                        take_files=tuple(args.take_file or ()), sources=tuple(args.source or ()),
+                        captions=tuple(args.captions or ()), caption_style=args.caption_style,
+                        watermark_y=args.watermark_y, ending=args.ending, hook_line=args.hook_line,
+                        no_hook_line=args.no_hook_line, hook_line_position=args.hook_line_position,
+                        no_cover=args.no_cover, cover_frame=args.cover_frame, no_panels=args.no_panels,
+                        recipe=recipe,
+                    )  # fmt: skip
+                except ReelServerUnreachable as exc:
+                    print(
+                        f"{unreachable_message(args.desk, args.episode)} ({exc})",
+                        file=sys.stderr,
+                    )
+                    return 1
+                except (ReelServerError, ValueError) as exc:
+                    print(f"Reel {recipe} not made: {exc}", file=sys.stderr)
+                    return 1
+                made_names.append(
+                    f"{recipe}: {one.video.name if one.video else '(plan only)'}"
+                )
+            print(
+                "Trial reels (post each as an Instagram trial reel; fill its metrics row after):"
+            )
+            for line in made_names:
+                print(f"  {line}")
+            return 0
         try:
             made = run_reel(
                 args.desk,
@@ -1144,6 +1203,13 @@ def dispatch_post(args: argparse.Namespace) -> int:
         except ReelServerError as exc:
             print(f"Reel not made: {exc}", file=sys.stderr)
             return 1
+        return 0
+    if args.command == "reel-results":
+        from creation.post.reel_results import metrics_sheets, results_lines, tally
+
+        sheets = metrics_sheets(args.paths)
+        for line in results_lines(tally(sheets), sheets=len(sheets)):
+            print(line)
         return 0
     if args.command == "join":
         joined = run_join(
