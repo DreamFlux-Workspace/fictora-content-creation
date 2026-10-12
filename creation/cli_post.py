@@ -1139,6 +1139,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
                 print(f"Reel not made: {exc}", file=sys.stderr)
                 return 1
             made_names: list[str] = []
+            cuts: dict[str, tuple[object, ...]] = {}
             for recipe in recipes:
                 print(f"== recipe {recipe} ==")
                 try:
@@ -1160,8 +1161,17 @@ def dispatch_post(args: argparse.Namespace) -> int:
                 except (ReelServerError, ValueError) as exc:
                     print(f"Reel {recipe} not made: {exc}", file=sys.stderr)
                     return 1
+                cut = tuple(
+                    (g.get("take"), g.get("start_s"), g.get("end_s"))
+                    for g in one.plan.get("segments") or []
+                )
+                twin = next((r for r, c in cuts.items() if c == cut), None)
+                cuts[recipe] = cut
+                name = one.video.name if one.video else "(plan only)"
+                # Two recipes can land on the same cut (no closer face than the flash-forward): post one.
                 made_names.append(
-                    f"{recipe}: {one.video.name if one.video else '(plan only)'}"
+                    f"{recipe}: {name}"
+                    + (f" (the same cut as {twin}: post only one)" if twin else "")
                 )
             print(
                 "Trial reels (post each as an Instagram trial reel; fill its metrics row after):"
