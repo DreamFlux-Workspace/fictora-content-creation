@@ -3,6 +3,11 @@
 A read, never a gate: it exits 0 whatever it measures (2 only when the command
 itself fails, like every other command). The block is also appended to the
 episode's ``run-notes.md``.
+
+After the block it prints the free edits to try before any re-film (salvage
+first, :mod:`creation.post.salvage`). ``keep-take`` puts a decent rejected take
+on the desk's reuse list (``shared/reuse-takes.jsonl``); ``keep-take --list``
+prints it.
 """
 
 from __future__ import annotations
@@ -15,11 +20,11 @@ from typing import TextIO
 
 import httpx
 
-REVIEW_COMMANDS = frozenset({"review"})
+REVIEW_COMMANDS = frozenset({"review", "keep-take"})
 
 
 def add_review_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """Register ``review``.
+    """Register ``review`` and ``keep-take``.
 
     Parameters
     ----------
@@ -65,6 +70,71 @@ def add_review_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
         "side-by-side of the held ends (takes/take-epNN-tK-original-compare-vN.mp4). Free.",
     )  # fmt: skip
 
+    keep = sub.add_parser(
+        "keep-take",
+        help="Put a decent rejected take on the desk's reuse list (shared/reuse-takes.jsonl), with a note on "
+        "what is good in it and where it could go later in the series. --list prints the list. Free, local.",
+    )
+    keep.add_argument("--desk", type=Path, required=True)
+    keep.add_argument("--episode", type=int, default=1)
+    keep.add_argument("--take", dest="take_id", default="t1")
+    keep.add_argument(
+        "--take-file", type=Path, default=None,
+        help="The file kept. Default: the take's newest raw file.",
+    )  # fmt: skip
+    keep.add_argument(
+        "--note", default=None, help="What is good in it and where it could go."
+    )
+    keep.add_argument(
+        "--list", action="store_true", help="Print the reuse list; add nothing."
+    )
+
+
+def dispatch_keep_take(
+    args: argparse.Namespace, *, stream: TextIO | None = None
+) -> int:
+    """Run ``keep-take``: add a take to the desk's reuse list, or print the list.
+
+    Parameters
+    ----------
+    args
+        Parsed namespace whose ``command`` is ``keep-take``.
+    stream
+        Where the report goes (stdout by default).
+
+    Returns
+    -------
+    int
+        ``0``.
+
+    Raises
+    ------
+    ValueError
+        When neither ``--note`` nor ``--list`` is given.
+    """
+
+    from creation.ops.notes import append_run_note
+    from creation.post.salvage import keep_for_reuse, reuse_lines
+
+    out = stream or sys.stdout
+    desk = args.desk.expanduser().resolve()
+    if args.list:
+        for line in reuse_lines(desk):
+            print(line, file=out)
+        return 0
+    entry = keep_for_reuse(desk, episode=args.episode, take_id=args.take_id, note=args.note or "",
+                           take_file=args.take_file)  # fmt: skip
+    file_text = f" `{entry['file']}`" if entry.get("file") else ""
+    line = (
+        f"Kept for reuse: ep{args.episode:02d} {args.take_id}{file_text}: {entry['note']} "
+        "(shared/reuse-takes.jsonl; `keep-take --list` shows the list)"
+    )
+    run_dir = desk / f"ep{args.episode:02d}"
+    if (run_dir / "run-notes.md").is_file():
+        append_run_note(run_dir, line)
+    print(line, file=out)
+    return 0
+
 
 def dispatch_review(args: argparse.Namespace, *, stream: TextIO | None = None) -> int:
     """Run ``review`` and print its block (or JSON).
@@ -82,8 +152,12 @@ def dispatch_review(args: argparse.Namespace, *, stream: TextIO | None = None) -
         ``0``, whatever was measured.
     """
 
+    if getattr(args, "command", "review") == "keep-take":
+        return dispatch_keep_take(args, stream=stream)
+
     from creation.ops.notes import append_run_note
     from creation.post.review import review_take
+    from creation.post.salvage import free_fix_lines
 
     out = stream or sys.stdout
     desk = args.desk.expanduser().resolve()
@@ -117,6 +191,10 @@ def dispatch_review(args: argparse.Namespace, *, stream: TextIO | None = None) -
         print(json.dumps(result.as_json(), indent=2, ensure_ascii=False), file=out)
     else:
         print(result.block(), file=out)
+        for line in free_fix_lines(
+            desk, args.episode, args.take_id, take_file=result.take, indent=""
+        ):
+            print(line, file=out)
     if getattr(args, "original", False):
         from creation.post.desk import latest_raw_take
         from creation.post.sfx import saved_take_facts

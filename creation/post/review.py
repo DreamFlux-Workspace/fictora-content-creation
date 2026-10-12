@@ -1585,7 +1585,9 @@ def people_section(
         *shots,
         "Check by eye, shot by shot (on a finished file also the zone sheet): is anyone on screen twice, "
         "the same face in two poses or a look-alike extra? Watch the cuts where a character changes pose.",
-        f"If so, re-film with the cause '{TWICE_CAUSE.format(shot='N')}'.",
+        "If so, salvage first: on screen about 0.5 s or less (or in one short shot), cut it "
+        "(`trim --cut`) or speed past it (`tempo --from --to`); only at the edge of the frame, `zoom` away from it.",
+        f"Re-film (cause '{TWICE_CAUSE.format(shot='N')}') only when it stays on screen and no free edit hides it.",
     ]
     return Section(
         "People",
