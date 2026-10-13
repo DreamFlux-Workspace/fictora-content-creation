@@ -1090,6 +1090,16 @@ def dispatch_post(args: argparse.Namespace) -> int:
                 trigger="finish",
                 stream=sys.stderr if args.json else sys.stdout,
             )
+        if result.complete:
+            from creation.post.moment_via_server import offer_moment_after_finish
+
+            # Episode 3 or 4: ask the creator about a moment and recommend its episodes (never made unasked).
+            named = re.search(r"take-ep(\d+)-", Path(str(result.final)).name)
+            offer_moment_after_finish(
+                args.desk,
+                int(named.group(1)) if named else (args.episode or 1),
+                stream=sys.stderr if args.json else sys.stdout,
+            )
         return 0 if result.complete else FINISH_INCOMPLETE
     if args.command == "reel":
         from creation.post.reel import run_reel
