@@ -12,8 +12,10 @@ Re-filming is the remedy: laying a separate voice line over the take breaks
 lip sync. Only a line heard off screen (no lips) may be patched instead, as an
 explicit, warned option.
 
-Locked-voice takes (``target_audio``) are not checked here: their words are
-rendered and checked before filming and cannot drift.
+Locked-voice takes (``target_audio``) are not word-checked here: their words
+are rendered and checked before filming and cannot drift. They ARE checked for
+``SPEAKER NOT ON SCREEN`` (:func:`locked_speaker_check`): the model still
+chooses whose mouth moves to the track.
 
 How a line is matched (:func:`check_take_lines`)
 --------------------------------------------------
@@ -44,6 +46,10 @@ Japanese line on the server's kana readings, cast names by sound). A line's
 - an on-screen line with most of its heard words more than :data:`SHOT_SLACK_SECONDS`
   outside the shot the take facts put it in (``lines[].start_seconds`` /
   ``end_seconds``): **WRONG SHOT** (it plays over someone else's face).
+- an on-screen line heard mostly over shots whose take facts name other people
+  and not its speaker (``shots[].people.named``): **SPEAKER NOT ON SCREEN**
+  (one of them mouths it; :mod:`creation.post.speaker_screen`, founder decision
+  12 Oct 2026). An off-screen line over named faces is a warning, never a stop.
 
 Cost: the transcript is the server's Whisper route (``POST /v1/transcripts``),
 booked at $0 by the server and cached per take media, so a repeated finish of
@@ -207,6 +213,8 @@ class ScriptLine:
     spellings: tuple[str, ...] = ()
     speaker: str = ""
     off_screen: bool = False
+    #: The speaker's cast id (``crowd:<line id>`` for a background shout; empty when unknown).
+    cast_id: str = ""
     #: The shot the take facts put it in, and that shot's window (take seconds).
     shot_index: int | None = None
     window: tuple[float, float] | None = None
@@ -216,7 +224,7 @@ class ScriptLine:
 class LineFault:
     """One thing the take got wrong about its script."""
 
-    #: ``missing`` | ``wrong`` | ``repeated`` | ``extra`` | ``wrong_shot``.
+    #: ``missing`` | ``wrong`` | ``repeated`` | ``extra`` | ``wrong_shot`` | ``speaker_off``.
     kind: str
     line: ScriptLine | None
     #: What the transcript heard there (empty for a missing line).
@@ -233,6 +241,7 @@ class LineFault:
         "repeated": "REPEATED LINE",
         "extra": "EXTRA SPEECH",
         "wrong_shot": "WRONG SHOT",
+        "speaker_off": "SPEAKER NOT ON SCREEN",
     }
 
     def describe(self) -> str:
@@ -281,6 +290,10 @@ class LineCheck:
     unread: str = ""
     #: Each line heard: ``(line, start, end, score)``.
     heard: list[tuple[ScriptLine, float, float, float]] = field(default_factory=list)
+    #: The middle of each word a line was heard as (take seconds), by line id: when it plays.
+    middles: dict[str, tuple[float, ...]] = field(default_factory=dict)
+    #: A locked-voice take: only who mouths each line was checked (:func:`locked_speaker_check`).
+    locked: bool = False
 
     @property
     def ok(self) -> bool:
@@ -293,6 +306,12 @@ class LineCheck:
 
         if self.unread:
             return f"line check: NOT CHECKED ({self.unread})"
+        if self.locked:
+            base = (
+                f"speaker check: {len(self.lines)} line(s) on the locked-voice track (words not compared: "
+                "they are the track's)"
+            )
+            return base + (f"; {len(self.faults)} fault(s)" if self.faults else "")
         said = len(self.heard)
         base = f"line check: {said} of {len(self.lines)} scripted line(s) heard as written, on their shot"
         if self.faults:
@@ -761,6 +780,9 @@ def check_take_lines(
             continue
         check.heard.append((line, at[0], at[1], ratio))
         spans[line.line_id] = span
+        check.middles[line.line_id] = tuple(
+            (heard_words[i].start + heard_words[i].end) / 2 for i in span
+        )
 
     # Wrong shot: an on-screen line heard well outside the shot the take facts put it in.
     for line, start, end, _ratio in list(check.heard):
@@ -902,6 +924,11 @@ def script_lines_for_take(
             if s and s != performed
         )
         cast_id = str(line.get("cast_id") or "")
+        flagged = (
+            row.get("off_screen") is True
+            or line.get("off_screen") in (True, "true")
+            or str(line.get("line_id")) in set(off_screen_ids)
+        )
         out.append(
             ScriptLine(
                 number=number,
@@ -910,7 +937,8 @@ def script_lines_for_take(
                 spellings=spellings,
                 # A background shout is named by its crowd label, never looked up in the cast.
                 speaker=names.get(cast_id, "") or str(line.get("speaker") or ""),
-                off_screen=str(line.get("line_id")) in set(off_screen_ids),
+                off_screen=flagged,
+                cast_id=cast_id,
                 shot_index=int(row["shot_index"])
                 if row.get("shot_index") is not None
                 else None,
@@ -942,6 +970,155 @@ def patched_line_ids(
             if window.start is not None and window.ratio >= LINE_OK_RATIO:
                 found.append(line.line_id)
     return found
+
+
+#: What the check says when the take facts name nobody per shot (an older server).
+SPEAKER_NOT_RUN = (
+    "speaker check NOT RUN: the take facts name nobody per shot (no shots[].people; an older server). "
+    "Watch that each line is mouthed by its own speaker"
+)
+
+
+def add_speaker_check(
+    check: LineCheck,
+    facts: Mapping[str, Any] | None,
+    *,
+    cast_names: Mapping[str, str] | None = None,
+    heard: Sequence[Any] | None = None,
+) -> None:
+    """Add ``SPEAKER NOT ON SCREEN`` faults and off-screen warnings to ``check`` (both voice modes).
+
+    Parameters
+    ----------
+    check
+        The take's check; faults and ``!!`` notes are added in place.
+    facts
+        The take facts (``shots[].people``).
+    cast_names
+        ``cast_id`` to display name.
+    heard
+        :class:`creation.post.speaker_screen.HeardLine` per line; default the lines ``check`` heard
+        (word middles), with the lines it put on the wrong shot.
+    """
+
+    from creation.post import speaker_screen as ss
+
+    shots = ss.shot_faces(facts)
+    if not shots:
+        check.notes.append(f"!! {SPEAKER_NOT_RUN}")
+        return
+    if heard is None:
+        rows = [(line, start, end) for line, start, end, _r in check.heard]
+        rows += [
+            (fault.line, fault.at[0], fault.at[1])
+            for fault in check.faults
+            if fault.kind == "wrong_shot" and fault.line is not None and fault.at
+        ]
+        heard = ss.model_heard_lines(rows, check.middles)
+    faults, warnings = ss.speaker_faults(heard, shots, cast_names=cast_names)
+    check.faults += faults
+    check.notes += warnings
+    check.faults.sort(
+        key=lambda f: f.at[0] if f.at else (f.line.number if f.line else 0)
+    )
+
+
+def crowd_off_screen_ids(spine: Mapping[str, Any]) -> set[str]:
+    """Background shouts the server marks heard off screen (``beats[].crowd_lines[].off_screen``)."""
+
+    return {
+        str(raw.get("line_id"))
+        for beat in spine.get("beats") or []
+        if isinstance(beat, Mapping)
+        for raw in beat.get("crowd_lines") or []
+        if isinstance(raw, Mapping) and raw.get("off_screen") is True
+    }
+
+
+def locked_speaker_check(
+    desk: Path,
+    *,
+    episode: int,
+    take_id: str,
+    facts: Mapping[str, Any] | None,
+) -> tuple[LineCheck | None, str]:
+    """``SPEAKER NOT ON SCREEN`` on a locked-voice take: each track line's window against the shot's people.
+
+    The words of a locked-voice take are right by construction; who mouths them is still the video
+    model's choice (Dead Heat ep 2: the off-screen announcer's lines mouthed by Moretti). Each
+    ``soundtrack.lines[]`` window is read against the take facts' ``shots[].people``.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    episode, take_id
+        Which take.
+    facts
+        The take facts (its ``soundtrack`` and ``shots``).
+
+    Returns
+    -------
+    tuple[LineCheck | None, str]
+        The check (faults and notes), and what it read; ``None`` and why when it could not run.
+    """
+
+    from creation.post import speaker_screen as ss
+    from creation.post.desk import episode_dialogue, saved_spine
+    from creation.post.soundtrack import soundtrack_from
+    from creation.spine_view import heard_line_ids
+
+    soundtrack = soundtrack_from(facts)
+    check = LineCheck(take_id=take_id, locked=True)
+    if not soundtrack.lines:
+        return check, "a locked-voice track with no lines"
+    found = saved_spine(desk, episode)
+    spine = found[0] if found else {}
+    names = {
+        str(card.get("cast_id")): str(card.get("name") or "")
+        for card in spine.get("cast") or []
+        if isinstance(card, Mapping)
+    }
+    texts = (
+        {
+            row["line_id"]: row.get("performed") or row.get("text") or ""
+            for row in episode_dialogue(spine, episode)
+        }
+        if spine
+        else {}
+    )
+    shouts = {}
+    from creation.crowd_lines import beat_shouts
+
+    for beat in spine.get("beats") or []:
+        if isinstance(beat, Mapping):
+            shouts.update({s.line_id: s for s in beat_shouts(beat)})
+    off_ids = (heard_line_ids(spine) | crowd_off_screen_ids(spine)) if spine else set()
+    heard: list[Any] = []
+    lines: list[ScriptLine] = []
+    for number, row in enumerate(soundtrack.lines, start=1):
+        shout_id = row.cast_id.removeprefix(ss.CROWD_PREFIX)
+        shout = shouts.get(row.line_id) or shouts.get(shout_id)
+        line = ScriptLine(
+            number=number,
+            line_id=row.line_id,
+            performed=texts.get(row.line_id)
+            or (shout.performed if shout else "")
+            or row.line_id,
+            speaker=names.get(row.cast_id, "")
+            or (f"{shout.who}, background" if shout else ""),
+            off_screen=row.off_screen or row.line_id in off_ids,
+            cast_id=row.cast_id or (f"{ss.CROWD_PREFIX}{row.line_id}" if shout else ""),
+        )
+        lines.append(line)
+        heard.append(
+            ss.HeardLine(
+                line, ss.window_moments(row.start, row.end), (row.start, row.end)
+            )
+        )
+    check.lines = tuple(lines)
+    add_speaker_check(check, facts, cast_names=names, heard=heard)
+    return check, "the take's locked-voice track (take facts soundtrack.lines)"
 
 
 def desk_line_check(
@@ -1009,7 +1186,9 @@ def desk_line_check(
         raw_lines,
         facts,
         cast_names=names,
-        off_screen_ids=sorted(heard_line_ids(spine[0])),
+        off_screen_ids=sorted(
+            heard_line_ids(spine[0]) | crowd_off_screen_ids(spine[0])
+        ),
     )
     if raw_take_of(desk, take) is None:
         # Which filmed take this file is cannot be known: its words are not compared with any take's.
@@ -1059,6 +1238,8 @@ def desk_line_check(
         levels = take_voice_levels(raw) if raw is not None and raw.exists() else None
         if levels:
             grade_unheard_lines(check, levels)
+    if not check.unread:
+        add_speaker_check(check, facts, cast_names=names)
     source = f"transcript `{words_path.name}`" + (
         " (made on the server now, $0, cached per take)" if made else ""
     )
@@ -1081,12 +1262,25 @@ def stop_message(
 ) -> str:
     """The plain stop: the take, each fault, what was heard, a clip of each to hear, and the re-film command."""
 
-    rows = [
-        f"ep{episode:02d} {take_id}: the take does not say its script. This take was filmed in the video "
-        "model's own voices (model voices: a model-voice show, or a take whose take facts say Soundtrack: "
-        "native), so the model wrote the words itself, and it got them wrong:"
-    ]
+    if check.locked:
+        rows = [
+            f"ep{episode:02d} {take_id}: a line plays over the wrong face. This take was filmed in the show's "
+            "locked voices, so its words are right, but the video model moves whichever mouth is on screen "
+            "when a line plays, and the speaker is not in the shot under it:"
+        ]
+    else:
+        rows = [
+            f"ep{episode:02d} {take_id}: the take does not say its script. This take was filmed in the video "
+            "model's own voices (model voices: a model-voice show, or a take whose take facts say Soundtrack: "
+            "native), so the model wrote the words itself, and it got them wrong:"
+        ]
     rows += [f"  - {fault.describe()}" for fault in check.faults]
+    if any(fault.kind == "speaker_off" for fault in check.faults):
+        rows.append(
+            "SPEAKER NOT ON SCREEN: the take facts say the shot under the line shows other named people and "
+            "not its speaker, so one of them mouths it. Before re-filming, check the board row draws the "
+            "speaker (or mark the line off screen), or the re-film lands the same way."
+        )
     if clips:
         rows.append("Listen before choosing (the part of the take each one is about):")
         rows += [f"  - {fault.LABELS[fault.kind]}: {clip}" for fault, clip in clips]
@@ -1123,8 +1317,12 @@ __all__ = [
     "LineCheck",
     "LineFault",
     "ScriptLine",
+    "SPEAKER_NOT_RUN",
     "accepted",
+    "add_speaker_check",
     "check_take_lines",
+    "crowd_off_screen_ids",
+    "locked_speaker_check",
     "desk_line_check",
     "grade_unheard_lines",
     "listen_clips",

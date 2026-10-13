@@ -56,6 +56,9 @@ class BackgroundShout:
         Plays before the beat's character line (else after it).
     beat_ordinal
         The beat's number in the episode.
+    off_screen
+        The server marks the shout heard off screen (``crowd_lines[].off_screen``; absent on an
+        older server, read as on screen).
     """
 
     line_id: str
@@ -66,6 +69,7 @@ class BackgroundShout:
     subtitle: str = ""
     before_line: bool = False
     beat_ordinal: int = 0
+    off_screen: bool = False
 
     @property
     def who(self) -> str:
@@ -158,6 +162,7 @@ def beat_shouts(beat: Mapping[str, Any]) -> list[BackgroundShout]:
                 subtitle=str(raw.get("subtitle_text") or "").strip(),
                 before_line=raw.get("order") == "before_line",
                 beat_ordinal=int(beat.get("ordinal") or 0),
+                off_screen=raw.get("off_screen") is True,
             )
         )
     return out
