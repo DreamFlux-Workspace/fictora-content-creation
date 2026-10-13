@@ -8394,7 +8394,7 @@ def add_episode_parsers(
     prop_redraw.add_argument(
         "--fresh",
         action="store_true",
-        help="Draw the object from its card, not as an edit of the old picture. A server without it says so; nothing sent.",
+        help="Draw again under a job key of its own, also when this note was already drawn. Only the key changes.",
     )
     prop_redraw.add_argument(
         "--confirm-spend",

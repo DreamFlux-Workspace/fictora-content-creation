@@ -44,7 +44,6 @@ from creation.episode_commands import (
     _note_key,
     _plates_home,
     _save_desk_json,
-    fresh_refused,
     run_unit,
 )
 from creation.harness.http_util import api_error_text
@@ -108,9 +107,6 @@ def redraw_price_message(
 
 #: How long one picture job is watched (as a plate redraw).
 PICTURE_DEADLINE_SECONDS = 900.0
-
-REDRAW_ROUTE = "/v1/spines/{spine_id}/props/{prop_id}/redraw"
-FRESH_FIELD = "fresh"
 
 
 # --- Shared ------------------------------------------------------------------------------------
@@ -236,39 +232,6 @@ def run_props(desk: Path, *, out: Any = None) -> list[dict[str, str]]:
 # --- redraw-prop -------------------------------------------------------------------------------
 
 
-def fresh_unsupported_for_props(openapi: Any) -> bool:
-    """The deploy's ``/openapi.json`` describes the prop redraw body and it has no ``fresh`` (an older server).
-
-    Anything unreadable reads as unknown (``False``): the server's own answer decides then.
-    """
-
-    if not isinstance(openapi, Mapping):
-        return False
-    route = ((openapi.get("paths") or {}).get(REDRAW_ROUTE) or {}).get("post")
-    if not isinstance(route, Mapping):
-        return False
-    schema = (
-        ((route.get("requestBody") or {}).get("content") or {}).get("application/json")
-        or {}
-    ).get("schema") or {}
-    ref = str(schema.get("$ref") or "") if isinstance(schema, Mapping) else ""
-    if ref.startswith("#/components/schemas/"):
-        schema = ((openapi.get("components") or {}).get("schemas") or {}).get(
-            ref.rsplit("/", 1)[-1]
-        ) or {}
-    properties = schema.get("properties") if isinstance(schema, Mapping) else None
-    if not isinstance(properties, Mapping):
-        return False
-    return FRESH_FIELD not in properties
-
-
-def _fresh_not_here(where: str) -> str:
-    return (
-        f"this server can't redraw an object from scratch yet ({where}). Nothing was drawn or charged. "
-        "Redraw without --fresh, or wait for the deploy that takes it."
-    )
-
-
 def _price_what(
     name: str,
     cast: list[tuple[str, str]],
@@ -320,9 +283,10 @@ def run_redraw_prop(
     note
         What is wrong with the object, in the creator's words.
     fresh
-        Ask the server to draw the object from its card, not as an edit of the
-        old picture. A deploy whose ``/openapi.json`` shows the redraw body
-        without ``fresh`` is refused before anything is sent.
+        Draw again under a job key of its own (``...-fresh-aN``), also when
+        this note was already drawn (the note is then sent again to mark the
+        picture owed). It changes only the key: the server's redraw body has
+        no ``fresh`` field (fictora-drama #786).
     confirm_spend
         The human said yes to the printed total (always needed; the first run
         only asks).
@@ -360,13 +324,6 @@ def run_redraw_prop(
         spine = run.spine(state.spine_id or "")
         card = find_prop(spine, prop)
         prop_id, name = str(card["prop_id"]), str(card.get("name") or card["prop_id"])
-        if fresh:
-            status, doc = run.get_optional("/openapi.json")
-            if 200 <= status < 300 and fresh_unsupported_for_props(doc):
-                raise CommandStopped(
-                    _fresh_not_here("its /openapi.json prop redraw body has no `fresh`")
-                    + " The note was not sent either."
-                )
         noted = {
             _note_key(str(n.get("text") or ""))
             for n in card.get("creator_notes") or []
@@ -409,26 +366,12 @@ def run_redraw_prop(
             f"Redrawing {name} with the human's yes: {count} picture(s), ${usd:.2f}.",
             file=out,
         )
-        if not already or fresh:
-            body: dict[str, Any] = {
-                "spine_version": spine["spine_version"],
-                "text": note,
-            }
-            if fresh:
-                body[FRESH_FIELD] = True
-            try:
-                run.post(
-                    f"/v1/spines/{state.spine_id}/props/{quote(prop_id, safe='')}/redraw",
-                    body,
-                )
-            except SystemExit as exc:
-                if fresh and fresh_refused(str(exc.code)):
-                    raise CommandStopped(
-                        _fresh_not_here(
-                            f"it refused the `{FRESH_FIELD}` field: {exc.code}"
-                        )
-                    ) from None
-                raise
+        if not already or (fresh and now in ("drawn", "approved")):
+            # The server's redraw body is ``{spine_version, text}``: --fresh changes only the job key.
+            run.post(
+                f"/v1/spines/{state.spine_id}/props/{quote(prop_id, safe='')}/redraw",
+                {"spine_version": spine["spine_version"], "text": note},
+            )
             spine = run.spine(state.spine_id or "")
         else:
             print(
@@ -596,7 +539,8 @@ def _episode_has_drawn_board(desk: Path, spine: Mapping[str, Any], ep: int) -> b
 def run_remove_prop(desk: Path, *, prop: str, out: Any = None) -> list[Path]:
     """Take one story object off the story. Free; refused once the episode has a drawn board.
 
-    Sends ``DELETE /v1/spines/{id}/props/{prop_id}`` with a key of its own. A
+    Sends ``DELETE /v1/spines/{id}/props/{prop_id}`` (fictora-drama #786) with no
+    body and a key of its own; a repeat answers 200 with the story. A
     server that refuses because a drawn board already used the object
     (``409 prop_on_board``) or no longer has it (``404 prop_not_found``) is
     answered in plain words; a server without the route (404/405) says it
@@ -638,7 +582,7 @@ def run_remove_prop(desk: Path, *, prop: str, out: Any = None) -> list[Path]:
             )
         status, answer = run.delete_optional(
             f"/v1/spines/{state.spine_id}/props/{quote(prop_id, safe='')}",
-            {"spine_version": spine["spine_version"]},
+            None,  # no body (fictora-drama #786); the key makes a repeat delete answer 200
             idempotency_key=f"{state.idempotency_prefix}-prop-remove-{prop_id}",
         )
         code = _error_code(answer)
@@ -653,6 +597,11 @@ def run_remove_prop(desk: Path, *, prop: str, out: Any = None) -> list[Path]:
                 f"{name} ({prop_id}) is no longer on the story (already removed?). Nothing changed; "
                 f"see `fictora-produce props --desk {desk}`."
             )
+        if status == 400 and code == "idempotency_key_required":
+            raise CommandStopped(
+                "the server wants an Idempotency-Key on the remove and did not get one; nothing changed. "
+                "This is a kit bug: tell the Fictora team."
+            )
         if status in (404, 405):
             raise CommandStopped(
                 "removing objects needs the server update (this server has no remove route). "
@@ -662,7 +611,12 @@ def run_remove_prop(desk: Path, *, prop: str, out: Any = None) -> list[Path]:
             raise CommandStopped(
                 f"the server did not remove {name}: HTTP {status} {api_error_text(answer)}. Nothing changed."
             )
-        spine = run.spine(state.spine_id or "")
+        # A 200 is the whole updated story (DramaSpineResponse); an older answer is read again.
+        spine = (
+            dict(answer)
+            if isinstance(answer, Mapping) and answer.get("spine_id")
+            else run.spine(state.spine_id or "")
+        )
         save_spine_snapshot(desk, ep, spine)
     finally:
         run.client.close()
@@ -692,7 +646,6 @@ __all__ = [
     "REDRAW_COST_ADVICE",
     "redraw_price_message",
     "find_prop",
-    "fresh_unsupported_for_props",
     "local_pictures",
     "run_props",
     "run_redraw_prop",

@@ -300,49 +300,27 @@ def test_confirm_spend_without_a_shown_price_sends_nothing(
     assert api.posted(ENROL) == []
 
 
-def test_fresh_on_a_server_without_it_is_refused_before_anything_is_sent(
-    desk: Path, api: FakeApi
-) -> None:
-    _serve(api)
-    api.routes[("GET", "/openapi.json")] = {
-        "paths": {
-            pc.REDRAW_ROUTE: {
-                "post": {
-                    "requestBody": {
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/DramaCastNoteAddRequest"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "components": {
-            "schemas": {
-                "DramaCastNoteAddRequest": {
-                    "properties": {"spine_version": {}, "text": {}}
-                }
-            }
-        },
-    }
-
-    with pytest.raises(ec.CommandStopped, match="from scratch"):
-        pc.run_redraw_prop(
-            desk, prop="Wooden Sign", note=NOTE, fresh=True, out=io.StringIO()
-        )
-    assert api.posted(REDRAW) == [] and api.posted(ENROL) == []
-
-
 def test_fresh_is_its_own_job(desk: Path, api: FakeApi) -> None:
     _serve(api)
 
     _redraw(desk, fresh=True)
 
-    assert api.posted(REDRAW)[0]["fresh"] is True
+    assert api.posted(REDRAW) == [{"spine_version": "v5", "text": NOTE}], (
+        "--fresh changes only the key: the server has no fresh field"
+    )
+    assert ("GET", "/openapi.json") not in [(m, p) for m, p, *_ in api.calls]
     assert str(_enrol_keys(api)[0]).endswith(f"-prop-{SIGN_ID}-{_digest()}-fresh-a1")
+
+
+def test_fresh_draws_again_with_a_note_already_drawn(desk: Path, api: FakeApi) -> None:
+    _serve(api)
+    api.spine_doc["props"][0]["creator_notes"] = [{"note_id": "pn0", "text": NOTE}]
+
+    path = _redraw(desk, fresh=True)
+
+    assert path is not None
+    assert len(api.posted(REDRAW)) == 1, "sent again only to mark the picture owed"
+    assert str(_enrol_keys(api)[0]).endswith("-fresh-a1")
 
 
 def test_a_job_handed_back_without_a_new_picture_stops_and_books_nothing(
@@ -414,7 +392,13 @@ def test_remove_prop_deletes_with_a_key_and_moves_the_pictures_aside(
 ) -> None:
     _serve(api)
     _no_boards(api)
-    api.routes[("DELETE", DELETE)] = {"spine_id": "sp1"}
+
+    def removed(_m: str, _p: str, body: dict[str, Any] | None) -> dict[str, Any]:
+        assert body is None, "no body on the remove (fictora-drama #786)"
+        api.spine_doc["props"] = []
+        return copy.deepcopy(api.spine_doc)
+
+    api.routes[("DELETE", DELETE)] = removed
     plates = desk / "ep01" / "plates"
     plates.mkdir(parents=True, exist_ok=True)
     (plates / "object-wooden-sign-ep01-v1.png").write_bytes(png_bytes())
@@ -426,6 +410,7 @@ def test_remove_prop_deletes_with_a_key_and_moves_the_pictures_aside(
     assert [(m, p, k) for m, p, _b, k in api.calls if m == "DELETE"] == [
         ("DELETE", DELETE, f"{prefix}-prop-remove-{SIGN_ID}")
     ]
+    assert [m for m, *_ in api.calls].count("GET") == 1, "the 200 answer is the story"
     assert [p.name for p in moved] == ["object-wooden-sign-ep01-v1.png"]
     assert moved[0].parent == desk / "objects" / "removed"
     assert not (plates / "object-wooden-sign-ep01-v1.png").exists()
@@ -448,6 +433,10 @@ def test_remove_prop_is_refused_on_the_desk_once_the_episode_has_a_board(
     [
         ((409, {"error": {"code": "prop_on_board"}}), "already on a drawn board"),
         ((404, {"error": {"code": "prop_not_found"}}), "no longer on the story"),
+        (
+            (400, {"error": {"code": "idempotency_key_required"}}),
+            "wants an Idempotency-Key",
+        ),
         ((404, {"detail": "Not Found"}), "needs the server update"),
         ((405, {"detail": "Method Not Allowed"}), "needs the server update"),
     ],
