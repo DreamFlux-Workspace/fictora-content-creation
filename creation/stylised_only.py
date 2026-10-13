@@ -110,6 +110,18 @@ _CLOSEST: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.I,
         ),
     ),
+    # Action shows take a hard, high-contrast look: soft romance presets made
+    # fights read as weightless (Iron Pigeon ep 1, L-20261010-1). Same words as
+    # the server's closest style; "live action" is a realism ask, not a genre.
+    (
+        "modern-dark-fantasy",
+        re.compile(
+            r"\b(?:(?<!live[\s-])action|fights?|fighting|fighters?|brawl\w*|boxers?|boxing|mma|kickbox\w*|"
+            r"street\s+fight\w*|gangsters?|heists?|assassins?|hitm[ae]n|mercenar\w*|battles?|duels?|"
+            r"kung\s*fu|karate|car\s+chases?|shoot-?outs?|gunfights?)\b",
+            re.I,
+        ),
+    ),
     (
         "modern-romance-3",
         re.compile(r"\b(?:k-?drama|romance|romantic|love|wedding|dating)", re.I),
