@@ -21,8 +21,7 @@ uploads, ``operator_upload_unavailable``, or it is an older deploy without the
 operator reel route: :data:`SERVER_UNUSABLE`), the reel is cut by the local
 reel engine with the desk's same rules and one line says so
 (:func:`creation.post.reel.local_fallback_reel`); a refusal about the content
-still stops. The TikTok clips have no local engine: they say they need the
-server. A ``finish`` never fails because its reel did
+still stops. A ``finish`` never fails because its reel did
 (:func:`creation.post.reel.auto_reel`).
 """
 

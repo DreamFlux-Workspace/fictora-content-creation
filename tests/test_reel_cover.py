@@ -17,6 +17,7 @@ from conftest import needs_ffmpeg
 from test_reel import reel_desk  # noqa: F401  (fixture)
 
 from creation.post.reel_cover import (
+    LEGACY_CLIP_COLUMNS,
     METRICS_COLUMNS,
     cover_path,
     record_metrics_row,
@@ -79,6 +80,41 @@ def test_metrics_keep_one_row_per_part_and_list_what_it_superseded(
     ):
         assert name in METRICS_COLUMNS
         assert rows[1][METRICS_COLUMNS.index(name)] == ""
+
+
+def test_an_old_sheet_with_tiktok_clip_rows_keeps_them_beside_a_new_reel(
+    tmp_path: Path,
+) -> None:
+    """The kit made TikTok clips until 13 Oct 2026; their rows and columns stay readable, never replaced."""
+
+    sheet = tmp_path / "metrics.csv"
+    header = [*METRICS_COLUMNS]
+    at = header.index("part") + 1
+    header[at:at] = list(LEGACY_CLIP_COLUMNS)
+    with sheet.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=header)
+        writer.writeheader()
+        writer.writerow({"reel_file": "reel-ep01-v1.mp4", "part": "1", "kind": "reel"})
+        writer.writerow(
+            {
+                "reel_file": "clip-ep01-1-v1.mp4",
+                "part": "1",
+                "kind": "clip",
+                "clip": "1",
+            }
+        )
+
+    record_metrics_row(sheet, {"reel_file": "reel-ep01-v2.mp4", "part": "1"})
+
+    with sheet.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        assert reader.fieldnames == header
+        rows = list(reader)
+    assert [(r["reel_file"], r["kind"], r["clip"]) for r in rows] == [
+        ("reel-ep01-v2.mp4", "reel", ""),
+        ("clip-ep01-1-v1.mp4", "clip", "1"),
+    ]
+    assert rows[0]["superseded"] == "reel-ep01-v1.mp4"
 
 
 # --- end to end on the tiny desk -----------------------------------------------------------------

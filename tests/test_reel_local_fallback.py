@@ -5,8 +5,7 @@ upload slot 409 ``operator_upload_unavailable`` (no R2 keys on the server), so
 ``finish`` made no reel, no cover and no clips, only a ⚠ line. Now a new desk's
 reel falls back to the local reel engine for that run (``reels/epNN/`` names,
 the cover drawn here and laid on frame 0, ``latest.json`` and ``metrics.csv``,
-the post text); a refusal about the content still stops; the clips, which have
-no local engine, say they need the server.
+the post text); a refusal about the content still stops.
 """
 
 from __future__ import annotations
@@ -23,7 +22,6 @@ from conftest import needs_ffmpeg
 from test_reel_via_server import legacy_reel_desk, reel_desk  # noqa: F401  (fixtures)
 
 from creation.post import cover_frame
-from creation.post.clips_via_server import auto_clips, episode_clips
 from creation.post.reel import auto_reel, run_reel
 from reel_fake_server import FakeReelServer
 
@@ -169,31 +167,3 @@ def test_a_refusal_about_the_content_still_stops(
     with pytest.raises(ReelServerError, match="episode_reel_invalid"):
         run_reel(reel_desk, episode=1, stream=io.StringIO())
     assert not list((reel_desk / "reels").rglob("*.mp4"))
-
-
-def test_the_clips_say_they_need_the_server_and_how_to_make_them_later(
-    reel_desk: Path,  # noqa: F811
-    reel_server: FakeReelServer,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from creation.cli_produce import main
-
-    reel_server.upload_refused = "operator_upload_unavailable"
-    out = io.StringIO()
-
-    assert auto_clips(reel_desk, 1, trigger="finish", stream=out) is None
-
-    said = out.getvalue()
-    assert (
-        "Clips not made: the TikTok clips are cut only by the server's reel engine"
-        in said
-    )
-    assert "no local clips engine" in said and "operator_upload_unavailable" in said
-    assert f"reel --desk {reel_desk} --episode 1 --clips 3" in said
-    assert "the finish is done" in said.lower()
-    assert not episode_clips(reel_desk, 1).exists()
-
-    assert (
-        main(["reel", "--desk", str(reel_desk), "--episode", "1", "--clips", "3"]) == 1
-    )
-    assert "no local clips engine" in capsys.readouterr().err
