@@ -1,8 +1,9 @@
 """Big impact beats punched up on the frame their effect plays (L-20261009-9, L-20260929-24).
 
 The kit's ``finish`` runs the server's pass (fictora-drama ``impact_post``) with the same numbers:
-a white flash (0.9 -> 0 over 0.32 s) and a decaying shake on a blast, a punch-in and a small shake on
-a hard hit; on measured motion where the effect is heard, at most two per take, never mid-line.
+a big punch-in and a hard shake on a blast (an explosion, a gunshot, a boom), a punch-in and a small
+shake on a hard hit, never a white flash (founder, 13 Oct 2026); on measured motion where the effect
+is heard, at most two per take, never mid-line.
 """
 
 from __future__ import annotations
@@ -18,15 +19,15 @@ from conftest import make_tone, needs_ffmpeg
 
 from creation.post.finish import run_finish
 from creation.post.impact_post import (
+    BLAST_PUNCH_ZOOM,
     BLAST_STEMS,
     HIT_STEMS,
-    FLASH_PEAK,
-    FLASH_SECONDS,
     MAX_MOMENTS_PER_TAKE,
     PUNCH_ZOOM,
     ImpactMoment,
     ImpactPlan,
     apply_impacts,
+    effect_seconds,
     impact_style,
     moment_move,
     plan_impacts,
@@ -91,7 +92,7 @@ def test_explosions_are_blasts_hard_hits_are_hits_and_soft_or_denied_hits_get_no
     assert impact_style("a door slams on the first frame", "event") is None
 
 
-#: Real-footage check of fictora-drama #764 (13 Oct): only a true explosion flashes; a bang is a hit at
+#: Real-footage check of fictora-drama #764 (13 Oct): only a true explosion (or a gunshot) is a blast; a bang is a hit at
 #: most; several hits get nothing. The same table as the server's tests (test_impact_post.py there).
 STYLE_CASES = (
     ("a gas tank explodes", "blast"),
@@ -129,7 +130,7 @@ def test_the_word_lists_are_the_servers() -> None:
 
 
 @pytest.mark.parametrize(("sound", "style"), STYLE_CASES)
-def test_only_true_explosions_flash_a_bang_is_a_hit_and_several_hits_get_nothing(
+def test_only_true_explosions_are_blasts_a_bang_is_a_hit_and_several_hits_get_nothing(
     sound: str, style: str | None
 ) -> None:
     assert impact_style(sound, "event") == style, sound
@@ -187,17 +188,44 @@ def test_at_most_two_per_take_blasts_first() -> None:
 # --- what --------------------------------------------------------------------------------------------
 
 
-def test_the_blast_frame_flashes_at_0_9_and_the_hit_frame_punches_in() -> None:
-    blast = ImpactMoment(1.0, 1.5, "blast", "boom")
+def test_the_blast_frame_punches_in_further_and_the_hit_frame_punches_in() -> None:
+    blast = ImpactMoment(1.0, 1.8, "blast", "a single gunshot")
     on = moment_move(blast, 1.0)
-    assert on is not None and on.flash == pytest.approx(FLASH_PEAK) and on.zoom > 1.0
-    later = moment_move(blast, 1.0 + FLASH_SECONDS)
-    assert later is not None and later.flash == 0.0
-    assert moment_move(blast, 0.99) is None and moment_move(blast, 1.5) is None
-    hit = moment_move(ImpactMoment(1.0, 1.8, "hit", "slam"), 1.0)
     assert (
-        hit is not None and hit.zoom == pytest.approx(PUNCH_ZOOM) and hit.flash == 0.0
+        on is not None
+        and on.zoom == pytest.approx(BLAST_PUNCH_ZOOM)
+        and BLAST_PUNCH_ZOOM > PUNCH_ZOOM
     )
+    assert abs(on.shift_y) > 0, "the blast frame is shaken"
+    easing = moment_move(blast, 1.55)
+    assert easing is not None and 1.0 < easing.zoom < BLAST_PUNCH_ZOOM
+    assert moment_move(blast, 0.99) is None and moment_move(blast, 1.8) is None
+    hit = moment_move(ImpactMoment(1.0, 1.8, "hit", "slam"), 1.0)
+    assert hit is not None and hit.zoom == pytest.approx(PUNCH_ZOOM)
+
+
+@pytest.mark.parametrize(
+    "sound",
+    ["a single gunshot", "a gas tank explodes", "a deep boom rolls", "a door slams"],
+)
+def test_no_impact_ever_flashes(sound: str) -> None:
+    """Founder, 13 Oct 2026: gunshots (and anything) get a zoom and a shake only, never a white flash."""
+    import dataclasses
+
+    from creation.post import impact_post
+    from creation.post.impact_post import Move
+
+    read = impact_style(sound, "event")
+    assert read is not None, sound
+    moment = ImpactMoment(0.0, effect_seconds(read[0]), read[0], sound)
+    moves = [
+        moment_move(moment, frame / FPS) for frame in range(int(moment.until * FPS))
+    ]
+    assert all(m is not None for m in moves) and max(m.zoom for m in moves if m) > 1.05
+    # No flash anywhere: the move has no flash, the pass names none, the renderer draws none.
+    assert "flash" not in {field.name for field in dataclasses.fields(Move)}
+    assert not any(name.startswith("FLASH") for name in vars(impact_post))
+    assert "addWeighted" not in Path(impact_post.__file__).read_text(encoding="utf-8")
 
 
 def test_the_shake_never_shows_the_frame_edge() -> None:
@@ -261,12 +289,17 @@ def test_rendered_blast_and_hit_on_the_impact_frame(tmp_path: Path) -> None:
     before = _frames(take)
 
     blast = apply_impacts(
-        take, ImpactPlan((ImpactMoment(1.0, 1.5, "blast", "boom"),)), tmp_path / "b.mp4"
+        take,
+        ImpactPlan((ImpactMoment(1.0, 1.8, "blast", "a single gunshot"),)),
+        tmp_path / "b.mp4",
     )
     after = _frames(blast.output)
     assert after.shape == before.shape
-    assert before[hit_at].mean() < 150 and after[hit_at].mean() > 0.85 * 255
-    for index in (hit_at - 1, hit_at + round(0.55 * FPS), len(before) - 1):
+    # Never a white frame (a 0.9 flash read ~230): as bright as filmed, and punched in.
+    for index in range(hit_at, hit_at + round(0.5 * FPS)):
+        assert after[index].mean() < before[index].mean() + 8, index
+    assert (after[hit_at] > 200).sum() > 1.2 * (before[hit_at] > 200).sum()
+    for index in (hit_at - 1, hit_at + round(0.9 * FPS), len(before) - 1):
         assert np.abs(after[index] - before[index]).mean() < 2.0, index
 
     hit = apply_impacts(

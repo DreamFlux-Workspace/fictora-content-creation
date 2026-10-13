@@ -44,9 +44,9 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
 3. ``colour``    - match the take to the board the human approved.
    ``impact``    - the take's big impact beats punched up on the frame their
    effect plays (:mod:`creation.post.impact_post`, L-20261009-9; the server's
-   pass, same numbers): a white flash (0.9 -> 0 over 0.32 s) and a decaying
-   shake on an explosion, gunshot or boom; a quick punch-in and a small shake
-   on a hard hit (slam, crash, punch, slap). Only on measured motion where the
+   pass, same numbers): a big punch-in and a hard decaying shake on an
+   explosion, gunshot or boom; a quick punch-in and a small shake on a hard
+   hit (slam, crash, punch, slap); never a white flash (founder, 13 Oct 2026). Only on measured motion where the
    effect is heard, at most two per take, never mid-line; the sound is
    copied untouched. ``--no-impact`` skips it; a desk made before 6 Oct 2026
    skips it (its effects do not follow the action yet). Free.
@@ -1339,8 +1339,8 @@ def run_finish(
         decision 12 Oct 2026).
     impact
         The ``impact`` step (default on; ``--no-impact`` turns it off): the take's big impact beats
-        punched up on the frame their effect plays (:mod:`creation.post.impact_post`: a white flash
-        and a shake on a blast, a punch-in on a hard hit; at most two, never mid-line), as the
+        punched up on the frame their effect plays (:mod:`creation.post.impact_post`: a big punch-in
+        and a hard shake on a blast or gunshot, a punch-in on a hard hit, never a flash; at most two, never mid-line), as the
         server does on every hosted episode. A desk made before 6 Oct 2026 skips it (its effects
         do not follow the action yet).
     stream

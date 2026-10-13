@@ -1,9 +1,10 @@
-"""Punch up a take's big impact on the frame it lands: a punch-in, or a white flash and a shake ($0, ffmpeg).
+"""Punch up a take's big impact on the frame it lands: a punch-in and a shake, never a flash ($0, ffmpeg).
 
 What worked in production, by hand: a punch-in or a crop rescued a weak key
-moment (L-20260929-24), and an explosion was sold with a white flash
-(brightness 0.9 to 0 over 0.32 s), a decaying crop shake on the blast frame
-and a full-level boom (L-20261009-9). The manual tools (``zoom``, ``freeze``,
+moment (L-20260929-24), and an explosion was sold with a decaying crop shake
+on the blast frame and a full-level boom (L-20261009-9). The white flash of
+that edit is never drawn: a gunshot, or any impact, gets a zoom and a shake
+only (founder, 13 Oct 2026, Motion & Physics review). The manual tools (``zoom``, ``freeze``,
 ``soften``...) stay; this is the automatic pass ``finish`` runs as its
 ``impact`` step, the same pass the server runs on every hosted episode
 (fictora-drama ``impact_post``), with the same numbers:
@@ -19,15 +20,17 @@ and a full-level boom (L-20261009-9). The manual tools (``zoom``, ``freeze``,
   filmed shot (:func:`creation.post.sfx_motion.action_moment`, the trace the
   ``sfx`` step snapped the effect to), and only where the effect is heard
   (within :data:`SOUND_TOLERANCE_SECONDS`). No clear spike, no effect.
-* **What.** A blast gets the white flash and a decaying crop shake; a hard
-  hit gets a quick punch-in (held, then eased back) and a small shake. Each
-  stays inside its filmed shot.
+* **What.** Every moment is a punch-in (held, then eased back) and a
+  decaying crop shake, never a flash: a blast (an explosion, a gunshot, a
+  boom) punches in further (:data:`BLAST_PUNCH_ZOOM`) and shakes harder; a
+  hard hit gets :data:`PUNCH_ZOOM` and a small shake. Each stays inside its
+  filmed shot. :class:`Move` has no flash: there is no flash path here.
 * **Taste.** At most :data:`MAX_MOMENTS_PER_TAKE` per take (blasts first,
   then the strongest motion), never overlapping, never mid-line.
 
 Same length, same frames; the sound is copied untouched. Desks created before
 6 Oct 2026 do not run it: their effects do not follow the action yet
-(:mod:`creation.post.sfx_motion`), so a flash would not land with its boom.
+(:mod:`creation.post.sfx_motion`), so a punch-in would not land with its boom.
 """
 
 from __future__ import annotations
@@ -52,7 +55,7 @@ ImpactStyle = Literal["blast", "hit"]
 # The two word lists mirror ``creation/post/ambience.py`` (kit PR #219; the server's ``impact_words``, #767)
 # exactly, so the sound and the picture agree on what is an explosion and what is a hit; this moves to an
 # import from ``ambience`` once #219 lands.
-#: Things that go off: only these get the white flash and the shake. A "bang" is never one.
+#: Things that go off (a gunshot too): the bigger punch-in and the harder shake. A "bang" is never one.
 BLAST_STEMS = frozenset(
     {
         "explosion",
@@ -126,7 +129,7 @@ def names_several_hits(sound: str) -> bool:
     Returns
     -------
     bool
-        True when one flash or punch-in could not stand for the cue.
+        True when one punch-in could not stand for the cue.
     """
 
     return bool(_SEVERAL_HITS.search(sound))
@@ -165,12 +168,12 @@ def _names(words: re.Pattern[str], sound: str) -> bool:
 MAX_MOMENTS_PER_TAKE = 2
 #: A moment this close to a spoken line (either side) is mid-line: left alone.
 SPEECH_GUARD_SECONDS = 0.15
-#: The spike must be this close to where the effect was laid: the flash lands with its boom.
+#: The spike must be this close to where the effect was laid: the punch-in lands with its boom.
 SOUND_TOLERANCE_SECONDS = 0.1
 
-#: The blast's white flash: its peak on the blast frame, falling to 0 over this long (L-20261009-9).
-FLASH_PEAK = 0.9
-FLASH_SECONDS = 0.32
+#: The blast's punch-in (an explosion, a gunshot, a boom): further in than a hit's. Never a white flash
+#: (founder, 13 Oct 2026: a gunshot gets a zoom and a shake only). The server's number.
+BLAST_PUNCH_ZOOM = 1.14
 #: The blast's crop shake: peak offset (fraction of the frame), how long.
 BLAST_SHAKE_AMPLITUDE = 0.015
 BLAST_SHAKE_SECONDS = 0.5
@@ -282,12 +285,11 @@ def impact_style(sound: str, kind: str) -> ImpactStyle | None:
 
 @dataclass(frozen=True)
 class Move:
-    """The picture on one frame: zoom about ``(anchor_x, anchor_y)``, a shift (fractions) and a white flash."""
+    """The picture on one frame: zoom about ``(anchor_x, anchor_y)`` and a shift (fractions). Never a flash."""
 
     zoom: float = 1.0
     anchor_x: float = 0.5
     anchor_y: float = 0.5
-    flash: float = 0.0
     shift_x: float = 0.0
     shift_y: float = 0.0
 
@@ -324,9 +326,9 @@ class ImpactMoment:
     label: str
 
     def one_line(self) -> str:
-        """``a gas tank explodes: flash + shake at 2.04s``."""
+        """``a gas tank explodes: big punch-in + shake at 2.04s``."""
 
-        what = "flash + shake" if self.style == "blast" else "punch-in + shake"
+        what = "big punch-in + shake" if self.style == "blast" else "punch-in + shake"
         return f"{self.label}: {what} at {self.time:.2f}s"
 
 
@@ -344,9 +346,8 @@ def effect_seconds(style: ImpactStyle) -> float:
         Seconds.
     """
 
-    if style == "blast":
-        return max(FLASH_SECONDS, BLAST_SHAKE_SECONDS)
-    return max(PUNCH_HOLD_SECONDS + PUNCH_RELEASE_SECONDS, HIT_SHAKE_SECONDS)
+    shake = BLAST_SHAKE_SECONDS if style == "blast" else HIT_SHAKE_SECONDS
+    return max(PUNCH_HOLD_SECONDS + PUNCH_RELEASE_SECONDS, shake)
 
 
 def _shake(dt: float, amplitude: float, seconds: float) -> tuple[float, float, float]:
@@ -373,25 +374,27 @@ def moment_move(moment: ImpactMoment, seconds: float) -> Move | None:
     Returns
     -------
     Move | None
-        Flash, zoom and shift; the zoom always covers the shake (no frame edge shows).
+        Zoom and shift, never a flash; the zoom always covers the shake (no frame edge shows).
     """
 
     if not moment.time <= seconds < moment.until:
         return None
     dt = seconds - moment.time
-    if moment.style == "blast":
-        flash = FLASH_PEAK * (1.0 - dt / FLASH_SECONDS) if dt < FLASH_SECONDS else 0.0
-        sx, sy, envelope = _shake(dt, BLAST_SHAKE_AMPLITUDE, BLAST_SHAKE_SECONDS)
-        return Move(zoom=1.0 + 2.5 * envelope, flash=flash, shift_x=sx, shift_y=sy)
+    blast = moment.style == "blast"
+    peak = BLAST_PUNCH_ZOOM if blast else PUNCH_ZOOM
     if dt < PUNCH_HOLD_SECONDS:
-        zoom = PUNCH_ZOOM
+        zoom = peak
     else:
         p = min(1.0, (dt - PUNCH_HOLD_SECONDS) / PUNCH_RELEASE_SECONDS)
-        zoom = PUNCH_ZOOM + (1.0 - PUNCH_ZOOM) * (p * p * (3.0 - 2.0 * p))
-    sx, sy, envelope = _shake(dt, HIT_SHAKE_AMPLITUDE, HIT_SHAKE_SECONDS)
+        zoom = peak + (1.0 - peak) * (p * p * (3.0 - 2.0 * p))
+    if blast:
+        sx, sy, envelope = _shake(dt, BLAST_SHAKE_AMPLITUDE, BLAST_SHAKE_SECONDS)
+    else:
+        sx, sy, envelope = _shake(dt, HIT_SHAKE_AMPLITUDE, HIT_SHAKE_SECONDS)
+    # A blast fills the frame (centre); a hit aims where faces sit.
     return Move(
         zoom=max(zoom, 1.0 + 2.5 * envelope),
-        anchor_y=PUNCH_ANCHOR_Y,
+        anchor_y=0.5 if blast else PUNCH_ANCHOR_Y,
         shift_x=sx,
         shift_y=sy,
     )
@@ -624,14 +627,6 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
                     frame, move.matrix(width, height), (width, height),
                     flags=cv2.INTER_CUBIC | cv2.WARP_INVERSE_MAP, borderMode=cv2.BORDER_REFLECT,
                 )  # fmt: skip
-                if move.flash > 0:
-                    frame = cv2.addWeighted(
-                        frame,
-                        1.0 - move.flash,
-                        np.full_like(frame, 255),
-                        move.flash,
-                        0.0,
-                    )
             writer.stdin.write(np.ascontiguousarray(frame).tobytes())
             index += 1
         writer.stdin.close()
@@ -657,9 +652,8 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
 
 
 __all__ = [
+    "BLAST_PUNCH_ZOOM",
     "BLAST_STEMS",
-    "FLASH_PEAK",
-    "FLASH_SECONDS",
     "HIT_STEMS",
     "MAX_MOMENTS_PER_TAKE",
     "PUNCH_ZOOM",
