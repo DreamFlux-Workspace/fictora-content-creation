@@ -1112,6 +1112,7 @@
      {
       "shot": 1,
       "camera": "Extreme close-up",
+      "camera_move": "Locked off",
       "scene": "Already mid-slam on Mitsu’s face: both palms strike the glass wagashi case before she refuses service to her rival.",
       "line": {
        "speaker": "Mitsu",
@@ -1124,6 +1125,7 @@
      {
       "shot": 2,
       "camera": "Wide",
+      "camera_move": null,
       "scene": "Ren calmly offering coins across the counter, with both shopfronts and arcade signs behind him.",
       "line": null,
       "expression": null,
@@ -1133,6 +1135,7 @@
      {
       "shot": 3,
       "camera": "Two-shot",
+      "camera_move": "Locked off",
       "scene": "Across the wagashi case: Ren keeps the coins offered and calmly asks for Mitsu’s method instead of buying; Mitsu’s raised refusal finger falters.",
       "line": {
        "speaker": "Ren",
@@ -1150,6 +1153,7 @@
      {
       "shot": 4,
       "camera": "Two-shot",
+      "camera_move": "Locked off",
       "scene": "Mitsu rejects Ren, but her outburst collapses when her gaze catches pink bean paste smeared on his white cuff—the irreversible hint that he has already been making wagashi.",
       "line": {
        "speaker": "Mitsu",
@@ -1162,6 +1166,7 @@
      {
       "shot": 5,
       "camera": "Close-up · high angle",
+      "camera_move": null,
       "scene": "Ren slides a single wrapped sakura mochi across the glass and walks out into the arcade.",
       "line": null,
       "expression": "Mitsu's eyes fill with tears",
@@ -1171,6 +1176,7 @@
      {
       "shot": 6,
       "camera": "Wide",
+      "camera_move": null,
       "scene": "Mitsu alone behind the counter as Ren leaves",
       "line": null,
       "expression": null,
