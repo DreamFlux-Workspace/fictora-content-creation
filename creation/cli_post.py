@@ -43,6 +43,7 @@ POST_COMMANDS = (
             "join",
             "reel",
             "reel-results",
+            "moment",
         }
     )
     | EDIT_COMMANDS
@@ -808,6 +809,47 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "straight) or a comma list of flash-forward|straight. Each is its own reel and its own row in "
         "reels/metrics.csv; `reel-results` adds the posted ones up. $0.",
     )  # fmt: skip
+    moment = sub.add_parser(
+        "moment",
+        help="A TikTok part (a moment): several finished episodes joined and cut as one story by the server's "
+        "engine, with a PART N title bar, a hook line, one bed and a `Part N+1 →` end card; in reels/moments/. $0. "
+        "Either --episodes A-B --part N, or --auto for every part of the show (episodes grouped into about a minute).",
+    )
+    moment.add_argument("--desk", type=Path, required=True)
+    which = moment.add_mutually_exclusive_group(required=True)
+    which.add_argument(
+        "--episodes",
+        default=None,
+        metavar="A-B",
+        help="The episodes to join: 1-3 or 1,2,3 (at most 6).",
+    )
+    which.add_argument(
+        "--auto",
+        action="store_true",
+        help="Group every finished episode into parts and make each.",
+    )
+    moment.add_argument(
+        "--part",
+        type=int,
+        default=None,
+        metavar="N",
+        help="PART N (with --episodes; default 1).",
+    )
+    moment.add_argument(
+        "--next",
+        dest="next_text",
+        default=None,
+        metavar="TEXT",
+        help="The end card's words.",
+    )
+    moment.add_argument(
+        "--hook-line",
+        dest="moment_hook",
+        default=None,
+        metavar="TEXT",
+        help="The hook line under the title bar.",
+    )
+    add_caption_style_arg(moment)
     results = sub.add_parser(
         "reel-results",
         help="The posted reels' numbers by recipe, from reels/metrics.csv of the given desks (or folders of desks).",
@@ -1151,6 +1193,31 @@ def dispatch_post(args: argparse.Namespace) -> int:
             return 1
         except ReelServerError as exc:
             print(f"Reel not made: {exc}", file=sys.stderr)
+            return 1
+        return 0
+    if args.command == "moment":
+        from creation.post.moment_via_server import parse_episodes, run_moments
+        from creation.post.reel_server import (
+            ReelServerError,
+            ReelServerUnreachable,
+            unreachable_message,
+        )
+
+        episodes = None
+        try:
+            episodes = parse_episodes(args.episodes) if args.episodes else None
+            run_moments(
+                args.desk, episodes=episodes, part=args.part, next_text=args.next_text, hook_line=args.moment_hook,
+                caption_style=args.caption_style,
+            )  # fmt: skip
+        except ReelServerUnreachable as exc:
+            print(
+                f"{unreachable_message(args.desk, (episodes or [1])[-1])} ({exc})",
+                file=sys.stderr,
+            )
+            return 1
+        except (ReelServerError, ValueError) as exc:
+            print(f"Moment not made: {exc}", file=sys.stderr)
             return 1
         return 0
     if args.command == "reel-results":
