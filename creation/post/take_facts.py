@@ -276,12 +276,15 @@ def ended_on_earlier_shot_note(
     last = filmed.planned[-1]
     last_start = filmed.windows.get(last.index, (last.start, duration))[0]
     inside = sorted(
-        cut for cut in cuts if FILMED_CUT_EDGE_SECONDS < cut < duration - FILMED_CUT_EDGE_SECONDS
+        cut
+        for cut in cuts
+        if FILMED_CUT_EDGE_SECONDS < cut < duration - FILMED_CUT_EDGE_SECONDS
     )
     extra = [
         cut
         for cut in inside
-        if cut > last_start + _SAME_CHANGE_SECONDS and duration - cut >= _MIN_TAIL_SECONDS
+        if cut > last_start + _SAME_CHANGE_SECONDS
+        and duration - cut >= _MIN_TAIL_SECONDS
     ]
     if extra and not any(abs(cut - last_start) < 1e-6 for cut in inside):
         # The change into the last shot found no cut near its plan: the first later cut is that change, filmed late.
