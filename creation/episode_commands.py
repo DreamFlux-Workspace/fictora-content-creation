@@ -28,6 +28,9 @@ desk with a versioned name, and never approves (the human's yes goes through
   from changed (``--same-shots`` / ``--reroll`` to re-roll).
 - ``plates``: retired (was ``plates --cast NAME --cause``); prints a pointer to ``redraw-plate --note`` and sends nothing.
 - ``redraw-plate --cast X --note "..."``: note one character, then redraw only their plate (one still).
+- ``props`` / ``redraw-prop --prop X --note "..."`` / ``remove-prop --prop X``: the story's objects
+  (:mod:`creation.prop_commands`): list free, redraw one picture ($0.30 each drawn; asks first,
+  draws on ``--confirm-spend``), remove free.
 - ``check-lines``: were the approved lines in the take's instructions, which shot and board row each fell in,
   and is its on-screen speaker in that row (take facts and board frames, never the prompt)?
 - ``film --episode N [--take tK]``: price, then (``--confirm-spend``) film episode N alone or only take K
@@ -7704,6 +7707,9 @@ EPISODE_COMMANDS = frozenset(
         "redraw-board",
         "plates",
         "redraw-plate",
+        "props",
+        "redraw-prop",
+        "remove-prop",
         "check-lines",
         "film",
         "collect-takes",
@@ -8363,6 +8369,47 @@ def add_episode_parsers(
         ),
     )
 
+    props = sub.add_parser(
+        "props",
+        help="List the story's objects: name, id, where each picture stands, the local file. Free, sends nothing.",
+    )
+    props.add_argument("--desk", type=Path, required=True)
+    prop_redraw = sub.add_parser(
+        "redraw-prop",
+        help=(
+            "Correct ONE story object (--note, your words) and draw its picture again. $0.30 a picture. "
+            "The first run only asks (the total, nothing sent); --confirm-spend after the human's yes draws. "
+            "The step is unchanged."
+        ),
+    )
+    prop_redraw.add_argument("--desk", type=Path, required=True)
+    prop_redraw.add_argument(
+        "--prop", required=True, help="The object's name or prop_id (see `props`)."
+    )
+    prop_redraw.add_argument(
+        "--note",
+        required=True,
+        help=f"What is wrong with the object, in your words (<={CAST_NOTE_MAX} characters).",
+    )
+    prop_redraw.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Draw again under a job key of its own, also when this note was already drawn. Only the key changes.",
+    )
+    prop_redraw.add_argument(
+        "--confirm-spend",
+        action="store_true",
+        help="The human said yes to the total the first run asked about (always needed to draw).",
+    )
+    prop_remove = sub.add_parser(
+        "remove-prop",
+        help="Take one story object off the story. Free; refused once the episode has a drawn board.",
+    )
+    prop_remove.add_argument("--desk", type=Path, required=True)
+    prop_remove.add_argument(
+        "--prop", required=True, help="The object's name or prop_id (see `props`)."
+    )
+
     film = sub.add_parser(
         "film",
         help=(
@@ -8670,6 +8717,22 @@ def dispatch_episode(args: argparse.Namespace) -> int:
             run_redraw_plate_with_note(
                 args.desk, cast=args.cast, note=args.note, fresh=args.fresh
             )
+            return 0
+        if args.command in ("props", "redraw-prop", "remove-prop"):
+            from creation import prop_commands
+
+            if args.command == "props":
+                prop_commands.run_props(args.desk)
+            elif args.command == "redraw-prop":
+                prop_commands.run_redraw_prop(
+                    args.desk,
+                    prop=args.prop,
+                    note=args.note,
+                    fresh=args.fresh,
+                    confirm_spend=args.confirm_spend,
+                )
+            else:
+                prop_commands.run_remove_prop(args.desk, prop=args.prop)
             return 0
         if args.command == "film":
             run_film(

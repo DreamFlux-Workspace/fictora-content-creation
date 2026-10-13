@@ -93,6 +93,10 @@ class ProductionState:
     #: key again (the server no longer accepts the body it was first sent with). Left out of the
     #: file while empty, like ``single_frame_start_keys``.
     reference_mode_keys: list[str] = field(default_factory=list)
+    #: The plates step's enrol key ending per episode (``ep01`` -> ``-o1a2b3c4d`` or ``""``), saved
+    #: before the send so a re-run while that job is in flight sends the same key; dropped once the
+    #: job is done. Left out of the file while empty, like ``single_frame_start_keys``.
+    plates_key_salts: dict[str, str] = field(default_factory=dict)
 
     def server_lane(self) -> tuple[str, str] | None:
         """Return ``(endpoint, resolution)`` the server last named, or ``None``."""
@@ -221,6 +225,7 @@ def save_production(desk: Path, state: ProductionState) -> None:
         "single_frame_start_keys",
         "single_frame_start_off_keys",
         "reference_mode_keys",
+        "plates_key_salts",
     ):
         if not data[trial]:
             del data[trial]
