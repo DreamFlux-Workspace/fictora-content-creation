@@ -373,3 +373,31 @@ def test_staging_that_says_without_touching_is_not_a_ban() -> None:
         }
     ]
     assert staging_contradiction_lines(spine, episode=1) == []
+
+
+def test_a_speaking_beats_lip_sync_lock_is_not_the_drafts_camera() -> None:
+    spine = _spine()
+    for beat in spine["beats"]:
+        beat.pop("shot_plan", None)
+        beat["motion_direction"]["camera"] = {"move": "locked"}
+    # Only b3 is wordless: its own locked camera is what the warning reads.
+    assert locked_camera_line(spine, episode=1) is not None
+    spine["beats"][2]["motion_direction"]["camera"] = {"move": "handheld"}
+    assert locked_camera_line(spine, episode=1) is None
+    # Every beat speaks: the take pushes in on each, so nothing is locked.
+    spine["beats"] = spine["beats"][:2]
+    assert locked_camera_line(spine, episode=1) is None
+
+
+def test_the_pictures_own_plan_is_the_camera_when_the_episode_has_one() -> None:
+    spine = _spine()
+    spine["frames"] = [
+        {
+            "frame_id": "f1",
+            "episode_id": "episode_01",
+            "visual_brief": {"row_direction": {"camera_move": "dolly_in"}},
+        }
+    ]
+    assert locked_camera_line(spine, episode=1) is None
+    spine["frames"][0]["visual_brief"]["row_direction"]["camera_move"] = "locked"
+    assert locked_camera_line(spine, episode=1) is not None
