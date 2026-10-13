@@ -19,6 +19,11 @@ from creation.harness.video_enrol_errors import server_refused_episode_ordinal_f
 from creation.desk_media_urls import drawn_cast_rows
 from creation.harness.session import DramaApiRunSession
 from creation.spine_view import board_assets, episode_id_for
+from creation.opening_action import (
+    DRAFT_SCHEMA,
+    OpeningActionRefused,
+    require_opening_action_support,
+)
 from creation.harness.visual_first_ep1 import (
     approve_ep1_boards,
     measure_ep1_board_exposure,
@@ -80,6 +85,7 @@ def draft_request_body(
     spoken_language: str | None = None,
     locale: str = "en-US",
     delivery_format: str | None = None,
+    opening_action: str | None = None,
 ) -> dict[str, Any]:
     """Build the ``POST /v1/prompt-video-authoring-drafts`` body: episode 1 alone, arc at episode 2.
 
@@ -103,6 +109,9 @@ def draft_request_body(
     delivery_format
         ``letterbox`` is sent as the show's ``delivery_format``. Portrait (``None`` or
         ``portrait``) sends nothing, so a portrait body and its brief hash are unchanged.
+    opening_action
+        How episode 1's first shot moves, in the human's words; sent as ``opening_action``.
+        ``None`` sends nothing, so the body and its brief hash are unchanged.
 
     Returns
     -------
@@ -127,6 +136,8 @@ def draft_request_body(
         body["spoken_language"] = spoken_language_tag(spoken_language)
     if delivery_format == "letterbox":
         body["delivery_format"] = "letterbox"
+    if opening_action:
+        body["opening_action"] = opening_action
     body["outline_mode"] = EP1_ALONE_OUTLINE_MODE
     return body
 
@@ -143,6 +154,7 @@ def start_draft(
     spoken_language: str | None = None,
     locale: str = "en-US",
     delivery_format: str | None = None,
+    opening_action: str | None = None,
     deadline_seconds: float = 1800.0,
     accept_notices: Sequence[str] = (),
     desk: str = "<desk>",
@@ -173,6 +185,9 @@ def start_draft(
         Session (its session id owns the new spine).
     prompt, preset_id, preset_version, band, video_lane, cut_tempo, spoken_language, locale, delivery_format
         As :func:`draft_request_body`.
+    opening_action
+        As :func:`draft_request_body`. Checked against the deploy's ``/openapi.json`` first: a
+        server without the field stops the draft before anything is sent.
     deadline_seconds
         Plan poll cap.
     accept_notices
@@ -229,7 +244,13 @@ def start_draft(
         spoken_language=spoken_language,
         locale=locale,
         delivery_format=delivery_format,
+        opening_action=opening_action,
     )
+    if opening_action:
+        try:
+            require_opening_action_support(run, DRAFT_SCHEMA, label="draft")
+        except OpeningActionRefused as exc:
+            raise SystemExit(str(exc)) from exc
     run.save("01_draft_request.json", body)
 
     last_plan: dict[str, Any] = {}

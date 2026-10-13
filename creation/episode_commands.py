@@ -95,6 +95,12 @@ from creation.harness.raw_video import (
 )
 from creation.harness.session import DramaApiRunSession
 from creation.harness.stages_gated import scene_prompt
+from creation.opening_action import (
+    AUTHOR_SCHEMA,
+    OpeningActionRefused,
+    clean_opening_action,
+    require_opening_action_support,
+)
 from creation.harness.visual_first_ep1 import reuse_generation_body
 from creation.stylised_only import photoreal_look_warning
 from creation.look_gate import (
@@ -1048,6 +1054,7 @@ def run_author(
     ask: Callable[[str], str] | None = None,
     keep_voices: bool = False,
     out: Any = None,
+    opening_action: str | None = None,
 ) -> Path:
     """Write episode N (2 on), save the spine, put its lines on the desk, and point the desk at it. Never approves.
 
@@ -1075,6 +1082,10 @@ def run_author(
         stops first, free, and prints whose voices the show speaks in.
     out
         Text stream for the script gate.
+    opening_action
+        How the episode's first shot moves, in the human's words (``--opening-action``); sent as
+        the request's ``opening_action`` so beat 1 and the board's first cell open on it. Checked
+        against the deploy's ``/openapi.json`` first. ``None`` sends nothing.
 
     Returns
     -------
@@ -1091,6 +1102,10 @@ def run_author(
         raise CommandStopped(
             "episode 1 is written by the draft (`step`); author writes episode 2 on"
         )
+    try:
+        opening_action = clean_opening_action(opening_action)
+    except OpeningActionRefused as exc:
+        raise CommandStopped(str(exc)) from exc
     out = out or sys.stdout
     desk, state, run = _desk_session(desk)
     if state.phase == "ready_video":
@@ -1118,6 +1133,12 @@ def run_author(
         body: dict[str, Any] = {"spine_version": spine["spine_version"]}
         if direction:
             body["direction"] = dict(direction)
+        if opening_action:
+            try:
+                require_opening_action_support(run, AUTHOR_SCHEMA, label="author")
+            except OpeningActionRefused as exc:
+                raise CommandStopped(str(exc)) from exc
+            body["opening_action"] = opening_action
         print(
             f"[author] Writing episode {episode} on the server (beats, lines, shots). Usually 1-3 minutes.",
             file=sys.stderr,
@@ -7771,6 +7792,12 @@ def add_episode_parsers(
         "--title", default=None, help="With --line: a short name for it."
     )
     author.add_argument(
+        "--opening-action",
+        default=None,
+        help="How this episode's first shot moves, in the human's words (\"he slams the phone down\"; "
+        "200 characters at most). Beat 1 and the board's first cell open on it, already in motion.",
+    )
+    author.add_argument(
         "--keep-voices",
         action="store_true",
         help="The human said yes to carrying the earlier episodes' voices on (desks from 6 Oct 2026 stop "
@@ -8433,6 +8460,7 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 narrator_on_screen=args.narrator_on_screen,
                 ask=interactive_ask(),
                 keep_voices=args.keep_voices,
+                opening_action=args.opening_action,
             )
             return 0
         if args.command == "rewrite":
