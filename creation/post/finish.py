@@ -10,9 +10,11 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    times, caption timing, the voice the mix ducks under) stays on the raw
    take's timeline. ``--no-deboard`` skips it. When the server set no trim
    handles, the clones (a held still before the first motion) are cut off
-   LAST, after every step below, picture and sound together, never past the
-   first line's onset (:func:`creation.post.deboard.head_cut`), and recorded
-   as a ``handles`` edit (source ``kit-deboard``).
+   LAST, after every step below, picture and sound together, exactly at the
+   first real frame (:func:`creation.post.deboard.head_cut`; a frozen opening
+   never ships), and recorded as a ``handles`` edit (source ``kit-deboard``),
+   so every later reader moves the take's times by the cut. A ``--take-file``
+   made by ``deboard`` (its edit chain says how many clones) is cut the same.
 1. ``sfx``       - the take's cue plan from ``GET /v1/jobs/{take_job}/take-facts?spine_id=``
    (fetched and saved as ``api/take-facts-epNN-tK-vN.json`` when missing),
    rendered on the server (the audio service) and cached in ``epNN/sfx/``.
@@ -113,7 +115,8 @@ the bed) and the un-marked file the mark went on. ``join`` reads it to lay one
 bed across several takes and mark the joined file once.
 
 Hand-placed sound (:mod:`creation.post.hand`), each flag repeatable, times on
-the take as filmed (deboard keeps the timeline, so nothing is shifted):
+the take as filmed (deboard keeps the timeline while finish works; the
+held head is cut last with everything on it, so nothing needs shifting by hand):
 
 - ``--mute A-B`` and ``--voice PATH@S[@DB]`` run as the ``voice`` step right
   after deboard: stray speech silenced, dry lines laid into the take's own
@@ -224,7 +227,12 @@ from creation.post.hand import (
     level_hand_cues,
     voice_gain,
 )
-from creation.post.lineage import CHAIN_FILE, raw_take_behind, record_edit
+from creation.post.lineage import (
+    CHAIN_FILE,
+    deboard_clones_behind,
+    raw_take_behind,
+    record_edit,
+)
 from creation.post.desk import (
     approved_board,
     board_versions,
@@ -794,6 +802,37 @@ def _opening_lines(
     return [f"⚠ {warning}" for warning in reading.warnings]
 
 
+def first_line_start(
+    ass_text: str | None, hand_starts: Sequence[float] = ()
+) -> float | None:
+    """The first spoken line's onset on the take as filmed, from its captions and hand-laid voices.
+
+    Only caption events count: the hook card and the panels kept beside the
+    master's captions are drawn over the picture, start at 0 and are not a
+    line (until 13 Oct 2026 they were read as one, so every first take with a
+    hook card kept its frozen board frames).
+
+    Parameters
+    ----------
+    ass_text
+        The master's ``.ass`` text, or ``None`` when it has none.
+    hand_starts
+        Where ``--voice`` lines were laid.
+
+    Returns
+    -------
+    float | None
+        The earliest onset, or ``None`` when no line is known.
+    """
+
+    from creation.post.reel import parse_ass_cues
+
+    starts = [float(t) for t in hand_starts]
+    if ass_text is not None:
+        starts += [cue.start for cue in parse_ass_cues(ass_text)]
+    return min(starts) if starts else None
+
+
 def _cut_held_head(
     desk: Path,
     *,
@@ -805,8 +844,11 @@ def _cut_held_head(
     """Cut the deboard clones (a held still) off a finished take's head, last, as a ``handles`` edit.
 
     Only when the server set no handles (its own cut already starts past the
-    board frames). Never past the first line's onset: the master's captions and
-    the laid voices say where it is (:func:`creation.post.deboard.head_cut`).
+    board frames). Always exactly at the first real frame
+    (:func:`creation.post.deboard.head_cut`): a frozen opening never ships.
+    The master's captions and the laid voices only say whether a line's voice
+    started under the board frames, for the note; the hook card and panels
+    drawn over the captions are not lines (:func:`first_line_start`).
 
     Parameters
     ----------
@@ -829,25 +871,18 @@ def _cut_held_head(
 
     from creation.post.deboard import HEAD_CUT_SOURCE, head_cut
     from creation.post.finish_record import _load
-    from creation.post.reel import parse_ass_cues
     from creation.post.take_handles import TakeHandles
 
     loaded = _load(record)
     if loaded is None:
         return HandleCut(None, None, "")
-    starts = [float(t) for t in hand_starts]
-    known = bool(starts)
     master = loaded.resolve(desk, "master")
-    if master is not None and master.with_suffix(".ass").is_file():
-        known = True
-        # Every event, the hook card and panels kept beside the captions included, as before (L-20261006-8).
-        cues = parse_ass_cues(
-            master.with_suffix(".ass").read_text(encoding="utf-8"), overlays=True
-        )
-        starts += [c.start for c in cues]
-    cut, why = head_cut(
-        frames, fps, first_speech=min(starts) if starts else None, known=known
+    ass = (
+        master.with_suffix(".ass").read_text(encoding="utf-8")
+        if master is not None and master.with_suffix(".ass").is_file()
+        else None
     )
+    cut, why = head_cut(frames, fps, first_speech=first_line_start(ass, hand_starts))
     final = loaded.resolve(desk, "final")
     if cut is None or final is None or not final.is_file():
         return HandleCut(None, None, why)
@@ -1375,7 +1410,7 @@ def run_finish(
         raise FileNotFoundError(f"take not found: {source}")
     hand = HandPlan()
     if mutes or voices or cues:
-        # Take seconds as filmed: deboard replaces the board frames without cutting, so no shift is applied.
+        # Take seconds as filmed: deboard keeps the timeline, and the held head is cut last with the hand sound on it.
         hand = check_hand_plan(
             probe_video(source).duration_seconds, mutes=mutes, voices=voices, cues=cues
         )
@@ -1725,6 +1760,16 @@ def run_finish(
         result.steps.append(report)
 
     def do_deboard(take: Path) -> StepReport:
+        behind = deboard_clones_behind(desk, take)
+        if behind is not None:
+            # `deboard` already held the board frames on this file: its clones are cut off last, like ours.
+            deboard_state["frames"], deboard_state["fps"] = behind
+            return StepReport(
+                "deboard",
+                "ran",
+                f"`{take.name}` already holds {behind[0]} cloned board frame(s) (deboard, edit chain); "
+                "they are cut off last",
+            )
         if not deboard:
             return StepReport("deboard", "skipped", "--no-deboard")
         if board is None:

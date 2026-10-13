@@ -233,3 +233,56 @@ def raw_take_behind(desk: Path, file: Path) -> Lineage:
     return Lineage(
         None, (), False, f"the edit chain behind `{file.name}` loops or is too long"
     )
+
+
+def deboard_clones_behind(desk: Path, file: Path) -> tuple[int, float] | None:
+    """How many cloned board frames a take file still opens on, when a ``deboard`` edit made it.
+
+    ``deboard`` holds the board frames with clones of the first real frame
+    and records how many (``frames``, ``fps``) in the edit chain. A file made
+    from such a take by edits that keep the timeline still opens on those
+    clones, and ``finish`` must cut them (Motion & Physics review #13).
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    file
+        The take file ``finish`` was given.
+
+    Returns
+    -------
+    tuple[int, float] | None
+        ``(frames, fps)`` of the clones; ``None`` when no ``deboard`` is in
+        its chain, an edit after it moved the timeline, or the record is
+        older than the frame count.
+    """
+
+    lineage = raw_take_behind(desk, file)
+    if lineage.raw is None or not lineage.keeps_timeline:
+        return None
+    outputs = {path.name for op, path in lineage.steps if op == "deboard"}
+    if not outputs:
+        return None
+    chain = file.expanduser().resolve().parent / CHAIN_FILE
+    if not chain.is_file():
+        return None
+    found: tuple[int, float] | None = None
+    for raw in chain.read_text(encoding="utf-8").splitlines():
+        try:
+            entry = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict) or entry.get("op") != "deboard":
+            continue
+        if Path(str(entry.get("output") or "")).name not in outputs:
+            continue
+        frames, fps = entry.get("frames"), entry.get("fps")
+        if (
+            isinstance(frames, int)
+            and frames > 0
+            and isinstance(fps, (int, float))
+            and fps > 0
+        ):
+            found = (frames, float(fps))
+    return found
