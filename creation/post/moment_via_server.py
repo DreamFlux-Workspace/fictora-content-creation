@@ -12,8 +12,10 @@ episode, to the reel route in mode ``moment`` and saves what comes back under
 
 from __future__ import annotations
 
+import io
 import json
 import re
+import shlex
 import sys
 import tempfile
 from collections.abc import Sequence
@@ -365,6 +367,124 @@ def finished_episode_lengths(
     return found
 
 
+#: Founder, 13 Oct 2026: never make a moment by itself; after ``finish`` of these episodes, ASK
+#: the creator whether they want one and recommend which episodes it covers.
+OFFER_EPISODES = (3, 4)
+
+
+@dataclass
+class MomentOffer:
+    """What the kit recommends after ``finish``: the parts (episode groups) and the command for each."""
+
+    episode: int
+    parts: list[list[int]]
+    seconds: float
+    commands: list[str]
+
+
+def _episode_span(group: Sequence[int]) -> str:
+    return f"{group[0]}" if len(group) == 1 else f"{group[0]}–{group[-1]}"
+
+
+def moment_offer(
+    desk: Path,
+    episode: int,
+    *,
+    lengths: Sequence[tuple[int, float]] | None = None,
+    stream: TextIO | None = None,
+) -> MomentOffer | None:
+    """The moment to offer the creator after finishing ``episode``; ``None`` when not to ask.
+
+    Asked only after episode 3 or 4 (:data:`OFFER_EPISODES`), and only while the show has no
+    moment yet (made at 3 means no second ask at 4). The recommendation covers the finished
+    episodes from 1 up to ``episode`` that run in a row, grouped into parts of about a minute
+    (:func:`group_parts`); a gap (an unfinished earlier episode) starts the run after it.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    episode
+        The episode just finished.
+    lengths
+        Finished episodes and their takes' length (tests); default measured from the desk.
+    stream
+        Progress output while measuring.
+    """
+
+    if episode not in OFFER_EPISODES:
+        return None
+    desk = desk.expanduser().resolve()
+    folder = desk / REELS_DIR / MOMENTS_DIR
+    if folder.is_dir() and any(folder.glob("moment-part*.mp4")):
+        return None
+    found = dict(
+        lengths if lengths is not None else finished_episode_lengths(desk, stream)
+    )
+    if episode not in found:
+        return None
+    run: list[tuple[int, float]] = []
+    for ep in range(episode, 0, -1):
+        if ep not in found:
+            break
+        run.insert(0, (ep, found[ep]))
+    if len(run) < 2:
+        # One episode is a reel, not a moment.
+        return None
+    parts = group_parts(run)
+    commands = []
+    for index, group in enumerate(parts, start=1):
+        card = "" if index < len(parts) else f' --next "Follow for Part {index + 1}"'
+        commands.append(
+            f"moment --desk {shlex.quote(str(desk))} --episodes {group[0]}-{group[-1]} --part {index}{card}"
+        )
+    return MomentOffer(
+        episode=episode, parts=parts, seconds=sum(s for _, s in run), commands=commands
+    )
+
+
+def offer_moment_after_finish(
+    desk: Path, episode: int, *, stream: TextIO | None = None
+) -> MomentOffer | None:
+    """Print the moment offer after ``finish`` (nothing is made); a failure is printed, never raised."""
+
+    out = stream or sys.stdout
+    try:
+        offer = moment_offer(desk, episode, stream=io.StringIO())
+        if offer is None or _letterbox(desk, episode):
+            return None
+    except Exception as exc:  # noqa: BLE001 — the finish is done; the offer is a nicety
+        print(f"(moment offer skipped: {type(exc).__name__}: {exc})", file=out)
+        return None
+    recommended = "; ".join(
+        f"Part {i} = episodes {_episode_span(g)}" for i, g in enumerate(offer.parts, 1)
+    )
+    print(
+        f"MOMENT OFFER (ask the creator; nothing is made until they say yes): "
+        f"episodes {offer.parts[0][0]}–{episode} are finished (~{offer.seconds:.0f} s of takes). "
+        f"Recommended: {recommended}.",
+        file=out,
+    )
+    for command in offer.commands:
+        print(f"  on yes: {command}", file=out)
+    return offer
+
+
+def _letterbox(desk: Path, episode: int) -> bool:
+    """A letterbox show (no moment yet), judged from the episode's finished takes."""
+
+    from creation.post.desk import saved_spine
+
+    found = saved_spine(desk, episode)
+    if found is None:
+        return False
+    with tempfile.TemporaryDirectory(prefix="fictora-moment-offer-") as tmp:
+        srcs = take_sources(
+            desk, episode, spine=found[0], scratch=Path(tmp), stream=io.StringIO()
+        )
+        return bool(srcs) and letterbox_finals(desk, found[0], srcs, []) is not None
+
+
 def run_moments(
     desk: Path,
     *,
@@ -435,11 +555,15 @@ __all__ = [
     "MAX_EPISODES",
     "MOMENTS_DIR",
     "MOMENT_RECIPE",
+    "MomentOffer",
     "MomentResult",
+    "OFFER_EPISODES",
     "PART_TAKE_SECONDS",
     "group_parts",
     "make_moment",
+    "moment_offer",
     "moment_paths",
+    "offer_moment_after_finish",
     "parse_episodes",
     "run_moments",
 ]

@@ -19,7 +19,9 @@ from creation.post.moment_via_server import (
     PART_TAKE_SECONDS,
     group_parts,
     make_moment,
+    moment_offer,
     moment_paths,
+    offer_moment_after_finish,
     parse_episodes,
 )
 
@@ -88,3 +90,53 @@ def test_a_moment_sends_every_take_with_its_episode_and_keeps_its_own_files_and_
     assert [r["recipe"] for r in rows] == [MOMENT_RECIPE] and rows[0]["part"] == "3"
     # The episode's own reel books are untouched.
     assert not (reel_desk / "reels" / "ep01" / "latest.json").exists()
+
+
+def test_the_kit_offers_a_moment_after_episode_3_or_4_and_never_makes_one(
+    tmp_path: Path,
+) -> None:
+    lengths = [(1, 25.0), (2, 25.0), (3, 25.0), (4, 25.0)]
+    # Founder, 13 Oct 2026: ask only at episode 3 or 4.
+    for episode in (1, 2, 5):
+        assert moment_offer(tmp_path, episode, lengths=lengths) is None
+    offer = moment_offer(tmp_path, 3, lengths=lengths)
+    assert offer is not None and offer.parts == [[1, 2, 3]]
+    assert offer.commands == [
+        f'moment --desk {tmp_path.resolve()} --episodes 1-3 --part 1 --next "Follow for Part 2"'
+    ]
+    # Episodes 1 to 4, a short leftover joins the part before it.
+    assert moment_offer(tmp_path, 4, lengths=lengths).parts == [[1, 2, 3, 4]]  # type: ignore[union-attr]
+    # An unfinished earlier episode: the run starts after the gap.
+    assert moment_offer(
+        tmp_path, 4, lengths=[(2, 30.0), (3, 30.0), (4, 30.0)]
+    ).parts == [[2, 3, 4]]  # type: ignore[union-attr]
+    # Not when the just-finished episode or its neighbour is missing.
+    assert moment_offer(tmp_path, 3, lengths=[(1, 30.0), (2, 30.0)]) is None
+    assert moment_offer(tmp_path, 4, lengths=[(1, 30.0), (2, 30.0), (4, 30.0)]) is None
+    # A show that already has a moment is not asked again.
+    folder = tmp_path / "reels" / "moments"
+    folder.mkdir(parents=True)
+    (folder / "moment-part01-v1.mp4").write_bytes(b"x")
+    assert moment_offer(tmp_path, 4, lengths=lengths) is None
+
+
+def test_the_offer_prints_a_question_and_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import creation.post.moment_via_server as mvs
+
+    monkeypatch.setattr(
+        mvs,
+        "finished_episode_lengths",
+        lambda desk, stream=None: [(1, 30.0), (2, 30.0), (3, 30.0)],
+    )
+    monkeypatch.setattr(mvs, "_letterbox", lambda desk, episode: False)
+    out = io.StringIO()
+    assert offer_moment_after_finish(tmp_path, 3, stream=out) is not None
+    text = out.getvalue()
+    assert (
+        "MOMENT OFFER" in text
+        and "Part 1 = episodes 1–3" in text
+        and "on yes: moment" in text
+    )
+    assert not (tmp_path / "reels" / "moments").exists()
