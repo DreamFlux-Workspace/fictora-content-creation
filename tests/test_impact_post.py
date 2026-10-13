@@ -18,6 +18,8 @@ from conftest import make_tone, needs_ffmpeg
 
 from creation.post.finish import run_finish
 from creation.post.impact_post import (
+    BLAST_STEMS,
+    HIT_STEMS,
     FLASH_PEAK,
     FLASH_SECONDS,
     MAX_MOMENTS_PER_TAKE,
@@ -66,7 +68,7 @@ def test_explosions_are_blasts_hard_hits_are_hits_and_soft_or_denied_hits_get_no
 ):
     """The same sounds the server's tests classify (fictora-drama ``test_impact_post.py``)."""
 
-    for blast in ("a gas tank explodes", "a single gunshot", "a deep boom rolls"):
+    for blast in ("a gas tank explodes", "a deep boom rolls", "a single gunshot"):
         assert impact_style(blast, "event") == "blast", blast
     for hit in (
         "the door slams shut",
@@ -83,13 +85,54 @@ def test_explosions_are_blasts_hard_hits_are_hits_and_soft_or_denied_hits_get_no
         assert impact_style(soft, "event") is None, soft
     assert impact_style("no explosion, only silence", "event") is None
     assert impact_style("a door slams with a thud", "event") == "hit", (
-        "the first hit word decides"
-    )
-    assert impact_style("a knock, then the door slams", "event") is None, (
-        "as on the server: the first hit"
+        "a hard hit with a softer sound"
     )
     assert impact_style("a gas tank explodes", "sustained") is None
     assert impact_style("a door slams on the first frame", "event") is None
+
+
+#: Real-footage check of fictora-drama #764 (13 Oct): only a true explosion flashes; a bang is a hit at
+#: most; several hits get nothing. The same table as the server's tests (test_impact_post.py there).
+STYLE_CASES = (
+    ("a gas tank explodes", "blast"),
+    ("a blast", "blast"),
+    ("a blast rips through the hangar", "blast"),
+    ("the bomb's detonation", "blast"),
+    ("kaboom", "blast"),
+    ("a deep boom rolls", "blast"),
+    ("a door bangs shut", "hit"),
+    ("a single bang on the table", "hit"),
+    ("a door slams with a boom", "blast"),
+    ("a single gunshot", "blast"),
+    ("a knock, then the door slams", "hit"),
+    ("three cane bangs", None),
+    ("the cane bangs three times", None),
+    ("he knocks twice", None),
+    ("distant explosions", None),
+    ("a flurry of punches", None),
+    ("a blast of cold air", None),
+    ("music blasts from the radio", None),
+    ("no explosion, only silence", None),
+    ("a soft thud", None),
+)
+
+
+def test_the_word_lists_are_the_servers() -> None:
+    """The server's ``impact_words`` lists (fictora-drama #767; kit copy in ``ambience``, #219)."""
+
+    assert BLAST_STEMS == {
+        "explosion", "explode", "blast", "boom", "gunshot", "detonation", "detonate", "kaboom",
+    }  # fmt: skip
+    assert HIT_STEMS == {
+        "slam", "bang", "crash", "smash", "shatter", "punch", "kick", "slap", "smack", "whack", "thwack",
+    }  # fmt: skip
+
+
+@pytest.mark.parametrize(("sound", "style"), STYLE_CASES)
+def test_only_true_explosions_flash_a_bang_is_a_hit_and_several_hits_get_nothing(
+    sound: str, style: str | None
+) -> None:
+    assert impact_style(sound, "event") == style, sound
 
 
 # --- where -------------------------------------------------------------------------------------------

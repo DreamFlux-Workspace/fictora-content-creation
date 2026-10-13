@@ -94,6 +94,7 @@ def test_finish_lays_sfx_music_mix_captions_and_mark_as_new_versions(
         "sfx",
         "bed",
         "colour",
+        "impact",
         "mix",
         "captions",
         "watermark",
@@ -239,7 +240,7 @@ def test_when_the_server_refuses_audio_finish_says_not_done_and_keeps_the_ffmpeg
     assert not result.complete
     assert result.sound_missing == ("music", "SFX")
     status = {s.step: s.status for s in result.steps}
-    assert status == {"deboard": "skipped", "sfx": "failed", "bed": "failed", "colour": "skipped", "mix": "ran", "captions": "ran",
+    assert status == {"deboard": "skipped", "sfx": "failed", "bed": "failed", "colour": "skipped", "impact": "skipped", "mix": "ran", "captions": "ran",
                       "watermark": "ran"}  # fmt: skip
     assert "operator_audio_unavailable" in out.getvalue()
     assert "$" not in out.getvalue(), "cost never reaches printed output"

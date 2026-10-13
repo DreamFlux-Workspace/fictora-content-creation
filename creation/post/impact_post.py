@@ -10,9 +10,11 @@ and a full-level boom (L-20261009-9). The manual tools (``zoom``, ``freeze``,
 
 * **Which beats.** The effects the ``sfx`` step laid (the take facts' plan:
   the story's stated impacts and Sound-line events) that name a big impact:
-  :data:`BLAST_STEMS` (an explosion, a boom, a gunshot) or :data:`HIT_STEMS`
-  (a slam, a crash, a punch, a slap...). A knock, a thud, a creak or the
-  opening hook gets nothing.
+  :data:`BLAST_STEMS` (an explosion, a blast, a boom, a gunshot, a detonation)
+  or :data:`HIT_STEMS` (a slam, a bang, a crash, a punch, a slap...): the
+  server's lists.
+  A knock, a thud, a creak, a cue naming several hits ("three cane bangs",
+  :func:`names_several_hits`) or the opening hook gets nothing.
 * **Where.** On MEASURED motion: the clearest motion spike in the effect's
   filmed shot (:func:`creation.post.sfx_motion.action_moment`, the trace the
   ``sfx`` step snapped the effect to), and only where the effect is heard
@@ -47,12 +49,27 @@ from creation.post.sfx_motion import Trace, action_moment
 
 ImpactStyle = Literal["blast", "hit"]
 
-#: Impacts that get the white flash and the shake: things that go off (fictora-drama ``impact_post``).
-BLAST_STEMS = frozenset({"explosion", "explode", "boom", "gunshot", "bang"})
-#: Hard hits that get the punch-in and a small shake. A knock, thud, crack or clatter is not one.
+# The two word lists mirror ``creation/post/ambience.py`` (kit PR #219; the server's ``impact_words``, #767)
+# exactly, so the sound and the picture agree on what is an explosion and what is a hit; this moves to an
+# import from ``ambience`` once #219 lands.
+#: Things that go off: only these get the white flash and the shake. A "bang" is never one.
+BLAST_STEMS = frozenset(
+    {
+        "explosion",
+        "explode",
+        "blast",
+        "boom",
+        "gunshot",
+        "detonation",
+        "detonate",
+        "kaboom",
+    }
+)
+#: A body or an object striking hard: the punch-in and a small shake. A knock, thud, crack or clatter is not one.
 HIT_STEMS = frozenset(
     {
         "slam",
+        "bang",
         "crash",
         "smash",
         "shatter",
@@ -64,6 +81,85 @@ HIT_STEMS = frozenset(
         "thwack",
     }
 )
+
+
+def _forms(stems: frozenset[str]) -> re.Pattern[str]:
+    """Every stem with its endings (as ``ambience._forms``): explode/explodes/exploded, slam/slammed."""
+
+    parts = [
+        f"{stem[:-1]}(?:e|es|ed|ing)"
+        if stem.endswith("e")
+        else f"{stem}(?:s|es|ed|ing|med|ming)?"
+        for stem in sorted(stems)
+    ]
+    return re.compile(r"\b(?:" + "|".join(parts) + r")\b", re.IGNORECASE)
+
+
+_EXPLOSION = _forms(BLAST_STEMS)
+_HARD_HIT = _forms(HIT_STEMS)
+#: "A blast of cold air", "music blasts": a blast that is wind, air, water or sound is not an explosion.
+_NOT_AN_EXPLOSION = re.compile(
+    r"\bblast(?:s|ing)?\s+of\s+(?:cold|hot|warm|icy|fresh)?\s*(?:air|wind|water|steam|music|noise|sound|horn|light)\b"
+    r"|\b(?:music|radio|speakers?|stereo|horns?|siren|tv|television)\s+blast",
+    re.IGNORECASE,
+)
+_NEGATED = re.compile(r"\b(?:no|not|never|nor|without)\b|n't\b", re.IGNORECASE)
+_CLAUSES = re.compile(r"[,;:.!?—–]|\s-\s|\bthen\b", re.IGNORECASE)
+#: Words that make a cue several hits, not one moment (a superset of #767's ``sfx_motion`` list): no effect.
+_SEVERAL_HITS = re.compile(
+    r"\b(?:twice|thrice|repeatedly|again and again|flurry|volley|barrage|footsteps|several|multiple|many|"
+    r"knocking|banging|hammering|pounding|clattering|slamming|explosions|gunshots|detonations|"
+    r"(?:two|three|four|five|six|seven|eight|nine|ten|\d+|a few)(?:\s+\w+){0,2}?\s+"
+    r"(?:times|hits|bangs|knocks|shots|blows|slams|thuds|cracks|punches|kicks|booms|blasts|strikes|taps))\b",
+    re.IGNORECASE,
+)
+
+
+def names_several_hits(sound: str) -> bool:
+    """Whether a cue names several hits ("three cane bangs", "knocks twice", "explosions"), not one moment.
+
+    Parameters
+    ----------
+    sound
+        The cue's words.
+
+    Returns
+    -------
+    bool
+        True when one flash or punch-in could not stand for the cue.
+    """
+
+    return bool(_SEVERAL_HITS.search(sound))
+
+
+def is_explosion(sound: str) -> bool:
+    """Whether a cue names a true explosion (an explosion, a blast, a detonation, a boom), not denied.
+
+    Parameters
+    ----------
+    sound
+        The cue's words.
+
+    Returns
+    -------
+    bool
+        False for "no explosion", "a blast of cold air", "music blasts" and every other sound.
+    """
+
+    if _NOT_AN_EXPLOSION.search(sound):
+        return False
+    return _names(_EXPLOSION, sound)
+
+
+def _names(words: re.Pattern[str], sound: str) -> bool:
+    """Whether some clause names one of ``words`` without denying it ("no explosion")."""
+
+    for clause in _CLAUSES.split(sound):
+        match = words.search(clause)
+        if match is not None and not _NEGATED.search(clause[: match.start()]):
+            return True
+    return False
+
 
 #: At most this many punched-up moments in one take: one or two, never a light show.
 MAX_MOMENTS_PER_TAKE = 2
@@ -171,15 +267,15 @@ def impact_style(sound: str, kind: str) -> ImpactStyle | None:
     Returns
     -------
     ImpactStyle | None
-        ``blast`` (an explosion, boom, gunshot), ``hit`` (a hard hit) or ``None``.
+        ``blast`` (a true explosion), ``hit`` (a hard hit, a bang) or ``None`` (several hits too).
     """
 
-    if kind != "event" or is_opening_cue(sound):
+    if kind != "event" or is_opening_cue(sound) or names_several_hits(sound):
         return None
-    stem = impact_stem(sound)
-    if stem in BLAST_STEMS:
+    # As the server (``impact_words.impact_weight``): a blast in the words wins over a hit.
+    if is_explosion(sound):
         return "blast"
-    if stem in HIT_STEMS:
+    if _names(_HARD_HIT, sound):
         return "hit"
     return None
 
@@ -576,6 +672,8 @@ __all__ = [
     "effect_seconds",
     "impact_stem",
     "impact_style",
+    "is_explosion",
     "moment_move",
+    "names_several_hits",
     "plan_impacts",
 ]
