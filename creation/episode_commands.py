@@ -57,6 +57,7 @@ import httpx
 
 from creation import inner_voice
 from creation.captions import is_english
+from creation.default_staging import cast_ids_in_episode, default_subject_blocking
 from creation.authoring_warnings import (
     authoring_warnings,
     for_episode,
@@ -2229,6 +2230,9 @@ def _frame_patch(
       older server needs both in one patch);
     - ``cast_refs`` alone (no brief change) sends no brief: the server keeps the
       staging of whoever stays and drops the rest (#498; an older server refuses);
+      when it *adds* someone, the whole brief goes with a default staging for
+      them (``default_staging.default_subject_blocking``, #19), since the server
+      refuses an added person with no staging (``frame_cast_needs_staging``);
     - both, naming different people, is refused here before anything is sent.
     """
 
@@ -2263,6 +2267,40 @@ def _frame_patch(
             f"cast_refs {wanted_refs} and the edited subject_blocking {staged} name different people; "
             "send one of them (the other follows) or make them agree"
         )
+    added = [
+        cast_id for cast_id in wanted_refs or [] if cast_id not in _blocking_ids(stored)
+    ]
+    if wanted_refs is not None and not changed and added and stored:
+        # #19: someone added by cast_refs alone gets a default place to stand
+        # (the server refuses them with no staging, frame_cast_needs_staging).
+        # The whole brief goes, with the blocking in cast_refs order. Only
+        # someone already in this episode (founder, 13 Oct 2026).
+        in_episode = cast_ids_in_episode(spine, found.get("episode_id"))
+        outside = [cast_id for cast_id in added if cast_id not in in_episode]
+        if outside:
+            names = _cast_names(spine)
+            who = ", ".join(names.get(cast_id, cast_id) for cast_id in outside)
+            raise CommandStopped(
+                f"{who} {'is' if len(outside) == 1 else 'are'} not in this episode (no line in it, not in any "
+                "of its shots), so the kit will not put them in this shot. Who is on screen is decided with the "
+                "episode's characters: give them a line in this episode first (`line --add ...`), then add them "
+                "to the shot. Nothing was sent."
+            )
+        brief["subject_blocking"] = default_subject_blocking(spine, found, wanted_refs)
+        if (
+            brief.get("reaction_cast_id")
+            and brief["reaction_cast_id"] not in wanted_refs
+        ):
+            brief["reaction_cast_id"] = None
+        entry["visual_brief"] = brief
+        names = _cast_names(spine)
+        for index, blocking in enumerate(brief["subject_blocking"]):
+            if blocking["cast_id"] in added:
+                changed.append(
+                    f"  subject_blocking.{index}: {names.get(blocking['cast_id'], blocking['cast_id'])} "
+                    f"stands at {blocking['frame_position']}, {blocking['pose']}, {blocking['gaze']} "
+                    f'(default staging; change it with --set subject_blocking.{index}.pose="...")'
+                )
     refs = wanted_refs
     if refs is None and changed and staged != _blocking_ids(stored):
         refs = staged
