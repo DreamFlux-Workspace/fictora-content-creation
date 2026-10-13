@@ -2029,7 +2029,9 @@ def run_finish(
             trace = (motion_meter or measure_motion)(measured)
         except (RuntimeError, OSError, MediaToolError) as exc:
             return plan, f"{note}; {MotionSnaps(error=str(exc)).one_line()}"
-        impact_state["trace"] = trace  # the impact step reads the same trace (never measured twice)
+        impact_state["trace"] = (
+            trace  # the impact step reads the same trace (never measured twice)
+        )
         cues, snaps = snap_to_action(plan.cues, windows, trace, cuts=cuts)
         line = snaps.one_line()
         return replace(plan, cues=cues), f"{note}; {line}" if line else note
