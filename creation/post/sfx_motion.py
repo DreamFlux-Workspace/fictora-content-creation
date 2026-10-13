@@ -8,20 +8,37 @@ into a 3 s shot lands at 1.9 s on one take and 2.6 s on the next, and the
 slam is heard before (or after) the door moves (Seedlings ep 6, 5 Oct 2026).
 
 This module reads the picture. A cue tied to an on-screen action (a one-off
-event whose words name a hit: a slam, a crack, a punch, a knock...) moves to
-the clearest motion spike near where it was placed: the frame-difference trace
-(``tblend=difference``, the same trace the cut detector reads, on a larger
-frame) inside the cue's filmed shot, within :data:`MOTION_SNAP_WINDOW_SECONDS`
-of its placed start, away from any cut. A cue whose window has no clear spike
-(a still frame, steady motion, two spikes alike) keeps the time it had. Beds,
-the episode's opening hook and sounds that name no action never move.
+event whose words name a hit: a slam, a crack, a punch, a knock...) moves to its
+action's motion spike on the frame-difference trace (``tblend=difference``, the
+same trace the cut detector reads, on a larger frame), away from any cut:
+
+1. **The shot's one clear movement.** When one spike dominates the cue's whole
+   filmed shot (:data:`MOTION_SHOT_PEAK_OVER_OTHERS` times every other motion
+   in it), the cue goes there, however far from where it was placed. A
+   "golden crack" placed on 0.00 s whose cracks appear at 3.7 s, a "lid grinds"
+   at 9.2 s whose lid moves at 5.25-7.0 s (L-20261030-10, seen four times)
+   stayed put while the snap only looked 1 s either way.
+2. **Otherwise the clearest spike near it**, within
+   :data:`MOTION_SNAP_WINDOW_SECONDS` of its placed start.
+
+A hit lands on the spike's frame; a sound that goes with the movement (a
+grind, a scrape, a spreading crack) starts on the movement's first frame. A
+cue whose window has no clear spike (a still frame, steady motion, two spikes
+alike) keeps the time it had. **One hit per movement**: two cues never land on
+one spike (the one placed nearest it goes there), and a cue whose words name
+several hits ("knocks three times", "footsteps") is never laid on one
+movement. The episode's **opening hook** follows the picture too when its
+words name a physical action; a sting, a whoosh, ambience, a deliberate
+cut-in or a genre fallback (picked without looking at the picture) stays on
+the cut. Beds and sounds that name no action never move.
 
 No model call and nothing billed: one ffmpeg pass over the take. Desks created
 before 6 Oct 2026 never run it (``finish`` asks
 :func:`creation.rules_epoch.legacy_rules`): this changes when effects are heard.
 
 The server's mix (fictora-drama ``sfx_motion``) does the same with the same
-numbers.
+numbers and the same word lists (kept in step by hand: this repo never imports
+the server's code).
 """
 
 from __future__ import annotations
@@ -49,6 +66,8 @@ MOTION_PEAK_MIN_RISE = 2.0
 MOTION_PEAK_OVER_OTHERS = 1.5
 #: What "other motion" means: samples further than this from the spike.
 MOTION_PEAK_SPREAD_SECONDS = 0.25
+#: A cue moves anywhere in its filmed shot only to a spike this many times every other motion in the shot.
+MOTION_SHOT_PEAK_OVER_OTHERS = 2.0
 #: The frame the trace is read on: big enough to see a hand or a door, small enough to be quick.
 MOTION_SCALE = "64:112"
 
@@ -65,6 +84,47 @@ _ACTION = re.compile(
     + "|".join(_ACTION_STEMS)
     + r")(s|es|ed|d|ing|ped|ping|med|ming|ded|ding|ting)?\b",
     re.IGNORECASE,
+)
+
+#: Words that make a cue several hits, not one movement: never laid on a single spike.
+_SEVERAL_HITS = re.compile(
+    r"\b(?:twice|thrice|(?:two|three|four|five|several|many) (?:times|hits|knocks|shots|blows|bangs)|"
+    r"again and again|over and over|repeated\w*|rapid\w*|a (?:series|flurry|volley|barrage|hail) of|"
+    r"flurry|volley|barrage|footsteps|several|multiple|knocking|banging|hammering|pounding|clattering)\b",
+    re.IGNORECASE,
+)
+#: Sounds that go with a movement rather than land at its end: they start where the movement starts.
+_WITH_THE_MOVEMENT = re.compile(
+    r"\b(?:grind\w*|scrap(?:e|es|ed|ing)|drag\w*|slid(?:e|es|ing)|creak\w*|roll(?:s|ed|ing)?|spread\w*|"
+    r"tear(?:s|ing)?|rip(?:s|ping)?|crumbl\w*|rumbl\w*)\b",
+    re.IGNORECASE,
+)
+#: Opening hooks that are a sound design gesture, not an action you can see.
+_NOT_ON_SCREEN = re.compile(
+    r"\b(?:sting|stings|stinger|music|musical|synth|cinematic|riser|braam|chord|note|whoosh\w*|swoosh\w*|"
+    r"swish\w*|drone|ambience|ambient)\b",
+    re.IGNORECASE,
+)
+#: Ends a deliberate cut-in hook (fictora-drama ``opening_sound.CUT_IN_MARKER``): it keeps its half second.
+CUT_IN_MARKER = "cutting in hard by half a second"
+#: The opening hooks the server picks by genre alone (fictora-drama ``opening_sound.GENRE_OPENING_FALLBACKS``
+#: and ``DEFAULT_OPENING_FALLBACKS``): never tied to the opening picture, so they never follow it.
+GENRE_OPENING_HOOKS = frozenset(
+    {
+        "a single wrong piano note, struck hard", "a door latch clicks behind the camera",
+        "a phone buzzes face down on wood", "a camera shutter, one sharp click", "a file drawer slams shut",
+        "a pen cap snaps off", "a squeaky chair gives out", "a microwave beeps three times",
+        "a can cracks open and fizzes", "a kettle clicks off", "a bicycle bell, two rings",
+        "a shop bell jangles over a door", "a paper cup set down hard on a counter", "an umbrella snaps open",
+        "a car door shuts outside", "an elevator chime", "a phone buzzes twice against wood",
+        "a glass set down hard on marble", "a pen clicks once", "a hard dry impact, close",
+        "a glove slaps a heavy bag", "a chain rattles against a fence", "a fan snaps shut",
+        "a teacup set down hard on lacquer", "a gong, struck once", "a door shuts hard",
+        "a glass set down hard on a table", "a short low music sting, one hit",
+    }
+)  # fmt: skip
+_OPENING_MARKERS = re.compile(
+    r",?\s*(?:cutting in hard by half a second|on the first frame)", re.IGNORECASE
 )
 
 Trace = tuple[tuple[float, float], ...]
@@ -89,12 +149,57 @@ def names_an_action(sound: str, kind: str, source: str = "") -> bool:
     Returns
     -------
     bool
-        True for a one-off event that names a hit (or comes from a stated impact), never the opening hook.
+        True for a one-off event that names a hit (or comes from a stated impact); an opening hook only
+        when :func:`opening_hook_names_an_action`.
     """
 
-    if kind != "event" or is_opening_cue(sound):
+    if kind != "event":
         return False
+    if is_opening_cue(sound):
+        return opening_hook_names_an_action(sound)
     return source == "impact" or bool(_ACTION.search(sound))
+
+
+def opening_hook_names_an_action(sound: str) -> bool:
+    """Whether an episode's opening hook names a physical action on screen (and may follow it).
+
+    Parameters
+    ----------
+    sound
+        The hook's Sound label, marker included.
+
+    Returns
+    -------
+    bool
+        True when its words name an action ("a golden crack spreads"); False for a sting, a whoosh,
+        ambience, a deliberate cut-in, or a genre fallback (:data:`GENRE_OPENING_HOOKS`).
+    """
+
+    if CUT_IN_MARKER in sound.casefold():
+        return False
+    words = " ".join(_OPENING_MARKERS.sub("", sound).split()).strip(" ,;")
+    if words.casefold().rstrip(".") in GENRE_OPENING_HOOKS or _NOT_ON_SCREEN.search(
+        words
+    ):
+        return False
+    return bool(_ACTION.search(words))
+
+
+def names_several_hits(sound: str) -> bool:
+    """Whether a cue's words name several hits ("knocks three times", "footsteps"), not one movement.
+
+    Parameters
+    ----------
+    sound
+        The cue's Sound label.
+
+    Returns
+    -------
+    bool
+        True when the clip carries more than one hit: it is never laid on a single motion spike.
+    """
+
+    return bool(_SEVERAL_HITS.search(sound))
 
 
 def measure_motion(take: Path) -> Trace:
@@ -119,10 +224,50 @@ def measure_motion(take: Path) -> Trace:
 
 @dataclass(frozen=True)
 class Peak:
-    """Where the action lands, or why no time was found."""
+    """Where the action lands, or why no time was found.
+
+    ``time`` is the spike's frame (where a hit lands); ``onset`` the first frame of its movement
+    (where a sound that goes with the movement, a grind or a spreading crack, starts).
+    """
 
     time: float | None
     reason: str
+    onset: float | None = None
+
+
+def _clear_spike(
+    samples: list[tuple[float, float]], typical: float, over_others: float
+) -> Peak:
+    """The loudest sample when it is a clear spike over ``typical`` and ``over_others`` times the rest.
+
+    The spike's movement is the run of frames around it that stay over the spike floor (gaps up to
+    :data:`MOTION_PEAK_SPREAD_SECONDS` bridged): a lid that moves for 1.75 s is one movement, not
+    two spikes alike. "The rest" is every frame further than the spread from that run.
+    """
+
+    time, value = max(samples, key=lambda sample: sample[1])
+    floor = max(typical * MOTION_PEAK_OVER_MEDIAN, typical + MOTION_PEAK_MIN_RISE)
+    if value < floor:
+        return Peak(None, "no clear motion spike")
+    ordered = sorted(samples)
+    at = ordered.index((time, value))
+    onset = end = time
+    for step in (1, -1):
+        last = time
+        index = at + step
+        while 0 <= index < len(ordered):
+            t, v = ordered[index]
+            if abs(t - last) > MOTION_PEAK_SPREAD_SECONDS:
+                break
+            if v >= floor:
+                last = t
+                onset, end = min(onset, t), max(end, t)
+            index += step
+    spread = MOTION_PEAK_SPREAD_SECONDS
+    others = [v for t, v in samples if t < onset - spread or t > end + spread]
+    if others and value < max(others) * over_others:
+        return Peak(None, "two motion spikes alike")
+    return Peak(round(time, 3), "motion spike", onset=round(onset, 3))
 
 
 def action_moment(
@@ -133,7 +278,7 @@ def action_moment(
     cuts: tuple[float, ...] = (),
     window: float = MOTION_SNAP_WINDOW_SECONDS,
 ) -> Peak:
-    """The clearest motion spike within ``window`` of ``around`` inside ``shot``.
+    """The shot's one clear movement, else the clearest motion spike within ``window`` of ``around``.
 
     Parameters
     ----------
@@ -146,7 +291,7 @@ def action_moment(
     cuts
         Every cut measured on the take (a spike at a cut is the cut, not the action).
     window
-        How far the cue may move.
+        How far the cue may move when no one movement dominates the shot.
 
     Returns
     -------
@@ -166,19 +311,13 @@ def action_moment(
     if len(inside) < 3:
         return Peak(None, "too little picture in the shot")
     typical = median(v for _, v in inside)
+    dominant = _clear_spike(inside, typical, MOTION_SHOT_PEAK_OVER_OTHERS)
+    if dominant.time is not None:
+        return replace(dominant, reason="the shot's one clear movement")
     near = [(t, v) for t, v in inside if abs(t - around) <= window + 1e-9]
     if not near:
         return Peak(None, f"no picture within {window:g} s")
-    time, value = max(near, key=lambda sample: sample[1])
-    if (
-        value < typical * MOTION_PEAK_OVER_MEDIAN
-        or value - typical < MOTION_PEAK_MIN_RISE
-    ):
-        return Peak(None, "no clear motion spike")
-    others = [v for t, v in near if abs(t - time) > MOTION_PEAK_SPREAD_SECONDS]
-    if others and value < max(others) * MOTION_PEAK_OVER_OTHERS:
-        return Peak(None, "two motion spikes alike")
-    return Peak(round(time, 3), "motion spike")
+    return _clear_spike(near, typical, MOTION_PEAK_OVER_OTHERS)
 
 
 @dataclass(frozen=True)
@@ -218,7 +357,12 @@ def snap_to_action(
     cuts: tuple[float, ...] = (),
     window: float = MOTION_SNAP_WINDOW_SECONDS,
 ) -> tuple[tuple, MotionSnaps]:
-    """Move each action cue to its action's spike (:func:`action_moment`); every other cue is returned as it was.
+    """Move each action cue to its action's spike (:func:`action_moment`), one cue per spike.
+
+    A hit lands on the spike's frame; a sound that goes with the movement (a grind, a scrape, a
+    spreading crack) starts on the movement's first frame. A cue naming several hits
+    (:func:`names_several_hits`) keeps its time; of two cues headed for one spike, the one placed
+    nearest it goes there and the other keeps its time. Every other cue is returned as it was.
 
     Parameters
     ----------
@@ -240,29 +384,53 @@ def snap_to_action(
         The cues, in the same order, and what moved.
     """
 
-    out = []
-    moved: list[tuple[str, float, float]] = []
-    kept: list[tuple[str, float, str]] = []
-    for cue in cues:
+    out = list(cues)
+    peaks: dict[int, Peak] = {}
+    kept_at: dict[int, str] = {}
+    for position, cue in enumerate(cues):
         shot = windows.get(cue.shot_index)
         if shot is None or not names_an_action(cue.sound, cue.kind, cue.source):
-            out.append(cue)
+            continue
+        if names_several_hits(cue.sound):
+            kept_at[position] = "several hits, not one movement"
             continue
         peak = action_moment(
             trace, around=cue.start, shot=shot, cuts=cuts, window=window
         )
-        if peak.time is None or abs(peak.time - cue.start) < 1e-3:
-            kept.append(
-                (
-                    cue.sound,
-                    cue.start,
-                    peak.reason if peak.time is None else "already on it",
-                )
-            )
-            out.append(cue)
+        if peak.time is None:
+            kept_at[position] = peak.reason
+        else:
+            peaks[position] = peak
+    # One hit per movement: of the cues headed for one spike, the one placed nearest it goes there.
+    for position, peak in peaks.items():
+        assert peak.time is not None
+        distance = (abs(cues[position].start - peak.time), position)
+        for other, theirs in peaks.items():
+            if (
+                other != position
+                and theirs.time is not None
+                and abs(theirs.time - peak.time) <= MOTION_PEAK_SPREAD_SECONDS
+                and (abs(cues[other].start - peak.time), other) < distance
+            ):
+                kept_at[position] = "another cue is on this movement"
+                break
+    moved: list[tuple[str, float, float]] = []
+    kept: list[tuple[str, float, str]] = []
+    for position, cue in enumerate(cues):
+        if position in kept_at:
+            kept.append((cue.sound, cue.start, kept_at[position]))
             continue
-        moved.append((cue.sound, cue.start, peak.time))
-        out.append(replace(cue, start=peak.time))
+        peak = peaks.get(position)
+        if peak is None or peak.time is None:
+            continue
+        target = peak.time
+        if peak.onset is not None and _WITH_THE_MOVEMENT.search(cue.sound):
+            target = peak.onset
+        if abs(target - cue.start) < 1e-3:
+            kept.append((cue.sound, cue.start, "already on it"))
+            continue
+        moved.append((cue.sound, cue.start, target))
+        out[position] = replace(cue, start=target)
     return tuple(out), MotionSnaps(tuple(moved), tuple(kept))
 
 
@@ -271,7 +439,10 @@ __all__ = [
     "MOTION_PEAK_MIN_RISE",
     "MOTION_PEAK_OVER_MEDIAN",
     "MOTION_PEAK_OVER_OTHERS",
+    "CUT_IN_MARKER",
+    "GENRE_OPENING_HOOKS",
     "MOTION_SCALE",
+    "MOTION_SHOT_PEAK_OVER_OTHERS",
     "MOTION_SNAP_WINDOW_SECONDS",
     "MotionMeter",
     "MotionSnaps",
@@ -279,5 +450,7 @@ __all__ = [
     "action_moment",
     "measure_motion",
     "names_an_action",
+    "names_several_hits",
+    "opening_hook_names_an_action",
     "snap_to_action",
 ]

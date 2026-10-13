@@ -172,7 +172,32 @@ _SOURCE_ONLY = re.compile(r"\b(?:crowd|crowds|traffic)\b", re.IGNORECASE)
 _ONE_OFF = re.compile(
     r"\b(?:gasp|gasps|gasped|sigh|sighs|sighed|bite|bites|crunch|crunches|breath|exhale|exhales|inhale|gulp|"
     r"cough|coughs|clap|claps|clink|clinks|snap|snaps|pop|pops|slam|slams|thud|thuds|bang|bangs|knock|knocks|"
-    r"crack|cracks|click|shout|shouts|yelp|yelps|laugh|laughs|burst|horn|honk|honks|screech|screeches)\b",
+    r"crack|cracks|click|shout|shouts|yelp|yelps|laugh|laughs|burst|horn|honk|honks|screech|screeches|"
+    r"explosion|explosions|explodes|exploded|boom|booms|blast|blasts|gunshot|gunshots|crash|crashes|"
+    r"impact|impacts|smash|smashes|shatter|shatters|detonation|detonates|kaboom)\b",
+    re.IGNORECASE,
+)
+#: Sounds that hit (the server's ``sfx_layer.IMPACT_WORDS``): they beat the sustained words, so "an
+#: explosion with a rumbling boom" happens once (L-20261009-9).
+IMPACT_WORDS: tuple[str, ...] = (
+    "explosion", "explosions", "explode", "explodes", "exploded", "exploding", "detonation", "detonates",
+    "kaboom", "boom", "booms", "blast", "blasts", "gunshot", "gunshots", "shot rings out", "crash", "crashes",
+    "bang", "bangs", "slam", "slams", "slammed", "impact", "impacts", "smash", "smashes", "shatter", "shatters",
+    "thud", "thuds", "clang", "clangs",
+)  # fmt: skip
+_IMPACT = re.compile(
+    r"\b(?:" + "|".join(re.escape(word) for word in IMPACT_WORDS) + r")\b",
+    re.IGNORECASE,
+)
+#: Words that say a sound goes on whatever it is ("distant explosions throughout"): it stays sustained.
+_GOES_ON_ON_PURPOSE = re.compile(
+    r"\b(?:throughout|all the while|the whole time|keeps going|carries on|continues|continuous|constant|"
+    r"steady|ongoing|under everything)\b",
+    re.IGNORECASE,
+)
+#: What puts a following sound after a hit ("an explosion, then a low rumble"; the server's ``sfx_layer._THEN``).
+_THEN = re.compile(
+    r"\b(then|followed by|before|into|and then|giving way to)\b|,\s*then\b",
     re.IGNORECASE,
 )
 
@@ -187,8 +212,17 @@ def scrub_hush_words(text: str) -> str:
 
 
 def goes_on(sound: str) -> bool:
-    """Whether a sound line names a sound that goes on (a simmer, rain, a crowd), not one that happens once."""
+    """Whether a sound line names a sound that goes on (a simmer, rain, a crowd), not one that happens once.
 
+    The server's ``sfx_layer.sfx_kind``: an impact word (:data:`IMPACT_WORDS`) beats the sustained
+    words ("an explosion with a rumbling boom" happens once, L-20261009-9) unless the words say it
+    goes on ("explosions throughout") or put a bed after the hit ("a door slams, then the engine idles").
+    """
+
+    if _IMPACT.search(sound) and not _GOES_ON_ON_PURPOSE.search(sound):
+        then = _THEN.search(sound)
+        if not (then and _GOES_ON.search(sound[then.end() :])):
+            return False
     if _GOES_ON.search(sound):
         return True
     return bool(_SOURCE_ONLY.search(sound)) and not _ONE_OFF.search(sound)
