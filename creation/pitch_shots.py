@@ -105,6 +105,46 @@ _CAMERA_FILLER = re.compile(
     r"^(?:(?:locked|static|handheld|slow|tight|loose|steady|single|continuous|shot|cut to|then|and)\b[\s,:-]*)+",
     re.IGNORECASE,
 )
+#: A clause that is only a camera lock ("Eye level, Locked."): a speaking beat's
+#: lip-sync token, never shown as the shot's camera (server ``_LOCK_TOKEN_CLAUSE``).
+_LOCK_TOKEN_CLAUSE = re.compile(
+    r"(?:^|(?<=[,.;]))\s*(?:locked(?:[\s-]off)?|static)(?:\s+(?:camera|shot|frame))?\s*(?=[,.;]|$)",
+    re.IGNORECASE,
+)
+_DANGLING_COMMA = re.compile(r"\s*,\s*(?=[.;,]|$)")
+_LEADING_STOPS = re.compile(r"^[\s,.;]+")
+#: Each camera move token in plain words (server ``CAMERA_MOVE_WORDS``).
+CAMERA_MOVE_WORDS: Mapping[str, str] = {
+    "locked": "Locked off",
+    "dolly_in": "Push in",
+    "dolly_out": "Pull back",
+    "pan_left": "Pan left",
+    "pan_right": "Pan right",
+    "tilt_up": "Tilt up",
+    "tilt_down": "Tilt down",
+    "truck_left": "Drift left",
+    "truck_right": "Drift right",
+    "crane_up": "Crane up",
+    "crane_down": "Crane down",
+    "orbit_left": "Orbit left",
+    "orbit_right": "Orbit right",
+    "zoom_in": "Zoom in",
+    "zoom_out": "Zoom out",
+    "handheld": "Handheld",
+}
+#: Moves a take keeps on a speaking row (server ``DRAMA_SPEAKING_ROW_CAMERA_MOVES``).
+SPEAKING_ROW_CAMERA_MOVES = frozenset(
+    {
+        "locked",
+        "dolly_in",
+        "dolly_out",
+        "pan_left",
+        "pan_right",
+        "tilt_up",
+        "tilt_down",
+        "handheld",
+    }
+)
 _ROW_SPLIT = re.compile(r"\bRow\s+(\d)\b[\s:,.-]*", re.IGNORECASE)
 _SHOT_SPLIT = re.compile(r"\bSHOT\s+(\d)\b[\s:,.-]*(?:—|-)?\s*", re.IGNORECASE)
 _EXPRESSION_TAIL = re.compile(
@@ -395,6 +435,123 @@ def _take_groups(
     return groups
 
 
+def drop_lock_tokens(scene: str) -> str:
+    """Drop a clause that is only a camera lock from a shot's scene (server ``drop_lock_tokens``).
+
+    Parameters
+    ----------
+    scene
+        The scene ("Eye level, Locked. She grips it").
+
+    Returns
+    -------
+    str
+        The scene without it ("Eye level. She grips it"); unchanged when that
+        would leave nothing. "The door stays locked" is kept.
+    """
+
+    kept = _LEADING_STOPS.sub(
+        "", _DANGLING_COMMA.sub("", _LOCK_TOKEN_CLAUSE.sub("", scene))
+    ).strip()
+    return _sentence_case(kept) if kept else scene
+
+
+def _picture_rows(
+    spine: Mapping[str, Any], episode_id: str
+) -> list[list[Mapping[str, Any]]]:
+    frames = sorted(
+        (
+            frame
+            for frame in spine.get("frames") or []
+            if isinstance(frame, Mapping) and frame.get("episode_id") == episode_id
+        ),
+        key=lambda frame: int(frame.get("ordinal") or 0),
+    )
+    row_board = spine.get("storyboard_board_kind") == "row"
+    rows: list[list[Mapping[str, Any]]] = []
+    for frame in frames:
+        if (
+            row_board
+            and rows
+            and frame.get("board_row") is not None
+            and rows[-1][-1].get("board_row") == frame.get("board_row")
+        ):
+            rows[-1].append(frame)
+        else:
+            rows.append([frame])
+    return rows
+
+
+def _row_move(row: Sequence[Mapping[str, Any]]) -> str | None:
+    for frame in row:
+        brief = frame.get("visual_brief")
+        direction = brief.get("row_direction") if isinstance(brief, Mapping) else None
+        if isinstance(direction, Mapping) and direction.get("camera_move"):
+            return str(direction["camera_move"])
+    return None
+
+
+def shot_camera_moves(
+    spine: Mapping[str, Any], episode_id: str
+) -> dict[str, list[str | None]]:
+    """Per beat, the camera move its shots play, in plain words (server ``shot_camera_moves``).
+
+    Read from each shot's own picture plan (``row_direction``), never from a
+    speaking beat's ``locked`` lip-sync token.
+
+    Parameters
+    ----------
+    spine
+        The desk's story.
+    episode_id
+        The episode.
+
+    Returns
+    -------
+    dict[str, list[str | None]]
+        Beat id -> one entry per picture row it owns: the move's words, or
+        ``None`` when the row has no direction or its speaking move would fall
+        back to the beat's camera.
+    """
+
+    rows = _picture_rows(spine, episode_id)
+    row_of = {
+        str(frame.get("frame_id")): index
+        for index, row in enumerate(rows)
+        for frame in row
+    }
+    beats = sorted(
+        (
+            beat
+            for beat in spine.get("beats") or []
+            if isinstance(beat, Mapping) and beat.get("episode_id") == episode_id
+        ),
+        key=lambda beat: int(beat.get("ordinal") or 0),
+    )
+    anchors = [
+        (beat, row_of[str(beat.get("frame_id"))])
+        for beat in beats
+        if str(beat.get("frame_id")) in row_of
+    ]
+    result: dict[str, list[str | None]] = {}
+    for position, (beat, start) in enumerate(anchors):
+        stop = next(
+            (row for _, row in anchors[position + 1 :] if row > start), len(rows)
+        )
+        moves: list[str | None] = []
+        for index in range(start, stop):
+            move = _row_move(rows[index])
+            speaking = index == start and bool(beat.get("dialogue_lines"))
+            if move is None or (speaking and move not in SPEAKING_ROW_CAMERA_MOVES):
+                moves.append(None)
+            else:
+                moves.append(
+                    CAMERA_MOVE_WORDS.get(move, move.replace("_", " ").capitalize())
+                )
+        result[str(beat.get("beat_id"))] = moves
+    return result
+
+
 def pitch_takes(spine: Mapping[str, Any], episode_id: str) -> list[dict[str, Any]]:
     """The episode's shots, grouped by take, as the app's pitch card shows them.
 
@@ -408,8 +565,10 @@ def pitch_takes(spine: Mapping[str, Any], episode_id: str) -> list[dict[str, Any
     Returns
     -------
     list[dict[str, Any]]
-        ``{"take": n, "shots": [{"shot", "camera", "scene", "line", "expression",
-        "opens", "ends_on"}]}`` per take; empty while the episode has no beats.
+        ``{"take": n, "shots": [{"shot", "camera", "camera_move", "scene", "line",
+        "expression", "opens", "ends_on"}]}`` per take; empty while the episode
+        has no beats. ``camera_move`` is the move the take plays on the shot
+        (:func:`shot_camera_moves`), or ``None``.
     """
 
     beats = sorted(
@@ -427,6 +586,7 @@ def pitch_takes(spine: Mapping[str, Any], episode_id: str) -> list[dict[str, Any
     takes: list[dict[str, Any]] = []
     number = 0
     pattern = spine.get("beats_per_storyboard_set") or []
+    moves = shot_camera_moves(spine, episode_id)
     for take_index, group in enumerate(_take_groups(beats, pattern), start=1):
         shots: list[dict[str, Any]] = []
         for beat in group:
@@ -436,6 +596,7 @@ def pitch_takes(spine: Mapping[str, Any], episode_id: str) -> list[dict[str, Any
                     speaking=bool(beat.get("dialogue_lines")),
                 )
             ]
+            beat_moves = moves.get(str(beat.get("beat_id")), [])
             for row_index, (camera, scene) in enumerate(rows):
                 number += 1
                 first = row_index == 0
@@ -443,7 +604,10 @@ def pitch_takes(spine: Mapping[str, Any], episode_id: str) -> list[dict[str, Any
                     {
                         "shot": number,
                         "camera": camera[:80],
-                        "scene": _shorten_names(scene, pairs)[:400],
+                        "camera_move": beat_moves[row_index]
+                        if row_index < len(beat_moves)
+                        else None,
+                        "scene": _shorten_names(drop_lock_tokens(scene), pairs)[:400],
                         "line": _beat_line(beat, names) if first else None,
                         "expression": beat_expression(spine, beat, names)
                         if first
@@ -474,7 +638,18 @@ def pitch_digest(takes: Sequence[Mapping[str, Any]], world_rules: Sequence[str])
         Changes whenever anything the card shows changes.
     """
 
-    payload = {"takes": list(takes), "world_rules": list(world_rules)}
+    # ``camera_move`` is display only and left out, as on the server.
+    bare = [
+        {
+            **take,
+            "shots": [
+                {key: value for key, value in shot.items() if key != "camera_move"}
+                for shot in take.get("shots") or []
+            ],
+        }
+        for take in takes
+    ]
+    payload = {"takes": bare, "world_rules": list(world_rules)}
     encoded = json.dumps(
         payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")
     ).encode("utf-8")
@@ -509,8 +684,9 @@ def shot_lines(takes: Sequence[Mapping[str, Any]], *, indent: str = "  ") -> lis
                 if shot["opens"]
                 else (" [ends on]" if shot["ends_on"] else "")
             )
+            move = f" · {shot['camera_move']}" if shot.get("camera_move") else ""
             out.append(
-                f"{indent}    {shot['shot']}. {shot['camera']}{flag}: {shot['scene']}"
+                f"{indent}    {shot['shot']}. {shot['camera']}{move}{flag}: {shot['scene']}"
             )
             if shot["line"]:
                 out.append(
@@ -523,13 +699,16 @@ def shot_lines(takes: Sequence[Mapping[str, Any]], *, indent: str = "  ") -> lis
 
 __all__ = [
     "ANGLES",
+    "CAMERA_MOVE_WORDS",
     "CAMERA_TAG_JOIN",
     "EXPRESSION_DIRECTIONS",
     "SCENE_MAX_CHARS",
     "SHOT_SIZES",
     "beat_expression",
+    "drop_lock_tokens",
     "camera_tag",
     "pitch_digest",
     "pitch_takes",
+    "shot_camera_moves",
     "shot_lines",
 ]
