@@ -1,6 +1,6 @@
 """An edit after ``finish`` carries the take's captions (``.ass``) onto the edited master (canary 7 Oct 2026).
 
-``reel`` (server and local) and ``clips`` find a take's captions as the
+``reel`` (server and local) finds a take's captions as the
 ``.ass`` beside the finish record's ``master``. An edit (``blur``, ``freeze``,
 ``soften``, ``trim``, ``tempo``, the take handles) writes a new master and a
 new record, so the new master needs its ``.ass`` too: the Lost & Found canary's
@@ -180,7 +180,7 @@ def carry_ass(
             return CaptionCarry(
                 None,
                 f"!! captions NOT carried from `{source.name}`: {how}; the edited take has no .ass, so its reel "
-                "and clips are uncaptioned. Run finish again on the take, then make the edit again.",
+                "is uncaptioned. Run finish again on the take, then make the edit again.",
             )
         maps.append(mapper)
         hows.append(how)
@@ -202,7 +202,7 @@ def carry_ass(
             return CaptionCarry(
                 None,
                 f"!! captions NOT carried from `{source.name}`: a cue's times cannot be read ({line[:60]!r}); "
-                "the edited take has no .ass, so its reel and clips are uncaptioned",
+                "the edited take has no .ass, so its reel is uncaptioned",
             )
         span: tuple[float, float] | None = (begin, end)
         for mapper in maps:
