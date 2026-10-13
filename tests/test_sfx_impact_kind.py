@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import pytest
 
-from creation.post.ambience import IMPACT_WORDS, goes_on
+from creation.post.ambience import BLAST_STEMS, HARD_HIT_STEMS, goes_on, impact_weight
 from creation.post.sfx import HIT_THEN_TAIL, SfxCue, checked_shape
+from creation.post.sfx_motion import names_an_action, names_several_hits
 
 
 @pytest.mark.parametrize(
@@ -43,15 +44,46 @@ def test_an_explosion_then_a_bed_is_checked_as_a_hit_then_its_tail() -> None:
     assert checked_shape(cue) == HIT_THEN_TAIL
 
 
-def test_the_impact_words_match_the_server() -> None:
-    for word in (
-        "explosion",
-        "boom",
-        "blast",
-        "gunshot",
-        "crash",
-        "bang",
-        "slam",
-        "impact",
-    ):
-        assert word in IMPACT_WORDS
+#: Pinned here and in fictora-drama tests/drama_generation/test_sfx_impact_kind.py
+#: (``impact_words``): change both together.
+PINNED_BLASTS = {
+    "explosion",
+    "explode",
+    "blast",
+    "boom",
+    "gunshot",
+    "detonation",
+    "detonate",
+    "kaboom",
+}
+PINNED_HARD_HITS = {
+    "slam",
+    "bang",
+    "crash",
+    "smash",
+    "shatter",
+    "punch",
+    "kick",
+    "slap",
+    "smack",
+    "whack",
+    "thwack",
+}
+
+
+def test_the_lists_match_the_server() -> None:
+    assert BLAST_STEMS == PINNED_BLASTS and HARD_HIT_STEMS == PINNED_HARD_HITS
+
+
+def test_a_blast_is_an_explosion_and_a_bang_is_a_hit() -> None:
+    assert impact_weight("a blast") == "blast"
+    assert impact_weight("the tank explodes") == "blast"
+    assert impact_weight("a door bangs shut") == "hit"
+    assert impact_weight("three cane bangs on the floor") == "hit"
+    assert impact_weight("a soft knock") is None
+
+
+def test_a_blast_follows_its_action_and_several_bangs_stay_several() -> None:
+    assert names_an_action("a blast", "event")
+    assert names_several_hits("three cane bangs on the floor")
+    assert not names_several_hits("a door bangs shut")

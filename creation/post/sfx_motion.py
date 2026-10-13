@@ -77,7 +77,7 @@ _ACTION_STEMS = (
     "crack", "crunch", "snap", "slam", "bang", "boom", "thud", "thump", "crash", "smash",
     "shatter", "clang", "clank", "clatter", "grind", "knock", "punch", "slap", "smack",
     "whack", "thwack", "stomp", "kick", "splinter", "gunshot", "explosion", "explode",
-    "hit", "strike", "stab", "whoosh", "swoosh", "swish",
+    "hit", "strike", "stab", "whoosh", "swoosh", "swish", "blast", "kaboom",
 )  # fmt: skip
 _ACTION = re.compile(
     r"\b("
@@ -88,7 +88,8 @@ _ACTION = re.compile(
 
 #: Words that make a cue several hits, not one movement: never laid on a single spike.
 _SEVERAL_HITS = re.compile(
-    r"\b(?:twice|thrice|(?:two|three|four|five|several|many) (?:times|hits|knocks|shots|blows|bangs)|"
+    r"\b(?:twice|thrice|(?:two|three|four|five|six|several|many|a few) (?:\w+ )?"
+    r"(?:times|hits|knocks|shots|gunshots|blows|bangs|slams|thuds|taps|raps|claps|punches|kicks|stomps|blasts)|"
     r"again and again|over and over|repeated\w*|rapid\w*|a (?:series|flurry|volley|barrage|hail) of|"
     r"flurry|volley|barrage|footsteps|several|multiple|knocking|banging|hammering|pounding|clattering)\b",
     re.IGNORECASE,

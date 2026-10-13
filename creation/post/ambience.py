@@ -177,18 +177,69 @@ _ONE_OFF = re.compile(
     r"impact|impacts|smash|smashes|shatter|shatters|detonation|detonates|kaboom)\b",
     re.IGNORECASE,
 )
-#: Sounds that hit (the server's ``sfx_layer.IMPACT_WORDS``): they beat the sustained words, so "an
-#: explosion with a rumbling boom" happens once (L-20261009-9).
-IMPACT_WORDS: tuple[str, ...] = (
-    "explosion", "explosions", "explode", "explodes", "exploded", "exploding", "detonation", "detonates",
-    "kaboom", "boom", "booms", "blast", "blasts", "gunshot", "gunshots", "shot rings out", "crash", "crashes",
-    "bang", "bangs", "slam", "slams", "slammed", "impact", "impacts", "smash", "smashes", "shatter", "shatters",
-    "thud", "thuds", "clang", "clangs",
-)  # fmt: skip
-_IMPACT = re.compile(
-    r"\b(?:" + "|".join(re.escape(word) for word in IMPACT_WORDS) + r")\b",
-    re.IGNORECASE,
+#: One meaning of "explosion" and "hit" (the server's ``impact_words``; pinned in both repos' tests).
+#: Things that go off.
+BLAST_STEMS = frozenset(
+    {
+        "explosion",
+        "explode",
+        "blast",
+        "boom",
+        "gunshot",
+        "detonation",
+        "detonate",
+        "kaboom",
+    }
 )
+#: A body or an object striking hard; a door that bangs shut is a hit, never an explosion.
+HARD_HIT_STEMS = frozenset(
+    {
+        "slam",
+        "bang",
+        "crash",
+        "smash",
+        "shatter",
+        "punch",
+        "kick",
+        "slap",
+        "smack",
+        "whack",
+        "thwack",
+    }
+)
+
+
+def _forms(stems: frozenset[str]) -> re.Pattern[str]:
+    parts = [
+        f"{stem[:-1]}(?:e|es|ed|ing)"
+        if stem.endswith("e")
+        else f"{stem}(?:s|es|ed|ing|med|ming)?"
+        for stem in sorted(stems)
+    ]
+    return re.compile(r"\b(?:" + "|".join(parts) + r")\b", re.IGNORECASE)
+
+
+_BLAST = _forms(BLAST_STEMS)
+_HARD_HIT = _forms(HARD_HIT_STEMS)
+_SOFT_IMPACT = re.compile(
+    r"\b(?:thud|thuds|clang|clangs|impact|impacts|shot rings out)\b", re.IGNORECASE
+)
+
+
+def impact_weight(words: str) -> str | None:
+    """``blast`` (something goes off), ``hit`` (a hard hit) or ``None``: the server's ``impact_words.impact_weight``."""
+
+    if _BLAST.search(words):
+        return "blast"
+    if _HARD_HIT.search(words):
+        return "hit"
+    return None
+
+
+def _names_an_impact(sound: str) -> bool:
+    return impact_weight(sound) is not None or bool(_SOFT_IMPACT.search(sound))
+
+
 #: Words that say a sound goes on whatever it is ("distant explosions throughout"): it stays sustained.
 _GOES_ON_ON_PURPOSE = re.compile(
     r"\b(?:throughout|all the while|the whole time|keeps going|carries on|continues|continuous|constant|"
@@ -214,12 +265,12 @@ def scrub_hush_words(text: str) -> str:
 def goes_on(sound: str) -> bool:
     """Whether a sound line names a sound that goes on (a simmer, rain, a crowd), not one that happens once.
 
-    The server's ``sfx_layer.sfx_kind``: an impact word (:data:`IMPACT_WORDS`) beats the sustained
+    The server's ``sfx_layer.sfx_kind``: an impact (a blast, a hard hit, a thud) beats the sustained
     words ("an explosion with a rumbling boom" happens once, L-20261009-9) unless the words say it
     goes on ("explosions throughout") or put a bed after the hit ("a door slams, then the engine idles").
     """
 
-    if _IMPACT.search(sound) and not _GOES_ON_ON_PURPOSE.search(sound):
+    if _names_an_impact(sound) and not _GOES_ON_ON_PURPOSE.search(sound):
         then = _THEN.search(sound)
         if not (then and _GOES_ON.search(sound[then.end() :])):
             return False
