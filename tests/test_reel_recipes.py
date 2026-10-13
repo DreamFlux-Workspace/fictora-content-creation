@@ -122,7 +122,7 @@ def test_results_add_posted_reels_up_by_recipe_and_call_a_leader_only_with_enoug
         *({"part": i, "recipe": "straight", "posted_at": "x", "views": "1,000", "hold_3s_pct": "60%"} for i in range(MIN_POSTS_TO_CALL)),
         *({"part": i, "recipe": "", "posted_at": "x", "views": "500", "hold_3s_pct": "40"} for i in range(MIN_POSTS_TO_CALL)),
         {"part": 99, "recipe": "straight"},  # made, not posted
-        {"part": 98, "kind": "clip", "posted_at": "x", "views": "9"},  # a clip
+        {"part": 98, "kind": "clip", "posted_at": "x", "views": "9"},  # an old TikTok clip row
     ]  # fmt: skip
     _posted(tmp_path / "desk-a", rows)
 

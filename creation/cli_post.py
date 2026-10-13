@@ -632,13 +632,6 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Make no reel. By default every complete finish makes the episode's social reel in "
         "reels/epNN/ ($0, local; a draft while takes are still to finish; skipped when nothing changed).",
     )
-    fin.add_argument(
-        "--no-clips",
-        action="store_true",
-        help="Make no TikTok clips. By default every complete finish of a desk made on or after 6 Oct 2026 "
-        "also makes the episode's 2-3 clips in reels/epNN/clips/ ($0, the server's reel engine; skipped "
-        "while takes are still to finish or when nothing changed).",
-    )
     add_caption_style_arg(fin)
     add_caption_scale_arg(fin)
     add_caption_colour_arg(fin)
@@ -785,15 +778,6 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     reel.add_argument(
         "--captions", action="append", default=None, metavar="[tK=]FILE.ass",
         help="The accepted cut's caption file (default: the record master's .ass).",
-    )  # fmt: skip
-    reel.add_argument(
-        "--clips", type=int, default=None, metavar="N", choices=(1, 2, 3),
-        help="Make the episode's TikTok clips instead of the reel: N (1-3) straight 10-24 s clips, each with "
-        "its cover and post text, in reels/epNN/clips/ (desks made on or after 6 Oct 2026; $0).",
-    )  # fmt: skip
-    reel.add_argument(
-        "--clip-seconds", type=float, default=None, metavar="S",
-        help="With --clips: the target length of each clip, 10-24 s (default 15, shorter on a short episode).",
     )  # fmt: skip
     add_caption_style_arg(reel)
     add_hook_line_args(reel)
@@ -1058,17 +1042,6 @@ def dispatch_post(args: argparse.Namespace) -> int:
                 trigger="finish",
                 stream=sys.stderr if args.json else sys.stdout,
             )
-        if result.complete and not getattr(args, "no_clips", False):
-            from creation.post.clips_via_server import auto_clips
-
-            # TikTok clips follow every complete finish of a new desk ($0); a failure is printed, the finish stands.
-            named = re.search(r"take-ep(\d+)-", Path(str(result.final)).name)
-            auto_clips(
-                args.desk,
-                int(named.group(1)) if named else (args.episode or 1),
-                trigger="finish",
-                stream=sys.stderr if args.json else sys.stdout,
-            )
         return 0 if result.complete else FINISH_INCOMPLETE
     if args.command == "reel":
         from creation.post.reel import run_reel
@@ -1090,41 +1063,6 @@ def dispatch_post(args: argparse.Namespace) -> int:
                 f"PART {args.part}: saved on the desk ({saved.name} first_part); finish, join and "
                 "later reels use it"
             )
-        if args.clips is not None or args.clip_seconds is not None:
-            from creation.post.clips_via_server import (
-                clips_need_server_message,
-                clips_unreachable_message,
-                run_clips,
-            )
-            from creation.post.reel_server import ReelEngineUnavailable
-
-            try:
-                run_clips(
-                    args.desk,
-                    episode=args.episode,
-                    count=args.clips,
-                    seconds=args.clip_seconds,
-                    take_files=tuple(args.take_file or ()),
-                    sources=tuple(args.source or ()),
-                    captions=tuple(args.captions or ()),
-                    caption_style=args.caption_style,
-                )
-            except ReelServerUnreachable as exc:
-                print(
-                    f"{clips_unreachable_message(args.desk, args.episode)} ({exc})",
-                    file=sys.stderr,
-                )
-                return 1
-            except ReelEngineUnavailable as exc:
-                print(
-                    clips_need_server_message(args.desk, args.episode, exc),
-                    file=sys.stderr,
-                )
-                return 1
-            except (ReelServerError, ValueError) as exc:
-                print(f"Clips not made: {exc}", file=sys.stderr)
-                return 1
-            return 0
         if args.recipes is not None:
             from creation.post.reel_via_server import recipe_list
 

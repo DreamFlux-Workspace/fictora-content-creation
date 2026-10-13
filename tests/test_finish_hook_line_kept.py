@@ -67,9 +67,6 @@ def _fake_finish(monkeypatch: pytest.MonkeyPatch, complete: bool = True) -> None
         ),
     )
     monkeypatch.setattr("creation.post.reel.auto_reel", lambda *a, **k: None)
-    monkeypatch.setattr(
-        "creation.post.clips_via_server.auto_clips", lambda *a, **k: None
-    )
 
 
 def test_finish_cli_keeps_the_hook_line_for_the_finished_episode(

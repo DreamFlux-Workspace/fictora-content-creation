@@ -38,7 +38,6 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from creation.captions import Cue
-from creation.post.clips_via_server import ClipsAsk, ClipsResult, save_clips
 from creation.post.media import probe_video
 from creation.post.reel import (
     AUTO_REEL_FAILED,
@@ -710,7 +709,6 @@ def run_reel(
             hook_line_position=hook_line_position, no_cover=no_cover, cover_frame=cover_frame, server=server,
             watermark_y=watermark_y, no_panels=no_panels, recipe=recipe,
         )  # fmt: skip
-    assert isinstance(result, ReelResult)
     if recipe is not None and not isinstance(result.plan.get("recipe"), Mapping):
         # A server that does not name the recipe: the books name the one asked for.
         result.plan["recipe"] = {"name": recipe, "opening": recipe}
@@ -780,25 +778,19 @@ def make_reel(
     server: ReelServer | None = None,
     watermark_y: int | None = None,
     no_panels: bool = False,
-    clips: ClipsAsk | None = None,
     recipe: str | None = None,
-) -> ReelResult | ClipsResult:
+) -> ReelResult:
     """The renderer: send the desk's takes to the server's reel engine and download what it made.
 
     Everything the episode's folder keeps about its reels (``latest.json``,
     the hand-edited plans, ``metrics.csv``) is :func:`record_reel`'s, outside
     this boundary. Writes only the reel's own new files.
 
-    ``clips`` asks for the episode's TikTok clips instead of the reel (clip
-    mode, :mod:`creation.post.clips_via_server`): the same takes, uploads, bed
-    and caption style; the clips are saved there.
-
     Returns
     -------
-    ReelResult | ClipsResult
+    ReelResult
         With ``paths``, ``sources`` (:func:`sources_fingerprint`), ``series``,
-        ``hook_text``, ``draft``, the server's report and warnings; the saved
-        clips when ``clips`` is given.
+        ``hook_text``, ``draft``, the server's report and warnings.
     """
 
     from creation.captions import resolve_caption_style
@@ -847,8 +839,7 @@ def make_reel(
         spine=spine, scratch=scratch, stream=out,
     )  # fmt: skip
     print(
-        ("Clips" if clips is not None else "Reel")
-        + " by the server's reel engine ($0; the takes are uploaded once): "
+        "Reel by the server's reel engine ($0; the takes are uploaded once): "
         + "; ".join(
             f"{s.take_id} {(s.inferred.source if s.inferred else s.source).name}"
             + (
@@ -952,7 +943,7 @@ def make_reel(
         job_id = reel_job_id(desk, episode, [s.take_id for s in srcs])
         still = (
             None
-            if no_cover or cover_frame is not None or clips is not None
+            if no_cover or cover_frame is not None
             else saved_take_cover(desk, episode, srcs, None)
         )
 
@@ -1002,11 +993,6 @@ def make_reel(
                 bands_in_source=finals is not None, watermark_y=watermark_y, no_panels=no_panels,
                 part=sent_part, recipe=recipe,
             )  # fmt: skip
-            if clips is not None:
-                # Clip mode: the engine picks 2-3 straight windows; a reel's length and plan do not apply.
-                request.pop("seconds", None)
-                request.pop("plan", None)
-                request.update(clips.request_fields())
             return client.make(job_id, episode_id_for(spine, episode), request)
 
         try:
@@ -1023,13 +1009,6 @@ def make_reel(
             client.forget_uploads()
             client.reused = False
             answer = send()
-        if clips is not None:
-            made = save_clips(
-                desk, episode, answer, client, series=str(spine.get("title") or desk.name), warnings=warnings,
-                stream=out,
-            )  # fmt: skip
-            made.sources, made.draft = sources_fingerprint(desk, srcs), draft
-            return made
         paths = reel_paths(desk, episode, draft=draft)
         plan = dict(answer.get("plan") or {})
         plan["take_windows"] = plan.get("takes") or {}

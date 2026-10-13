@@ -181,7 +181,7 @@ class RecordCarry:
     def _carry_captions(self, edit: dict[str, Any]) -> str | None:
         """Carry the master's ``.ass`` onto the edited master, re-timed as the picture was (canary 7 Oct 2026).
 
-        ``reel`` and ``clips`` read a take's captions beside the record's master;
+        ``reel`` reads a take's captions beside the record's master;
         without this an edit after finish left the reel uncaptioned.
         """
 
@@ -244,12 +244,6 @@ def _take_args(parser: argparse.ArgumentParser, *, take_file_help: str) -> None:
         action="store_true",
         help="Make no reel. By default an edit that writes a new finished file (a new finish record) "
         "makes the episode's social reel again in reels/epNN/ ($0, local).",
-    )
-    parser.add_argument(
-        "--no-clips",
-        action="store_true",
-        help="Make no TikTok clips. By default such an edit on a desk made on or after 6 Oct 2026 also makes "
-        "the episode's clips again in reels/epNN/clips/ ($0).",
     )
 
 
@@ -571,16 +565,11 @@ def reel_after_edit(
         Where the reel's report goes.
     """
 
-    if record is None:
+    if record is None or getattr(args, "no_reel", False):
         return
-    if not getattr(args, "no_reel", False):
-        from creation.post import reel as reel_module
+    from creation.post import reel as reel_module
 
-        reel_module.auto_reel(desk, args.episode, trigger=args.command, stream=out)
-    if not getattr(args, "no_clips", False):
-        from creation.post.clips_via_server import auto_clips
-
-        auto_clips(desk, args.episode, trigger=args.command, stream=out)
+    reel_module.auto_reel(desk, args.episode, trigger=args.command, stream=out)
 
 
 def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> int:
