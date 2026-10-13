@@ -6,9 +6,15 @@ The app makes one reel, the default recipe; only the kit makes several of one ep
 from __future__ import annotations
 
 import csv
+import io
+import json
 from pathlib import Path
 
 import pytest
+
+from conftest import needs_ffmpeg
+from test_reel import reel_desk as legacy_reel_desk  # noqa: F401  (fixture)
+from test_reel_via_server import reel_desk  # noqa: F401  (fixture)
 
 from creation.post.reel_cover import record_metrics_row
 from creation.post.reel_results import (
@@ -18,6 +24,7 @@ from creation.post.reel_results import (
     tally,
 )
 from creation.post.reel_via_server import (
+    auto_reel,
     DEFAULT_RECIPE,
     TRIAL_RECIPES,
     BedChoice,
@@ -115,7 +122,7 @@ def test_results_add_posted_reels_up_by_recipe_and_call_a_leader_only_with_enoug
         *({"part": i, "recipe": "straight", "posted_at": "x", "views": "1,000", "hold_3s_pct": "60%"} for i in range(MIN_POSTS_TO_CALL)),
         *({"part": i, "recipe": "", "posted_at": "x", "views": "500", "hold_3s_pct": "40"} for i in range(MIN_POSTS_TO_CALL)),
         {"part": 99, "recipe": "straight"},  # made, not posted
-        {"part": 98, "kind": "clip", "posted_at": "x", "views": "9"},  # a clip
+        {"part": 98, "kind": "clip", "posted_at": "x", "views": "9"},  # an old TikTok clip row
     ]  # fmt: skip
     _posted(tmp_path / "desk-a", rows)
 
@@ -135,3 +142,30 @@ def test_results_add_posted_reels_up_by_recipe_and_call_a_leader_only_with_enoug
     few = tally(sheets)
     few[0].posts = few[1].posts = MIN_POSTS_TO_CALL - 1
     assert any("Too few posts" in line for line in results_lines(few, sheets=1))
+
+
+@needs_ffmpeg
+@pytest.mark.both_openings
+def test_every_reel_run_makes_both_openings_and_the_flash_forward_stays_the_episodes_reel(
+    reel_desk: Path,  # noqa: F811
+) -> None:
+    # Founder, 13 Oct 2026: the kit makes both openings of every episode; the app makes only the straight one.
+    out = io.StringIO()
+    result = auto_reel(reel_desk, 1, trigger="finish", stream=out)
+
+    assert result is not None and result.video is not None
+    folder = reel_desk / "reels" / "ep01"
+    assert sorted(p.name for p in folder.glob("reel-ep01-v*.mp4")) == [
+        "reel-ep01-v1.mp4",
+        "reel-ep01-v2.mp4",
+    ]
+    latest = json.loads((folder / "latest.json").read_text(encoding="utf-8"))
+    assert (
+        latest["reel"]
+        == f"reels/ep01/{result.video.name}"
+        == "reels/ep01/reel-ep01-v1.mp4"
+    )
+    rows = list(
+        csv.DictReader((reel_desk / "reels" / "metrics.csv").open(encoding="utf-8"))
+    )
+    assert sorted(r["recipe"] for r in rows) == ["flash-forward", "straight"]

@@ -197,7 +197,7 @@ def test_after_blur_the_reel_finds_the_captions(
     takes, final = _finished(post_desk)
 
     assert main(["blur", "--desk", str(post_desk), "--take-file", str(final), "--box", "20,40,40,30",
-                 "--from", "0.5", "--to", "2.5", "--no-reel", "--no-clips"]) == 0  # fmt: skip
+                 "--from", "0.5", "--to", "2.5", "--no-reel"]) == 0  # fmt: skip
 
     said = capsys.readouterr().out
     carried = takes / "take-ep01-t1-blur-master-v1.ass"
@@ -219,7 +219,7 @@ def test_after_a_trim_the_cues_are_shifted_like_the_picture(
     takes, final = _finished(post_desk)
 
     assert main(["trim", "--desk", str(post_desk), "--take-file", str(final), "--cut", "1.46-2.5",
-                 "--no-reel", "--no-clips"]) == 0  # fmt: skip
+                 "--no-reel"]) == 0  # fmt: skip
 
     said = capsys.readouterr().out
     carried = takes / "take-ep01-t1-trim-master-v1.ass"

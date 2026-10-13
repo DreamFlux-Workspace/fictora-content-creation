@@ -1,4 +1,4 @@
-"""An action's sound lands on the frame the action happens (L-20260930-10), new desks only."""
+"""An action's sound lands on the frame the action happens (L-20260930-10, L-20261030-10), new desks only."""
 
 from __future__ import annotations
 
@@ -16,10 +16,13 @@ from creation.production_state import ProductionState, save_production
 from creation.post.finish import run_finish
 from creation.post.sfx import SfxCue, plan_from_take_facts
 from creation.post.sfx_motion import (
+    MOTION_SHOT_PEAK_OVER_OTHERS,
     MOTION_SNAP_WINDOW_SECONDS,
     action_moment,
     measure_motion,
     names_an_action,
+    names_several_hits,
+    opening_hook_names_an_action,
     snap_to_action,
 )
 from test_post_finish import FACTS, TWO_LINES, fake_bed
@@ -57,9 +60,51 @@ def test_only_one_off_events_that_name_an_action_follow_the_picture() -> None:
         "no visible action named"
     )
     assert not names_an_action("a sharp comic shock sting", "event")
-    assert not names_an_action("a door slams on the first frame", "event"), (
-        "the opening hook stays on the cut"
+    assert names_an_action("a door slams, on the first frame", "event"), (
+        "a hook that names an action follows it"
     )
+
+
+# --- the opening hook (L-20261030-10) ---------------------------------------------------------------
+
+
+def test_an_opening_hook_that_names_a_physical_action_follows_it() -> None:
+    assert opening_hook_names_an_action(
+        "a golden crack spreads across the vase, on the first frame"
+    )
+    assert opening_hook_names_an_action("glass shatters on tile, on the first frame")
+
+
+def test_a_sting_ambience_cut_in_or_genre_hook_stays_on_the_cut() -> None:
+    assert not opening_hook_names_an_action(
+        "a short low music sting, one hit, on the first frame"
+    )
+    assert not opening_hook_names_an_action(
+        "a cinematic whoosh and a hit, on the first frame"
+    )
+    assert not opening_hook_names_an_action(
+        "one held breath, close, then a door slams, cutting in hard by half a second, "
+        "on the first frame"
+    ), "a deliberate cut-in keeps its half second"
+    # Picked by genre without looking at the picture: no drawer to follow.
+    assert not opening_hook_names_an_action(
+        "a file drawer slams shut, on the first frame"
+    )
+    assert not opening_hook_names_an_action(
+        "a can cracks open and fizzes, on the first frame"
+    )
+
+
+def test_the_golden_crack_hook_lands_on_the_cracks_not_on_0s() -> None:
+    hook = SfxCue(
+        1,
+        "a golden crack spreads across the vase, on the first frame",
+        "event",
+        0.0,
+        2.0,
+    )
+    (moved,), _ = snap_to_action((hook,), {1: (0.0, 5.0)}, _trace(spikes={3.7: 14.0}))
+    assert moved.start == pytest.approx(3.7, abs=0.03)
 
 
 # --- finding the moment -----------------------------------------------------------------------------
@@ -67,17 +112,65 @@ def test_only_one_off_events_that_name_an_action_follow_the_picture() -> None:
 
 def test_a_clear_spike_in_the_window_is_the_moment() -> None:
     peak = action_moment(_trace(spikes={3.5: 12.0}), around=3.0, shot=(2.5, 5.0))
-    assert peak.time == pytest.approx(3.5, abs=0.03) and peak.reason == "motion spike"
+    assert peak.time == pytest.approx(3.5, abs=0.03)
 
 
 def test_no_spike_keeps_the_time() -> None:
     assert action_moment(_trace(), around=3.0, shot=(2.5, 5.0)).time is None
 
 
-def test_a_spike_outside_the_window_is_never_taken() -> None:
+def test_one_clear_movement_anywhere_in_the_shot_takes_the_cue() -> None:
+    """L-20261030-10: a cue more than 1 s from its action stayed put; one dominant movement now takes it."""
+
     far = 3.0 + MOTION_SNAP_WINDOW_SECONDS + 0.2
     peak = action_moment(_trace(spikes={far: 12.0}), around=3.0, shot=(2.5, 5.0))
-    assert peak.time is None
+    assert peak.time == pytest.approx(far, abs=0.03)
+    assert peak.reason == "the shot's one clear movement"
+
+
+def test_a_far_spike_that_does_not_dominate_the_shot_is_never_taken() -> None:
+    far = 3.0 + MOTION_SNAP_WINDOW_SECONDS + 0.2
+    # A second movement over half the far one's size, far from the cue as well: the cue keeps its time.
+    two = _trace(
+        7.0, spikes={far: 12.0, 5.8: 12.0 / MOTION_SHOT_PEAK_OVER_OTHERS + 1.0}
+    )
+    assert action_moment(two, around=3.0, shot=(2.5, 7.0)).time is None
+
+
+def test_the_lid_grinds_from_where_the_lid_starts_moving() -> None:
+    """L-20261030-10: "the lid grinds" at 9.2 s while the lid moves 5.25-7.0 s."""
+
+    moving = {
+        round(5.25 + step / FPS, 3): 8.0 + (step % 5) for step in range(int(1.75 * FPS))
+    }
+    lid = SfxCue(3, "the stone lid grinds open", "event", 9.2, 2.5)
+    (moved,), snaps = snap_to_action(
+        (lid,), {3: (4.0, 10.0)}, _trace(10.0, spikes=moving)
+    )
+    assert moved.start == pytest.approx(5.25, abs=0.06), snaps.one_line()
+
+
+def test_one_hit_per_movement() -> None:
+    slam = SfxCue(2, "a door slams", "event", 3.2, 1.0)
+    thud = SfxCue(2, "a body thuds against the door", "event", 4.0, 1.0)
+    out, snaps = snap_to_action(
+        (slam, thud), {2: (2.5, 5.0)}, _trace(spikes={3.5: 12.0})
+    )
+    assert out[0].start == pytest.approx(3.5, abs=0.03), (
+        "the cue placed nearest the spike"
+    )
+    assert out[1] == thud and "another cue is on this movement" in snaps.one_line()
+
+
+def test_a_several_hit_clip_is_never_laid_on_one_movement() -> None:
+    knocks = SfxCue(2, "someone knocks three times on the door", "event", 3.0, 1.0)
+    (kept,), snaps = snap_to_action(
+        (knocks,), {2: (2.5, 5.0)}, _trace(spikes={3.5: 12.0})
+    )
+    assert kept == knocks and "several hits, not one movement" in snaps.one_line()
+    assert names_several_hits("footsteps on gravel") and not names_several_hits(
+        "a door slams"
+    )
 
 
 def test_a_spike_outside_the_shot_or_on_a_cut_is_not_the_action() -> None:
@@ -201,12 +294,12 @@ def test_a_new_desk_with_no_motion_keeps_the_planned_time(tmp_path: Path) -> Non
 
 
 @needs_ffmpeg
-def test_a_spike_past_the_window_is_not_taken_on_a_take(tmp_path: Path) -> None:
+def test_a_far_action_alone_in_its_shot_takes_the_cue_on_a_take(tmp_path: Path) -> None:
     desk = _desk(
         tmp_path, date(2026, 10, 6), box_at=3.0 + MOTION_SNAP_WINDOW_SECONDS + 0.4
     )
     sfx = next(s for s in _finish(desk).steps if s.step == "sfx")
-    assert "a door slams @3.00s" in sfx.detail, sfx.detail
+    assert "a door slams 3.00->4.4" in sfx.detail, sfx.detail
 
 
 @needs_ffmpeg

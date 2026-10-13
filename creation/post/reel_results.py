@@ -63,7 +63,8 @@ def metrics_sheets(paths: Iterable[Path]) -> list[Path]:
 def tally(sheets: Sequence[Path]) -> list[RecipeTally]:
     """Posted reel rows (a ``posted_at`` or ``views`` filled) added up by recipe, most posts first.
 
-    Clips are left out (a clip has no recipe); a row from before recipes is the default.
+    Rows of the TikTok clips the kit made until 13 Oct 2026 (``kind`` ``clip``) are left out; a row from
+    before recipes is the default.
     """
 
     by: dict[str, RecipeTally] = {}

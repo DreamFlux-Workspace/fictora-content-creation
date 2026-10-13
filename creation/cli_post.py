@@ -43,6 +43,7 @@ POST_COMMANDS = (
             "join",
             "reel",
             "reel-results",
+            "moment",
         }
     )
     | EDIT_COMMANDS
@@ -637,13 +638,6 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Make no reel. By default every complete finish makes the episode's social reel in "
         "reels/epNN/ ($0, local; a draft while takes are still to finish; skipped when nothing changed).",
     )
-    fin.add_argument(
-        "--no-clips",
-        action="store_true",
-        help="Make no TikTok clips. By default every complete finish of a desk made on or after 6 Oct 2026 "
-        "also makes the episode's 2-3 clips in reels/epNN/clips/ ($0, the server's reel engine; skipped "
-        "while takes are still to finish or when nothing changed).",
-    )
     add_caption_style_arg(fin)
     add_caption_scale_arg(fin)
     add_caption_colour_arg(fin)
@@ -791,15 +785,6 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--captions", action="append", default=None, metavar="[tK=]FILE.ass",
         help="The accepted cut's caption file (default: the record master's .ass).",
     )  # fmt: skip
-    reel.add_argument(
-        "--clips", type=int, default=None, metavar="N", choices=(1, 2, 3),
-        help="Make the episode's TikTok clips instead of the reel: N (1-3) straight 10-24 s clips, each with "
-        "its cover and post text, in reels/epNN/clips/ (desks made on or after 6 Oct 2026; $0).",
-    )  # fmt: skip
-    reel.add_argument(
-        "--clip-seconds", type=float, default=None, metavar="S",
-        help="With --clips: the target length of each clip, 10-24 s (default 15, shorter on a short episode).",
-    )  # fmt: skip
     add_caption_style_arg(reel)
     add_hook_line_args(reel)
     reel.add_argument("--watermark-y", type=int, default=None)
@@ -829,6 +814,47 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "straight) or a comma list of flash-forward|straight. Each is its own reel and its own row in "
         "reels/metrics.csv; `reel-results` adds the posted ones up. $0.",
     )  # fmt: skip
+    moment = sub.add_parser(
+        "moment",
+        help="A TikTok part (a moment): several finished episodes joined and cut as one story by the server's "
+        "engine, with a PART N title bar, a hook line, one bed and a `Part N+1 →` end card; in reels/moments/. $0. "
+        "Either --episodes A-B --part N, or --auto for every part of the show (episodes grouped into about a minute).",
+    )
+    moment.add_argument("--desk", type=Path, required=True)
+    which = moment.add_mutually_exclusive_group(required=True)
+    which.add_argument(
+        "--episodes",
+        default=None,
+        metavar="A-B",
+        help="The episodes to join: 1-3 or 1,2,3 (at most 6).",
+    )
+    which.add_argument(
+        "--auto",
+        action="store_true",
+        help="Group every finished episode into parts and make each.",
+    )
+    moment.add_argument(
+        "--part",
+        type=int,
+        default=None,
+        metavar="N",
+        help="PART N (with --episodes; default 1).",
+    )
+    moment.add_argument(
+        "--next",
+        dest="next_text",
+        default=None,
+        metavar="TEXT",
+        help="The end card's words.",
+    )
+    moment.add_argument(
+        "--hook-line",
+        dest="moment_hook",
+        default=None,
+        metavar="TEXT",
+        help="The hook line under the title bar.",
+    )
+    add_caption_style_arg(moment)
     results = sub.add_parser(
         "reel-results",
         help="The posted reels' numbers by recipe, from reels/metrics.csv of the given desks (or folders of desks).",
@@ -1064,17 +1090,6 @@ def dispatch_post(args: argparse.Namespace) -> int:
                 trigger="finish",
                 stream=sys.stderr if args.json else sys.stdout,
             )
-        if result.complete and not getattr(args, "no_clips", False):
-            from creation.post.clips_via_server import auto_clips
-
-            # TikTok clips follow every complete finish of a new desk ($0); a failure is printed, the finish stands.
-            named = re.search(r"take-ep(\d+)-", Path(str(result.final)).name)
-            auto_clips(
-                args.desk,
-                int(named.group(1)) if named else (args.episode or 1),
-                trigger="finish",
-                stream=sys.stderr if args.json else sys.stdout,
-            )
         return 0 if result.complete else FINISH_INCOMPLETE
     if args.command == "reel":
         from creation.post.reel import run_reel
@@ -1096,41 +1111,6 @@ def dispatch_post(args: argparse.Namespace) -> int:
                 f"PART {args.part}: saved on the desk ({saved.name} first_part); finish, join and "
                 "later reels use it"
             )
-        if args.clips is not None or args.clip_seconds is not None:
-            from creation.post.clips_via_server import (
-                clips_need_server_message,
-                clips_unreachable_message,
-                run_clips,
-            )
-            from creation.post.reel_server import ReelEngineUnavailable
-
-            try:
-                run_clips(
-                    args.desk,
-                    episode=args.episode,
-                    count=args.clips,
-                    seconds=args.clip_seconds,
-                    take_files=tuple(args.take_file or ()),
-                    sources=tuple(args.source or ()),
-                    captions=tuple(args.captions or ()),
-                    caption_style=args.caption_style,
-                )
-            except ReelServerUnreachable as exc:
-                print(
-                    f"{clips_unreachable_message(args.desk, args.episode)} ({exc})",
-                    file=sys.stderr,
-                )
-                return 1
-            except ReelEngineUnavailable as exc:
-                print(
-                    clips_need_server_message(args.desk, args.episode, exc),
-                    file=sys.stderr,
-                )
-                return 1
-            except (ReelServerError, ValueError) as exc:
-                print(f"Clips not made: {exc}", file=sys.stderr)
-                return 1
-            return 0
         if args.recipes is not None:
             from creation.post.reel_via_server import recipe_list
 
@@ -1219,6 +1199,31 @@ def dispatch_post(args: argparse.Namespace) -> int:
             return 1
         except ReelServerError as exc:
             print(f"Reel not made: {exc}", file=sys.stderr)
+            return 1
+        return 0
+    if args.command == "moment":
+        from creation.post.moment_via_server import parse_episodes, run_moments
+        from creation.post.reel_server import (
+            ReelServerError,
+            ReelServerUnreachable,
+            unreachable_message,
+        )
+
+        episodes = None
+        try:
+            episodes = parse_episodes(args.episodes) if args.episodes else None
+            run_moments(
+                args.desk, episodes=episodes, part=args.part, next_text=args.next_text, hook_line=args.moment_hook,
+                caption_style=args.caption_style,
+            )  # fmt: skip
+        except ReelServerUnreachable as exc:
+            print(
+                f"{unreachable_message(args.desk, (episodes or [1])[-1])} ({exc})",
+                file=sys.stderr,
+            )
+            return 1
+        except (ReelServerError, ValueError) as exc:
+            print(f"Moment not made: {exc}", file=sys.stderr)
             return 1
         return 0
     if args.command == "reel-results":

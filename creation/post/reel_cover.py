@@ -541,9 +541,10 @@ def face_note(faces: Sequence[tuple[float, float, float, float]] | None) -> str 
     return None if faces else NO_FACE_NOTE
 
 
+#: Columns an older sheet may have from the TikTok clips the kit made until 13 Oct 2026 (``kind``
+#: ``reel`` / ``clip``, the clip's number), after ``part``. No new row is a clip; old ones are kept as they are.
+LEGACY_CLIP_COLUMNS: tuple[str, ...] = ("kind", "clip")
 #: The columns the operator fills from Instagram; a row with any of them filled was posted.
-#: A TikTok clip's columns (``kind`` ``reel`` / ``clip``, the clip's number), after ``part`` once a desk has clips.
-CLIP_COLUMNS: tuple[str, ...] = ("kind", "clip")
 OPERATOR_COLUMNS = (
     "posted_at",
     "views",
@@ -556,26 +557,26 @@ OPERATOR_COLUMNS = (
 
 
 def record_metrics_row(sheet: Path, row: Mapping[str, Any]) -> Path:
-    """Put one reel (or one clip) in the results sheet: one row per part (per part and clip), updated to the newest.
+    """Put one reel in the results sheet: one row per part (and recipe), updated to the newest.
 
     The part's row that was not posted yet (no :data:`OPERATOR_COLUMNS` filled)
     is updated in place: the kit's columns take the new reel, the old reel file
     joins ``superseded`` (oldest first, ``; `` between), the operator's columns
     and ``notes`` stay. A posted row is history and never changed: a re-cut
     after posting gets a new row. The header is written when the file is new;
-    a sheet from an older kit gains the new columns. A TikTok clip's row is
-    ``kind`` ``clip`` with its number in ``clip`` (:data:`CLIP_COLUMNS`, after
-    ``part``): its key is the part and the clip, apart from the reel's row. A
-    sheet gets those two columns with its first clip (every reel row then says
-    ``reel``); a sheet with no clip (an older desk's) keeps its columns.
+    a sheet from an older kit gains the new columns. A sheet that has rows of
+    the TikTok clips the kit made until 13 Oct 2026 (``kind`` ``clip``, with
+    :data:`LEGACY_CLIP_COLUMNS` after ``part``) keeps them and their columns
+    where they are; a new reel's row there says ``kind`` ``reel`` and never
+    replaces a clip's row.
 
     Parameters
     ----------
     sheet
         ``<desk>/reels/metrics.csv``.
     row
-        Values by column name (:data:`METRICS_COLUMNS`); ``part`` (with ``kind`` and ``clip``) is the key, a
-        missing column is blank (``kind`` blank is ``reel``).
+        Values by column name (:data:`METRICS_COLUMNS`); ``part`` (and ``recipe``) is the key, a missing
+        column is blank.
 
     Returns
     -------
@@ -587,17 +588,15 @@ def record_metrics_row(sheet: Path, row: Mapping[str, Any]) -> Path:
     if sheet.is_file() and sheet.stat().st_size:
         with sheet.open(encoding="utf-8", newline="") as handle:
             rows = [dict(r) for r in csv.DictReader(handle)]
-    new = {
-        name: str(row.get(name, "") or "") for name in (*METRICS_COLUMNS, *CLIP_COLUMNS)
-    }
-    clipped = new["kind"] == "clip" or any(r.get("kind") for r in rows)
+    new = {name: str(row.get(name, "") or "") for name in METRICS_COLUMNS}
+    clipped = any(r.get("kind") for r in rows)
     if clipped:
-        new["kind"] = new["kind"] or "reel"
+        new["kind"] = "reel"
         for r in rows:
             r["kind"] = r.get("kind") or "reel"
 
     def key(r: Mapping[str, Any]) -> tuple[str, str, str, str]:
-        # Each recipe of a part is its own row (trial posts); blank (an older row or a clip) is the default.
+        # Each recipe of a part is its own row (trial posts); blank (an older row or an old clip) is the default.
         return (
             str(r.get("part") or ""),
             str(r.get("kind") or "reel"),
@@ -625,12 +624,12 @@ def record_metrics_row(sheet: Path, row: Mapping[str, Any]) -> Path:
     base = list(METRICS_COLUMNS)
     if clipped:
         at = base.index("part") + 1
-        base[at:at] = list(CLIP_COLUMNS)
+        base[at:at] = list(LEGACY_CLIP_COLUMNS)
     extra = [
         c
         for r in rows
         for c in r
-        if c not in base and c and not (c in CLIP_COLUMNS and not clipped)
+        if c not in base and c and not (c in LEGACY_CLIP_COLUMNS and not clipped)
     ]
     columns = [*base, *dict.fromkeys(extra)]
     scratch = sheet.with_name(sheet.name + ".tmp")
@@ -643,7 +642,7 @@ def record_metrics_row(sheet: Path, row: Mapping[str, Any]) -> Path:
 
 
 __all__ = [
-    "CLIP_COLUMNS",
+    "LEGACY_CLIP_COLUMNS",
     "METRICS_COLUMNS",
     "METRICS_FILE",
     "CoverLayout",

@@ -272,6 +272,7 @@ from creation.post.mix import (
     pick_gain,
 )
 from creation.post.take_facts import (
+    ended_on_earlier_shot_note,
     save_take_facts,
     stale_facts_reason,
     take_warning_lines,
@@ -2080,6 +2081,11 @@ def run_finish(
             )  # fmt: skip
         else:
             filmed = filmed_shot_windows(shots, cuts, duration=duration)
+        ending = ended_on_earlier_shot_note(filmed, tuple(cuts), duration=duration)
+        if ending:
+            # Operator-only safety net behind the server's shot-order line (L-20261009-35): printed, never blocks.
+            print(f"[sfx] !! {ending}", file=out, flush=True)
+            append_run_note(run_dir, f"Finish · sfx: {ending}")
         return (
             follow_filmed_cuts(plan, filmed),
             f"cues follow the filmed cuts measured on `{measured.name}`: {filmed.one_line()}",
