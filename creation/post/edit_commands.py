@@ -682,7 +682,11 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
             board = pick_board(source, versions, max_frames=args.max_frames)[0]
         result = deboard(source, board, target("deboard"), max_frames=args.max_frames)
         if result.output is not None:
-            record_edit(desk, op="deboard", source=source, output=result.output)
+            # How many clones it holds, so `finish --take-file` cuts them off last (review #13).
+            record_edit(
+                desk, op="deboard", source=source, output=result.output,
+                frames=result.removed, fps=probe_video(result.output).fps or 24.0,
+            )  # fmt: skip
         lines = [f"Deboard `{source.name}` against `{board.name}`: {result.one_line()}"]
         if earlier_note is not None:
             lines.append(earlier_note)
