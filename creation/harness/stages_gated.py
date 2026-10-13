@@ -536,8 +536,15 @@ def enrol_cast(
     video_lane: str | None = "minimax-h3",
     tag: str = "ep1",
     max_attempts: int = 5,
+    key_salt: str = "",
 ) -> dict[str, Any]:
-    """Enrol cast plates and poll. Does not approve."""
+    """Enrol cast plates and poll. Does not approve.
+
+    ``key_salt`` ends the key before the attempt suffix (``-o1a2b3c4d``): the
+    plates step sets it when the pictures owed differ from a first run's, so a
+    rewound desk never gets an old, completed job handed back. Empty keeps the
+    key as it always was.
+    """
 
     last_terminal: dict[str, Any] = {}
     for attempt in range(max_attempts):
@@ -552,7 +559,7 @@ def enrol_cast(
                 preset_version=preset_version,
                 video_lane=video_lane,
             ),
-            idempotency_key=f"{run.prefix}-{tag}-cast-enrol{suffix}",
+            idempotency_key=f"{run.prefix}-{tag}-cast-enrol{key_salt}{suffix}",
         )
         run.save(f"05_{tag}_cast_enrol{suffix}.json", job)
         terminal = run.poll_job(

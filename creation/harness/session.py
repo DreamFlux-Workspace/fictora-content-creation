@@ -357,6 +357,39 @@ class DramaApiRunSession:
             )
         )
 
+    def delete_optional(
+        self,
+        path: str,
+        body: dict[str, Any] | None = None,
+        *,
+        idempotency_key: str | None = None,
+    ) -> tuple[int, Any]:
+        """DELETE without raising on an error status, for a caller that answers a refusal itself.
+
+        Parameters
+        ----------
+        path
+            Drama API path.
+        body
+            Optional JSON object.
+        idempotency_key
+            Optional ``Idempotency-Key``.
+
+        Returns
+        -------
+        tuple[int, Any]
+            HTTP status and the parsed JSON body (text when it is not JSON).
+        """
+
+        response = self.client.request(
+            "DELETE", self.url(path), headers=self.headers(idempotency_key), json=body
+        )
+        try:
+            answer: Any = response.json()
+        except ValueError:
+            answer = response.text
+        return response.status_code, answer
+
     def poll_job(
         self,
         job_id: str,

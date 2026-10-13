@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import httpx
 
@@ -27,9 +27,11 @@ from creation.plate_traits_print import plate_traits_text, wait_for_plate_traits
 from creation.authoring_warnings import authoring_warnings, for_episode, warning_lines
 from creation.brief_lines import brief_vs_spine_lines
 from creation.story_objects import (
+    cast_owing_plates,
     object_picture_urls,
     objects_owing_approval,
     objects_to_draw,
+    owed_digest,
 )
 from creation.new_cast import (
     cast_owing_pictures,
@@ -1290,6 +1292,71 @@ def draft_key_prefix(state: ProductionState) -> str:
     )
 
 
+def plates_key_salt(
+    desk: Path,
+    state: ProductionState,
+    spine: Mapping[str, Any],
+    *,
+    intended: set[str],
+) -> str:
+    """The plates step's enrol key ending: empty on a first run, else a hash of what is owed now.
+
+    The enrol key was fixed per desk and episode, so a desk moved back to the
+    plates step (a hand rewind, an object redraw asked by hand) sent the key of
+    the job that already finished: the server handed that job back, nothing
+    was drawn and the kit said "Cast drawn" (L-20261014-1). Now, when the
+    pictures the story owes (characters with no current plate, objects with no
+    current picture) are not exactly what this step means to draw, or a plates
+    job of this episode already finished under this kit, the key ends on a
+    short hash of the owed ids. A first run keeps the key it always had. The
+    ending is saved before the send and reused until the job is done, so a
+    re-run while it is in flight picks up the same job and never pays twice.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    state
+        Production state (the ending is saved on it).
+    spine
+        The story just before the send.
+    intended
+        Cast and prop ids this step means to draw.
+
+    Returns
+    -------
+    str
+        ``""`` or ``-o<8 hex>``.
+    """
+
+    slot = f"ep{state.episode_ordinal:02d}"
+    if slot in state.plates_key_salts:
+        return state.plates_key_salts[slot]
+    cast, props = (
+        cast_owing_plates(spine),
+        objects_to_draw(spine, episode=state.episode_ordinal),
+    )
+    owed = {cast_id for cast_id, _ in cast} | {prop_id for prop_id, _ in props}
+    attempt = state.attempts.get(f"plates-{slot}", 0)
+    salt = (
+        ""
+        if owed == intended and not attempt
+        else f"-o{owed_digest(owed, attempt=attempt)}"
+    )
+    state.plates_key_salts[slot] = salt
+    save_production(desk, state)
+    return salt
+
+
+def plates_job_done(desk: Path, state: ProductionState) -> None:
+    """The plates job finished: drop its saved key ending and count it, so the next run never replays it."""
+
+    slot = f"ep{state.episode_ordinal:02d}"
+    state.plates_key_salts.pop(slot, None)
+    state.attempts[f"plates-{slot}"] = state.attempts.get(f"plates-{slot}", 0) + 1
+    save_production(desk, state)
+
+
 def drawing_spend_stop(
     desk: Path,
     state: ProductionState,
@@ -1648,6 +1715,19 @@ def run_step(
             )
             if priced is not None:
                 return priced
+            salt = plates_key_salt(
+                desk,
+                state,
+                spine_now,
+                intended={
+                    *(
+                        owing
+                        if owing is not None
+                        else (str(row["cast_id"]) for row in drawn_cast_rows(spine_now))
+                    ),
+                    *(prop_id for prop_id, _ in objects_owed),
+                },
+            )
             stages.enrol_cast(
                 run,
                 spine_id=state.spine_id,
@@ -1656,7 +1736,9 @@ def run_step(
                 preset_version=state.preset_version,
                 video_lane=state.video_lane,
                 tag=f"ep{ep}" if ep >= 2 else "ep1",
+                key_salt=salt,
             )
+            plates_job_done(desk, state)
             spine = run.spine(state.spine_id)
             # Every character this step owed must have come back with a
             # picture; otherwise say so, not "Cast drawn" (L-20261008-17).

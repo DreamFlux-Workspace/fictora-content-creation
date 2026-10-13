@@ -271,6 +271,22 @@ class FakeApi:
         """DELETE."""
         return self._answer("DELETE", path, body)
 
+    def delete_optional(
+        self,
+        path: str,
+        body: dict[str, Any] | None = None,
+        *,
+        idempotency_key: str | None = None,
+    ) -> tuple[int, Any]:
+        """DELETE without raising; a route may answer ``(status, body)`` for a refusal; unset is a 404."""
+        if ("DELETE", path) not in self.routes:
+            self.calls.append(("DELETE", path, copy.deepcopy(body), idempotency_key))
+            return 404, {"detail": "Not Found"}
+        answer = self._answer("DELETE", path, body, idempotency_key)
+        if isinstance(answer, tuple):
+            return answer
+        return 200, answer
+
     def spine(self, spine_id: str) -> dict[str, Any]:
         """GET the spine."""
         return self.get(f"/v1/spines/{spine_id}")
