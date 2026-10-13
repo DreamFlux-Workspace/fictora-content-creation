@@ -32,10 +32,21 @@ REDRAW = f"/v1/spines/sp1/props/{SIGN_ID}/redraw"
 ENROL = "/v1/spines/sp1/cast/enrol"
 DELETE = f"/v1/spines/sp1/props/{SIGN_ID}"
 NOTE = "carved wood, the letters cut in, never painted"
-WARNING = (
-    "Redrawing adds $0.30 per object to this episode. Objects usually read fine on the board, "
-    "so only redraw if the object is wrong for the story."
+ASK_ONE = (
+    "Redrawing adds $0.30 per object to this episode (total $0.30 for this redraw). "
+    "Objects usually read fine on the board, so only redraw if the object is wrong for the story. "
+    "Say yes and I'll redraw it."
 )
+
+
+def _redraw(desk: Path, out: io.StringIO | None = None, **kw: Any) -> Path | None:
+    """Ask, then redraw with the human's yes (the two runs an operator makes)."""
+
+    out = out or io.StringIO()
+    kw.setdefault("prop", "Wooden Sign")
+    kw.setdefault("note", NOTE)
+    assert pc.run_redraw_prop(desk, out=out, **kw) is None, "the first run only asks"
+    return pc.run_redraw_prop(desk, out=out, confirm_spend=True, **kw)
 
 
 def _sign(**over: Any) -> dict[str, Any]:
@@ -159,11 +170,10 @@ def test_redraw_prop_notes_draws_under_its_own_key_and_books_one_picture(
     old.write_bytes(png_bytes(200))
     out = io.StringIO()
 
-    path = pc.run_redraw_prop(desk, prop="wooden sign", note=NOTE, out=out)
+    path = _redraw(desk, out, prop="wooden sign")
 
     text = out.getvalue()
-    assert WARNING in text
-    assert text.index(WARNING) < text.index("$0.30.")
+    assert ASK_ONE in text
     assert api.posted(REDRAW) == [{"spine_version": "v5", "text": NOTE}]
     prefix = load_production(desk).idempotency_prefix
     assert _enrol_keys(api) == [f"{prefix}-prop-{SIGN_ID}-{_digest()}-a1"]
@@ -184,7 +194,7 @@ def test_redraw_prop_at_the_plates_gate_asks_for_the_one_yes(
     _serve(api)
     out = io.StringIO()
 
-    pc.run_redraw_prop(desk, prop=SIGN_ID, note=NOTE, out=out)
+    _redraw(desk, out, prop=SIGN_ID)
 
     assert "one yes covers the cast and objects" in out.getvalue()
     assert load_production(desk).phase == "wait_plates"
@@ -212,7 +222,7 @@ def test_a_note_already_recorded_and_still_owed_is_not_sent_again(
     api.spine_doc["props"][0]["creator_notes"] = [{"note_id": "pn0", "text": NOTE}]
     api.spine_doc["media_assets"][-1]["stale"] = True
 
-    path = pc.run_redraw_prop(desk, prop="Wooden Sign", note=NOTE, out=io.StringIO())
+    path = _redraw(desk)
 
     assert path is not None
     assert api.posted(REDRAW) == []
@@ -242,7 +252,10 @@ def test_more_than_one_picture_owed_is_priced_and_waits_for_the_yes(
     assert pc.run_redraw_prop(desk, prop="Wooden Sign", note=NOTE, out=out) is None
 
     text = out.getvalue()
-    assert WARNING in text
+    assert "(total $0.60 for this redraw)" in text
+    assert text.index("Say yes and I'll redraw it.") < text.index(
+        "This draws 2 pictures"
+    )
     assert "This draws 2 pictures, $0.60 in all" in text and "Ren" in text
     assert "--confirm-spend" in text
     assert api.posted(REDRAW) == [] and api.posted(ENROL) == []
@@ -270,7 +283,7 @@ def test_confirm_spend_without_a_shown_price_sends_nothing(
 
     pc.run_redraw_prop(desk, prop="Wooden Sign", note=NOTE, confirm_spend=True, out=out)
 
-    assert "this price was not shown before" in out.getvalue()
+    assert "this total was not asked before" in out.getvalue()
     assert api.posted(ENROL) == []
 
 
@@ -313,9 +326,7 @@ def test_fresh_on_a_server_without_it_is_refused_before_anything_is_sent(
 def test_fresh_is_its_own_job(desk: Path, api: FakeApi) -> None:
     _serve(api)
 
-    pc.run_redraw_prop(
-        desk, prop="Wooden Sign", note=NOTE, fresh=True, out=io.StringIO()
-    )
+    _redraw(desk, fresh=True)
 
     assert api.posted(REDRAW)[0]["fresh"] is True
     assert str(_enrol_keys(api)[0]).endswith(f"-prop-{SIGN_ID}-{_digest()}-fresh-a1")
@@ -327,9 +338,32 @@ def test_a_job_handed_back_without_a_new_picture_stops_and_books_nothing(
     _serve(api, draws=False)
 
     with pytest.raises(ec.CommandStopped, match="no new picture"):
-        pc.run_redraw_prop(desk, prop="Wooden Sign", note=NOTE, out=io.StringIO())
+        _redraw(desk)
 
     assert load_series(desk).spend_log == []
+
+
+def test_one_picture_still_waits_for_the_yes_and_spends_nothing(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The human's yes comes before any spend, even for one picture (founder, 14 Oct 2026)."""
+
+    _serve(api)
+    argv = ["redraw-prop", "--desk", str(desk), "--prop", "Wooden Sign", "--note", NOTE]
+
+    assert produce_main(argv) == 0
+
+    text = capsys.readouterr().out
+    assert ASK_ONE in text
+    assert text.rstrip().splitlines()[0] == ASK_ONE
+    assert "--confirm-spend" in text
+    assert api.posted(REDRAW) == [] and api.posted(ENROL) == []
+    assert load_series(desk).spend_log == []
+
+    assert produce_main([*argv, "--confirm-spend"]) == 0
+
+    assert len(api.posted(ENROL)) == 1
+    assert [e.unit for e in load_series(desk).spend_log] == [f"object-redraw:{SIGN_ID}"]
 
 
 # --- remove-prop ----------------------------------------------------------------------------

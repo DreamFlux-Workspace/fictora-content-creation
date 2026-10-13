@@ -29,7 +29,8 @@ desk with a versioned name, and never approves (the human's yes goes through
 - ``plates``: retired (was ``plates --cast NAME --cause``); prints a pointer to ``redraw-plate --note`` and sends nothing.
 - ``redraw-plate --cast X --note "..."``: note one character, then redraw only their plate (one still).
 - ``props`` / ``redraw-prop --prop X --note "..."`` / ``remove-prop --prop X``: the story's objects
-  (:mod:`creation.prop_commands`): list free, redraw one picture ($0.30 each drawn), remove free.
+  (:mod:`creation.prop_commands`): list free, redraw one picture ($0.30 each drawn; asks first,
+  draws on ``--confirm-spend``), remove free.
 - ``check-lines``: were the approved lines in the take's instructions, which shot and board row each fell in,
   and is its on-screen speaker in that row (take facts and board frames, never the prompt)?
 - ``film --episode N [--take tK]``: price, then (``--confirm-spend``) film episode N alone or only take K
@@ -8376,8 +8377,9 @@ def add_episode_parsers(
     prop_redraw = sub.add_parser(
         "redraw-prop",
         help=(
-            "Correct ONE story object (--note, your words) and draw its picture again. $0.30 a picture; "
-            "prices first, and needs --confirm-spend when the story owes more than this one. The step is unchanged."
+            "Correct ONE story object (--note, your words) and draw its picture again. $0.30 a picture. "
+            "The first run only asks (the total, nothing sent); --confirm-spend after the human's yes draws. "
+            "The step is unchanged."
         ),
     )
     prop_redraw.add_argument("--desk", type=Path, required=True)
@@ -8397,7 +8399,7 @@ def add_episode_parsers(
     prop_redraw.add_argument(
         "--confirm-spend",
         action="store_true",
-        help="The human said yes to the printed total (needed only when more than one picture will be drawn).",
+        help="The human said yes to the total the first run asked about (always needed to draw).",
     )
     prop_remove = sub.add_parser(
         "remove-prop",

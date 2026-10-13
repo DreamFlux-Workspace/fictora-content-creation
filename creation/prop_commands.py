@@ -64,11 +64,20 @@ from creation.story_objects import (
     prop_cards,
 )
 
-#: Printed before the price of an object redraw; never blocks (founder wording, 14 Oct 2026).
-REDRAW_COST_WARNING = (
-    "Redrawing adds $0.30 per object to this episode. Objects usually read fine on the board, "
-    "so only redraw if the object is wrong for the story."
+#: What the human is told before an object redraw spends anything (founder wording, 14 Oct 2026):
+#: the real total goes in, and it ends on a plain ask. Nothing is drawn until their yes.
+REDRAW_COST_ASK = (
+    "Redrawing adds $0.30 per object to this episode (total ${usd:.2f} for this redraw). "
+    "Objects usually read fine on the board, so only redraw if the object is wrong for the story. "
+    "Say yes and I'll redraw it."
 )
+
+
+def redraw_cost_ask(usd: float) -> str:
+    """The ask printed before an object redraw, with this redraw's real total."""
+
+    return REDRAW_COST_ASK.format(usd=usd)
+
 
 #: How long one picture job is watched (as a plate redraw).
 PICTURE_DEADLINE_SECONDS = 900.0
@@ -242,7 +251,7 @@ def _price_lines(
     count = len(cast) + len(props)
     usd = round(float(STILL_USD) * count, 2)
     if count == 1:
-        return count, usd, [f"This draws 1 picture: {name}, ${usd:.2f}."]
+        return count, usd, []
     others = [n for pid, n in props if pid != prop_id] + [n for _, n in cast]
     return (
         count,
@@ -272,11 +281,10 @@ def run_redraw_prop(
     each; current plates and pictures are reused at $0). Its key is
     ``<desk prefix>-prop-<prop_id>-<note hash>[-fresh]-aN``: one per note, so it
     never collides with the plates step's key and a run cut off mid-job picks
-    up the same job. The price is printed first, after
-    :data:`REDRAW_COST_WARNING`. One picture is drawn straight away, as
-    ``redraw-plate`` does; when the story owes more than this one (another
-    object, a character), nothing is sent until ``--confirm-spend`` after that
-    number was shown. The desk's phase is never changed. The picture is saved
+    up the same job. It always asks first: the first run prints
+    :func:`redraw_cost_ask` with the real total (this object plus anything
+    else the story owes a picture) and sends nothing; only ``--confirm-spend``
+    after that total was shown draws (founder, 14 Oct 2026). The desk's phase is never changed. The picture is saved
     as a new ``object-NAME-epNN-vK`` file (never over an older one), each
     picture drawn is booked on the ledger, and the human's yes is asked for
     again with the cast (``approve --gate plates``).
@@ -294,8 +302,8 @@ def run_redraw_prop(
         old picture. A deploy whose ``/openapi.json`` shows the redraw body
         without ``fresh`` is refused before anything is sent.
     confirm_spend
-        The human said yes to the printed total (needed when more than one
-        picture will be drawn).
+        The human said yes to the printed total (always needed; the first run
+        only asks).
     out
         Text stream.
 
@@ -357,24 +365,27 @@ def run_redraw_prop(
         if prop_id not in {pid for pid, _ in props_owed}:
             props_owed = [*props_owed, (prop_id, name)]
         count, usd, lines = _price_lines(name, cast_owed, props_owed, prop_id)
-        print(REDRAW_COST_WARNING, file=out)
-        for line in lines:
-            print(line, file=out)
         price_key = f"prop-{prop_id}-{digest}" + ("-fresh" if fresh else "")
-        if count > 1:
-            shown = load_production(desk).drawing_estimates.get(price_key)
-            if not confirm_spend or shown is None or abs(shown - usd) > 0.001:
-                fresh_state = load_production(desk)
-                fresh_state.drawing_estimates[price_key] = usd
-                save_production(desk, fresh_state)
-                flag = " --fresh" if fresh else ""
-                print(
-                    ("Nothing sent: this price was not shown before. " if confirm_spend else "Nothing sent. ")
-                    + "Show the human the number; their yes, then: "
-                    f'fictora-produce redraw-prop --desk {desk} --prop "{name}" --note "{note}"{flag} --confirm-spend',
-                    file=out,
-                )  # fmt: skip
-                return None
+        shown = load_production(desk).drawing_estimates.get(price_key)
+        if not confirm_spend or shown is None or abs(shown - usd) > 0.001:
+            asked = load_production(desk)
+            asked.drawing_estimates[price_key] = usd
+            save_production(desk, asked)
+            print(redraw_cost_ask(usd), file=out)
+            for line in lines:
+                print(line, file=out)
+            flag = " --fresh" if fresh else ""
+            print(
+                ("Nothing sent: this total was not asked before. " if confirm_spend else "Nothing sent or paid. ")
+                + "Ask the human in those words; after their yes: "
+                f'fictora-produce redraw-prop --desk {desk} --prop "{name}" --note "{note}"{flag} --confirm-spend',
+                file=out,
+            )  # fmt: skip
+            return None
+        print(
+            f"Redrawing {name} with the human's yes: {count} picture(s), ${usd:.2f}.",
+            file=out,
+        )
         if not already or fresh:
             body: dict[str, Any] = {
                 "spine_version": spine["spine_version"],
@@ -655,7 +666,8 @@ def run_remove_prop(desk: Path, *, prop: str, out: Any = None) -> list[Path]:
 
 
 __all__ = [
-    "REDRAW_COST_WARNING",
+    "REDRAW_COST_ASK",
+    "redraw_cost_ask",
     "find_prop",
     "fresh_unsupported_for_props",
     "local_pictures",
