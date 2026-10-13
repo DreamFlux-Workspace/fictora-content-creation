@@ -67,13 +67,24 @@ def _seconds(value: Any, *, where: str) -> float:
     if isinstance(value, bool):
         raise ShotPlanError(f"{where}: seconds must be a number, got {value!r}")
     if isinstance(value, str):
-        text = value.strip().lower().removesuffix("seconds").removesuffix("sec").removesuffix("s").strip()
+        text = (
+            value.strip()
+            .lower()
+            .removesuffix("seconds")
+            .removesuffix("sec")
+            .removesuffix("s")
+            .strip()
+        )
         try:
             value = float(text)
         except ValueError:
-            raise ShotPlanError(f"{where}: seconds must be a number like 3 or 2.5, got {value!r}") from None
+            raise ShotPlanError(
+                f"{where}: seconds must be a number like 3 or 2.5, got {value!r}"
+            ) from None
     if not isinstance(value, (int, float)):
-        raise ShotPlanError(f"{where}: seconds must be a number, got {type(value).__name__}")
+        raise ShotPlanError(
+            f"{where}: seconds must be a number, got {type(value).__name__}"
+        )
     seconds = float(value)
     if not MIN_SECONDS <= seconds <= MAX_SECONDS:
         raise ShotPlanError(
