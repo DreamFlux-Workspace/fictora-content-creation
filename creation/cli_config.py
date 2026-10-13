@@ -47,9 +47,9 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--opening-action",
         default=None,
-        help="Set on the draft: how episode 1's first shot moves, in the human's words "
-        '("she kicks the door open"; 200 characters at most). Beat 1 and the board\'s first cell open on it, '
-        "already in motion. Default: none (the server opens mid-motion on its own).",
+        help="Override only, set on the draft: how episode 1's first shot moves, in the human's words "
+        '("she kicks the door open"; 200 characters at most). Default: none, and the server\'s writer picks '
+        "the opening action itself; never ask the human for one.",
     )
     parser.add_argument(
         "--voice-mode",

@@ -5,7 +5,9 @@ still pose and the real action arrived about 2.5 s in (L-20261005-17, Sighted
 ep 4, NOCLIP ep 3). The server takes an optional ``opening_action`` ("she kicks
 the door open") on the draft (episode 1) and on ``pilot-episodes/{n}/author``
 (episode 2 on); it pins beat 1's motion and the board's first cell to it.
-Empty sends nothing, and the server opens mid-motion on its own as before.
+Empty sends nothing: the server's take-1 writer then picks the opening action
+itself (founder, 13 Oct 2026: never ask the human). The flag is an operator
+override for when the human says it unprompted.
 
 The kit sends it only to a server that takes it: a deploy whose
 ``/openapi.json`` does not list the field is told plainly, before anything is

@@ -7794,8 +7794,9 @@ def add_episode_parsers(
     author.add_argument(
         "--opening-action",
         default=None,
-        help="How this episode's first shot moves, in the human's words (\"he slams the phone down\"; "
-        "200 characters at most). Beat 1 and the board's first cell open on it, already in motion.",
+        help="Override only: how this episode's first shot moves, in the human's words "
+        '("he slams the phone down"; 200 characters at most). Without it the server\'s writer picks the '
+        "opening action itself.",
     )
     author.add_argument(
         "--keep-voices",
