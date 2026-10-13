@@ -43,6 +43,10 @@ class ProductionConfig:
     #: band above and a caption band below (fictora-drama #595). The server decides the board aspect
     #: only at admission, so it must be on the draft. ``None`` (or ``portrait``) sends nothing: portrait.
     delivery_format: str | None = None
+    #: An OVERRIDE of episode 1's opening action, in the human's words ("she kicks the door open"), sent
+    #: on the DRAFT as ``opening_action`` (:mod:`creation.opening_action`). ``None`` (the default) sends
+    #: nothing: the server's writer picks the opening action itself. Never ask the human for one.
+    opening_action: str | None = None
     #: Whose voices the show's takes speak in, chosen at ``start --voice-mode``: ``locked`` (each
     #: character's locked voice, filmed as a dialogue track) or ``model`` (the video model's own voices
     #: from the cast descriptions). Sent to the server once the story exists, and only while the server

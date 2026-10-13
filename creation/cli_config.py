@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 
+from creation.opening_action import clean_opening_action
 from creation.ops.state import LETTERBOX_TAKE_SECONDS_FOR_BAND
 from creation.production_config import ProductionConfig
 
@@ -42,6 +43,13 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
         choices=("portrait", "letterbox"),
         help="Set on the draft: letterbox films a 4:3 picture with a title band above and a caption "
         "band below (needs a server with fictora-drama #595). Default: portrait.",
+    )
+    parser.add_argument(
+        "--opening-action",
+        default=None,
+        help="Override only, set on the draft: how episode 1's first shot moves, in the human's words "
+        '("she kicks the door open"; 200 characters at most). Default: none, and the server\'s writer picks '
+        "the opening action itself; never ask the human for one.",
     )
     parser.add_argument(
         "--voice-mode",
@@ -123,6 +131,7 @@ def config_from_args(args: argparse.Namespace) -> ProductionConfig:
         voice_mode=(
             str(args.voice_mode) if getattr(args, "voice_mode", None) else None
         ),
+        opening_action=clean_opening_action(getattr(args, "opening_action", None)),
         caption_style=style,
         api_captions=args.api_captions is not False,
         fallback_estimate_usd=(
@@ -154,6 +163,8 @@ def merge_config_from_args(
         merged.spoken_language = fresh.spoken_language
     if getattr(args, "voice_mode", None):
         merged.voice_mode = fresh.voice_mode
+    if getattr(args, "opening_action", None):
+        merged.opening_action = fresh.opening_action
     format_changed = bool(getattr(args, "delivery_format", None)) and (
         fresh.delivery_format != saved.delivery_format
     )

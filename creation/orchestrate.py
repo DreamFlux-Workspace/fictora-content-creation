@@ -1514,6 +1514,7 @@ def run_step(
                     spoken_language=cfg.spoken_language,
                     locale=cfg.locale,
                     delivery_format=cfg.delivery_format,
+                    opening_action=cfg.opening_action,
                     deadline_seconds=cfg.poll_plan_deadline_seconds,
                     accept_notices=accept_notices,
                     desk=str(desk),
