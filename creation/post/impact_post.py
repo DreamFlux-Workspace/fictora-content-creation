@@ -1,0 +1,581 @@
+"""Punch up a take's big impact on the frame it lands: a punch-in, or a white flash and a shake ($0, ffmpeg).
+
+What worked in production, by hand: a punch-in or a crop rescued a weak key
+moment (L-20260929-24), and an explosion was sold with a white flash
+(brightness 0.9 to 0 over 0.32 s), a decaying crop shake on the blast frame
+and a full-level boom (L-20261009-9). The manual tools (``zoom``, ``freeze``,
+``soften``...) stay; this is the automatic pass ``finish`` runs as its
+``impact`` step, the same pass the server runs on every hosted episode
+(fictora-drama ``impact_post``), with the same numbers:
+
+* **Which beats.** The effects the ``sfx`` step laid (the take facts' plan:
+  the story's stated impacts and Sound-line events) that name a big impact:
+  :data:`BLAST_STEMS` (an explosion, a boom, a gunshot) or :data:`HIT_STEMS`
+  (a slam, a crash, a punch, a slap...). A knock, a thud, a creak or the
+  opening hook gets nothing.
+* **Where.** On MEASURED motion: the clearest motion spike in the effect's
+  filmed shot (:func:`creation.post.sfx_motion.action_moment`, the trace the
+  ``sfx`` step snapped the effect to), and only where the effect is heard
+  (within :data:`SOUND_TOLERANCE_SECONDS`). No clear spike, no effect.
+* **What.** A blast gets the white flash and a decaying crop shake; a hard
+  hit gets a quick punch-in (held, then eased back) and a small shake. Each
+  stays inside its filmed shot.
+* **Taste.** At most :data:`MAX_MOMENTS_PER_TAKE` per take (blasts first,
+  then the strongest motion), never overlapping, never mid-line.
+
+Same length, same frames; the sound is copied untouched. Desks created before
+6 Oct 2026 do not run it: their effects do not follow the action yet
+(:mod:`creation.post.sfx_motion`), so a flash would not land with its boom.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+import subprocess
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from statistics import median
+from typing import Any, Literal
+
+import numpy as np
+
+from creation.harness_rules import is_opening_cue
+from creation.post.media import MediaToolError, ffmpeg_bin, ffprobe_bin
+from creation.post.sfx_motion import Trace, action_moment
+
+ImpactStyle = Literal["blast", "hit"]
+
+#: Impacts that get the white flash and the shake: things that go off (fictora-drama ``impact_post``).
+BLAST_STEMS = frozenset({"explosion", "explode", "boom", "gunshot", "bang"})
+#: Hard hits that get the punch-in and a small shake. A knock, thud, crack or clatter is not one.
+HIT_STEMS = frozenset(
+    {
+        "slam",
+        "crash",
+        "smash",
+        "shatter",
+        "punch",
+        "kick",
+        "slap",
+        "smack",
+        "whack",
+        "thwack",
+    }
+)
+
+#: At most this many punched-up moments in one take: one or two, never a light show.
+MAX_MOMENTS_PER_TAKE = 2
+#: A moment this close to a spoken line (either side) is mid-line: left alone.
+SPEECH_GUARD_SECONDS = 0.15
+#: The spike must be this close to where the effect was laid: the flash lands with its boom.
+SOUND_TOLERANCE_SECONDS = 0.1
+
+#: The blast's white flash: its peak on the blast frame, falling to 0 over this long (L-20261009-9).
+FLASH_PEAK = 0.9
+FLASH_SECONDS = 0.32
+#: The blast's crop shake: peak offset (fraction of the frame), how long.
+BLAST_SHAKE_AMPLITUDE = 0.015
+BLAST_SHAKE_SECONDS = 0.5
+#: The hard hit's punch-in: how far in, held this long on the hit, then eased back over this long.
+PUNCH_ZOOM = 1.1
+PUNCH_HOLD_SECONDS = 0.3
+PUNCH_RELEASE_SECONDS = 0.5
+#: The hard hit's small shake.
+HIT_SHAKE_AMPLITUDE = 0.006
+HIT_SHAKE_SECONDS = 0.25
+#: The shake's decay time constant and its two frequencies (Hz, across and up).
+SHAKE_DECAY_SECONDS = 0.18
+SHAKE_HZ_X = 13.0
+SHAKE_HZ_Y = 9.0
+#: Where a punch-in aims (fraction of the height): faces sit high in a 9:16 frame.
+PUNCH_ANCHOR_Y = 0.42
+
+#: Every word the server reads as a hit (fictora-drama ``impact_sfx._IMPACT_STEMS``): the FIRST one in
+#: a sound decides it, as on the server ("a door slams with a thud" is a slam).
+_IMPACT_STEMS = (
+    "crack", "crunch", "snap", "slam", "bang", "boom", "thud", "thump", "crash", "smash",
+    "shatter", "clang", "clank", "clatter", "grind", "knock", "punch", "slap", "smack",
+    "whack", "thwack", "stomp", "kick", "splinter", "gunshot", "explosion", "explode",
+)  # fmt: skip
+_IMPACT = re.compile(
+    r"(" + "|".join(_IMPACT_STEMS) + r")(s|es|ed|d|ing|ped|ping|med|ming|ded|ding)?",
+    re.IGNORECASE,
+)
+_NEGATION = re.compile(
+    r"\b(?:no|not|never|nor|without|silent|silently)\b|n't\b", re.IGNORECASE
+)
+_CLAUSE_SPLIT = re.compile(r"[,;:.!?—–]|\s-\s|\bthen\b", re.IGNORECASE)
+_DETERMINERS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "his",
+        "her",
+        "its",
+        "their",
+        "my",
+        "your",
+        "our",
+        "one",
+        "that",
+        "this",
+    }
+)
+#: The exact colour round trip: without these flags swscale moves every pixel ~2 levels (yuv -> rgb -> yuv).
+_EXACT_SCALE = "accurate_rnd+full_chroma_int"
+
+
+def impact_stem(sound: str) -> str | None:
+    """The first impact word a sound names, as its stem, or ``None`` (none, denied, or an adjective).
+
+    Parameters
+    ----------
+    sound
+        A cue's words.
+
+    Returns
+    -------
+    str | None
+        ``"slam"``, ``"explode"``...; ``None`` for "no explosion", "the cracked mug" or no hit.
+    """
+
+    for clause in _CLAUSE_SPLIT.split(sound):
+        words = re.findall(r"[A-Za-z0-9'’-]+", clause)
+        for index, word in enumerate(words):
+            match = _IMPACT.fullmatch(word)
+            if match is None:
+                continue
+            suffix = (match.group(2) or "").casefold()
+            before = words[index - 1].casefold() if index else ""
+            if suffix in {"ed", "d", "ped", "med", "ded"} and before in _DETERMINERS:
+                continue
+            if _NEGATION.search(" ".join(words[:index])):
+                continue
+            return match.group(1).casefold()
+    return None
+
+
+def impact_style(sound: str, kind: str) -> ImpactStyle | None:
+    """Whether a laid effect is a big impact beat.
+
+    Parameters
+    ----------
+    sound
+        The effect's words.
+    kind
+        ``event`` or ``sustained``.
+
+    Returns
+    -------
+    ImpactStyle | None
+        ``blast`` (an explosion, boom, gunshot), ``hit`` (a hard hit) or ``None``.
+    """
+
+    if kind != "event" or is_opening_cue(sound):
+        return None
+    stem = impact_stem(sound)
+    if stem in BLAST_STEMS:
+        return "blast"
+    if stem in HIT_STEMS:
+        return "hit"
+    return None
+
+
+@dataclass(frozen=True)
+class Move:
+    """The picture on one frame: zoom about ``(anchor_x, anchor_y)``, a shift (fractions) and a white flash."""
+
+    zoom: float = 1.0
+    anchor_x: float = 0.5
+    anchor_y: float = 0.5
+    flash: float = 0.0
+    shift_x: float = 0.0
+    shift_y: float = 0.0
+
+    def matrix(self, width: int, height: int) -> np.ndarray:
+        """The 2x3 affine (output pixel -> source pixel) for OpenCV ``warpAffine`` with ``WARP_INVERSE_MAP``.
+
+        Parameters
+        ----------
+        width, height
+            The frame size.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``[[s, 0, tx], [0, s, ty]]``.
+        """
+
+        ax, ay = self.anchor_x * width, self.anchor_y * height
+        s = 1.0 / self.zoom
+        dx, dy = self.shift_x * width, self.shift_y * height
+        return np.asarray(
+            [[s, 0.0, ax * (1.0 - s) + dx], [0.0, s, ay * (1.0 - s) + dy]],
+            dtype=np.float64,
+        )
+
+
+@dataclass(frozen=True)
+class ImpactMoment:
+    """One punched-up impact: the measured frame it lands on, when its effect is over, its style."""
+
+    time: float
+    until: float
+    style: ImpactStyle
+    label: str
+
+    def one_line(self) -> str:
+        """``a gas tank explodes: flash + shake at 2.04s``."""
+
+        what = "flash + shake" if self.style == "blast" else "punch-in + shake"
+        return f"{self.label}: {what} at {self.time:.2f}s"
+
+
+def effect_seconds(style: ImpactStyle) -> float:
+    """How long a moment's effect lasts from its impact frame.
+
+    Parameters
+    ----------
+    style
+        The moment's style.
+
+    Returns
+    -------
+    float
+        Seconds.
+    """
+
+    if style == "blast":
+        return max(FLASH_SECONDS, BLAST_SHAKE_SECONDS)
+    return max(PUNCH_HOLD_SECONDS + PUNCH_RELEASE_SECONDS, HIT_SHAKE_SECONDS)
+
+
+def _shake(dt: float, amplitude: float, seconds: float) -> tuple[float, float, float]:
+    if dt >= seconds:
+        return 0.0, 0.0, 0.0
+    envelope = amplitude * math.exp(-dt / SHAKE_DECAY_SECONDS)
+    return (
+        envelope * math.sin(2 * math.pi * SHAKE_HZ_X * dt),
+        envelope * math.cos(2 * math.pi * SHAKE_HZ_Y * dt),
+        envelope,
+    )
+
+
+def moment_move(moment: ImpactMoment, seconds: float) -> Move | None:
+    """The picture's move at ``seconds`` from one moment, or ``None`` outside it.
+
+    Parameters
+    ----------
+    moment
+        The impact.
+    seconds
+        Time into the take.
+
+    Returns
+    -------
+    Move | None
+        Flash, zoom and shift; the zoom always covers the shake (no frame edge shows).
+    """
+
+    if not moment.time <= seconds < moment.until:
+        return None
+    dt = seconds - moment.time
+    if moment.style == "blast":
+        flash = FLASH_PEAK * (1.0 - dt / FLASH_SECONDS) if dt < FLASH_SECONDS else 0.0
+        sx, sy, envelope = _shake(dt, BLAST_SHAKE_AMPLITUDE, BLAST_SHAKE_SECONDS)
+        return Move(zoom=1.0 + 2.5 * envelope, flash=flash, shift_x=sx, shift_y=sy)
+    if dt < PUNCH_HOLD_SECONDS:
+        zoom = PUNCH_ZOOM
+    else:
+        p = min(1.0, (dt - PUNCH_HOLD_SECONDS) / PUNCH_RELEASE_SECONDS)
+        zoom = PUNCH_ZOOM + (1.0 - PUNCH_ZOOM) * (p * p * (3.0 - 2.0 * p))
+    sx, sy, envelope = _shake(dt, HIT_SHAKE_AMPLITUDE, HIT_SHAKE_SECONDS)
+    return Move(
+        zoom=max(zoom, 1.0 + 2.5 * envelope),
+        anchor_y=PUNCH_ANCHOR_Y,
+        shift_x=sx,
+        shift_y=sy,
+    )
+
+
+@dataclass(frozen=True)
+class ImpactPlan:
+    """The take's punched-up moments and why other impacts were left alone."""
+
+    moments: tuple[ImpactMoment, ...] = ()
+    skipped: tuple[str, ...] = ()
+
+    def move_at(self, seconds: float) -> Move | None:
+        """The move at ``seconds``, or ``None`` (the frame is left exactly as it is).
+
+        Parameters
+        ----------
+        seconds
+            Time into the take.
+
+        Returns
+        -------
+        Move | None
+            The move.
+        """
+
+        for moment in self.moments:
+            moved = moment_move(moment, seconds)
+            if moved is not None:
+                return moved
+        return None
+
+    def one_line(self) -> str:
+        """What was punched up and what was left alone."""
+
+        parts = [moment.one_line() for moment in self.moments]
+        if self.skipped:
+            parts.append("left alone: " + "; ".join(self.skipped))
+        return "; ".join(parts) or "no big impact on this take"
+
+
+def plan_impacts(
+    cues: Sequence[Any],
+    windows: Mapping[int, tuple[float, float]],
+    trace: Trace,
+    *,
+    cuts: Sequence[float] = (),
+    speech: Sequence[tuple[float, float]] = (),
+) -> ImpactPlan:
+    """Choose the take's punched-up moments on its measured motion.
+
+    Parameters
+    ----------
+    cues
+        The laid effects (:class:`creation.post.sfx.SfxCue`: ``sound``, ``kind``, ``shot_index``,
+        ``start``), on their filmed shots.
+    windows
+        ``shot_index -> (start, end)`` as filmed.
+    trace
+        :func:`creation.post.sfx_motion.measure_motion`.
+    cuts
+        Cuts measured on the take.
+    speech
+        Spoken-line windows.
+
+    Returns
+    -------
+    ImpactPlan
+        At most :data:`MAX_MOMENTS_PER_TAKE` moments in time order, none overlapping, none mid-line,
+        each on a measured spike where its effect is heard; every impact left alone is named.
+    """
+
+    typical = median(v for _t, v in trace) if trace else 0.0
+    candidates: list[tuple[int, float, ImpactMoment]] = []
+    skipped: list[str] = []
+    for cue in cues:
+        style = impact_style(cue.sound, cue.kind)
+        if style is None:
+            continue
+        shot = windows.get(cue.shot_index)
+        if shot is None:
+            skipped.append(f"{cue.sound} (its shot was not filmed)")
+            continue
+        peak = action_moment(trace, around=cue.start, shot=shot, cuts=tuple(cuts))
+        if peak.time is None:
+            skipped.append(f"{cue.sound} ({peak.reason})")
+            continue
+        if abs(peak.time - cue.start) > SOUND_TOLERANCE_SECONDS:
+            skipped.append(
+                f"{cue.sound} (the action at {peak.time:.2f}s is not where the effect plays, {cue.start:.2f}s)"
+            )
+            continue
+        if any(
+            a - SPEECH_GUARD_SECONDS <= peak.time <= b + SPEECH_GUARD_SECONDS
+            for a, b in speech
+        ):
+            skipped.append(f"{cue.sound} (mid-line at {peak.time:.2f}s)")
+            continue
+        strength = (
+            max((v for t, v in trace if abs(t - peak.time) < 1e-3), default=typical)
+            - typical
+        )
+        until = min(peak.time + effect_seconds(style), shot[1])
+        candidates.append(
+            (
+                0 if style == "blast" else 1,
+                -strength,
+                ImpactMoment(peak.time, round(until, 3), style, cue.sound),
+            )
+        )
+    chosen: list[ImpactMoment] = []
+    for _rank, _strength, moment in sorted(
+        candidates, key=lambda c: (c[0], c[1], c[2].time)
+    ):
+        if any(abs(moment.time - other.time) < 1e-3 for other in chosen):
+            continue  # the same hit laid twice
+        if len(chosen) >= MAX_MOMENTS_PER_TAKE:
+            skipped.append(
+                f"{moment.label} (already {MAX_MOMENTS_PER_TAKE} on this take)"
+            )
+            continue
+        if any(
+            moment.time < other.until and other.time < moment.until for other in chosen
+        ):
+            skipped.append(f"{moment.label} (overlaps a stronger moment)")
+            continue
+        chosen.append(moment)
+    return ImpactPlan(tuple(sorted(chosen, key=lambda m: m.time)), tuple(skipped))
+
+
+@dataclass(frozen=True)
+class ImpactResult:
+    """What :func:`apply_impacts` wrote."""
+
+    output: Path
+    plan: ImpactPlan
+
+    def one_line(self) -> str:
+        """Report line."""
+
+        return (
+            f"{self.plan.one_line()} -> {self.output.name}; length and sound unchanged"
+        )
+
+
+def _probe(path: Path) -> tuple[int, int, float, bool]:
+    import json
+
+    run = subprocess.run(
+        [ffprobe_bin(), "-v", "error", "-select_streams", "v:0", "-show_entries",
+         "stream=width,height,r_frame_rate,color_space", "-of", "json", str(path)],
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    streams = json.loads(run.stdout or "{}").get("streams") or []
+    if run.returncode != 0 or not streams:
+        raise MediaToolError(f"no picture in {path.name}")
+    stream = streams[0]
+    num, _, den = str(stream.get("r_frame_rate") or "24/1").partition("/")
+    fps = float(num) / float(den or 1) if float(den or 1) else 24.0
+    return (
+        int(stream["width"]),
+        int(stream["height"]),
+        fps if fps > 0 else 24.0,
+        str(stream.get("color_space") or "") == "bt709",
+    )
+
+
+def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
+    """Render the moments onto the take: same size, length and frames, the sound copied untouched.
+
+    Parameters
+    ----------
+    take
+        Video.
+    plan
+        :func:`plan_impacts` (with at least one moment).
+    out
+        New file.
+
+    Returns
+    -------
+    ImpactResult
+        The file and the plan.
+
+    Raises
+    ------
+    FileExistsError
+        When ``out`` exists.
+    MediaToolError
+        When ffmpeg fails.
+    """
+
+    import cv2
+
+    if out.exists():
+        raise FileExistsError(f"{out} exists; impact never overwrites")
+    width, height, fps, bt709 = _probe(take)
+    ffmpeg = ffmpeg_bin()
+    picture = out.with_name(f"{out.stem}.picture.mp4")
+    matrix = ":out_color_matrix=bt709" if bt709 else ""
+    tags = (
+        ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]
+        if bt709
+        else []
+    )
+    reader = subprocess.Popen(
+        [ffmpeg, "-hide_banner", "-loglevel", "error", "-i", str(take), "-map", "0:v:0",
+         "-vf", f"fps={fps:.6f},scale=flags={_EXACT_SCALE}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )  # fmt: skip
+    writer = subprocess.Popen(
+        [ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+         "-s", f"{width}x{height}", "-r", f"{fps:g}", "-i", "-",
+         "-vf", f"scale=flags={_EXACT_SCALE}{matrix},format=yuv420p",
+         "-c:v", "libx264", "-preset", "medium", "-crf", "16", *tags, "-an", "-y", str(picture)],
+        stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+    )  # fmt: skip
+    assert reader.stdout is not None and writer.stdin is not None
+    size = width * height * 3
+    index = 0
+    try:
+        while True:
+            raw = reader.stdout.read(size)
+            if len(raw) < size:
+                break
+            frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
+            move = plan.move_at(index / fps)
+            if move is not None:
+                frame = cv2.warpAffine(
+                    frame, move.matrix(width, height), (width, height),
+                    flags=cv2.INTER_CUBIC | cv2.WARP_INVERSE_MAP, borderMode=cv2.BORDER_REFLECT,
+                )  # fmt: skip
+                if move.flash > 0:
+                    frame = cv2.addWeighted(
+                        frame,
+                        1.0 - move.flash,
+                        np.full_like(frame, 255),
+                        move.flash,
+                        0.0,
+                    )
+            writer.stdin.write(np.ascontiguousarray(frame).tobytes())
+            index += 1
+        writer.stdin.close()
+        reader.wait(timeout=600)
+        writer.wait(timeout=600)
+    except (subprocess.TimeoutExpired, BrokenPipeError) as exc:
+        reader.kill()
+        writer.kill()
+        raise MediaToolError(f"the impact render failed: {exc}") from exc
+    if reader.returncode != 0 or writer.returncode != 0 or index == 0:
+        err = writer.stderr.read().decode("utf-8", "replace") if writer.stderr else ""
+        picture.unlink(missing_ok=True)
+        raise MediaToolError(f"the impact render failed: {err[-300:]}")
+    run = subprocess.run(
+        [ffmpeg, "-v", "error", "-y", "-i", str(picture), "-i", str(take), "-map", "0:v:0", "-map", "1:a?",
+         "-c:v", "copy", "-c:a", "copy", "-movflags", "+faststart", str(out)],
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    picture.unlink(missing_ok=True)
+    if run.returncode != 0:
+        raise MediaToolError(f"the impact mux failed: {(run.stderr or '')[-300:]}")
+    return ImpactResult(out, plan)
+
+
+__all__ = [
+    "BLAST_STEMS",
+    "FLASH_PEAK",
+    "FLASH_SECONDS",
+    "HIT_STEMS",
+    "MAX_MOMENTS_PER_TAKE",
+    "PUNCH_ZOOM",
+    "SOUND_TOLERANCE_SECONDS",
+    "ImpactMoment",
+    "ImpactPlan",
+    "ImpactResult",
+    "Move",
+    "apply_impacts",
+    "effect_seconds",
+    "impact_stem",
+    "impact_style",
+    "moment_move",
+    "plan_impacts",
+]

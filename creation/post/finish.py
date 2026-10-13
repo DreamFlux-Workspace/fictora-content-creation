@@ -42,6 +42,14 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    saved as a music change note for the harness (:func:`creation.post.bed.record_music_note`),
    and every finish prints the saved notes (``music-note --send-saved`` sends them to the harness).
 3. ``colour``    - match the take to the board the human approved.
+   ``impact``    - the take's big impact beats punched up on the frame their
+   effect plays (:mod:`creation.post.impact_post`, L-20261009-9; the server's
+   pass, same numbers): a white flash (0.9 -> 0 over 0.32 s) and a decaying
+   shake on an explosion, gunshot or boom; a quick punch-in and a small shake
+   on a hard hit (slam, crash, punch, slap). Only on measured motion where the
+   effect is heard, at most two per take, never mid-line; the sound is
+   copied untouched. ``--no-impact`` skips it; a desk made before 6 Oct 2026
+   skips it (its effects do not follow the action yet). Free.
 4. ``mix``       - bed under the take, ducked under the voice, gain measured
    so the mix lands near -18 LUFS; ``--duck-db N`` for an exact duck depth.
    The bed before and after ducking and the duck key are saved beside the mix
@@ -315,6 +323,7 @@ from creation.post.sfx import (
     saved_take_facts,
     service_renderer,
 )
+from creation.post.impact_post import apply_impacts, impact_style, plan_impacts
 from creation.post.sfx_motion import (
     MotionMeter,
     MotionSnaps,
@@ -1188,6 +1197,7 @@ def run_finish(
     no_panels: bool = False,
     thought_db: float = 0.0,
     accept_line_mismatch: tuple[str, ...] = (),
+    impact: bool = True,
 ) -> FinishResult:
     """Run the whole local post chain on one accepted take.
 
@@ -1326,6 +1336,12 @@ def run_finish(
         8 Oct 2026: re-film the take). The same flag delivers a take of either voice mode
         with a ``SPEAKER NOT ON SCREEN`` fault (:mod:`creation.post.speaker_screen`; founder
         decision 12 Oct 2026).
+    impact
+        The ``impact`` step (default on; ``--no-impact`` turns it off): the take's big impact beats
+        punched up on the frame their effect plays (:mod:`creation.post.impact_post`: a white flash
+        and a shake on a blast, a punch-in on a hard hit; at most two, never mid-line), as the
+        server does on every hosted episode. A desk made before 6 Oct 2026 skips it (its effects
+        do not follow the action yet).
     stream
         Progress output (stderr by default).
 
@@ -1538,6 +1554,8 @@ def run_finish(
         "db_source": "flag" if bed_db is not None else "default",
     }
     voice_state: dict[str, Path | None] = {"path": None}
+    # For the impact step: (measured file, filmed windows, cuts) and the effects laid on the filmed shots.
+    impact_state: dict[str, Any] = {"picture": None, "cues": (), "trace": None}
     # The inner-voice step's output (what the mix ducks under) and each laid thought: (cue, placed, seconds).
     thought_state: dict[str, Any] = {"path": None, "laid": []}
     # For the finish record `join` reads: what the mix read, and what the mark went on.
@@ -1990,6 +2008,7 @@ def run_finish(
         """
 
         moved, note, picture = filmed_cut_placement(plan, payload, take)
+        impact_state["picture"] = picture
         if legacy_rules():
             return moved, note
         return on_filmed_action(moved, picture, note)
@@ -2010,6 +2029,7 @@ def run_finish(
             trace = (motion_meter or measure_motion)(measured)
         except (RuntimeError, OSError, MediaToolError) as exc:
             return plan, f"{note}; {MotionSnaps(error=str(exc)).one_line()}"
+        impact_state["trace"] = trace  # the impact step reads the same trace (never measured twice)
         cues, snaps = snap_to_action(plan.cues, windows, trace, cuts=cuts)
         line = snaps.one_line()
         return replace(plan, cues=cues), f"{note}; {line}" if line else note
@@ -2115,6 +2135,7 @@ def run_finish(
                 filmed_note += (
                     f"; {len(in_track)} effect(s) already in the track, not laid again"
                 )
+        impact_state["cues"] = tuple(in_track)
         if locked:
             # The dialogue track is the take's sound: its line windows are exact and do not move with the cuts.
             plan = replace(plan, speech=line_windows(soundtrack))
@@ -2232,6 +2253,7 @@ def run_finish(
                 stream=out,
                 unit="sfx",
             )
+        impact_state["cues"] = (*in_track, *sfx.mixed)
         bed_state["cues"] = tuple(
             CueLevel(c.sound, c.start, c.seconds, peak, c.gain_db)
             for c, peak in zip(sfx.mixed, sfx.peaks_db)
@@ -2528,6 +2550,39 @@ def run_finish(
             f"Colour match to `{board.name}` -> `{matched.output.name}`: {matched.one_line()}",
         )
         return StepReport("colour", "ran", matched.one_line(), matched.output)
+
+    def do_impact(take: Path) -> StepReport:
+        """The take's big impact beats punched up on the frame their effect plays (L-20261009-9)."""
+
+        if not impact:
+            return StepReport("impact", "skipped", "--no-impact")
+        if legacy_rules():
+            return StepReport(
+                "impact",
+                "skipped",
+                "a desk made before 6 Oct 2026: its effects do not follow the action, so a flash would "
+                "not land with its sound",
+            )
+        if not any(impact_style(c.sound, c.kind) for c in impact_state["cues"]):
+            # Nothing is measured for a take with no big impact.
+            return StepReport("impact", "skipped", "no big impact on this take")
+        if impact_state["picture"] is None:
+            return StepReport("impact", "skipped", "the take's cuts were not measured")
+        measured, windows, cuts = impact_state["picture"]
+        trace = impact_state["trace"]
+        if trace is None:
+            trace = (motion_meter or measure_motion)(measured)
+        speech = bed_state["speech"] or ()
+        plan = plan_impacts(
+            impact_state["cues"], windows, trace, cuts=cuts, speech=speech
+        )
+        if not plan.moments:
+            return StepReport("impact", "skipped", plan.one_line())
+        done = apply_impacts(
+            take, plan, next_versioned_path(takes, f"{base}-impact", ".mp4")
+        )
+        append_run_note(run_dir, f"Impact -> `{done.output.name}`: {done.one_line()}")
+        return StepReport("impact", "ran", done.one_line(), done.output)
 
     def do_mix(take: Path) -> StepReport:
         record_state["pre_bed"] = take
@@ -3145,6 +3200,7 @@ def run_finish(
         append_run_note(run_dir, f"Finish · STOPPED: {result.stopped}")
     else:
         step("colour", "Matching the look to the approved board", do_colour)
+        step("impact", "Punching up the big impact beats", do_impact)
         step("mix", "Mixing the bed under the voice at a measured level", do_mix)
         if sign_overlay and overlays:
             step(
