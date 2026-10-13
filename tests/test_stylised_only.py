@@ -380,7 +380,10 @@ def test_a_notice_without_a_matched_phrase_prints_no_empty_line() -> None:
     ("brief", "expected"),
     [
         ("A washed-up boxer fights one last bout.", "modern-dark-fantasy"),
-        ("A love story told through fights in an underground ring.", "modern-dark-fantasy"),
+        (
+            "A love story told through fights in an underground ring.",
+            "modern-dark-fantasy",
+        ),
         ("A heist crew double-crossed mid-job.", "modern-dark-fantasy"),
         ("A cyberpunk brawler in a neon city.", "cyberpunk"),
         ("A live-action K-drama romance.", "modern-romance-3"),
@@ -392,11 +395,18 @@ def test_an_action_brief_is_pointed_at_a_hard_look(brief: str, expected: str) ->
     assert so.closest_preset(brief) == expected
 
 
-def test_the_skill_asks_for_few_long_fight_shots_lead_seams_and_offscreen_sound() -> None:
+def test_the_skill_asks_for_few_long_fight_shots_lead_seams_and_offscreen_sound() -> (
+    None
+):
     root = Path(__file__).resolve().parents[1]
     for skill in (".claude", ".cursor"):
-        text = (root / skill / "skills" / "episode-production" / "SKILL.md").read_text(encoding="utf-8")
-        assert "An action or fight show takes Cold Gate (`modern-dark-fantasy`) or Riot Ink (`cyberpunk`)" in text
+        text = (root / skill / "skills" / "episode-production" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        assert (
+            "An action or fight show takes Cold Gate (`modern-dark-fantasy`) or Riot Ink (`cyberpunk`)"
+            in text
+        )
         assert "**Fights are few, long shots**" in text
         assert "**Seams: the same close-up of the lead**" in text
         assert "**Off-screen sound stays sound**" in text
