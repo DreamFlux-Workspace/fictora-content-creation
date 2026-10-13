@@ -526,6 +526,11 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--no-colour-match", action="store_true", help="Keep the take's own look."
     )
     fin.add_argument(
+        "--no-impact",
+        action="store_true",
+        help="Keep the big impact beats as filmed (no automatic flash, shake or punch-in).",
+    )
+    fin.add_argument(
         "--colour-strength", type=float, default=1.0, help="0..1 toward the board."
     )
     fin.add_argument(
@@ -1052,6 +1057,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             no_panels=args.no_panels,
             thought_db=args.thought_db,
             accept_line_mismatch=tuple(args.accept_line_mismatch),
+            impact=not args.no_impact,
         )
         if args.json:
             print(json.dumps(result.as_json(), indent=2))
