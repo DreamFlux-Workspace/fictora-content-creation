@@ -4,10 +4,14 @@ The server refuses someone added to a shot with no staging
 (``frame_cast_needs_staging``), so the operator had to write their whole
 ``subject_blocking`` entry by hand. The kit now writes a default one (their
 side on the episode's other frames, else opposite the lead; still pose; facing
-the lead) and sends it with the whole brief.
+the lead) and sends it with the whole brief, only for someone already in the
+episode (a line in it, or a shot of it): anyone else is refused before
+anything is sent (founder, 13 Oct 2026).
 """
 
 from __future__ import annotations
+
+import pytest
 
 from creation import episode_commands as ec
 from creation.default_staging import (
@@ -78,3 +82,19 @@ def test_frame_side_ignores_hands_and_relative_places() -> None:
     assert frame_side("frame right, in the middle plane") == "right"
     assert frame_side("centre, her left hand on the rail") == "center"
     assert frame_side("just right of the door") is None
+
+
+def test_someone_not_in_the_episode_is_refused_before_anything_is_sent() -> None:
+    spine = spine_fixture()
+    spine["cast"].append({**spine["cast"][1], "cast_id": "cast_kai", "name": "Kai"})
+
+    with pytest.raises(ec.CommandStopped, match="Kai is not in this episode") as caught:
+        ec.build_patch(
+            spine,
+            episode=1,
+            frame="frame_episode_01_01",
+            assignments=[ec.parse_assignment('cast_refs=["Hana", "Kai"]')],
+        )
+
+    assert "line --add" in str(caught.value)
+    assert "Nothing was sent" in str(caught.value)

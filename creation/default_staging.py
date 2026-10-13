@@ -14,6 +14,11 @@ for them and sends it with the whole brief, so the edit goes through:
 * pose: still, hands in view;
 * gaze and interaction: toward the lead, or the centre of the shot.
 
+Only someone already in the frame's episode (a line in it, or a shot of it
+that stages them: :func:`cast_ids_in_episode`) is added this way (founder,
+13 Oct 2026: who is on screen is decided with the episode's characters; the
+kit never introduces someone new to an episode through a shot).
+
 The same rule as fictora-drama's ``spine_frame_cast_edits.default_subject_blocking``
 (which the app's director uses). The kit keeps its own copy because it never
 imports server code (AGENTS.md boundary); keep the two in step.
@@ -57,6 +62,45 @@ def frame_side(text: str | None) -> str | None:
     if lateral:
         return None
     return "center" if words else None
+
+
+def cast_ids_in_episode(
+    spine: Mapping[str, Any], episode_id: str | None
+) -> frozenset[str]:
+    """The cast ids an episode already uses: a line of theirs, or a frame that stages them.
+
+    Parameters
+    ----------
+    spine
+        The story (``api/spine.json``).
+    episode_id
+        The episode.
+
+    Returns
+    -------
+    frozenset[str]
+        Ids that speak in, or are staged on, the episode's beats and frames
+        (the server's ``cast_roster.cast_ids_in_episode``).
+    """
+
+    ids: set[str] = set()
+    for beat in spine.get("beats") or []:
+        if isinstance(beat, Mapping) and beat.get("episode_id") == episode_id:
+            ids.update(
+                str(line.get("cast_id"))
+                for line in beat.get("dialogue_lines") or []
+                if isinstance(line, Mapping) and line.get("cast_id")
+            )
+    for frame in spine.get("frames") or []:
+        if isinstance(frame, Mapping) and frame.get("episode_id") == episode_id:
+            ids.update(str(ref) for ref in frame.get("cast_refs") or [] if ref)
+            ids.update(
+                str(entry.get("cast_id"))
+                for entry in (frame.get("visual_brief") or {}).get("subject_blocking")
+                or []
+                if isinstance(entry, Mapping) and entry.get("cast_id")
+            )
+    return frozenset(ids)
 
 
 def _nearest_own_side(
@@ -154,4 +198,9 @@ def default_subject_blocking(
     return entries
 
 
-__all__ = ["ADDED_CAST_POSE", "default_subject_blocking", "frame_side"]
+__all__ = [
+    "ADDED_CAST_POSE",
+    "cast_ids_in_episode",
+    "default_subject_blocking",
+    "frame_side",
+]

@@ -57,7 +57,7 @@ import httpx
 
 from creation import inner_voice
 from creation.captions import is_english
-from creation.default_staging import default_subject_blocking
+from creation.default_staging import cast_ids_in_episode, default_subject_blocking
 from creation.authoring_warnings import (
     authoring_warnings,
     for_episode,
@@ -2273,7 +2273,19 @@ def _frame_patch(
     if wanted_refs is not None and not changed and added and stored:
         # #19: someone added by cast_refs alone gets a default place to stand
         # (the server refuses them with no staging, frame_cast_needs_staging).
-        # The whole brief goes, with the blocking in cast_refs order.
+        # The whole brief goes, with the blocking in cast_refs order. Only
+        # someone already in this episode (founder, 13 Oct 2026).
+        in_episode = cast_ids_in_episode(spine, found.get("episode_id"))
+        outside = [cast_id for cast_id in added if cast_id not in in_episode]
+        if outside:
+            names = _cast_names(spine)
+            who = ", ".join(names.get(cast_id, cast_id) for cast_id in outside)
+            raise CommandStopped(
+                f"{who} {'is' if len(outside) == 1 else 'are'} not in this episode (no line in it, not in any "
+                "of its shots), so the kit will not put them in this shot. Who is on screen is decided with the "
+                "episode's characters: give them a line in this episode first (`line --add ...`), then add them "
+                "to the shot. Nothing was sent."
+            )
         brief["subject_blocking"] = default_subject_blocking(spine, found, wanted_refs)
         if (
             brief.get("reaction_cast_id")
