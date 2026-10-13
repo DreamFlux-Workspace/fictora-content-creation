@@ -23,6 +23,21 @@ from creation.production_state import (
 from fake_api import FakeApi, png_bytes, spine_fixture
 
 
+@pytest.fixture(autouse=True)
+def _one_reel_per_run(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plain reel run makes both openings (13 Oct 2026); the tests of a single reel's books see one.
+
+    Mark a test ``both_openings`` to see the pair.
+    """
+
+    if request.node.get_closest_marker("both_openings") is None:
+        from creation.post import reel_via_server
+
+        monkeypatch.setattr(reel_via_server, "BOTH_OPENINGS", False)
+
+
 @pytest.fixture
 def desk(tmp_path: Path) -> Path:
     """A 15s desk with episode 1 drafted (spine ``sp1``), ready for later stages."""
