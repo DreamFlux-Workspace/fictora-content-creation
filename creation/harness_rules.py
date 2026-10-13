@@ -615,12 +615,30 @@ def hook_mouth_edit_stop(
     return _hook_mouth_text(beat)
 
 
+def _beat_camera_move(beat: Mapping[str, Any]) -> str:
+    """A wordless beat's own camera move (``motion_direction.camera.move``), or ``""``."""
+
+    direction = beat.get("motion_direction") or {}
+    if not isinstance(direction, Mapping):
+        return ""
+    camera = direction.get("camera")
+    if isinstance(camera, Mapping):
+        return str(camera.get("move") or "")
+    return str(direction.get("camera_move") or camera or "")
+
+
 def locked_camera_line(spine: Mapping[str, Any], *, episode: int) -> str | None:
     """Warn when every shot on the episode is a locked camera.
 
     A draft locks the camera. Set the move before the board is drawn, with
     ``edit --beat N --shot``. A push-in on the first frame is how a close-up
     hook gets past a medium opening.
+
+    What is read is the camera the take will play (L-20261001-31): each
+    picture's own plan (``row_direction.camera_move``) when the episode has
+    one, else the shot plan's cameras and each wordless beat's own move. A
+    speaking beat's ``locked`` is its lip-sync token, not its camera, and is
+    never counted: the take moves it (a slow push, or its row's move).
 
     Parameters
     ----------
@@ -635,21 +653,29 @@ def locked_camera_line(spine: Mapping[str, Any], *, episode: int) -> str | None:
         The warning, or ``None`` when any shot already has a move.
     """
 
-    cameras: list[str] = []
-    for beat in _episode_beats(spine, episode):
-        plan = beat.get("shot_plan") or []
-        if isinstance(plan, list) and plan:
-            for shot in plan:
-                if isinstance(shot, Mapping):
-                    cameras.append(
-                        str(shot.get("camera") or shot.get("camera_move") or "")
-                    )
-            continue
-        direction = beat.get("motion_direction") or {}
-        if isinstance(direction, Mapping):
-            cameras.append(
-                str(direction.get("camera_move") or direction.get("camera") or "")
-            )
+    episode_id = episode_id_for(spine, episode)
+    planned = [
+        str(direction.get("camera_move") or "")
+        for frame in spine.get("frames") or []
+        if isinstance(frame, Mapping) and frame.get("episode_id") == episode_id
+        for brief in [frame.get("visual_brief")]
+        if isinstance(brief, Mapping)
+        for direction in [brief.get("row_direction")]
+        if isinstance(direction, Mapping)
+    ]
+    cameras: list[str] = list(planned)
+    if not planned:
+        for beat in _episode_beats(spine, episode):
+            plan = beat.get("shot_plan") or []
+            if isinstance(plan, list) and plan:
+                for shot in plan:
+                    if isinstance(shot, Mapping):
+                        cameras.append(
+                            str(shot.get("camera") or shot.get("camera_move") or "")
+                        )
+                continue
+            if not beat.get("dialogue_lines"):
+                cameras.append(_beat_camera_move(beat))
     if not cameras:
         return None
     if any(
