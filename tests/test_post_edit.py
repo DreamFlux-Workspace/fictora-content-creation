@@ -122,6 +122,11 @@ def test_deboard_replaces_exactly_the_measured_board_frames_and_keeps_the_timeli
         )
     assert measure_board_leak(out, board).frames == 0
     assert "Deboard" in (post_desk / "ep01" / "run-notes.md").read_text()
+    # The chain keeps how many clones it holds, so `finish --take-file` cuts them (review #13).
+    from creation.post.lineage import deboard_clones_behind
+
+    held = deboard_clones_behind(post_desk, out)
+    assert held is not None and held[0] == leaked
 
 
 @needs_ffmpeg

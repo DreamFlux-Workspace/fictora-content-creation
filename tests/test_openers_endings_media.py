@@ -206,17 +206,100 @@ def test_finish_cuts_the_held_head_after_deboard(post_desk: Path) -> None:
     assert first.start == pytest.approx(1.0 - BOARD_FRAMES / FPS, abs=0.05)
 
 
-def test_the_head_cut_never_clips_a_line_under_the_board_frames() -> None:
+def test_the_head_cut_always_cuts_exactly_the_board_frames() -> None:
+    """Review #13 (13 Oct 2026): a frozen opening never ships; only the measured board frames go."""
     from creation.post.deboard import head_cut
 
-    assert head_cut(10, 24.0, first_speech=1.0, known=True)[0] == pytest.approx(
-        10 / 24, abs=1e-4
+    want = pytest.approx(10 / 24, abs=1e-4)
+    cut, why = head_cut(10, 24.0, first_speech=1.0)
+    assert cut == want and "!!" not in why
+    # A line under the board frames no longer keeps the clones: they go, and the note says so.
+    for first in (0.25, 0.02, 0.0):
+        cut, why = head_cut(10, 24.0, first_speech=first)
+        assert cut == want
+        assert "under the board frames" in why
+    # No line times known: still cut (it used to keep the frozen frames).
+    assert head_cut(10, 24.0, first_speech=None)[0] == want
+    assert head_cut(0, 24.0, first_speech=None)[0] is None
+
+
+HOOK_AND_CAPTION_ASS = """[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 10,0:00:00.00,0:00:03.00,Hook,overlay,0,0,0,,The board is gone
+Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Kenji speaks
+"""
+
+
+def test_the_hook_card_is_not_a_line_for_the_head_cut() -> None:
+    """The hook card starts at 0: read as a line, it kept every first take's frozen board frames."""
+    from creation.post.finish import first_line_start
+    from creation.post.master_captions import is_overlay_event
+
+    hook = HOOK_AND_CAPTION_ASS.splitlines()[2].split(":", 1)[1].split(",", 9)
+    assert is_overlay_event(hook), "the fixture's first event is the hook card"
+    assert first_line_start(HOOK_AND_CAPTION_ASS) == pytest.approx(1.0)
+    assert first_line_start(HOOK_AND_CAPTION_ASS, (0.6,)) == pytest.approx(0.6)
+    assert first_line_start(None) is None
+
+
+@needs_ffmpeg
+def test_finish_cuts_the_held_head_under_a_hook_card(post_desk: Path) -> None:
+    """Episode t1 with a hook line (on by default): the clones are still cut off the head."""
+    from creation.post.finish import run_finish
+    from creation.post.finish_record import latest_finish_record
+
+    raw = _board_take(post_desk)
+    out = io.StringIO()
+    result = run_finish(post_desk, bed_maker=_fake_bed, facts_fetcher=lambda *a: None,
+                        colour=False, hook_line="The board is gone", stream=out)  # fmt: skip
+
+    assert result.complete, out.getvalue()
+    record = latest_finish_record(post_desk, 1, "t1")
+    assert record is not None
+    master = record.resolve(post_desk, "master")
+    assert master is not None
+    ass = master.with_suffix(".ass").read_text(encoding="utf-8")
+    assert ",overlay," in ass and "The board is gone" in ass, (
+        "the hook card was drawn at the head"
     )
-    short, why = head_cut(10, 24.0, first_speech=0.25, known=True)
-    assert short is not None and short < 0.25 and "cut short" in why
-    assert head_cut(10, 24.0, first_speech=0.02, known=True)[0] is None
-    assert head_cut(10, 24.0, first_speech=None, known=False)[0] is None
-    assert head_cut(0, 24.0, first_speech=None, known=True)[0] is None
+    assert count_frames(result.final) == count_frames(raw) - BOARD_FRAMES, (
+        out.getvalue()
+    )
+    assert "held head cut" in out.getvalue()
+
+
+@needs_ffmpeg
+def test_finish_take_file_made_by_deboard_cuts_its_clones(post_desk: Path) -> None:
+    """`deboard` then `finish --take-file`: the chain says how many clones, and finish cuts them."""
+    from creation.post.deboard import deboard
+    from creation.post.finish import run_finish
+    from creation.post.lineage import deboard_clones_behind, record_edit
+
+    raw = _board_take(post_desk)
+    board = post_desk / "ep01" / "boards" / "board-ep01-t1-1-v1.png"
+    held = deboard(raw, board, raw.with_name("take-ep01-t1-deboard-v1.mp4"))
+    assert held.output is not None and held.removed == BOARD_FRAMES
+    record_edit(
+        post_desk,
+        op="deboard",
+        source=raw,
+        output=held.output,
+        frames=held.removed,
+        fps=FPS,
+    )
+    assert deboard_clones_behind(post_desk, held.output) == (
+        BOARD_FRAMES,
+        pytest.approx(FPS),
+    )
+    out = io.StringIO()
+    result = run_finish(post_desk, take_file=held.output, bed_maker=_fake_bed,
+                        facts_fetcher=lambda *a: None, colour=False, stream=out)  # fmt: skip
+
+    assert result.complete, out.getvalue()
+    assert count_frames(result.final) == count_frames(raw) - BOARD_FRAMES, (
+        out.getvalue()
+    )
+    assert "held head cut" in out.getvalue()
 
 
 @needs_ffmpeg

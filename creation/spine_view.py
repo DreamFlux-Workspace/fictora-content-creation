@@ -473,14 +473,18 @@ class ShotRow:
     camera_move: str
     cell_roles: tuple[str, ...]
     reaction_kinds: tuple[str, ...]
+    #: The seconds the writer planned the row to play (``row_direction.seconds``);
+    #: ``None`` when the tempo times it, and the line reads as before.
+    seconds: float | None = None
 
     def one_line(self) -> str:
-        """Return ``row N: size · angle · viewpoint · camera move · cells · reaction``."""
+        """Return ``row N: size · angle · viewpoint · camera move · cells · reaction[ · plays N s]``."""
 
         reaction = ", ".join(self.reaction_kinds) or "none"
+        timed = f" · plays {self.seconds:g} s" if self.seconds is not None else ""
         return (
             f"row {self.row}: {self.shot_scale} · {self.camera_angle} · {self.viewpoint} · "
-            f"camera {self.camera_move} · cells {', '.join(self.cell_roles) or '?'} · reaction {reaction}"
+            f"camera {self.camera_move} · cells {', '.join(self.cell_roles) or '?'} · reaction {reaction}{timed}"
         )
 
 
@@ -528,6 +532,13 @@ def shot_rows(frames: Sequence[Mapping[str, Any]]) -> list[ShotRow]:
             if isinstance(brief.get("row_direction"), Mapping)
             and brief["row_direction"].get("camera_move")
         ]
+        seconds = [
+            brief["row_direction"]["seconds"]
+            for brief in briefs
+            if isinstance(brief.get("row_direction"), Mapping)
+            and isinstance(brief["row_direction"].get("seconds"), (int, float))
+            and not isinstance(brief["row_direction"].get("seconds"), bool)
+        ]
         out.append(
             ShotRow(
                 row=row,
@@ -543,6 +554,7 @@ def shot_rows(frames: Sequence[Mapping[str, Any]]) -> list[ShotRow]:
                     for brief in briefs
                     if brief.get("reaction_kind")
                 ),
+                seconds=float(seconds[0]) if seconds else None,
             )
         )
     return out
