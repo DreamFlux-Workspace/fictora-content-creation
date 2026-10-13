@@ -16,6 +16,7 @@ import httpx
 
 from creation.harness.board_edit_refusal import board_edit_choice
 from creation.harness.minor_scene_refusal import minor_scene_fix, says_minor_scene
+from creation.harness.prop_hold_refusal import prop_hold_text
 
 _TERMINAL = frozenset({"completed", "failed", "cancelled"})
 
@@ -244,6 +245,10 @@ def api_error_text(body: Any) -> str:
     choice = board_edit_choice(code, details if isinstance(details, dict) else None)
     if choice is not None:
         text += "\n" + choice
+    # fictora-drama #787: boards held while a story object's redraw is pending.
+    held = prop_hold_text(code, details)
+    if held is not None:
+        text += "\n" + held
     return text
 
 
