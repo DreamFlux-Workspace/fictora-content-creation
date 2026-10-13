@@ -528,7 +528,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     fin.add_argument(
         "--no-impact",
         action="store_true",
-        help="Keep the big impact beats as filmed (no automatic flash, shake or punch-in).",
+        help="Keep the big impact beats as filmed (no automatic punch-in or shake).",
     )
     fin.add_argument(
         "--colour-strength", type=float, default=1.0, help="0..1 toward the board."
