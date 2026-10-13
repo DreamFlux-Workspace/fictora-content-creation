@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import io
+import re
 from pathlib import Path
 from typing import Any
 
@@ -32,11 +33,22 @@ REDRAW = f"/v1/spines/sp1/props/{SIGN_ID}/redraw"
 ENROL = "/v1/spines/sp1/cast/enrol"
 DELETE = f"/v1/spines/sp1/props/{SIGN_ID}"
 NOTE = "carved wood, the letters cut in, never painted"
-ASK_ONE = (
-    "Redrawing adds $0.30 per object to this episode (total $0.30 for this redraw). "
-    "Objects usually read fine on the board, so only redraw if the object is wrong for the story. "
-    "Say yes and I'll redraw it."
+PRICE_ONE = "Objects for episode 1: 1 picture(s): Wooden Sign redrawn, about $0.30. Nothing drawn yet."
+ADVICE = (
+    "Redrawing adds $0.30 per object to this episode. Objects usually read fine on the board, "
+    "so only redraw if the object is wrong for the story."
 )
+#: ``step``'s plates/boards price shape: the price line, then the confirm hint.
+PRICE_LINE = re.compile(
+    r"^\w+ for episode \d+: .+, about \$\d+\.\d\d\. Nothing drawn yet\.$"
+)
+CONFIRM_LINE = re.compile(r"^Human yes, then `fictora-produce .+ --confirm-spend`\.$")
+
+
+def _ask_lines(text: str) -> list[str]:
+    lines = text.rstrip().splitlines()
+    start = next(i for i, line in enumerate(lines) if PRICE_LINE.match(line))
+    return lines[start : start + 3]
 
 
 def _redraw(desk: Path, out: io.StringIO | None = None, **kw: Any) -> Path | None:
@@ -173,7 +185,7 @@ def test_redraw_prop_notes_draws_under_its_own_key_and_books_one_picture(
     path = _redraw(desk, out, prop="wooden sign")
 
     text = out.getvalue()
-    assert ASK_ONE in text
+    assert PRICE_ONE in text and ADVICE in text
     assert api.posted(REDRAW) == [{"spine_version": "v5", "text": NOTE}]
     prefix = load_production(desk).idempotency_prefix
     assert _enrol_keys(api) == [f"{prefix}-prop-{SIGN_ID}-{_digest()}-a1"]
@@ -252,11 +264,12 @@ def test_more_than_one_picture_owed_is_priced_and_waits_for_the_yes(
     assert pc.run_redraw_prop(desk, prop="Wooden Sign", note=NOTE, out=out) is None
 
     text = out.getvalue()
-    assert "(total $0.60 for this redraw)" in text
-    assert text.index("Say yes and I'll redraw it.") < text.index(
-        "This draws 2 pictures"
+    price, advice, confirm = _ask_lines(text)
+    assert price == (
+        "Objects for episode 1: 2 picture(s): Wooden Sign redrawn, plus Ren "
+        "(already owed a picture), about $0.60. Nothing drawn yet."
     )
-    assert "This draws 2 pictures, $0.60 in all" in text and "Ren" in text
+    assert advice == ADVICE and CONFIRM_LINE.match(confirm)
     assert "--confirm-spend" in text
     assert api.posted(REDRAW) == [] and api.posted(ENROL) == []
 
@@ -283,7 +296,7 @@ def test_confirm_spend_without_a_shown_price_sends_nothing(
 
     pc.run_redraw_prop(desk, prop="Wooden Sign", note=NOTE, confirm_spend=True, out=out)
 
-    assert "this total was not asked before" in out.getvalue()
+    assert "No price shown for this redraw yet." in out.getvalue()
     assert api.posted(ENROL) == []
 
 
@@ -354,9 +367,10 @@ def test_one_picture_still_waits_for_the_yes_and_spends_nothing(
     assert produce_main(argv) == 0
 
     text = capsys.readouterr().out
-    assert ASK_ONE in text
-    assert text.rstrip().splitlines()[0] == ASK_ONE
-    assert "--confirm-spend" in text
+    price, advice, confirm = _ask_lines(text)
+    assert (price, advice) == (PRICE_ONE, ADVICE)
+    assert confirm.startswith("Human yes, then `fictora-produce redraw-prop --desk ")
+    assert confirm.endswith(f'--prop "Wooden Sign" --note "{NOTE}" --confirm-spend`.')
     assert api.posted(REDRAW) == [] and api.posted(ENROL) == []
     assert load_series(desk).spend_log == []
 
@@ -364,6 +378,26 @@ def test_one_picture_still_waits_for_the_yes_and_spends_nothing(
 
     assert len(api.posted(ENROL)) == 1
     assert [e.unit for e in load_series(desk).spend_log] == [f"object-redraw:{SIGN_ID}"]
+
+
+def test_the_object_price_has_the_same_shape_as_steps_plates_and_boards_price(
+    desk: Path, api: FakeApi
+) -> None:
+    from creation.orchestrate import drawing_spend_stop
+
+    _serve(api)
+    out = io.StringIO()
+    pc.run_redraw_prop(desk, prop="Wooden Sign", note=NOTE, out=out)
+    price, _advice, confirm = _ask_lines(out.getvalue())
+
+    for kind in ("plates", "boards"):
+        stop = drawing_spend_stop(
+            desk, load_production(desk), kind=kind, count=1, confirm_spend=False
+        )
+        assert stop is not None
+        step_price, step_confirm = stop.message.splitlines()
+        assert PRICE_LINE.match(step_price) and CONFIRM_LINE.match(step_confirm)
+    assert PRICE_LINE.match(price) and CONFIRM_LINE.match(confirm)
 
 
 # --- remove-prop ----------------------------------------------------------------------------
