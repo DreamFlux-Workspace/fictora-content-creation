@@ -92,7 +92,7 @@ Start with `start`, print desk path and phase, wait for my "aligned" before the 
 
 **Script.** Three lines at most per 15 s take. A silent comic beat (a pause, a stare) costs a line. Every line is said to someone. Any line the writers changed from your brief is shown to you beside the new one. Japanese or Korean lines sound like a native speaker in that situation; a dialect needs a native speaker's yes. Captions are English for now.
 
-**Board.** Frame 0 is mid-motion on a face. Every action follows a visible face reacting to its cause. Each row opens on the emotion the last row ended on. Each speaker is in frame, medium or closer, on the row where they speak; no off-screen speaker is drawn. No clenched or closed mouth while someone speaks. Expressions fit the moment and sit on the right face.
+**Board.** Frame 0 is mid-motion on a face. Every action follows a visible face reacting to its cause. Each row opens on the emotion the last row ended on. Each speaker is in frame, medium or closer, on the row where they speak; no off-screen speaker is drawn. No clenched or closed mouth while someone speaks. Expressions fit the moment and sit on the right face. A fight take is two or three shots, one clear action each. Each take opens on the same close-up of the lead the last one ended on. A sound from off screen stays a sound: the picture shows the reaction.
 
 **Social safe zones (TikTok, Reels, Shorts).** No face, eyes, mouth or key prop in the top 8%, the bottom 20%, or the right 12% of the lower two thirds. Faces do not have to be centred. Captions sit between 55% and 70% of the height. The Sokii mark goes top left.
 
