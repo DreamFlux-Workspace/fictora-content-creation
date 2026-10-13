@@ -85,8 +85,11 @@ from creation.post.reel_server import (
 #: makes both of one episode for our own trial posts; ``reel-results`` tallies them by recipe.
 SERVER_OPENINGS = ("flash-forward", "straight")
 DEFAULT_RECIPE = "flash-forward"
-#: ``reel --recipes trial``: both openings.
+#: Both openings (``reel --recipes trial``; every plain reel run makes both too, see :func:`run_reel`).
 TRIAL_RECIPES = SERVER_OPENINGS
+#: A plain reel run (``reel``, and the reel after ``finish``) makes both openings (founder, 13 Oct 2026).
+#: The tests of a single reel's books turn it off; ``tests/test_reel_recipes.py`` holds the pair.
+BOTH_OPENINGS = True
 
 
 def parse_recipe(text: str) -> str:
@@ -628,6 +631,7 @@ def run_reel(
     watermark_y: int | None = None,
     no_panels: bool = False,
     recipe: str | None = None,
+    companion: bool = False,
 ) -> ReelResult:
     """Make the episode's reel on the server and keep the books. Writes only under ``<desk>/reels/``.
 
@@ -666,7 +670,10 @@ def run_reel(
     server
         The server client (tests pass a stand-in); default the desk's.
     recipe
-        The opening (``reel --recipes``); ``None`` is the default, the app's one reel.
+        The opening (``reel --recipes``); ``None`` makes both openings (:func:`_both_openings`).
+    companion
+        A second opening made beside the episode's reel: its own files and metrics row, but
+        ``latest.json`` keeps naming the main reel.
 
     Returns
     -------
@@ -685,6 +692,14 @@ def run_reel(
         raise ValueError(
             f"--ending {ending!r}: one of {', '.join(SERVER_ENDING_STYLES)}"
         )
+    if BOTH_OPENINGS and recipe is None and plan_file is None and not plan_only:
+        return _both_openings(
+            desk, episode=episode, seconds=seconds, take_files=take_files, sources=sources,
+            captions=captions, caption_style=caption_style, ending=ending, hook_line=hook_line,
+            no_hook_line=no_hook_line, hook_line_position=hook_line_position, stream=stream,
+            no_cover=no_cover, cover_frame=cover_frame, made_by=made_by, server=server,
+            watermark_y=watermark_y, no_panels=no_panels,
+        )  # fmt: skip
     desk = desk.expanduser().resolve()
     # Edited copies of an inferred source and patched pictures live in a scratch folder, never on the desk.
     with tempfile.TemporaryDirectory(prefix="fictora-reel-") as tmp:
@@ -696,7 +711,51 @@ def run_reel(
             watermark_y=watermark_y, no_panels=no_panels, recipe=recipe,
         )  # fmt: skip
     assert isinstance(result, ReelResult)
-    return record_reel(desk, episode, result, made_by=made_by, stream=stream)
+    if recipe is not None and not isinstance(result.plan.get("recipe"), Mapping):
+        # A server that does not name the recipe: the books name the one asked for.
+        result.plan["recipe"] = {"name": recipe, "opening": recipe}
+    return record_reel(
+        desk, episode, result, made_by=made_by, stream=stream, companion=companion
+    )
+
+
+def _cut_of(plan: Mapping[str, Any]) -> tuple[tuple[Any, Any, Any], ...]:
+    """A plan's segments as ``(take, start, end)``: two plans with the same cut compare equal."""
+
+    return tuple(
+        (g.get("take"), g.get("start_s"), g.get("end_s"))
+        for g in plan.get("segments") or []
+    )
+
+
+def _both_openings(desk: Path, *, stream: TextIO | None, **kwargs: Any) -> ReelResult:
+    """Both openings of the episode (founder, 13 Oct 2026; the app makes only the straight one).
+
+    The flash-forward reel first: it is the episode's reel (``latest.json``, a one-take
+    final's cover) and is returned; a server that cannot take it raises, so the caller's
+    local fallback cuts the one reel it always did. Then the straight reel beside it,
+    its own files and metrics row; its failure is printed, never raised.
+    """
+
+    out = stream or sys.stdout
+    flash = run_reel(desk, stream=stream, recipe=DEFAULT_RECIPE, **kwargs)
+    try:
+        straight = run_reel(
+            desk, stream=stream, recipe="straight", companion=True, **kwargs
+        )
+    except (*SERVER_UNUSABLE, ReelServerError, ValueError) as exc:
+        print(
+            f"⚠ The straight reel was not made ({exc}); the flash-forward reel stands",
+            file=out,
+        )
+        return flash
+    if _cut_of(straight.plan) == _cut_of(flash.plan):
+        # No flash-forward window was found: both are the same cut, so post one.
+        print(
+            "Note: the straight and flash-forward reels are the same cut; post one",
+            file=out,
+        )
+    return flash
 
 
 def make_reel(
@@ -1069,6 +1128,7 @@ def record_reel(
     *,
     made_by: str = "reel",
     stream: TextIO | None = None,
+    companion: bool = False,
 ) -> ReelResult:
     """Keep the books on a reel :func:`make_reel` made: the plan's hash, ``latest.json``, ``metrics.csv``.
 
@@ -1082,6 +1142,8 @@ def record_reel(
         ``reel``, ``finish`` or an edit's name.
     stream
         Progress output (stdout by default).
+    companion
+        A second opening beside the episode's reel: ``latest.json`` is left naming the main reel.
 
     Returns
     -------
@@ -1101,10 +1163,11 @@ def record_reel(
         if isinstance(result.plan.get("strongest"), Mapping)
         else None
     )
-    write_latest(
-        desk, episode, paths=paths, cover=result.cover, draft=result.draft, made_by=made_by,
-        sources=result.sources,
-    )  # fmt: skip
+    if not companion:
+        write_latest(
+            desk, episode, paths=paths, cover=result.cover, draft=result.draft, made_by=made_by,
+            sources=result.sources,
+        )  # fmt: skip
     result.metrics = record_metrics_row(
         desk / REELS_DIR / METRICS_FILE,
         {
