@@ -1684,7 +1684,7 @@ def _changes(
 
 
 def _shot_plan_change(
-    beat: Mapping[str, Any], plan: list[dict[str, str]] | None
+    beat: Mapping[str, Any], plan: list[dict[str, Any]] | None
 ) -> list[str]:
     """Printable lines for a beat's plan going from what it has to ``plan`` (``None`` = cleared); empty if equal."""
 
@@ -1910,7 +1910,7 @@ def build_patch(
     subtitle: str | None = None,
     speaker: str | None = None,
     off_screen: bool | None = None,
-    shot_plan: list[dict[str, str]] | None = None,
+    shot_plan: list[dict[str, Any]] | None = None,
     clear_shot_plan: bool = False,
     set_reaction_kind: bool = False,
     reaction_kind: str | None = None,
@@ -3736,7 +3736,7 @@ def run_edit(
     subtitle: str | None = None,
     speaker: str | None = None,
     off_screen: bool | None = None,
-    shot_plan: list[dict[str, str]] | None = None,
+    shot_plan: list[dict[str, Any]] | None = None,
     clear_shot_plan: bool = False,
     expression: str | None = None,
     select_regen: bool = False,
@@ -3918,7 +3918,7 @@ def _report_shot_plan(
     *,
     episode: int,
     beat: str,
-    wanted: list[dict[str, str]] | None,
+    wanted: list[dict[str, Any]] | None,
     out: Any,
 ) -> bool:
     """Print the beat's plan as the server now holds it, and say so when it did not keep what was sent.
@@ -7886,13 +7886,18 @@ def add_episode_parsers(
     plan.add_argument(
         "--shot-plan", default=None, metavar="JSON",
         help=(
-            "Beat: its shot plan, 1-4 shots [{\"size\", \"subject\", \"camera\"?, \"angle\"?}]; shot 1 is the beat's "
+            "Beat: its shot plan, 1-4 shots [{\"size\", \"subject\", \"camera\"?, \"angle\"?, \"seconds\"?}]; shot 1 "
+            "is the beat's "
             "first board row. Replaces the whole plan. JSON, or @FILE / an existing file path to read it from."
         ),
     )  # fmt: skip
     plan.add_argument(
-        "--shot", dest="shots", action="append", default=None, metavar="SIZE|SUBJECT|CAMERA|ANGLE",
-        help="Beat: one shot of its plan, in order; repeat 1-4 times. Camera and angle optional.",
+        "--shot", dest="shots", action="append", default=None, metavar="SIZE|SUBJECT|CAMERA|ANGLE|SECONDS",
+        help=(
+            "Beat: one shot of its plan, in order; repeat 1-4 times. Camera, angle and seconds optional; "
+            "seconds (0.5-15) only for a reveal or punchline that needs its own length: the take plays it that "
+            "long and shares the rest by tempo."
+        ),
     )  # fmt: skip
     plan.add_argument(
         "--clear-shot-plan",
