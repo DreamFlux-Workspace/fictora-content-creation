@@ -685,7 +685,9 @@ def shape_problem(
 HIT_THEN_TAIL = "hit_then_tail"
 _HIT_WORDS = re.compile(
     r"\b(slam|slams|slammed|bang|bangs|crash|crashes|thud|thuds|clang|clangs|knock|knocks|"
-    r"smash|smashes|shut|shuts|snap|snaps|hit|hits|crack|cracks|pop|pops|click|clicks|clinks?)\b",
+    r"smash|smashes|shut|shuts|snap|snaps|hit|hits|crack|cracks|pop|pops|click|clicks|clinks?|"
+    r"explosion|explosions|explodes|exploded|boom|booms|blast|blasts|gunshot|gunshots|impact|impacts|"
+    r"shatter|shatters|detonation|detonates|kaboom)\b",
     re.IGNORECASE,
 )
 _THEN = re.compile(
