@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from creation.ops.folder import next_versioned_path
-from creation.post.sfx import noted_gain_db
+from creation.post.sfx import FILMED_CUT_EDGE_SECONDS, FilmedShots, noted_gain_db
 from creation.spine_view import episode_id_for
 
 #: The kit's stamp on a saved facts file: the add notes for this take the facts already carry.
@@ -234,6 +234,66 @@ def stale_facts_reason(
     if removed:
         parts.append(f"{removed} removed since")
     return ", ".join(parts)
+
+
+#: A cut closer than this after the last shot's filmed start is the same change.
+_SAME_CHANGE_SECONDS = 0.5
+#: Less than this left after the cut is a flash at the end, not a shot.
+_MIN_TAIL_SECONDS = 0.75
+
+
+def ended_on_earlier_shot_note(
+    filmed: FilmedShots, cuts: tuple[float, ...], *, duration: float
+) -> str | None:
+    """An operator note when the take cut again inside its last planned shot, or ``None``.
+
+    Last Call ep 2 (L-20261009-35): the punchline shot played at 8-10.7 s, then
+    the take cut back to an earlier shot at the cafe for its last 4.3 s. The
+    server's take prompt now says each shot plays once, in order, and the clip
+    ends on its last shot (fictora-drama ``take_shot_order_line``); this is the
+    quiet safety net behind it, printed by ``finish`` beside the filmed cuts
+    for the operator only. It never blocks; a trim of the end is free
+    (``trim --end``), before any paid re-film. The server logs the same check
+    (``take_end_shot.ended_on_earlier_shot_note``).
+
+    Parameters
+    ----------
+    filmed
+        :func:`creation.post.sfx.filmed_shot_windows` for the take.
+    cuts
+        Hard cuts measured on the take.
+    duration
+        The take's length.
+
+    Returns
+    -------
+    str | None
+        One plain line; ``None`` for a one-shot plan or when no such cut was measured.
+    """
+
+    if len(filmed.planned) < 2:
+        return None
+    last = filmed.planned[-1]
+    last_start = filmed.windows.get(last.index, (last.start, duration))[0]
+    inside = sorted(
+        cut for cut in cuts if FILMED_CUT_EDGE_SECONDS < cut < duration - FILMED_CUT_EDGE_SECONDS
+    )
+    extra = [
+        cut
+        for cut in inside
+        if cut > last_start + _SAME_CHANGE_SECONDS and duration - cut >= _MIN_TAIL_SECONDS
+    ]
+    if extra and not any(abs(cut - last_start) < 1e-6 for cut in inside):
+        # The change into the last shot found no cut near its plan: the first later cut is that change, filmed late.
+        extra = extra[1:]
+    if not extra:
+        return None
+    cut = extra[0]
+    return (
+        f"take may end on an earlier shot: it cuts again at {cut:.2f}s, inside its last planned shot "
+        f"(shot {last.index}, from {last_start:.2f}s), and runs {duration - cut:.2f}s more; check its end "
+        f"before keeping it (free: `trim --end`)"
+    )
 
 
 def _cue_line(cue: Mapping[str, Any]) -> str:
