@@ -8,7 +8,7 @@ raw take it was made from and says whether every edit on the way kept the
 sound timeline, i.e. a word the server heard at 3.20 s on the raw take is still
 at 3.20 s on the file.
 
-``freeze``, ``soften``, ``blur``, ``zoom``, ``deboard`` and ``colour`` keep it (same length, same
+``freeze``, ``soften``, ``blur``, ``zoom``, ``deboard``, ``colour`` and ``impact`` keep it (same length, same
 frame count, sound copied or untouched). ``trim`` and ``tempo`` move it; the
 hand ``voice`` step (``--voice`` / ``--mute``) and the sound steps (``sfx``,
 ``cues``, ``mix``) change the speech or the sound, so a transcript of the raw
@@ -28,7 +28,9 @@ from pathlib import Path
 from typing import Any
 
 #: Edits that keep the length, the frame count and the sound: the raw take's word times still hold.
-KEEPS_TIMELINE = frozenset({"freeze", "soften", "blur", "zoom", "deboard", "colour"})
+KEEPS_TIMELINE = frozenset(
+    {"freeze", "soften", "blur", "zoom", "deboard", "colour", "impact"}
+)
 #: Why each other known edit breaks the raw take's word times.
 BREAKS_TIMELINE = {
     "trim": "trim cuts time out, so every word after the cut moved",

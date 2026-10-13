@@ -188,7 +188,7 @@ def test_finish_lays_room_tone_bed_ducked_in_line_windows_effects_on_measured_cu
     log = out.getvalue()
     assert result.complete, log
     assert [s.step for s in result.steps] == [
-        "deboard", "sfx", AMBIENCE_STEP, ROOM_TONE_STEP, "bed", "colour", "mix", "captions", "watermark",
+        "deboard", "sfx", AMBIENCE_STEP, ROOM_TONE_STEP, "bed", "colour", "impact", "mix", "captions", "watermark",
         "thumbnail",
     ]  # fmt: skip
     # The fixture spine names no location: no ambience cue, room tone is the fallback (test_target_audio_ambience).
@@ -338,6 +338,7 @@ def test_native_and_older_server_takes_finish_exactly_as_before(
         "sfx",
         "bed",
         "colour",
+        "impact",
         "mix",
         "captions",
         "watermark",
