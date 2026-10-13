@@ -563,8 +563,12 @@ def take_warning_lines(
 ) -> list[str]:
     """The take facts' ``warnings`` (fictora-drama #584), one ``!!`` line each, then what to do.
 
-    Each warning is ``{code, shot_index, who, cast_id?, moves?, message}``; the first code is
-    ``edge_duplicate_risk`` (the same person may show twice, at opposite frame edges).
+    Each warning is ``{code, shot_index, who, cast_id?, moves?, message}``. Codes:
+    ``edge_duplicate_risk`` (the same person may show twice, at opposite frame edges) and
+    ``state_change_check`` (fictora-drama ``object_state``: an earlier shot destroyed, removed or
+    took something, a head off or a door kicked in, and ``who`` says what; the message lists every
+    later shot told to keep it so, to check none shows it undone; Iron Pigeon L-20261009-14).
+    A code this kit does not know prints the same way.
 
     Parameters
     ----------
@@ -591,6 +595,7 @@ def take_warning_lines(
     }
     lines: list[str] = []
     shots: list[str] = []
+    state_change = False
     for item in raw if isinstance(raw, list) else []:
         if not isinstance(item, Mapping):
             continue
@@ -603,6 +608,7 @@ def take_warning_lines(
         ).strip()
         tags = ", ".join(t for t in (str(item.get("code") or "").strip(), who) if t)
         message = str(item.get("message") or "").strip() or "no message"
+        state_change = state_change or item.get("code") == "state_change_check"
         lines.append(f"!! {where}: {message}" + (f" [{tags}]" if tags else ""))
         if where not in shots:
             shots.append(where)
@@ -611,6 +617,12 @@ def take_warning_lines(
             f"   Check {', '.join(shots)} at full size before finishing (the server flagged "
             f"{'it' if len(shots) == 1 else 'them'}). If it shows what the warning says, try a free edit first "
             "(cut a short stretch, speed up the shot, zoom past it); re-film only if none hides it"
+            + (
+                ". For a change that must hold (state_change_check), look for it undone (a head back on, "
+                "a door whole again): a short slip can be cut, otherwise re-film the take once"
+                if state_change
+                else ""
+            )
         )
     return lines
 
