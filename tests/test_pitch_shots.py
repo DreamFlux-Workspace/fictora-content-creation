@@ -18,6 +18,7 @@ from creation.pitch_card import RESTRAINT_KINDS, run_pitch
 from creation.pitch_shots import (
     EXPRESSION_DIRECTIONS,
     camera_tag,
+    drop_lock_tokens,
     pitch_digest,
     pitch_takes,
     shot_lines,
@@ -92,7 +93,7 @@ def test_pitch_prints_the_episode_shots_from_the_desk_story(desk: Path) -> None:
 
     text = out.getvalue()
     assert "Shots, by take (6; what an app creator approves):" in text
-    assert "1. Extreme close-up [opens]:" in text
+    assert "1. Extreme close-up · Locked off [opens]:" in text
     assert '"I don\'t sell to my rival!"' in text
     assert "(Mitsu stares, stunned)" in text
 
@@ -120,3 +121,76 @@ def test_without_the_servers_short_name_the_full_name_is_shown() -> None:
     ]
 
     assert shots[0]["line"]["speaker"] == "Mitsu Hanakaze"
+
+
+# L-20261001-31 follow-up: the shot list shows the camera the take plays, never
+# a speaking beat's lip-sync "Locked" token.
+
+
+def _row_spine(*, move: str, beat_camera: str = "locked") -> dict[str, Any]:
+    """One speaking beat on a two-row board; its rows' own plan moves ``move``."""
+
+    frames = [
+        {
+            "frame_id": f"f{ordinal}",
+            "episode_id": "episode_01",
+            "ordinal": ordinal,
+            "board_row": (ordinal + 1) // 2,
+            "visual_brief": {"row_direction": {"camera_move": move}}
+            if ordinal % 2
+            else {},
+        }
+        for ordinal in (1, 2, 3, 4)
+    ]
+    beat = {
+        "beat_id": "b1",
+        "episode_id": "episode_01",
+        "ordinal": 1,
+        "frame_id": "f1",
+        "motion_intent": "SHOT 1 - medium, eye level, Locked. Mara grips the switch. "
+        "SHOT 2 - close-up, low angle, Locked. Her thumb hovers.",
+        "motion_direction": {"camera": {"move": beat_camera}},
+        "dialogue_lines": [{"cast_id": "c1", "text": "Don't."}],
+    }
+    return {
+        "storyboard_board_kind": "row",
+        "cast": [{"cast_id": "c1", "name": "Mara"}],
+        "frames": frames,
+        "beats": [beat],
+        "beats_per_storyboard_set": [1],
+        "episode_summaries": [{"episode_id": "episode_01", "ordinal": 1}],
+    }
+
+
+def test_a_speaking_shot_shows_its_rows_move_not_the_lip_sync_lock() -> None:
+    shots = pitch_takes(_row_spine(move="dolly_in"), "episode_01")[0]["shots"]
+
+    assert [shot["camera_move"] for shot in shots] == ["Push in", "Push in"]
+    assert not any("Locked" in shot["scene"] for shot in shots)
+    assert "Medium · eye level · Push in [opens]" in "\n".join(
+        shot_lines([{"take": 1, "shots": shots}])
+    )
+
+
+def test_a_speaking_row_whose_move_the_take_drops_shows_no_move() -> None:
+    shots = pitch_takes(_row_spine(move="orbit_left"), "episode_01")[0]["shots"]
+
+    assert shots[0]["camera_move"] is None
+    assert shots[1]["camera_move"] == "Orbit left"
+
+
+def test_the_move_never_changes_the_digest() -> None:
+    takes = pitch_takes(_row_spine(move="dolly_in"), "episode_01")
+    bare = [
+        {**take, "shots": [{**shot, "camera_move": None} for shot in take["shots"]]}
+        for take in takes
+    ]
+
+    assert pitch_digest(takes, []) == pitch_digest(bare, [])
+
+
+def test_a_story_lock_stays_in_the_scene() -> None:
+    assert drop_lock_tokens("The door stays locked.") == "The door stays locked."
+    assert drop_lock_tokens("Low angle, locked off, her thumb hovers.") == (
+        "Low angle, her thumb hovers."
+    )
