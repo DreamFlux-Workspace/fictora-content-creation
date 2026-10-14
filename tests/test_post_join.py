@@ -19,6 +19,7 @@ from creation.cli_produce import main
 from creation.ops.floor import init_series_desk
 from creation.post import join as join_module
 from creation.post.bed import pin_bed
+from creation.post.episode_name import today
 from creation.post.finish import run_finish
 from creation.post.finish_record import write_finish_record
 from creation.post.join import JOIN_NOT_DONE, assert_house_fps, run_join
@@ -133,7 +134,11 @@ def test_an_episode_joins_on_one_continuous_bed_with_captions_and_one_mark(
     takes = join_desk / "ep01" / "takes"
     assert result.complete, out.getvalue()
     assert result.master == takes / "episode-ep01-join-v1.mp4"
-    assert result.marked == takes / "episode-ep01-join-sokii-v1.mp4"
+    assert (
+        result.marked == takes / f"join-test_ep01_draft_v1_{today().isoformat()}.mp4"
+    ), (
+        "the marked episode has its readable name (founder, 14 Oct 2026); the master is a working file"
+    )
     assert [p.take_id for p in result.parts] == ["t1", "t2"]
     assert result.parts[0].picture.name == "take-ep01-t1-cap-v1.mp4", (
         "the un-marked captioned picture, not -sokii"
@@ -180,7 +185,7 @@ def test_an_episode_joins_on_one_continuous_bed_with_captions_and_one_mark(
     again = run_join(join_desk, episodes=(1,), stream=io.StringIO())
     assert (
         again.master.name == "episode-ep01-join-v2.mp4"
-        and again.marked.name == "episode-ep01-join-sokii-v2.mp4"
+        and again.marked.name == f"join-test_ep01_draft_v2_{today().isoformat()}.mp4"
     )
     assert all(digest(takes / name) == sha for name, sha in before.items())
 
@@ -245,7 +250,7 @@ def test_a_seam_step_over_5_db_stops_the_join_unmarked_and_gain_matching_fixes_i
     assert (takes / "episode-ep01-join-v1.mp4").is_file(), (
         "the un-marked master stays to listen to"
     )
-    assert not list(takes.glob("episode-ep01-join-sokii-*.mp4")), "nothing is marked"
+    assert not list(takes.glob("*_ep01_*.mp4")), "nothing is marked"
     assert "STOPPED: seam at 2.50s" in (join_desk / "ep01" / "run-notes.md").read_text()
 
     matched = run_join(join_desk, episodes=(1,), stream=io.StringIO())
@@ -342,7 +347,7 @@ def test_take_files_in_the_order_given_and_unfinished_files_are_refused(
     )
     assert code == 0
     marked = Path(capsys.readouterr().out.strip().splitlines()[-1])
-    assert marked.name == "episode-ep01-join-sokii-v1.mp4"
+    assert marked.name == f"join-test_ep01_draft_v1_{today().isoformat()}.mp4"
     assert abs(region(frame_at(marked, 1.0), (0, 100, 192, 60)) - 90) < 6, (
         "t2 comes first, as named"
     )
@@ -415,7 +420,7 @@ def test_finish_writes_the_record_join_reads(post_desk: Path) -> None:
     assert result.bed.name.startswith("show-bed-v1")
     assert (
         result.marked is not None
-        and result.marked.name == "episode-ep01-join-sokii-v1.mp4"
+        and result.marked.name == f"post-test_ep01_draft_v1_{today().isoformat()}.mp4"
     )
 
 

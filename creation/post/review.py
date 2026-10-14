@@ -146,6 +146,7 @@ FINISHED_STEPS = (
     "mix",
     "cap",
     "sokii",
+    "draft",
     "trim",
     "tempo",
     "final",
@@ -281,6 +282,13 @@ class TakeReview:
 
 
 def _steps(take: Path) -> set[str]:
+    from creation.post.episode_name import NEW_NAME
+
+    # A readable episode name (``show_ep01_draft_v3_2026-10-14.mp4``) is the joined, marked
+    # episode: its step is its stage, never a word of the show's title.
+    named = NEW_NAME.match(take.name)
+    if named:
+        return {named.group("stage")}
     return set(re.split(r"-", take.stem))
 
 

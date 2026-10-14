@@ -437,9 +437,12 @@ def letterbox_file(video: Path, *, desk: Path | None = None) -> bool:
     record = record_for_file(desk, resolved)
     if record is not None:
         return record.letterbox
+    from creation.post.episode_name import episode_number
+
     joined = re.match(r"episode-ep(\d+)-join", resolved.name)
-    if joined:
-        first = latest_finish_record(desk, int(joined.group(1)), "t1")
+    episode = int(joined.group(1)) if joined else episode_number(resolved.name)
+    if episode is not None:
+        first = latest_finish_record(desk, episode, "t1")
         return bool(first and first.letterbox)
     return False
 
