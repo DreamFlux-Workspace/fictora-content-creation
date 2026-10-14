@@ -290,3 +290,69 @@ def test_wrong_flag_mixes_are_refused_before_anything_is_sent(
     assert _note(desk, "--take", "t1", "calmer") == 2
     assert _posts(api) == []
     assert music_note_entries(desk) == []
+
+
+@pytest.mark.parametrize(
+    "note",
+    ["no music here", "Silence, please.", "room only", "drop the music on this take"],
+)
+def test_a_no_music_note_read_as_new_music_is_held_even_with_yes(
+    note: str, desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Asking for no music and getting a new piece is the opposite: the kit never applies that."""
+
+    _route(api, kind="new_music")
+
+    assert _note(desk, "--episode", "1", "--take", "t1", note, "--yes") == 2
+
+    assert [body["dry_run"] for body, _ in _posts(api)] == [True], "only the plan"
+    assert load_series(desk).spend_usd == 0
+    [entry] = music_note_entries(desk)
+    assert entry["status"] == "held"
+    text = capsys.readouterr().out
+    assert "Held: you asked for no music in ep01 t1" in text
+    assert "leaves quiet beats" in text
+    assert "--episode 1 --take t1 'much quieter'" in text
+    assert "Not applied: nothing was changed or spent. Applying costs" not in text
+
+
+def test_a_no_music_note_the_harness_can_take_out_is_applied(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _route(api, kind="silence")
+
+    assert _note(desk, "--episode", "2", "no music here", "--yes") == 0
+
+    assert [body["dry_run"] for body, _ in _posts(api)] == [True, False]
+    assert _posts(api)[1][0]["episode_ordinal"] == 2
+    assert music_note_entries(desk)[0]["status"] == "applied"
+    assert "no music: the music is taken out of ep02" in capsys.readouterr().out
+
+
+def test_an_episode_new_music_note_says_it_is_for_that_episode_only(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _route(api, kind="new_music")
+
+    assert _note(desk, "--episode", "3", "mix up the music") == 0
+
+    text = capsys.readouterr().out
+    assert "new music: one new bed for ep03 only, $0.20" in text
+    assert "The rest of the show keeps its music" in text
+
+
+@pytest.mark.parametrize(
+    ("note", "silent"),
+    [
+        ("no music here", True),
+        ("SILENT on the look", True),
+        ("just the room, please", True),
+        ("less music", False),
+        ("quieter", False),
+        ("mix up the music", False),
+        ("calmer, no drums", False),
+        (None, False),
+    ],
+)
+def test_asks_for_no_music(note: str | None, silent: bool) -> None:
+    assert music_send.asks_for_no_music(note) is silent

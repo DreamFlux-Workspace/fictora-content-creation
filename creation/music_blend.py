@@ -4,8 +4,9 @@ The server keeps it on the spine (``music_blend``, fictora-drama
 intent-driven scoring): up to three families from ``romance``, ``suspense``,
 ``mystery``, ``comedy``, ``action``, ``drama``, ``horror``, ``slice_of_life``.
 The score follows each beat's music intent (written by the harness's beat
-writer) and plays the blend's moods on ambiguous beats, so a romance with a
-mystery spine can play suspense under a near-confession.
+writer; a beat marked ``silence`` or ``room only`` gets no music) and plays
+the blend's moods on ambiguous beats, so a romance with a mystery spine can
+play suspense under a near-confession.
 
 It never adds a step or a gate. Unset, a show plays its genre and overlays
 (or the blend the season writer read from the premise). ``step`` and the
@@ -285,8 +286,9 @@ def run_music_blend(
         run.client.close()
     print(blend.line(), file=out)
     print(
-        "Each beat's own music intent (written by the harness) still leads; the blend decides the "
-        "ambiguous beats. Filmed takes keep their music.",
+        "Each beat's own music intent (written by the harness) still leads, and a beat it marks "
+        "silence or room only gets no music; the blend decides the ambiguous beats. Filmed takes keep "
+        "their music.",
         file=out,
     )
     print(
