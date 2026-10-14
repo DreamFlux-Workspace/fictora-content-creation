@@ -105,6 +105,7 @@ Every `CONFIRM` line in the plan (a gate the old desk never recorded, an unfinis
 | `finish … --voice/--mute/--cue` | `P finish … --voice FILE@S[@DB] --mute A-B --cue FILE@S[@DB]` (same idea) |
 | `cue --name N --text "…" --seconds S` | `P cue --desk D --episode N --description "…" [--seconds S]` |
 | `set-bed --spine-json … / --library` | Gone: the music is the harness's (`finish` finds the spine's bed or has the server make one). Say what should change with `P music-note --desk D [--episode N] [--take tK] "calmer"`; it is sent to the harness: plan and price first, applied with `--yes` (`--confirm-refilm` for takes that must be filmed again; `--revert N`; `--send-saved`) |
+| `rescore-music --desk D (--episode N \| --all) [--revert] [--yes]` | Opt-in: older episodes get the music the harness's current rules give (never filmed; old cuts kept). Plan and cost first, `--yes` applies, then the kit rebuilds its episode file (finish + join on the new takes, a new draft file); `--revert` puts the earlier music back |
 | `deboard`, `soften`, `freeze`, `trim`, `tempo` | `P` with the same name, on `--desk D [--take-file F]` |
 | `join --part t1 --part t2 …` | `P join --desk D --episode N` (or `--episodes 1 2 3`, or `--take-file F …`); needs a finish record per take, so re-run `finish` on a take finished before the join landed; a re-captioned copy joins with `--from-record <its -cap master>` |
 | `preflight`, `status`, `spend`, `estimate`, `handoff`, `filmed`, `verdict`, `next-path` | `O` with the same name |
