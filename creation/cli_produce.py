@@ -362,7 +362,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.command,
             desk_arg,
             transcribe=bool(getattr(args, "transcribe", False)),
-            sends=args.command == "music-note" and bool(getattr(args, "yes", False)),
+            sends=args.command in ("music-note", "rescore-music")
+            and bool(getattr(args, "yes", False)),
         )
         if refused:
             print(refused, file=sys.stderr)

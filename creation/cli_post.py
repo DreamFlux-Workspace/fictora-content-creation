@@ -39,6 +39,7 @@ POST_COMMANDS = (
             "cue",
             "set-bed",
             "music-note",
+            "rescore-music",
             "finish",
             "join",
             "reel",
@@ -494,6 +495,41 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         default=None,
         metavar="SECONDS",
         help="How long to follow the episodes being put together again after applying (default 600; 0 reads once).",
+    )
+
+    rescore = sub.add_parser(
+        "rescore-music",
+        help="Give already-made episodes the music the harness's CURRENT rules give (opt-in; never films): "
+        "the harness lays it on each take's own voices-and-room track and joins the episode again (the old cut "
+        "is kept). Prints the harness's plan first (which takes change, which are skipped and why, the cost: only "
+        "new cue versions); --yes applies, then rebuilds this laptop's episode file (finish + join on the new "
+        "takes, a new <slug>_epNN_draft_vN file, nothing overwritten). --revert puts back what a re-score "
+        "replaced. The kit never lays or picks music itself.",
+    )
+    rescore.add_argument("--desk", type=Path, required=True)
+    rescore_scope = rescore.add_mutually_exclusive_group(required=True)
+    rescore_scope.add_argument("--episode", type=int, default=None, help="One episode.")
+    rescore_scope.add_argument(
+        "--all",
+        dest="all_episodes",
+        action="store_true",
+        help="The whole show, in episode order (the cue rotation across episodes depends on it).",
+    )
+    rescore.add_argument(
+        "--revert",
+        action="store_true",
+        help="Put back the music the latest re-score replaced (free; plan first, --yes applies).",
+    )
+    rescore.add_argument(
+        "--rescore-id",
+        default=None,
+        metavar="ID",
+        help="With --revert: undo exactly this re-score (printed when it was applied).",
+    )
+    rescore.add_argument(
+        "--yes",
+        action="store_true",
+        help="Apply after showing the plan. Without it nothing is changed or spent.",
     )
 
     fin = sub.add_parser(
@@ -1023,6 +1059,17 @@ def dispatch_post(args: argparse.Namespace) -> int:
             yes=args.yes,
             confirm_refilm=args.confirm_refilm,
             wait_seconds=DEFAULT_WAIT_SECONDS if args.wait is None else args.wait,
+        )
+    if args.command == "rescore-music":
+        from creation.post.music_rescore import run_rescore_music
+
+        return run_rescore_music(
+            args.desk,
+            episode=args.episode,
+            all_episodes=args.all_episodes,
+            revert=args.revert,
+            rescore_id=args.rescore_id,
+            yes=args.yes,
         )
     if args.command == "finish":
         result = run_finish(
