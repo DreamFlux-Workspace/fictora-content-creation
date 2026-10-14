@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import unicodedata
 from datetime import date
 from pathlib import Path
 
@@ -36,6 +37,7 @@ FALLBACK_SLUG = "series"
 STAGES = ("draft", "final")
 
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
+_COMBINING = re.compile("[\u0300-\u036f]")
 #: ``<slug>_ep01_draft_v3_2026-10-14.mp4`` (the episode, stage and version in groups).
 NEW_NAME = re.compile(
     r"^(?P<slug>[a-z0-9-]+)_ep(?P<ep>\d{2,})_(?P<stage>draft|final)_v(?P<v>\d+)_(?P<day>\d{4}-\d{2}-\d{2})\.mp4$"
@@ -45,9 +47,12 @@ OLD_NAME = re.compile(r"^episode-ep(?P<ep>\d+)-join-sokii-v(?P<v>\d+)\.mp4$")
 
 
 def slugify(text: str) -> str:
-    """``Back From The Sea!`` -> ``back-from-the-sea`` (capped at :data:`SLUG_MAX`); ``""`` when nothing is left."""
+    """``Back From The Sea!`` -> ``back-from-the-sea``, ``Café Nights`` -> ``cafe-nights`` (capped at :data:`SLUG_MAX`); ``""`` when nothing is left."""
 
-    slug = _NON_ALNUM.sub("-", text.strip().lower()).strip("-")
+    # The app's slug, step for step: NFKD, drop combining marks (U+0300-U+036F), lowercase,
+    # anything else a hyphen ("Café Nights" -> "cafe-nights").
+    folded = _COMBINING.sub("", unicodedata.normalize("NFKD", text))
+    slug = _NON_ALNUM.sub("-", folded.lower()).strip("-")
     return slug[:SLUG_MAX].rstrip("-")
 
 

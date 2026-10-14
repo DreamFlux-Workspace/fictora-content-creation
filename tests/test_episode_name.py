@@ -40,6 +40,10 @@ def test_the_slug_is_the_title_then_the_folder_then_series(
     tmp_path: Path, desk: Path
 ) -> None:
     assert slugify("  Back From The Sea! ") == "back-from-the-sea"
+    assert slugify("Back From The Sea!") == "back-from-the-sea"
+    assert slugify("Café Nights") == "cafe-nights", (
+        "the app's slug: accents folded, not dropped"
+    )
     assert slugify("A" * 30 + " " + "b" * 30) == "a" * 30 + "-" + "b" * 9
     assert len(slugify("word " * 20)) <= 40 and not slugify("word " * 20).endswith("-")
     assert series_slug(desk) == "back-from-the-sea"
