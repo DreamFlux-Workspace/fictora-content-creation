@@ -16,7 +16,9 @@ The golden file is recorded on origin/main before any letterbox code (now
 ae52d98, which carries #131's join gain-match change). ``finish-locked`` has one
 command more since #177 (L-20261005-6): a new desk's locked-voice take reads its
 levels once more (0.05 s windows) to find where each voice starts; its captions
-are unchanged here (the test voices start exactly on their windows). Numbers measured from
+are unchanged here (the test voices start exactly on their windows). The join's marked
+file has had its readable name since 14 Oct 2026 (``join-test_ep01_draft_v1_<date>.mp4``,
+the date pinned in the test); its commands are unchanged. Numbers measured from
 the test media may differ by a few milliseconds between ffmpeg builds
 (:data:`NUMBER_TOLERANCE`); everything else must match exactly. Regenerate only on purpose:
 ``UPDATE_GOLDEN=1 uv run pytest tests/test_letterbox_portrait_unchanged.py``.
@@ -29,6 +31,7 @@ import io
 import json
 import os
 import re
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +42,7 @@ from test_post_finish import FACTS, TWO_LINES, _board, fake_bed, fake_sfx
 from test_post_join import finished_take, noise_bed
 
 from creation.ops.floor import init_series_desk
+from creation.post import episode_name
 from creation.post.finish import run_finish
 from creation.post.join import run_join
 
@@ -174,6 +178,8 @@ def test_a_portrait_join_runs_the_commands_it_always_ran(
     finished_take(desk, 1, "t2", grey=90, tone=0.1, box=(1.0, 1.5))
     noise_bed(desk)
     calls = _recording(monkeypatch, [desk, REPO])
+    # The marked episode's readable name carries the day it was made (14 Oct 2026): pinned here.
+    monkeypatch.setattr(episode_name, "today", lambda: date(2026, 10, 14))
 
     result = run_join(desk, episodes=(1,), stream=io.StringIO())
 

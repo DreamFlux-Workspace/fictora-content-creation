@@ -63,8 +63,12 @@ joined file once. The opening and tail checks read the picture only. The
 captions are the ones each take was finished with (``--caption-colour`` on
 ``finish``).
 
-Outputs never overwrite: ``epNN/takes/episode-epNN-join-vN.mp4`` (master) and
-``episode-epNN-join-sokii-vN.mp4``; a series cut goes to ``shared/cuts/``.
+Outputs never overwrite: ``epNN/takes/episode-epNN-join-vN.mp4`` (the un-marked
+master, a working file) and the marked episode under its readable name,
+``<series-slug>_epNN_draft_vN_<YYYY-MM-DD>.mp4``
+(:mod:`creation.post.episode_name`; its ``vN`` continues an older desk's
+``episode-epNN-join-sokii-vN.mp4`` numbers, which keep their names). A series cut
+goes to ``shared/cuts/series-epNN-epMM-join[-sokii]-vN.mp4`` as before.
 """
 
 from __future__ import annotations
@@ -94,6 +98,7 @@ from creation.post.bed import (
     harness_bed,
     pinned_bed,
 )
+from creation.post.episode_name import next_episode_path
 from creation.post.finish_record import (
     FinishRecord,
     finish_records,
@@ -1995,8 +2000,12 @@ def run_join(
                 f"STOPPED: seam at {seam:.2f}s steps {step:+.1f} dB (over {SEAM_STEP_DB:.0f}, audible)"
             )
     else:
-        marked_stem = f"{stem}-sokii"
-        target = next_versioned_path(folder, marked_stem, ".mp4")
+        # One episode: the readable name (founder, 14 Oct 2026). A series cut keeps its old name.
+        target = (
+            next_episode_path(folder, desk, episode_set[0], "draft")
+            if len(episode_set) == 1
+            else next_versioned_path(folder, f"{stem}-sokii", ".mp4")
+        )
         cover, cover_note = _join_cover(desk, episodes)
 
         def mark(video: Path, out: Path) -> Path:

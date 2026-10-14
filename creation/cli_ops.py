@@ -128,7 +128,11 @@ def _add_floor_parsers(
         help="JSON list of {speaker, original, translation}: the JSON text, or @FILE / an existing file path.",
     )
 
-    ap = sub.add_parser("approve", help="Record a human yes on a gate.")
+    ap = sub.add_parser(
+        "approve",
+        help="Record a human yes on a gate. --gate post (the episode is final) also copies the episode file "
+        "to <show>_epNN_final_vN_<date>.mp4 (--path FILE, default the newest joined file).",
+    )
     ap.add_argument("--desk", type=Path, required=True)
     ap.add_argument(
         "--gate", required=True, choices=("look", "plates", "script", "board", "post")
@@ -390,12 +394,36 @@ def _dispatch_approve(args: argparse.Namespace) -> int:
         print(f"ep{args.episode:02d} script {record.status}")
         return 0
     if args.gate == "post":
+        from creation.post.episode_name import mark_final
+
         record = approve_post(
             args.desk,
             episode=args.episode,
             path=str(args.path) if args.path else None,
         )
         print(f"ep{args.episode:02d} post {record.status}")
+        # The human's "this episode is final": a copy named <show>_epNN_final_vN_<date>.mp4
+        # (founder, 14 Oct 2026). The file watched is left as it was.
+        final = mark_final(args.desk, args.episode, args.path)
+        if final is None:
+            print(
+                "No final copy made: no joined episode file on the desk"
+                + (f" and {args.path} is not an .mp4 file" if args.path else "")
+                + " (the yes is recorded)."
+            )
+            return 0
+        print(f"Final file: {final}")
+        notes_dir = args.desk / f"ep{args.episode:02d}"
+        if (notes_dir / "run-notes.md").is_file():
+            append_run_note(
+                notes_dir,
+                f"Episode marked final\nFinal file -> {final.name}"
+                + (
+                    f" (a copy of {args.path.name})"
+                    if args.path and args.path.name != final.name
+                    else ""
+                ),
+            )
         return 0
     if args.take is None or args.path is None:
         raise ValueError("board approve needs --take and --path")

@@ -316,7 +316,7 @@ Captions are the ones `finish` burned on each take (timed on that take's voice b
 
 On a letterbox join the captions are the ones each take was finished with: `--caption-colour` that differs from them is refused with the `finish --caption-colour` to run on each take. `--hook-line`, `--no-hook-line` and `--caption-colour` on a portrait join are refused (its hook line is the first take's, burned at `finish`).
 
-Outputs, never overwritten: `epNN/takes/episode-epNN-join-vN.mp4` (un-marked master) and `episode-epNN-join-sokii-vN.mp4`; a cut across episodes goes to `shared/cuts/series-epNN-epMM-join[-sokii]-vN.mp4`. The report and a run note in every episode joined list the parts and their gains, the bed, each seam (cut or dissolve, step in dB), frames / seconds and loudness.
+Outputs, never overwritten: `epNN/takes/episode-epNN-join-vN.mp4` (un-marked master, a working file) and the marked episode under its readable name `<show>_epNN_draft_vN_<YYYY-MM-DD>.mp4` (show = the title lowercased and hyphenated, at most 40 characters; `vN` is one count per episode across draft and final and carries on from an older desk's `episode-epNN-join-sokii-vN.mp4` files, which keep their names). `fictora-ops approve --desk D --gate post --episode N [--path FILE]` (the human says the episode is final) copies that file, default the newest, to `<show>_epNN_final_vN_<date>.mp4`, the next version; the draft stays; a cut across episodes goes to `shared/cuts/series-epNN-epMM-join[-sokii]-vN.mp4`. The report and a run note in every episode joined list the parts and their gains, the bed, each seam (cut or dissolve, step in dB), frames / seconds and loudness.
 
 ## Reel cut
 
@@ -536,7 +536,7 @@ uv run fictora-produce check-lines --desk D --episode N [--take tK]             
 | `api/spine.json`, `epNN/api/spine.json` | The story as last read; `api/brief-epNN-vK.json` briefs and arcs |
 | `epNN/takes/take-epNN-tK-finish-vN.json` | Finish record: the take before the bed, the un-marked master, the final, the bed and its level, and `edits` made after finish (what `join` reads) |
 | `epNN/takes/take-epNN-tK-mix-vN-{raw,ducked,key}-bus.wav` | Mix buses (bed before and after ducking, duck key; mono 48 kHz 16-bit, what `review` measures the duck depth from) |
-| `epNN/takes/episode-epNN-join-vN.mp4`, `shared/cuts/` | Joined episode / series cut: un-marked master and `-sokii` marked file |
+| `epNN/takes/episode-epNN-join-vN.mp4`, `epNN/takes/<show>_epNN_<draft\|final>_vN_<date>.mp4`, `shared/cuts/` | Joined episode: un-marked master and the marked episode (readable name; older desks: `episode-epNN-join-sokii-vN.mp4`); series cut: `-join[-sokii]-vN` |
 | `epNN/api/take-facts-epNN-tK-vN.json` | Take facts: lane, seconds, reference images, shots, which approved line ids were asked for. Never the prompt |
 | `ep01/run-notes.md` | Ledger, job ids, faults, causes |
 

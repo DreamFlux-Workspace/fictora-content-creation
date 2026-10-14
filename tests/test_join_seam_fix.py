@@ -333,7 +333,7 @@ def test_a_seam_that_cannot_be_fixed_still_refuses_and_lists_what_was_tried(
     assert abs(report["seams"][0]["step_db"]) > 5, "the master as first joined is kept"
     notes = (desk / "ep01" / "run-notes.md").read_text()
     assert "SEAM FIX TRIED" in notes and "STOPPED: seam at 4.00s" in notes
-    assert not list((desk / "ep01" / "takes").glob("episode-ep01-join-sokii-*.mp4"))
+    assert not list((desk / "ep01" / "takes").glob("*_ep01_*.mp4"))
 
 
 @needs_ffmpeg
