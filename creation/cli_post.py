@@ -513,7 +513,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--all",
         dest="all_episodes",
         action="store_true",
-        help="The whole show, in episode order (the cue rotation across episodes depends on it).",
+        help="The whole show, in episode order (each episode's piece depends on what the show used just before).",
     )
     rescore.add_argument(
         "--revert",

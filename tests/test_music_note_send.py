@@ -311,7 +311,7 @@ def test_a_no_music_note_read_as_new_music_is_held_even_with_yes(
     assert entry["status"] == "held"
     text = capsys.readouterr().out
     assert "Held: you asked for no music in ep01 t1" in text
-    assert "leaves quiet beats" in text
+    assert "one continuous piece under each episode" in text
     assert "--episode 1 --take t1 'much quieter'" in text
     assert "Not applied: nothing was changed or spent. Applying costs" not in text
 
