@@ -163,6 +163,7 @@ from creation.orchestrate import (
     seed_attempt_for,
     sync_spine_lines,
 )
+from creation.outdated_boards import outdated_objects_on_board, saved_spine
 from creation.prices import STILL_USD, server_lane
 from creation.production_config import (
     SERVER_HOUSE_CAPTION_STYLE,
@@ -5497,7 +5498,9 @@ def board_changes(
 
     Compares the digests recorded when the board was drawn
     (``state.board_inputs``: frames, beats, look notes, plates) with the story
-    now, and counts a board the server marked stale after a cascade. A desk drawn
+    now, and counts a board the server marked stale after a cascade, and a
+    board the story lists as showing an older object picture
+    (``outdated_boards``, fictora-drama #787). A desk drawn
     before the kit recorded all four has only the frame digest
     (``state.board_digests``); that one is compared alone.
 
@@ -5529,6 +5532,13 @@ def board_changes(
     changed: list[str] = []
     if key in state.boards_stale:
         changed.append("the server marked this board stale after a story edit")
+    # An object's newer picture, approved after this board was drawn (fictora-drama #787): the
+    # redraw binds it, so it is a change, though the board's own inputs read the same.
+    older = outdated_objects_on_board(spine, episode=episode, set_index=set_index)
+    if older:
+        changed.append(
+            f"a newer picture of {', '.join(older)} (the board shows the older one)"
+        )
     before = state.board_inputs.get(key)
     if before:
         changed.extend(
@@ -5795,6 +5805,10 @@ def restaging_warning(
     return lines
 
 
+#: ``redraw-board`` with neither a label nor a note, on a board not listed as showing an older object picture.
+NO_CAUSE = "--cause is required (a label for the desk) unless --note says what is wrong with the board"
+
+
 def run_redraw_board(
     desk: Path,
     *,
@@ -5827,6 +5841,11 @@ def run_redraw_board(
     take's frames first). Prints the redrawn board's shot list and safe-zone
     check, and sends the desk back to the board gate. Refused before anything
     is sent while a drawn look frame awaits its yes (as ``step`` is).
+
+    A board the story lists in ``outdated_boards`` (an object's newer picture
+    was approved after it was drawn; fictora-drama #787) counts as changed:
+    the redraw binds the new picture. It needs neither ``--note`` nor
+    ``--cause`` (the label defaults to the object's name).
 
     Parameters
     ----------
@@ -5870,13 +5889,20 @@ def run_redraw_board(
         except ValueError as exc:
             raise CommandStopped(str(exc)) from None
     cause = (cause or "").strip() or (note or "")
-    if not cause:
-        raise CommandStopped(
-            "--cause is required (a label for the desk) unless --note says what is wrong with the board"
-        )
     if not (take_id.startswith("t") and take_id[1:].isdigit()):
         raise CommandStopped("--take is t1, t2 ...")
     set_index = int(take_id[1:])
+    # A board listed as showing an object's older picture (fictora-drama #787) needs no label:
+    # the desk's saved story says so before any call, and the live story is checked below.
+    outdated_label = not cause and bool(
+        outdated_objects_on_board(
+            saved_spine(desk.expanduser().resolve()),
+            episode=episode,
+            set_index=set_index,
+        )
+    )
+    if not cause and not outdated_label:
+        raise CommandStopped(NO_CAUSE)
     _hold_for_pitch(desk, "redraw-board", episode=episode)
     _hold_for_look(desk, "redraw-board")
     desk, state, run = _desk_session(desk)
@@ -5931,6 +5957,13 @@ def run_redraw_board(
                     out=out,
                 )
                 state = load_production(desk)
+        if outdated_label:
+            older = outdated_objects_on_board(
+                spine, episode=episode, set_index=set_index
+            )
+            if not older:
+                raise CommandStopped(NO_CAUSE)
+            cause = f"newer picture of {', '.join(older)}"
         changed = board_changes(
             state, spine, episode=episode, take_id=take_id, take_count=len(slot.takes)
         )
@@ -8330,7 +8363,8 @@ def add_episode_parsers(
     )
     redraw.add_argument(
         "--cause",
-        help="Why: a LABEL for the desk (never changes the drawing). Defaults to the note.",
+        help="Why: a LABEL for the desk (never changes the drawing). Defaults to the note; on a board "
+        "showing an older object picture (listed by props/status/approve --gate plates) it defaults to the object.",
     )
     redraw.add_argument(
         "--same-shots",

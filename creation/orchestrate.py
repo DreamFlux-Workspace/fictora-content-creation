@@ -96,6 +96,7 @@ from creation.post.take_facts import (
     save_take_facts,
     shot_people_lines,
 )
+from creation.outdated_boards import outdated_boards_notice, saved_spine
 from creation.prices import (
     fal_billing_day,
     H3_MAX_R2V_ENDPOINT,
@@ -966,13 +967,16 @@ def _open_run(desk: Path, state: ProductionState) -> DramaApiRunSession:
 
 
 def status_message(desk: Path) -> str:
-    """Return a one-line operator status for the desk."""
+    """Return a one-line operator status for the desk, plus any boards showing an older object picture."""
 
     state = load_production(desk)
-    return (
+    line = (
         f"episode={state.episode_ordinal} phase={state.phase} spine={state.spine_id or '—'} "
         f"session={state.session_id}"
     )
+    # From the story the desk last saved (no call): boards drawn with an object's older picture (#787).
+    outdated = outdated_boards_notice(saved_spine(desk), desk=desk)
+    return f"{line}\n{outdated}" if outdated else line
 
 
 def _first_episode_of_series(desk: Path, episode: int) -> bool:
@@ -2004,7 +2008,9 @@ def run_step(
             )
 
         if state.phase == "failed":
-            if CAST_NOT_APPROVED in (state.last_error or ""):
+            if CAST_NOT_APPROVED in (state.last_error or "") and not held_for_object(
+                state.last_error or ""
+            ):
                 raise RuntimeError(
                     f"Episode {ep} stopped at `{state.failed_phase or 'an unrecorded stage'}`: {state.last_error}\n"
                     f"Nothing more was sent. {reapprove_plates_hint(desk)}"
@@ -2028,7 +2034,7 @@ def run_step(
         state.phase = "failed"
         state.last_error = str(exc)
         save_production(desk, state)
-        if CAST_NOT_APPROVED in str(exc.code):
+        if CAST_NOT_APPROVED in str(exc.code) and not held_for_object(str(exc.code)):
             raise SystemExit(f"{exc.code}\n{reapprove_plates_hint(desk)}") from exc
         plain = explain_film_refusal(str(exc.code))
         if plain is not None:
@@ -2640,6 +2646,16 @@ def book_filmed_episode(
 CAST_NOT_APPROVED = "cast_not_approved"
 
 
+def held_for_object(message: str) -> bool:
+    """A ``cast_not_approved`` refusal that holds the boards for a story object's pending redraw (#787).
+
+    Its fix is to draw and approve the object (the refusal text says how), not
+    to approve the same plates again, so :func:`reapprove_plates_hint` is not added.
+    """
+
+    return "redraw_pending" in message
+
+
 #: The server's refusal when the brief's locked lines do not fit the episode (fictora-drama).
 LOCKED_LINES_OUT_OF_BOUNDS = "locked_lines_out_of_bounds"
 #: The server's refusal when a locked line is not in the show's spoken language (fictora-drama #650):
@@ -2812,10 +2828,13 @@ def reapprove_plates(desk: Path, *, path: Path | None = None) -> StepResult:
     else:
         follow = "Next: `fictora-produce step`."
     traits = plate_traits_text(spine, wait_note=not is_legacy(desk))
+    # Boards drawn with an object's older picture (fictora-drama #787): said, never redrawn.
+    outdated = outdated_boards_notice(spine, desk=desk)
     return StepResult(
         state.phase,
         f"Plates approved again on spine_version {version} ($0, nothing drawn). {follow}"
-        + (f"\n{traits}" if traits else ""),
+        + (f"\n{traits}" if traits else "")
+        + (f"\n{outdated}" if outdated else ""),
         (desk / "api" / "spine.json",),
     )
 
@@ -2974,6 +2993,11 @@ def approve_gate(
             )
             traits = plate_traits_text(approved_spine, wait_note=not is_legacy(desk))
             traits = f"\n{traits}" if traits else ""
+            # Boards drawn with an object's older picture (fictora-drama #787): said, never redrawn.
+            outdated = outdated_boards_notice(approved_spine, desk=desk)
+            if outdated:
+                save_spine_snapshot(desk, ep, approved_spine)
+                traits += f"\n{outdated}"
             # A character a later episode brought in is approved after that
             # episode's script yes: go on to its boards.
             # The voices gate comes after the plates: the human hears each voice before any filming.

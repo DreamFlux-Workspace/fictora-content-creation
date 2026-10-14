@@ -52,6 +52,7 @@ from creation.harness.visual_first_ep1 import reuse_generation_body
 from creation.ops.floor import record_spend
 from creation.ops.folder import next_versioned_path
 from creation.orchestrate import save_spine_snapshot
+from creation.outdated_boards import outdated_boards_notice
 from creation.prices import STILL_USD
 from creation.production_state import load_production, save_production
 from creation.spine_view import episode_id_for
@@ -226,6 +227,9 @@ def run_props(desk: Path, *, out: Any = None) -> list[dict[str, str]]:
         f"| remove one: fictora-produce remove-prop --desk {desk} --prop NAME",
         file=out,
     )
+    outdated = outdated_boards_notice(spine, desk=desk)
+    if outdated:
+        print(outdated, file=out)
     return rows
 
 
