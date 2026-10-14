@@ -23,6 +23,15 @@ the harness answered is written back onto the entry (``status``,
 ``version``, ``job_id``, ``spent_usd``) and the full answers are kept under
 ``shared/music-notes/``. An applied note is never sent again.
 
+A note that asks for **no music** ("no music here", "silence", "room only")
+is checked against the plan: when the harness reads it as new music (a new
+piece, which is the opposite of what was asked), it is held, never applied,
+even with ``--yes``. The operator is told what the harness does instead (it
+leaves quiet beats without music on its own when it scores new takes) and
+what they can send today ("much quieter", a free re-mix). The words matched
+are the kit's own (:data:`NO_MUSIC_PHRASES`); the harness alone decides what
+a note means.
+
 After an apply, each episode whose takes were re-mixed is put together again
 on the server; this polls the re-mixed takes' facts (``refinish``) and says
 when the delivered cut changed.
@@ -31,6 +40,7 @@ when the delivered cut changed.
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import sys
 import time
@@ -59,8 +69,58 @@ IN_PROGRESS = frozenset({"queued", "running"})
 #: Exit code when the change did not run (blocked, refused, or a re-film without a verified price).
 NOT_APPLIED = 2
 
+#: Words that ask for no music at all on the note's scope (matched whole, case and punctuation ignored).
+#: Only used to hold a note the harness would answer with new music; the harness reads the note itself.
+NO_MUSIC_PHRASES: tuple[str, ...] = (
+    "no music",
+    "without music",
+    "without the music",
+    "no score",
+    "silence",
+    "silent",
+    "room only",
+    "room tone only",
+    "just the room",
+    "only the room",
+    "drop the music",
+    "cut the music",
+    "kill the music",
+    "lose the music",
+    "remove the music",
+    "take the music out",
+    "take out the music",
+    "music out",
+    "mute the music",
+    "music off",
+    "turn off the music",
+)
+#: Plan kinds that take the music out (a newer harness may answer a no-music note with one of these).
+NO_MUSIC_KINDS = frozenset({"silence", "no_music", "room_only"})
+#: Exit code when a no-music note is held because the harness would make new music.
+HELD = NOT_APPLIED
+
 Sleep = Callable[[float], None]
 _sleep: Sleep = time.sleep
+
+
+def asks_for_no_music(note: str | None) -> bool:
+    """Whether a note asks for no music at all ("no music here", "silence", "room only").
+
+    Parameters
+    ----------
+    note
+        The note in the operator's words (``None`` for a revert).
+
+    Returns
+    -------
+    bool
+        ``True`` when one of :data:`NO_MUSIC_PHRASES` is in the note as whole words.
+    """
+
+    if not note:
+        return False
+    text = " " + " ".join(re.sub(r"[^a-z0-9' ]+", " ", note.casefold()).split()) + " "
+    return any(f" {phrase} " in text for phrase in NO_MUSIC_PHRASES)
 
 
 def _route(spine_id: str) -> str:
@@ -117,6 +177,36 @@ def apply_key(prefix: str, entry: Mapping[str, Any], *, confirm_refilm: bool) ->
     )
 
 
+def _plan_scope(entry: Mapping[str, Any]) -> str:
+    """Where a note applies, as the plan lines say it."""
+
+    words = _scope_words(entry)
+    return "the show" if words == "the whole show" else words
+
+
+def _held_text(desk: Path, entry: Mapping[str, Any]) -> str:
+    """Why a no-music note is held, and what the operator can send instead."""
+
+    scope = _scope_words(entry)
+    quieter = ["fictora-produce", "music-note", "--desk", str(desk)]
+    if entry.get("episode") is not None:
+        quieter += ["--episode", str(entry["episode"])]
+    if entry.get("take"):
+        quieter += ["--take", str(entry["take"])]
+    quieter.append("much quieter")
+    return (
+        f"Held: you asked for no music in {scope}, but the harness read the note as new music "
+        "(it would make a new piece, the opposite of what you asked). Nothing was changed or spent, "
+        "and --yes will not apply it.\n"
+        "  What happens anyway: with its October music update the harness leaves quiet beats (a pause, "
+        "a look, a held breath) with no music on its own, and a beat its writer marks silence or room only "
+        "gets none. Takes it scores after that update get this without a note.\n"
+        "  What you can send now for takes already filmed: "
+        f"`{shlex.join(quieter)}` (the same music pulled far down, free, nothing new made). "
+        "The note stays saved as held; --send-saved asks the harness again once it can take music out."
+    )
+
+
 def _take_label(take: Mapping[str, Any]) -> str:
     episode = take.get("episode_ordinal")
     number = take.get("take") or take.get("take_index")
@@ -128,11 +218,13 @@ def _take_label(take: Mapping[str, Any]) -> str:
     return f"{head} t{number}" if number is not None else head
 
 
-def _kind_line(answer: Mapping[str, Any]) -> str:
+def _kind_line(answer: Mapping[str, Any], scope: str = "the show") -> str:
     kind = answer.get("kind")
     cost = answer.get("cost") or {}
     if kind == "level_only":
         return "level only: the same music re-mixed at a new level. Free, nothing new is made."
+    if kind in NO_MUSIC_KINDS:
+        return f"no music: the music is taken out of {scope}; the voices, the room and the effects stay."
     if kind == "revert":
         version = answer.get("version") or {}
         which = f" v{version['version']}" if version.get("version") else ""
@@ -140,14 +232,21 @@ def _kind_line(answer: Mapping[str, Any]) -> str:
             f"revert: the earlier music{which} is put back. Free, nothing new is made."
         )
     if kind == "new_music":
+        if scope == "the show":
+            return (
+                f"new music: one new bed for the show, {_money(cost.get('new_bed_usd') or 0)}. "
+                "Every take filmed later uses it too."
+            )
         return (
-            f"new music: one new bed for the show, {_money(cost.get('new_bed_usd') or 0)}. "
-            "Every take filmed later uses it too."
+            f"new music: one new bed for {scope} only, {_money(cost.get('new_bed_usd') or 0)}. "
+            f"The rest of the show keeps its music; takes filmed later in {scope} use it too."
         )
-    return f"{kind}"
+    return f"{kind}" + (f": {answer['message']}" if answer.get("message") else "")
 
 
-def plan_lines(answer: Mapping[str, Any], *, confirm_refilm: bool) -> list[str]:
+def plan_lines(
+    answer: Mapping[str, Any], *, confirm_refilm: bool, scope: str = "the show"
+) -> list[str]:
     """The harness's plan (or what ran) in plain words, one line each.
 
     Parameters
@@ -156,6 +255,8 @@ def plan_lines(answer: Mapping[str, Any], *, confirm_refilm: bool) -> list[str]:
         The ``music-notes`` response.
     confirm_refilm
         Whether re-films were confirmed on this call.
+    scope
+        Where the note applies, in words ("the show", "ep02", "ep02 t1").
 
     Returns
     -------
@@ -163,7 +264,7 @@ def plan_lines(answer: Mapping[str, Any], *, confirm_refilm: bool) -> list[str]:
         Operator lines.
     """
 
-    lines = [f"  What it is: {_kind_line(answer)}"]
+    lines = [f"  What it is: {_kind_line(answer, scope)}"]
     if answer.get("direction"):
         lines.append(f"  Words sent for the new music: {answer['direction']}")
     version = answer.get("version") or {}
@@ -451,7 +552,8 @@ def send_entry(
             )
             return NOT_APPLIED
         saved = _save_answer(desk, entry, "plan", plan)
-        for line in plan_lines(plan, confirm_refilm=confirm_refilm):
+        scope = _plan_scope(entry)
+        for line in plan_lines(plan, confirm_refilm=confirm_refilm, scope=scope):
             print(line, file=out)
         cost = plan.get("cost") or {}
         refilm_count = int(cost.get("refilm_take_count") or 0)
@@ -466,6 +568,13 @@ def send_entry(
                 file=out,
             )
             return NOT_APPLIED
+        if asks_for_no_music(entry.get("note")) and plan.get("kind") == "new_music":
+            update_music_note(
+                desk, entry["id"], status="held", kind=plan.get("kind"),
+                response=str(saved.relative_to(desk)), sent_at=_now(),
+            )  # fmt: skip
+            print(_held_text(desk, entry), file=out)
+            return HELD
         update_music_note(
             desk, entry["id"], status="planned", kind=plan.get("kind"),
             response=str(saved.relative_to(desk)), sent_at=_now(),
@@ -555,7 +664,7 @@ def send_entry(
             else f"Not applied ({status}): {answer.get('message')}",
             file=out,
         )
-        for line in plan_lines(answer, confirm_refilm=confirm_refilm)[1:]:
+        for line in plan_lines(answer, confirm_refilm=confirm_refilm, scope=scope)[1:]:
             print(line, file=out)
         if status != "applied":
             return NOT_APPLIED
@@ -696,8 +805,12 @@ def run_music_note(
 
 __all__: Sequence[str] = (
     "DEFAULT_WAIT_SECONDS",
+    "HELD",
     "MUSIC_NOTE_ANSWERS",
     "NOT_APPLIED",
+    "NO_MUSIC_KINDS",
+    "NO_MUSIC_PHRASES",
+    "asks_for_no_music",
     "apply_key",
     "plan_lines",
     "poll_refinish",

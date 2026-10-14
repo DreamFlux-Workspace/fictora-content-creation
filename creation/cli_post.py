@@ -437,11 +437,14 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     note = sub.add_parser(
         "music-note",
-        help='Say what should change about the show\'s music ("calmer", "quieter under the lines") and send it to '
-        "the harness: the note is saved on the desk (shared/music-notes.jsonl), the harness's plan and price are "
-        "shown (a dry run), and it is applied only with --yes. Takes that can only change by filming again need "
-        "--confirm-refilm too. --revert N puts music version N back; --send-saved sends saved notes not yet "
-        "applied. The kit never picks or makes music itself.",
+        help='Say what should change about the music ("calmer", "quieter", "less music", "mix up the music", '
+        '"no music here") for the whole show, one --episode, or one --take, and send it to the harness: the '
+        "note is saved on the desk (shared/music-notes.jsonl), the harness's plan and price are shown (a dry "
+        "run), and it is applied only with --yes. A note the harness reads as level only (quieter, louder) is a "
+        "free re-mix; anything else is new music (about $0.20). A no-music note the harness would answer with "
+        "new music is held, never applied. Takes that can only change by filming again need --confirm-refilm "
+        "too. --revert N puts music version N back; --send-saved sends saved notes not yet applied. The kit "
+        "never picks or makes music itself.",
     )
     note.add_argument("--desk", type=Path, required=True)
     note.add_argument(

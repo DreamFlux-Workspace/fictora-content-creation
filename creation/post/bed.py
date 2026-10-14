@@ -193,8 +193,10 @@ def pinned_bed(desk: Path) -> Path | None:
 
 
 #: What a sent note's ``status`` can be: ``planned`` (a dry run answered), ``applied`` (the harness ran it),
-#: ``blocked`` (a new bed was needed and provider spend is off), ``refused`` (the server said no).
-SENT_STATUSES = ("planned", "applied", "blocked", "refused")
+#: ``blocked`` (a new bed was needed and provider spend is off), ``refused`` (the server said no),
+#: ``held`` (the note asks for no music but the harness's plan would make new music: never applied, see
+#: :func:`creation.post.music_send.asks_for_no_music`).
+SENT_STATUSES = ("planned", "applied", "blocked", "refused", "held")
 
 
 def _scope_of(entry: Mapping[str, Any]) -> tuple[int | None, str | None]:
