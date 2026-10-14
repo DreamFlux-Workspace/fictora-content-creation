@@ -26,8 +26,8 @@ the harness answered is written back onto the entry (``status``,
 A note that asks for **no music** ("no music here", "silence", "room only")
 is checked against the plan: when the harness reads it as new music (a new
 piece, which is the opposite of what was asked), it is held, never applied,
-even with ``--yes``. The operator is told what the harness does instead (it
-leaves quiet beats without music on its own when it scores new takes) and
+even with ``--yes``. The operator is told what the harness does instead (one
+continuous piece under each episode, with a swell into its key line) and
 what they can send today ("much quieter", a free re-mix). The words matched
 are the kit's own (:data:`NO_MUSIC_PHRASES`); the harness alone decides what
 a note means.
@@ -198,9 +198,8 @@ def _held_text(desk: Path, entry: Mapping[str, Any]) -> str:
         f"Held: you asked for no music in {scope}, but the harness read the note as new music "
         "(it would make a new piece, the opposite of what you asked). Nothing was changed or spent, "
         "and --yes will not apply it.\n"
-        "  What happens anyway: with its October music update the harness leaves quiet beats (a pause, "
-        "a look, a held breath) with no music on its own, and a beat its writer marks silence or room only "
-        "gets none. Takes it scores after that update get this without a note.\n"
+        "  What happens anyway: the harness lays one continuous piece under each episode, a gentle mix "
+        "that swells into the episode's key line; it does not leave quiet beats empty on its own.\n"
         "  What you can send now for takes already filmed: "
         f"`{shlex.join(quieter)}` (the same music pulled far down, free, nothing new made). "
         "The note stays saved as held; --send-saved asks the harness again once it can take music out."

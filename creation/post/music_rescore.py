@@ -1,8 +1,8 @@
 """Re-score already-made episodes with the harness's current music rules, then rebuild the kit's episode file.
 
-Music rules change (how much music a genre gets, quiet beats with no music, at
-most two stings an episode, cue versions rotated across episodes...), and each
-change only reaches takes filmed after it. ``fictora-produce rescore-music``
+Music rules change (since 14 Oct 2026: one continuous piece under each
+episode, picked from the labelled library, swelling into its key line, a
+gentler mix), and each change only reaches takes filmed after it. ``fictora-produce rescore-music``
 asks the harness to give an older episode, or the whole show, the music a take
 filmed today would get (``POST /v1/spines/{spine_id}/music-rescore``):
 
@@ -10,7 +10,7 @@ filmed today would get (``POST /v1/spines/{spine_id}/music-rescore``):
   it in plain words: per episode, which takes get the new music, which are
   skipped and why (the video model made the music, no stored voices-and-room
   track, a music note the creator scoped there, the story changed, a later
-  re-roll, already current), and the cost (only new cue versions cost
+  re-roll, already current), and the cost (only newly made pieces cost
   anything). Nothing is changed or spent without ``--yes``.
 - **never filming.** The harness lays the new music on each take's stored
   voices-and-room track and joins its episode again (a new cut; the old one is
