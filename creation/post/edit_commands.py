@@ -334,9 +334,11 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     tempo = sub.add_parser(
         "tempo",
-        help="Change the speed of picture and sound together, pitch kept (0.9 = 10%% slower). "
-        "--from and --to speed only that window (the action); lines outside it stay at 1x. "
-        "Run it on the FINISHED take: finish lays the take's effects at the filmed times.",
+        help="Change a take's speed (0.9 = 10%% slower). A locked-voice take is changed on the server: the "
+        "picture changes speed, the voices keep their natural speed where their words now start, the room, "
+        "music and effects are laid again, and the take facts move (then finish the new raw take). A take whose "
+        "sound the video model made is changed here, picture and sound together, pitch kept (run it on the "
+        "FINISHED take). --from and --to speed only that window (the action).",
     )
     _take_args(
         tempo,
@@ -358,6 +360,16 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         type=float,
         default=None,
         help="Seconds: the sped window ends. Requires --from.",
+    )
+    tempo.add_argument(
+        "--preview",
+        action="store_true",
+        help="Locked-voice take: print where each line goes at the new speed; change nothing.",
+    )
+    tempo.add_argument(
+        "--revert",
+        action="store_true",
+        help="Locked-voice take: put back what the take played before its tempo (the server keeps it).",
     )
 
     soft = sub.add_parser(
@@ -632,6 +644,29 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
         raise ValueError(
             "trim needs --take-file: finish the raw take first, then trim the finished file"
         )
+    if args.command == "tempo":
+        # A locked-voice take's tempo is set on the server: the picture changes speed and the
+        # server lays the take's own voices (natural speed, where their words now start), room,
+        # music and effects again, and reports its take facts on the new timeline
+        # (L-20261014-20). Only a take whose sound the video model made (or a server without
+        # the route) falls through to the local edit below, which speeds the voices too.
+        from creation.post.take_tempo import run_take_tempo
+
+        answered = run_take_tempo(
+            desk,
+            episode=args.episode,
+            take_id=args.take_id,
+            factor=args.factor,
+            start_s=getattr(args, "start", None),
+            end_s=getattr(args, "end", None),
+            preview=bool(getattr(args, "preview", False)),
+            revert=bool(getattr(args, "revert", False)),
+            out=out,
+        )
+        if answered is not None:
+            return answered
+        if getattr(args, "preview", False) or getattr(args, "revert", False):
+            raise ValueError("tempo --preview / --revert are for a locked-voice take the server keeps")
     source = _source(args, desk)
     # A finished file with the episode cover attached keeps it through the edit, and says so in its name.
     covered = "-cover" if video_streams(source)[1] is not None else ""
