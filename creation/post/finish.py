@@ -733,6 +733,13 @@ def api_facts_fetcher(desk: Path, episode: int, take_id: str) -> Path | None:
     )
 
 
+def fight_take(payload: dict[str, Any]) -> bool:
+    """Whether the take facts say the take is a fight (``take_facts.fight``, the server's call)."""
+
+    facts = payload.get("take_facts", payload)
+    return isinstance(facts, dict) and facts.get("fight") is True
+
+
 def api_impact_planner(desk: Path, episode: int, take_id: str) -> ImpactPlanner | None:
     """The server's impact decision for this take (``POST /v1/jobs/{take_job}/impact-plan``), or ``None``.
 
@@ -1658,7 +1665,12 @@ def run_finish(
     }
     voice_state: dict[str, Path | None] = {"path": None}
     # For the impact step: (measured file, filmed windows, cuts) and the effects laid on the filmed shots.
-    impact_state: dict[str, Any] = {"picture": None, "cues": (), "trace": None}
+    impact_state: dict[str, Any] = {
+        "picture": None,
+        "cues": (),
+        "trace": None,
+        "fight": False,
+    }
     # The inner-voice step's output (what the mix ducks under) and each laid thought: (cue, placed, seconds).
     thought_state: dict[str, Any] = {"path": None, "laid": []}
     # For the finish record `join` reads: what the mix read, and what the mark went on.
@@ -2122,6 +2134,7 @@ def run_finish(
 
         moved, note, picture = filmed_cut_placement(plan, payload, take)
         impact_state["picture"] = picture
+        impact_state["fight"] = fight_take(payload)
         if legacy_rules():
             return moved, note
         return on_filmed_action(moved, picture, note)
@@ -2145,7 +2158,9 @@ def run_finish(
         impact_state["trace"] = (
             trace  # the impact step reads the same trace (never measured twice)
         )
-        cues, snaps = snap_to_action(plan.cues, windows, trace, cuts=cuts)
+        cues, snaps = snap_to_action(
+            plan.cues, windows, trace, cuts=cuts, fight=impact_state["fight"]
+        )
         line = snaps.one_line()
         return replace(plan, cues=cues), f"{note}; {line}" if line else note
 
@@ -2164,10 +2179,17 @@ def run_finish(
                 return plan, "cues as planned (the take facts plan one shot)", None
             # One planned shot: nothing to follow, but its action can still be found on the picture.
             only = {shot.index: (shot.start, shot.end) for shot in shots}
+            one_shot_cuts: tuple[float, ...] = ()
+            if fight_take(payload):
+                # A cut the model filmed anyway (a flash) is never a blow: measured, as the server does.
+                try:
+                    one_shot_cuts = tuple((cut_meter or measure_cuts)(take))
+                except (RuntimeError, OSError, MediaToolError):
+                    one_shot_cuts = ()
             return (
                 plan,
                 "cues as planned (the take facts plan one shot)",
-                (take, only, ()),
+                (take, only, one_shot_cuts),
             )
         # Cuts are measured on the raw take when the finished file keeps its picture timeline: a freeze
         # hold ends in a jump that would read as a cut, and soften fades the real ones.

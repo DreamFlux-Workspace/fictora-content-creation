@@ -147,3 +147,45 @@ def test_the_take_eases_out_of_the_hold_instead_of_jumping(tmp_path: Path) -> No
     first = np.abs(after[end + 1] - after[end]).mean()
     full = np.abs(after[end + 3] - after[end]).mean()
     assert first < 0.6 * full, (first, full)
+
+
+def test_on_a_long_one_shot_fight_the_hit_sound_goes_under_the_server_s_strike() -> (
+    None
+):
+    """B1 (kit side): the real spar's trace, its hit a Sound-line cue at 0.0 s, a filmed cut at 5.04 s.
+
+    The server punches in on the shot's strongest strike (~11.08 s); the kit's sfx step lays the hit
+    sound there too, never on the cut.
+    """
+
+    import json
+
+    from creation.post.sfx import SfxCue
+    from creation.post.sfx_motion import LONG_FIGHT_SHOT_SECONDS, snap_to_action
+
+    trace = tuple(
+        (t, v)
+        for t, v in json.loads(
+            (
+                Path(__file__).parent / "fixtures" / "boxer_s04_spar_motion_trace.json"
+            ).read_text()
+        )
+    )
+    cue = SfxCue(
+        shot_index=1,
+        sound="two hard leather pops, sharp breath; then a flat slap of leather on skin",
+        kind="event",
+        start=0.0,
+        seconds=3.0,
+        source="sound_line",
+        impact="hit",
+    )
+
+    (fight,), _ = snap_to_action(
+        (cue,), {1: (0.0, 15.0)}, trace, cuts=(5.042,), fight=True
+    )
+    (plain,), _ = snap_to_action((cue,), {1: (0.0, 15.0)}, trace, cuts=(5.042,))
+
+    assert LONG_FIGHT_SHOT_SECONDS == 5.0, "the server's number"
+    assert 10.6 <= fight.start <= 11.2 and abs(fight.start - 5.042) > 0.15
+    assert plain.start == 0.0, "off a fight, the old search keeps its time"
