@@ -29,7 +29,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -37,7 +38,7 @@ from typing import Any
 import httpx
 
 from creation.harness.http_util import api_error_text
-from creation.media_fetch import MEDIA_HEADERS
+from creation.media_fetch import MEDIA_HEADERS, get_media
 
 #: The reel route, as ``/openapi.json`` lists it.
 REEL_ROUTE = "/v1/video-generations/{job_id}/episodes/{episode_id}/reel"
@@ -213,6 +214,8 @@ class ReelServer:
             headers=MEDIA_HEADERS,
         )
         self._own_http = http is None
+        #: Waits between download tries (tests pass a no-op).
+        self.sleep: Callable[[float], None] = time.sleep
         #: An upload was taken from ``uploads.json`` instead of sent (a failed reel then uploads again).
         self.reused = False
 
@@ -385,17 +388,15 @@ class ReelServer:
         """
 
         try:
-            response = self.http.get(url)
+            # The shared media download: browser user agent, one more try
+            # after a refusal or busy answer, never off https.
+            content = get_media(self.http, url, sleep=self.sleep)
         except httpx.HTTPError as exc:
-            raise ReelServerUnreachable(
-                f"downloading {dest.name}: {type(exc).__name__}"
-            ) from exc
-        if not response.is_success or not response.content:
-            raise ReelServerUnreachable(
-                f"downloading {dest.name}: HTTP {response.status_code}"
-            )
+            raise ReelServerUnreachable(f"downloading {dest.name}: {exc}") from exc
+        if not content:
+            raise ReelServerUnreachable(f"downloading {dest.name}: the file was empty")
         with dest.open("xb") as handle:
-            handle.write(response.content)
+            handle.write(content)
         return dest
 
 

@@ -13,7 +13,9 @@ same call for an operator who needs a file a command did not save.
 
 from __future__ import annotations
 
+import os
 import time
+import uuid
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
@@ -59,7 +61,8 @@ def get_media(
 
     Sends :data:`BROWSER_USER_AGENT` whatever ``client`` was built with, and
     tries again (:data:`RETRY_WAITS`) after an answer in
-    :data:`RETRY_STATUSES` or a dropped connection.
+    :data:`RETRY_STATUSES` or a dropped connection. An https URL that
+    redirects to plain http is refused.
 
     Raises
     ------
@@ -76,6 +79,10 @@ def get_media(
         except httpx.TransportError as exc:
             last = type(exc).__name__
             continue
+        if url.startswith("https://") and response.url.scheme != "https":
+            raise MediaFetchError(
+                f"refused {_short(url)}: it redirected off https to {response.url.scheme}"
+            )
         if response.is_success:
             return response.content
         last = f"HTTP {response.status_code}"
@@ -90,8 +97,15 @@ def fetch_to(
     *,
     client: httpx.Client | None = None,
     sleep: Callable[[float], None] = time.sleep,
+    overwrite: bool = True,
 ) -> Path:
-    """Download ``url`` into ``dest`` (parent created) and return ``dest``."""
+    """Download ``url`` into ``dest`` (parent created) and return ``dest``.
+
+    The file appears whole or not at all: the bytes go to a temporary file
+    beside it, which is then renamed into place. With ``overwrite=False`` an
+    existing ``dest`` is never replaced (``FileExistsError``), even if it
+    appeared while downloading.
+    """
 
     own = client is None
     http = client or media_client()
@@ -101,7 +115,15 @@ def fetch_to(
         if own:
             http.close()
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(data)
+    part = dest.with_name(f".{dest.name}.{uuid.uuid4().hex}.part")
+    try:
+        part.write_bytes(data)
+        if overwrite:
+            os.replace(part, dest)
+        else:
+            os.link(part, dest)  # atomic, and refuses an existing file
+    finally:
+        part.unlink(missing_ok=True)
     return dest
 
 

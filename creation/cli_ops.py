@@ -237,7 +237,7 @@ def _fetch(url: str, out: Path) -> int:
             "(pick a new name with `fictora-ops next-path`)"
         )
     try:
-        print(fetch_to(url, out))
+        print(fetch_to(url, out, overwrite=False))
     except MediaFetchError as exc:
         print(f"{exc}; nothing was saved", file=sys.stderr)
         return 1

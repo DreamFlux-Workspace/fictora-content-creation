@@ -18,6 +18,7 @@ from creation import cli_ops, media_fetch
 from creation.media_fetch import (
     BROWSER_USER_AGENT,
     MediaFetchError,
+    fetch_to,
     get_media,
     media_client,
 )
@@ -104,10 +105,94 @@ def test_stems_and_music_downloads_go_through_the_media_fetch(
     assert out.read_bytes() == b"RIFFstem"
 
 
-def test_the_reel_client_sends_a_browser_user_agent() -> None:
-    from creation.post import reel_server
+def test_the_reel_servers_own_client_sends_a_browser_user_agent(tmp_path: Path) -> None:
+    """Uploads and downloads both go through ``ReelServer.http``."""
 
-    assert reel_server.MEDIA_HEADERS["User-Agent"] == BROWSER_USER_AGENT
+    from creation.post.reel_server import ReelServer
+
+    server = ReelServer(tmp_path, 1, run=object())
+    try:
+        assert server.http.headers["user-agent"] == BROWSER_USER_AGENT
+    finally:
+        server.http.close()
+
+
+def test_reel_downloads_go_through_the_media_fetch(tmp_path: Path) -> None:
+    from creation.post.reel_server import ReelServer, ReelServerUnreachable
+
+    answers = iter([httpx.Response(503), httpx.Response(200, content=b"mp4")])
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("user-agent", ""))
+        return next(answers)
+
+    server = ReelServer(
+        tmp_path,
+        1,
+        run=object(),
+        http=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    server.sleep = lambda _s: None
+    out = server.download("https://pub-x.r2.dev/reel.mp4", tmp_path / "reel.mp4")
+    assert out.read_bytes() == b"mp4"
+    assert seen == [BROWSER_USER_AGENT, BROWSER_USER_AGENT]
+
+    missing = ReelServer(
+        tmp_path,
+        1,
+        run=object(),
+        http=httpx.Client(
+            transport=httpx.MockTransport(lambda _r: httpx.Response(404))
+        ),
+    )
+    with pytest.raises(ReelServerUnreachable, match="HTTP 404"):
+        missing.download("https://pub-x.r2.dev/gone.mp4", tmp_path / "gone.mp4")
+
+
+def test_a_redirect_off_https_is_refused() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.scheme == "https":
+            return httpx.Response(
+                302, headers={"Location": "http://evil.example/stem.wav"}
+            )
+        return httpx.Response(200, content=b"plain")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(MediaFetchError, match="off https"):
+        get_media(client, URL, sleep=lambda _s: None)
+
+
+def test_a_download_lands_whole_or_not_at_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No half-written file: the bytes go to a temporary file that is renamed into place."""
+
+    out = tmp_path / "t1-stem-v1.wav"
+    writes: list[Path] = []
+    real_write = Path.write_bytes
+
+    def watch(self: Path, data: bytes) -> int:
+        writes.append(self)
+        return real_write(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", watch)
+    client = httpx.Client(transport=httpx.MockTransport(_like_the_media_host))
+    fetch_to(URL, out, client=client, overwrite=False)
+
+    assert out.read_bytes() == b"RIFFstem"
+    assert writes and all(path != out for path in writes)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["t1-stem-v1.wav"]
+
+
+def test_a_file_that_appeared_meanwhile_is_never_replaced(tmp_path: Path) -> None:
+    out = tmp_path / "t1-stem-v1.wav"
+    out.write_bytes(b"mine")
+    client = httpx.Client(transport=httpx.MockTransport(_like_the_media_host))
+    with pytest.raises(FileExistsError):
+        fetch_to(URL, out, client=client, overwrite=False)
+    assert out.read_bytes() == b"mine"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["t1-stem-v1.wav"]
 
 
 def test_fetch_command_saves_a_new_file_and_never_overwrites(
