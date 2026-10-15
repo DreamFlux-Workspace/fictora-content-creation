@@ -19,10 +19,15 @@ POST_GATE: Final = "post"
 PITCH_GATE: Final = "pitch"
 
 
-def _command_line(tool: str, args: argparse.Namespace, *, with_path: bool) -> str:
+def _command_line(
+    tool: str, args: argparse.Namespace, *, with_path: bool, episode_required: bool
+) -> str:
     parts = [tool, "approve", "--desk", str(args.desk), "--gate", str(args.gate)]
     episode = getattr(args, "episode", None)
-    parts += ["--episode", str(episode) if episode is not None else "N"]
+    if episode is not None:
+        parts += ["--episode", str(episode)]
+    elif episode_required:
+        parts += ["--episode", "N"]
     path = getattr(args, "path", None)
     if with_path and path is not None:
         parts += ["--path", str(path)]
@@ -45,17 +50,25 @@ def wrong_tool_for_gate(args: argparse.Namespace) -> str:
     """
 
     if args.gate == POST_GATE:
-        line = _command_line("fictora-ops", args, with_path=True)
+        line = _command_line("fictora-ops", args, with_path=True, episode_required=True)
         return (
             "The episode-is-final yes (--gate post) is recorded by fictora-ops, not fictora-produce. "
             f"Nothing was recorded. Run:\n  {line}"
+            + (
+                "\n(N = the episode number)"
+                if getattr(args, "episode", None) is None
+                else ""
+            )
             + (
                 ""
                 if getattr(args, "path", None) is not None
                 else "\n(add --path FILE to mark a file other than the newest joined one)"
             )
         )
-    line = _command_line("fictora-produce", args, with_path=False)
+    # fictora-produce's pitch gate defaults to the desk's current episode.
+    line = _command_line(
+        "fictora-produce", args, with_path=False, episode_required=False
+    )
     return (
         f"The --gate {args.gate} yes is recorded by fictora-produce, not fictora-ops. "
         f"Nothing was recorded. Run:\n  {line}"

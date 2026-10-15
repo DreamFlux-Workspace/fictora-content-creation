@@ -141,8 +141,9 @@ def _add_floor_parsers(
     ap.add_argument(
         "--gate",
         required=True,
-        # "pitch" is accepted only to say where it lives (fictora-produce).
+        # "pitch" is accepted only to say where it lives (fictora-produce), and kept out of --help.
         choices=("look", "plates", "script", "board", POST_GATE, PITCH_GATE),
+        metavar="{look,plates,script,board,post}",
     )
     ap.add_argument("--episode", type=int, default=None)
     ap.add_argument("--take", default=None)
