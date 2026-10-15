@@ -1,14 +1,13 @@
-"""``tempo`` on a locked-voice take: set on the server, which keeps the voices at natural speed (L-20261014-20).
+"""``tempo`` is set on the server: the take plays faster or slower and every time it reports moves (L-20261014-20).
 
-The kit's own ``tempo`` (``setpts`` + ``atempo`` on a finished file) re-sped
-everything under the picture: on a locked-voice take the character voices
-and the music too, so lines had to be re-rendered and the music and
-ambience re-laid by hand, and captions timed on the take facts went up about
-0.9 s late. The server now owns a take's tempo
-(``POST /v1/video-generations/{job}/takes/{index}/tempo``, fictora-drama): it
-plays the picture at the factor, lays the take's own voices at natural speed
-where their words now start, lays its room, music and effects again at natural
-speed, replaces the take and reports its take facts on the new timeline.
+The kit's own ``tempo`` (``setpts`` + ``atempo`` on a finished file) left the
+server's take facts on the filmed times, so captions timed on them went up
+about 0.9 s late, and effects and finish read the old moments. The server now
+owns a take's tempo (``POST /v1/video-generations/{job}/takes/{index}/tempo``,
+fictora-drama): it speeds picture and the whole sound together (pitch kept, so
+lips stay on their words; founder blind A/B, 15 Oct 2026), replaces the take
+and moves every time it reports (take facts, trim handles, post edits, kept
+captions).
 
 This module only asks and saves (the kit keeps no tempo logic):
 
@@ -18,22 +17,21 @@ This module only asks and saves (the kit keeps no tempo logic):
   the new timeline;
 - ``tempo --revert`` puts back what the take played before (same saves).
 
-A take whose sound the video model made (``take_tempo_native_sound``), or a
-server without the route, answers ``None``: the caller runs the local tempo,
-which still speeds the voices with the picture, and says so.
+The request key is built from the desk, the take and the tempo, so a retry
+after a lost answer is the same request. A take that already plays at a speed
+(``take_tempo_already_set``) has its take and facts fetched again. Only a
+server without the route (or a take the desk cannot place on its video job)
+answers ``None``: the caller runs the local edit and says so.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
-import uuid
 from pathlib import Path
 from typing import Any, TextIO
-
-#: The server's answer that leaves the tempo to the kit's local edit.
-LOCAL_TEMPO_CODES = frozenset({"take_tempo_native_sound"})
 
 
 def _code(text: str) -> str | None:
@@ -41,6 +39,28 @@ def _code(text: str) -> str | None:
         r"\b(take_tempo_[a-z_]+|take_not_[a-z_]+|video_generation_not_found)\b", text
     )
     return found.group(1) if found else None
+
+
+def tempo_key(prefix: str, *, episode: int, take_id: str, body: dict[str, Any]) -> str:
+    """The request key: the same desk, take and tempo is the same request (a retry is never a second one).
+
+    Parameters
+    ----------
+    prefix
+        The desk's idempotency prefix.
+    episode, take_id
+        The take.
+    body
+        The request body.
+
+    Returns
+    -------
+    str
+        ``<prefix>-tempo-epNN-tK-<digest>``.
+    """
+
+    digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:16]
+    return f"{prefix}-tempo-ep{episode:02d}-{take_id}-{digest}"
 
 
 def run_take_tempo(
@@ -79,23 +99,24 @@ def run_take_tempo(
     Returns
     -------
     int | None
-        ``0`` applied, previewed or reverted; ``2`` refused; ``None`` when the
-        take's voices are the video model's own (or the server has no route):
-        run the local tempo.
+        ``0`` applied, previewed, reverted or already set at this speed; ``2``
+        refused; ``None`` when the server has no route or the desk cannot
+        place the take on its video job: run the local edit.
     """
 
     from creation import episode_commands as ec
-    from creation.harness.raw_video import fetch_take_facts
-    from creation.media_fetch import download_to_versioned
-    from creation.ops.notes import append_run_note
-    from creation.post.desk import saved_spine
-    from creation.post.take_facts import save_take_facts
     from creation.post.take_handles import take_coordinate
 
     desk = desk.expanduser().resolve()
     label = f"ep{episode:02d} {take_id}"
     where = take_coordinate(desk, episode, take_id)
     if where is None:
+        print(
+            f"!! {label}: the desk has no video job for this take, so the server cannot change its speed: the "
+            "local tempo runs instead and the take facts keep their filmed times (captions after it are timed "
+            "on speech spans).",
+            file=out,
+        )
         return None
     body: dict[str, Any] = (
         {"revert": True} if revert else {"factor": factor, "dry_run": preview}
@@ -108,25 +129,31 @@ def run_take_tempo(
             answer = run.post(
                 f"/v1/video-generations/{where.video_job_id}/takes/{where.take_index}/tempo",
                 body,
-                idempotency_key=f"{run.prefix}-tempo-ep{episode:02d}-{take_id}-{uuid.uuid4().hex[:12]}",
+                idempotency_key=tempo_key(
+                    run.prefix, episode=episode, take_id=take_id, body=body
+                ),
             )
         except SystemExit as exc:
             text = exc.code if isinstance(exc.code, str) else str(exc.code)
             code = _code(text)
-            if code in LOCAL_TEMPO_CODES:
-                print(
-                    f"{label}: the video model made this take's sound, voices included, so the server cannot keep "
-                    "them at natural speed; the local tempo speeds them with the picture.",
-                    file=out,
-                )
-                return None
             if code is None and re.search(r"HTTP (404|405)\b", text):
                 print(
                     f"!! {label}: this server has no take tempo (fictora-drama tempo route not deployed): the local "
-                    "tempo speeds the voices and music with the picture.",
+                    "tempo speeds the take here and the take facts keep their filmed times.",
                     file=out,
                 )
                 return None
+            if code == "take_tempo_already_set":
+                # Set earlier (an answer lost on the way?): bring the desk up to what the server plays.
+                print(f"{label}: {text.split(': ', 2)[-1]}", file=out)
+                _save(desk, run, state, where, episode, take_id, video=None, out=out)
+                asked = f"{float(factor):g}x" if factor is not None else None
+                if asked is not None and asked in text:
+                    print("Applied (already, at this speed)", file=out)
+                    return 0
+                out.flush()
+                print(f"Refused: {ec.refusal_reason(text)}", file=sys.stderr)
+                return 2
             out.flush()
             print(f"Stopped: {text}", file=sys.stderr)
             print(f"Refused: {ec.refusal_reason(text)}", file=sys.stderr)
@@ -135,7 +162,7 @@ def run_take_tempo(
         for line in answer.get("lines") or []:
             print(
                 f"  {line['line_id']}: filmed at {float(line['filmed_start_s']):.2f} s, now "
-                f"{float(line['start_s']):.2f}-{float(line['end_s']):.2f} s (natural speed)",
+                f"{float(line['start_s']):.2f}-{float(line['end_s']):.2f} s",
                 file=out,
             )
         if answer.get("status") == "planned":
@@ -143,32 +170,16 @@ def run_take_tempo(
                 "Not applied: --preview showed the tempo; nothing was changed", file=out
             )
             return 0
-        facts = fetch_take_facts(run, where.take_job_id, spine_id=state.spine_id)
-        if facts is None:
-            print(
-                "  !! take facts not saved again: run `take-facts --refresh` before finish",
-                file=out,
-            )
-        else:
-            found = saved_spine(desk, episode)
-            saved = save_take_facts(desk, episode=episode, take_id=take_id, facts=facts,
-                                    spine=found[0] if found else None)  # fmt: skip
-            print(
-                f"  take facts: `{saved.name}` (on the take's new timeline)", file=out
-            )
-        video = answer.get("video_url")
-        if video:
-            import httpx
-
-            with httpx.Client(timeout=180.0) as client:
-                path = download_to_versioned(
-                    client,
-                    str(video),
-                    desk / f"ep{episode:02d}" / "takes",
-                    f"take-ep{episode:02d}-{take_id}-raw",
-                    default_suffix=".mp4",
-                )
-            print(f"  take: `{path.name}` (the newest raw take)", file=out)
+        _save(
+            desk,
+            run,
+            state,
+            where,
+            episode,
+            take_id,
+            video=str(answer["video_url"]) if answer.get("video_url") else None,
+            out=out,
+        )
     finally:
         run.client.close()
     run_dir = desk / f"ep{episode:02d}"
@@ -179,6 +190,8 @@ def run_take_tempo(
         }
     )
     if (run_dir / "run-notes.md").is_file():
+        from creation.ops.notes import append_run_note
+
         append_run_note(run_dir, f"Tempo {label} on the server: {note}")
     print(
         f"Next: `fictora-produce finish --desk {desk} --episode {episode} --take {take_id}`",
@@ -187,4 +200,51 @@ def run_take_tempo(
     return 0
 
 
-__all__ = ["LOCAL_TEMPO_CODES", "run_take_tempo"]
+def _save(
+    desk: Path,
+    run: Any,
+    state: Any,
+    where: Any,
+    episode: int,
+    take_id: str,
+    *,
+    video: str | None,
+    out: TextIO,
+) -> None:
+    """Save the take's facts again and download its stored clip as the newest raw take."""
+
+    from creation.harness.raw_video import fetch_take_facts
+    from creation.media_fetch import download_to_versioned
+    from creation.post.desk import saved_spine
+    from creation.post.take_facts import save_take_facts
+
+    facts = fetch_take_facts(run, where.take_job_id, spine_id=state.spine_id)
+    if facts is None:
+        print(
+            "  !! take facts not saved again: run `take-facts --refresh` before finish",
+            file=out,
+        )
+    else:
+        found = saved_spine(desk, episode)
+        saved = save_take_facts(desk, episode=episode, take_id=take_id, facts=facts,
+                                spine=found[0] if found else None)  # fmt: skip
+        print(f"  take facts: `{saved.name}` (on the take's new timeline)", file=out)
+        if video is None:
+            # The facts name the take's file (``playable_window.media_url``).
+            window = facts.get("playable_window") if isinstance(facts, dict) else None
+            video = window.get("media_url") if isinstance(window, dict) else None
+    if video:
+        import httpx
+
+        with httpx.Client(timeout=180.0) as client:
+            path = download_to_versioned(
+                client,
+                str(video),
+                desk / f"ep{episode:02d}" / "takes",
+                f"take-ep{episode:02d}-{take_id}-raw",
+                default_suffix=".mp4",
+            )
+        print(f"  take: `{path.name}` (the newest raw take)", file=out)
+
+
+__all__ = ["run_take_tempo", "tempo_key"]
