@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable
@@ -667,8 +668,89 @@ def serve_emotions(api: FakeApi, spine_id: str = "sp1") -> None:
             )
         return doc
 
+    def read_words(text: str) -> dict[str, Any]:
+        """A tiny stand-in for the server's sentence reader (``emotion_request``)."""
+
+        lowered = text.casefold()
+        if re.search(r"\b(wears?|outfit|dress)\b", lowered):
+            return {
+                "refusal": (
+                    "not_an_emotion_request",
+                    "That reads as a look request, not a feeling.",
+                )
+            }
+        names = [c for c in api.spine_doc["cast"] if c["name"].casefold() in lowered]
+        everyone = "everyone" in lowered
+        if not names and not everyone:
+            return {
+                "refusal": (
+                    "unknown_cast",
+                    "Name the character, as the story calls them.",
+                )
+            }
+        cast_id = None if everyone else names[0]["cast_id"]
+        found = re.search(r"episode\s+(\d+)", lowered)
+        if "cry" in lowered:
+            return {
+                "add": {
+                    "cast_id": cast_id,
+                    "from_episode": int(found.group(1)) if found else 1,
+                    "through_episode": None,
+                    "mood": None,
+                    "no_tears": True,
+                    "note": "",
+                }
+            }
+        if "calmer" in lowered and cast_id and not found:
+            return {"default": (cast_id, {"mood": "composed", "note": ""})}
+        return {
+            "refusal": (
+                "not_an_emotion_request",
+                "Say how they feel or whether they cry.",
+            )
+        }
+
     def change(_m: str, _p: str, body: dict[str, Any] | None) -> Any:
         body = body or {}
+        if body.get("request_text") is not None:
+            if body.get("spine_version") != api.spine_doc.get("spine_version"):
+                return refuse(
+                    409,
+                    "spine_version_conflict",
+                    latest_spine_version=api.spine_doc.get("spine_version"),
+                )
+            reading = read_words(body["request_text"])
+            if "refusal" in reading:
+                code, message = reading["refusal"]
+                return answer(
+                    api.spine_doc,
+                    {"preview": True},
+                    False,
+                    {},
+                    refusal={"code": code, "message": message},
+                )
+            if "add" in reading:
+                status, said = change(
+                    _m,
+                    _p,
+                    {
+                        "spine_version": body["spine_version"],
+                        "add": reading["add"],
+                        "preview": True,
+                    },
+                )
+                return status, {**said, "added": None, "inferred_add": reading["add"]}
+            cast_id, wanted = reading["default"]
+            status, said = default(
+                "PUT",
+                f"{base}/cast/{cast_id}/emotional-default",
+                {
+                    "spine_version": body["spine_version"],
+                    "emotional_default": wanted,
+                    "preview": True,
+                },
+            )
+            return status, {**said, "inferred_default": wanted}
         doc = open_doc(body)
         if isinstance(doc, tuple):
             return doc

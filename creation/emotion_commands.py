@@ -74,6 +74,11 @@ SERVER_TOO_OLD = (
     "this server is older than the emotion plan (fictora-drama /emotions): nothing was sent. "
     "Ask engineering to deploy it; do not strip tear words from shots by hand"
 )
+ASK = "--ask"
+ASK_TOO_OLD = (
+    "this server cannot read a plain sentence yet (emotion request_text): nothing was changed. "
+    "Use the flag forms instead, e.g. --cast NAME --no-tears --episodes 5-"
+)
 _KNOWN_404 = {"spine_not_found", "cast_not_found", "emotion_entry_not_found"}
 
 
@@ -261,6 +266,8 @@ class _Desk:
 
         code, _ = _error(answer)
         desk = self.desk
+        if what == ASK and status == 422:
+            return ASK_TOO_OLD
         if code == "emotion_entry_not_found":
             return (
                 f"the plan has no entry {what}: `fictora-produce emotion --desk {desk}` lists the entries "
@@ -649,6 +656,107 @@ def run_emotion_default(
         session.close()
 
 
+def _ask(session: _Desk, text: str) -> dict[str, Any]:
+    """Send the creator's words; the server answers a preview with what it read them as, or a refusal.
+
+    Raises
+    ------
+    ec.CommandStopped
+        The server's refusal, in its own words; or a server too old to read a sentence.
+    """
+
+    answer = session.send(
+        "POST",
+        f"{session.base}/emotions",
+        {"request_text": text},
+        preview=True,
+        what=ASK,
+    )
+    refusal = answer.get("refusal")
+    if isinstance(refusal, Mapping):
+        message = _one_line(refusal.get("message")) or str(refusal.get("code") or "")
+        raise ec.CommandStopped(
+            f"the server did not read that as an emotion change: {message}. Nothing was changed"
+        )
+    if (
+        not isinstance(answer.get("inferred_add"), Mapping)
+        and "inferred_default" not in answer
+    ):
+        raise ec.CommandStopped(ASK_TOO_OLD)
+    return answer
+
+
+def run_emotion_ask(
+    desk: Path, *, text: str, confirm: bool = False, out: Any = None
+) -> None:
+    """Say the change in plain words ("Seo-yeon shouldn't cry from episode 5 on"); the server reads it.
+
+    Without ``confirm`` it prints the server's preview: what it read the words as, the shots and lines
+    that would change and the boards that would need a redraw. With ``confirm`` it asks the server
+    again (the kit stores nothing between runs) and applies exactly what came back: ``add`` for a plan
+    entry, the emotional-default ``PUT`` for a default.
+
+    Raises
+    ------
+    ec.CommandStopped
+        Empty words, the server's refusal (its own message), or a server too old to read a sentence.
+    """
+
+    out = out or sys.stdout
+    text = _one_line(text)
+    if not text:
+        raise ec.CommandStopped(
+            '--ask needs the change in words, e.g. --ask "Seo-yeon shouldn\'t cry from episode 5 on"; '
+            "nothing was sent"
+        )
+    session = _open(desk)
+    try:
+        preview = _ask(session, text)
+        add = preview.get("inferred_add")
+        rerun = f'fictora-produce emotion --desk {session.desk} --ask "{text}"'
+        if isinstance(add, Mapping):
+            said = entry_text(add, session.names)
+            answer = preview
+            if confirm:
+                print(f"Read as: {said}", file=out)
+                answer = session.send(
+                    "POST",
+                    f"{session.base}/emotions",
+                    {"add": dict(add)},
+                    preview=False,
+                    what=str(add.get("cast_id") or EVERYONE),
+                )
+                said = entry_text(answer.get("added") or add, session.names)
+            episode = _first_episode(answer, int(add.get("from_episode") or 1))
+        else:
+            cast_id = str(preview.get("cast_id") or "")
+            default = preview.get("inferred_default")
+            who = session.names.get(cast_id, cast_id)
+            said = f"{who}'s default: {_default_text(default)}"
+            answer = preview
+            if confirm:
+                print(f"Read as: {said}", file=out)
+                answer = session.send(
+                    "PUT",
+                    f"{session.base}/cast/{quote(cast_id, safe='')}/emotional-default",
+                    {"emotional_default": default},
+                    preview=False,
+                    what=who,
+                )
+            episode = _first_episode(answer, 1)
+        _finish(
+            session,
+            answer,
+            said=said,
+            cause=text,
+            rerun=rerun,
+            episode=episode,
+            out=out,
+        )
+    finally:
+        session.close()
+
+
 def run_emotion_cli(args: Any) -> None:
     """Route ``fictora-produce emotion`` flags to one command; a flag mix that makes no sense stops first.
 
@@ -660,6 +768,22 @@ def run_emotion_cli(args: Any) -> None:
 
     adding = bool(args.mood) or args.no_tears or args.tears_ok
     defaulting = args.default is not None or args.clear_default
+    if args.ask is not None:
+        if (
+            adding
+            or defaulting
+            or args.remove is not None
+            or args.cast
+            or args.everyone
+            or args.episodes
+            or args.note
+        ):
+            raise ec.CommandStopped(
+                "--ask comes alone (with --confirm to apply): the server reads who, which episodes and "
+                "what from the words. Nothing was sent"
+            )
+        run_emotion_ask(args.desk, text=args.ask, confirm=args.confirm)
+        return
     if args.no_tears and args.tears_ok:
         raise ec.CommandStopped(
             "--no-tears and --tears-ok contradict each other; pick one. Nothing was sent"
@@ -709,7 +833,7 @@ def run_emotion_cli(args: Any) -> None:
         return
     if args.confirm or args.episodes or args.note or args.everyone:
         raise ec.CommandStopped(
-            "nothing to change: add --mood, --no-tears, --tears-ok, --default, --clear-default or --remove. "
+            "nothing to change: add --ask, --mood, --no-tears, --tears-ok, --default, --clear-default or --remove. "
             "Nothing was sent"
         )
     run_emotion_list(args.desk, cast=args.cast)
@@ -723,6 +847,7 @@ __all__ = [
     "parse_range",
     "range_text",
     "run_emotion_add",
+    "run_emotion_ask",
     "run_emotion_cli",
     "run_emotion_default",
     "run_emotion_list",

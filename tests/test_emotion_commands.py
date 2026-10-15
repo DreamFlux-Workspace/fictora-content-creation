@@ -397,3 +397,147 @@ def test_ranges_parse(raw: str, parsed: tuple[int, int | None]) -> None:
 def test_bad_ranges_stop(raw: str) -> None:
     with pytest.raises(ec.CommandStopped):
         em.parse_range(raw)
+
+
+# --- --ask: the creator's own words, read by the server -------------------------------------------
+
+
+def test_ask_shows_the_servers_preview_and_stores_nothing(
+    desk: Path, api: FakeApi, capsys: Any
+) -> None:
+    _serve(api)
+
+    code = produce_main(
+        [
+            "emotion",
+            "--desk",
+            str(desk),
+            "--ask",
+            "Hana shouldn't cry from episode 2 on",
+        ]
+    )
+
+    assert code == 0
+    ((method, path, body),) = _sent(api)
+    assert (method, path) == ("POST", "/v1/spines/sp1/emotions")
+    assert body == {
+        "spine_version": "v5",
+        "request_text": "Hana shouldn't cry from episode 2 on",
+        "preview": True,
+    }
+    assert _faces(api, "ep_02") == ["tear_up", "tear_up"]
+    assert not api.spine_doc.get("emotion_plan")
+    assert load_production(desk).boards_stale == []
+    text = capsys.readouterr().out
+    assert "Preview: Hana, ep 2 onward: no tears" in text
+    assert "face t1 frame_ep_02_01 (Hana): tear_up -> freeze" in text
+    assert "$0.30 each, $0.30 in all" in text and "--episode 2 --take t1" in text
+    assert '--ask "Hana shouldn\'t cry from episode 2 on" --confirm' in text
+
+
+def test_ask_confirm_asks_again_and_applies_exactly_what_was_read(
+    desk: Path, api: FakeApi
+) -> None:
+    _serve(api)
+    out = io.StringIO()
+
+    em.run_emotion_ask(
+        desk, text="Hana shouldn't cry from episode 2 on", confirm=True, out=out
+    )
+
+    asked, applied = (body for _, _, body in _sent(api))
+    assert "request_text" in asked
+    # Applies the server's own reading, nothing the kit kept between runs.
+    assert applied == {
+        "spine_version": "v5",
+        "add": {
+            "cast_id": "cast_hana",
+            "from_episode": 2,
+            "through_episode": None,
+            "mood": None,
+            "no_tears": True,
+            "note": "",
+        },
+        "preview": False,
+    }
+    assert _faces(api, "ep_02") == ["freeze", "freeze"]
+    assert _faces(api, "episode_01") == ["tear_up", "tear_up"]
+    assert load_production(desk).boards_stale == ["ep02-t1"]
+    text = out.getvalue()
+    assert "Read as: Hana, ep 2 onward: no tears" in text
+    assert "ASK THE HUMAN NOW" in text and "Applied" in text
+
+
+def test_ask_for_a_default_applies_it_with_the_put(desk: Path, api: FakeApi) -> None:
+    _serve(api)
+    out = io.StringIO()
+
+    em.run_emotion_ask(desk, text="make Ren calmer by default", out=out)
+    assert "Preview: Ren's default: composed" in out.getvalue()
+    assert "emotional_default" not in api.spine_doc["cast"][1]
+
+    em.run_emotion_ask(
+        desk, text="make Ren calmer by default", confirm=True, out=io.StringIO()
+    )
+
+    method, path, body = _sent(api)[-1]
+    assert (method, path) == ("PUT", "/v1/spines/sp1/cast/cast_ren/emotional-default")
+    assert body["emotional_default"] == {"mood": "composed", "note": ""}
+    assert body["preview"] is False
+    assert api.spine_doc["cast"][1]["emotional_default"] == {
+        "mood": "composed",
+        "note": "",
+    }
+
+
+@pytest.mark.parametrize(
+    ("words", "said"),
+    [
+        ("Hana wears a red dress in episode 2", "a look request, not a feeling"),
+        ("Seo-yeon shouldn't cry", "Name the character"),
+    ],
+)
+def test_ask_refusals_print_the_servers_message_and_apply_nothing(
+    desk: Path, api: FakeApi, words: str, said: str
+) -> None:
+    _serve(api)
+
+    with pytest.raises(ec.CommandStopped, match=said):
+        em.run_emotion_ask(desk, text=words, confirm=True, out=io.StringIO())
+    assert len(_sent(api)) == 1  # the question only, never a write
+    assert not api.spine_doc.get("emotion_plan")
+
+
+def test_ask_on_a_server_that_cannot_read_sentences_stops(
+    desk: Path, api: FakeApi
+) -> None:
+    _serve(api)
+    api.routes[("POST", "/v1/spines/sp1/emotions")] = (
+        422,
+        {"error": {"code": "validation_error", "message": "send add or remove"}},
+    )
+
+    with pytest.raises(ec.CommandStopped, match="cannot read a plain sentence"):
+        em.run_emotion_ask(
+            desk, text="Hana shouldn't cry", confirm=True, out=io.StringIO()
+        )
+
+
+def test_ask_comes_alone(desk: Path, api: FakeApi, capsys: Any) -> None:
+    _serve(api)
+
+    code = produce_main(
+        [
+            "emotion",
+            "--desk",
+            str(desk),
+            "--ask",
+            "Hana shouldn't cry",
+            "--cast",
+            "Hana",
+        ]
+    )
+
+    assert code != 0
+    assert "--ask comes alone" in capsys.readouterr().err
+    assert _sent(api) == []

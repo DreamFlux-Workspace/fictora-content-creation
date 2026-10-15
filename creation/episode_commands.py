@@ -8207,6 +8207,12 @@ def add_episode_parsers(
         "nothing (boards it outdates are named with their redraw-board, $0.30 each, never drawn here).",
     )
     emotion.add_argument("--desk", type=Path, required=True)
+    emotion.add_argument(
+        "--ask",
+        metavar="TEXT",
+        help='The change in plain words, e.g. "Seo-yeon shouldn\'t cry from episode 5 on" or "make Jae-won '
+        'calmer by default": the server reads it and shows a preview; --confirm applies what it read (alone).',
+    )
     emotion.add_argument("--cast", help="The character's name or cast id.")
     emotion.add_argument(
         "--everyone",
