@@ -41,8 +41,47 @@ def _code(text: str) -> str | None:
     return found.group(1) if found else None
 
 
-def tempo_key(prefix: str, *, episode: int, take_id: str, body: dict[str, Any]) -> str:
-    """The request key: the same desk, take and tempo is the same request (a retry is never a second one).
+def take_state(desk: Path, episode: int, take_id: str) -> str:
+    """The take as the desk last saved it: its newest take-facts file's name and content digest.
+
+    Every applied tempo or revert saves the facts again (a new ``vN``), so a set,
+    a revert and a set again are three states; a retry after a lost answer saved
+    nothing, so it is the same state.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    episode, take_id
+        The take.
+
+    Returns
+    -------
+    str
+        ``<file name>:<sha256 prefix>``, or ``none``.
+    """
+
+    from creation.post.sfx import saved_take_facts
+
+    path = saved_take_facts(desk, episode, take_id)
+    if path is None or not path.is_file():
+        return "none"
+    return f"{path.name}:{hashlib.sha256(path.read_bytes()).hexdigest()[:16]}"
+
+
+def tempo_key(
+    prefix: str,
+    *,
+    episode: int,
+    take_id: str,
+    body: dict[str, Any],
+    state: str = "none",
+) -> str:
+    """The request key: the same command on the same take state is the same request.
+
+    A retry of one command reuses its key (never a second change); a new command
+    after a revert (a new take state) gets a new one, so it is never answered
+    with the old, already-reverted change.
 
     Parameters
     ----------
@@ -52,6 +91,8 @@ def tempo_key(prefix: str, *, episode: int, take_id: str, body: dict[str, Any]) 
         The take.
     body
         The request body.
+    state
+        :func:`take_state`.
 
     Returns
     -------
@@ -59,8 +100,40 @@ def tempo_key(prefix: str, *, episode: int, take_id: str, body: dict[str, Any]) 
         ``<prefix>-tempo-epNN-tK-<digest>``.
     """
 
-    digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:16]
+    payload = json.dumps({"body": body, "state": state}, sort_keys=True)
+    digest = hashlib.sha256(payload.encode()).hexdigest()[:16]
     return f"{prefix}-tempo-ep{episode:02d}-{take_id}-{digest}"
+
+
+def _same_tempo(
+    facts: dict[str, Any] | None,
+    *,
+    factor: float | None,
+    start_s: float | None,
+    end_s: float | None,
+) -> bool:
+    """Whether the take's facts say it already plays at exactly this tempo (factor and window)."""
+
+    tempo = facts.get("tempo") if isinstance(facts, dict) else None
+    if not isinstance(tempo, dict) or factor is None:
+        return False
+    if abs(float(tempo.get("factor") or 0) - factor) > 1e-6:
+        return False
+    if start_s is None:
+        # No window asked: the server's default is the take's playable part (its automatic handles).
+        window = facts.get("playable_window") if isinstance(facts, dict) else None
+        auto = (
+            (window.get("auto_start_s"), window.get("auto_end_s"))
+            if isinstance(window, dict)
+            else (None, None)
+        )
+        if auto[0] is None or auto[1] is None:
+            return True
+        start_s, end_s = float(auto[0]), float(auto[1])
+    return (
+        abs(float(tempo.get("from_s") or 0) - float(start_s)) <= 0.002
+        and abs(float(tempo.get("to_s") or 0) - float(end_s or 0)) <= 0.002
+    )
 
 
 def run_take_tempo(
@@ -130,7 +203,11 @@ def run_take_tempo(
                 f"/v1/video-generations/{where.video_job_id}/takes/{where.take_index}/tempo",
                 body,
                 idempotency_key=tempo_key(
-                    run.prefix, episode=episode, take_id=take_id, body=body
+                    run.prefix,
+                    episode=episode,
+                    take_id=take_id,
+                    body=body,
+                    state=take_state(desk, episode, take_id),
                 ),
             )
         except SystemExit as exc:
@@ -146,10 +223,11 @@ def run_take_tempo(
             if code == "take_tempo_already_set":
                 # Set earlier (an answer lost on the way?): bring the desk up to what the server plays.
                 print(f"{label}: {text.split(': ', 2)[-1]}", file=out)
-                _save(desk, run, state, where, episode, take_id, video=None, out=out)
-                asked = f"{float(factor):g}x" if factor is not None else None
-                if asked is not None and asked in text:
-                    print("Applied (already, at this speed)", file=out)
+                facts = _save(
+                    desk, run, state, where, episode, take_id, video=None, out=out
+                )
+                if _same_tempo(facts, factor=factor, start_s=start_s, end_s=end_s):
+                    print("Applied (already, at this speed and window)", file=out)
                     return 0
                 out.flush()
                 print(f"Refused: {ec.refusal_reason(text)}", file=sys.stderr)
@@ -210,8 +288,8 @@ def _save(
     *,
     video: str | None,
     out: TextIO,
-) -> None:
-    """Save the take's facts again and download its stored clip as the newest raw take."""
+) -> dict[str, Any] | None:
+    """Save the take's facts again and download its stored clip as the newest raw take; return the facts."""
 
     from creation.harness.raw_video import fetch_take_facts
     from creation.media_fetch import download_to_versioned
@@ -245,6 +323,7 @@ def _save(
                 default_suffix=".mp4",
             )
         print(f"  take: `{path.name}` (the newest raw take)", file=out)
+    return facts if isinstance(facts, dict) else None
 
 
-__all__ = ["run_take_tempo", "tempo_key"]
+__all__ = ["run_take_tempo", "take_state", "tempo_key"]

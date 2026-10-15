@@ -146,22 +146,7 @@ def test_a_model_sound_take_is_sent_to_the_server_too(desk: Path, api: FakeApi) 
     assert _tempo(desk, "--factor", "1.5") == 2
 
 
-def test_a_retry_is_the_same_request_and_a_take_already_at_that_speed_is_fetched_again(
-    desk: Path,
-    api: FakeApi,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    _desk_with_take(desk)
-    keys: list[str | None] = []
-
-    def already(method: str, path: str, body: Any) -> Any:
-        raise SystemExit(
-            f"HTTP 409 POST {TEMPO}: take_tempo_already_set: Take 2 already plays at 1.5x. Revert it first"
-        )
-
-    api.routes[("POST", TEMPO)] = already
-    api.routes[("GET", FACTS_ROUTE)] = _facts()
+def _download_to(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     fetched: list[str] = []
 
     def download(
@@ -179,22 +164,75 @@ def test_a_retry_is_the_same_request_and_a_take_already_at_that_speed_is_fetched
         return path
 
     monkeypatch.setattr(media_fetch, "download_to_versioned", download)
+    return fetched
 
-    assert _tempo(desk, "--factor", "1.5") == 0
-    assert _tempo(desk, "--factor", "1.5") == 0
-    keys = [
+
+def _keys(api: FakeApi) -> list[str | None]:
+    return [
         key
         for method, path, _body, key in api.calls
         if method == "POST" and path == TEMPO
     ]
 
+
+def test_a_retry_reuses_its_key_but_set_revert_set_never_replays_the_first_answer(
+    desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """L-20261014-20 review: set, revert, set again replayed the first (reverted) answer for 24 h."""
+
+    from creation.post.take_tempo import take_state, tempo_key
+
+    _desk_with_take(desk)
+    body = {"factor": 1.5, "dry_run": False}
+    state = take_state(desk, 1, "t1")
+    # A retry after a lost answer: nothing saved in between, the same key.
+    assert tempo_key("p", episode=1, take_id="t1", body=body, state=state) == tempo_key(
+        "p", episode=1, take_id="t1", body=body, state=take_state(desk, 1, "t1")
+    )
+    _download_to(monkeypatch)
+    api.routes[("GET", FACTS_ROUTE)] = _facts()
+    api.routes[("POST", TEMPO)] = _answer()
+    assert _tempo(desk, "--factor", "1.5") == 0
+    api.routes[("POST", TEMPO)] = {**_answer("reverted"), "lines": []}
+    assert _tempo(desk, "--revert") == 0
+    api.routes[("POST", TEMPO)] = _answer()
+    assert _tempo(desk, "--factor", "1.5") == 0
+
+    first, _revert, again = _keys(api)
     assert (
-        len(keys) == 2 and keys[0] == keys[1]
-    )  # the same desk, take and tempo: the same key
-    assert fetched and "Applied (already, at this speed)" in capsys.readouterr().out
+        first != again
+    )  # the take's state changed in between: a new request, never the old answer
+
+
+def test_a_take_already_at_exactly_that_tempo_is_fetched_again_and_a_different_one_refused(
+    desk: Path,
+    api: FakeApi,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _desk_with_take(desk)
+
+    def already(method: str, path: str, body: Any) -> Any:
+        raise SystemExit(
+            f"HTTP 409 POST {TEMPO}: take_tempo_already_set: Take 2 already plays at 1.5x. Revert it first"
+        )
+
+    api.routes[("POST", TEMPO)] = already
+    playing = _facts()
+    # The take plays 1.5x over its playable part (the automatic handles 0.417-15.0 s).
+    playing["take_facts"]["tempo"] = {"factor": 1.5, "from_s": 0.417, "to_s": 15.0,
+                                      "filmed_duration_s": 15.0, "duration_s": 10.139}  # fmt: skip
+    api.routes[("GET", FACTS_ROUTE)] = playing
+    fetched = _download_to(monkeypatch)
+
+    assert _tempo(desk, "--factor", "1.5") == 0
     assert (
-        _tempo(desk, "--factor", "1.2") == 2
-    )  # a different speed is refused, not hidden
+        fetched
+        and "Applied (already, at this speed and window)" in capsys.readouterr().out
+    )
+    # Structural, not a substring: 1.5x over another window, or 1.25x, is a different tempo.
+    assert _tempo(desk, "--factor", "1.5", "--from", "2", "--to", "9") == 2
+    assert _tempo(desk, "--factor", "1.25") == 2
 
 
 def test_a_take_with_no_video_job_on_the_desk_warns_before_the_local_edit(
