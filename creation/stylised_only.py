@@ -155,8 +155,51 @@ def find_photoreal_request(text: str) -> str | None:
         The matched phrase as written.
     """
 
-    found = _PHOTOREAL.search(text or "")
-    return found.group(0) if found else None
+    source = text or ""
+    for found in _PHOTOREAL.finditer(source):
+        # "never photoreal", "no live-action": a look ruled out is no ask for it
+        # (mirrors the server's ``creator_content_rules._ruled_out``, 15 Oct 2026).
+        if _ruled_out(source, found.start()):
+            continue
+        return found.group(0)
+    return None
+
+
+#: Words that rule out the look named right after them, up to three words on.
+_RULED_OUT = re.compile(
+    r"\b(?:no|not|never|without|avoid(?:ing)?|nothing|zero|anything\s+but|don['’]?t|do\s+not|doesn['’]?t|"
+    r"isn['’]?t|aren['’]?t|won['’]?t|shouldn['’]?t|must\s+not|non)"
+    r"(?:[\s-]+[\w'’-]+){0,3}?[\s-]+$",
+    re.IGNORECASE,
+)
+#: Where the words before a match stop counting: a new clause.
+_CLAUSE_START = re.compile(
+    r"[.;:!?\n,]|(?<!anything )\b(?:but|and|or|yet|so|instead)\b", re.IGNORECASE
+)
+
+
+#: Double negatives that ask for the look right after them.
+_EMPHATIC = re.compile(
+    r"\b(?:less|other|else|rather|more)\s+(?:\w+\s+){0,2}than\s*$|"
+    r"\b(?:nothing|never\s+anything|not\s+anything|nothing\s+else|no\s+\w+)\s+but\s*$|"
+    r"\b(?:nothing|never)\s+short\s+of\s*$|\bexcept\s*$",
+    re.IGNORECASE,
+)
+
+
+def _ruled_out(text: str, start: int) -> bool:
+    """Whether the words just before ``start``, in the same clause, rule the look out."""
+
+    before = text[:start]
+    cut = 0
+    for boundary in _CLAUSE_START.finditer(before):
+        cut = boundary.end()
+    clause = before[cut:]
+    # "nothing less than photoreal", "no other style than photorealistic",
+    # "never anything but photorealistic": an emphatic ask, not a ban.
+    if _EMPHATIC.search(clause):
+        return False
+    return _RULED_OUT.search(clause) is not None
 
 
 _CAST_HEADING = re.compile(
