@@ -423,3 +423,13 @@ def reel_server(monkeypatch: pytest.MonkeyPatch) -> Any:
 @pytest.fixture(autouse=True)
 def _offline_reel_server(reel_server: Any) -> None:
     """The reel after ``finish`` and every ``reel`` run against :func:`reel_server`, never the network."""
+
+
+@pytest.fixture(autouse=True)
+def _offline_impact_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``finish``'s impact step never asks the real server: no take job, so the kit's copy plans it.
+
+    A test that wants the server's plan passes its own ``impact_planner``.
+    """
+
+    monkeypatch.setattr("creation.post.finish.api_impact_planner", lambda *_a: None)

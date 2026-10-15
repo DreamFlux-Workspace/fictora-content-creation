@@ -167,6 +167,7 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from urllib.parse import quote
 from typing import Any, TextIO
 
 import httpx
@@ -332,7 +333,19 @@ from creation.post.sfx import (
     saved_take_facts,
     service_renderer,
 )
-from creation.post.impact_post import apply_impacts, impact_style, plan_impacts
+from creation.post.impact_post import (
+    IMPACT_PLAN_PATH,
+    MAX_EDITOR_HITS,
+    SOUND_MATCH_SECONDS,
+    ImpactHit,
+    ImpactPlan,
+    ImpactPlanUnavailable,
+    apply_impacts,
+    impact_plan_request,
+    impact_style,
+    plan_from_server_answer,
+    plan_impacts,
+)
 from creation.post.sfx_motion import (
     MotionMeter,
     MotionSnaps,
@@ -381,6 +394,10 @@ STEP_ERRORS: tuple[type[BaseException], ...] = (
 )
 
 FactsFetcher = Callable[[Path, int, str], Path | None]
+#: ``request body -> the server's plan`` (raises :class:`ImpactPlanUnavailable`); see :func:`api_impact_planner`.
+ImpactPlanner = Callable[[dict[str, Any]], ImpactPlan]
+#: ``(desk, episode, take_id) -> planner``, or ``None`` when the take has no job the server knows.
+ImpactPlannerFactory = Callable[[Path, int, str], ImpactPlanner | None]
 Transcriber = Callable[[Path, int, str], Path]
 """``(desk, episode, take_id) -> saved words JSON`` (:func:`creation.post.review.server_transcript`)."""
 
@@ -714,6 +731,46 @@ def api_facts_fetcher(desk: Path, episode: int, take_id: str) -> Path | None:
         facts=facts,
         spine=found[0] if found else None,
     )
+
+
+def api_impact_planner(desk: Path, episode: int, take_id: str) -> ImpactPlanner | None:
+    """The server's impact decision for this take (``POST /v1/jobs/{take_job}/impact-plan``), or ``None``.
+
+    The server chooses the frames (the take's own impact cues, a fight's strikes, the editor's
+    ``--impact-at`` hits) with the rules the hosted episode uses; the kit only measures its copy of the
+    take and draws what comes back. ``None`` when the desk names no job for the take.
+    """
+
+    job = take_job_id(desk, episode, take_id)
+    if job is None:
+        return None
+
+    def plan(body: dict[str, Any]) -> ImpactPlan:
+        try:
+            sid = spine_id(desk)
+            query = f"?spine_id={quote(sid, safe='')}" if sid else ""
+            run = open_api(desk, episode)
+        except (
+            Exception
+        ) as exc:  # no credentials, no network: the finish goes on with its own copy
+            raise ImpactPlanUnavailable(
+                f"the API could not be opened ({str(exc)[:120]})"
+            ) from exc
+        try:
+            status, answer = run.post_optional(
+                IMPACT_PLAN_PATH.format(job_id=quote(job, safe="")) + query, body
+            )
+        except Exception as exc:
+            raise ImpactPlanUnavailable(
+                f"the server did not answer ({str(exc)[:120]})"
+            ) from exc
+        finally:
+            run.client.close()
+        if not 200 <= status < 300:
+            raise ImpactPlanUnavailable(f"HTTP {status}")
+        return plan_from_server_answer(answer)
+
+    return plan
 
 
 def take_lengths(
@@ -1234,6 +1291,8 @@ def run_finish(
     thought_db: float = 0.0,
     accept_line_mismatch: tuple[str, ...] = (),
     impact: bool = True,
+    impact_at: tuple[ImpactHit, ...] = (),
+    impact_planner: ImpactPlannerFactory | None = None,
 ) -> FinishResult:
     """Run the whole local post chain on one accepted take.
 
@@ -1378,6 +1437,14 @@ def run_finish(
         and a hard shake on a blast or gunshot, a punch-in on a hard hit, never a flash; at most two, never mid-line), as the
         server does on every hosted episode. A desk made before 6 Oct 2026 skips it (its effects
         do not follow the action yet).
+    impact_at
+        ``--impact-at``: frames the editor says are hits (``2.40``, ``5.10:blast``), sent to the server's
+        impact plan, which punches each in exactly there (it wins over a planned moment it overlaps).
+        Not applied when the server cannot plan the take (printed with ``!!``).
+    impact_planner
+        ``(desk, episode, take) -> planner`` for the server's impact decision
+        (:func:`api_impact_planner`, ``POST /v1/jobs/{take_job}/impact-plan``); a factory that returns
+        ``None`` (or a planner that raises :class:`ImpactPlanUnavailable`) leaves it to the kit's copy.
     stream
         Progress output (stderr by default).
 
@@ -2604,8 +2671,40 @@ def run_finish(
         )
         return StepReport("colour", "ran", matched.one_line(), matched.output)
 
+    def server_impacts(take: Path) -> tuple[ImpactPlan | None, str]:
+        """The server's plan on this kit's measurements, or ``None`` and why it could not be had."""
+
+        # Looked up when the step runs (not bound at import), so tests can keep finish off the network.
+        planner = (impact_planner or api_impact_planner)(desk, episode, take_id)
+        if planner is None:
+            return None, "no take job on the desk for the server to plan"
+        measured, windows, cuts = impact_state["picture"]
+        try:
+            trace = impact_state["trace"]
+            if trace is None:
+                trace = (motion_meter or measure_motion)(measured)
+            body = impact_plan_request(
+                trace,
+                windows=windows,
+                cuts=cuts,
+                # Only windows the kit really has (a locked line, a laid voice): the server adds its own.
+                speech=tuple(bed_state["speech"]) if bed_state["speech"] else None,
+                hits=impact_at[:MAX_EDITOR_HITS],
+                take_seconds=probe_video(take).duration_seconds,
+            )
+            return planner(body), ""
+        except ImpactPlanUnavailable as exc:
+            return None, str(exc)
+        except (RuntimeError, OSError, MediaToolError) as exc:
+            return None, f"the take could not be measured ({str(exc)[:120]})"
+
     def do_impact(take: Path) -> StepReport:
-        """The take's big impact beats punched up on the frame their effect plays (L-20261009-9)."""
+        """The take's big impact beats punched up on the frame their effect plays (L-20261009-9).
+
+        The server decides which frames (``POST /v1/jobs/{take_job}/impact-plan``: the take's impact
+        cues, a fight's strikes, ``--impact-at``); this step measures the take and draws the frames.
+        Without an answer (no take job, offline, an older server) the kit's copy of the rules plans it.
+        """
 
         if not impact:
             return StepReport("impact", "skipped", "--no-impact")
@@ -2613,14 +2712,84 @@ def run_finish(
             return StepReport(
                 "impact",
                 "skipped",
-                "a desk made before 6 Oct 2026: its effects do not follow the action, so a flash would "
+                "a desk made before 6 Oct 2026: its effects do not follow the action, so a punch-in would "
                 "not land with its sound",
             )
-        if not any(impact_style(c.sound, c.kind) for c in impact_state["cues"]):
-            # Nothing is measured for a take with no big impact.
+        payload = (
+            json.loads(facts_state["path"].read_text(encoding="utf-8"))
+            if facts_state["path"] is not None
+            else None
+        )
+        facts = (
+            payload.get("take_facts", payload) if isinstance(payload, dict) else None
+        )
+        stale = isinstance(facts, dict) and not facts.get("shots")
+        refresh = (
+            f"the saved take facts plan no shot (a fight take filmed before the server read fight shots?): "
+            f"run `fictora-produce take-facts --desk {desk} --episode {episode} --take {take_id} --refresh`, "
+            f"then finish again"
+        )
+        if len(impact_at) > MAX_EDITOR_HITS:
+            print(f"[impact] !! {len(impact_at)} --impact-at hits: the server takes at most {MAX_EDITOR_HITS} a "
+                  f"take; only the first {MAX_EDITOR_HITS} ({', '.join(f'{h.at:.2f}s' for h in impact_at[:MAX_EDITOR_HITS])}) "
+                  f"are sent", file=out, flush=True)  # fmt: skip
+        big = any(
+            impact_style(c.sound, c.kind, getattr(c, "impact", None))
+            for c in impact_state["cues"]
+        )
+        if (
+            not big
+            and not impact_at
+            and not (isinstance(facts, dict) and facts.get("fight") is True)
+        ):
+            # Nothing is measured or asked for a take with no big impact, no fight and no editor's hit.
+            if stale:
+                print(f"[impact] !! {refresh}", file=out, flush=True)
+                return StepReport(
+                    "impact", "skipped", f"no big impact on this take; !! {refresh}"
+                )
             return StepReport("impact", "skipped", "no big impact on this take")
         if impact_state["picture"] is None:
+            # The moments are times on the filmed shots: without the take's measured cuts they could land
+            # off the action on a trimmed or re-timed file, so nothing is drawn.
+            if stale:
+                print(f"[impact] !! {refresh}", file=out, flush=True)
+                return StepReport(
+                    "impact",
+                    "skipped",
+                    f"the take's cuts were not measured; !! {refresh}",
+                )
             return StepReport("impact", "skipped", "the take's cuts were not measured")
+        plan, unavailable = server_impacts(take)
+        if plan is not None:
+            if not plan.moments:
+                return StepReport("impact", "skipped", f"server: {plan.one_line()}")
+            laid = [c.start for c in impact_state["cues"]]
+            for moment in plan.moments:
+                if moment.source == "planned" and not any(
+                    abs(moment.time - at) <= SOUND_MATCH_SECONDS for at in laid
+                ):
+                    # The picture would punch in on a strike with no hit sound under it.
+                    print(f"[impact] !! {moment.label} at {moment.time:.2f}s is punched in but no hit sound is laid "
+                          f"there: run `fictora-produce take-facts --desk {desk} --episode {episode} --take {take_id} "
+                          f"--refresh` (the server now plans it), then finish again", file=out, flush=True)  # fmt: skip
+            done = apply_impacts(
+                take, plan, next_versioned_path(takes, f"{base}-impact", ".mp4")
+            )
+            append_run_note(
+                run_dir,
+                f"Impact (server's plan) -> `{done.output.name}`: {done.one_line()}",
+            )
+            return StepReport(
+                "impact", "ran", f"server: {done.one_line()}", done.output
+            )
+        print(f"[impact] the server's plan is not available ({unavailable}): the kit's copy plans it",
+              file=out, flush=True)  # fmt: skip
+        if impact_at:
+            print(f"[impact] !! --impact-at needs the server's plan ({unavailable}): not applied",
+                  file=out, flush=True)  # fmt: skip
+        if not big:
+            return StepReport("impact", "skipped", "no big impact on this take")
         measured, windows, cuts = impact_state["picture"]
         trace = impact_state["trace"]
         if trace is None:
