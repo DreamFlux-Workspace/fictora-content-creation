@@ -16,6 +16,7 @@ from creation.post.hand import parse_caption_label, parse_placed, parse_range
 from creation.post.prop_text import parse_prop_text
 from creation.post.join import JOIN_NOT_DONE, run_join
 from creation.post.handmade import CUE_DEFAULT_SECONDS
+from creation.post.impact_post import parse_impact_at
 from creation.post.review_command import (
     REVIEW_COMMANDS,
     add_review_parser,
@@ -570,6 +571,16 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Keep the big impact beats as filmed (no automatic punch-in or shake).",
     )
     fin.add_argument(
+        "--impact-at",
+        action="append",
+        type=parse_impact_at,
+        default=[],
+        metavar="SECONDS[:blast]",
+        help="A frame you know is a hit (seconds into the take as filmed, comma-separated or repeated; "
+        "':blast' for the bigger punch-in). Sent to the server's impact plan, which punches each in exactly "
+        "there and drops a planned one it overlaps. At most 8 per take.",
+    )
+    fin.add_argument(
         "--colour-strength", type=float, default=1.0, help="0..1 toward the board."
     )
     fin.add_argument(
@@ -1108,6 +1119,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             thought_db=args.thought_db,
             accept_line_mismatch=tuple(args.accept_line_mismatch),
             impact=not args.no_impact,
+            impact_at=tuple(hit for hits in args.impact_at for hit in hits),
         )
         if args.json:
             print(json.dumps(result.as_json(), indent=2))

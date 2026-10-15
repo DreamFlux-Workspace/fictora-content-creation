@@ -257,7 +257,9 @@ def impact_stem(sound: str) -> str | None:
     return None
 
 
-def impact_style(sound: str, kind: str) -> ImpactStyle | None:
+def impact_style(
+    sound: str, kind: str, called: str | None = None
+) -> ImpactStyle | None:
     """Whether a laid effect is a big impact beat.
 
     Parameters
@@ -266,6 +268,9 @@ def impact_style(sound: str, kind: str) -> ImpactStyle | None:
         The effect's words.
     kind
         ``event`` or ``sustained``.
+    called
+        The server's own call from the take facts (``sfx_cues[].impact``): it wins (a fight's strike,
+        "Ren elbows the guard", names no impact word the lists below know).
 
     Returns
     -------
@@ -275,6 +280,8 @@ def impact_style(sound: str, kind: str) -> ImpactStyle | None:
 
     if kind != "event" or is_opening_cue(sound) or names_several_hits(sound):
         return None
+    if called == "blast" or called == "hit":
+        return called
     # As the server (``impact_words.impact_weight``): a blast in the words wins over a hit.
     if is_explosion(sound):
         return "blast"
@@ -471,7 +478,7 @@ def plan_impacts(
     candidates: list[tuple[int, float, ImpactMoment]] = []
     skipped: list[str] = []
     for cue in cues:
-        style = impact_style(cue.sound, cue.kind)
+        style = impact_style(cue.sound, cue.kind, getattr(cue, "impact", None))
         if style is None:
             continue
         shot = windows.get(cue.shot_index)
@@ -523,6 +530,143 @@ def plan_impacts(
             continue
         chosen.append(moment)
     return ImpactPlan(tuple(sorted(chosen, key=lambda m: m.time)), tuple(skipped))
+
+
+# --- the server's plan ------------------------------------------------------------------------------
+
+#: The server route that decides a take's punch-ins from this kit's measurements (fictora-drama).
+IMPACT_PLAN_PATH = "/v1/jobs/{job_id}/impact-plan"
+_IMPACT_AT = re.compile(
+    r"^\s*(\d+(?:\.\d+)?)\s*(?::\s*(hit|blast)\s*)?$", re.IGNORECASE
+)
+
+
+@dataclass(frozen=True)
+class ImpactHit:
+    """A frame the editor says is a hit (``finish --impact-at 2.40`` or ``2.40:blast``)."""
+
+    at: float
+    style: ImpactStyle = "hit"
+
+
+def parse_impact_at(raw: str) -> tuple[ImpactHit, ...]:
+    """``"2.4, 5.1:blast"`` -> two hits; seconds into the take as filmed.
+
+    Parameters
+    ----------
+    raw
+        One ``--impact-at`` value: comma-separated ``SECONDS[:hit|blast]``.
+
+    Returns
+    -------
+    tuple[ImpactHit, ...]
+        The hits, in the order written.
+
+    Raises
+    ------
+    ValueError
+        For a part that is not ``SECONDS`` or ``SECONDS:hit|blast``.
+    """
+
+    hits: list[ImpactHit] = []
+    for part in raw.split(","):
+        if not part.strip():
+            continue
+        match = _IMPACT_AT.match(part)
+        if match is None:
+            raise ValueError(
+                f"--impact-at {part.strip()!r}: write SECONDS or SECONDS:blast (e.g. 2.40 or 5.10:blast)"
+            )
+        style: ImpactStyle = (
+            "blast" if (match.group(2) or "").casefold() == "blast" else "hit"
+        )
+        hits.append(ImpactHit(float(match.group(1)), style))
+    return tuple(hits)
+
+
+class ImpactPlanUnavailable(RuntimeError):
+    """The server did not answer with a plan (no take job, unreachable, or an older server)."""
+
+
+def plan_from_server_answer(body: Any) -> ImpactPlan:
+    """The kit's :class:`ImpactPlan` from a ``POST /v1/jobs/{id}/impact-plan`` answer.
+
+    Parameters
+    ----------
+    body
+        The JSON answer.
+
+    Returns
+    -------
+    ImpactPlan
+        The server's moments, as it chose them, and what it left alone.
+
+    Raises
+    ------
+    ImpactPlanUnavailable
+        When the answer is not an impact plan.
+    """
+
+    if not isinstance(body, dict) or not isinstance(body.get("moments"), list):
+        raise ImpactPlanUnavailable("the server's answer is not an impact plan")
+    moments: list[ImpactMoment] = []
+    for item in body["moments"]:
+        style = item.get("style")
+        if style not in ("blast", "hit"):
+            continue
+        label = str(item.get("label") or "impact")
+        moments.append(
+            ImpactMoment(float(item["time_s"]), float(item["until_s"]), style, label)
+        )
+    skipped = tuple(str(reason) for reason in body.get("skipped") or [])
+    return ImpactPlan(tuple(sorted(moments, key=lambda m: m.time)), skipped)
+
+
+def impact_plan_request(
+    trace: Trace,
+    *,
+    windows: Mapping[int, tuple[float, float]] | None,
+    cuts: Sequence[float] = (),
+    speech: Sequence[tuple[float, float]] | None = None,
+    hits: Sequence[ImpactHit] = (),
+    take_seconds: float | None = None,
+) -> dict[str, Any]:
+    """The body of ``POST /v1/jobs/{id}/impact-plan``: what this kit measured on its copy of the take.
+
+    Parameters
+    ----------
+    trace
+        :func:`creation.post.sfx_motion.measure_motion` on the take.
+    windows
+        ``shot_index -> (start, end)`` as filmed; ``None`` lets the server keep the planned shots.
+    cuts
+        Cuts measured on the take.
+    speech
+        Spoken windows on the filmed timeline (a locked line, a laid voice); ``None`` lets the server use
+        the take's own.
+    hits
+        ``--impact-at`` hits.
+    take_seconds
+        The take's length.
+
+    Returns
+    -------
+    dict[str, Any]
+        JSON-ready body.
+    """
+
+    return {
+        "motion": [[round(t, 4), round(v, 4)] for t, v in trace],
+        "shots": [
+            {"shot_index": index, "start_seconds": start, "end_seconds": end}
+            for index, (start, end) in sorted((windows or {}).items())
+            if end > start
+        ],
+        "cuts": [round(c, 4) for c in cuts],
+        "speech": None if speech is None else [[a, b] for a, b in speech if b > a],
+        "hits": [{"at_s": hit.at, "style": hit.style} for hit in hits],
+        "take_seconds": take_seconds,
+    }
 
 
 @dataclass(frozen=True)
@@ -652,6 +796,12 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
 
 
 __all__ = [
+    "IMPACT_PLAN_PATH",
+    "ImpactHit",
+    "ImpactPlanUnavailable",
+    "impact_plan_request",
+    "parse_impact_at",
+    "plan_from_server_answer",
     "BLAST_PUNCH_ZOOM",
     "BLAST_STEMS",
     "HIT_STEMS",
