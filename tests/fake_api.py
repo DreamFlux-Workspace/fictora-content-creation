@@ -316,3 +316,223 @@ class FakeApi:
             for method, called, body, _ in self.calls
             if method == "POST" and called == path
         ]
+
+
+def serve_outfits(api: FakeApi, spine_id: str = "sp1") -> None:
+    """Answer ``POST``/``GET /v1/spines/{id}/outfits`` like fictora-drama's outfit plan, on ``api.spine_doc``.
+
+    Adds or rewords an outfit (at most four), plans one for episodes (tagging every written shot of the
+    person, ``pending_episode_ordinals`` for episodes with none), removes an unused one, and answers the
+    server's refusals (``cast_not_drawn``, ``unknown_wardrobe_variant``, ``wardrobe_variant_limit``,
+    ``outfit_in_use``, ``spine_version_conflict``) as ``(status, envelope)``.
+    """
+
+    from creation.spine_view import board_assets, frames_by_set
+
+    path = f"/v1/spines/{spine_id}/outfits"
+
+    def refuse(status: int, code: str, **details: Any) -> tuple[int, dict[str, Any]]:
+        return status, {"error": {"code": code, "message": code, "details": details}}
+
+    def ordinals(doc: dict[str, Any]) -> list[int]:
+        return sorted(int(s["ordinal"]) for s in doc.get("episode_summaries") or [])
+
+    def shots(
+        doc: dict[str, Any], cast_id: str, number: int
+    ) -> list[tuple[int, dict[str, Any], dict[str, Any]]]:
+        rows = []
+        for take, frames in sorted(frames_by_set(doc, episode=number).items()):
+            for frame in frames:
+                for entry in (frame.get("visual_brief") or {}).get(
+                    "subject_blocking"
+                ) or []:
+                    if entry.get("cast_id") == cast_id:
+                        rows.append((take, frame, entry))
+        return rows
+
+    def change(_m: str, _p: str, body: dict[str, Any] | None) -> Any:
+        body = body or {}
+        doc = api.spine_doc if not body.get("preview") else copy.deepcopy(api.spine_doc)
+        if body.get("spine_version") != doc.get("spine_version"):
+            return refuse(
+                409,
+                "spine_version_conflict",
+                latest_spine_version=doc.get("spine_version"),
+            )
+        card = next(
+            (c for c in doc["cast"] if c["cast_id"] == body.get("cast_id")), None
+        )
+        if card is None:
+            return refuse(404, "cast_not_found")
+        brief = card.get("visual_brief")
+        if not isinstance(brief, dict):
+            return refuse(400, "cast_not_drawn")
+        variants = brief.setdefault("wardrobe_variants", [])
+        plan = doc.setdefault("outfit_plan", [])
+        mine = [p for p in plan if p["cast_id"] == card["cast_id"]]
+        changed = False
+        sheet = False
+        result: dict[str, Any] = {
+            "shots_changed": [],
+            "pending_episode_ordinals": [],
+            "boards_to_redraw": [],
+        }
+        if body.get("remove"):
+            label = body["remove"].casefold()
+            used_eps = sorted(
+                {
+                    n
+                    for p in mine
+                    if p["wardrobe_variant"].casefold() == label
+                    for n in p["episode_ordinals"]
+                }
+                | {
+                    n
+                    for n in ordinals(doc)
+                    for _, _, entry in shots(doc, card["cast_id"], n)
+                    if (entry.get("wardrobe_variant") or "").casefold() == label
+                }
+            )
+            if used_eps:
+                return refuse(
+                    409, "outfit_in_use", episode_ordinals=used_eps, frame_ids=[]
+                )
+            before = len(variants)
+            variants[:] = [v for v in variants if v["label"].casefold() != label]
+            changed = len(variants) != before
+        if body.get("add"):
+            add = body["add"]
+            have = next(
+                (
+                    v
+                    for v in variants
+                    if v["label"].casefold() == add["label"].casefold()
+                ),
+                None,
+            )
+            if have is None:
+                if len(variants) >= 4:
+                    return refuse(409, "wardrobe_variant_limit", limit=4)
+                variants.append(
+                    {"label": add["label"], "instruction": add["instruction"]}
+                )
+                changed = sheet = True
+            elif have["instruction"] != add["instruction"]:
+                have["instruction"] = add["instruction"]
+                changed = sheet = True
+        if body.get("wear"):
+            wear = body["wear"]
+            label = wear.get("wardrobe_variant")
+            if label is not None:
+                have = next(
+                    (v for v in variants if v["label"].casefold() == label.casefold()),
+                    None,
+                )
+                if have is None:
+                    return refuse(
+                        400,
+                        "unknown_wardrobe_variant",
+                        available=[v["label"] for v in variants],
+                    )
+                label = have["label"]
+            numbers = sorted(set(wear["episode_ordinals"]))
+            for p in mine:
+                p["episode_ordinals"] = [
+                    n for n in p["episode_ordinals"] if n not in numbers
+                ]
+            if label is not None:
+                entry = next((p for p in mine if p["wardrobe_variant"] == label), None)
+                if entry is None:
+                    entry = {
+                        "cast_id": card["cast_id"],
+                        "wardrobe_variant": label,
+                        "episode_ordinals": [],
+                    }
+                    plan.append(entry)
+                entry["episode_ordinals"] = sorted(
+                    set(entry["episode_ordinals"]) | set(numbers)
+                )
+            plan[:] = [p for p in plan if p["episode_ordinals"]]
+            for number in numbers:
+                if not frames_by_set(doc, episode=number):
+                    result["pending_episode_ordinals"].append(number)
+                    continue
+                drawn = {take for take, _ in board_assets(doc, episode=number)}
+                for take, frame, entry in shots(doc, card["cast_id"], number):
+                    before = entry.get("wardrobe_variant")
+                    if (before or "").casefold() == (label or "").casefold():
+                        continue
+                    entry["wardrobe_variant"] = label
+                    changed = True
+                    result["shots_changed"].append(
+                        {
+                            "episode_ordinal": number,
+                            "frame_id": frame["frame_id"],
+                            "set_index": take,
+                            "before": before,
+                            "after": label,
+                        }
+                    )
+                    if (
+                        take in drawn
+                        and {"episode_ordinal": number, "set_index": take}
+                        not in result["boards_to_redraw"]
+                    ):
+                        result["boards_to_redraw"].append(
+                            {"episode_ordinal": number, "set_index": take}
+                        )
+        previous = doc["spine_version"]
+        if changed and not body.get("preview"):
+            doc["spine_version"] = f"{previous}+"
+        return 200, {
+            "request_id": "req_1",
+            "spine_id": spine_id,
+            "cast_id": card["cast_id"],
+            "applied": changed and not body.get("preview"),
+            "preview": bool(body.get("preview")),
+            "previous_spine_version": previous,
+            "spine_version": doc["spine_version"],
+            "outfits": copy.deepcopy(variants),
+            "plan": [p for p in plan if p["cast_id"] == card["cast_id"]],
+            "sheet_needs_redraw": sheet,
+            **result,
+        }
+
+    def view(_m: str, _p: str, _b: Any) -> dict[str, Any]:
+        doc = api.spine_doc
+        cast = []
+        for card in doc["cast"]:
+            brief = card.get("visual_brief")
+            if not isinstance(brief, dict):
+                continue
+            episodes = []
+            for number in ordinals(doc):
+                if not frames_by_set(doc, episode=number):
+                    continue
+                counts: dict[str, int] = {}
+                for _, _, entry in shots(doc, card["cast_id"], number):
+                    key = entry.get("wardrobe_variant") or "base"
+                    counts[key] = counts.get(key, 0) + 1
+                episodes.append({"episode_ordinal": number, "shots_by_outfit": counts})
+            cast.append(
+                {
+                    "cast_id": card["cast_id"],
+                    "name": card.get("name") or card["cast_id"],
+                    "base_outfit": list(brief.get("wardrobe_anchors") or []),
+                    "outfits": copy.deepcopy(brief.get("wardrobe_variants") or []),
+                    "plan": [
+                        p
+                        for p in doc.get("outfit_plan") or []
+                        if p["cast_id"] == card["cast_id"]
+                    ],
+                    "episodes": episodes,
+                }
+            )
+        return {
+            "spine_id": spine_id,
+            "spine_version": doc["spine_version"],
+            "cast": cast,
+        }
+
+    api.routes[("POST", path)] = change
+    api.routes[("GET", path)] = view

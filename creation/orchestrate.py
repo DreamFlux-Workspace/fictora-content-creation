@@ -1179,10 +1179,6 @@ def board_report(
     lines += edge_duplicate_risk_lines(
         exposure, desk=str(desk), episode=episode, sets=[index for index, _ in made]
     )
-    # The desk's outfit plan against the shots (outfit --wear; warnings only).
-    from creation.outfit_commands import outfit_plan_lines
-
-    lines += outfit_plan_lines(desk, spine, episode=episode)
     # The server's picture check of each board (warnings only; fictora-drama picture_checks).
     lines += board_picture_check_lines(
         spine, episode=episode, sets=[index for index, _ in made]
@@ -1896,16 +1892,6 @@ def run_step(
                 confirm_spend=confirm_spend,
             )
             if priced is not None:
-                # The desk's outfit plan against the shots, free, before the paid draw (L-20261015-1).
-                from creation.outfit_commands import outfit_plan_lines
-
-                outfits = outfit_plan_lines(desk, spine_now, episode=ep)
-                if outfits:
-                    return StepResult(
-                        priced.phase,
-                        "\n".join([priced.message, *outfits]),
-                        priced.paths,
-                    )
                 return priced
             stages.enrol_boards(
                 run,

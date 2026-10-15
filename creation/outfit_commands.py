@@ -4,125 +4,76 @@ The Gallery Heiress (desk ``2026-10-06-blood-vows``, 13-15 Oct 2026): the
 producer wanted Seo-yeon in a black evening gown for episodes 5-6. A look note
 for one episode and "black evening gown, NOT her blouse" written into every
 shot (two redraws, $1.20) were both ignored: the boards kept drawing her ivory
-blouse. The server already has outfits: ``wardrobe_variants`` (``{label,
-instruction}``, at most four) on the card's ``visual_brief`` draws each one on
-her sheet, and ``wardrobe_variant`` on a shot's ``subject_blocking`` entry asks
-for it in that shot. The kit had no command for either, so it was hand-built
-JSON and one ``edit`` per shot.
+blouse. The server has outfits (``wardrobe_variants`` ``{label, instruction}``
+on the card, at most four, each drawn on her sheet; ``wardrobe_variant`` on a
+shot's staging asks for it) and, since the outfit-plan change, owns the plan
+too: ``POST /v1/spines/{id}/outfits`` adds an outfit, plans it for episodes
+(tagging every shot of theirs already written) or removes one, and the
+writer puts a planned outfit on an episode's shots when it writes them.
 
-- ``outfit --cast NAME``: free, read-only. Their outfits (BASE and each named
-  one with its words), the plan on the desk, and per episode which of her
-  shots wear what; a shot that does not match the plan is marked ``!!``.
-- ``outfit --cast NAME --add LABEL --look TEXT|@FILE``: adds the outfit to
-  their card (the whole ``visual_brief`` goes, as ``cast --look`` sends it:
-  ``PATCH`` before the script gate, the ``cast_card`` cascade with paid items
-  off after it). Free. Their sheet only shows it once redrawn, so it then prices
-  that one redraw ($0.30) and draws it on ``--confirm-spend`` after the
-  human's yes (``redraw-plate``'s flow). ``--add`` on an outfit the card has
-  changes its words. ``--remove LABEL`` takes one off, refused while a shot or
-  the plan still uses it.
-- ``outfit --cast NAME --wear LABEL|base --episodes 5-6``: tags every shot of the
-  character in those episodes (one story edit per episode, the same ``PATCH`` or
-  episode cascade ``edit --frame`` uses, paid items off). Free. Shots already
-  right are skipped; the boards drawn with the old outfit are named with the
-  ``redraw-board`` that fixes each ($0.30), never drawn here. The plan is kept
-  on the desk (``shared/outfits.json``), also for episodes whose shots are not
-  written yet.
-- The plan is checked for free before the boards are priced and after they
-  are drawn (:func:`outfit_plan_lines`): a shot of a planned episode with the character
-  in another outfit gets a ``!!`` line and the ``--wear`` command that fixes
-  it. A warning, never a block.
+The first ``outfit`` (kit #236) did the work itself: one card edit, one story
+edit per episode, and the plan in a file on the desk (``shared/outfits.json``)
+that the server never saw, so an episode written later came back in the base
+outfit and only a kit warning caught it. The kit now only calls the server:
 
-The boards drawing the tagged outfit in every panel is the server's part
-(fictora-drama); its picture check names a panel drawn in the wrong outfit
-(``wrong_outfit``), printed with the other picture checks.
+- ``outfit --cast NAME``: free, read-only (``GET .../outfits``). Their outfits
+  (base and each named one with its words), the plan, and per episode what
+  their written shots wear.
+- ``outfit --cast NAME --add LABEL --look TEXT|@FILE``: adds the outfit (or
+  rewords one the card has). Free. Their sheet only shows it once redrawn, so
+  when the server says ``sheet_needs_redraw`` the kit prices that one redraw
+  ($0.30) and draws it on ``--confirm-spend`` after the human's yes
+  (``redraw-plate``'s flow).
+- ``outfit --cast NAME --wear LABEL|base --episodes 5-6``: plans the outfit and
+  tags their written shots. Free. With ``--add`` both go in one request. The
+  boards drawn with the old outfit are named with the ``redraw-board`` that
+  fixes each ($0.30), never drawn here. Episodes not written yet are planned:
+  the writer dresses them.
+- ``outfit --cast NAME --remove LABEL``: takes an outfit off the card, refused
+  by the server while the plan or a shot still uses it.
+- A desk with the old ``shared/outfits.json`` sends its plan to the server once
+  (on the next ``outfit`` run) and the file becomes ``outfits.migrated.json``.
+
+A server without the route stops with "server too old"; there is no fallback
+to the old client-side edits. The board picture check's ``wrong_outfit``
+finding still prints with the other picture checks.
 """
 
 from __future__ import annotations
 
-import copy
 import json
 import re
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from creation import cast_commands as cc
 from creation import episode_commands as ec
 from creation.cli_text import TextArgError, text_or_file
 from creation.desk_media_urls import drawn_cast_rows
+from creation.harness.http_util import api_error_text
 from creation.orchestrate import save_spine_snapshot
 from creation.prices import STILL_USD
-from creation.spine_view import board_assets, frames_by_set
 
 #: Most outfits one card holds (``DramaCastVisualBrief.wardrobe_variants``, max_length=4).
 MAX_OUTFITS = 4
 #: The word for the card's own outfit (``wardrobe_variant: null``).
 BASE = "base"
-#: The plan on the desk: ``{cast_id: {"name": ..., "episodes": {"5": label | "base"}}}``.
-PLAN_FILE = ("shared", "outfits.json")
+#: The plan the first ``outfit`` kept on the desk; sent to the server once, then renamed.
+OLD_PLAN_FILE = ("shared", "outfits.json")
+MIGRATED_PLAN_FILE = ("shared", "outfits.migrated.json")
+#: Sheet redraws whose price was shown (``{"priced": ["cast_id:label", ...]}``).
+PRICED_FILE = ("shared", "outfit-sheet-priced.json")
 _EPISODES = re.compile(r"^\s*\d+(\s*-\s*\d+)?(\s*,\s*\d+(\s*-\s*\d+)?)*\s*$")
+SERVER_TOO_OLD = (
+    "this server is older than the outfit plan (fictora-drama /outfits): nothing was sent. "
+    "Ask engineering to deploy it; the kit no longer edits outfits shot by shot"
+)
 
 
-# --- Plan on the desk ---------------------------------------------------------------------------
-
-
-def _plan_path(desk: Path) -> Path:
-    return desk.joinpath(*PLAN_FILE)
-
-
-def load_plan(desk: Path) -> dict[str, Any]:
-    """The outfit plan saved on the desk (``{}`` when none)."""
-
-    path = _plan_path(desk)
-    if not path.is_file():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _save_plan(desk: Path, plan: Mapping[str, Any]) -> None:
-    path = _plan_path(desk)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _record_wear(
-    desk: Path, card: Mapping[str, Any], label: str | None, episodes: Sequence[int]
-) -> None:
-    plan = load_plan(desk)
-    entry = plan.setdefault(str(card["cast_id"]), {})
-    entry["name"] = str(card.get("name") or card["cast_id"])
-    worn = entry.setdefault("episodes", {})
-    for number in episodes:
-        worn[str(number)] = label if label is not None else BASE
-    _save_plan(desk, plan)
-
-
-def _priced_key(cast_id: str, label: str) -> str:
-    return f"{cast_id}:{' '.join(label.split()).casefold()}"
-
-
-def _mark_priced(desk: Path, key: str, *, on: bool) -> None:
-    plan = load_plan(desk)
-    priced = set(plan.get("_sheet_priced") or [])
-    if on:
-        priced.add(key)
-    else:
-        priced.discard(key)
-    plan["_sheet_priced"] = sorted(priced)
-    _save_plan(desk, plan)
-
-
-def _was_priced(desk: Path, key: str) -> bool:
-    return key in set(load_plan(desk).get("_sheet_priced") or [])
-
-
-# --- Reading the story --------------------------------------------------------------------------
+# --- Small helpers ------------------------------------------------------------------------------
 
 
 def parse_episodes(raw: str) -> list[int]:
@@ -154,227 +105,297 @@ def _one_line(value: str) -> str:
     return " ".join(str(value).split())
 
 
-def outfits_of(card: Mapping[str, Any]) -> list[dict[str, str]]:
-    """The card's named outfits (``wardrobe_variants``), in order."""
-
-    brief = card.get("visual_brief")
-    if not isinstance(brief, Mapping):
-        return []
-    return [
-        {"label": str(v["label"]), "instruction": str(v.get("instruction") or "")}
-        for v in brief.get("wardrobe_variants") or []
-        if isinstance(v, Mapping) and v.get("label")
-    ]
-
-
-def resolve_outfit(card: Mapping[str, Any], wanted: str) -> str | None:
-    """The card's label for ``wanted`` (any case), ``None`` for ``base``.
-
-    Raises
-    ------
-    ec.CommandStopped
-        Not one of their outfits; the message lists them and names ``--add``.
-    """
-
-    key = _one_line(wanted).casefold()
-    if key == BASE:
-        return None
-    for outfit in outfits_of(card):
-        if outfit["label"].casefold() == key:
-            return outfit["label"]
-    who = str(card.get("name") or card["cast_id"])
-    have = ", ".join(f'"{o["label"]}"' for o in outfits_of(card)) or "none yet"
-    raise ec.CommandStopped(
-        f'{who} has no outfit "{_one_line(wanted)}" (outfits: base, {have}); nothing was sent. '
-        f'Add it first: outfit --cast "{who}" --add "{_one_line(wanted)}" --look "what it is"'
-    )
-
-
-def _episode_ordinals(spine: Mapping[str, Any]) -> dict[str, int]:
-    return {
-        str(s.get("episode_id")): int(s.get("ordinal") or 0)
-        for s in spine.get("episode_summaries") or []
-        if isinstance(s, Mapping) and s.get("episode_id")
-    }
-
-
-def _staging(
-    frame: Mapping[str, Any], cast_id: str
-) -> tuple[int, Mapping[str, Any]] | None:
-    blocking = (frame.get("visual_brief") or {}).get("subject_blocking") or []
-    for index, entry in enumerate(blocking):
-        if isinstance(entry, Mapping) and entry.get("cast_id") == cast_id:
-            return index, entry
-    return None
-
-
-def _worn(entry: Mapping[str, Any]) -> str | None:
-    label = entry.get("wardrobe_variant")
-    return _one_line(label) if isinstance(label, str) and label.strip() else None
-
-
-def _same(a: str | None, b: str | None) -> bool:
-    return (a or "").casefold() == (b or "").casefold()
-
-
 def _say(label: str | None) -> str:
     return f'"{label}"' if label else "their base outfit"
 
 
-def shots_of(
-    spine: Mapping[str, Any], cast_id: str, episode: int
-) -> list[tuple[int, Mapping[str, Any], int, str | None]]:
-    """``(take, frame, blocking index, outfit worn)`` for each shot of ``episode`` that stages ``cast_id``."""
-
-    rows: list[tuple[int, Mapping[str, Any], int, str | None]] = []
-    for take, frames in sorted(frames_by_set(dict(spine), episode=episode).items()):
-        for frame in frames:
-            found = _staging(frame, cast_id)
-            if found is not None:
-                rows.append((take, frame, found[0], _worn(found[1])))
-    return rows
+def _episodes_text(numbers: Sequence[int]) -> str:
+    return ", ".join(str(n) for n in numbers)
 
 
-def _has_frames(spine: Mapping[str, Any], episode: int) -> bool:
-    return bool(frames_by_set(dict(spine), episode=episode))
+def _read_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
-# --- The check ----------------------------------------------------------------------------------
+def _priced(desk: Path) -> set[str]:
+    data = _read_json(desk.joinpath(*PRICED_FILE))
+    return set(data.get("priced") or []) if isinstance(data, dict) else set()
 
 
-def outfit_plan_lines(
-    desk: Path, spine: Mapping[str, Any], *, episode: int
-) -> list[str]:
-    """``!!`` lines for shots of ``episode`` that do not wear the outfit the desk's plan gives (free).
+def _mark_priced(desk: Path, key: str, *, on: bool) -> None:
+    priced = _priced(desk)
+    (priced.add if on else priced.discard)(key)
+    path = desk.joinpath(*PRICED_FILE)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"priced": sorted(priced)}, indent=2) + "\n", encoding="utf-8"
+    )
 
-    Parameters
-    ----------
-    desk
-        Series desk (its ``shared/outfits.json``).
-    spine
-        Spine JSON.
-    episode
-        Episode ordinal.
+
+def _priced_key(cast_id: str, label: str) -> str:
+    return f"{cast_id}:{_one_line(label).casefold()}"
+
+
+def _error(body: Any) -> tuple[str, dict[str, Any], str]:
+    """``(code, details, message)`` from the server's error envelope."""
+
+    if not isinstance(body, Mapping):
+        return "", {}, str(body)
+    error = body.get("error") if isinstance(body.get("error"), Mapping) else body
+    details = error.get("details") if isinstance(error.get("details"), Mapping) else {}
+    return str(error.get("code") or ""), dict(details), str(error.get("message") or "")
+
+
+def _too_old(status: int, code: str) -> bool:
+    return status == 405 or (
+        status == 404 and code not in {"spine_not_found", "cast_not_found"}
+    )
+
+
+# --- Talking to the server ----------------------------------------------------------------------
+
+
+class _Desk:
+    """One desk's session, spine and the character a command names."""
+
+    def __init__(self, desk: Path, cast: str) -> None:
+        self.desk = desk
+        _, self.state, self.run = ec._desk_session(desk)
+        self.spine_id = self.state.spine_id or ""
+        self.spine = self.run.spine(self.spine_id)
+        self.card = cc.exit_card(self.spine, cast)
+        self.cast_id = str(self.card["cast_id"])
+        self.who = str(self.card.get("name") or self.cast_id)
+
+    def close(self) -> None:
+        self.run.client.close()
+
+    @property
+    def path(self) -> str:
+        return f"/v1/spines/{quote(self.spine_id, safe='')}/outfits"
+
+    def outfits(self) -> list[dict[str, str]]:
+        brief = self.card.get("visual_brief")
+        if not isinstance(brief, Mapping):
+            return []
+        return [
+            {"label": str(v["label"]), "instruction": str(v.get("instruction") or "")}
+            for v in brief.get("wardrobe_variants") or []
+            if isinstance(v, Mapping) and v.get("label")
+        ]
+
+    def change(self, change: Mapping[str, Any], *, preview: bool) -> dict[str, Any]:
+        """``POST .../outfits`` for this character; a stale story version is read again and sent once more."""
+
+        version = str(self.spine.get("spine_version") or "")
+        for attempt in (1, 2):
+            body = {
+                "spine_version": version,
+                "cast_id": self.cast_id,
+                **change,
+                "preview": preview,
+            }
+            status, answer = self.run.post_optional(self.path, body)
+            if 200 <= status < 300 and isinstance(answer, Mapping):
+                return dict(answer)
+            code, details, _ = _error(answer)
+            if _too_old(status, code):
+                raise ec.CommandStopped(SERVER_TOO_OLD)
+            if code == "spine_version_conflict" and attempt == 1:
+                version = str(details.get("latest_spine_version") or "") or str(
+                    self.run.spine(self.spine_id).get("spine_version") or ""
+                )
+                continue
+            raise ec.CommandStopped(self.refusal(status, answer, change))
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    def refusal(self, status: int, answer: Any, change: Mapping[str, Any]) -> str:
+        """The server's no, in the kit's words, with the fix."""
+
+        code, details, _ = _error(answer)
+        who, desk = self.who, self.desk
+        wear = change.get("wear") or {}
+        label = (
+            (change.get("add") or {}).get("label")
+            or wear.get("wardrobe_variant")
+            or change.get("remove")
+            or ""
+        )
+        if code == "cast_not_drawn":
+            return (
+                f"{who} is heard only: no look, so no outfit. Give them one first: "
+                f'fictora-produce cast --desk {desk} --name "{who}" --look @look.txt. Nothing was changed'
+            )
+        if code == "unknown_wardrobe_variant":
+            have = (
+                ", ".join(f'"{x}"' for x in details.get("available") or [])
+                or "none yet"
+            )
+            return (
+                f'{who} has no outfit "{label}" (outfits: base, {have}); nothing was changed. '
+                f'Add it first: outfit --cast "{who}" --add "{label}" --look "what it is"'
+            )
+        if code == "wardrobe_variant_limit":
+            have = ", ".join(f'"{o["label"]}"' for o in self.outfits())
+            return (
+                f"{who} already has {details.get('limit') or MAX_OUTFITS} outfits ({have}), the most a card holds. "
+                f'Remove one first (outfit --cast "{who}" --remove LABEL). Nothing was changed'
+            )
+        if code == "outfit_in_use":
+            where = (
+                _episodes_text(details.get("episode_ordinals") or []) or "some shots"
+            )
+            return (
+                f'{who} still wears "{label}" in episode(s) {where}. Dress those episodes in another outfit first '
+                f'(outfit --cast "{who}" --wear base --episodes N). Nothing was changed'
+            )
+        return f"the server refused the outfit change (HTTP {status}): {api_error_text(answer)}. Nothing was changed"
+
+    def view(self) -> dict[str, Any]:
+        """``GET .../outfits`` (stores nothing)."""
+
+        status, answer = self.run.get_optional(self.path)
+        if 200 <= status < 300 and isinstance(answer, Mapping):
+            return dict(answer)
+        code, _, _ = _error(answer)
+        if _too_old(status, code):
+            raise ec.CommandStopped(SERVER_TOO_OLD)
+        raise ec.CommandStopped(
+            f"could not read the outfits (HTTP {status}): {api_error_text(answer)}"
+        )
+
+    def refresh(self, episode: int) -> None:
+        self.spine = self.run.spine(self.spine_id)
+        save_spine_snapshot(self.desk, episode, self.spine)
+        self.card = cc.exit_card(self.spine, self.cast_id)
+
+
+def _open(desk: Path, cast: str) -> _Desk:
+    return _Desk(desk.expanduser().resolve(), cast)
+
+
+# --- The old desk plan, sent once ---------------------------------------------------------------
+
+
+def migrate_old_plan(desk: Path, *, out: Any = None) -> bool:
+    """Send a desk's old ``shared/outfits.json`` plan to the server once, then rename the file.
 
     Returns
     -------
-    list[str]
-        One line per character whose shots are off the plan, with the fix; empty when every shot
-        matches or no plan names the episode.
+    bool
+        Whether a plan file was found and sent.
+
+    Raises
+    ------
+    ec.CommandStopped
+        The server is too old (the file stays as it is).
     """
-
-    lines: list[str] = []
-    cards = {
-        str(c["cast_id"]): c
-        for c in spine.get("cast") or []
-        if isinstance(c, Mapping) and c.get("cast_id")
-    }
-    for cast_id, entry in sorted(load_plan(desk).items()):
-        if cast_id.startswith("_") or not isinstance(entry, Mapping):
-            continue
-        planned = (entry.get("episodes") or {}).get(str(episode))
-        if planned is None:
-            continue
-        card = cards.get(cast_id)
-        who = str((card or {}).get("name") or entry.get("name") or cast_id)
-        label = None if planned == BASE else str(planned)
-        if card is None:
-            continue
-        if label is not None and not any(
-            _same(o["label"], label) for o in outfits_of(card)
-        ):
-            lines.append(
-                f'!! outfit: ep{episode:02d}: the plan dresses {who} in "{label}", which is no longer on their card. '
-                f'Add it again (outfit --desk {desk} --cast "{who}" --add "{label}" --look "...") or plan another.'
-            )
-            continue
-        off = [
-            f"t{take} shot {frame.get('ordinal')} ({_say(worn)})"
-            for take, frame, _, worn in shots_of(spine, cast_id, episode)
-            if not _same(worn, label)
-        ]
-        if off:
-            lines.append(
-                f"!! outfit: ep{episode:02d}: {who} should wear {_say(label)} (the plan) but "
-                f"{len(off)} shot(s) do not: {', '.join(off)}. Fix (free): fictora-produce outfit --desk {desk} "
-                f'--cast "{who}" --wear "{label or BASE}" --episodes {episode}'
-            )
-    return lines
-
-
-# --- Commands -----------------------------------------------------------------------------------
-
-
-def _read_spine(desk: Path) -> dict[str, Any]:
-    _, state, run = ec._desk_session(desk)
-    try:
-        return run.spine(state.spine_id or "")
-    finally:
-        run.client.close()
-
-
-def run_outfit_list(desk: Path, *, cast: str, out: Any = None) -> None:
-    """Print one character's outfits, the plan, and what each of their shots wears. Free."""
 
     out = out or sys.stdout
     desk = desk.expanduser().resolve()
-    spine = _read_spine(desk)
-    card = cc.exit_card(spine, cast)
-    cast_id = str(card["cast_id"])
-    who = str(card.get("name") or cast_id)
-    brief = (
-        card.get("visual_brief")
-        if isinstance(card.get("visual_brief"), Mapping)
-        else {}
+    path = desk.joinpath(*OLD_PLAN_FILE)
+    if not path.is_file():
+        return False
+    data = _read_json(path)
+    plan = data if isinstance(data, Mapping) else {}
+    print("Moving this desk's outfit plan to the server (once):", file=out)
+    for cast_id, entry in sorted(plan.items()):
+        if cast_id.startswith("_") or not isinstance(entry, Mapping):
+            continue
+        by_label: dict[str, list[int]] = {}
+        for number, label in (entry.get("episodes") or {}).items():
+            by_label.setdefault(str(label), []).append(int(number))
+        if not by_label:
+            continue
+        session = _open(desk, cast_id)
+        try:
+            for label, numbers in sorted(by_label.items()):
+                wanted = None if label.casefold() == BASE else label
+                try:
+                    answer = session.change(
+                        {
+                            "wear": {
+                                "wardrobe_variant": wanted,
+                                "episode_ordinals": sorted(numbers),
+                            }
+                        },
+                        preview=False,
+                    )
+                except ec.CommandStopped as exc:
+                    if str(exc) == SERVER_TOO_OLD:
+                        raise
+                    print(
+                        f"  !! {session.who}: {_say(wanted)} in ep {_episodes_text(sorted(numbers))} not moved: {exc}",
+                        file=out,
+                    )
+                    continue
+                print(
+                    f"  {session.who}: {_say(wanted)} in ep {_episodes_text(sorted(numbers))} "
+                    f"({len(answer.get('shots_changed') or [])} shot(s) changed)",
+                    file=out,
+                )
+        finally:
+            session.close()
+    path.rename(desk.joinpath(*MIGRATED_PLAN_FILE))
+    print(
+        f"  the old plan file is now {Path(*MIGRATED_PLAN_FILE)}; the server keeps the plan from here.",
+        file=out,
     )
-    base = (
-        "; ".join(str(a) for a in (brief or {}).get("wardrobe_anchors") or [])
-        or "(no look yet)"
-    )
-    print(f"{who} ({cast_id}) outfits:", file=out)
-    print(f"  base: {base}", file=out)
-    for outfit in outfits_of(card):
-        print(f'  "{outfit["label"]}": {outfit["instruction"]}', file=out)
-    planned = (load_plan(desk).get(cast_id) or {}).get("episodes") or {}
-    if planned:
-        listed = ", ".join(
-            f"ep{int(n)}: {'base' if v == BASE else repr(v)}"
-            for n, v in sorted(planned.items(), key=lambda kv: int(kv[0]))
-        )
-        print(f"plan: {listed}", file=out)
-    numbers = sorted(set(_episode_ordinals(spine).values()) | {int(n) for n in planned})
-    for number in numbers:
-        if number < 1:
-            continue
-        if not _has_frames(spine, number):
-            print(f"ep{number:02d}: shots not written yet", file=out)
-            continue
-        shots = shots_of(spine, cast_id, number)
-        if not shots:
-            print(f"ep{number:02d}: {who} is in no shot", file=out)
-            continue
-        counts: dict[str, int] = {}
-        for _, _, _, worn in shots:
-            counts[worn or BASE] = counts.get(worn or BASE, 0) + 1
-        print(
-            f"ep{number:02d}: "
-            + ", ".join(
-                f"{n} shot(s) {'base' if k == BASE else repr(k)}"
-                for k, n in counts.items()
-            ),
-            file=out,
-        )
-        for line in outfit_plan_lines(desk, spine, episode=number):
-            if f" {who} " in line:
-                print(f"  {line}", file=out)
+    return True
 
 
-def _brief_with_outfits(
-    card: Mapping[str, Any], outfits: list[dict[str, str]]
-) -> dict[str, Any]:
-    brief = copy.deepcopy(dict(card["visual_brief"]))
-    brief["wardrobe_variants"] = outfits
-    return {"cast_id": str(card["cast_id"]), "visual_brief": brief}
+# --- Printing what the server did ---------------------------------------------------------------
+
+
+def _print_change(
+    session: _Desk,
+    answer: Mapping[str, Any],
+    *,
+    episodes: Sequence[int],
+    label: str | None,
+    out: Any,
+) -> None:
+    desk, who = session.desk, session.who
+    shots: dict[int, list[Mapping[str, Any]]] = {}
+    for shot in answer.get("shots_changed") or []:
+        if isinstance(shot, Mapping):
+            shots.setdefault(int(shot.get("episode_ordinal") or 0), []).append(shot)
+    pending = set(int(n) for n in answer.get("pending_episode_ordinals") or [])
+    boards: dict[int, list[int]] = {}
+    for board in answer.get("boards_to_redraw") or []:
+        if isinstance(board, Mapping):
+            boards.setdefault(int(board.get("episode_ordinal") or 0), []).append(
+                int(board.get("set_index") or 1)
+            )
+    for number in sorted(set(episodes) | set(shots) | pending):
+        rows = shots.get(number) or []
+        if rows:
+            print(f"ep{number:02d} outfit ({who}):", file=out)
+            for shot in rows:
+                print(
+                    f"  t{shot.get('set_index')} {shot.get('frame_id')}: {_say(shot.get('before'))} -> {_say(shot.get('after'))}",
+                    file=out,
+                )
+            print(f"ep{number:02d}: {len(rows)} shot(s) now {_say(label)}.", file=out)
+        elif number in pending:
+            print(
+                f"ep{number:02d}: shots not written yet; the writer will put {_say(label)} on when they are written.",
+                file=out,
+            )
+        else:
+            print(
+                f"ep{number:02d}: nothing to change (no shot of {who} needed it).",
+                file=out,
+            )
+        for take in sorted(set(boards.get(number) or [])):
+            print(
+                f"  t{take} board was drawn with the old outfit: redraw it (${float(STILL_USD):.2f}, after the human's yes): "
+                f'fictora-produce redraw-board --desk {desk} --episode {number} --take t{take} --cause "outfit: {label or BASE}"',
+                file=out,
+            )
 
 
 def _sheet_drawn(spine: Mapping[str, Any], cast_id: str) -> bool:
@@ -395,41 +416,103 @@ def _sheet_price(desk: Path, who: str, label: str, *, again: bool = False) -> st
     )
 
 
-def run_outfit_add(
+# --- Commands -----------------------------------------------------------------------------------
+
+
+def run_outfit_list(desk: Path, *, cast: str, out: Any = None) -> None:
+    """Print one character's outfits, the plan, and what their written shots wear. Free."""
+
+    out = out or sys.stdout
+    desk = desk.expanduser().resolve()
+    migrate_old_plan(desk, out=out)
+    session = _open(desk, cast)
+    try:
+        view = session.view()
+    finally:
+        session.close()
+    who, cast_id = session.who, session.cast_id
+    entry = next(
+        (
+            c
+            for c in view.get("cast") or []
+            if isinstance(c, Mapping) and c.get("cast_id") == cast_id
+        ),
+        None,
+    )
+    if entry is None:
+        print(f"{who} ({cast_id}) is heard only: no look, so no outfits.", file=out)
+        return
+    print(f"{who} ({cast_id}) outfits:", file=out)
+    print(
+        f"  base: {'; '.join(str(x) for x in entry.get('base_outfit') or []) or '(no look yet)'}",
+        file=out,
+    )
+    for outfit in entry.get("outfits") or []:
+        print(f'  "{outfit.get("label")}": {outfit.get("instruction")}', file=out)
+    planned: set[int] = set()
+    for row in entry.get("plan") or []:
+        numbers = [int(n) for n in row.get("episode_ordinals") or []]
+        planned.update(numbers)
+        print(
+            f'plan: "{row.get("wardrobe_variant")}" in ep {_episodes_text(numbers)}',
+            file=out,
+        )
+    written = set()
+    for episode in entry.get("episodes") or []:
+        number = int(episode.get("episode_ordinal") or 0)
+        written.add(number)
+        counts = {k: v for k, v in (episode.get("shots_by_outfit") or {}).items() if v}
+        said = ", ".join(
+            f"{n} shot(s) {'base' if k == BASE else repr(k)}" for k, n in counts.items()
+        )
+        print(f"ep{number:02d}: {said or f'{who} is in no shot'}", file=out)
+    for number in sorted(planned - written):
+        print(
+            f"ep{number:02d}: shots not written yet; the writer will dress them as planned",
+            file=out,
+        )
+
+
+def run_outfit_change(
     desk: Path,
     *,
     cast: str,
-    label: str,
-    look: str | None,
+    add: str | None = None,
+    look: str | None = None,
+    wear: str | None = None,
+    episodes: str | None = None,
     preview_only: bool = False,
     confirm_spend: bool = False,
     out: Any = None,
 ) -> Path | None:
-    """Add (or reword) one outfit on a card, then price, or on ``confirm_spend`` draw, their sheet's redraw.
+    """Add an outfit and/or plan one for episodes: one ``POST .../outfits``; then the sheet's price or redraw.
 
     Returns
     -------
     Path | None
-        The new plate on ``confirm_spend``; else ``None``.
+        The new plate when ``confirm_spend`` drew it; else ``None``.
 
     Raises
     ------
     ec.CommandStopped
-        No look on the card, a blank label or look, ``base`` as a label, a fifth outfit, or a server
-        refusal; nothing is sent before these checks pass.
+        A blank or ``base`` name, a missing ``--look`` or ``--episodes``, bad ``--episodes``, a server
+        refusal (in plain words), or a server too old for the outfit plan.
     """
 
     out = out or sys.stdout
     desk = desk.expanduser().resolve()
-    name = _one_line(label)
-    if not name:
-        raise ec.CommandStopped(
-            '--add needs the outfit\'s name, e.g. --add "black gown"; nothing was sent'
-        )
-    if name.casefold() == BASE:
-        raise ec.CommandStopped(
-            '"base" is the card\'s own outfit; give the new one another name. Nothing was sent'
-        )
+    change: dict[str, Any] = {}
+    name: str | None = None
+    if add is not None:
+        name = _one_line(add)
+        if not name:
+            raise ec.CommandStopped(
+                '--add needs the outfit\'s name, e.g. --add "black gown"; nothing was sent'
+            )
+        if name.casefold() == BASE:
+            raise ec.CommandStopped(
+                '"base" is the card\'s own outfit; give the new one another name. Nothing was sent'
+            )
     words: str | None = None
     if look is not None:
         try:
@@ -440,105 +523,93 @@ def run_outfit_add(
             raise ec.CommandStopped(
                 "--look is empty: say what the outfit is. Nothing was sent"
             )
-    spine = _read_spine(desk)
-    card = cc.exit_card(spine, cast)
-    cast_id = str(card["cast_id"])
-    who = str(card.get("name") or cast_id)
-    if not isinstance(card.get("visual_brief"), Mapping):
-        raise ec.CommandStopped(
-            f"{who} has no look yet, so no outfit can be added. Give them one first: "
-            f'fictora-produce cast --desk {desk} --name "{who}" --look @look.txt. Nothing was sent'
-        )
-    outfits = outfits_of(card)
-    existing = next(
-        (o for o in outfits if o["label"].casefold() == name.casefold()), None
-    )
-    if existing is None and words is None:
-        raise ec.CommandStopped(
-            f'{who} has no outfit "{name}" yet: add it with --look "what it is". Nothing was sent'
-        )
-    changed = False
-    if existing is None:
-        if len(outfits) >= MAX_OUTFITS:
-            have = ", ".join(f'"{o["label"]}"' for o in outfits)
+    numbers: list[int] = []
+    wanted: str | None = None
+    if wear is not None:
+        if not episodes:
             raise ec.CommandStopped(
-                f"{who} already has {MAX_OUTFITS} outfits ({have}), the most a card holds. Remove one first "
-                f'(outfit --cast "{who}" --remove LABEL). Nothing was sent'
+                "--wear needs --episodes (5, 5-6 or 5,7); nothing was sent"
             )
-        outfits = [*outfits, {"label": name, "instruction": words or ""}]
-        print(f'outfit for {who} ({cast_id}): + "{name}": {words}', file=out)
-        changed = True
-    elif words is not None and words != existing["instruction"]:
-        print(
-            f'outfit for {who} ({cast_id}): "{existing["label"]}" was: {existing["instruction"]}',
-            file=out,
-        )
-        print(f"{' ' * (len(who) + len(cast_id) + 15)}now: {words}", file=out)
-        outfits = [{**o, "instruction": words} if o is existing else o for o in outfits]
-        name = existing["label"]
-        changed = True
-    else:
-        name = existing["label"]
+        numbers = parse_episodes(episodes)
+        wanted = None if _one_line(wear).casefold() == BASE else _one_line(wear)
+        change["wear"] = {"wardrobe_variant": wanted, "episode_ordinals": numbers}
+    if not preview_only:
+        migrate_old_plan(desk, out=out)
+    session = _open(desk, cast)
+    try:
+        who, cast_id = session.who, session.cast_id
+        if name is not None:
+            existing = next(
+                (
+                    o
+                    for o in session.outfits()
+                    if o["label"].casefold() == name.casefold()
+                ),
+                None,
+            )
+            if existing is not None:
+                name = existing["label"]
+            if words is not None:
+                change["add"] = {"label": name, "instruction": words}
+            elif existing is None:
+                raise ec.CommandStopped(
+                    f'{who} has no outfit "{name}" yet: add it with --look "what it is". Nothing was sent'
+                )
+        answer: dict[str, Any] = {}
+        if change:
+            answer = session.change(change, preview=preview_only)
+            if "add" in change:
+                print(f'outfit for {who} ({cast_id}): "{name}": {words}', file=out)
+            if "wear" in change:
+                _print_change(session, answer, episodes=numbers, label=wanted, out=out)
+            if preview_only:
+                print("Not applied: --preview; nothing was stored", file=out)
+                return None
+            if not answer.get("applied"):
+                print("Nothing changed: the story already says this.", file=out)
+            else:
+                first = (
+                    numbers[0]
+                    if numbers
+                    else int(session.card.get("intro_episode_ordinal") or 1)
+                )
+                session.refresh(first)
+                what = []
+                if "add" in change:
+                    what.append(f'"{name}": {words}')
+                if "wear" in change:
+                    what.append(f"wears {_say(wanted)} in episode(s) {episodes}")
+                ec._note(desk, first, f"outfit: {who} ({cast_id}) " + "; ".join(what))
+                print("Applied", file=out)
+        if name is None:
+            return None
+        key = _priced_key(cast_id, name)
+        if change and answer.get("applied") and "add" in change:
+            _mark_priced(desk, key, on=False)
+        needs_sheet = bool(answer.get("sheet_needs_redraw")) if change else True
+        if not needs_sheet:
+            return None
+        if not _sheet_drawn(session.spine, cast_id):
+            print(
+                f'{who} has no sheet drawn yet: "{name}" is drawn on the sheet with the others at the plates step.',
+                file=out,
+            )
+            return None
         if not confirm_spend:
-            print(
-                f'{who} already has "{name}" with these words; nothing to send.',
-                file=out,
-            )
-    episode = int(card.get("intro_episode_ordinal") or 1)
-    fresh: dict[str, Any] | None = spine
-    if changed:
-        fresh, cascade = cc._send_cast_patch(
-            desk,
-            _brief_with_outfits(card, outfits),
-            episode=episode,
-            select_regen=False,
-            preview_only=preview_only,
-            out=out,
-        )
-        if fresh is None:
-            print("Not applied: --preview; nothing was sent", file=out)
+            _mark_priced(desk, key, on=True)
+            print(_sheet_price(desk, who, name), file=out)
+            if wear is None:
+                print(
+                    f'Then dress the shots: outfit --desk {desk} --cast "{who}" --wear "{name}" --episodes N (free).',
+                    file=out,
+                )
             return None
-        save_spine_snapshot(desk, episode, fresh)
-        if not any(
-            _same(o["label"], name) for o in outfits_of(cc.exit_card(fresh, cast_id))
-        ):
-            print(
-                f'!! the server answered but {who}\'s card does not show "{name}": it may be an older deploy. '
-                "Nothing was charged; run the command again or ask engineering.",
-                file=out,
-            )
+        if key not in _priced(desk):
+            _mark_priced(desk, key, on=True)
+            print(_sheet_price(desk, who, name, again=True), file=out)
             return None
-        ec._note(
-            desk,
-            episode,
-            f'outfit: {who} ({cast_id}) "{name}": {words}'
-            + (" through the cast cascade" if cascade else ""),
-        )
-        print("Applied", file=out)
-        _mark_priced(desk, _priced_key(cast_id, name), on=False)
-    if preview_only:
-        print("(preview only: nothing was sent)", file=out)
-        return None
-    if not _sheet_drawn(fresh or spine, cast_id):
-        print(
-            f'{who} has no sheet drawn yet: "{name}" is drawn on the sheet with the others at the plates step. '
-            f'Next: dress the shots with outfit --cast "{who}" --wear "{name}" --episodes N.',
-            file=out,
-        )
-        return None
-    key = _priced_key(cast_id, name)
-    if not confirm_spend:
-        _mark_priced(desk, key, on=True)
-        print(_sheet_price(desk, who, name), file=out)
-        print(
-            f'Then dress the shots: outfit --desk {desk} --cast "{who}" --wear "{name}" --episodes N (free).',
-            file=out,
-        )
-        return None
-    if not _was_priced(desk, key):
-        _mark_priced(desk, key, on=True)
-        print(_sheet_price(desk, who, name, again=True), file=out)
-        return None
+    finally:
+        session.close()
     plate = ec.run_redraw_plate_with_note(
         desk,
         cast=cast_id,
@@ -546,89 +617,30 @@ def run_outfit_add(
         out=out,
     )
     _mark_priced(desk, key, on=False)
-    print(
-        f'Next: dress the shots: outfit --desk {desk} --cast "{who}" --wear "{name}" --episodes N (free).',
-        file=out,
-    )
     return plate
 
 
-def run_outfit_remove(desk: Path, *, cast: str, label: str, out: Any = None) -> None:
-    """Take one outfit off a card; refused while any shot or the plan still uses it. Free."""
+def run_outfit_add(
+    desk: Path,
+    *,
+    cast: str,
+    label: str,
+    look: str | None,
+    preview_only: bool = False,
+    confirm_spend: bool = False,
+    out: Any = None,
+) -> Path | None:
+    """``--add`` alone (:func:`run_outfit_change`)."""
 
-    out = out or sys.stdout
-    desk = desk.expanduser().resolve()
-    spine = _read_spine(desk)
-    card = cc.exit_card(spine, cast)
-    cast_id = str(card["cast_id"])
-    who = str(card.get("name") or cast_id)
-    name = resolve_outfit(card, label)
-    if name is None:
-        raise ec.CommandStopped("the base outfit cannot be removed; nothing was sent")
-    wearing = sorted(
-        {
-            f"ep{ordinal:02d}"
-            for ordinal in set(_episode_ordinals(spine).values())
-            for _, _, _, worn in shots_of(spine, cast_id, ordinal)
-            if _same(worn, name)
-        }
-    )
-    planned = sorted(
-        int(n)
-        for n, v in ((load_plan(desk).get(cast_id) or {}).get("episodes") or {}).items()
-        if _same(v, name)
-    )
-    if wearing or planned:
-        where = ", ".join(
-            wearing
-            + [f"ep{n:02d} (planned)" for n in planned if f"ep{n:02d}" not in wearing]
-        )
-        raise ec.CommandStopped(
-            f'{who} still wears "{name}" in {where}. Dress those episodes in another outfit first '
-            f'(outfit --cast "{who}" --wear base --episodes N). Nothing was sent'
-        )
-    outfits = [o for o in outfits_of(card) if o["label"] != name]
-    print(f'outfit for {who} ({cast_id}): - "{name}"', file=out)
-    episode = int(card.get("intro_episode_ordinal") or 1)
-    fresh, cascade = cc._send_cast_patch(
+    return run_outfit_change(
         desk,
-        _brief_with_outfits(card, outfits),
-        episode=episode,
-        select_regen=False,
-        preview_only=False,
+        cast=cast,
+        add=label,
+        look=look,
+        preview_only=preview_only,
+        confirm_spend=confirm_spend,
         out=out,
     )
-    if fresh is not None:
-        save_spine_snapshot(desk, episode, fresh)
-    ec._note(
-        desk,
-        episode,
-        f'outfit: {who} ({cast_id}) "{name}" removed'
-        + (" through the cast cascade" if cascade else ""),
-    )
-    print("Applied", file=out)
-
-
-def _wear_patch(
-    spine: Mapping[str, Any], cast_id: str, episode: int, label: str | None
-) -> tuple[dict[str, Any], list[str], set[int]]:
-    entries: list[dict[str, Any]] = []
-    changed: list[str] = []
-    takes: set[int] = set()
-    for take, frame, index, worn in shots_of(spine, cast_id, episode):
-        if _same(worn, label):
-            continue
-        brief = copy.deepcopy(dict(frame.get("visual_brief") or {}))
-        brief["subject_blocking"][index] = {
-            **brief["subject_blocking"][index],
-            "wardrobe_variant": label,
-        }
-        entries.append({"frame_id": frame["frame_id"], "visual_brief": brief})
-        changed.append(
-            f"  t{take} shot {frame.get('ordinal')} ({frame['frame_id']}): {_say(worn)} -> {_say(label)}"
-        )
-        takes.add(take)
-    return {"frames": entries}, changed, takes
 
 
 def run_outfit_wear(
@@ -640,112 +652,55 @@ def run_outfit_wear(
     preview_only: bool = False,
     out: Any = None,
 ) -> None:
-    """Dress one character in one outfit for every shot of theirs in ``episodes``; record the plan. Free.
+    """``--wear`` alone (:func:`run_outfit_change`)."""
 
-    Raises
-    ------
-    ec.CommandStopped
-        Bad ``--episodes``, an outfit not on their card, or a server refusal (the episodes sent before it
-        stay sent and are named).
-    """
+    run_outfit_change(
+        desk,
+        cast=cast,
+        wear=label,
+        episodes=episodes,
+        preview_only=preview_only,
+        out=out,
+    )
+
+
+def run_outfit_remove(desk: Path, *, cast: str, label: str, out: Any = None) -> None:
+    """Take one outfit off a card; the server refuses while the plan or a shot still uses it. Free."""
 
     out = out or sys.stdout
     desk = desk.expanduser().resolve()
-    numbers = parse_episodes(episodes)
-    spine = _read_spine(desk)
-    card = cc.exit_card(spine, cast)
-    cast_id = str(card["cast_id"])
-    who = str(card.get("name") or cast_id)
-    wanted = resolve_outfit(card, label)
-    approved = spine.get("approval_state") == "approved"
-    done: list[int] = []
-    pending: list[int] = []
-    for number in numbers:
-        if not _has_frames(spine, number):
-            pending.append(number)
-            print(
-                f"ep{number:02d}: shots not written yet; the plan is kept and checked before its boards.",
-                file=out,
-            )
-            continue
-        patch, changed, takes = _wear_patch(spine, cast_id, number, wanted)
-        if not changed:
-            shots = shots_of(spine, cast_id, number)
-            print(
-                f"ep{number:02d}: "
-                + (
-                    f"all {len(shots)} shot(s) already {_say(wanted)}."
-                    if shots
-                    else f"{who} is in no shot."
-                ),
-                file=out,
-            )
-            done.append(number)
-            continue
-        if preview_only and not approved:
-            print(f"ep{number:02d} outfit ({who}):", file=out)
-            for row in changed:
-                print(row, file=out)
-            continue
-        try:
-            _, _, fresh, _, _, _ = ec._send_story_edit(
+    name = _one_line(label)
+    if name.casefold() == BASE:
+        raise ec.CommandStopped("the base outfit cannot be removed; nothing was sent")
+    migrate_old_plan(desk, out=out)
+    session = _open(desk, cast)
+    try:
+        answer = session.change({"remove": name}, preview=False)
+        print(f'outfit for {session.who} ({session.cast_id}): - "{name}"', file=out)
+        if answer.get("applied"):
+            episode = int(session.card.get("intro_episode_ordinal") or 1)
+            session.refresh(episode)
+            ec._note(
                 desk,
-                episode=number,
-                build=lambda _s, p=patch, c=changed: (p, c, f"outfit ({who})"),
-                select_regen=False,
-                preview_only=preview_only,
-                out=out,
+                episode,
+                f'outfit: {session.who} ({session.cast_id}) "{name}" removed',
             )
-        except ec.CommandStopped as exc:
-            sent = (
-                f" Episodes already changed: {', '.join(str(n) for n in done)}."
-                if done and not preview_only
-                else ""
-            )
-            raise ec.CommandStopped(f"ep{number:02d}: {exc}{sent}") from None
-        spine = fresh
-        done.append(number)
-        if preview_only:
-            continue
-        print(f"ep{number:02d}: {len(changed)} shot(s) now {_say(wanted)}.", file=out)
-        drawn = {take for take, _ in board_assets(spine, episode=number)}
-        stale = sorted(takes & drawn)
-        for take in stale:
-            print(
-                f"  t{take} board was drawn with the old outfit: redraw it (${float(STILL_USD):.2f}, after the human's yes): "
-                f'fictora-produce redraw-board --desk {desk} --episode {number} --take t{take} --cause "outfit: {label}"',
-                file=out,
-            )
-    if preview_only:
-        print("Not applied: --preview; nothing was sent", file=out)
-        return
-    _record_wear(desk, card, wanted, numbers)
-    first = numbers[0] if numbers else 1
-    ec._note(
-        desk,
-        first,
-        f"outfit: {who} ({cast_id}) wears {_say(wanted)} in episode(s) {episodes}",
-    )
-    if pending:
-        print(
-            f"Plan saved for ep {', '.join(str(n) for n in pending)}: once those shots are written, the board price "
-            f"warns about any shot of {who} not in {_say(wanted)}; run this command again then.",
-            file=out,
-        )
-    print("Applied", file=out)
+            print("Applied", file=out)
+        else:
+            print("Nothing changed.", file=out)
+    finally:
+        session.close()
 
 
 __all__ = [
     "BASE",
     "MAX_OUTFITS",
-    "load_plan",
-    "outfit_plan_lines",
-    "outfits_of",
+    "SERVER_TOO_OLD",
+    "migrate_old_plan",
     "parse_episodes",
-    "resolve_outfit",
     "run_outfit_add",
+    "run_outfit_change",
     "run_outfit_list",
     "run_outfit_remove",
     "run_outfit_wear",
-    "shots_of",
 ]
