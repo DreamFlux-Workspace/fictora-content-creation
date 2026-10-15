@@ -369,6 +369,26 @@ def save_spine_snapshot(desk: Path, episode: int, spine: dict[str, Any]) -> Path
     return desk / "api" / "spine.json"
 
 
+def _filmed_seconds(facts: Mapping[str, Any] | None, ceiling: int) -> int:
+    """Seconds a take filmed, from its take facts; the run's take length when unknown.
+
+    Parameters
+    ----------
+    facts
+        The take's facts from the server, if fetched.
+    ceiling
+        The run's take length (``clip_duration_seconds``).
+
+    Returns
+    -------
+    int
+        Whole seconds.
+    """
+
+    raw = facts.get("duration_seconds") if isinstance(facts, Mapping) else None
+    return int(round(raw)) if isinstance(raw, (int, float)) and raw > 0 else ceiling
+
+
 def sync_desk_to_spine_takes(desk: Path, spine: dict[str, Any]) -> list[str]:
     """Match the desk's take slots and take length to the story the server films.
 
@@ -2300,7 +2320,8 @@ def collect_takes(
                     episode=episode,
                     usd=priced[0],
                     take_id=take_id,
-                    unit=f"take {clip_seconds}s",
+                    # The seconds the take filmed (the server sizes each take), not the run's ceiling.
+                    unit=f"take {_filmed_seconds(facts, clip_seconds)}s",
                     job_id=str(clip.get("job_id") or "") or None,
                 )
                 booked += priced[0]
