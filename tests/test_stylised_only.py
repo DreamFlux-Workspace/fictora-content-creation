@@ -412,5 +412,7 @@ def test_the_skill_asks_for_few_long_fight_shots_lead_seams_and_offscreen_sound(
         assert "real-time speed" in text
         assert "Fights are few, long shots" not in text
         assert "**Seams: the same close-up of the lead**" in text
-        assert "ends every seam on movement" in text
+        assert "caught mid-expression or mid-turn" in text
+        assert "one speed per shot" in text
+        assert "clothes intact unless the story tears them" in text
         assert "**Off-screen sound stays sound**" in text
