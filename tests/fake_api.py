@@ -536,3 +536,273 @@ def serve_outfits(api: FakeApi, spine_id: str = "sp1") -> None:
 
     api.routes[("POST", path)] = change
     api.routes[("GET", path)] = view
+
+
+#: The server's tearless swaps (fictora-drama ``NO_TEARS_KIND_SUBSTITUTES``; ``through_tears`` -> ``trailing_off``).
+TEARLESS = {"tear_up": "freeze", "comic_tears": "gloom", "big_laugh": "laugh"}
+
+
+def serve_emotions(api: FakeApi, spine_id: str = "sp1") -> None:
+    """Answer ``GET``/``POST /v1/spines/{id}/emotions`` and ``PUT .../cast/{id}/emotional-default`` on ``api.spine_doc``.
+
+    Like fictora-drama's emotion plan: the plan lives on the story (``emotion_plan``), the default on the
+    card (``emotional_default``). A no-tears entry swaps the tear kinds of that face (a subject's
+    ``reaction_kind`` here) on written shots and ``through_tears`` lines, and names each drawn board it
+    touches. Refusals (``spine_version_conflict``, ``cast_not_found``, ``emotion_entry_not_found``, a
+    series-wide mood) come back as ``(status, envelope)``.
+    """
+
+    from creation.spine_view import board_assets, frames_by_set
+
+    base = f"/v1/spines/{spine_id}"
+
+    def refuse(status: int, code: str, **details: Any) -> tuple[int, dict[str, Any]]:
+        return status, {"error": {"code": code, "message": code, "details": details}}
+
+    def ordinals(doc: dict[str, Any]) -> list[int]:
+        return sorted(int(s["ordinal"]) for s in doc.get("episode_summaries") or [])
+
+    def episode_id(doc: dict[str, Any], number: int) -> str:
+        return next(
+            s["episode_id"]
+            for s in doc["episode_summaries"]
+            if int(s["ordinal"]) == number
+        )
+
+    def covers(entry: dict[str, Any], number: int) -> bool:
+        last = entry.get("through_episode")
+        return entry["from_episode"] <= number and (last is None or number <= last)
+
+    def no_tears(doc: dict[str, Any], cast_id: str, number: int) -> bool:
+        said = False
+        for entry in doc.get("emotion_plan") or []:
+            if entry.get("cast_id") in (None, cast_id) and covers(entry, number):
+                if entry.get("no_tears") is not None:
+                    said = bool(entry["no_tears"])
+        return said
+
+    def sweep(doc: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+        """Swap tears on every written face and line the plan says may not cry."""
+
+        result: dict[str, list[dict[str, Any]]] = {
+            "shots_changed": [],
+            "lines_changed": [],
+            "boards_to_redraw": [],
+        }
+        for number in ordinals(doc):
+            drawn = {take for take, _ in board_assets(doc, episode=number)}
+            for take, frames in sorted(frames_by_set(doc, episode=number).items()):
+                for frame in frames:
+                    for entry in frame["visual_brief"].get("subject_blocking") or []:
+                        kind = entry.get("reaction_kind")
+                        if kind in TEARLESS and no_tears(doc, entry["cast_id"], number):
+                            entry["reaction_kind"] = TEARLESS[kind]
+                            result["shots_changed"].append(
+                                {
+                                    "episode_ordinal": number,
+                                    "frame_id": frame["frame_id"],
+                                    "set_index": take,
+                                    "cast_id": entry["cast_id"],
+                                    "before": kind,
+                                    "after": TEARLESS[kind],
+                                }
+                            )
+                            board = {"episode_ordinal": number, "set_index": take}
+                            if (
+                                take in drawn
+                                and board not in result["boards_to_redraw"]
+                            ):
+                                result["boards_to_redraw"].append(board)
+            for beat in doc["beats"]:
+                if beat["episode_id"] != episode_id(doc, number):
+                    continue
+                for line in beat.get("dialogue_lines") or []:
+                    if line.get("delivery") == "through_tears" and no_tears(
+                        doc, line["cast_id"], number
+                    ):
+                        line["delivery"] = "trailing_off"
+                        result["lines_changed"].append(
+                            {
+                                "episode_ordinal": number,
+                                "beat_id": beat["beat_id"],
+                                "cast_id": line["cast_id"],
+                                "before": "through_tears",
+                                "after": "trailing_off",
+                            }
+                        )
+        return result
+
+    def answer(
+        doc: dict[str, Any],
+        body: dict[str, Any],
+        changed: bool,
+        result: dict[str, Any],
+        **extra: Any,
+    ) -> tuple[int, dict[str, Any]]:
+        previous = doc["spine_version"]
+        if changed and not body.get("preview"):
+            doc["spine_version"] = f"{previous}+"
+        return 200, {
+            "request_id": "req_emo",
+            "spine_id": spine_id,
+            "applied": changed and not body.get("preview"),
+            "preview": bool(body.get("preview")),
+            "previous_spine_version": previous,
+            "spine_version": doc["spine_version"],
+            "plan": copy.deepcopy(doc.get("emotion_plan") or []),
+            "added": None,
+            "cast_id": None,
+            "emotional_default": None,
+            **result,
+            **extra,
+        }
+
+    def open_doc(body: dict[str, Any]) -> dict[str, Any] | tuple[int, dict[str, Any]]:
+        doc = api.spine_doc if not body.get("preview") else copy.deepcopy(api.spine_doc)
+        if body.get("spine_version") != doc.get("spine_version"):
+            return refuse(
+                409,
+                "spine_version_conflict",
+                latest_spine_version=doc.get("spine_version"),
+            )
+        return doc
+
+    def change(_m: str, _p: str, body: dict[str, Any] | None) -> Any:
+        body = body or {}
+        doc = open_doc(body)
+        if isinstance(doc, tuple):
+            return doc
+        if (body.get("add") is None) == (body.get("remove") is None):
+            return refuse(
+                422, "validation_error", reason="send add or remove, not both"
+            )
+        plan = doc.setdefault("emotion_plan", [])
+        if body.get("remove") is not None:
+            before = len(plan)
+            plan[:] = [e for e in plan if e["entry_id"] != body["remove"]]
+            if len(plan) == before:
+                return refuse(404, "emotion_entry_not_found")
+            return answer(doc, body, True, sweep(doc))
+        add = dict(body["add"])
+        if add.get("cast_id") is None and add.get("mood") is not None:
+            return refuse(
+                422,
+                "validation_error",
+                reason="a series-wide entry (no cast_id) sets no_tears only",
+            )
+        if add.get("cast_id") is not None and not any(
+            c["cast_id"] == add["cast_id"] for c in doc["cast"]
+        ):
+            return refuse(404, "cast_not_found")
+        same = next(
+            (e for e in plan if {k: v for k, v in e.items() if k != "entry_id"} == add),
+            None,
+        )
+        if same is not None:
+            return answer(doc, body, False, sweep(doc), added=copy.deepcopy(same))
+        entry = {"entry_id": f"emo_{len(plan) + 1}", **add}
+        plan.append(entry)
+        return answer(doc, body, True, sweep(doc), added=copy.deepcopy(entry))
+
+    def default(_m: str, path: str, body: dict[str, Any] | None) -> Any:
+        body = body or {}
+        doc = open_doc(body)
+        if isinstance(doc, tuple):
+            return doc
+        cast_id = path.split("/cast/", 1)[1].split("/", 1)[0]
+        card = next((c for c in doc["cast"] if c["cast_id"] == cast_id), None)
+        if card is None:
+            return refuse(404, "cast_not_found")
+        wanted = body.get("emotional_default")
+        changed = card.get("emotional_default") != wanted
+        card["emotional_default"] = copy.deepcopy(wanted)
+        result: dict[str, list[dict[str, Any]]] = {
+            "shots_changed": [],
+            "lines_changed": [],
+            "boards_to_redraw": [],
+        }
+        if changed:
+            for number in ordinals(doc):
+                drawn = {take for take, _ in board_assets(doc, episode=number)}
+                for take, frames in sorted(frames_by_set(doc, episode=number).items()):
+                    plain = any(
+                        e["cast_id"] == cast_id and not e.get("reaction_kind")
+                        for f in frames
+                        for e in f["visual_brief"].get("subject_blocking") or []
+                    )
+                    board = {"episode_ordinal": number, "set_index": take}
+                    if (
+                        plain
+                        and take in drawn
+                        and board not in result["boards_to_redraw"]
+                    ):
+                        result["boards_to_redraw"].append(board)
+        return answer(
+            doc,
+            body,
+            changed,
+            result,
+            cast_id=cast_id,
+            emotional_default=copy.deepcopy(wanted),
+        )
+
+    def view(_m: str, _p: str, _b: Any) -> dict[str, Any]:
+        doc = api.spine_doc
+        plan = doc.get("emotion_plan") or []
+        cast = []
+        for card in doc["cast"]:
+            cast_id = card["cast_id"]
+            mine = [e for e in plan if e.get("cast_id") == cast_id]
+            fallback = card.get("emotional_default")
+            episodes = []
+            for number in ordinals(doc):
+                frames = frames_by_set(doc, episode=number)
+                if not frames:
+                    continue
+                mood = next(
+                    (
+                        e["mood"]
+                        for e in reversed(mine)
+                        if e.get("mood") and covers(e, number)
+                    ),
+                    None,
+                )
+                source = "plan" if mood else ("default" if fallback else "neutral")
+                episodes.append(
+                    {
+                        "episode_ordinal": number,
+                        "mood": mood or (fallback or {}).get("mood") or "neutral",
+                        "mood_source": source,
+                        "no_tears": no_tears(doc, cast_id, number),
+                        "tear_shots": sum(
+                            1
+                            for rows in frames.values()
+                            for f in rows
+                            for e in f["visual_brief"].get("subject_blocking") or []
+                            if e["cast_id"] == cast_id
+                            and e.get("reaction_kind") in TEARLESS
+                        ),
+                    }
+                )
+            cast.append(
+                {
+                    "cast_id": cast_id,
+                    "name": card.get("name") or cast_id,
+                    "emotional_default": copy.deepcopy(fallback),
+                    "plan": copy.deepcopy(mine),
+                    "episodes": episodes,
+                }
+            )
+        return {
+            "spine_id": spine_id,
+            "spine_version": doc["spine_version"],
+            "series_plan": [copy.deepcopy(e) for e in plan if e.get("cast_id") is None],
+            "cast": cast,
+        }
+
+    api.routes[("GET", f"{base}/emotions")] = view
+    api.routes[("POST", f"{base}/emotions")] = change
+    for card in api.spine_doc["cast"]:
+        api.routes[("PUT", f"{base}/cast/{card['cast_id']}/emotional-default")] = (
+            default
+        )

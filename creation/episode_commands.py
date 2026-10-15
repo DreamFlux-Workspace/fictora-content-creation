@@ -7720,6 +7720,7 @@ EPISODE_COMMANDS = frozenset(
         "cast",
         "cast-exit",
         "outfit",
+        "emotion",
         "look-frame",
         "look",
         "look-note",
@@ -8196,6 +8197,62 @@ def add_episode_parsers(
         "--confirm-spend",
         action="store_true",
         help="With --add: the human said yes to the sheet redraw's price; draw it ($0.30).",
+    )
+
+    emotion = sub.add_parser(
+        "emotion",
+        help="How characters feel, kept by the server (so they stop crying in every shot): list the plan "
+        "(free), add a mood and/or a no-tears rule for a character or --everyone over --episodes, --remove an "
+        "entry, or set/clear a character's --default. Every change is a preview until --confirm; spends "
+        "nothing (boards it outdates are named with their redraw-board, $0.30 each, never drawn here).",
+    )
+    emotion.add_argument("--desk", type=Path, required=True)
+    emotion.add_argument("--cast", help="The character's name or cast id.")
+    emotion.add_argument(
+        "--everyone",
+        action="store_true",
+        help="A series-wide rule (with --no-tears/--tears-ok and --episodes); never a mood.",
+    )
+    emotion.add_argument(
+        "--mood",
+        help="Their mood in --episodes: neutral, angry, composed, shocked, happy, sad, deflated or flustered.",
+    )
+    emotion.add_argument(
+        "--no-tears",
+        action="store_true",
+        help="They never cry in --episodes: crying faces become tearless ones, through-tears lines trail off.",
+    )
+    emotion.add_argument(
+        "--tears-ok",
+        action="store_true",
+        help="Lift an earlier no-tears rule for --episodes (tears allowed again).",
+    )
+    emotion.add_argument(
+        "--episodes", help="5, 5-6, or 5- (episode 5 to the end of the series)."
+    )
+    emotion.add_argument(
+        "--note",
+        help="Why, in the creator's words (with --mood/--no-tears, or the temperament with --default).",
+    )
+    emotion.add_argument(
+        "--remove",
+        metavar="ENTRY_ID",
+        help="Take one plan entry off (ids from the list; alone).",
+    )
+    emotion.add_argument(
+        "--default",
+        metavar="MOOD",
+        help="With --cast: how their face sits when nothing says otherwise (e.g. composed, with --note).",
+    )
+    emotion.add_argument(
+        "--clear-default",
+        action="store_true",
+        help="With --cast: clear their emotional default (neutral).",
+    )
+    emotion.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Apply the change (after the human saw the preview). Without it nothing is stored.",
     )
 
     cast_exit = sub.add_parser(
@@ -8817,6 +8874,11 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 )
             else:
                 outfit_commands.run_outfit_list(args.desk, cast=args.cast)
+            return 0
+        if args.command == "emotion":
+            from creation import emotion_commands
+
+            emotion_commands.run_emotion_cli(args)
             return 0
         if args.command in ("props", "keep-prop", "redraw-prop", "remove-prop"):
             from creation import prop_commands
