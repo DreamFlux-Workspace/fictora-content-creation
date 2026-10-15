@@ -361,6 +361,22 @@ def run_redraw_prop(
                 ),
                 file=out,
             )
+            if confirm_spend:
+                # A yes the kit could not honour is a stop, never a quiet exit 0: on one shell
+                # line (`a && b`) the next paid command ran and this one had silently done
+                # nothing (L-20261014-28).
+                from creation.episode_commands import CommandStopped as _Stopped
+
+                why = (
+                    "no price was shown for it on this desk"
+                    if shown is None
+                    else f"the price changed from ${shown:.2f} to ${usd:.2f} since it was shown"
+                )
+                raise _Stopped(
+                    f"redraw-prop --confirm-spend did NOT draw {name}: {why} (another command on this desk "
+                    "can change what is owed). Nothing was sent or charged. Show the new price to the human, "
+                    "then run it again on its own line."
+                )
             return None
         print(
             f"Redrawing {name} with the human's yes: {count} picture(s), ${usd:.2f}.",
