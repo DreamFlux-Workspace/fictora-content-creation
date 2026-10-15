@@ -86,6 +86,33 @@ class AudioServiceError(RuntimeError):
     """The server refused or failed a generated-audio request (message says what to do)."""
 
 
+#: Request flag: the server words a creature or monster cue (fictora-drama #826).
+CREATURE_CUE_FLAG = "server_words_creature_cues"
+#: The stop when the server is older than that: nothing was made or spent.
+CREATURE_CUE_SERVER_TOO_OLD = (
+    "server too old for cue: this server does not word creature or monster cues yet "
+    "(fictora-drama #826 not deployed), so nothing was sent to be made and nothing was spent. "
+    "Run cue again once the server is updated."
+)
+
+
+def creature_flag_refused(message: str) -> bool:
+    """Whether a refused cue was the server rejecting :data:`CREATURE_CUE_FLAG` (an older server).
+
+    Parameters
+    ----------
+    message
+        The :class:`AudioServiceError` text.
+
+    Returns
+    -------
+    bool
+        True for a 422 that names the flag.
+    """
+
+    return message.startswith("HTTP 422") and CREATURE_CUE_FLAG in message
+
+
 class AudioServiceTimeout(AudioServiceError):
     """The server gave no answer within the request's deadline (message says how to retry)."""
 
@@ -249,14 +276,26 @@ class DramaApiAudio:
     def sfx_cue(
         self, *, spine_id: str, sound: str, seconds: float, key: str
     ) -> dict[str, Any]:
-        """POST ``/v1/spines/{id}/sfx-cues`` with the :data:`CUE_DEADLINE_SECONDS` deadline."""
+        """POST ``/v1/spines/{id}/sfx-cues`` with the :data:`CUE_DEADLINE_SECONDS` deadline.
 
-        return self._post(
-            f"/v1/spines/{spine_id}/sfx-cues",
-            {"sound": sound, "seconds": seconds},
-            key,
-            deadline_seconds=CUE_DEADLINE_SECONDS,
-        )
+        The body says ``server_words_creature_cues: true``: the kit sends a
+        monster cue as written and relies on the server to word it (fictora-drama
+        #826). A server without that refuses the field (422, nothing made or
+        spent), and the kit stops with :data:`CREATURE_CUE_SERVER_TOO_OLD`
+        instead of sending a cue that could come back as a dog or a person.
+        """
+
+        try:
+            return self._post(
+                f"/v1/spines/{spine_id}/sfx-cues",
+                {"sound": sound, "seconds": seconds, CREATURE_CUE_FLAG: True},
+                key,
+                deadline_seconds=CUE_DEADLINE_SECONDS,
+            )
+        except AudioServiceError as exc:
+            if creature_flag_refused(str(exc)):
+                raise AudioServiceError(CREATURE_CUE_SERVER_TOO_OLD) from exc
+            raise
 
     def music_bed(
         self, *, spine_id: str, brief: str | None, key: str
