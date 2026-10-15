@@ -96,6 +96,10 @@ def test_a_photoreal_ask_is_found(brief: str, phrase: str) -> None:
         ARCHETYPE,
         "Realistic dialogue about grief; a realistic story of two sisters.",
         "Cinematic lighting, soft film grain, manhwa ink linework.",
+        # A look the brief rules out is no ask for it (GRAFT, 15 Oct 2026).
+        "Stylised manhwa ink, never photoreal.",
+        "No live-action, anime only.",
+        "Don't make it photorealistic.",
     ],
 )
 def test_a_stylised_or_story_realism_brief_is_not_a_photoreal_ask(brief: str) -> None:
