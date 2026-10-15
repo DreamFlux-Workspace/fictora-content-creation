@@ -131,3 +131,19 @@ def test_the_held_frames_show_the_hit_frame_and_the_take_keeps_its_length_and_so
         ).stdout.strip()  # fmt: skip
 
     assert audio(done.output) == audio(take), "the sound is copied untouched"
+
+
+@needs_ffmpeg
+def test_the_take_eases_out_of_the_hold_instead_of_jumping(tmp_path: Path) -> None:
+    take = _moving_take(tmp_path / "t.mp4")
+    done = apply_impacts(
+        take,
+        ImpactPlan((ImpactMoment(1.5, 2.3, "hit", "strike", "planned", 0.125),)),
+        tmp_path / "h.mp4",
+    )
+    after = _frames(done.output)
+    end = round(1.5 * FPS) + 3
+
+    first = np.abs(after[end + 1] - after[end]).mean()
+    full = np.abs(after[end + 3] - after[end]).mean()
+    assert first < 0.6 * full, (first, full)

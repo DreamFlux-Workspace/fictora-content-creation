@@ -2752,6 +2752,9 @@ def run_finish(
         if impact_state["picture"] is None:
             # The moments are times on the filmed shots: without the take's measured cuts they could land
             # off the action on a trimmed or re-timed file, so nothing is drawn.
+            if impact_at:
+                print("[impact] !! --impact-at needs the take's measured cuts (they were not measured): "
+                      "not applied", file=out, flush=True)  # fmt: skip
             if stale:
                 print(f"[impact] !! {refresh}", file=out, flush=True)
                 return StepReport(
@@ -2764,7 +2767,12 @@ def run_finish(
         if plan is not None:
             if not plan.moments:
                 return StepReport("impact", "skipped", f"server: {plan.one_line()}")
-            laid = [c.start for c in impact_state["cues"]]
+            # Only hit sounds count: an ambience, a rain bed or a footstep under the strike is no hit.
+            laid = [
+                c.start
+                for c in impact_state["cues"]
+                if impact_style(c.sound, c.kind, getattr(c, "impact", None))
+            ]
             for moment in plan.moments:
                 if moment.source == "planned" and not any(
                     abs(moment.time - at) <= SOUND_MATCH_SECONDS for at in laid

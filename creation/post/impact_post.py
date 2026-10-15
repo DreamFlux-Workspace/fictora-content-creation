@@ -440,6 +440,34 @@ class ImpactPlan:
                 return moved
         return None
 
+    def resume(self, index: int, fps: float) -> tuple[int, float] | None:
+        """On the frames just after a hold: ``(hit frame, its weight)``, easing from it into the take.
+
+        The first frame after a hold shows 2/3 of the held frame over 1/3 of its own, the next 1/3 over
+        2/3 (:data:`FREEZE_RESUME_FRAMES`, the server's numbers): a hit-stop, not a hitch.
+
+        Parameters
+        ----------
+        index
+            Frame number, 0-based.
+        fps
+            Frames per second.
+
+        Returns
+        -------
+        tuple[int, float] | None
+            The hit frame and how much of it shows; ``None`` elsewhere.
+        """
+
+        for moment in self.moments:
+            if moment.freeze <= 0:
+                continue
+            hit = round(moment.time * fps)
+            after = index - (hit + max(1, round(moment.freeze * fps)))
+            if 1 <= after <= FREEZE_RESUME_FRAMES:
+                return hit, 1.0 - after / (FREEZE_RESUME_FRAMES + 1)
+        return None
+
     def held_from(self, index: int, fps: float) -> int:
         """The frame shown at ``index``: the hit frame inside a freeze (the server's plan), else ``index``.
 
@@ -568,6 +596,8 @@ def plan_impacts(
 IMPACT_PLAN_PATH = "/v1/jobs/{job_id}/impact-plan"
 #: At most this many ``--impact-at`` hits per take: the server refuses more (422), so the kit sends the first ones.
 MAX_EDITOR_HITS = 8
+#: Frames after a freeze that ease from the held frame back into the take (the server's number).
+FREEZE_RESUME_FRAMES = 2
 #: A punched-in moment with no laid effect this close to it has no hit sound under it.
 SOUND_MATCH_SECONDS = 1.0
 _IMPACT_AT = re.compile(
@@ -818,16 +848,31 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
                 break
             frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
             source = plan.held_from(index, fps)
+            easing = plan.resume(index, fps) if anchor is not None else None
             if source < index and anchor is not None:
                 frame = anchor
-            else:
+            elif easing is None:
                 anchor = frame
-            move = plan.move_at(source / fps)
-            if move is not None:
-                frame = cv2.warpAffine(
-                    frame, move.matrix(width, height), (width, height),
+
+            def moved(picture: np.ndarray, at: float) -> np.ndarray:
+                move = plan.move_at(at)
+                if move is None:
+                    return picture
+                return cv2.warpAffine(
+                    picture, move.matrix(width, height), (width, height),
                     flags=cv2.INTER_CUBIC | cv2.WARP_INVERSE_MAP, borderMode=cv2.BORDER_REFLECT,
                 )  # fmt: skip
+
+            frame = moved(frame, source / fps)
+            if easing is not None and anchor is not None:
+                # Out of a hold: the held frame fades into the take over a frame or two.
+                hit, weight = easing
+                held = moved(anchor, hit / fps).astype(np.float32)
+                frame = np.clip(
+                    weight * held + (1.0 - weight) * frame.astype(np.float32) + 0.5,
+                    0,
+                    255,
+                ).astype(np.uint8)
             writer.stdin.write(np.ascontiguousarray(frame).tobytes())
             index += 1
         writer.stdin.close()

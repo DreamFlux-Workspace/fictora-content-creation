@@ -381,3 +381,78 @@ def test_a_take_whose_cuts_were_not_measured_is_not_drawn(tmp_path: Path) -> Non
         "skipped",
         "the take's cuts were not measured",
     )
+
+
+# --- follow-ups (A4-A6) ------------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_a_fight_take_with_no_big_cue_still_asks_the_server(tmp_path: Path) -> None:
+    """A4: the facts say fight: the server plans its strikes even when no saved cue names one."""
+
+    facts = copy.deepcopy(FACTS)
+    facts["take_facts"]["fight"] = True
+    facts["take_facts"]["sfx_cues"][0]["sound"] = "a soft knock"
+    desk = _facts_desk(tmp_path, facts)
+    sent: list[dict[str, Any]] = []
+
+    result, _ = _finish(
+        desk,
+        impact_planner=lambda *a: (
+            lambda body: sent.append(body) or _answer((3.5, "Ren kicks"))
+        ),
+    )
+
+    assert len(sent) == 1
+    assert _impact(result).status == "ran"
+
+
+@needs_ffmpeg
+def test_unmeasured_cuts_still_say_the_editor_s_hits_were_not_applied(
+    tmp_path: Path,
+) -> None:
+    """A5."""
+
+    desk = _fight_desk(tmp_path)
+
+    def no_cuts(_take: Path) -> tuple[float, ...]:
+        raise RuntimeError("cut detector failed")
+
+    _, log = _finish(
+        desk,
+        impact_planner=lambda *a: _never,
+        cut_meter=no_cuts,
+        impact_at=(ImpactHit(1.2),),
+    )
+
+    assert (
+        "!! --impact-at needs the take's measured cuts" in log and "not applied" in log
+    )
+
+
+@needs_ffmpeg
+def test_only_a_hit_sound_counts_under_a_punch_in(tmp_path: Path) -> None:
+    """A6: a rain bed laid at the strike is no hit sound."""
+
+    facts = copy.deepcopy(FIGHT_FACTS)
+    facts["take_facts"]["fight"] = True
+    facts["take_facts"]["sfx_cues"] = [
+        {
+            "shot_index": 2,
+            "sound": "rain hissing on the alley",
+            "kind": "sustained",
+            "start_seconds": 3.4,
+            "duration_seconds": 1.5,
+        }  # fmt: skip
+    ]
+    desk = _facts_desk(tmp_path, facts)
+
+    _, log = _finish(
+        desk,
+        impact_planner=lambda *a: lambda body: _answer((3.5, "Ren elbows the guard")),
+    )
+
+    assert (
+        "!! Ren elbows the guard at 3.50s is punched in but no hit sound is laid there"
+        in log
+    )
