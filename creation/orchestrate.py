@@ -1434,6 +1434,7 @@ def run_step(
     ask: Callable[[str], str] | None = None,
     single_frame_start: bool = False,
     no_single_frame_start: bool = False,
+    keep_preset_look: bool = False,
     _spend_yes: bool = False,
 ) -> StepResult:
     """Run the next automated API step for the current phase.
@@ -1478,6 +1479,10 @@ def run_step(
         the spend yes (or on a desk waiting to film whose film was not sent
         yet) and kept per film key (:func:`_take_single_frame_start`), so a
         resumed ``step`` sends the same body.
+    keep_preset_look
+        Episode 1's plates on a new show: the human says the preset's look is
+        the one, so ``step`` does not stop for the server's art style pick
+        (``look-options``, GRAFT 15 Oct 2026).
     _spend_yes
         Internal: this call follows the spend yes in the same run.
 
@@ -1503,6 +1508,15 @@ def run_step(
             raise RuntimeError(refusal)
     cfg = load_production_config(desk)
     run = _open_run(desk, state)
+    if state.phase == "ready_cast_enrol" and not keep_preset_look and state.spine_id:
+        # Art style before plates (GRAFT, 15 Oct 2026): the server says whether this story is
+        # offered a pick; a continuing show, a pinned or picked look, or drawn plates never is.
+        from creation.look_options_commands import look_options_refusal
+
+        offer = look_options_refusal(desk, run, state.spine_id)
+        if offer:
+            run.client.close()
+            raise RuntimeError(offer)
     retry_prefix = step_retry_prefix(state)
     run.prefix = retry_prefix or paid_key_prefix(desk, state, run.prefix, scope="step")
     ep = state.episode_ordinal

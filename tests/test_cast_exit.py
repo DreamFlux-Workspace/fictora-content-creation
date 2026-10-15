@@ -1,21 +1,25 @@
-"""`cast-exit`: mark a character as gone after an episode, or bring them back (Noodle24, 8 Oct 2026).
+"""`cast-exit`: mark a character as gone after an episode, or bring them back. One server call.
 
-A guest-per-arc show hit the old cap of four characters a story. A series now holds up to 50, and a
-guest who has left is marked on their card (``exit_episode_ordinal``) so the next episode's writers see
-one line for them. Spends nothing: before the script gate a ``PATCH`` with ``cast[]``, after it the
-``cast_card`` cascade with every paid item off.
+Noodle24 (8 Oct 2026) hit the old cap of four characters a story; a series now holds 50. Long
+Shadow (15 Oct 2026) had no way to say its episode 1 giant was dead. Since then the server owns
+the whole rule: ``POST /v1/spines/{id}/cast/{cast}/retire`` finds the character (id or name),
+checks the episode, writes ``exit_episode_ordinal`` at any stage (nothing redrawn, re-voiced or
+re-approved) and names written episodes that still show them. The kit sends the episode and
+prints what comes back; it decides nothing and keeps nothing.
 """
 
 from __future__ import annotations
 
+import copy
 import io
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, unquote
 
 import pytest
 
-from cast_story import _after_gate, _before_gate, _patches, _story, _writes
+from cast_story import _story
 from creation import cast_commands as cc
 from creation import episode_commands as ec
 from creation.cli_produce import main as produce_main
@@ -38,6 +42,55 @@ def _with_tanaka(
     return spine
 
 
+def _retire_server(
+    api: FakeApi, spine: dict[str, Any], *, still: list[int] | None = None
+) -> list[dict[str, Any]]:
+    """Answer the retire route the way the server does; return every body it was sent."""
+
+    api.spine_doc = spine
+    sent: list[dict[str, Any]] = []
+
+    def retire(_m: str, path: str, body: dict[str, Any] | None) -> Any:
+        who = unquote(path.rsplit("/cast/", 1)[1].removesuffix("/retire"))
+        sent.append({"cast": who, **(body or {})})
+        cards = [
+            c
+            for c in api.spine_doc["cast"]
+            if c["cast_id"] == who or c["name"].casefold() == who.casefold()
+        ]
+        if len(cards) != 1:
+            return 404, {
+                "error": {
+                    "code": "cast_not_found",
+                    "message": f"This story has no character {who!r}.",
+                }
+            }
+        card = cards[0]
+        after = (body or {}).get("after_episode_ordinal")
+        before = card.get("exit_episode_ordinal")
+        changed = before != after
+        if changed:
+            card["exit_episode_ordinal"] = after
+            api.spine_doc["spine_version"] = "v_" + "f" * 16
+        return {
+            **copy.deepcopy(api.spine_doc),
+            "request_id": "req_1",
+            "retired_cast_id": card["cast_id"],
+            "after_episode_ordinal": after,
+            "previous_after_episode_ordinal": before,
+            "changed": changed,
+            "still_in_episodes": still or [],
+        }
+
+    api.routes[("POST", "/v1/spines/sp1/cast/Nobody/retire")] = retire
+    for card in spine["cast"]:
+        for key in {card["cast_id"], card["name"]}:
+            api.routes[
+                ("POST", f"/v1/spines/sp1/cast/{quote(key, safe='')}/retire")
+            ] = retire
+    return sent
+
+
 def _saved(desk: Path) -> dict[str, Any]:
     return json.loads((desk / "api" / "spine.json").read_text(encoding="utf-8"))
 
@@ -46,77 +99,37 @@ def _card(spine: dict[str, Any], cast_id: str) -> dict[str, Any]:
     return next(c for c in spine["cast"] if c["cast_id"] == cast_id)
 
 
-def test_before_the_gate_it_patches_the_card_and_says_what_writers_will_see(
-    desk: Path, api: FakeApi
+@pytest.mark.parametrize("approved", [False, True])
+def test_one_call_before_or_after_the_gate_and_it_says_what_writers_will_see(
+    desk: Path, api: FakeApi, approved: bool
 ) -> None:
-    _before_gate(api, _with_tanaka(_story(approved=False)))
+    sent = _retire_server(api, _with_tanaka(_story(approved=approved)))
     out = io.StringIO()
 
     cc.run_cast_exit(desk, cast="Mr. Tanaka", after_episode=5, out=out)
 
-    assert _patches(api) == [
-        {"cast": [{"cast_id": "cast_tanaka", "exit_episode_ordinal": 5}]}
+    assert [(body["cast"], body["after_episode_ordinal"]) for body in sent] == [
+        ("Mr. Tanaka", 5)
     ]
+    # No PATCH and no cascade: the server takes it at any stage.
+    assert [method for method, *_ in api.calls if method in {"PATCH", "PUT"}] == []
+    assert not any("/cascade/" in path for _, path, *_ in api.calls)
     assert (
         "Mr. Tanaka is marked as leaving after episode 5. Writers will see one line for them from "
         "episode 6; run with --clear to bring them back."
     ) in out.getvalue()
-    assert _card(_saved(desk), "cast_tanaka")["exit_episode_ordinal"] == 5
-
-
-def test_after_the_gate_it_goes_through_the_cast_cascade_with_paid_items_off(
-    desk: Path, api: FakeApi
-) -> None:
-    edits = _after_gate(api, _with_tanaka(_story(approved=True)))
-    executed: list[dict[str, Any]] = []
-    preview = api.routes[("POST", "/v1/spines/sp1/cascade/preview")]
-    execute = api.routes[("POST", "/v1/spines/sp1/cascade/execute")]
-
-    def paid_preview(m: str, p: str, body: dict[str, Any] | None) -> dict[str, Any]:
-        answer = preview(m, p, body)
-        answer["items"] = [
-            {
-                "item_id": "it_1",
-                "recipe_id": "plate",
-                "estimated_tier": ec.PAID_TIER,
-                "selected": True,
-            }
-        ]
-        return answer
-
-    def recording_execute(m: str, p: str, body: dict[str, Any] | None) -> Any:
-        executed.append(body or {})
-        return execute(m, p, body)
-
-    api.routes[("POST", "/v1/spines/sp1/cascade/preview")] = paid_preview
-    api.routes[("POST", "/v1/spines/sp1/cascade/execute")] = recording_execute
-
-    cc.run_cast_exit(desk, cast="cast_tanaka", after_episode=5, out=io.StringIO())
-
-    assert edits == [
-        {
-            "scope": "field",
-            "target_type": "cast_card",
-            "target_id": "cast_tanaka",
-            "patch": {"cast_id": "cast_tanaka", "exit_episode_ordinal": 5},
-        }
-    ]
-    assert not _patches(api)
-    assert executed[0]["items"] == [
-        {"item_id": "it_1", "selected": False}
-    ]  # spends nothing
-    assert _card(_saved(desk), "cast_tanaka")["exit_episode_ordinal"] == 5
+    saved = _saved(desk)
+    assert _card(saved, "cast_tanaka")["exit_episode_ordinal"] == 5
+    assert "retired_cast_id" not in saved and "still_in_episodes" not in saved
 
 
 def test_clear_sends_null_and_brings_them_back(desk: Path, api: FakeApi) -> None:
-    _before_gate(api, _with_tanaka(_story(approved=False), exit_after=5))
+    sent = _retire_server(api, _with_tanaka(_story(approved=False), exit_after=5))
     out = io.StringIO()
 
-    cc.run_cast_exit(desk, cast="mr. tanaka", clear=True, out=out)
+    cc.run_cast_exit(desk, cast="cast_tanaka", clear=True, out=out)
 
-    assert _patches(api) == [
-        {"cast": [{"cast_id": "cast_tanaka", "exit_episode_ordinal": None}]}
-    ]
+    assert sent[0]["after_episode_ordinal"] is None
     assert (
         "Mr. Tanaka is back in the story (was leaving after episode 5)"
         in out.getvalue()
@@ -124,92 +137,62 @@ def test_clear_sends_null_and_brings_them_back(desk: Path, api: FakeApi) -> None
     assert _card(_saved(desk), "cast_tanaka").get("exit_episode_ordinal") is None
 
 
-def test_nothing_is_sent_when_the_mark_is_already_there(
-    desk: Path, api: FakeApi
-) -> None:
-    _before_gate(api, _with_tanaka(_story(approved=False), exit_after=5))
+def test_a_repeat_changes_nothing_and_saves_nothing(desk: Path, api: FakeApi) -> None:
+    _retire_server(api, _with_tanaka(_story(approved=False), exit_after=5))
     out = io.StringIO()
 
     assert cc.run_cast_exit(desk, cast="Mr. Tanaka", after_episode=5, out=out) is None
-    assert cc.run_cast_exit(desk, cast="Ren", clear=True, out=out) is None
-
-    assert _writes(api) == []
     assert "already marked as leaving after episode 5" in out.getvalue()
-    assert "Ren is not marked as leaving" in out.getvalue()
+    assert not (desk / "api" / "spine.json").exists()
 
 
-def test_an_unknown_name_is_refused_and_lists_the_cast(
-    desk: Path, api: FakeApi
-) -> None:
-    _before_gate(api, _with_tanaka(_story(approved=False)))
-
-    with pytest.raises(ec.CommandStopped) as stopped:
-        cc.run_cast_exit(desk, cast="Mrs. Tanaka", after_episode=5, out=io.StringIO())
-
-    assert "no character 'Mrs. Tanaka'" in str(stopped.value)
-    assert "Mr. Tanaka (cast_tanaka)" in str(stopped.value)
-    assert _writes(api) == []
-
-
-def test_a_shared_name_is_refused_until_the_cast_id_is_given(
-    desk: Path, api: FakeApi
-) -> None:
+def test_the_servers_refusal_is_printed_as_it_is(desk: Path, api: FakeApi) -> None:
     spine = _with_tanaka(_story(approved=False))
-    spine["cast"].append(
-        {"cast_id": "cast_tanaka_2", "name": "Mr. Tanaka", "intro_episode_ordinal": 4}
+    _retire_server(api, spine)
+    api.routes[("POST", "/v1/spines/sp1/cast/Mr.%20Tanaka/retire")] = lambda *_: (
+        422,
+        {
+            "error": {
+                "code": "cast_retire_before_intro",
+                "message": "Mr. Tanaka first appears in episode 2.",
+            }
+        },
     )
-    _before_gate(api, spine)
-
-    with pytest.raises(ec.CommandStopped) as stopped:
-        cc.run_cast_exit(desk, cast="Mr. Tanaka", after_episode=5, out=io.StringIO())
-
-    assert "2 characters are called 'Mr. Tanaka' (cast_tanaka, cast_tanaka_2)" in str(
-        stopped.value
-    )
-    assert _writes(api) == []
-
-    cc.run_cast_exit(desk, cast="cast_tanaka_2", after_episode=5, out=io.StringIO())
-    assert _patches(api) == [
-        {"cast": [{"cast_id": "cast_tanaka_2", "exit_episode_ordinal": 5}]}
-    ]
-
-
-def test_leaving_before_the_first_episode_they_are_in_is_refused(
-    desk: Path, api: FakeApi
-) -> None:
-    # The server's rule (DramaCastCard: exit_episode_ordinal is never before intro_episode_ordinal).
-    _before_gate(api, _with_tanaka(_story(approved=False)))
 
     with pytest.raises(ec.CommandStopped) as stopped:
         cc.run_cast_exit(desk, cast="Mr. Tanaka", after_episode=1, out=io.StringIO())
 
-    assert "first appears in episode 2" in str(stopped.value)
-    assert "--after-episode 2" in str(stopped.value)
-    assert _writes(api) == []
-
-    cc.run_cast_exit(
-        desk, cast="Mr. Tanaka", after_episode=2, out=io.StringIO()
-    )  # the same episode is fine
-    assert _patches(api) == [
-        {"cast": [{"cast_id": "cast_tanaka", "exit_episode_ordinal": 2}]}
-    ]
+    assert str(stopped.value) == "Refused: Mr. Tanaka first appears in episode 2."
 
 
-def test_a_character_who_still_speaks_later_gets_a_note(
+def test_an_older_server_without_the_route_is_named(desk: Path, api: FakeApi) -> None:
+    api.spine_doc = _story(approved=False)
+    api.routes[("POST", "/v1/spines/sp1/cast/Ren/retire")] = lambda *_: (
+        404,
+        {"detail": "Not Found"},
+    )
+
+    with pytest.raises(ec.CommandStopped) as stopped:
+        cc.run_cast_exit(desk, cast="Ren", after_episode=1, out=io.StringIO())
+
+    assert "no cast retire route yet" in str(stopped.value)
+
+
+def test_written_episodes_that_still_show_them_are_named_from_the_server(
     desk: Path, api: FakeApi
 ) -> None:
-    _before_gate(api, _story(approved=False))  # Ren speaks in episodes 1 and 2
+    _retire_server(api, _story(approved=False), still=[2])
     out = io.StringIO()
 
     cc.run_cast_exit(desk, cast="Ren", after_episode=1, out=out)
 
-    assert "note: Ren still has lines in episode 2" in out.getvalue()
+    assert "note: Ren is still in written episode 2" in out.getvalue()
 
 
 def test_from_the_command_line(
     desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _before_gate(api, _with_tanaka(_story(approved=False)))
+    _retire_server(api, _with_tanaka(_story(approved=False)))
 
     assert (
         produce_main(
