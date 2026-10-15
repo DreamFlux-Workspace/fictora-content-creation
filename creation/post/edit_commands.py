@@ -666,7 +666,9 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
         if answered is not None:
             return answered
         if getattr(args, "preview", False) or getattr(args, "revert", False):
-            raise ValueError("tempo --preview / --revert are for a locked-voice take the server keeps")
+            raise ValueError(
+                "tempo --preview / --revert are for a locked-voice take the server keeps"
+            )
     source = _source(args, desk)
     # A finished file with the episode cover attached keeps it through the edit, and says so in its name.
     covered = "-cover" if video_streams(source)[1] is not None else ""

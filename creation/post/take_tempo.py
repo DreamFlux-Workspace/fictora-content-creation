@@ -37,7 +37,9 @@ LOCAL_TEMPO_CODES = frozenset({"take_tempo_native_sound"})
 
 
 def _code(text: str) -> str | None:
-    found = re.search(r"\b(take_tempo_[a-z_]+|take_not_[a-z_]+|video_generation_not_found)\b", text)
+    found = re.search(
+        r"\b(take_tempo_[a-z_]+|take_not_[a-z_]+|video_generation_not_found)\b", text
+    )
     return found.group(1) if found else None
 
 
@@ -95,7 +97,9 @@ def run_take_tempo(
     where = take_coordinate(desk, episode, take_id)
     if where is None:
         return None
-    body: dict[str, Any] = {"revert": True} if revert else {"factor": factor, "dry_run": preview}
+    body: dict[str, Any] = (
+        {"revert": True} if revert else {"factor": factor, "dry_run": preview}
+    )
     if not revert and start_s is not None:
         body.update(from_s=start_s, to_s=end_s)
     _desk, state, run = ec._desk_session(desk)
@@ -135,16 +139,23 @@ def run_take_tempo(
                 file=out,
             )
         if answer.get("status") == "planned":
-            print("Not applied: --preview showed the tempo; nothing was changed", file=out)
+            print(
+                "Not applied: --preview showed the tempo; nothing was changed", file=out
+            )
             return 0
         facts = fetch_take_facts(run, where.take_job_id, spine_id=state.spine_id)
         if facts is None:
-            print("  !! take facts not saved again: run `take-facts --refresh` before finish", file=out)
+            print(
+                "  !! take facts not saved again: run `take-facts --refresh` before finish",
+                file=out,
+            )
         else:
             found = saved_spine(desk, episode)
             saved = save_take_facts(desk, episode=episode, take_id=take_id, facts=facts,
                                     spine=found[0] if found else None)  # fmt: skip
-            print(f"  take facts: `{saved.name}` (on the take's new timeline)", file=out)
+            print(
+                f"  take facts: `{saved.name}` (on the take's new timeline)", file=out
+            )
         video = answer.get("video_url")
         if video:
             import httpx
@@ -161,10 +172,18 @@ def run_take_tempo(
     finally:
         run.client.close()
     run_dir = desk / f"ep{episode:02d}"
-    note = json.dumps({key: answer.get(key) for key in ("status", "factor", "from_s", "to_s", "duration_s")})
+    note = json.dumps(
+        {
+            key: answer.get(key)
+            for key in ("status", "factor", "from_s", "to_s", "duration_s")
+        }
+    )
     if (run_dir / "run-notes.md").is_file():
         append_run_note(run_dir, f"Tempo {label} on the server: {note}")
-    print(f"Next: `fictora-produce finish --desk {desk} --episode {episode} --take {take_id}`", file=out)
+    print(
+        f"Next: `fictora-produce finish --desk {desk} --episode {episode} --take {take_id}`",
+        file=out,
+    )
     return 0
 
 

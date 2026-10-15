@@ -36,18 +36,26 @@ def _answer(status: str = "applied") -> dict[str, Any]:
         "to_s": 15.0,
         "filmed_duration_s": 15.0,
         "duration_s": 10.14,
-        "lines": [{"line_id": "l1", "filmed_start_s": 0.5, "start_s": 0.472, "end_s": 3.572}],
+        "lines": [
+            {"line_id": "l1", "filmed_start_s": 0.5, "start_s": 0.472, "end_s": 3.572}
+        ],
         "video_url": "https://media.test/tempo/t1.mp4" if status != "planned" else None,
         "message": "Take 2 at 1.5x. Every voice keeps its natural speed.",
     }
 
 
 def _tempo(desk: Path, *extra: str) -> int:
-    return produce_main(["tempo", "--desk", str(desk), "--episode", "1", "--take", "t1", *extra])
+    return produce_main(
+        ["tempo", "--desk", str(desk), "--episode", "1", "--take", "t1", *extra]
+    )
 
 
 def _posts(api: FakeApi) -> list[dict[str, Any] | None]:
-    return [body for method, path, body, _key in api.calls if method == "POST" and path == TEMPO]
+    return [
+        body
+        for method, path, body, _key in api.calls
+        if method == "POST" and path == TEMPO
+    ]
 
 
 def test_a_preview_sends_a_dry_run_and_changes_nothing(
@@ -65,7 +73,10 @@ def test_a_preview_sends_a_dry_run_and_changes_nothing(
 
 
 def test_a_tempo_is_set_on_the_server_and_the_new_take_and_facts_are_saved(
-    desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    desk: Path,
+    api: FakeApi,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     _desk_with_take(desk)
     api.routes[("POST", TEMPO)] = _answer()
@@ -76,7 +87,14 @@ def test_a_tempo_is_set_on_the_server_and_the_new_take_and_facts_are_saved(
     api.routes[("GET", FACTS_ROUTE)] = moved
     fetched: list[str] = []
 
-    def download(client: Any, url: str, directory: Path, stem: str, *, default_suffix: str = ".png") -> Path:
+    def download(
+        client: Any,
+        url: str,
+        directory: Path,
+        stem: str,
+        *,
+        default_suffix: str = ".png",
+    ) -> Path:
         fetched.append(url)
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"{stem}-v9.mp4"
@@ -87,7 +105,9 @@ def test_a_tempo_is_set_on_the_server_and_the_new_take_and_facts_are_saved(
 
     assert _tempo(desk, "--factor", "1.5", "--from", "0.417", "--to", "15") == 0
 
-    assert _posts(api) == [{"factor": 1.5, "dry_run": False, "from_s": 0.417, "to_s": 15.0}]
+    assert _posts(api) == [
+        {"factor": 1.5, "dry_run": False, "from_s": 0.417, "to_s": 15.0}
+    ]
     assert fetched == ["https://media.test/tempo/t1.mp4"]
     saved = sorted((desk / "ep01" / "api").glob("take-facts-ep01-t1-v*.json"))
     assert len(saved) == 2 and '"tempo"' in saved[-1].read_text(encoding="utf-8")
@@ -100,7 +120,9 @@ def test_a_take_with_the_models_own_sound_is_left_to_the_local_edit(
     _desk_with_take(desk)
 
     def native(*_: Any) -> Any:
-        raise SystemExit(f"HTTP 409 POST {TEMPO}: take_tempo_native_sound: The video model made this take's sound")
+        raise SystemExit(
+            f"HTTP 409 POST {TEMPO}: take_tempo_native_sound: The video model made this take's sound"
+        )
 
     api.routes[("POST", TEMPO)] = native
 
@@ -118,7 +140,9 @@ def test_a_refusal_stops_with_exit_2_and_never_runs_the_local_edit(
     _desk_with_take(desk)
 
     def overrun(*_: Any) -> Any:
-        raise SystemExit(f"HTTP 422 POST {TEMPO}: take_tempo_lines_overrun: line l3 would end at 10.6 s")
+        raise SystemExit(
+            f"HTTP 422 POST {TEMPO}: take_tempo_lines_overrun: line l3 would end at 10.6 s"
+        )
 
     api.routes[("POST", TEMPO)] = overrun
 
