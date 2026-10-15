@@ -27,7 +27,7 @@ from reel_fake_server import FakeReelServer
 
 pytestmark = needs_ffmpeg
 
-LINE = "Reel made locally (the server reel engine refused: operator_upload_unavailable); same rules, but action hits are not protected (only the server's reel engine keeps them)"
+LINE = "Reel made locally (the server reel engine refused: operator_upload_unavailable); same rules"
 
 
 def _rgb(path: Path, index: int = 0) -> tuple[int, int, int]:
@@ -147,10 +147,7 @@ def test_a_silent_server_or_one_without_the_route_also_falls_back(
     assert (
         result.video is not None and result.video.is_file() and result.cover is not None
     )
-    assert (
-        f"Reel made locally ({why}); same rules, but action hits are not protected (only the server's reel engine keeps them)"
-        in out.getvalue()
-    )
+    assert f"Reel made locally ({why}); same rules" in out.getvalue()
     assert _latest(reel_desk)["reel"] == "reels/ep01/reel-ep01-v1.mp4"
 
 
@@ -170,3 +167,17 @@ def test_a_refusal_about_the_content_still_stops(
     with pytest.raises(ReelServerError, match="episode_reel_invalid"):
         run_reel(reel_desk, episode=1, stream=io.StringIO())
     assert not list((reel_desk / "reels").rglob("*.mp4"))
+
+
+def test_the_fallback_line_names_unprotected_hits_only_when_the_episode_has_planned_hits() -> (
+    None
+):
+    """fictora-drama reel-rules-v8 keeps a fight's planned hits; this frozen local engine does not."""
+
+    from creation.post.reel import local_fallback_line
+
+    why = RuntimeError("the server reel engine did not answer")
+    assert local_fallback_line(why).endswith("; same rules")
+    assert local_fallback_line(why, hits=True).endswith(
+        "; same rules, but action hits are not protected (only the server's reel engine keeps them)"
+    )
