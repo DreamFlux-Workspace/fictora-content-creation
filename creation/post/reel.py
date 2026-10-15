@@ -802,6 +802,9 @@ class ReelResult:
     #: The number "PART N" shows on the cover, in the post text and in ``metrics.csv``: the series
     #: episode number (:func:`creation.post.reel_cover.series_part`); ``None`` before it is worked out.
     part: int | None = None
+    #: How many planned sound events (fight hits) the takes' facts name: the local engine does not
+    #: protect them (fictora-drama reel-rules-v8 does), and the fallback line says so only then.
+    planned_hits: int = 0
     #: Made for a desk created before 6 Oct 2026 (:mod:`creation.rules_epoch`): flat ``reels/``,
     #: no cover, no draft names, no books, the post text as it was.
     legacy: bool = False
@@ -1388,19 +1391,30 @@ def run_reel(
     )
     if server_refused is not None:
         print(
-            local_fallback_line(server_refused, made=recorded.video is not None),
+            local_fallback_line(
+                server_refused,
+                made=recorded.video is not None,
+                hits=result.planned_hits > 0,
+            ),
             file=stream or sys.stdout,
         )
     return recorded
 
 
-def local_fallback_line(exc: Exception, *, made: bool = True) -> str:
+def local_fallback_line(
+    exc: Exception, *, made: bool = True, hits: bool = False
+) -> str:
     """The one line saying the reel was cut locally because the server's reel engine could not be used."""
 
     from creation.post.reel_server import ReelServerError, fallback_reason
 
     why = fallback_reason(exc) if isinstance(exc, ReelServerError) else str(exc)
-    return f"{'Reel' if made else 'Reel plan'} made locally ({why}); same rules"
+    line = f"{'Reel' if made else 'Reel plan'} made locally ({why}); same rules"
+    if hits:
+        # The local engine is the frozen pre-v8 planner: it cuts by lines and never protects a fight's
+        # planned hits (fictora-drama reel-rules-v8, L-20261014-15), so an episode with any says so.
+        line += ", but action hits are not protected (only the server's reel engine keeps them)"
+    return line
 
 
 def local_fallback_reel(
@@ -1905,7 +1919,7 @@ def make_reel(
         sources=sources_fingerprint(desk, srcs), series=str(spine.get("title") or desk.name),
         hook_text=hook.overlay.text if hook.overlay is not None
         else boxed.title.hook if boxed is not None and boxed.title is not None else "",
-        legacy=legacy, part=part_found.number,
+        legacy=legacy, part=part_found.number, planned_hits=sum(len(t.events) for t in takes),
     )  # fmt: skip
     if not part_found.from_desk_ordinal:
         print(f"Cover: {part_found.note()}", file=out, flush=True)

@@ -167,3 +167,17 @@ def test_a_refusal_about_the_content_still_stops(
     with pytest.raises(ReelServerError, match="episode_reel_invalid"):
         run_reel(reel_desk, episode=1, stream=io.StringIO())
     assert not list((reel_desk / "reels").rglob("*.mp4"))
+
+
+def test_the_fallback_line_names_unprotected_hits_only_when_the_episode_has_planned_hits() -> (
+    None
+):
+    """fictora-drama reel-rules-v8 keeps a fight's planned hits; this frozen local engine does not."""
+
+    from creation.post.reel import local_fallback_line
+
+    why = RuntimeError("the server reel engine did not answer")
+    assert local_fallback_line(why).endswith("; same rules")
+    assert local_fallback_line(why, hits=True).endswith(
+        "; same rules, but action hits are not protected (only the server's reel engine keeps them)"
+    )
