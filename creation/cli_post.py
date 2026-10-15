@@ -189,6 +189,14 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     voice.add_argument("--desk", type=Path, required=True)
     voice.add_argument(
+        "--accept-notice",
+        action="append",
+        default=[],
+        choices=("real_person_not_allowed",),
+        help="With --pick: the creator saw the server's notice that the voice names a real person and says it "
+        "is someone they made up; sends acknowledged_notices (fictora-drama #833).",
+    )
+    voice.add_argument(
         "--cast", default=None, help="cast_id or name (not with --keep-all or --list)."
     )
     mode = voice.add_mutually_exclusive_group(required=True)
@@ -985,7 +993,12 @@ def dispatch_post(args: argparse.Namespace) -> int:
         else:
             if args.text or args.voices:
                 raise ValueError("--text and --voices go with --audition")
-            run_voice_pick(args.desk, cast=args.cast, pick=args.pick)
+            run_voice_pick(
+                args.desk,
+                cast=args.cast,
+                pick=args.pick,
+                accept_notices=args.accept_notice,
+            )
         return 0
     if args.command == "hook-line":
         from creation.hook_line import run_hook_line

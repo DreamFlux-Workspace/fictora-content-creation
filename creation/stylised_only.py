@@ -362,6 +362,34 @@ def pause_text(
     return "\n".join(lines)
 
 
+def voice_notice_text(notices: Sequence[Mapping[str, Any]], command: str) -> str:
+    """Word the pause for a voice the server matched to a listed real person (fictora-drama #833).
+
+    The server answers a voice pick or a new heard-only voice that names a
+    listed real person with the one-tap notice; nothing was changed.
+
+    Parameters
+    ----------
+    notices
+        The server's notices.
+    command
+        The ``fictora-produce`` command to repeat, without ``--accept-notice``.
+
+    Returns
+    -------
+    str
+        Plain operator text.
+    """
+
+    lines = ["PAUSED for the creator: nothing was changed."]
+    lines.extend(f"  - {notice.get('message')}" for notice in notices)
+    lines.append(
+        "    Describe an original voice instead, or, if the creator says it is someone they made up: "
+        f"`fictora-produce {command} --accept-notice {REAL_PERSON_NOT_ALLOWED}`."
+    )
+    return "\n".join(lines)
+
+
 def photoreal_look_warning(text: str) -> str | None:
     """Return a warning when a look-frame description or look note asks for a photoreal look.
 
@@ -403,4 +431,5 @@ __all__ = [
     "photoreal_look_warning",
     "server_notices",
     "unacknowledged",
+    "voice_notice_text",
 ]
