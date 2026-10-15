@@ -288,7 +288,8 @@ def take_length_line(spine: Mapping[str, Any], *, episode: int, take_index: int)
             and plan.get("take_index") == take_index
             and isinstance(plan.get("seconds"), int)
         ):
-            reason = str(plan.get("reason") or "").strip()
+            # The seconds are printed once (an older server began its reason with them).
+            reason = re.sub(r"^\d+ s, ", "", str(plan.get("reason") or "").strip())
             return f"films {plan['seconds']} s" + (f" ({reason})" if reason else "")
     return ""
 
@@ -319,7 +320,9 @@ def script_lines(
 
     out: list[str] = []
     grouped = beats_by_take(spine, episode=episode, take_count=len(take_ids))
-    for take_index, (take_id, beats) in enumerate(zip(take_ids, grouped, strict=True), start=1):
+    for take_index, (take_id, beats) in enumerate(
+        zip(take_ids, grouped, strict=True), start=1
+    ):
         out.append(f"ep{episode:02d} {take_id}")
         length = take_length_line(spine, episode=episode, take_index=take_index)
         if length:
