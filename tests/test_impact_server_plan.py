@@ -22,7 +22,9 @@ from typing import Any
 import pytest
 from conftest import needs_ffmpeg
 
-from creation.post.finish import run_finish
+from creation.cli_post import _impact_hits
+from creation.post import finish as finish_module
+from creation.post.finish import api_impact_planner, run_finish
 from creation.post.impact_post import (
     ImpactHit,
     ImpactPlanUnavailable,
@@ -61,9 +63,9 @@ def _fight_desk(root: Path, *, box_at: float | None = 3.5) -> Path:
 
 def _finish(desk: Path, **kw: Any):  # type: ignore[no-untyped-def]
     out = io.StringIO()
+    kw.setdefault("cut_meter", lambda _take: ())
     result = run_finish(desk, sfx_render=lambda cue, target: make_tone(target, seconds=cue.seconds, freq=300),
-                        bed_maker=fake_bed, facts_fetcher=lambda *a: None, cut_meter=lambda _take: (),
-                        stream=out, **kw)  # fmt: skip
+                        bed_maker=fake_bed, facts_fetcher=lambda *a: None, stream=out, **kw)  # fmt: skip
     return result, out.getvalue()
 
 
@@ -211,3 +213,171 @@ def test_an_unreachable_server_says_the_editor_s_hits_were_not_applied(
 
     assert "!! --impact-at needs the server's plan (HTTP 503): not applied" in log
     assert _impact(result).status == "ran", "the kit's copy still plans the strike"
+
+
+# --- review fixes --------------------------------------------------------------------------------------
+
+
+def _answer(*moments: tuple[float, str]) -> Any:
+    return plan_from_server_answer(
+        {
+            "moments": [
+                {
+                    "time_s": t,
+                    "until_s": t + 0.8,
+                    "style": "hit",
+                    "label": label,
+                    "source": "planned",
+                }
+                for t, label in moments
+            ],
+            "skipped": [],
+        }  # fmt: skip
+    )
+
+
+def _facts_desk(
+    root: Path, facts: dict[str, Any], *, box_at: float | None = 3.5
+) -> Path:
+    desk = _desk(root, date(2026, 10, 14), box_at=box_at)
+    (desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(json.dumps(facts))
+    return desk
+
+
+def _never(*_a: Any) -> Any:
+    raise AssertionError("the server was asked for a take that cannot need it")
+
+
+@needs_ffmpeg
+def test_the_kit_sends_no_speech_list_unless_it_has_real_windows(
+    tmp_path: Path,
+) -> None:
+    """Stale facts (no speaking shot known) must not tell the server "nothing is spoken"."""
+
+    quiet = copy.deepcopy(FIGHT_FACTS)
+    for shot in quiet["take_facts"]["shots"]:
+        shot["speaks"] = False
+    sent: list[dict[str, Any]] = []
+    desk = _facts_desk(tmp_path, quiet)
+
+    _finish(desk, impact_planner=lambda *a: lambda body: sent.append(body) or _answer())
+
+    (body,) = sent
+    assert body["speech"] is None
+
+
+@needs_ffmpeg
+def test_a_punch_in_with_no_hit_sound_under_it_says_to_refresh_the_facts(
+    tmp_path: Path,
+) -> None:
+    desk = _fight_desk(tmp_path)
+
+    result, log = _finish(
+        desk, impact_planner=lambda *a: lambda body: _answer((1.2, "Ren kicks"))
+    )
+
+    assert _impact(result).status == "ran"
+    assert "!! Ren kicks at 1.20s is punched in but no hit sound is laid there" in log
+    assert "take-facts --desk" in log and "--refresh" in log
+
+
+@needs_ffmpeg
+def test_stale_fight_facts_with_no_shot_skip_with_the_refresh_command(
+    tmp_path: Path,
+) -> None:
+    stale = copy.deepcopy(FACTS)
+    stale["take_facts"]["shots"] = []
+    stale["take_facts"]["sfx_cues"] = []
+    desk = _facts_desk(tmp_path, stale)
+
+    result, log = _finish(desk, impact_planner=lambda *a: _never)
+
+    impact = _impact(result)
+    assert impact.status == "skipped" and "--refresh" in impact.detail
+    assert "!! the saved take facts plan no shot" in log
+
+
+@needs_ffmpeg
+def test_a_take_with_no_fight_no_impact_and_no_hit_is_never_measured_or_sent(
+    tmp_path: Path,
+) -> None:
+    drama = copy.deepcopy(FACTS)
+    drama["take_facts"]["fight"] = False
+    drama["take_facts"]["sfx_cues"][0]["sound"] = "a soft knock"
+    desk = _facts_desk(tmp_path, drama)
+
+    result, _ = _finish(desk, impact_planner=lambda *a: _never)
+
+    assert (_impact(result).status, _impact(result).detail) == (
+        "skipped",
+        "no big impact on this take",
+    )
+
+
+@needs_ffmpeg
+def test_more_hits_than_the_server_takes_sends_the_first_eight_and_says_so(
+    tmp_path: Path,
+) -> None:
+    desk = _fight_desk(tmp_path)
+    sent: list[dict[str, Any]] = []
+    hits = tuple(ImpactHit(0.3 + 0.4 * i) for i in range(10))
+
+    _, log = _finish(
+        desk,
+        impact_planner=lambda *a: lambda body: sent.append(body) or _answer(),
+        impact_at=hits,
+    )
+
+    assert len(sent[0]["hits"]) == 8
+    assert "!! 10 --impact-at hits: the server takes at most 8" in log
+    with pytest.raises(SystemExit, match="at most 8"):
+        _impact_hits([hits[:5], hits[5:]])
+
+
+def test_a_malformed_answer_is_no_plan_not_a_crash() -> None:
+    for moment in ({"until_s": 1.0, "style": "hit"}, {"time_s": "x", "until_s": 1.0, "style": "hit"},
+                   {"time_s": 1.0, "until_s": 1.5, "style": "flash"}):  # fmt: skip
+        with pytest.raises(ImpactPlanUnavailable):
+            plan_from_server_answer({"moments": [moment]})
+
+
+def test_a_desk_whose_spine_cannot_be_read_falls_back_instead_of_crashing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(finish_module, "take_job_id", lambda *a: "job_1")
+
+    def broken(_desk: Path) -> str:
+        raise ValueError("production.json is not JSON")
+
+    monkeypatch.setattr(finish_module, "spine_id", broken)
+    planner = api_impact_planner(tmp_path, 1, "t1")
+    assert planner is not None
+    with pytest.raises(ImpactPlanUnavailable, match="could not be opened"):
+        planner({})
+
+
+def test_kit_tests_never_reach_the_real_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The autouse fixture: even a desk that names a take job never builds a real planner in tests."""
+
+    monkeypatch.setattr(finish_module, "take_job_id", lambda *a: "job_1")
+    assert api_impact_planner(Path("/nowhere"), 1, "t1") is not None, (
+        "the real factory would call out"
+    )
+    assert finish_module.api_impact_planner(Path("/nowhere"), 1, "t1") is None
+
+
+@needs_ffmpeg
+def test_a_take_whose_cuts_were_not_measured_is_not_drawn(tmp_path: Path) -> None:
+    """Moments are filmed-shot times: without measured cuts they could land off the action."""
+
+    desk = _fight_desk(tmp_path)
+
+    def no_cuts(_take: Path) -> tuple[float, ...]:
+        raise RuntimeError("cut detector failed")
+
+    result, _ = _finish(desk, impact_planner=lambda *a: _never, cut_meter=no_cuts)
+
+    assert (_impact(result).status, _impact(result).detail) == (
+        "skipped",
+        "the take's cuts were not measured",
+    )

@@ -331,6 +331,8 @@ class ImpactMoment:
     until: float
     style: ImpactStyle
     label: str
+    #: ``planned`` from the take's impact cues; ``editor`` for an ``--impact-at`` hit (the server's ``source``).
+    source: str = "planned"
 
     def one_line(self) -> str:
         """``a gas tank explodes: big punch-in + shake at 2.04s``."""
@@ -536,6 +538,10 @@ def plan_impacts(
 
 #: The server route that decides a take's punch-ins from this kit's measurements (fictora-drama).
 IMPACT_PLAN_PATH = "/v1/jobs/{job_id}/impact-plan"
+#: At most this many ``--impact-at`` hits per take: the server refuses more (422), so the kit sends the first ones.
+MAX_EDITOR_HITS = 8
+#: A punched-in moment with no laid effect this close to it has no hit sound under it.
+SOUND_MATCH_SECONDS = 1.0
 _IMPACT_AT = re.compile(
     r"^\s*(\d+(?:\.\d+)?)\s*(?::\s*(hit|blast)\s*)?$", re.IGNORECASE
 )
@@ -611,13 +617,20 @@ def plan_from_server_answer(body: Any) -> ImpactPlan:
         raise ImpactPlanUnavailable("the server's answer is not an impact plan")
     moments: list[ImpactMoment] = []
     for item in body["moments"]:
-        style = item.get("style")
-        if style not in ("blast", "hit"):
-            continue
+        try:
+            style = item["style"]
+            time, until = float(item["time_s"]), float(item["until_s"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ImpactPlanUnavailable(
+                f"the server's impact plan has a malformed moment ({exc!r})"
+            ) from exc
+        if style not in ("blast", "hit") or until <= time:
+            raise ImpactPlanUnavailable(
+                f"the server's impact plan has a malformed moment ({item!r})"[:200]
+            )
         label = str(item.get("label") or "impact")
-        moments.append(
-            ImpactMoment(float(item["time_s"]), float(item["until_s"]), style, label)
-        )
+        source = "editor" if item.get("source") == "editor" else "planned"
+        moments.append(ImpactMoment(time, until, style, label, source))
     skipped = tuple(str(reason) for reason in body.get("skipped") or [])
     return ImpactPlan(tuple(sorted(moments, key=lambda m: m.time)), skipped)
 
@@ -797,6 +810,8 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
 
 __all__ = [
     "IMPACT_PLAN_PATH",
+    "MAX_EDITOR_HITS",
+    "SOUND_MATCH_SECONDS",
     "ImpactHit",
     "ImpactPlanUnavailable",
     "impact_plan_request",

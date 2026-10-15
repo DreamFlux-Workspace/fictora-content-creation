@@ -6,6 +6,7 @@ import argparse
 import json
 import re
 import sys
+from typing import Any
 from pathlib import Path
 
 from creation.cli_text import HELP_SUFFIX, text_or_file
@@ -16,7 +17,7 @@ from creation.post.hand import parse_caption_label, parse_placed, parse_range
 from creation.post.prop_text import parse_prop_text
 from creation.post.join import JOIN_NOT_DONE, run_join
 from creation.post.handmade import CUE_DEFAULT_SECONDS
-from creation.post.impact_post import parse_impact_at
+from creation.post.impact_post import MAX_EDITOR_HITS, parse_impact_at
 from creation.post.review_command import (
     REVIEW_COMMANDS,
     add_review_parser,
@@ -51,6 +52,18 @@ POST_COMMANDS = (
     | EDIT_COMMANDS
     | REVIEW_COMMANDS
 )
+
+
+def _impact_hits(values: list[Any]) -> tuple[Any, ...]:
+    """Every ``--impact-at`` hit, refused when there are more than the server takes (it would refuse them all)."""
+
+    hits = tuple(hit for group in values for hit in group)
+    if len(hits) > MAX_EDITOR_HITS:
+        raise SystemExit(
+            f"fictora-produce finish: --impact-at names {len(hits)} hits; the server takes at most "
+            f"{MAX_EDITOR_HITS} a take. Keep the {MAX_EDITOR_HITS} that matter most."
+        )
+    return hits
 
 
 def add_hook_line_args(parser: argparse.ArgumentParser) -> None:
@@ -1119,7 +1132,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             thought_db=args.thought_db,
             accept_line_mismatch=tuple(args.accept_line_mismatch),
             impact=not args.no_impact,
-            impact_at=tuple(hit for hits in args.impact_at for hit in hits),
+            impact_at=_impact_hits(args.impact_at),
         )
         if args.json:
             print(json.dumps(result.as_json(), indent=2))
