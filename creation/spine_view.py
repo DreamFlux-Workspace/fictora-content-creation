@@ -249,6 +249,50 @@ def dialogue_line_ids(
     return found
 
 
+def take_length_line(spine: Mapping[str, Any], *, episode: int, take_index: int) -> str:
+    """The server's planned length for one take and why, ready to print; ``""`` when it sent none.
+
+    The server sizes each take to its scene (``take_lengths`` on the spine
+    response: lines at natural pace, moves, a short beat at the end). The kit
+    only shows it; it never works a length out itself.
+
+    Parameters
+    ----------
+    spine
+        Spine JSON as the server returned it.
+    episode
+        Episode ordinal.
+    take_index
+        One-based take number in the episode.
+
+    Returns
+    -------
+    str
+        ``"films 9 s: 9 s, sized to the scene: ..."``, or ``""``.
+    """
+
+    episode_id = next(
+        (
+            str(summary.get("episode_id"))
+            for summary in spine.get("episode_summaries") or []
+            if isinstance(summary, Mapping) and summary.get("ordinal") == episode
+        ),
+        None,
+    )
+    if episode_id is None:
+        return ""
+    for plan in spine.get("take_lengths") or []:
+        if (
+            isinstance(plan, Mapping)
+            and plan.get("episode_id") == episode_id
+            and plan.get("take_index") == take_index
+            and isinstance(plan.get("seconds"), int)
+        ):
+            reason = str(plan.get("reason") or "").strip()
+            return f"films {plan['seconds']} s" + (f" ({reason})" if reason else "")
+    return ""
+
+
 def script_lines(
     spine: Mapping[str, Any], *, episode: int, take_ids: Sequence[str]
 ) -> list[str]:
@@ -275,8 +319,11 @@ def script_lines(
 
     out: list[str] = []
     grouped = beats_by_take(spine, episode=episode, take_count=len(take_ids))
-    for take_id, beats in zip(take_ids, grouped, strict=True):
+    for take_index, (take_id, beats) in enumerate(zip(take_ids, grouped, strict=True), start=1):
         out.append(f"ep{episode:02d} {take_id}")
+        length = take_length_line(spine, episode=episode, take_index=take_index)
+        if length:
+            out.append(f"  {length}")
         for beat in beats:
             out.append(
                 f"  shot {beat.get('ordinal')}: {beat.get('motion_intent') or '(no shot written)'}"
@@ -294,7 +341,7 @@ def script_lines(
         count = sum(len(spoken_lines(spine, beat)) for beat in beats)
         if count > 3:
             out.append(
-                f"  !! {take_id} has {count} lines; a 15 s take holds three. Say which to cut"
+                f"  !! {take_id} has {count} lines; a take holds three. Say which to cut"
             )
     return out
 
