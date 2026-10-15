@@ -333,12 +333,16 @@ class ImpactMoment:
     label: str
     #: ``planned`` from the take's impact cues; ``editor`` for an ``--impact-at`` hit (the server's ``source``).
     source: str = "planned"
+    #: Seconds the picture holds on the hit frame (the server's ``freeze_s``: a fight's strike freeze);
+    #: 0 for none. The held frames replace the frames after the hit: same length, same sound.
+    freeze: float = 0.0
 
     def one_line(self) -> str:
-        """``a gas tank explodes: big punch-in + shake at 2.04s``."""
+        """``a gas tank explodes: big punch-in + shake at 2.04s`` (``+ 0.12s freeze`` when it holds)."""
 
         what = "big punch-in + shake" if self.style == "blast" else "punch-in + shake"
-        return f"{self.label}: {what} at {self.time:.2f}s"
+        held = f" + {self.freeze:.2f}s freeze" if self.freeze > 0 else ""
+        return f"{self.label}: {what}{held} at {self.time:.2f}s"
 
 
 def effect_seconds(style: ImpactStyle) -> float:
@@ -435,6 +439,30 @@ class ImpactPlan:
             if moved is not None:
                 return moved
         return None
+
+    def held_from(self, index: int, fps: float) -> int:
+        """The frame shown at ``index``: the hit frame inside a freeze (the server's plan), else ``index``.
+
+        Parameters
+        ----------
+        index
+            Frame number, 0-based.
+        fps
+            Frames per second.
+
+        Returns
+        -------
+        int
+            The source frame, never later than ``index``.
+        """
+
+        for moment in self.moments:
+            if moment.freeze <= 0:
+                continue
+            hit = round(moment.time * fps)
+            if hit < index <= hit + max(1, round(moment.freeze * fps)):
+                return hit
+        return index
 
     def one_line(self) -> str:
         """What was punched up and what was left alone."""
@@ -630,7 +658,16 @@ def plan_from_server_answer(body: Any) -> ImpactPlan:
             )
         label = str(item.get("label") or "impact")
         source = "editor" if item.get("source") == "editor" else "planned"
-        moments.append(ImpactMoment(time, until, style, label, source))
+        freeze = item.get("freeze_s") or 0.0
+        if (
+            isinstance(freeze, bool)
+            or not isinstance(freeze, (int, float))
+            or not 0 <= freeze <= 0.5
+        ):
+            raise ImpactPlanUnavailable(
+                f"the server's impact plan has a malformed freeze ({freeze!r})"
+            )
+        moments.append(ImpactMoment(time, until, style, label, source, float(freeze)))
     skipped = tuple(str(reason) for reason in body.get("skipped") or [])
     return ImpactPlan(tuple(sorted(moments, key=lambda m: m.time)), skipped)
 
@@ -772,13 +809,20 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
     assert reader.stdout is not None and writer.stdin is not None
     size = width * height * 3
     index = 0
+    # The server's freeze: held frames show the hit frame, with the hit frame's own move; nothing is added.
+    anchor: np.ndarray | None = None
     try:
         while True:
             raw = reader.stdout.read(size)
             if len(raw) < size:
                 break
             frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
-            move = plan.move_at(index / fps)
+            source = plan.held_from(index, fps)
+            if source < index and anchor is not None:
+                frame = anchor
+            else:
+                anchor = frame
+            move = plan.move_at(source / fps)
             if move is not None:
                 frame = cv2.warpAffine(
                     frame, move.matrix(width, height), (width, height),
