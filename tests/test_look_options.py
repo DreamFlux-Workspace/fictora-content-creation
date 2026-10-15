@@ -226,3 +226,118 @@ def test_a_continuing_show_or_an_older_server_is_never_held(
     assert look_options_refusal(desk, run, "sp1") is None  # no route: an older server
     _server(api, offered=False)
     assert look_options_refusal(desk, run, "sp1") is None
+
+
+# --- Review of #244 (15 Oct 2026) -----------------------------------------------------------------
+
+
+def test_the_preview_carries_a_key_through_the_real_session_headers(
+    desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real ``DramaApiRunSession`` against a server that asks for a key on every POST (as before #820)."""
+
+    import json
+
+    import httpx
+
+    from creation import episode_commands as ec
+    from creation.harness.session import DramaApiRunSession
+
+    seen: list[tuple[str, str | None, dict[str, Any]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        key = request.headers.get("Idempotency-Key")
+        if request.method == "GET" and path.endswith("/look-options"):
+            return httpx.Response(
+                200, json={"offered": True, "reason": "Pick it.", "options": []}
+            )
+        if request.method == "POST" and path.endswith("/look-options"):
+            body = json.loads(request.content or b"{}")
+            seen.append((request.method, key, body))
+            if not key:
+                return httpx.Response(
+                    400,
+                    json={
+                        "error": {"code": "idempotency_key_required", "message": "key"}
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "offered": True,
+                    "options": _options(drawn=False),
+                    "cost_usd": 0.9,
+                },
+            )
+        return httpx.Response(404, json={"detail": "Not Found"})
+
+    session = DramaApiRunSession(
+        base_url="https://drama.test", token="t", out_dir=desk / "api", session_id="s1"
+    )
+    session.client = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(ec, "_open_run", lambda _desk, _state: session)
+    out = io.StringIO()
+
+    run_look_options(desk, out=out)
+
+    ((_, key, body),) = seen
+    assert body["preview"] is True and key and "look-options-preview" in key
+    assert "about $0.90" in out.getvalue()
+
+
+def test_a_story_not_offered_a_pick_is_never_drawn_and_a_pick_is_never_cleared(
+    desk: Path, api: FakeApi
+) -> None:
+    from creation.episode_commands import CommandStopped
+
+    server = _server(api)
+    run_look_options(desk, confirm_spend=True, out=io.StringIO())
+    run_look_options(desk, pick=1, out=io.StringIO())
+    bodies_before = list(server["bodies"])
+
+    with pytest.raises(CommandStopped) as stopped:
+        run_look_options(desk, confirm_spend=True, out=io.StringIO())
+
+    assert "Nothing was drawn" in str(stopped.value)
+    assert server["bodies"] == bodies_before and server["picked"] == "look_1"
+    plain = io.StringIO()
+    run_look_options(desk, out=plain)  # the offer view, no preview call
+    assert server["bodies"] == bodies_before
+
+
+def test_keep_preset_look_tells_the_server_to_drop_the_options(
+    desk: Path, api: FakeApi
+) -> None:
+    server = _server(api)
+    run_look_options(desk, confirm_spend=True, out=io.StringIO())
+
+    def drop(*_: Any) -> Any:
+        server["options"] = []
+        server["offered"] = False
+        return 200, dict(api.spine_doc)
+
+    api.routes[("DELETE", BASE)] = drop
+    set_phase(desk, "ready_cast_enrol", drawing_estimates=SHOWN_PRICES)
+    api.routes[("POST", "/v1/spines/sp1/cast/enrol")] = {"job_id": "job_cast"}
+    api.jobs["job_cast"] = {"status": "completed"}
+
+    result = orchestrate.run_step(desk, confirm_spend=True, keep_preset_look=True)
+
+    assert result.phase == "wait_plates"
+    assert ("DELETE", BASE) in [(m, p) for m, p, _b, _k in api.calls]
+    assert server["options"] == []
+
+
+def test_the_newest_saved_version_wins_counted_as_a_number(
+    desk: Path, api: FakeApi
+) -> None:
+    _server(api)
+    run_look_options(desk, confirm_spend=True, out=io.StringIO())
+    folder = desk / "shared" / "look"
+    for version in (9, 10):
+        (folder / f"look-option-2-v{version}.png").write_bytes(b"png")
+
+    run_look_options(desk, pick=2, out=io.StringIO())
+
+    assert load_series(desk).look.path == "shared/look/look-option-2-v10.png"

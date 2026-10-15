@@ -130,6 +130,21 @@ def run_look_options(
         if pick is not None:
             return _pick(desk, state, run, view, pick, out)
         body: dict[str, Any] = {"count": count, "descriptions": looks}
+        digest = hashlib.sha256(repr((count, looks)).encode()).hexdigest()[:24]
+        if not view.get("offered"):
+            # The server answers why (a continuing show, drawn characters, a pinned, picked or
+            # kept look); nothing is priced or drawn, and a pick is never cleared.
+            print(
+                str(view.get("reason") or "This story is not offered a style pick."),
+                file=out,
+            )
+            if confirm_spend:
+                raise ec.CommandStopped(
+                    f"Refused: {view.get('reason') or 'this story is not offered a style pick'} Nothing was drawn."
+                )
+            if view.get("options"):
+                _print_options(view, out)
+            return view
         if not confirm_spend:
             print(str(view.get("reason") or ""), file=out)
             if view.get("options") and not looks:
@@ -140,10 +155,11 @@ def run_look_options(
                     file=out,
                 )
                 return view
-            if not view.get("offered") and not looks:
-                return view
+            # Free; a deterministic key anyway, so an older server that asks for one still answers.
             status, priced = run.post_optional(
-                base, {**body, "preview": True}, idempotency_key=None
+                base,
+                {**body, "preview": True},
+                idempotency_key=f"{run.prefix}-look-options-preview-{digest}",
             )
             if status >= 400:
                 raise ec.CommandStopped(f"Refused: {_refusal(priced)}")
@@ -161,7 +177,6 @@ def run_look_options(
                 file=out,
             )
             return priced
-        digest = hashlib.sha256(repr((count, looks)).encode()).hexdigest()[:24]
         status, drawn = run.post_optional(
             base, body, idempotency_key=f"{run.prefix}-look-options-{digest}"
         )
@@ -229,7 +244,14 @@ def _pick(
         raise ec.CommandStopped(f"Refused: {_refusal(answer)}")
     orchestrate.save_spine_snapshot(desk, state.episode_ordinal, dict(answer))
     url = str(option.get("image_url") or "")
-    files = sorted((desk / "shared" / "look").glob(f"{OPTION_STEM}-{pick}-v*"))
+    files = sorted(
+        (desk / "shared" / "look").glob(f"{OPTION_STEM}-{pick}-v*"),
+        key=lambda path: (
+            int(path.stem.rsplit("-v", 1)[1])
+            if path.stem.rsplit("-v", 1)[1].isdigit()
+            else -1
+        ),
+    )
     shown = str(files[-1].relative_to(desk)) if files else url
     approve_series_gate(desk, "look", path=shown, note=f"pinned {url}", url=url)
     ec._note(desk, 1, f"look picked: {pick}. {option.get('label')} ({url}).")
@@ -241,6 +263,38 @@ def _pick(
 
     caption_style_at_look(desk, out=out)
     return answer
+
+
+def keep_preset_look(desk: Path, run: Any, spine_id: str, out: Any = None) -> None:
+    """Tell the server the human keeps the preset's look: drawn options are dropped, the hold lifts. Free.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    run
+        An open API session.
+    spine_id
+        The story.
+    out
+        Text stream.
+
+    Raises
+    ------
+    RuntimeError
+        The server refused (characters already drawn on a picked look).
+    """
+
+    status, answer = run.delete_optional(f"/v1/spines/{spine_id}/look-options")
+    if _route_missing(status, answer):
+        return  # an older server holds nothing
+    if status >= 400:
+        raise RuntimeError(f"Refused: {_refusal(answer)} Nothing was sent.")
+    ec._note(desk, 1, "look-options: the human kept the preset's look.")
+    print(
+        "Kept the preset's look; no style pick is asked for this story.",
+        file=out or sys.stdout,
+    )
 
 
 def look_options_refusal(desk: Path, run: Any, spine_id: str) -> str | None:
@@ -282,4 +336,9 @@ def look_options_refusal(desk: Path, run: Any, spine_id: str) -> str | None:
     )
 
 
-__all__ = ["OPTION_STEM", "look_options_refusal", "run_look_options"]
+__all__ = [
+    "OPTION_STEM",
+    "keep_preset_look",
+    "look_options_refusal",
+    "run_look_options",
+]

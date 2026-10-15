@@ -1481,8 +1481,9 @@ def run_step(
         resumed ``step`` sends the same body.
     keep_preset_look
         Episode 1's plates on a new show: the human says the preset's look is
-        the one, so ``step`` does not stop for the server's art style pick
-        (``look-options``, GRAFT 15 Oct 2026).
+        the one: the server drops any drawn options and lifts its hold
+        (``DELETE .../look-options``), and ``step`` does not stop for the art
+        style pick (``look-options``, GRAFT 15 Oct 2026).
     _spend_yes
         Internal: this call follows the spend yes in the same run.
 
@@ -1508,6 +1509,15 @@ def run_step(
             raise RuntimeError(refusal)
     cfg = load_production_config(desk)
     run = _open_run(desk, state)
+    if state.phase == "ready_cast_enrol" and keep_preset_look and state.spine_id:
+        # The human keeps the preset's look: the server drops any drawn options and lifts its hold.
+        from creation.look_options_commands import keep_preset_look as _keep_preset
+
+        try:
+            _keep_preset(desk, run, state.spine_id)
+        except RuntimeError:
+            run.client.close()
+            raise
     if state.phase == "ready_cast_enrol" and not keep_preset_look and state.spine_id:
         # Art style before plates (GRAFT, 15 Oct 2026): the server says whether this story is
         # offered a pick; a continuing show, a pinned or picked look, or drawn plates never is.
