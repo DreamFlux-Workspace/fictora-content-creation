@@ -10,6 +10,7 @@ from creation import episode_commands as ec
 from creation import orchestrate
 from creation.picture_checks import (
     LOOK_BEFORE_APPROVING,
+    WRONG_SCALE_FIX,
     picture_check_lines,
     plate_picture_check_lines,
 )
@@ -219,3 +220,24 @@ def test_look_frame_prints_its_check(desk: Path, api: FakeApi) -> None:
         in printed
     )
     assert LOOK_BEFORE_APPROVING in printed
+
+
+def test_a_giant_drawn_at_another_size_says_where_its_size_comes_from() -> None:
+    wrong_scale = {
+        "kind": "wrong_scale",
+        "severity": "warn",
+        "where": {"row": 2},
+        "message": "row 2: Stone Giant is drawn about 3 times Ren's height, smaller than the 4 times its card states",
+    }
+    lines = picture_check_lines([wrong_scale], what="t2 board")
+    assert lines == [
+        "!! picture check: t2 board: row 2: Stone Giant is drawn about 3 times Ren's height, smaller than the "
+        "4 times its card states",
+        WRONG_SCALE_FIX,
+        LOOK_BEFORE_APPROVING,
+    ]
+    # The hint names the free command that states the size without a redraw of the plate.
+    assert "fictora-produce cast --desk D --name NAME --look" in WRONG_SCALE_FIX
+    assert "silhouette:" in WRONG_SCALE_FIX
+    # Only on that finding: another warning gets no size hint.
+    assert WRONG_SCALE_FIX not in picture_check_lines([BACK_OF_HEAD], what="t2 board")
