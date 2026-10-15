@@ -7735,6 +7735,7 @@ EPISODE_COMMANDS = frozenset(
         "cast-exit",
         "outfit",
         "look-frame",
+        "look-options",
         "look",
         "look-note",
         "sound-note",
@@ -8260,6 +8261,42 @@ def add_episode_parsers(
         "--size", default=LOOK_FRAME_DEFAULT_SIZE, choices=LOOK_FRAME_SIZES
     )
 
+    options = sub.add_parser(
+        "look-options",
+        help=(
+            "Pick the art style before the plates (new shows): the server draws two or three looks for this "
+            "story side by side, one picture each. Without flags: the offer and its price, nothing drawn. "
+            "--confirm-spend draws them after the human's yes; --pick N picks one (free)."
+        ),
+    )
+    options.add_argument("--desk", type=Path, required=True)
+    options.add_argument(
+        "--confirm-spend",
+        action="store_true",
+        help="The human said yes to the price: draw them.",
+    )
+    options.add_argument(
+        "--pick",
+        type=int,
+        default=None,
+        metavar="N",
+        help="The look the human picked (1, 2 or 3).",
+    )
+    options.add_argument(
+        "--count",
+        type=int,
+        default=3,
+        choices=(2, 3),
+        help="How many looks the server writes.",
+    )
+    options.add_argument(
+        "--description",
+        action="append",
+        default=[],
+        metavar="TEXT|FILE",
+        help="The human's own look instead of the server's (repeat, up to three).",
+    )
+
     look = sub.add_parser(
         "look",
         help="Pin one style frame by public https URL. Not the look yes: approve --gate look records it. Spends nothing.",
@@ -8747,6 +8784,17 @@ def dispatch_episode(args: argparse.Namespace) -> int:
             return 0
         if args.command == "look-frame":
             run_look_frame(args.desk, description=args.description, size=args.size)
+            return 0
+        if args.command == "look-options":
+            from creation.look_options_commands import run_look_options
+
+            run_look_options(
+                args.desk,
+                confirm_spend=args.confirm_spend,
+                pick=args.pick,
+                count=args.count,
+                descriptions=args.description,
+            )
             return 0
         if args.command == "look":
             run_look(args.desk, url=args.url)

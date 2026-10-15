@@ -204,6 +204,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "(style_not_available after picking a stylised preset; real_person_not_allowed to let the "
         "writer make an original character). Repeat for both.",
     )
+    step.add_argument(
+        "--keep-preset-look",
+        action="store_true",
+        help="Plates of a new show: the human says the preset's look is the one, so no art style pick "
+        "(`look-options`) first.",
+    )
     add_narrator_answer_args(step)
 
     pitch = sub.add_parser(
@@ -526,6 +532,7 @@ def _run_command(args: argparse.Namespace) -> int:
                 ask=interactive_ask(),
                 single_frame_start=args.single_frame_start,
                 no_single_frame_start=args.no_single_frame_start,
+                keep_preset_look=args.keep_preset_look,
             )
             print(result.message)
             for path in result.paths:

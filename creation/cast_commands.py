@@ -46,7 +46,8 @@ Production learnings, 22 Sep to 1 Oct 2026:
   ``cast-exit --desk D --cast NAME --after-episode N`` marks someone as gone
   (``exit_episode_ordinal`` on their card) so the next episode's writers see
   one line for them instead of their whole card; ``--clear`` brings them back.
-  Same PATCH-or-cascade path as ``cast --look``, paid items always off.
+  Since 15 Oct 2026 (Long Shadow) it is one server call, ``POST .../cast/{cast}/retire``:
+  the server finds them, checks the episode and names later lines; the kit prints it.
 """
 
 from __future__ import annotations
@@ -58,6 +59,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import quote
 
 from creation import episode_commands as ec
 from creation.captions import is_english
@@ -1159,27 +1161,6 @@ def exit_card(spine: Mapping[str, Any], who: str) -> Mapping[str, Any]:
     )
 
 
-def _speaks_after(spine: Mapping[str, Any], cast_id: str, last: int) -> list[int]:
-    """Episodes after ``last`` where the stored story still gives ``cast_id`` a line."""
-
-    ordinal = {
-        str(e.get("episode_id")): int(e.get("ordinal") or 0)
-        for e in spine.get("episode_summaries") or []
-        if isinstance(e, Mapping)
-    }
-    later: set[int] = set()
-    for beat in spine.get("beats") or []:
-        if not isinstance(beat, Mapping):
-            continue
-        number = ordinal.get(str(beat.get("episode_id")), 0)
-        if number > last and any(
-            isinstance(line, Mapping) and line.get("cast_id") == cast_id
-            for line in beat.get("dialogue_lines") or []
-        ):
-            later.add(number)
-    return sorted(later)
-
-
 def run_cast_exit(
     desk: Path,
     *,
@@ -1190,15 +1171,12 @@ def run_cast_exit(
 ) -> Path | None:
     """Mark a character as gone after an episode, or bring them back. Spends nothing.
 
-    A series holds up to 50 characters, and every character still in the story
-    is written out in full for the writers of the next episode. A guest who has
-    left (they died, moved away, their arc ended) is better marked as gone: the
-    writers then see one line for them ("gone after episode 5") and do not
-    bring them back by accident. ``clear`` puts them back in the story.
-
-    The change is the card's ``exit_episode_ordinal``: ``PATCH /v1/spines/{id}``
-    with ``cast[]`` before the script gate, the ``cast_card`` cascade after it
-    (paid items always off). It changes no picture and no voice.
+    A thin call: ``POST /v1/spines/{id}/cast/{cast}/retire`` (fictora-drama,
+    Long Shadow, 15 Oct 2026). The server finds the character (cast id or
+    name), checks the episode, writes ``exit_episode_ordinal`` at any stage
+    (nothing is redrawn, re-voiced or re-approved) and names the written
+    episodes that still show or voice them. This prints what it answers and
+    saves the story; the kit decides nothing.
 
     Parameters
     ----------
@@ -1216,13 +1194,13 @@ def run_cast_exit(
     Returns
     -------
     Path | None
-        The refreshed ``api/spine.json``; ``None`` when there was nothing to send.
+        The refreshed ``api/spine.json``; ``None`` when the card already said it.
 
     Raises
     ------
     CommandStopped
-        An unknown or shared name, an episode before the character first appears,
-        or a server refusal. Nothing is sent before these checks pass.
+        A server refusal (unknown or shared name, an episode before they first
+        appear), or an older server without the route. Nothing changed.
     """
 
     if (after_episode is None) == (not clear):
@@ -1236,57 +1214,68 @@ def run_cast_exit(
     _, state, run = ec._desk_session(desk)
     try:
         spine = run.spine(state.spine_id or "")
+        status, answer = run.post_optional(
+            f"/v1/spines/{state.spine_id}/cast/{quote(cast.strip(), safe='')}/retire",
+            {
+                "spine_version": spine["spine_version"],
+                "after_episode_ordinal": after_episode,
+            },
+        )
     finally:
         run.client.close()
-    card = exit_card(spine, cast)
-    cast_id = str(card["cast_id"])
-    who = str(card.get("name") or cast_id)
-    intro = int(card.get("intro_episode_ordinal") or 1)
-    before = card.get("exit_episode_ordinal")
-    if after_episode is not None and after_episode < intro:
+    if status == 404 and isinstance(answer, Mapping) and "error" not in answer:
         raise ec.CommandStopped(
-            f"{who} first appears in episode {intro}, so they cannot leave after episode {after_episode}; "
-            f"nothing was sent. The earliest is --after-episode {intro}"
+            "this Drama API has no cast retire route yet (an older deploy); nothing was sent. "
+            "It needs the fictora-drama cast-retire PR deployed."
         )
-    if clear and before is None:
-        print(f"{who} is not marked as leaving; nothing to send.", file=out)
-        return None
-    if after_episode is not None and before == after_episode:
-        print(
-            f"{who} is already marked as leaving after episode {after_episode}; nothing to send.",
-            file=out,
+    if status >= 400 or not isinstance(answer, Mapping):
+        error = answer.get("error") if isinstance(answer, Mapping) else None
+        message = (
+            str(error.get("message")) if isinstance(error, Mapping) else str(answer)
         )
-        return None
-    patch = {"cast_id": cast_id, "exit_episode_ordinal": after_episode}
-    fresh, cascade = _send_cast_patch(
-        desk, patch, episode=intro, select_regen=False, preview_only=False, out=out
+        raise ec.CommandStopped(f"Refused: {message}")
+    who = next(
+        (
+            str(c.get("name"))
+            for c in answer.get("cast") or []
+            if isinstance(c, Mapping)
+            and c.get("cast_id") == answer.get("retired_cast_id")
+        ),
+        cast,
     )
-    if (
-        fresh is None
-    ):  # only a preview returns no story, and this command never previews
+    cast_id = str(answer.get("retired_cast_id") or cast)
+    before = answer.get("previous_after_episode_ordinal")
+    if not answer.get("changed"):
+        if after_episode is None:
+            print(f"{who} is not marked as leaving; nothing to send.", file=out)
+        else:
+            print(
+                f"{who} is already marked as leaving after episode {after_episode}; nothing to send.",
+                file=out,
+            )
         return None
-    path = save_spine_snapshot(desk, intro, fresh)
-    kept = exit_card(fresh, cast_id).get("exit_episode_ordinal")
-    if kept != after_episode:
-        print(
-            f"!! the server answered but its story does not show the change for {who} "
-            f"(it shows {kept if kept is not None else 'no leaving episode'}): it may be an older deploy. "
-            "Nothing was charged; run the command again or ask engineering.",
-            file=out,
-        )
-        return path
+    extras = {
+        "retired_cast_id",
+        "after_episode_ordinal",
+        "previous_after_episode_ordinal",
+        "changed",
+        "still_in_episodes",
+        "request_id",
+    }
+    story = {key: value for key, value in answer.items() if key not in extras}
+    path = save_spine_snapshot(desk, state.episode_ordinal, story)
     if after_episode is not None:
         print(
             f"{who} is marked as leaving after episode {after_episode}. Writers will see one line for them "
             f"from episode {after_episode + 1}; run with --clear to bring them back.",
             file=out,
         )
-        later = _speaks_after(fresh, cast_id, after_episode)
+        later = [int(n) for n in answer.get("still_in_episodes") or []]
         if later:
             listed = ", ".join(str(n) for n in later)
             word = "episodes" if len(later) > 1 else "episode"
             print(
-                f"note: {who} still has lines in {word} {listed}. Give those lines to someone else "
+                f"note: {who} is still in written {word} {listed}. Give those lines to someone else "
                 f"(`line --desk {desk} --episode N`), or mark them as leaving later.",
                 file=out,
             )
@@ -1297,12 +1286,7 @@ def run_cast_exit(
             file=out,
         )
         what = f"back in the story (was leaving after episode {before})"
-    ec._note(
-        desk,
-        intro,
-        f"cast-exit: {who} ({cast_id}) {what}"
-        + (" through the cast cascade" if cascade else ""),
-    )
+    ec._note(desk, state.episode_ordinal, f"cast-exit: {who} ({cast_id}) {what}")
     return path
 
 
