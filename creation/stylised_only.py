@@ -11,10 +11,16 @@
   anything is drawn.
 
 The rule lives on the server (``fictora-drama``): a draft that breaks it is
-answered ``409 brief_needs_creator_choice`` with ``details.notices``. This
-module mirrors its cheap deterministic check so the kit pauses *before* it
-sends (an older server never raises the 409), and renders the server's notices
-as operator text. It is a mirror, not the rule: the server's notice wins.
+answered ``409 brief_needs_creator_choice`` with ``details.notices``, before
+anything is written or spent. This module renders the server's notices as
+operator text. It mirrors only the look check, so a photoreal ask pauses before
+the draft is sent; it is a mirror, not the rule: the server's notice wins.
+
+Real people are the server's call alone (Iron Pigeon, 14 Oct 2026). The kit's
+own copy of that check read any "<Name>'s face" as a likeness and knew the
+show's cast only under a ``## Cast`` heading, so the lead's own name paused
+the draft until the cast was moved there. The server reads the cast whatever
+heading it sits under, and its 409 pauses the desk with its own words.
 
 Look frames and look notes are only *warned* about (:func:`photoreal_look_warning`):
 they are an operator calibration tool drawn from words, the board and plate
@@ -66,26 +72,6 @@ _PHOTOREAL = re.compile(
     r")",
     re.IGNORECASE,
 )
-
-# A capitalised name of one to four tokens ("Park Seo-joon", "Jungkook", "Taylor Swift").
-_NAME = r"(?P<name>[A-Z][\w'’-]*(?: [A-Z][\w'’-]*){0,3})"
-_NOT_NAMES = frozenset(
-    "I A An The He She They We You It His Her Their My Our This That These Those Him Them Me "
-    "God Someone Somebody Anyone Everyone Mom Dad Mum Mother Father Grandma Grandpa Sister Brother "
-    "Uncle Aunt Nobody".split()
-)
-_ROLE_WORDS = (
-    r"idol|singer|actor|actress|rapper|model|athlete|star|celebrity|influencer|youtuber|streamer|member|"
-    r"footballer|player|politician|president"
-)
-_LIKENESS = (
-    rf"(?i:played by|starring|voiced by|modell?ed (?:on|after)|lookalike of|look-alike of|resembl(?:es|ing|e)|"
-    rf"look(?:s|ing)?(?: just| exactly| a lot| a bit)? like|sounds? like|the real(?:-life)?|"
-    rf"(?:face|likeness|voice) of|(?:an?|the) (?:{_ROLE_WORDS}) like)\s+{_NAME}",
-    rf"{_NAME}(?:'s|’s) (?i:face|voice|likeness)\b",
-    rf"{_NAME} (?i:look-?alike|doppelg[aä]nger)",
-)
-_LIKENESS_RE = tuple(re.compile(pattern) for pattern in _LIKENESS)
 
 #: Words in a brief that point at the closest stylised preset, most specific first.
 _CLOSEST: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -155,118 +141,51 @@ def find_photoreal_request(text: str) -> str | None:
         The matched phrase as written.
     """
 
-    found = _PHOTOREAL.search(text or "")
-    return found.group(0) if found else None
+    source = text or ""
+    for found in _PHOTOREAL.finditer(source):
+        # "never photoreal", "no live-action": a look ruled out is no ask for it
+        # (mirrors the server's ``creator_content_rules._ruled_out``, 15 Oct 2026).
+        if _ruled_out(source, found.start()):
+            continue
+        return found.group(0)
+    return None
 
 
-_CAST_HEADING = re.compile(
-    r"^#{1,6}\s*(?:the\s+)?cast\b.*$", re.IGNORECASE | re.MULTILINE
+#: Words that rule out the look named right after them, up to three words on.
+_RULED_OUT = re.compile(
+    r"\b(?:no|not|never|without|avoid(?:ing)?|nothing|zero|anything\s+but|don['’]?t|do\s+not|doesn['’]?t|"
+    r"isn['’]?t|aren['’]?t|won['’]?t|shouldn['’]?t|must\s+not|non)"
+    r"(?:[\s-]+[\w'’-]+){0,3}?[\s-]+$",
+    re.IGNORECASE,
 )
-_ANY_HEADING = re.compile(r"^#{1,6}\s", re.MULTILINE)
-_TABLE_RULE = re.compile(r"^\|?\s*:?-{2,}")
-_LIST_NAME = re.compile(
-    r"^\s*(?:[-*+]|\d+[.)])\s+(?:\*\*|__)?(?P<name>[A-Z][\w'’-]*(?: [A-Z][\w'’-]*){0,3})(?:\*\*|__)?"
-    r"\s*(?:[:—–(,]|-\s|$)"
+#: Where the words before a match stop counting: a new clause.
+_CLAUSE_START = re.compile(
+    r"[.;:!?\n,]|(?<!anything )\b(?:but|and|or|yet|so|instead)\b", re.IGNORECASE
 )
 
 
-def brief_cast_names(text: str) -> tuple[str, ...]:
-    """Return the character names a brief's own cast section lists.
-
-    Read from the section headed ``Cast`` (``## Cast``, ``### The cast``):
-    the first column of a Markdown table (header and rule rows skipped), or
-    the name that opens each list item (``- Mina Park — the heir``,
-    ``- **Joon**: her bodyguard``).
-
-    Parameters
-    ----------
-    text
-        The brief.
-
-    Returns
-    -------
-    tuple[str, ...]
-        Names in the order listed, without repeats (empty when the brief has
-        no cast section).
-    """
-
-    names: dict[str, str] = {}
-    for heading in _CAST_HEADING.finditer(text or ""):
-        rest = text[heading.end() :]
-        following = _ANY_HEADING.search(rest)
-        section = rest[: following.start()] if following else rest
-        header_seen = False
-        for row in section.splitlines():
-            stripped = row.strip()
-            if stripped.startswith("|"):
-                if _TABLE_RULE.match(stripped):
-                    continue
-                cell = stripped.strip("|").split("|", 1)[0].strip().strip("*_ ")
-                if not header_seen:
-                    header_seen = True
-                    if cell.casefold() in ("name", "character", "who", "cast"):
-                        continue
-                if cell and cell[0].isupper():
-                    names.setdefault(cell.casefold(), cell)
-                continue
-            found = _LIST_NAME.match(row)
-            if found:
-                name = found.group("name").strip()
-                names.setdefault(name.casefold(), name)
-    return tuple(names.values())
+#: Double negatives that ask for the look right after them.
+_EMPHATIC = re.compile(
+    r"\b(?:less|other|else|rather|more)\s+(?:\w+\s+){0,2}than\s*$|"
+    r"\b(?:nothing|never\s+anything|not\s+anything|nothing\s+else|no\s+\w+)\s+but\s*$|"
+    r"\b(?:nothing|never)\s+short\s+of\s*$|\bexcept\s*$",
+    re.IGNORECASE,
+)
 
 
-def _is_cast_name(name: str, cast: Sequence[str]) -> bool:
-    """True when ``name`` is a cast name, or the first or last name of one (``Dez`` of ``Dez Okoye``)."""
+def _ruled_out(text: str, start: int) -> bool:
+    """Whether the words just before ``start``, in the same clause, rule the look out."""
 
-    folded = name.casefold()
-    for full in cast:
-        parts = full.casefold().split()
-        if folded == full.casefold() or (parts and folded in (parts[0], parts[-1])):
-            return True
-    return False
-
-
-def find_real_people(
-    text: str, *, cast_names: Sequence[str] | None = None
-) -> tuple[str, ...]:
-    """Return the real people a text names as a character's face, voice or casting.
-
-    Only a capitalised name used as a likeness counts ("looks like Park
-    Seo-joon", "an idol like Jungkook from BTS", "played by ..."). Pronouns and
-    family words are not names, so "looks like her mother" passes, and so does
-    every archetype ("a K-pop idol type"). A name the brief lists in its own
-    cast ("Ends on Dez's face." with Dez Okoye in the cast table) is one of
-    the story's characters, not a real person.
-
-    Parameters
-    ----------
-    text
-        A brief or a cast description.
-    cast_names
-        The story's own characters; default the brief's cast section
-        (:func:`brief_cast_names`).
-
-    Returns
-    -------
-    tuple[str, ...]
-        Names in order of first mention, without repeats.
-    """
-
-    cast = brief_cast_names(text) if cast_names is None else tuple(cast_names)
-    hits: list[tuple[int, str]] = []
-    for pattern in _LIKENESS_RE:
-        for match in pattern.finditer(text or ""):
-            name = match.group("name").strip(" '’-")
-            if not name or name.split()[0] in _NOT_NAMES:
-                continue
-            if _is_cast_name(name, cast):
-                continue
-            hits.append((match.start("name"), name))
-    seen: dict[str, str] = {}
-    for _, name in sorted(hits):
-        seen.setdefault(name.casefold(), name)
-    return tuple(seen.values())
+    before = text[:start]
+    cut = 0
+    for boundary in _CLAUSE_START.finditer(before):
+        cut = boundary.end()
+    clause = before[cut:]
+    # "nothing less than photoreal", "no other style than photorealistic",
+    # "never anything but photorealistic": an emphatic ask, not a ban.
+    if _EMPHATIC.search(clause):
+        return False
+    return _RULED_OUT.search(clause) is not None
 
 
 def closest_preset(text: str) -> str:
@@ -294,7 +213,10 @@ def _label(preset_id: str) -> str:
 
 
 def brief_notices(text: str) -> list[dict[str, Any]]:
-    """Return the notices the server would raise for this brief, in the server's shape.
+    """Return the look notice the server would raise for this brief, in the server's shape.
+
+    Real people are left to the server's ``409 brief_needs_creator_choice``
+    (module docstring): nothing is drawn or spent before it answers.
 
     Parameters
     ----------
@@ -304,7 +226,7 @@ def brief_notices(text: str) -> list[dict[str, Any]]:
     Returns
     -------
     list[dict[str, Any]]
-        Zero, one or two notices (``kind``, ``message``, ``asked_for``, ``styles``,
+        Zero or one notice (``kind``, ``message``, ``asked_for``, ``styles``,
         ``suggested_preset_id``, ``real_people``).
     """
 
@@ -327,23 +249,6 @@ def brief_notices(text: str) -> list[dict[str, Any]]:
                 ],
                 "suggested_preset_id": suggested,
                 "real_people": [],
-            }
-        )
-    people = find_real_people(text)
-    if people:
-        named = " and ".join(people)
-        notices.append(
-            {
-                "kind": REAL_PERSON_NOT_ALLOWED,
-                "message": (
-                    f"We can't draw or voice real people, so {named} won't be in your story. We'll write an "
-                    "original character with the same vibe instead, and you'll see them in the cast before "
-                    f"anything is drawn. If {named} is someone you made up, just continue."
-                ),
-                "asked_for": named,
-                "styles": [],
-                "suggested_preset_id": None,
-                "real_people": list(people),
             }
         )
     return notices
@@ -457,6 +362,34 @@ def pause_text(
     return "\n".join(lines)
 
 
+def voice_notice_text(notices: Sequence[Mapping[str, Any]], command: str) -> str:
+    """Word the pause for a voice the server matched to a listed real person (fictora-drama #833).
+
+    The server answers a voice pick or a new heard-only voice that names a
+    listed real person with the one-tap notice; nothing was changed.
+
+    Parameters
+    ----------
+    notices
+        The server's notices.
+    command
+        The ``fictora-produce`` command to repeat, without ``--accept-notice``.
+
+    Returns
+    -------
+    str
+        Plain operator text.
+    """
+
+    lines = ["PAUSED for the creator: nothing was changed."]
+    lines.extend(f"  - {notice.get('message')}" for notice in notices)
+    lines.append(
+        "    Describe an original voice instead, or, if the creator says it is someone they made up: "
+        f"`fictora-produce {command} --accept-notice {REAL_PERSON_NOT_ALLOWED}`."
+    )
+    return "\n".join(lines)
+
+
 def photoreal_look_warning(text: str) -> str | None:
     """Return a warning when a look-frame description or look note asks for a photoreal look.
 
@@ -494,10 +427,9 @@ __all__ = [
     "brief_notices",
     "closest_preset",
     "find_photoreal_request",
-    "brief_cast_names",
-    "find_real_people",
     "pause_text",
     "photoreal_look_warning",
     "server_notices",
     "unacknowledged",
+    "voice_notice_text",
 ]

@@ -86,6 +86,33 @@ class AudioServiceError(RuntimeError):
     """The server refused or failed a generated-audio request (message says what to do)."""
 
 
+#: Request flag: the server words a creature or monster cue (fictora-drama #826).
+CREATURE_CUE_FLAG = "server_words_creature_cues"
+#: The stop when the server is older than that: nothing was made or spent.
+CREATURE_CUE_SERVER_TOO_OLD = (
+    "server too old for cue: this server does not word creature or monster cues yet "
+    "(fictora-drama #826 not deployed), so nothing was sent to be made and nothing was spent. "
+    "Run cue again once the server is updated."
+)
+
+
+def creature_flag_refused(message: str) -> bool:
+    """Whether a refused cue was the server rejecting :data:`CREATURE_CUE_FLAG` (an older server).
+
+    Parameters
+    ----------
+    message
+        The :class:`AudioServiceError` text.
+
+    Returns
+    -------
+    bool
+        True for a 422 that names the flag.
+    """
+
+    return message.startswith("HTTP 422") and CREATURE_CUE_FLAG in message
+
+
 class AudioServiceTimeout(AudioServiceError):
     """The server gave no answer within the request's deadline (message says how to retry)."""
 
@@ -130,9 +157,15 @@ class AudioService(Protocol):
         ...
 
     def sfx_cue(
-        self, *, spine_id: str, sound: str, seconds: float, key: str
+        self,
+        *,
+        spine_id: str,
+        sound: str,
+        seconds: float,
+        key: str,
+        server_words_creature_cues: bool = False,
     ) -> dict[str, Any]:
-        """``{audio_url, kind, shape_problem, cached, cost_usd}``."""
+        """``{audio_url, kind, shape_problem, cached, cost_usd}``; the flag only from the ``cue`` command."""
         ...
 
     def music_bed(
@@ -247,16 +280,40 @@ class DramaApiAudio:
         )
 
     def sfx_cue(
-        self, *, spine_id: str, sound: str, seconds: float, key: str
+        self,
+        *,
+        spine_id: str,
+        sound: str,
+        seconds: float,
+        key: str,
+        server_words_creature_cues: bool = False,
     ) -> dict[str, Any]:
-        """POST ``/v1/spines/{id}/sfx-cues`` with the :data:`CUE_DEADLINE_SECONDS` deadline."""
+        """POST ``/v1/spines/{id}/sfx-cues`` with the :data:`CUE_DEADLINE_SECONDS` deadline.
 
-        return self._post(
-            f"/v1/spines/{spine_id}/sfx-cues",
-            {"sound": sound, "seconds": seconds},
-            key,
-            deadline_seconds=CUE_DEADLINE_SECONDS,
-        )
+        Only the ``cue`` command (a hand cue) passes ``server_words_creature_cues``:
+        the kit sends a monster cue as written and relies on the server to word it
+        (fictora-drama #826). A server without that refuses the field (422,
+        nothing made or spent), and the kit stops with
+        :data:`CREATURE_CUE_SERVER_TOO_OLD` instead of sending a cue that could
+        come back as a dog or a person. ``finish``'s Sound-line effects and the
+        ambience never send it, so a continuing show's effects keep their words
+        and their cache, and an older server still makes them.
+        """
+
+        body: dict[str, Any] = {"sound": sound, "seconds": seconds}
+        if server_words_creature_cues:
+            body[CREATURE_CUE_FLAG] = True
+        try:
+            return self._post(
+                f"/v1/spines/{spine_id}/sfx-cues",
+                body,
+                key,
+                deadline_seconds=CUE_DEADLINE_SECONDS,
+            )
+        except AudioServiceError as exc:
+            if server_words_creature_cues and creature_flag_refused(str(exc)):
+                raise AudioServiceError(CREATURE_CUE_SERVER_TOO_OLD) from exc
+            raise
 
     def music_bed(
         self, *, spine_id: str, brief: str | None, key: str
@@ -419,9 +476,8 @@ def download(url: str, dest: Path) -> Path:
         ``dest``.
     """
 
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    with httpx.Client(timeout=180.0, follow_redirects=True) as client:
-        response = client.get(url)
-        response.raise_for_status()
-        dest.write_bytes(response.content)
-    return dest
+    from creation.media_fetch import fetch_to
+
+    # Stems, tracks and music: a browser user agent and one more try after a
+    # refusal (the media host blocks some client names, L-20261014-21).
+    return fetch_to(url, dest)

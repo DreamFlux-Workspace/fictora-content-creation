@@ -18,6 +18,7 @@ from cast_story import _before_gate, _story, _writes
 from creation import episode_commands as ec
 from creation import outfit_commands as oc
 from creation.cli_produce import main as produce_main
+from creation.production_state import load_production
 from creation.picture_checks import WRONG_OUTFIT_FIX, picture_check_lines
 from fake_api import FakeApi, serve_outfits
 
@@ -107,9 +108,17 @@ def test_confirm_spend_draws_only_after_the_price_was_shown(
     )
     out = io.StringIO()
 
-    oc.run_outfit_add(
-        desk, cast="Hana", label="Black Gown", look=None, confirm_spend=True, out=out
-    )
+    # A yes with no price shown stops (exit 2), so `a && b` never runs b over a silent no-op
+    # (L-20261014-28).
+    with pytest.raises(ec.CommandStopped, match="did NOT draw"):
+        oc.run_outfit_add(
+            desk,
+            cast="Hana",
+            label="Black Gown",
+            look=None,
+            confirm_spend=True,
+            out=out,
+        )
 
     assert drawn == []
     assert "No price shown for this redraw yet." in out.getvalue()
@@ -168,6 +177,10 @@ def test_add_and_wear_go_in_one_request_and_name_the_stale_boards(
         }
     ]
     assert not (desk / "shared" / "outfits.json").exists()
+    # The stale boards are on the desk (preflight blocks them) and the assistant is told to ask now.
+    stale = load_production(desk).boards_stale
+    assert "ep02-t1" in stale
+    assert "ASK THE HUMAN NOW" in text and "ep02-t1" in text
 
 
 def test_wear_base_sends_null_and_the_same_request_again_changes_nothing(

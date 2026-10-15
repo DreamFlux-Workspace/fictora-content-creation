@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Sequence
 
 from creation.cli_text import force_utf8_output, json_or_file
+from creation.gate_tools import PITCH_GATE, POST_GATE, wrong_tool_for_gate
 from creation.ops.adopt import AdoptRefused, adopt_desk
 from creation.ops.floor import (
     add_episode,
@@ -51,6 +52,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     _add_folder_parsers(sub)
     _add_floor_parsers(sub)
     args = parser.parse_args(list(argv) if argv is not None else None)
+    if args.command == "approve" and args.gate == PITCH_GATE:
+        print(wrong_tool_for_gate(args), file=sys.stderr)
+        return 2
     try:
         return _dispatch(args)
     except (AdoptRefused, FileExistsError, FileNotFoundError, ValueError) as exc:
@@ -84,6 +88,23 @@ def _add_folder_parsers(
     ver_p.add_argument("--dir", type=Path, required=True)
     ver_p.add_argument("--stem", required=True)
     ver_p.add_argument("--suffix", required=True)
+
+    fetch_p = sub.add_parser(
+        "fetch",
+        help=(
+            "Download one media URL (stem, music, take, board) to a new file. "
+            "Use this, never Python urllib: the media host refuses urllib (403)."
+        ),
+    )
+    fetch_p.add_argument(
+        "url", help="The https media URL (from take facts, a spine, a job)."
+    )
+    fetch_p.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="New file to write; never overwritten (fictora-ops next-path names one).",
+    )
 
 
 def _add_floor_parsers(
@@ -135,7 +156,11 @@ def _add_floor_parsers(
     )
     ap.add_argument("--desk", type=Path, required=True)
     ap.add_argument(
-        "--gate", required=True, choices=("look", "plates", "script", "board", "post")
+        "--gate",
+        required=True,
+        # "pitch" is accepted only to say where it lives (fictora-produce), and kept out of --help.
+        choices=("look", "plates", "script", "board", POST_GATE, PITCH_GATE),
+        metavar="{look,plates,script,board,post}",
     )
     ap.add_argument("--episode", type=int, default=None)
     ap.add_argument("--take", default=None)
@@ -207,6 +232,26 @@ def _add_floor_parsers(
     )
 
 
+def _fetch(url: str, out: Path) -> int:
+    """``fictora-ops fetch``: one media URL into a new file (exit 1 when it cannot be read)."""
+
+    from creation.media_fetch import MediaFetchError, fetch_to
+
+    if not url.startswith("https://"):
+        raise ValueError(f"only https media URLs are fetched, not {url!r}")
+    if out.exists():
+        raise FileExistsError(
+            f"{out} already exists; desk files are never overwritten "
+            "(pick a new name with `fictora-ops next-path`)"
+        )
+    try:
+        print(fetch_to(url, out, overwrite=False))
+    except MediaFetchError as exc:
+        print(f"{exc}; nothing was saved", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _dispatch(args: argparse.Namespace) -> int:
     if args.command == "init":
         day = date.fromisoformat(args.date) if args.date else date.today()
@@ -238,6 +283,8 @@ def _dispatch(args: argparse.Namespace) -> int:
     if args.command == "next-path":
         print(next_versioned_path(args.dir, args.stem, args.suffix))
         return 0
+    if args.command == "fetch":
+        return _fetch(args.url, args.out)
     if args.command == "init-series":
         day = date.fromisoformat(args.date) if args.date else date.today()
         desk = init_series_desk(

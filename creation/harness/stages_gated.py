@@ -165,8 +165,9 @@ def start_draft(
     """Draft episode 1 alone (arc picked at episode 2) and poll the plan job.
 
     Founder rules of 1 Oct 2026 (:mod:`creation.stylised_only`): a brief that asks
-    for a photoreal or live-action look, or names a real person, pauses before
-    anything is sent unless the operator acknowledged that notice. The first post
+    for a photoreal or live-action look pauses before anything is sent unless the
+    operator acknowledged that notice; a real person is the server's call alone
+    (its 409 below, Iron Pigeon 14 Oct 2026), never a kit-side guess. The first post
     never carries ``acknowledged_notices`` (an older server answers 422 to the
     unknown field); a ``409 brief_needs_creator_choice`` is answered by resending
     the same body and key with the acknowledged kinds, or pauses with the

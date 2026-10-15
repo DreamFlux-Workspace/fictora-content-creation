@@ -197,3 +197,23 @@ def test_a_later_take_of_an_episode_still_warns_without_a_hand_off(
         not check.ok
         and check.detail == "Hand-off frame is not set. Paste the previous last frame."
     )
+
+
+def test_a_board_marked_stale_after_its_yes_blocks_the_take(ready_desk: Path) -> None:
+    from creation.production_state import ProductionState, save_production
+
+    assert preflight_take(ready_desk, episode=1, take_id="t1").status() == "PASS"
+    save_production(
+        ready_desk,
+        ProductionState(
+            session_id="s",
+            prompt="p",
+            preset_id="x",
+            preset_version="1",
+            boards_stale=["ep01-t1"],
+        ),
+    )
+    report = preflight_take(ready_desk, episode=1, take_id="t1")
+    check = next(c for c in report.checks if c.code == "board_current")
+    assert not check.ok and check.blocking and report.blocked
+    assert "Ask the human" in check.detail and "$0.30" in check.detail

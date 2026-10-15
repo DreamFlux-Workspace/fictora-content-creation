@@ -28,9 +28,10 @@ desk with a versioned name, and never approves (the human's yes goes through
   from changed (``--same-shots`` / ``--reroll`` to re-roll).
 - ``plates``: retired (was ``plates --cast NAME --cause``); prints a pointer to ``redraw-plate --note`` and sends nothing.
 - ``redraw-plate --cast X --note "..."``: note one character, then redraw only their plate (one still).
-- ``props`` / ``redraw-prop --prop X --note "..."`` / ``remove-prop --prop X``: the story's objects
-  (:mod:`creation.prop_commands`): list free, redraw one picture ($0.30 each drawn; asks first,
-  draws on ``--confirm-spend``), remove free.
+- ``props`` / ``keep-prop --prop X`` / ``redraw-prop --prop X --note "..."`` / ``remove-prop --prop X``: the
+  story's objects (:mod:`creation.prop_commands`): list free, keep one the server suggested (free; its picture is
+  drawn at the next plates step), redraw one picture ($0.30 each drawn; asks first, draws on ``--confirm-spend``),
+  remove free.
 - ``check-lines``: were the approved lines in the take's instructions, which shot and board row each fell in,
   and is its on-screen speaker in that row (take facts and board frames, never the prompt)?
 - ``film --episode N [--take tK]``: price, then (``--confirm-spend``) film episode N alone or only take K
@@ -82,7 +83,7 @@ from creation.narrator_cast import (
 from creation.narrator_cast import question as narrator_question
 from creation.cli_text import TextArgError, text_or_file
 from creation.new_cast import new_cast_notice, newcomers
-from creation.story_objects import new_objects, new_objects_notice
+from creation.story_objects import new_objects, new_objects_notice, suggested_objects
 from creation.desk_media_urls import drawn_cast_rows
 from creation.post.desk import name_matches
 from creation.harness import stages_gated as stages
@@ -1226,7 +1227,9 @@ def _show_authored(
         print(f"  {summary['summary']}", file=out)
     print(script_gate_text(desk, spine, episode=episode), file=out)
     arrived = new_cast_notice(newcomers(before, spine)) + new_objects_notice(
-        new_objects(before, spine)
+        new_objects(before, spine),
+        suggested={prop_id for prop_id, _ in suggested_objects(spine)},
+        desk=str(desk),
     )
     for line in arrived:
         print(line, file=out)
@@ -2519,6 +2522,7 @@ def build_line_add_remove_patch(
     role: str | None = None,
     voice_description: str | None = None,
     provider_voice: str | None = None,
+    accept_notices: Sequence[str] = (),
 ) -> tuple[dict[str, Any], list[str]]:
     """Build the spine patch that adds a line, removes one, or both, and adds a voice-only character with its line.
 
@@ -2551,6 +2555,9 @@ def build_line_add_remove_patch(
         A line to drop: its id or its number in the episode.
     new_voice, role, voice_description, provider_voice
         A new voice-only character who speaks the added line.
+    accept_notices
+        Notice kinds the creator answered (``--accept-notice``), sent as the
+        patch's ``acknowledged_notices`` with a new voice (fictora-drama #833).
 
     Returns
     -------
@@ -2641,6 +2648,8 @@ def build_line_add_remove_patch(
         if provider_voice is not None:
             card["provider_voice"] = provider_voice
         patch["add_voice_only_cast"] = [card]
+        if accept_notices:
+            patch["acknowledged_notices"] = sorted(set(accept_notices))
         off_screen = True
         who = new_voice
         voice = (
@@ -2701,6 +2710,12 @@ REFUSAL_FIXES: dict[str, str] = {
         "--speaker-moves (the shot then moves the speaker), or put the line on a beat where the speaker moves"
     ),
     "voice_only_cast_needs_a_line": "a new voice comes with its line: send --new-voice together with --add",
+    # fictora-drama #833: a new voice matched to a listed real person is a one-tap notice, never a block.
+    "brief_needs_creator_choice": (
+        "the new voice names a real person (we never match a voice to one): describe an original voice instead, "
+        "or, if the creator says it is someone they made up, send the same command again with "
+        "--accept-notice real_person_not_allowed"
+    ),
     "voice_only_cast_on_screen": (
         "a new voice is heard, never seen: keep its line off screen and keep it out of every frame "
         "(lines {lines}, frames {frames})"
@@ -3170,6 +3185,7 @@ def run_line(
     language: str | None = None,
     shout: str | None = None,
     remove_shout: str | None = None,
+    accept_notices: Sequence[str] = (),
     out: Any = None,
 ) -> Path | None:
     """Change, add or remove a line on the server and on the desk in one step; with no change, list the lines.
@@ -3311,6 +3327,7 @@ def run_line(
                 spine, episode=episode, add=add, beat=beat, text=text, spoken=spoken, subtitle=subtitle,
                 speaker=speaker, off_screen=off_screen, speaker_moves=speaker_moves, remove=remove,
                 new_voice=new_voice, role=role, voice_description=voice_description, provider_voice=provider_voice,
+                accept_notices=accept_notices,
             )  # fmt: skip
             what = " and ".join(
                 part
@@ -5890,6 +5907,16 @@ def run_redraw_board(
     restart_dead_saved_job(desk, run, unit=unit, video_route=True)
     state = load_production(desk)
     resuming = bool((state.pending.get(unit) or {}).get("job_id"))
+    if not resuming and note is not None:
+        # The note rides on the saved unit, so a second redraw-board of this take while this one
+        # runs can tell its note from this one (it stops rather than drop it, L-20261014-28).
+        entry = state.pending.get(unit) or {
+            "key": f"{state.idempotency_prefix}-{unit}-a{state.attempts.get(unit, 0) + 1}",
+            "job_id": None,
+        }
+        entry["note"] = note
+        state.pending[unit] = entry
+        save_production(desk, state)
     if note is None:
         print(f"[board] {REDRAW_CAUSE_IS_A_LABEL}.", file=sys.stderr)
     extra: dict[str, Any] = {"episode_count": episode}
@@ -5901,6 +5928,15 @@ def run_redraw_board(
         )
         key = f"ep{episode:02d}-{take_id}"
         if resuming:
+            in_flight = (state.pending.get(unit) or {}).get("note")
+            if note is not None and in_flight is not None and in_flight != note:
+                # A second redraw of the same take with a new note joined the first and dropped the
+                # note without a word (L-20261014-28): stop instead; nothing is sent or charged.
+                raise CommandStopped(
+                    f"a redraw of {take_id} is already under way with another note; this note was NOT sent "
+                    "and nothing was charged. Wait for it (`fictora-produce collect-takes` / run the same "
+                    "redraw-board again without --note), then redraw with the new note on its own line."
+                )
             print(
                 f"[board] {take_id}: a redraw is already under way; picking it up (a note was applied before it "
                 "and is not sent again).",
@@ -7710,6 +7746,7 @@ EPISODE_COMMANDS = frozenset(
         "plates",
         "redraw-plate",
         "props",
+        "keep-prop",
         "redraw-prop",
         "remove-prop",
         "check-lines",
@@ -8064,6 +8101,14 @@ def add_episode_parsers(
         "--voice-description",
         default=None,
         help='With --new-voice: how the voice sounds ("tinny, clipped, calm").',
+    )
+    line.add_argument(
+        "--accept-notice",
+        action="append",
+        default=[],
+        choices=("real_person_not_allowed",),
+        help="With --new-voice: the creator saw the server's notice that the voice names a real person and "
+        "says it is someone they made up; sends acknowledged_notices (fictora-drama #833).",
     )
     line.add_argument(
         "--provider-voice",
@@ -8479,6 +8524,17 @@ def add_episode_parsers(
         action="store_true",
         help="The human said yes to the total the first run asked about (always needed to draw).",
     )
+    prop_keep = sub.add_parser(
+        "keep-prop",
+        help=(
+            "Say yes to a story object the server suggested. Free; its picture is drawn at the next plates step "
+            "($0.30, once). Until then nothing is drawn or paid for it."
+        ),
+    )
+    prop_keep.add_argument("--desk", type=Path, required=True)
+    prop_keep.add_argument(
+        "--prop", required=True, help="The object's name or prop_id (see `props`)."
+    )
     prop_remove = sub.add_parser(
         "remove-prop",
         help="Take one story object off the story. Free; refused once the episode has a drawn board.",
@@ -8705,6 +8761,7 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 language=args.language,
                 shout=args.shout,
                 remove_shout=args.remove_shout,
+                accept_notices=args.accept_notice,
             )
             return 0
         if args.command == "cast":
@@ -8832,11 +8889,13 @@ def dispatch_episode(args: argparse.Namespace) -> int:
             else:
                 outfit_commands.run_outfit_list(args.desk, cast=args.cast)
             return 0
-        if args.command in ("props", "redraw-prop", "remove-prop"):
+        if args.command in ("props", "keep-prop", "redraw-prop", "remove-prop"):
             from creation import prop_commands
 
             if args.command == "props":
                 prop_commands.run_props(args.desk)
+            elif args.command == "keep-prop":
+                prop_commands.run_keep_prop(args.desk, prop=args.prop)
             elif args.command == "redraw-prop":
                 prop_commands.run_redraw_prop(
                     args.desk,

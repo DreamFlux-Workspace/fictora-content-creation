@@ -9,7 +9,9 @@ ask for a photoreal look are warned about, never blocked.
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 from pathlib import Path
 from typing import Any
 
@@ -96,34 +98,14 @@ def test_a_photoreal_ask_is_found(brief: str, phrase: str) -> None:
         ARCHETYPE,
         "Realistic dialogue about grief; a realistic story of two sisters.",
         "Cinematic lighting, soft film grain, manhwa ink linework.",
+        # A look the brief rules out is no ask for it (GRAFT, 15 Oct 2026).
+        "Stylised manhwa ink, never photoreal.",
+        "No live-action, anime only.",
+        "Don't make it photorealistic.",
     ],
 )
 def test_a_stylised_or_story_realism_brief_is_not_a_photoreal_ask(brief: str) -> None:
     assert so.find_photoreal_request(brief) is None
-
-
-def test_named_real_people_are_found_by_how_the_brief_uses_them() -> None:
-    assert so.find_real_people(ACTOR) == ("Park Seo-joon",)
-    assert so.find_real_people(IDOL) == ("Jungkook",)
-    assert so.find_real_people("The villain is played by Lee Min-ho.") == (
-        "Lee Min-ho",
-    )
-    assert so.find_real_people("Her voice sounds like Taylor Swift.") == (
-        "Taylor Swift",
-    )
-
-
-@pytest.mark.parametrize(
-    "brief",
-    [
-        ARCHETYPE,
-        "Mina looks like her mother, and he looks like a ghost.",
-        "A cold CEO who looks like he never sleeps.",
-        "It looks like I lost him again; Mina looks like Mom did at her age.",
-    ],
-)
-def test_archetypes_and_family_resemblance_are_not_real_people(brief: str) -> None:
-    assert so.find_real_people(brief) == ()
 
 
 def test_the_clean_archetype_brief_raises_no_notice() -> None:
@@ -200,13 +182,16 @@ def test_a_live_action_brief_pauses_before_anything_is_sent() -> None:
     assert "--accept-notice style_not_available" in text
 
 
-def test_a_named_actor_pauses_and_names_them() -> None:
-    run = _Run([ACCEPTED])
+def test_a_named_actor_is_the_servers_call_and_its_409_pauses() -> None:
+    """Real people are the server's call alone: the brief is sent, the server's 409 pauses it."""
+
+    run = _Run([(409, _envelope(PERSON_NOTICE))])
 
     with pytest.raises(so.BriefNoticePause, match="Park Seo-joon") as stopped:
         _draft(run, ACTOR)
 
-    assert run.bodies == []
+    assert len(run.bodies) == 1, "the 409 itself writes and spends nothing"
+    assert "acknowledged_notices" not in run.bodies[0]
     assert "--accept-notice real_person_not_allowed" in str(stopped.value)
 
 
@@ -344,23 +329,28 @@ Repossession, then the twist. Ends on Dez's face.
 """
 
 
-def test_a_cast_name_in_the_brief_is_not_a_real_person() -> None:
-    # Three Payments Late (5 Oct 2026): "Ends on Dez's face." paused the draft.
-    assert so.find_real_people(CAST_TABLE_BRIEF) == ()
-    assert so.brief_notices(CAST_TABLE_BRIEF) == []
+IRON_PIGEON_BRIEF = """Iron Pigeon. An underground boxing drama.
+
+Characters:
+Mateo Reyes (28, the boxer)
+Lina Reyes (19, his sister)
+
+Episode 1 ends on Mateo Reyes's face pressed into the canvas.
+"""
 
 
-def test_cast_names_come_from_a_table_or_a_list() -> None:
-    assert {"Noor Vatan", "Dez Okoye"} <= set(so.brief_cast_names(CAST_TABLE_BRIEF))
-    listed = "## Cast\n\n- **Mina Park** — the heir\n- Joon: her bodyguard\n\n## Set\n\nA roof.\n"
-    assert {"Mina Park", "Joon"} <= set(so.brief_cast_names(listed))
+@pytest.mark.parametrize("brief", [CAST_TABLE_BRIEF, IRON_PIGEON_BRIEF, ACTOR])
+def test_the_kit_never_guesses_at_real_people_itself(brief: str) -> None:
+    """Iron Pigeon (14 Oct 2026): the kit's copy of the check paused on the lead's own name
+    ("Mateo Reyes's face") because the cast was not under ``## Cast``. Only the server decides."""
 
+    assert so.brief_notices(brief) == []
+    run = _Run([ACCEPTED])
 
-def test_a_real_likeness_is_still_flagged_beside_a_cast() -> None:
-    brief = (
-        CAST_TABLE_BRIEF + "\nDez looks like Park Seo-joon. Ends on Jungkook's face.\n"
-    )
-    assert so.find_real_people(brief) == ("Park Seo-joon", "Jungkook")
+    spine_id, _ = _draft(run, brief)
+
+    assert spine_id == "spine_1" and len(run.bodies) == 1
+    assert run.bodies[0]["prompt"] == brief
 
 
 def test_the_pause_prints_the_phrase_each_notice_matched() -> None:
@@ -410,3 +400,24 @@ def test_the_skill_asks_for_few_long_fight_shots_lead_seams_and_offscreen_sound(
         assert "**Fights are few, long shots**" in text
         assert "**Seams: the same close-up of the lead**" in text
         assert "**Off-screen sound stays sound**" in text
+
+
+#: The shared case list (fictora-drama ``tests/fixtures/realism_parity_cases.json``
+#: is the same file); both suites pin its digest so the two checks cannot drift.
+REALISM_PARITY_SHA256 = (
+    "80054b4f10602bb7f81cddae354d9471b607eefd8b7dce85bc66064f82508dfa"
+)
+_PARITY = Path(__file__).parent / "fixtures" / "realism_parity_cases.json"
+
+
+def test_the_realism_parity_cases_are_the_servers() -> None:
+    assert hashlib.sha256(_PARITY.read_bytes()).hexdigest() == REALISM_PARITY_SHA256
+
+
+@pytest.mark.parametrize(
+    "case", json.loads(_PARITY.read_text())["cases"], ids=lambda case: case["text"]
+)
+def test_the_kit_reads_a_realism_ask_as_the_server_does(
+    case: dict[str, object],
+) -> None:
+    assert (so.find_photoreal_request(str(case["text"])) is not None) is case["ask"]

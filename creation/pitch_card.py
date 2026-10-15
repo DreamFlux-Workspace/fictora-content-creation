@@ -778,7 +778,10 @@ def desk_voice_lines(desk: Path) -> list[str]:
             else {}
         )
         voice = brief.get("provider_voice") or "no voice yet"
-        lines.append(f"  {card.get('name') or card.get('cast_id')}: {voice}")
+        # The story's own role tag ("Grandmother", "The creature") when the server wrote one.
+        label = str(card.get("role_label") or "").strip()
+        name = card.get("name") or card.get("cast_id")
+        lines.append(f"  {name} ({label}): {voice}" if label else f"  {name}: {voice}")
     return lines
 
 
@@ -789,6 +792,18 @@ def _desk_spine(desk: Path) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return raw if isinstance(raw, dict) else None
+
+
+def _desk_place(desk: Path) -> str:
+    """The story's place in one line, from the server's ``world_profile.place``.
+
+    Empty when the server wrote none. ``materials`` is never used: a world
+    nobody settled keeps the creator's whole brief there.
+    """
+
+    spine = _desk_spine(desk) or {}
+    world = spine.get("world_profile")
+    return str(world.get("place") or "").strip() if isinstance(world, Mapping) else ""
 
 
 def _desk_shot_lines(desk: Path, episode: int) -> list[str]:
@@ -850,6 +865,9 @@ def pitch_text(
         from creation.hook_line import gate_hook_line_lines
 
         out.extend(gate_hook_line_lines(desk, _desk_spine(desk), stored.episode))
+    place = _desk_place(desk)
+    if place:
+        out.append(f"  Place: {place}")
     out.append("  World rules:")
     out.extend(f"    - {rule}" for rule in pitch.get("world_rules") or [])
     out.extend(_desk_shot_lines(desk, stored.episode))

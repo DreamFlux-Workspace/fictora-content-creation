@@ -490,6 +490,24 @@ def test_cue_flags_a_silent_render_and_refuses_a_bad_length_before_calling(
     assert len(audio.calls) == 1
 
 
+@needs_ffmpeg
+def test_a_monster_cue_is_sent_as_written_for_the_server_to_word(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GRAFT (14 Oct 2026): "monster" was refused until it said "no voice, no animal"; the server words it now."""
+
+    _downloads(monkeypatch)
+    audio = FakeAudio()
+
+    handmade.run_cue(post_desk, episode=1, description="a monster as the door opens", seconds=1.0,
+                     audio=audio, out=io.StringIO())  # fmt: skip
+
+    ((_, sent),) = audio.calls
+    assert sent["sound"] == "a monster as the door opens", (
+        "thin pass-through: no kit-side words"
+    )
+
+
 class FakeSpineApi:
     def __init__(self, spine: dict[str, Any]) -> None:
         self.spine_body = spine

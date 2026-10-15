@@ -89,6 +89,10 @@ class SfxCue:
     #: Where the take facts say the cue came from: ``sound_line``, ``impact`` (an action the story
     #: states) or ``note``. Read only by the action snap (:mod:`creation.post.sfx_motion`).
     source: str = "sound_line"
+    #: The server's call that this cue is a big impact beat (take facts ``sfx_cues[].impact``: ``blast`` or
+    #: ``hit``; a fight's strike included), ``None`` on every other cue and on an older server's facts.
+    #: Read only by the impact step's offline fallback (:mod:`creation.post.impact_post`).
+    impact: str | None = None
     #: 0 for the first render; 1 when a render came back silent or the wrong shape and the SAME
     #: cue (same sound label, same placement) is asked for once more. Never part of the cache key.
     remake: int = 0
@@ -331,6 +335,7 @@ def plan_from_take_facts(payload: dict[str, Any]) -> SfxPlan:
             gain_db=noted_gain_db(cue),
             note_ids=tuple(str(note) for note in cue.get("note_ids") or []),
             source=str(cue.get("source") or "sound_line"),
+            impact=cue["impact"] if cue.get("impact") in ("blast", "hit") else None,
         )
         for cue in facts.get("sfx_cues") or []
         if str(cue.get("sound") or "").strip() and _cue_identity(cue) not in dropped_ids

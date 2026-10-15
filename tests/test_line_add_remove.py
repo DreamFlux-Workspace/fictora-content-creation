@@ -491,3 +491,61 @@ def test_an_added_line_carries_the_tier_the_server_would_classify(
     """
 
     assert dialogue_tier(text) == tier
+
+
+# --- a new voice matched to a listed real person: the one-tap notice (fictora-drama #833) ----------
+
+
+def test_accept_notice_sends_acknowledged_notices_with_a_new_voice(
+    desk: Path, api: FakeApi
+) -> None:
+    _before_gate(api)
+
+    ec.run_line(
+        desk, episode=1, add=True, beat="2", text="Begin the test.", new_voice="Speaker voice",
+        role="Facility intercom", voice_description="sounds like Taylor Swift", speaker_moves=True,
+        accept_notices=("real_person_not_allowed",), out=io.StringIO(),
+    )  # fmt: skip
+
+    patch = _patches(api)[-1]
+    assert patch["acknowledged_notices"] == ["real_person_not_allowed"]
+    assert (
+        patch["add_voice_only_cast"][0]["voice_description"]
+        == "sounds like Taylor Swift"
+    )
+
+
+def test_without_accept_notice_no_acknowledgement_is_sent(
+    desk: Path, api: FakeApi
+) -> None:
+    _before_gate(api)
+
+    ec.run_line(
+        desk, episode=1, add=True, beat="2", text="Begin the test.", new_voice="Speaker voice",
+        role="Facility intercom", voice_description="tinny, clipped, calm", speaker_moves=True, out=io.StringIO(),
+    )  # fmt: skip
+
+    assert "acknowledged_notices" not in _patches(api)[-1]
+
+
+def test_the_servers_voice_notice_says_how_to_go_on() -> None:
+    message = (
+        "HTTP 409 PATCH /v1/spines/s: brief_needs_creator_choice: We can't match a voice to a real person "
+        '(Taylor Swift). (details {"cast_ids": ["cast_speaker-voice"]})'
+    )
+    fixed = ec.explain_refusal(message, spine_fixture(), episode=1)
+
+    assert "--accept-notice real_person_not_allowed" in fixed
+
+
+def test_cli_line_takes_accept_notice(
+    desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(ec, "run_line", lambda *a, **k: seen.update(k))
+    produce_main(
+        ["line", "--desk", str(desk), "--episode", "1", "--add", "--beat", "2", "--text", "x",
+         "--new-voice", "Kai", "--role", "r", "--voice-description", "v", "--accept-notice",
+         "real_person_not_allowed"]
+    )  # fmt: skip
+    assert seen["accept_notices"] == ["real_person_not_allowed"]

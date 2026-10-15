@@ -1,0 +1,22 @@
+{
+ "about": "Shared by fictora-drama (tests/drama_generation/test_boards_obey_brief.py) and fictora-content-creation (tests/test_stylised_only.py). Edit both copies together: each suite pins this file's sha256.",
+ "cases": [
+  {"text": "photoreal please", "ask": true},
+  {"text": "I want it live action", "ask": true},
+  {"text": "Photorealistic faces, shot on 35mm.", "ask": true},
+  {"text": "Nothing less than photoreal.", "ask": true},
+  {"text": "No other style than photorealistic.", "ask": true},
+  {"text": "Never anything but photorealistic.", "ask": true},
+  {"text": "nothing but photoreal", "ask": true},
+  {"text": "no photoreal faces but live-action actors", "ask": true},
+  {"text": "Stylised manhwa ink, never photoreal.", "ask": false},
+  {"text": "No live-action, anime only.", "ask": false},
+  {"text": "Don't make it photorealistic.", "ask": false},
+  {"text": "dont want it photorealistic", "ask": false},
+  {"text": "anything but photoreal", "ask": false},
+  {"text": "avoid hyper-realistic faces", "ask": false},
+  {"text": "non-photoreal ink style", "ask": false},
+  {"text": "Realistic dialogue about grief; a realistic story of two sisters.", "ask": false},
+  {"text": "Cinematic lighting, manhwa ink linework, no clichés.", "ask": false}
+ ]
+}
