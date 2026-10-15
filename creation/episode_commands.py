@@ -8137,27 +8137,28 @@ def add_episode_parsers(
 
     outfit = sub.add_parser(
         "outfit",
-        help="A character's outfits: list them (free), --add one to the card (free; the sheet redraw is "
-        "priced, then drawn on --confirm-spend), --wear one for some --episodes (tags every shot, free), "
-        "or --remove one.",
+        help="A character's outfits, kept by the server: list them (free), --add one to the card (free; the "
+        "sheet redraw is priced, then drawn on --confirm-spend), --wear one for some --episodes (the server "
+        "tags every written shot and dresses episodes written later, free), or --remove one.",
     )
     outfit.add_argument("--desk", type=Path, required=True)
     outfit.add_argument(
         "--cast", required=True, help="The character's name or cast id."
     )
-    outfit_action = outfit.add_mutually_exclusive_group()
-    outfit_action.add_argument(
+    outfit.add_argument(
         "--add",
         metavar="LABEL",
-        help='A new outfit\'s name, e.g. "black gown" (with --look).',
+        help='A new outfit\'s name, e.g. "black gown" (with --look); may come with --wear.',
     )
-    outfit_action.add_argument(
+    outfit.add_argument(
         "--wear",
         metavar="LABEL",
         help='The outfit to wear in --episodes: one of theirs, or "base".',
     )
-    outfit_action.add_argument(
-        "--remove", metavar="LABEL", help="Take an outfit off the card (unused only)."
+    outfit.add_argument(
+        "--remove",
+        metavar="LABEL",
+        help="Take an outfit off the card (unused only; alone).",
     )
     outfit.add_argument(
         "--look",
@@ -8761,30 +8762,24 @@ def dispatch_episode(args: argparse.Namespace) -> int:
         if args.command == "outfit":
             from creation import outfit_commands
 
-            if args.add is not None:
-                outfit_commands.run_outfit_add(
-                    args.desk,
-                    cast=args.cast,
-                    label=args.add,
-                    look=args.look,
-                    preview_only=args.preview,
-                    confirm_spend=args.confirm_spend,
-                )
-            elif args.wear is not None:
-                if not args.episodes:
+            if args.remove is not None:
+                if args.add is not None or args.wear is not None:
                     raise CommandStopped(
-                        "--wear needs --episodes (5, 5-6 or 5,7); nothing was sent"
+                        "--remove comes alone, without --add or --wear; nothing was sent"
                     )
-                outfit_commands.run_outfit_wear(
-                    args.desk,
-                    cast=args.cast,
-                    label=args.wear,
-                    episodes=args.episodes,
-                    preview_only=args.preview,
-                )
-            elif args.remove is not None:
                 outfit_commands.run_outfit_remove(
                     args.desk, cast=args.cast, label=args.remove
+                )
+            elif args.add is not None or args.wear is not None:
+                outfit_commands.run_outfit_change(
+                    args.desk,
+                    cast=args.cast,
+                    add=args.add,
+                    look=args.look,
+                    wear=args.wear,
+                    episodes=args.episodes,
+                    preview_only=args.preview,
+                    confirm_spend=args.confirm_spend,
                 )
             else:
                 outfit_commands.run_outfit_list(args.desk, cast=args.cast)
