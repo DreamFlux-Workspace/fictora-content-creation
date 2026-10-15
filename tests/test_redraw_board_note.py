@@ -536,3 +536,49 @@ def test_the_note_refusal_and_schema_helpers() -> None:
     assert regenerate_note_support(404, None) is None
     assert regenerate_note_support(200, "not json") is None
     assert regenerate_note_support(200, openapi_doc()) is False
+
+
+def test_a_second_redraw_with_a_new_note_while_one_runs_stops_and_sends_nothing(
+    desk: Path, api: FakeApi
+) -> None:
+    """L-20261014-28: the second redraw joined the first's job and dropped its note silently."""
+
+    from creation.production_state import save_production
+
+    _record_digest(desk, api)
+    _regen_routes(api)
+    _note_on_redraw_deploy(api)
+    state = load_production(desk)
+    unit = "boards-ep01-t1-redraw"
+    state.pending[unit] = {
+        "key": "k-a1",
+        "job_id": "job_live",
+        "note": "an earlier note",
+    }
+    save_production(desk, state)
+    api.jobs["job_live"] = {"status": "running"}
+
+    with pytest.raises(ec.CommandStopped, match="this note was NOT sent"):
+        ec.run_redraw_board(desk, episode=1, take_id="t1", note=NOTE, out=io.StringIO())
+
+    assert api.posted(REGEN) == [] and api.posted(TURNS) == []
+    assert load_production(desk).pending[unit]["job_id"] == "job_live"
+
+
+def test_a_redraw_saves_its_note_on_the_unit_it_runs_under(
+    desk: Path, api: FakeApi
+) -> None:
+    _record_digest(desk, api)
+    _regen_routes(api)
+    _note_on_redraw_deploy(api)
+    seen: list[Any] = []
+    regenerate = api.routes[("POST", REGEN)]
+
+    def spy(method: str, path: str, body: dict | None) -> dict:
+        seen.append(load_production(desk).pending.get("boards-ep01-t1-redraw"))
+        return regenerate(method, path, body)  # type: ignore[operator]
+
+    api.routes[("POST", REGEN)] = spy
+    ec.run_redraw_board(desk, episode=1, take_id="t1", note=NOTE, out=io.StringIO())
+
+    assert seen and seen[0]["note"] == NOTE

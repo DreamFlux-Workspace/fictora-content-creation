@@ -642,7 +642,13 @@ def run_outfit_change(
         if key not in _priced(desk):
             _mark_priced(desk, key, on=True)
             print(_sheet_price(desk, who, name, again=True), file=out)
-            return None
+            # A yes the kit cannot honour is a stop (exit 2), never a quiet exit 0 that lets the
+            # next paid command on the same shell line run over it (L-20261014-28).
+            raise ec.CommandStopped(
+                f'outfit --confirm-spend did NOT draw "{name}" on {who}\'s sheet: no price was shown for it on '
+                "this desk. Nothing was sent or charged. Show the price above to the human, then run it again "
+                "on its own line."
+            )
     finally:
         session.close()
     plate = ec.run_redraw_plate_with_note(

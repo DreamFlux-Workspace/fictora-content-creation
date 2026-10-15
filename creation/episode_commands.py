@@ -5890,6 +5890,16 @@ def run_redraw_board(
     restart_dead_saved_job(desk, run, unit=unit, video_route=True)
     state = load_production(desk)
     resuming = bool((state.pending.get(unit) or {}).get("job_id"))
+    if not resuming and note is not None:
+        # The note rides on the saved unit, so a second redraw-board of this take while this one
+        # runs can tell its note from this one (it stops rather than drop it, L-20261014-28).
+        entry = state.pending.get(unit) or {
+            "key": f"{state.idempotency_prefix}-{unit}-a{state.attempts.get(unit, 0) + 1}",
+            "job_id": None,
+        }
+        entry["note"] = note
+        state.pending[unit] = entry
+        save_production(desk, state)
     if note is None:
         print(f"[board] {REDRAW_CAUSE_IS_A_LABEL}.", file=sys.stderr)
     extra: dict[str, Any] = {"episode_count": episode}
@@ -5901,6 +5911,15 @@ def run_redraw_board(
         )
         key = f"ep{episode:02d}-{take_id}"
         if resuming:
+            in_flight = (state.pending.get(unit) or {}).get("note")
+            if note is not None and in_flight is not None and in_flight != note:
+                # A second redraw of the same take with a new note joined the first and dropped the
+                # note without a word (L-20261014-28): stop instead; nothing is sent or charged.
+                raise CommandStopped(
+                    f"a redraw of {take_id} is already under way with another note; this note was NOT sent "
+                    "and nothing was charged. Wait for it (`fictora-produce collect-takes` / run the same "
+                    "redraw-board again without --note), then redraw with the new note on its own line."
+                )
             print(
                 f"[board] {take_id}: a redraw is already under way; picking it up (a note was applied before it "
                 "and is not sent again).",

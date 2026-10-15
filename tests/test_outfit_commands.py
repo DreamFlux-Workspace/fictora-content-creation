@@ -108,9 +108,17 @@ def test_confirm_spend_draws_only_after_the_price_was_shown(
     )
     out = io.StringIO()
 
-    oc.run_outfit_add(
-        desk, cast="Hana", label="Black Gown", look=None, confirm_spend=True, out=out
-    )
+    # A yes with no price shown stops (exit 2), so `a && b` never runs b over a silent no-op
+    # (L-20261014-28).
+    with pytest.raises(ec.CommandStopped, match="did NOT draw"):
+        oc.run_outfit_add(
+            desk,
+            cast="Hana",
+            label="Black Gown",
+            look=None,
+            confirm_spend=True,
+            out=out,
+        )
 
     assert drawn == []
     assert "No price shown for this redraw yet." in out.getvalue()
