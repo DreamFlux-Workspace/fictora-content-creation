@@ -40,14 +40,6 @@ _PROPORTIONS = re.compile(
     r"oversized head|huge eyes|large eyes|chubby|small body|short limbs|baby proportions",
     re.IGNORECASE,
 )
-_CREATURE = re.compile(
-    r"\b(?:creature|monster|beast|dragon|hatchling|wyrm|reptile|demon|wolf|hound)\b",
-    re.IGNORECASE,
-)
-_CREATURE_SOUND_OK = re.compile(
-    r"\b(?:hiss|roar|growl|screech|howl|bark|chirp|snarl|shriek|bellow|croak|yelp|whine|rumble)\b",
-    re.IGNORECASE,
-)
 _LINE_START = re.compile(r"\((\d+(?:\.\d+)?)\s*[–-]")
 
 #: A one- or two-word line held longer than this was stretched by the transcript.
@@ -724,34 +716,6 @@ def young_creature_lines(spine: Mapping[str, Any]) -> list[str]:
             "small body. A look note does not hold; use redraw-plate --note with those words."
         )
     return lines
-
-
-def creature_sound_stop(description: str) -> str | None:
-    """Refuse a non-human cue that does not name its sound.
-
-    A non-human cue comes back as a familiar animal unless the description
-    names the sound. Place that sound on the frame the mouth opens.
-
-    Parameters
-    ----------
-    description
-        The cue description about to be sent.
-
-    Returns
-    -------
-    str | None
-        The stop line, or ``None`` when the cue is not a creature or already names the sound.
-    """
-
-    if (
-        _CREATURE.search(description) is None
-        or _CREATURE_SOUND_OK.search(description) is not None
-    ):
-        return None
-    return (
-        "A non-human cue comes back as a familiar animal unless the description names the sound. "
-        "Name the sound, say what it is not, and place it on the frame the mouth opens."
-    )
 
 
 def short_line_hold(text: str, *, start: float, end: float) -> str | None:
