@@ -44,6 +44,7 @@ New rules apply to new desks (user decision, 6 Oct 2026, "only for new desks"). 
 - Approve plates, script or a board in the turn you enrolled them.
 - Overwrite a desk file. New version, new `-vN` name (`fictora-ops next-path`). A desk that already exists for that date and slug is refused by `start`: never delete it or pick another folder to get round it; ask the human.
 - Write your own HTTP around the API. Where no command exists it is a DEVIATION (reference.md) and a backlog line.
+- Download a media URL (a take's stem or track, music, a take, a board) with Python `urllib` or a script of your own: the media host refuses urllib's default client with 403 (Cloudflare "error code: 1010", L-20261014-21). Every kit command already saves what it needs; for any other file use `uv run fictora-ops fetch URL --out PATH` (a new file; `fictora-ops next-path` names one). It sends a browser user agent and tries again after a refusal, so `curl -A` is never needed.
 - Fetch, save, print or quote a compiled prompt (`GET /v1/jobs/{id}/provider-spec`). Record job ids instead (Prompt policy).
 - Clone or read `fictora-drama`. Edit product code or settings to get a different look.
 - Print or commit `FICTORA_DRAMA_GENERATION_SERVICE_TOKEN`.

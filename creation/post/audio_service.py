@@ -419,9 +419,8 @@ def download(url: str, dest: Path) -> Path:
         ``dest``.
     """
 
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    with httpx.Client(timeout=180.0, follow_redirects=True) as client:
-        response = client.get(url)
-        response.raise_for_status()
-        dest.write_bytes(response.content)
-    return dest
+    from creation.media_fetch import fetch_to
+
+    # Stems, tracks and music: a browser user agent and one more try after a
+    # refusal (the media host blocks some client names, L-20261014-21).
+    return fetch_to(url, dest)

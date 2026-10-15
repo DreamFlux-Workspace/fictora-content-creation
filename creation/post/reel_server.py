@@ -37,6 +37,7 @@ from typing import Any
 import httpx
 
 from creation.harness.http_util import api_error_text
+from creation.media_fetch import MEDIA_HEADERS
 
 #: The reel route, as ``/openapi.json`` lists it.
 REEL_ROUTE = "/v1/video-generations/{job_id}/episodes/{episode_id}/reel"
@@ -207,7 +208,9 @@ class ReelServer:
                 raise ReelServerError(f"no Drama API credentials ({exc})") from exc
         self.run = run
         self.http = http or httpx.Client(
-            timeout=UPLOAD_TIMEOUT_SECONDS, follow_redirects=True
+            timeout=UPLOAD_TIMEOUT_SECONDS,
+            follow_redirects=True,
+            headers=MEDIA_HEADERS,
         )
         self._own_http = http is None
         #: An upload was taken from ``uploads.json`` instead of sent (a failed reel then uploads again).
