@@ -350,6 +350,90 @@ class MotionSnaps:
         return "; ".join(parts)
 
 
+#: A fight shot at least this long is searched end to end for its strikes (the server's
+#: ``sfx_motion.LONG_FIGHT_SHOT_SECONDS``): a one-shot spar holds many blows, its hit cue at the start.
+LONG_FIGHT_SHOT_SECONDS = 5.0
+
+
+def fight_strike_peaks(
+    trace: Trace,
+    shot: tuple[float, float],
+    *,
+    cuts: tuple[float, ...] = (),
+    typical: float,
+    spacing: float,
+    limit: int = 2,
+) -> tuple[tuple[float, float], ...]:
+    """The strongest strike spikes across one long fight shot, strongest first (the server's search).
+
+    The server plans the punch-ins with the same search (fictora-drama ``sfx_motion.fight_strike_peaks``),
+    so the kit's hit sound lands under the server's first punch-in. Same numbers, pinned.
+
+    Parameters
+    ----------
+    trace
+        The take's motion trace.
+    shot
+        The shot as filmed.
+    cuts
+        Cuts measured on the take.
+    typical
+        The take's median motion.
+    spacing
+        The least time between two strikes kept.
+    limit
+        At most this many.
+
+    Returns
+    -------
+    tuple[tuple[float, float], ...]
+        ``(time, value)`` spikes.
+    """
+
+    guard = MOTION_CUT_GUARD_SECONDS
+    edges = (shot[0], shot[1], *cuts)
+    inside = [
+        (t, v)
+        for t, v in trace
+        if shot[0] + guard <= t <= shot[1] - guard
+        and all(abs(t - edge) >= guard for edge in edges)
+    ]
+    peaks = [
+        (t, v)
+        for t, v in inside
+        if v >= typical * MOTION_PEAK_OVER_MEDIAN
+        and v - typical >= MOTION_PEAK_MIN_RISE
+        and all(
+            v >= other
+            for u, other in inside
+            if abs(u - t) <= MOTION_PEAK_SPREAD_SECONDS
+        )
+    ]
+    kept: list[tuple[float, float]] = []
+    for t, v in sorted(peaks, key=lambda item: (-item[1], item[0])):
+        if all(abs(t - other) >= spacing for other, _ in kept):
+            kept.append((t, v))
+        if len(kept) >= limit:
+            break
+    return tuple(kept)
+
+
+def _big_hit(cue: object) -> bool:
+    """A one-moment big impact (the server's ``impact`` call, else the words)."""
+
+    from creation.post.ambience import impact_weight
+
+    sound = str(getattr(cue, "sound", ""))
+    return (
+        getattr(cue, "kind", "event") == "event"
+        and not names_several_hits(sound)
+        and (
+            getattr(cue, "impact", None) in ("blast", "hit")
+            or impact_weight(sound) is not None
+        )
+    )
+
+
 def snap_to_action(
     cues: tuple,
     windows: Mapping[int, tuple[float, float]],
@@ -357,6 +441,7 @@ def snap_to_action(
     *,
     cuts: tuple[float, ...] = (),
     window: float = MOTION_SNAP_WINDOW_SECONDS,
+    fight: bool = False,
 ) -> tuple[tuple, MotionSnaps]:
     """Move each action cue to its action's spike (:func:`action_moment`), one cue per spike.
 
@@ -378,6 +463,9 @@ def snap_to_action(
         Cuts measured on the take.
     window
         How far a cue may move.
+    fight
+        A fight take (take facts ``fight``): a big hit on a shot of :data:`LONG_FIGHT_SHOT_SECONDS` or
+        more goes under the shot's strongest strike, where the server's impact plan punches in first.
 
     Returns
     -------
@@ -395,9 +483,20 @@ def snap_to_action(
         if names_several_hits(cue.sound):
             kept_at[position] = "several hits, not one movement"
             continue
-        peak = action_moment(
-            trace, around=cue.start, shot=shot, cuts=cuts, window=window
-        )
+        if fight and shot[1] - shot[0] >= LONG_FIGHT_SHOT_SECONDS and _big_hit(cue):
+            strikes = fight_strike_peaks(
+                trace, shot, cuts=cuts, typical=median(v for _t, v in trace) if trace else 0.0,
+                spacing=0.8, limit=1,
+            )  # fmt: skip
+            peak = (
+                Peak(strikes[0][0], "the shot's strongest strike")
+                if strikes
+                else Peak(None, "no strike spike")
+            )
+        else:
+            peak = action_moment(
+                trace, around=cue.start, shot=shot, cuts=cuts, window=window
+            )
         if peak.time is None:
             kept_at[position] = peak.reason
         else:
