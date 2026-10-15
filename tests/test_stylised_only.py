@@ -410,3 +410,54 @@ def test_the_skill_asks_for_few_long_fight_shots_lead_seams_and_offscreen_sound(
         assert "**Fights are few, long shots**" in text
         assert "**Seams: the same close-up of the lead**" in text
         assert "**Off-screen sound stays sound**" in text
+
+
+# --- Rename-required notices (server, 15 Oct 2026) -------------------------------------------
+
+NAMED_IP_NOTICE = {
+    "kind": "named_ip_not_allowed",
+    "message": (
+        "Naruto Uzumaki is a character someone else owns (Naruto). Fictora only makes original characters, "
+        "so rename this character in your cast: keep the genre, the tropes and the vibe, give them an "
+        "original name and look, and send it again."
+    ),
+    "asked_for": "Naruto Uzumaki",
+    "named_characters": ["Naruto Uzumaki"],
+    "rename_required": True,
+}
+CAST_PERSON_NOTICE = {
+    **PERSON_NOTICE,
+    "message": "Taylor Swift is a real person. We can't draw or voice real people, in any style, so rename.",
+    "asked_for": "Taylor Swift",
+    "real_people": ["Taylor Swift"],
+    "rename_required": True,
+}
+
+
+def test_accept_notice_never_clears_a_rename_required_notice() -> None:
+    owed = so.unacknowledged(
+        [NAMED_IP_NOTICE, CAST_PERSON_NOTICE, STYLE_NOTICE],
+        ["real_person_not_allowed", "named_ip_not_allowed", "style_not_available"],
+    )
+
+    assert [notice["kind"] for notice in owed] == ["named_ip_not_allowed", "real_person_not_allowed"]
+
+
+def test_a_rename_required_409_pauses_with_rename_words_even_when_accepted() -> None:
+    run = _Run([(409, _envelope(NAMED_IP_NOTICE))])
+
+    with pytest.raises(so.BriefNoticePause) as stopped:
+        _draft(run, "A ninja story.", accept=("real_person_not_allowed",))
+
+    text = str(stopped.value)
+    assert len(run.bodies) == 1, "nothing is resent: an acknowledgement cannot clear it"
+    assert "Naruto Uzumaki is a character someone else owns" in text
+    assert "Rename required" in text and "does not clear this one" in text
+    assert "--accept-notice named_ip_not_allowed" not in text
+
+
+def test_a_rename_required_real_person_is_not_offered_accept_notice() -> None:
+    text = so.pause_text([CAST_PERSON_NOTICE], desk="desk-1")
+
+    assert "Rename required" in text
+    assert "--accept-notice real_person_not_allowed" not in text

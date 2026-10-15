@@ -10,6 +10,14 @@
   original character with the same vibe; the cast gate shows it before
   anything is drawn.
 
+**No real people or someone else's characters in the cast (15 Oct 2026).** A
+cast member named after a real person ("Taylor Swift") or a character a
+studio or publisher owns ("Naruto Uzumaki", ``named_ip_not_allowed``) is
+caught by the server only (its curated list plus one cheap model check); the
+kit keeps no list of its own. Such a notice carries ``rename_required``:
+``--accept-notice`` never clears it, and the pause says to rename the
+character in the brief and bind again.
+
 The rule lives on the server (``fictora-drama``): a draft that breaks it is
 answered ``409 brief_needs_creator_choice`` with ``details.notices``. This
 module mirrors its cheap deterministic check so the kit pauses *before* it
@@ -31,6 +39,9 @@ from typing import Any
 #: Notice kinds the server raises and the operator acknowledges.
 STYLE_NOT_AVAILABLE = "style_not_available"
 REAL_PERSON_NOT_ALLOWED = "real_person_not_allowed"
+#: A cast member named after a character someone else owns (server, 15 Oct 2026).
+#: Never acknowledgeable, so not in :data:`NOTICE_KINDS`.
+NAMED_IP_NOT_ALLOWED = "named_ip_not_allowed"
 NOTICE_KINDS: tuple[str, ...] = (STYLE_NOT_AVAILABLE, REAL_PERSON_NOT_ALLOWED)
 #: The draft refusal that carries the notices.
 BRIEF_NEEDS_CREATOR_CHOICE = "brief_needs_creator_choice"
@@ -391,11 +402,33 @@ def unacknowledged(
     Returns
     -------
     list[Mapping[str, Any]]
-        Notices still owed a choice.
+        Notices still owed a choice. A ``rename_required`` notice is always
+        owed: only renaming the character in the brief clears it.
     """
 
     taken = set(accepted)
-    return [notice for notice in notices if str(notice.get("kind")) not in taken]
+    return [
+        notice
+        for notice in notices
+        if notice.get("rename_required") is True or str(notice.get("kind")) not in taken
+    ]
+
+
+def needs_rename(notice: Mapping[str, Any]) -> bool:
+    """Whether only a rename clears this server notice (``rename_required``).
+
+    Parameters
+    ----------
+    notice
+        A server notice.
+
+    Returns
+    -------
+    bool
+        True for a cast member named after a real person or someone else's character.
+    """
+
+    return notice.get("rename_required") is True
 
 
 def pause_text(
@@ -448,6 +481,13 @@ def pause_text(
                 "--preset-id <id>`, then `fictora-produce step --desk "
                 f"{desk} --accept-notice {STYLE_NOT_AVAILABLE}`."
             )
+        elif needs_rename(notice):
+            lines.append(
+                "    Rename required: the cast names a real person or a character someone else owns. "
+                "`--accept-notice` does not clear this one (founder rule: original characters only). "
+                "Rename them in the brief with the creator (keep the vibe, new name and look), then "
+                f"`fictora-produce bind --desk {desk} --prompt <brief>` and step again."
+            )
         elif kind == REAL_PERSON_NOT_ALLOWED:
             lines.append(
                 "    The writer makes an original character with the same vibe (new name, new look); the creator "
@@ -487,6 +527,7 @@ def photoreal_look_warning(text: str) -> str | None:
 __all__ = [
     "BRIEF_NEEDS_CREATOR_CHOICE",
     "NOTICE_KINDS",
+    "NAMED_IP_NOT_ALLOWED",
     "REAL_PERSON_NOT_ALLOWED",
     "STYLE_NOT_AVAILABLE",
     "STYLISED_PRESETS",
@@ -499,5 +540,6 @@ __all__ = [
     "pause_text",
     "photoreal_look_warning",
     "server_notices",
+    "needs_rename",
     "unacknowledged",
 ]

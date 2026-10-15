@@ -202,7 +202,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         choices=NOTICE_KINDS,
         help="Draft only: the creator saw this brief notice and chose to go on "
         "(style_not_available after picking a stylised preset; real_person_not_allowed to let the "
-        "writer make an original character). Repeat for both.",
+        "writer make an original character). Repeat for both. A notice the server marks rename_required "
+        "(a cast member named after a real person or someone else's character) is never cleared this way: "
+        "rename them in the brief and bind again.",
     )
     add_narrator_answer_args(step)
 
