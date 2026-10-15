@@ -2,7 +2,7 @@
 
 Two kinds of check:
 
-- **Gates** (look, plates, script, board approved). A human says yes before
+- **Gates** (look, plates, script, board approved and still current). A human says yes before
   money moves. These block; nothing overrides them.
 - **Warnings** (line count, board luma, estimate, envelope, hand-off,
   re-roll cause). The hand-off warns only on a later take of an episode
@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from creation.ops.luma import measure_board_luma
+from creation.prices import STILL_USD
+from creation.production_state import load_production
 from creation.ops.state import (
     ENVELOPE_STOP_MULTIPLIER,
     MAX_LINES_PER_TAKE,
@@ -252,6 +254,7 @@ def evaluate_preflight(
             take.board.status,
             f"{take.take_id} board is not approved.",
         ),
+        _board_current(episode, take, desk),
         _board_luma(episode, take, desk),
         _estimate(take),
         _envelope(series, episode, take),
@@ -335,6 +338,32 @@ def _approved(code: str, status: str, detail: str) -> PreflightCheck:
         code=code,
         ok=status == "approved",
         detail=detail if status != "approved" else "ok",
+    )
+
+
+def _board_current(
+    episode: EpisodeState, take: TakeState, desk: Path
+) -> PreflightCheck:
+    """Block a board the server marked stale after it was drawn (an outfit change, a story edit).
+
+    The desk's yes may predate the change, so ``board_approved`` alone passes it
+    (Gallery Heiress, 15 Oct 2026: a board still showing the old outfit).
+    """
+
+    key = f"ep{episode.ordinal:02d}-{take.take_id}"
+    try:
+        stale = key in load_production(desk).boards_stale
+    except (FileNotFoundError, ValueError):
+        stale = False
+    return PreflightCheck(
+        code="board_current",
+        ok=not stale,
+        detail=(
+            f"{take.take_id} board no longer matches the story (an outfit change or a story edit after it was "
+            f"drawn). Ask the human: redraw it for ${float(STILL_USD):.2f}, then approve the new board, then film."
+            if stale
+            else "ok"
+        ),
     )
 
 
