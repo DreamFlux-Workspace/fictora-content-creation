@@ -36,6 +36,12 @@ LOOK_BEFORE_APPROVING = (
 )
 #: The server's findings about letters drawn on a prop or a sign (fictora-drama prop_text).
 LETTERING_KINDS = frozenset({"readable_text", "garbled_text"})
+#: The server's finding for a panel drawn in another outfit than its shot asks for (fictora-drama).
+WRONG_OUTFIT = "wrong_outfit"
+WRONG_OUTFIT_FIX = (
+    "   the shot asks for that outfit: `fictora-produce outfit --desk D --cast NAME` lists what each shot "
+    "wears; if the tags are right, redraw the board (`redraw-board ... --same-shots`, $0.30)"
+)
 _SET_SUFFIX = re.compile(r"_set(\d+)$")
 
 
@@ -67,10 +73,13 @@ def picture_check_lines(raw: Any, *, what: str) -> list[str]:
         return []
     if not findings:
         return [f"picture check: {what}: nothing found"]
-    lines = [
-        f"!! picture check: {what}: {str(item.get('message') or item.get('kind') or 'a warning').strip()}"
-        for item in findings
-    ]
+    lines: list[str] = []
+    for item in findings:
+        lines.append(
+            f"!! picture check: {what}: {str(item.get('message') or item.get('kind') or 'a warning').strip()}"
+        )
+        if item.get("kind") == WRONG_OUTFIT:
+            lines.append(WRONG_OUTFIT_FIX)
     return [*lines, LOOK_BEFORE_APPROVING]
 
 

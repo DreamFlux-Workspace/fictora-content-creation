@@ -7697,6 +7697,7 @@ EPISODE_COMMANDS = frozenset(
         "line",
         "cast",
         "cast-exit",
+        "outfit",
         "look-frame",
         "look",
         "look-note",
@@ -8132,6 +8133,45 @@ def add_episode_parsers(
         "--preview",
         action="store_true",
         help="Print the change (after the gate, the cascade too) and send nothing.",
+    )
+
+    outfit = sub.add_parser(
+        "outfit",
+        help="A character's outfits: list them (free), --add one to the card (free; the sheet redraw is "
+        "priced, then drawn on --confirm-spend), --wear one for some --episodes (tags every shot, free), "
+        "or --remove one.",
+    )
+    outfit.add_argument("--desk", type=Path, required=True)
+    outfit.add_argument(
+        "--cast", required=True, help="The character's name or cast id."
+    )
+    outfit_action = outfit.add_mutually_exclusive_group()
+    outfit_action.add_argument(
+        "--add",
+        metavar="LABEL",
+        help='A new outfit\'s name, e.g. "black gown" (with --look).',
+    )
+    outfit_action.add_argument(
+        "--wear",
+        metavar="LABEL",
+        help='The outfit to wear in --episodes: one of theirs, or "base".',
+    )
+    outfit_action.add_argument(
+        "--remove", metavar="LABEL", help="Take an outfit off the card (unused only)."
+    )
+    outfit.add_argument(
+        "--look",
+        help='With --add: what the outfit is, in words (TEXT or @FILE), e.g. "floor-length black '
+        'silk evening gown, off-shoulder, no jewellery".',
+    )
+    outfit.add_argument("--episodes", help="With --wear: 5, 5-6 or 5,7.")
+    outfit.add_argument(
+        "--preview", action="store_true", help="Print the change and send nothing."
+    )
+    outfit.add_argument(
+        "--confirm-spend",
+        action="store_true",
+        help="With --add: the human said yes to the sheet redraw's price; draw it ($0.30).",
     )
 
     cast_exit = sub.add_parser(
@@ -8717,6 +8757,37 @@ def dispatch_episode(args: argparse.Namespace) -> int:
             run_redraw_plate_with_note(
                 args.desk, cast=args.cast, note=args.note, fresh=args.fresh
             )
+            return 0
+        if args.command == "outfit":
+            from creation import outfit_commands
+
+            if args.add is not None:
+                outfit_commands.run_outfit_add(
+                    args.desk,
+                    cast=args.cast,
+                    label=args.add,
+                    look=args.look,
+                    preview_only=args.preview,
+                    confirm_spend=args.confirm_spend,
+                )
+            elif args.wear is not None:
+                if not args.episodes:
+                    raise CommandStopped(
+                        "--wear needs --episodes (5, 5-6 or 5,7); nothing was sent"
+                    )
+                outfit_commands.run_outfit_wear(
+                    args.desk,
+                    cast=args.cast,
+                    label=args.wear,
+                    episodes=args.episodes,
+                    preview_only=args.preview,
+                )
+            elif args.remove is not None:
+                outfit_commands.run_outfit_remove(
+                    args.desk, cast=args.cast, label=args.remove
+                )
+            else:
+                outfit_commands.run_outfit_list(args.desk, cast=args.cast)
             return 0
         if args.command in ("props", "redraw-prop", "remove-prop"):
             from creation import prop_commands
