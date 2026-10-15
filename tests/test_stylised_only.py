@@ -108,30 +108,6 @@ def test_a_stylised_or_story_realism_brief_is_not_a_photoreal_ask(brief: str) ->
     assert so.find_photoreal_request(brief) is None
 
 
-def test_named_real_people_are_found_by_how_the_brief_uses_them() -> None:
-    assert so.find_real_people(ACTOR) == ("Park Seo-joon",)
-    assert so.find_real_people(IDOL) == ("Jungkook",)
-    assert so.find_real_people("The villain is played by Lee Min-ho.") == (
-        "Lee Min-ho",
-    )
-    assert so.find_real_people("Her voice sounds like Taylor Swift.") == (
-        "Taylor Swift",
-    )
-
-
-@pytest.mark.parametrize(
-    "brief",
-    [
-        ARCHETYPE,
-        "Mina looks like her mother, and he looks like a ghost.",
-        "A cold CEO who looks like he never sleeps.",
-        "It looks like I lost him again; Mina looks like Mom did at her age.",
-    ],
-)
-def test_archetypes_and_family_resemblance_are_not_real_people(brief: str) -> None:
-    assert so.find_real_people(brief) == ()
-
-
 def test_the_clean_archetype_brief_raises_no_notice() -> None:
     assert so.brief_notices(ARCHETYPE) == []
 
@@ -206,13 +182,16 @@ def test_a_live_action_brief_pauses_before_anything_is_sent() -> None:
     assert "--accept-notice style_not_available" in text
 
 
-def test_a_named_actor_pauses_and_names_them() -> None:
-    run = _Run([ACCEPTED])
+def test_a_named_actor_is_the_servers_call_and_its_409_pauses() -> None:
+    """Real people are the server's call alone: the brief is sent, the server's 409 pauses it."""
+
+    run = _Run([(409, _envelope(PERSON_NOTICE))])
 
     with pytest.raises(so.BriefNoticePause, match="Park Seo-joon") as stopped:
         _draft(run, ACTOR)
 
-    assert run.bodies == []
+    assert len(run.bodies) == 1, "the 409 itself writes and spends nothing"
+    assert "acknowledged_notices" not in run.bodies[0]
     assert "--accept-notice real_person_not_allowed" in str(stopped.value)
 
 
@@ -350,23 +329,28 @@ Repossession, then the twist. Ends on Dez's face.
 """
 
 
-def test_a_cast_name_in_the_brief_is_not_a_real_person() -> None:
-    # Three Payments Late (5 Oct 2026): "Ends on Dez's face." paused the draft.
-    assert so.find_real_people(CAST_TABLE_BRIEF) == ()
-    assert so.brief_notices(CAST_TABLE_BRIEF) == []
+IRON_PIGEON_BRIEF = """Iron Pigeon. An underground boxing drama.
+
+Characters:
+Mateo Reyes (28, the boxer)
+Lina Reyes (19, his sister)
+
+Episode 1 ends on Mateo Reyes's face pressed into the canvas.
+"""
 
 
-def test_cast_names_come_from_a_table_or_a_list() -> None:
-    assert {"Noor Vatan", "Dez Okoye"} <= set(so.brief_cast_names(CAST_TABLE_BRIEF))
-    listed = "## Cast\n\n- **Mina Park** — the heir\n- Joon: her bodyguard\n\n## Set\n\nA roof.\n"
-    assert {"Mina Park", "Joon"} <= set(so.brief_cast_names(listed))
+@pytest.mark.parametrize("brief", [CAST_TABLE_BRIEF, IRON_PIGEON_BRIEF, ACTOR])
+def test_the_kit_never_guesses_at_real_people_itself(brief: str) -> None:
+    """Iron Pigeon (14 Oct 2026): the kit's copy of the check paused on the lead's own name
+    ("Mateo Reyes's face") because the cast was not under ``## Cast``. Only the server decides."""
 
+    assert so.brief_notices(brief) == []
+    run = _Run([ACCEPTED])
 
-def test_a_real_likeness_is_still_flagged_beside_a_cast() -> None:
-    brief = (
-        CAST_TABLE_BRIEF + "\nDez looks like Park Seo-joon. Ends on Jungkook's face.\n"
-    )
-    assert so.find_real_people(brief) == ("Park Seo-joon", "Jungkook")
+    spine_id, _ = _draft(run, brief)
+
+    assert spine_id == "spine_1" and len(run.bodies) == 1
+    assert run.bodies[0]["prompt"] == brief
 
 
 def test_the_pause_prints_the_phrase_each_notice_matched() -> None:

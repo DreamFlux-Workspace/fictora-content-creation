@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from creation.harness_rules import (
     adult_face_lines,
-    creature_sound_stop,
     film_stops,
     gain_match_note,
     hands_on_sound_lines,
@@ -189,13 +188,6 @@ def test_a_young_creature_without_proportions_is_named() -> None:
         "a newborn, oversized head, large eyes, small body"
     )
     assert young_creature_lines(spine) == []
-
-
-def test_a_creature_cue_must_say_it_is_not_a_cat() -> None:
-    stopped = creature_sound_stop("a monster as the door opens")
-    assert stopped is not None and "names the sound" in stopped
-    assert creature_sound_stop("a wolf howl at the gate") is None
-    assert creature_sound_stop("a cat meow") is None
 
 
 def test_a_short_line_held_for_seconds_is_named() -> None:

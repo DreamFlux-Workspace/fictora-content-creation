@@ -28,7 +28,7 @@ from typing import Any, TextIO
 
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
-from creation.harness_rules import creature_sound_stop, mouth_sound_note
+from creation.harness_rules import mouth_sound_note
 from creation.post.audio_service import AudioService, DramaApiAudio, download
 from creation.post.desk import (
     cast_slug,
@@ -128,8 +128,8 @@ def run_cue(
     Raises
     ------
     ValueError
-        When the description is empty, the length is out of range, or a non-human
-        cue does not name its sound.
+        When the description is empty or the length is out of range. A creature
+        or monster cue is never refused: the server words it.
     """
 
     out = out or sys.stdout
@@ -137,9 +137,8 @@ def run_cue(
     sound = description.strip()
     if not sound:
         raise ValueError("--description is empty: say what the cue should sound like")
-    creature = creature_sound_stop(sound)
-    if creature:
-        raise ValueError(creature + " Nothing was sent.")
+    # A creature or monster cue is sent as written: the server adds the words that keep it
+    # from coming back as a familiar animal or a person (GRAFT, 14 Oct 2026).
     mouth = mouth_sound_note(sound)
     if mouth:
         print(mouth, file=out)
@@ -153,7 +152,11 @@ def run_cue(
     key = _key(f"cue-ep{episode:02d}", {"sound": sound, "seconds": round(seconds, 2)})
     print(f"Rendering the cue {sound!r} ({seconds:g} s) on the server", file=out)
     answer = service.sfx_cue(
-        spine_id=spine_id(desk), sound=sound, seconds=round(seconds, 2), key=key
+        spine_id=spine_id(desk),
+        sound=sound,
+        seconds=round(seconds, 2),
+        key=key,
+        server_words_creature_cues=True,
     )
     dest = download(
         str(answer["audio_url"]),
