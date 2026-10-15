@@ -297,8 +297,12 @@ def test_confirm_spend_without_a_shown_price_sends_nothing(
 
     # A yes the kit cannot honour stops (exit 2), so `a && b` never runs b over a silent no-op
     # (L-20261014-28).
-    with pytest.raises(CommandStopped, match="did NOT draw Wooden Sign: no price was shown"):
-        pc.run_redraw_prop(desk, prop="Wooden Sign", note=NOTE, confirm_spend=True, out=out)
+    with pytest.raises(
+        CommandStopped, match="did NOT draw Wooden Sign: no price was shown"
+    ):
+        pc.run_redraw_prop(
+            desk, prop="Wooden Sign", note=NOTE, confirm_spend=True, out=out
+        )
 
     assert "No price shown for this redraw yet." in out.getvalue()
     assert api.posted(ENROL) == []
@@ -318,7 +322,9 @@ def test_confirm_spend_after_the_price_changed_stops_and_sends_nothing(
             asset["stale"] = False
 
     with pytest.raises(CommandStopped, match=r"price changed from \$0\.60 to \$0\.30"):
-        pc.run_redraw_prop(desk, prop="Wooden Sign", note=NOTE, confirm_spend=True, out=io.StringIO())
+        pc.run_redraw_prop(
+            desk, prop="Wooden Sign", note=NOTE, confirm_spend=True, out=io.StringIO()
+        )
 
     assert api.posted(ENROL) == [] and api.posted(REDRAW) == []
 

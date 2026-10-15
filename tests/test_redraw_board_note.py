@@ -550,7 +550,11 @@ def test_a_second_redraw_with_a_new_note_while_one_runs_stops_and_sends_nothing(
     _note_on_redraw_deploy(api)
     state = load_production(desk)
     unit = "boards-ep01-t1-redraw"
-    state.pending[unit] = {"key": "k-a1", "job_id": "job_live", "note": "an earlier note"}
+    state.pending[unit] = {
+        "key": "k-a1",
+        "job_id": "job_live",
+        "note": "an earlier note",
+    }
     save_production(desk, state)
     api.jobs["job_live"] = {"status": "running"}
 
@@ -561,7 +565,9 @@ def test_a_second_redraw_with_a_new_note_while_one_runs_stops_and_sends_nothing(
     assert load_production(desk).pending[unit]["job_id"] == "job_live"
 
 
-def test_a_redraw_saves_its_note_on_the_unit_it_runs_under(desk: Path, api: FakeApi) -> None:
+def test_a_redraw_saves_its_note_on_the_unit_it_runs_under(
+    desk: Path, api: FakeApi
+) -> None:
     _record_digest(desk, api)
     _regen_routes(api)
     _note_on_redraw_deploy(api)
