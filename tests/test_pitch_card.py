@@ -920,7 +920,9 @@ def test_the_pitch_card_prints_the_place_and_each_role_tag_the_server_wrote(
 
 def test_an_older_spine_prints_no_place_line(desk: Path) -> None:
     (desk / "api").mkdir(exist_ok=True)
-    (desk / "api" / "spine.json").write_text(json.dumps(spine_fixture()), encoding="utf-8")
+    (desk / "api" / "spine.json").write_text(
+        json.dumps(spine_fixture()), encoding="utf-8"
+    )
     store_pitch(desk, 1, card())
     out = io.StringIO()
 
