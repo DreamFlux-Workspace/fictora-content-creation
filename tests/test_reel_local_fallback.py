@@ -27,7 +27,7 @@ from reel_fake_server import FakeReelServer
 
 pytestmark = needs_ffmpeg
 
-LINE = "Reel made locally (the server reel engine refused: operator_upload_unavailable); same rules"
+LINE = "Reel made locally (the server reel engine refused: operator_upload_unavailable); same rules, but action hits are not protected (only the server's reel engine keeps them)"
 
 
 def _rgb(path: Path, index: int = 0) -> tuple[int, int, int]:
@@ -147,7 +147,10 @@ def test_a_silent_server_or_one_without_the_route_also_falls_back(
     assert (
         result.video is not None and result.video.is_file() and result.cover is not None
     )
-    assert f"Reel made locally ({why}); same rules" in out.getvalue()
+    assert (
+        f"Reel made locally ({why}); same rules, but action hits are not protected (only the server's reel engine keeps them)"
+        in out.getvalue()
+    )
     assert _latest(reel_desk)["reel"] == "reels/ep01/reel-ep01-v1.mp4"
 
 

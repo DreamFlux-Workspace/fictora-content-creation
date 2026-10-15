@@ -1400,7 +1400,12 @@ def local_fallback_line(exc: Exception, *, made: bool = True) -> str:
     from creation.post.reel_server import ReelServerError, fallback_reason
 
     why = fallback_reason(exc) if isinstance(exc, ReelServerError) else str(exc)
-    return f"{'Reel' if made else 'Reel plan'} made locally ({why}); same rules"
+    # The local engine is the frozen pre-v8 planner: it cuts by lines and never protects a fight's hits
+    # (fictora-drama reel-rules-v8, L-20261014-15), so the line says so.
+    return (
+        f"{'Reel' if made else 'Reel plan'} made locally ({why}); same rules, but action hits are not "
+        "protected (only the server's reel engine keeps them)"
+    )
 
 
 def local_fallback_reel(

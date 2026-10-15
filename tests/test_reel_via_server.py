@@ -205,7 +205,7 @@ def test_a_server_that_does_not_answer_gets_the_reel_cut_locally(
     assert code == 0
     said = capsys.readouterr().out
     assert (
-        "Reel made locally (the server reel engine did not answer: ConnectError); same rules"
+        "Reel made locally (the server reel engine did not answer: ConnectError); same rules, but action hits are not protected (only the server's reel engine keeps them)"
         in said
     )
     assert (reel_desk / "reels" / "ep01" / "reel-ep01-v1.mp4").is_file()
