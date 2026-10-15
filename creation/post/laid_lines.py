@@ -10,11 +10,15 @@ filming, at its planned time, with the creator's words exactly. The take facts
 say which lines it laid::
 
     laid_after_filming: [{"line_id": str, "speaker": str,
-                          "start_seconds": float, "end_seconds": float}]
+                          "start_seconds": float, "end_seconds": float,
+                          "spine_line_id": str}]   # spine_line_id when known
 
 ``line_id`` is the spine's crowd line id for a background voice, and
 ``<scene>-s<shot>-l<position>`` for a cast line (the take's id, the shot, the
-line's place among the shot's lines). ``speaker`` is the name the take prints.
+line's place among the shot's lines). ``spine_line_id`` (newer servers) is the
+story's own line id (``dialogue_lines[]`` or crowd line) and names the script
+line outright; without it the kit matches by speaker, shot and time.
+``speaker`` is the name the take prints.
 Times are on the filmed take. The list is left out on every other take, and an
 older server never sends it: then nothing here changes anything.
 
@@ -56,6 +60,8 @@ class LaidLine:
     speaker: str
     start: float
     end: float
+    #: The story's own line id, when the server sends it (``spine_line_id``).
+    spine_line_id: str = ""
 
     @property
     def shot_index(self) -> int | None:
@@ -107,7 +113,8 @@ def laid_after_filming(facts: Mapping[str, Any] | None) -> tuple[LaidLine, ...]:
             or end <= start
         ):
             continue
-        out.append(LaidLine(line_id, speaker, float(start), float(end)))
+        story = str(row.get("spine_line_id") or "").strip()
+        out.append(LaidLine(line_id, speaker, float(start), float(end), story))
     return tuple(out)
 
 
@@ -129,8 +136,9 @@ def laid_line_ids(
 ) -> dict[str, LaidLine]:
     """Which of the take's spine lines the server laid after filming.
 
-    A background voice's row names its spine line id. A cast line's row names
-    the take's own id, so it is found by its speaker (the cast card of that
+    A row with ``spine_line_id`` (newer servers) names its line outright. Without
+    it, a background voice's row names its spine line id, and a cast line's row
+    names the take's own id, so it is found by its speaker (the cast card of that
     name) among the take facts' ``lines[]``, in the row's shot (else by time),
     first unclaimed first.
 
@@ -167,7 +175,13 @@ def laid_line_ids(
         ]
     known = {str(row["line_id"]) for row in rows} | set(owners)
     found: dict[str, LaidLine] = {}
+    # The server's own id first, so the fallback below never takes a line it names.
     for item in laid:
+        if item.spine_line_id:
+            found.setdefault(item.spine_line_id, item)
+    for item in laid:
+        if item.spine_line_id:
+            continue
         if item.line_id in known:
             found.setdefault(item.line_id, item)
             continue

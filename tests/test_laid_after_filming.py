@@ -432,3 +432,38 @@ def test_finish_stops_before_making_anything_on_a_second_lay(post_desk: Path) ->
             voices=(Placed(pa, 2.6),), stream=io.StringIO(),
         )  # fmt: skip
     assert not list((post_desk / "ep01" / "takes").glob("take-ep01-t1-voice-*.mp4"))
+
+
+def test_spine_line_id_names_the_script_line_when_the_server_sends_it() -> None:
+    from creation.post.laid_lines import laid_line_ids
+
+    facts = take_facts(laid=True)
+    rows = facts["take_facts"]["laid_after_filming"]
+    # A speaker the cast does not know by that name: only the story's own id can name the line.
+    rows[0].update({"speaker": "Voice on the platform", "spine_line_id": "l3"})
+    rows[1]["spine_line_id"] = "c1"
+    assert sorted(laid_line_ids(facts, cast_names=NAMES)) == ["c1", "l3"]
+
+
+def test_spine_line_id_wins_over_the_speaker_and_shot_fallback() -> None:
+    from creation.post.laid_lines import laid_line_ids
+
+    facts = take_facts(laid=True)
+    # Two lines of the PA in shot 2: the fallback takes the first, the server's id names the second.
+    facts["take_facts"]["lines"].append(
+        {
+            "line_id": "l4",
+            "count": 1,
+            "shot_index": 2,
+            "start_seconds": 2.5,
+            "end_seconds": 5.0,
+            "cast_id": "cast_pa",
+        }
+    )
+    facts["take_facts"]["laid_after_filming"][0]["spine_line_id"] = "l4"
+    found = laid_line_ids(facts, cast_names=NAMES)
+    assert "l4" in found and "l3" not in found
+    del facts["take_facts"]["laid_after_filming"][0]["spine_line_id"]
+    assert "l3" in laid_line_ids(facts, cast_names=NAMES), (
+        "rows without it: speaker and shot, as before"
+    )
