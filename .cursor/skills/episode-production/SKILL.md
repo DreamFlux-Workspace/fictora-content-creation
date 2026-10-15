@@ -59,6 +59,8 @@ New rules apply to new desks (user decision, 6 Oct 2026, "only for new desks"). 
 1 Brief + pitch card → 2 Draft → 3 Pitch yes → 4 Plates → 5 Voices → 6 Script yes → 7 Board → 8 Estimate → 9 Take → 10 Read → 11 Finish
 ```
 
+Every `approve` below is `fictora-produce approve` except the episode-is-final yes, which is `fictora-ops approve --desk D --gate post --episode N [--path FILE]` (Long Shadow L-20261014-18). Sent to the wrong command, each prints the exact line to run and records nothing (exit 2).
+
 | Stage | Command | Gate |
 | --- | --- | --- |
 | Desk | `fictora-produce start --series "…" --prompt "…" --band 15s --preset-id ID --video-lane minimax-h3 --clip-seconds 15 --cut-tempo T` (a new show films in locked voices; `--voice-mode model` only when the human asks for the video model's own voices: see "Show voices") | Say **aligned** before the first paid step |

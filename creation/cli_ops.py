@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Sequence
 
 from creation.cli_text import force_utf8_output, json_or_file
+from creation.gate_tools import PITCH_GATE, POST_GATE, wrong_tool_for_gate
 from creation.ops.adopt import AdoptRefused, adopt_desk
 from creation.ops.floor import (
     add_episode,
@@ -51,6 +52,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     _add_folder_parsers(sub)
     _add_floor_parsers(sub)
     args = parser.parse_args(list(argv) if argv is not None else None)
+    if args.command == "approve" and args.gate == PITCH_GATE:
+        print(wrong_tool_for_gate(args), file=sys.stderr)
+        return 2
     try:
         return _dispatch(args)
     except (AdoptRefused, FileExistsError, FileNotFoundError, ValueError) as exc:
@@ -135,7 +139,10 @@ def _add_floor_parsers(
     )
     ap.add_argument("--desk", type=Path, required=True)
     ap.add_argument(
-        "--gate", required=True, choices=("look", "plates", "script", "board", "post")
+        "--gate",
+        required=True,
+        # "pitch" is accepted only to say where it lives (fictora-produce).
+        choices=("look", "plates", "script", "board", POST_GATE, PITCH_GATE),
     )
     ap.add_argument("--episode", type=int, default=None)
     ap.add_argument("--take", default=None)
