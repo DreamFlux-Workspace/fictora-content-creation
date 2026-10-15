@@ -887,3 +887,43 @@ def test_a_restrained_kind_on_a_grief_beat_is_warned_without_a_pitch() -> None:
         "Hana holds her late mother's umbrella. Expression: Hana — tear_up"
     )
     assert restraint_beat_lines(spine, episode=1) == []
+
+
+def test_the_pitch_card_prints_the_place_and_each_role_tag_the_server_wrote(
+    desk: Path,
+) -> None:
+    spine = spine_fixture()
+    spine["world_profile"] = {
+        "palette": ["the story palette"],
+        "materials": "Its a monster clash\n\nReading: The brief.\n\nCast:\nGodzilla (protagonist): ...",
+        "lighting": "the world's own light on these surfaces",
+        "wardrobe": "",
+        "place": "A shattered coastal industrial basin",
+    }
+    spine["cast"][0]["role_label"] = "Grandmother"
+    (desk / "api").mkdir(exist_ok=True)
+    (desk / "api" / "spine.json").write_text(json.dumps(spine), encoding="utf-8")
+    store_pitch(desk, 1, card())
+    out = io.StringIO()
+
+    run_pitch(desk, episode=1, out=out)
+
+    printed = out.getvalue()
+    assert "  Place: A shattered coastal industrial basin" in printed
+    # The brief a world nobody settled keeps in materials is never printed as the place.
+    assert "Reading: The brief." not in printed
+    first = spine["cast"][0]
+    assert f"  {first['name']} (Grandmother): " in printed
+    second = spine["cast"][1]
+    assert f"  {second['name']}: " in printed
+
+
+def test_an_older_spine_prints_no_place_line(desk: Path) -> None:
+    (desk / "api").mkdir(exist_ok=True)
+    (desk / "api" / "spine.json").write_text(json.dumps(spine_fixture()), encoding="utf-8")
+    store_pitch(desk, 1, card())
+    out = io.StringIO()
+
+    run_pitch(desk, episode=1, out=out)
+
+    assert "  Place:" not in out.getvalue()
