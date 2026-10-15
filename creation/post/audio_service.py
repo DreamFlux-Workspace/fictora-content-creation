@@ -157,9 +157,15 @@ class AudioService(Protocol):
         ...
 
     def sfx_cue(
-        self, *, spine_id: str, sound: str, seconds: float, key: str
+        self,
+        *,
+        spine_id: str,
+        sound: str,
+        seconds: float,
+        key: str,
+        server_words_creature_cues: bool = False,
     ) -> dict[str, Any]:
-        """``{audio_url, kind, shape_problem, cached, cost_usd}``."""
+        """``{audio_url, kind, shape_problem, cached, cost_usd}``; the flag only from the ``cue`` command."""
         ...
 
     def music_bed(
@@ -274,26 +280,38 @@ class DramaApiAudio:
         )
 
     def sfx_cue(
-        self, *, spine_id: str, sound: str, seconds: float, key: str
+        self,
+        *,
+        spine_id: str,
+        sound: str,
+        seconds: float,
+        key: str,
+        server_words_creature_cues: bool = False,
     ) -> dict[str, Any]:
         """POST ``/v1/spines/{id}/sfx-cues`` with the :data:`CUE_DEADLINE_SECONDS` deadline.
 
-        The body says ``server_words_creature_cues: true``: the kit sends a
-        monster cue as written and relies on the server to word it (fictora-drama
-        #826). A server without that refuses the field (422, nothing made or
-        spent), and the kit stops with :data:`CREATURE_CUE_SERVER_TOO_OLD`
-        instead of sending a cue that could come back as a dog or a person.
+        Only the ``cue`` command (a hand cue) passes ``server_words_creature_cues``:
+        the kit sends a monster cue as written and relies on the server to word it
+        (fictora-drama #826). A server without that refuses the field (422,
+        nothing made or spent), and the kit stops with
+        :data:`CREATURE_CUE_SERVER_TOO_OLD` instead of sending a cue that could
+        come back as a dog or a person. ``finish``'s Sound-line effects and the
+        ambience never send it, so a continuing show's effects keep their words
+        and their cache, and an older server still makes them.
         """
 
+        body: dict[str, Any] = {"sound": sound, "seconds": seconds}
+        if server_words_creature_cues:
+            body[CREATURE_CUE_FLAG] = True
         try:
             return self._post(
                 f"/v1/spines/{spine_id}/sfx-cues",
-                {"sound": sound, "seconds": seconds, CREATURE_CUE_FLAG: True},
+                body,
                 key,
                 deadline_seconds=CUE_DEADLINE_SECONDS,
             )
         except AudioServiceError as exc:
-            if creature_flag_refused(str(exc)):
+            if server_words_creature_cues and creature_flag_refused(str(exc)):
                 raise AudioServiceError(CREATURE_CUE_SERVER_TOO_OLD) from exc
             raise
 

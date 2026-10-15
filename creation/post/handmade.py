@@ -152,7 +152,11 @@ def run_cue(
     key = _key(f"cue-ep{episode:02d}", {"sound": sound, "seconds": round(seconds, 2)})
     print(f"Rendering the cue {sound!r} ({seconds:g} s) on the server", file=out)
     answer = service.sfx_cue(
-        spine_id=spine_id(desk), sound=sound, seconds=round(seconds, 2), key=key
+        spine_id=spine_id(desk),
+        sound=sound,
+        seconds=round(seconds, 2),
+        key=key,
+        server_words_creature_cues=True,
     )
     dest = download(
         str(answer["audio_url"]),
