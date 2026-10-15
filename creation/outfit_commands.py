@@ -56,6 +56,7 @@ from creation.desk_media_urls import drawn_cast_rows
 from creation.harness.http_util import api_error_text
 from creation.orchestrate import save_spine_snapshot
 from creation.prices import STILL_USD
+from creation.production_state import load_production, save_production
 
 #: Most outfits one card holds (``DramaCastVisualBrief.wardrobe_variants``, max_length=4).
 MAX_OUTFITS = 4
@@ -398,6 +399,39 @@ def _print_change(
             )
 
 
+def _mark_boards_stale(
+    desk: Path, answer: Mapping[str, Any], *, who: str, label: str | None, out: Any
+) -> None:
+    """Record boards drawn in the old outfit as stale on the desk, and say: ask the human now.
+
+    The server marks them stale too (approval and filming refuse them); the
+    desk record makes preflight block the take even when its board was approved
+    before the change, and ``redraw-board`` clears it.
+    """
+
+    keys = sorted(
+        {
+            f"ep{int(b.get('episode_ordinal') or 0):02d}-t{int(b.get('set_index') or 1)}"
+            for b in answer.get("boards_to_redraw") or []
+            if isinstance(b, Mapping)
+        }
+    )
+    if not keys:
+        return
+    state = load_production(desk)
+    for key in keys:
+        if key not in state.boards_stale:
+            state.boards_stale.append(key)
+    save_production(desk, state)
+    total = float(STILL_USD) * len(keys)
+    print(
+        f"ASK THE HUMAN NOW: {len(keys)} board(s) ({', '.join(keys)}) still show {who} in the old outfit and "
+        f"cannot be approved or filmed until redrawn. Redraw them in {_say(label)} for ${total:.2f} in all? "
+        "On a yes, run the redraw-board lines above; nothing was spent.",
+        file=out,
+    )
+
+
 def _sheet_drawn(spine: Mapping[str, Any], cast_id: str) -> bool:
     drawn = {str(row["cast_id"]) for row in drawn_cast_rows(dict(spine))}
     return cast_id in drawn and cc._has_plates(spine)
@@ -580,6 +614,7 @@ def run_outfit_change(
                 if "wear" in change:
                     what.append(f"wears {_say(wanted)} in episode(s) {episodes}")
                 ec._note(desk, first, f"outfit: {who} ({cast_id}) " + "; ".join(what))
+                _mark_boards_stale(desk, answer, who=who, label=wanted, out=out)
                 print("Applied", file=out)
         if name is None:
             return None
