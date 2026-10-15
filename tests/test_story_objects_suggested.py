@@ -170,3 +170,39 @@ def test_keep_prop_says_the_servers_refusal_plainly(
 
     with pytest.raises(ec.CommandStopped, match=says):
         pc.run_keep_prop(desk, prop="Wooden Sign", out=io.StringIO())
+
+
+def test_a_suggestion_can_be_removed_after_boards_are_drawn(
+    desk: Path, api: FakeApi
+) -> None:
+    # The server allows the "no" on a suggestion (it was never drawn into a board); the kit must too.
+    api.spine_doc["props"] = [dict(SUGGESTED)]
+    boards = desk / "ep01" / "boards"
+    boards.mkdir(parents=True, exist_ok=True)
+    (boards / "board-01.png").write_bytes(b"png")
+    delete = f"/v1/spines/sp1/props/{SIGN_ID}"
+
+    def remove(_m: str, _p: str, _body: dict[str, Any] | None) -> dict[str, Any]:
+        api.spine_doc["props"] = []
+        return api.spine_doc
+
+    api.routes[("DELETE", delete)] = remove
+    out = io.StringIO()
+
+    pc.run_remove_prop(desk, prop="Wooden Sign", out=out)
+
+    assert [(m, p) for m, p, *_ in api.calls if m == "DELETE"] == [("DELETE", delete)]
+    assert "is off the story" in out.getvalue()
+
+
+def test_a_kept_object_is_still_held_once_boards_are_drawn(
+    desk: Path, api: FakeApi
+) -> None:
+    api.spine_doc["props"] = [{**KEPT, "intro_episode_ordinal": 1}]
+    boards = desk / "ep01" / "boards"
+    boards.mkdir(parents=True, exist_ok=True)
+    (boards / "board-01.png").write_bytes(b"png")
+
+    with pytest.raises(ec.CommandStopped, match="already has a drawn board"):
+        pc.run_remove_prop(desk, prop="Wooden Sign", out=io.StringIO())
+    assert all(m != "DELETE" for m, *_ in api.calls)

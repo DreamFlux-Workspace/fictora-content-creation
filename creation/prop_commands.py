@@ -635,7 +635,7 @@ def _episode_has_drawn_board(desk: Path, spine: Mapping[str, Any], ep: int) -> b
 
 
 def run_remove_prop(desk: Path, *, prop: str, out: Any = None) -> list[Path]:
-    """Take one story object off the story. Free; refused once the episode has a drawn board.
+    """Take one story object off the story. Free; refused once the episode has a drawn board (never a suggestion).
 
     Sends ``DELETE /v1/spines/{id}/props/{prop_id}`` (fictora-drama #786) with no
     body and a key of its own; a repeat answers 200 with the story. A
@@ -672,7 +672,9 @@ def run_remove_prop(desk: Path, *, prop: str, out: Any = None) -> list[Path]:
         spine = run.spine(state.spine_id or "")
         card = find_prop(spine, prop)
         prop_id, name = str(card["prop_id"]), str(card.get("name") or card["prop_id"])
-        if _episode_has_drawn_board(desk, spine, ep):
+        # A suggestion (the server's ``proposed``) was never drawn into any board, so the
+        # server always allows its "no"; only a kept object is held by a drawn board.
+        if not is_suggested(card) and _episode_has_drawn_board(desk, spine, ep):
             raise CommandStopped(
                 f"episode {ep} already has a drawn board, so {name} stays on the story (the boards were "
                 "drawn with it). Nothing was sent. If it is wrong, redraw it instead: "
