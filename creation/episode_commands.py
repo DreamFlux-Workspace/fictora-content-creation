@@ -28,9 +28,10 @@ desk with a versioned name, and never approves (the human's yes goes through
   from changed (``--same-shots`` / ``--reroll`` to re-roll).
 - ``plates``: retired (was ``plates --cast NAME --cause``); prints a pointer to ``redraw-plate --note`` and sends nothing.
 - ``redraw-plate --cast X --note "..."``: note one character, then redraw only their plate (one still).
-- ``props`` / ``redraw-prop --prop X --note "..."`` / ``remove-prop --prop X``: the story's objects
-  (:mod:`creation.prop_commands`): list free, redraw one picture ($0.30 each drawn; asks first,
-  draws on ``--confirm-spend``), remove free.
+- ``props`` / ``keep-prop --prop X`` / ``redraw-prop --prop X --note "..."`` / ``remove-prop --prop X``: the
+  story's objects (:mod:`creation.prop_commands`): list free, keep one the server suggested (free; its picture is
+  drawn at the next plates step), redraw one picture ($0.30 each drawn; asks first, draws on ``--confirm-spend``),
+  remove free.
 - ``check-lines``: were the approved lines in the take's instructions, which shot and board row each fell in,
   and is its on-screen speaker in that row (take facts and board frames, never the prompt)?
 - ``film --episode N [--take tK]``: price, then (``--confirm-spend``) film episode N alone or only take K
@@ -82,7 +83,7 @@ from creation.narrator_cast import (
 from creation.narrator_cast import question as narrator_question
 from creation.cli_text import TextArgError, text_or_file
 from creation.new_cast import new_cast_notice, newcomers
-from creation.story_objects import new_objects, new_objects_notice
+from creation.story_objects import new_objects, new_objects_notice, suggested_objects
 from creation.desk_media_urls import drawn_cast_rows
 from creation.post.desk import name_matches
 from creation.harness import stages_gated as stages
@@ -1226,7 +1227,9 @@ def _show_authored(
         print(f"  {summary['summary']}", file=out)
     print(script_gate_text(desk, spine, episode=episode), file=out)
     arrived = new_cast_notice(newcomers(before, spine)) + new_objects_notice(
-        new_objects(before, spine)
+        new_objects(before, spine),
+        suggested={prop_id for prop_id, _ in suggested_objects(spine)},
+        desk=str(desk),
     )
     for line in arrived:
         print(line, file=out)
@@ -7709,6 +7712,7 @@ EPISODE_COMMANDS = frozenset(
         "plates",
         "redraw-plate",
         "props",
+        "keep-prop",
         "redraw-prop",
         "remove-prop",
         "check-lines",
@@ -8442,6 +8446,17 @@ def add_episode_parsers(
         action="store_true",
         help="The human said yes to the total the first run asked about (always needed to draw).",
     )
+    prop_keep = sub.add_parser(
+        "keep-prop",
+        help=(
+            "Say yes to a story object the server suggested. Free; its picture is drawn at the next plates step "
+            "($0.30, once). Until then nothing is drawn or paid for it."
+        ),
+    )
+    prop_keep.add_argument("--desk", type=Path, required=True)
+    prop_keep.add_argument(
+        "--prop", required=True, help="The object's name or prop_id (see `props`)."
+    )
     prop_remove = sub.add_parser(
         "remove-prop",
         help="Take one story object off the story. Free; refused once the episode has a drawn board.",
@@ -8784,11 +8799,13 @@ def dispatch_episode(args: argparse.Namespace) -> int:
             else:
                 outfit_commands.run_outfit_list(args.desk, cast=args.cast)
             return 0
-        if args.command in ("props", "redraw-prop", "remove-prop"):
+        if args.command in ("props", "keep-prop", "redraw-prop", "remove-prop"):
             from creation import prop_commands
 
             if args.command == "props":
                 prop_commands.run_props(args.desk)
+            elif args.command == "keep-prop":
+                prop_commands.run_keep_prop(args.desk, prop=args.prop)
             elif args.command == "redraw-prop":
                 prop_commands.run_redraw_prop(
                     args.desk,

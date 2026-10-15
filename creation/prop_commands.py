@@ -9,7 +9,10 @@ finished, so a hand-rewound desk got that old job back: "Cast drawn", nothing
 drawn. These commands do it in one go, never touching the desk's phase:
 
 - ``props``: free, read-only. Each object, its id, where its picture stands
-  (none / drawn / stale-redraw-asked / approved) and the local file.
+  (suggested / none / drawn / stale-redraw-asked / approved) and the local file.
+- ``keep-prop --prop NAME``: free. The yes to an object the server only
+  suggested (``proposed``, fictora-drama 15 Oct 2026): until then nothing is
+  drawn, priced or paid for it. Once kept, the next plates step draws it.
 - ``redraw-prop --prop NAME --note "..."``: records the note on the object
   (free; skipped when that note is already there) and runs one picture job
   (``cast/enrol``) under a key of its own per note. The server draws only what
@@ -57,6 +60,7 @@ from creation.production_state import load_production, save_production
 from creation.spine_view import episode_id_for
 from creation.desk_media_urls import drawn_cast_rows
 from creation.story_objects import (
+    is_suggested,
     object_slug,
     owed_pictures,
     picture_state,
@@ -221,12 +225,106 @@ def run_props(desk: Path, *, out: Any = None) -> list[dict[str, str]]:
             f"    file: {row['file'] or '(none saved on the desk)'}",
             file=out,
         )
+    if any(row["picture"] == "suggested" for row in rows):
+        print(
+            "picture: suggested = the server suggested this object; nothing is drawn or paid unless the human "
+            f"says yes. Keep it: fictora-produce keep-prop --desk {desk} --prop NAME (free; drawn at the next "
+            "plates step, $0.30 once) | not needed: remove-prop (free).",
+            file=out,
+        )
     print(
         f'Redraw one: fictora-produce redraw-prop --desk {desk} --prop NAME --note "what is wrong"  '
         f"| remove one: fictora-produce remove-prop --desk {desk} --prop NAME",
         file=out,
     )
     return rows
+
+
+# --- keep-prop ---------------------------------------------------------------------------------
+
+
+def run_keep_prop(desk: Path, *, prop: str, out: Any = None) -> Mapping[str, Any]:
+    """Say yes to one story object the server suggested. Free; the next plates step draws its picture.
+
+    Sends ``POST /v1/spines/{id}/props/{prop_id}/keep`` (no body, a key of its
+    own). The server holds the suggestion and says what drawing it costs
+    (``draw_cost_usd``); the kit keeps no list of its own. An object already
+    kept answers 200 with the story as it stands.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    prop
+        The object's name (any case) or ``prop_id``.
+    out
+        Text stream.
+
+    Returns
+    -------
+    Mapping[str, Any]
+        The story after the yes.
+
+    Raises
+    ------
+    CommandStopped
+        Unknown object, or the server's refusal (nothing changed).
+    """
+
+    out = out or sys.stdout
+    desk, state, run = _desk_session(desk)
+    ep = state.episode_ordinal
+    try:
+        spine = run.spine(state.spine_id or "")
+        card = find_prop(spine, prop)
+        prop_id, name = str(card["prop_id"]), str(card.get("name") or card["prop_id"])
+        if not is_suggested(card):
+            print(
+                f"{name} ({prop_id}) is already kept on the story. Nothing was sent or paid.",
+                file=out,
+            )
+            return spine
+        status, answer = run.post_optional(
+            f"/v1/spines/{state.spine_id}/props/{quote(prop_id, safe='')}/keep",
+            {},
+            idempotency_key=f"{state.idempotency_prefix}-prop-keep-{prop_id}",
+        )
+        code = _error_code(answer)
+        if status == 404 and code == "prop_not_found":
+            raise CommandStopped(
+                f"{name} ({prop_id}) is no longer on the story (removed?). Nothing changed; "
+                f"see `fictora-produce props --desk {desk}`."
+            )
+        if status in (404, 405):
+            raise CommandStopped(
+                "keeping objects needs the server update (this server has no keep route). "
+                "Nothing changed or was paid."
+            )
+        if not 200 <= status < 300:
+            raise CommandStopped(
+                f"the server did not keep {name}: HTTP {status} {api_error_text(answer)}. Nothing changed."
+            )
+        spine = (
+            dict(answer)
+            if isinstance(answer, Mapping) and answer.get("spine_id")
+            else run.spine(state.spine_id or "")
+        )
+        save_spine_snapshot(desk, ep, spine)
+    finally:
+        run.client.close()
+    cost = answer.get("draw_cost_usd") if isinstance(answer, Mapping) else None
+    usd = float(cost) if isinstance(cost, (int, float)) else float(STILL_USD)
+    _note(
+        desk,
+        ep,
+        f"object kept: {name} ({prop_id}), $0 now; its picture is owed (${usd:.2f}).",
+    )
+    print(
+        f"{name} ({prop_id}) is kept. Free; nothing was drawn. Its picture (${usd:.2f}, once) is drawn at the "
+        "next plates step, which prices it first; approve it with the cast: `approve --gate plates`.",
+        file=out,
+    )
+    return spine
 
 
 # --- redraw-prop -------------------------------------------------------------------------------
@@ -647,6 +745,7 @@ __all__ = [
     "redraw_price_message",
     "find_prop",
     "local_pictures",
+    "run_keep_prop",
     "run_props",
     "run_redraw_prop",
     "run_remove_prop",

@@ -13,6 +13,13 @@ owed object picture at the plates gate (from episode 2 the episode routes
 through it again, as for a new character), and saves the pictures next to the
 plates so the human sees them before ``approve --gate plates``. A server
 without the feature sends no ``props``: nothing changes.
+
+An object the server only suggests (``proposed: true`` on the card, fictora-drama
+"props held for a yes", 15 Oct 2026) is never drawn, priced or held for: it is
+not owed a picture and does not route the episode through the plates gate.
+The kit reads the server's mark and never keeps its own list: ``author`` and
+``props`` say it is waiting, ``keep-prop`` is the yes (free), ``remove-prop``
+the no (free).
 """
 
 from __future__ import annotations
@@ -26,14 +33,36 @@ from creation.desk_media_urls import drawn_cast_rows
 #: Every episode at once: an object written for a later episode is still a picture the story owes.
 ANY_EPISODE = 10**6
 
-PictureState = Literal["none", "drawn", "stale-redraw-asked", "approved"]
+PictureState = Literal["suggested", "none", "drawn", "stale-redraw-asked", "approved"]
 
 
-def _props(spine: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+def _cards(spine: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return [
         card
         for card in spine.get("props") or []
         if isinstance(card, Mapping) and card.get("prop_id")
+    ]
+
+
+def is_suggested(card: Mapping[str, Any]) -> bool:
+    """Whether the server only suggested this object and is waiting for the human's yes (``proposed``)."""
+
+    return card.get("proposed") is True
+
+
+def _props(spine: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """The objects the story keeps: a suggestion is never drawn, priced or held for."""
+
+    return [card for card in _cards(spine) if not is_suggested(card)]
+
+
+def suggested_objects(spine: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """``(prop_id, name)`` of each object the server suggested and the human has not kept, in card order."""
+
+    return [
+        (str(card["prop_id"]), str(card.get("name") or card["prop_id"]))
+        for card in _cards(spine)
+        if is_suggested(card)
     ]
 
 
@@ -158,13 +187,13 @@ def object_slug(card: Mapping[str, Any]) -> str:
 
 
 def prop_cards(spine: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    """The story's objects (``spine.props``), in card order; empty on a server without them."""
+    """The story's objects (``spine.props``), suggestions included, in card order; empty on a server without them."""
 
-    return _props(spine)
+    return _cards(spine)
 
 
 def picture_state(spine: Mapping[str, Any], prop_id: str) -> PictureState:
-    """Where one object's picture stands: ``none``, ``drawn``, ``stale-redraw-asked`` or ``approved``.
+    """Where one object's picture stands: ``suggested``, ``none``, ``drawn``, ``stale-redraw-asked`` or ``approved``.
 
     Parameters
     ----------
@@ -176,11 +205,16 @@ def picture_state(spine: Mapping[str, Any], prop_id: str) -> PictureState:
     Returns
     -------
     str
-        ``none`` (never drawn), ``stale-redraw-asked`` (a redraw was asked; the
+        ``suggested`` (the server suggested it; nothing is drawn until
+        ``keep-prop``), ``none`` (never drawn), ``stale-redraw-asked`` (a redraw was asked; the
         next picture run draws it), ``approved`` (current and approved with the
         cast), else ``drawn`` (current, waiting for the human's yes).
     """
 
+    if any(
+        str(card["prop_id"]) == prop_id and is_suggested(card) for card in _cards(spine)
+    ):
+        return "suggested"
     picture = _latest_pictures(spine).get(prop_id)
     if picture is None or not picture.get("url"):
         return "none"
@@ -260,27 +294,55 @@ def new_objects(
 ) -> list[tuple[str, str]]:
     """The story objects ``after`` has that ``before`` did not, in card order."""
 
-    known = {str(card["prop_id"]) for card in _props(before)}
+    known = {str(card["prop_id"]) for card in _cards(before)}
     return [
         (str(card["prop_id"]), str(card.get("name") or card["prop_id"]))
-        for card in _props(after)
+        for card in _cards(after)
         if str(card["prop_id"]) not in known
     ]
 
 
-def new_objects_notice(found: list[tuple[str, str]]) -> list[str]:
-    """The lines ``author`` prints for each story object the episode added."""
+def new_objects_notice(
+    found: list[tuple[str, str]],
+    *,
+    suggested: Collection[str] = (),
+    desk: str = "D",
+) -> list[str]:
+    """The lines ``author`` prints for each story object the episode added.
 
-    return [
-        f"story object added: {name} ({prop_id}) — one picture is drawn at the plates gate (~$0.30, once) "
-        "and every board and take from this episode on keeps to it; approve it with `approve --gate plates`"
-        for prop_id, name in found
-    ]
+    Parameters
+    ----------
+    found
+        ``(prop_id, name)`` of each new object (:func:`new_objects`).
+    suggested
+        The ``prop_id`` s the server only suggested (``proposed``): nothing is
+        drawn or paid for them until the human says yes.
+    desk
+        The desk, for the commands printed.
+    """
+
+    lines: list[str] = []
+    for prop_id, name in found:
+        if prop_id in suggested:
+            lines.append(
+                f"story object suggested: {name} ({prop_id}). Nothing is drawn or paid unless the human "
+                f'says yes. Keep it: `fictora-produce keep-prop --desk {desk} --prop "{name}"` (free; its '
+                f"picture is then drawn at the plates gate, $0.30, once). Not needed: "
+                f'`fictora-produce remove-prop --desk {desk} --prop "{name}"` (free). Left alone, boards draw '
+                "it from the story's words."
+            )
+        else:
+            lines.append(
+                f"story object added: {name} ({prop_id}) — one picture is drawn at the plates gate (~$0.30, once) "
+                "and every board and take from this episode on keeps to it; approve it with `approve --gate plates`"
+            )
+    return lines
 
 
 __all__ = [
     "ANY_EPISODE",
     "cast_owing_plates",
+    "is_suggested",
     "new_objects",
     "new_objects_notice",
     "object_picture_urls",
@@ -291,4 +353,5 @@ __all__ = [
     "owed_pictures",
     "picture_state",
     "prop_cards",
+    "suggested_objects",
 ]
