@@ -167,7 +167,7 @@ def test_shouts_are_never_characters_or_counted_lines() -> None:
         "Hana",
     ]
     assert not any(
-        "lines; a 15 s take holds three" in row
+        "lines; a take holds three" in row
         for row in script_lines(spine, episode=1, take_ids=["t1"])
     )
     assert ec.episode_lines(spine, episode=1)[-1][1]["line_id"] == "line_episode_01_03"

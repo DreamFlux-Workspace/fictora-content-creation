@@ -236,5 +236,8 @@ def test_a_giant_drawn_at_another_size_says_where_its_size_comes_from() -> None:
         WRONG_SCALE_FIX,
         LOOK_BEFORE_APPROVING,
     ]
+    # The hint names the free command that states the size without a redraw of the plate.
+    assert "fictora-produce cast --desk D --name NAME --look" in WRONG_SCALE_FIX
+    assert "silhouette:" in WRONG_SCALE_FIX
     # Only on that finding: another warning gets no size hint.
     assert WRONG_SCALE_FIX not in picture_check_lines([BACK_OF_HEAD], what="t2 board")

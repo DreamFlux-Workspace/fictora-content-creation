@@ -46,8 +46,10 @@ WRONG_OUTFIT_FIX = (
 #: The server's finding for a creature drawn at another size than its card states (fictora-drama creature_scale).
 WRONG_SCALE = "wrong_scale"
 WRONG_SCALE_FIX = (
-    "   the size comes from the creature's card (\"four times Ren's height\"); if the card says it, redraw "
-    "the board (`redraw-board ... --same-shots`, $0.30): the board prompt prints that size on every panel"
+    "   the size comes from the creature's card (\"four times Ren's height\"); to state or fix it, free: "
+    "`fictora-produce cast --desk D --name NAME --look \"silhouette: <its silhouette>, about four times Ren's "
+    "height\"` (the server keeps Ren off the creature's own plate), then redraw the board "
+    "(`redraw-board ... --same-shots`, $0.30)"
 )
 _SET_SUFFIX = re.compile(r"_set(\d+)$")
 
