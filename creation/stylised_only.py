@@ -173,7 +173,18 @@ _RULED_OUT = re.compile(
     re.IGNORECASE,
 )
 #: Where the words before a match stop counting: a new clause.
-_CLAUSE_START = re.compile(r"[.;:!?\n,]|(?<!anything )\b(?:but|and|or|yet|so|instead)\b", re.IGNORECASE)
+_CLAUSE_START = re.compile(
+    r"[.;:!?\n,]|(?<!anything )\b(?:but|and|or|yet|so|instead)\b", re.IGNORECASE
+)
+
+
+#: Double negatives that ask for the look right after them.
+_EMPHATIC = re.compile(
+    r"\b(?:less|other|else|rather|more)\s+(?:\w+\s+){0,2}than\s*$|"
+    r"\b(?:nothing|never\s+anything|not\s+anything|nothing\s+else|no\s+\w+)\s+but\s*$|"
+    r"\b(?:nothing|never)\s+short\s+of\s*$|\bexcept\s*$",
+    re.IGNORECASE,
+)
 
 
 def _ruled_out(text: str, start: int) -> bool:
@@ -183,7 +194,12 @@ def _ruled_out(text: str, start: int) -> bool:
     cut = 0
     for boundary in _CLAUSE_START.finditer(before):
         cut = boundary.end()
-    return _RULED_OUT.search(before[cut:]) is not None
+    clause = before[cut:]
+    # "nothing less than photoreal", "no other style than photorealistic",
+    # "never anything but photorealistic": an emphatic ask, not a ban.
+    if _EMPHATIC.search(clause):
+        return False
+    return _RULED_OUT.search(clause) is not None
 
 
 _CAST_HEADING = re.compile(

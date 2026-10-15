@@ -9,7 +9,9 @@ ask for a photoreal look are warned about, never blocked.
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 from pathlib import Path
 from typing import Any
 
@@ -414,3 +416,24 @@ def test_the_skill_asks_for_few_long_fight_shots_lead_seams_and_offscreen_sound(
         assert "**Fights are few, long shots**" in text
         assert "**Seams: the same close-up of the lead**" in text
         assert "**Off-screen sound stays sound**" in text
+
+
+#: The shared case list (fictora-drama ``tests/fixtures/realism_parity_cases.json``
+#: is the same file); both suites pin its digest so the two checks cannot drift.
+REALISM_PARITY_SHA256 = (
+    "80054b4f10602bb7f81cddae354d9471b607eefd8b7dce85bc66064f82508dfa"
+)
+_PARITY = Path(__file__).parent / "fixtures" / "realism_parity_cases.json"
+
+
+def test_the_realism_parity_cases_are_the_servers() -> None:
+    assert hashlib.sha256(_PARITY.read_bytes()).hexdigest() == REALISM_PARITY_SHA256
+
+
+@pytest.mark.parametrize(
+    "case", json.loads(_PARITY.read_text())["cases"], ids=lambda case: case["text"]
+)
+def test_the_kit_reads_a_realism_ask_as_the_server_does(
+    case: dict[str, object],
+) -> None:
+    assert (so.find_photoreal_request(str(case["text"])) is not None) is case["ask"]
