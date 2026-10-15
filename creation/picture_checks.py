@@ -6,7 +6,8 @@ what it found as warnings: a board row the shot list does not have, a spoken
 line drawn on the back of the speaker's head, one person drawn twice, a man
 drawn for a woman's card, a forbidden element, a take that opens wide on a
 close-up board, letters drawn on a prop or a sign (``garbled_text`` /
-``readable_text``). Until now nothing compared the picture with its spec before a
+``readable_text``), a creature drawn at another size than its card states
+(``wrong_scale``). Until now nothing compared the picture with its spec before a
 human looked, and each miss became a paid redraw or a re-film.
 
 This module only prints them, one ``!!`` line each, plus "look before
@@ -41,6 +42,12 @@ WRONG_OUTFIT = "wrong_outfit"
 WRONG_OUTFIT_FIX = (
     "   the shot asks for that outfit: `fictora-produce outfit --desk D --cast NAME` lists what each shot "
     "wears; if the tags are right, redraw the board (`redraw-board ... --same-shots`, $0.30)"
+)
+#: The server's finding for a creature drawn at another size than its card states (fictora-drama creature_scale).
+WRONG_SCALE = "wrong_scale"
+WRONG_SCALE_FIX = (
+    "   the size comes from the creature's card (\"four times Ren's height\"); if the card says it, redraw "
+    "the board (`redraw-board ... --same-shots`, $0.30): the board prompt prints that size on every panel"
 )
 _SET_SUFFIX = re.compile(r"_set(\d+)$")
 
@@ -80,6 +87,8 @@ def picture_check_lines(raw: Any, *, what: str) -> list[str]:
         )
         if item.get("kind") == WRONG_OUTFIT:
             lines.append(WRONG_OUTFIT_FIX)
+        if item.get("kind") == WRONG_SCALE:
+            lines.append(WRONG_SCALE_FIX)
     return [*lines, LOOK_BEFORE_APPROVING]
 
 
