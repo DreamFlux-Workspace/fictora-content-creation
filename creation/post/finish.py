@@ -236,6 +236,7 @@ from creation.post.hand import (
     level_hand_cues,
     voice_gain,
 )
+from creation.post.laid_lines import finish_laid_guard
 from creation.post.lineage import (
     CHAIN_FILE,
     deboard_clones_behind,
@@ -1091,7 +1092,40 @@ def caption_italic_overrides(
             if isinstance(item, dict) and item.get("line_id")
         ]
     overrides, notes = lb.italic_overrides(spine, facts, take_lines)
+    # A line the server laid after filming (take facts laid_after_filming, fictora-drama #834) is a
+    # voice with no body on the take: heard, not seen, whatever its spine flag says.
+    for line_id in laid_caption_ids(spine, facts):
+        overrides[line_id] = True
+        notes = [n for n in notes if not n.startswith(f"{line_id}: ")]
+        notes.append(
+            f"{line_id}: italic (laid by the server after filming: heard, not seen)"
+        )
     return overrides, [f"italics: {n}" for n in notes]
+
+
+def laid_caption_ids(
+    spine: dict[str, Any] | None, facts: dict[str, Any] | None
+) -> list[str]:
+    """Spine line ids the take facts say the server laid after filming (empty on an older server)."""
+
+    from creation.post.laid_lines import laid_after_filming, laid_line_ids
+
+    if not laid_after_filming(facts):
+        return []
+    body = spine.get("spine", spine) if isinstance(spine, dict) else {}
+    names = {
+        str(card.get("cast_id")): str(card.get("name") or "")
+        for card in body.get("cast") or []
+        if isinstance(card, dict) and card.get("cast_id")
+    }
+    line_cast = {
+        str(item.get("line_id")): str(item.get("cast_id") or "")
+        for beat in body.get("beats") or []
+        if isinstance(beat, dict)
+        for item in beat.get("dialogue_lines") or []
+        if isinstance(item, dict) and item.get("line_id")
+    }
+    return list(laid_line_ids(facts, cast_names=names, line_cast=line_cast))
 
 
 def finish_hook(
@@ -1460,7 +1494,9 @@ def run_finish(
     ValueError
         When ``duck_db`` is out of range, or a mute, voice or cue cannot go on the
         take (outside it, silent), or the voices of a locked-voice take would be
-        changed without ``over_locked_voices``; checked before any step runs.
+        changed without ``over_locked_voices``, or a ``--voice`` lays a line the server already laid on
+        the take after filming (take facts ``laid_after_filming``) with no ``--mute`` over it; checked
+        before any step runs.
     """
 
     out = stream or sys.stderr
@@ -1608,6 +1644,16 @@ def run_finish(
                 locked_voice_refusal(soundtrack, what) + " (given: carrying on)",
                 file=out,
             )
+    # The server lays a bodiless off-screen line on new model-voice takes itself (fictora-drama #834, take
+    # facts laid_after_filming): a hand --voice of that line would play it twice. Older facts: no change.
+    laid_refusals, laid_warnings = finish_laid_guard(
+        desk, episode=episode, take_id=take_id, facts=facts_payload, mutes=hand.mutes, voices=hand.voices,
+    )  # fmt: skip
+    if laid_refusals:
+        raise ValueError("; ".join(laid_refusals))
+    for warning in laid_warnings:
+        print(f"[voice] {warning}", file=out, flush=True)
+        append_run_note(run_dir, f"Finish · voice: {warning}")
     found_spine = saved_spine(desk, episode)
     spine = found_spine[0] if found_spine else None
     board = approved_board(desk, episode, take_id)

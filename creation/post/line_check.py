@@ -50,6 +50,11 @@ Japanese line on the server's kana readings, cast names by sound). A line's
   and not its speaker (``shots[].people.named``): **SPEAKER NOT ON SCREEN**
   (one of them mouths it; :mod:`creation.post.speaker_screen`, founder decision
   12 Oct 2026). An off-screen line over named faces is a warning, never a stop.
+- a line the server laid on the take after filming (take facts
+  ``laid_after_filming``, fictora-drama #834; :mod:`creation.post.laid_lines`)
+  is heard off screen and never flagged: no wrong shot, no speaker fault, no
+  "may mouth it" warning, and unscripted words inside its window are that line,
+  not invented speech. Facts without the field are read as before.
 
 Cost: the transcript is the server's Whisper route (``POST /v1/transcripts``),
 booked at $0 by the server and cached per take media, so a repeated finish of
@@ -218,6 +223,9 @@ class ScriptLine:
     #: The shot the take facts put it in, and that shot's window (take seconds).
     shot_index: int | None = None
     window: tuple[float, float] | None = None
+    #: The server laid it on the take after filming (take facts ``laid_after_filming``,
+    #: :mod:`creation.post.laid_lines`): heard, never mouthed, never a wrong shot or speaker.
+    laid: bool = False
 
 
 @dataclass(frozen=True)
@@ -605,6 +613,7 @@ def check_take_lines(
     language: str = "en",
     muted: Sequence[tuple[float, float]] = (),
     patched: Sequence[str] = (),
+    laid_windows: Sequence[tuple[float, float]] = (),
 ) -> LineCheck:
     """Compare a model-voice take's transcript with its scripted lines.
 
@@ -623,6 +632,9 @@ def check_take_lines(
     patched
         Line ids a ``finish --voice`` line lays in by hand. Only an off-screen line may be patched
         (no lips to miss); its missing or wrong words become a warned note.
+    laid_windows
+        Where the server laid lines on the take after filming (take facts ``laid_after_filming``):
+        unscripted words inside one are that line as heard, a note, never invented speech.
 
     Returns
     -------
@@ -832,6 +844,13 @@ def check_take_lines(
         if again is not None:
             fault("repeated", again[0], heard=text, at=at)
         elif _is_extra(heard_words, run, language):
+            middle = (at[0] + at[1]) / 2
+            if any(a - 0.3 <= middle <= b + 0.3 for a, b in laid_windows):
+                check.notes.append(
+                    f'words heard at {at[0]:.2f}-{at[1]:.2f}s ("{text}") sit in a line the server laid after '
+                    "filming (take facts laid_after_filming): not invented speech"
+                )
+                continue
             fault("extra", None, heard=text, at=at)
     check.faults.sort(
         key=lambda f: f.at[0] if f.at else (f.line.number if f.line else 0)
@@ -860,13 +879,19 @@ def shouts_asked_of(facts: Mapping[str, Any] | None) -> list[str]:
         Line ids the take's prompt carries.
     """
 
+    from creation.post.laid_lines import laid_after_filming
+
     body = (facts or {}).get("take_facts", facts or {})
-    return [
+    asked = [
         str(row["line_id"])
         for row in body.get("lines") or []
         if isinstance(row, Mapping)
         and row.get("line_id")
         and int(row.get("count") or 0) >= 1
+    ]
+    # A background voice the server laid after filming is the take's too (fictora-drama #834).
+    return asked + [
+        item.line_id for item in laid_after_filming(facts) if item.line_id not in asked
     ]
 
 
@@ -894,8 +919,11 @@ def script_lines_for_take(
     Returns
     -------
     list[ScriptLine]
-        One per line, numbered from 1.
+        One per line, numbered from 1. A line the take facts say the server laid after filming
+        (``laid_after_filming``) is ``laid`` and heard off screen; facts without the field change nothing.
     """
+
+    from creation.post.laid_lines import laid_line_ids
 
     body = (facts or {}).get("take_facts", facts or {})
     placed = {
@@ -904,6 +932,15 @@ def script_lines_for_take(
         if isinstance(row, Mapping) and row.get("line_id")
     }
     names = cast_names or {}
+    laid = laid_line_ids(
+        facts,
+        cast_names=names,
+        line_cast={
+            str(line.get("line_id")): str(line.get("cast_id") or "")
+            for line in lines
+            if line.get("line_id")
+        },
+    )
     out: list[ScriptLine] = []
     for number, line in enumerate(lines, start=1):
         row = placed.get(str(line.get("line_id")), {})
@@ -924,8 +961,10 @@ def script_lines_for_take(
             if s and s != performed
         )
         cast_id = str(line.get("cast_id") or "")
+        was_laid = str(line.get("line_id")) in laid
         flagged = (
-            row.get("off_screen") is True
+            was_laid
+            or row.get("off_screen") is True
             or line.get("off_screen") in (True, "true")
             or str(line.get("line_id")) in set(off_screen_ids)
         )
@@ -943,6 +982,7 @@ def script_lines_for_take(
                 if row.get("shot_index") is not None
                 else None,
                 window=window,
+                laid=was_laid,
             )
         )
     return out
@@ -1161,6 +1201,7 @@ def desk_line_check(
 
     from creation.post.audio_service import AudioServiceError
     from creation.post.desk import saved_spine
+    from creation.post.laid_lines import laid_windows
     from creation.post.review import (
         raw_take_of,
         server_transcript,
@@ -1231,6 +1272,7 @@ def desk_line_check(
         language=language,
         muted=muted,
         patched=patched_line_ids(lines, voice_texts, language),
+        laid_windows=laid_windows(facts),
     )
     if any(fault.kind == "missing" for fault in check.faults):
         # The transcript misses quiet lines: listen where the line should be before calling it missing.

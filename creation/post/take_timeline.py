@@ -325,8 +325,8 @@ def shift_take_facts(
 ) -> dict[str, Any]:
     """Move every time in the take facts ``seconds`` earlier, clamped at 0.
 
-    Shot windows, ``soundtrack.lines``, line windows and SFX cues (played and
-    dropped) all move. A window that ends at or before 0 after the move was in
+    Shot windows, ``soundtrack.lines``, line windows, lines laid after filming
+    (``laid_after_filming``) and SFX cues (played and dropped) all move. A window that ends at or before 0 after the move was in
     the part that was cut and is dropped (its line or cue is not on the clip).
 
     Parameters
@@ -388,6 +388,11 @@ def shift_take_facts(
     facts["shots"] = windows(facts.get("shots"), "start_seconds", "end_seconds")
     facts["lines"] = windows(facts.get("lines"), "start_seconds", "end_seconds")
     facts["sfx_cues"] = windows(facts.get("sfx_cues"), "start_seconds", None)
+    if "laid_after_filming" in facts:
+        # Lines the server laid after filming (fictora-drama #834) play on the same timeline.
+        facts["laid_after_filming"] = windows(
+            facts.get("laid_after_filming"), "start_seconds", "end_seconds"
+        )
     if "sfx_dropped_cues" in facts:
         facts["sfx_dropped_cues"] = windows(
             facts.get("sfx_dropped_cues"), "start_seconds", None

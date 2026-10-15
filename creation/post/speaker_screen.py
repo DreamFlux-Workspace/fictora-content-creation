@@ -29,6 +29,9 @@ line window on a locked-voice take (``soundtrack.lines[]``).
   that shows only named people (nobody unnamed to shout it).
 - Shots without ``people`` (an older server) are not judged; when no shot has
   them the check says it did not run.
+- A line the server laid after filming (``ScriptLine.laid``, take facts
+  ``laid_after_filming``) is never judged: the video model was never asked to
+  say it, so no face mouths it.
 
 Before filming (:func:`film_speaker_warnings`)
 ----------------------------------------------
@@ -199,7 +202,9 @@ def speaker_faults(
         return faults, warnings
     for item in heard:
         line = item.line
-        if not item.moments:
+        if not item.moments or line.laid:
+            # Laid by the server after filming (take facts laid_after_filming): nobody on screen was
+            # asked to say it, so no face mouths it and nothing is flagged.
             continue
         crowd = line.cast_id.startswith(CROWD_PREFIX)
         who = _who(line, names)

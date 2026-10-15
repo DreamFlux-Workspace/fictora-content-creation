@@ -230,7 +230,7 @@ Repurposing an episode (a new idea on an episode already authored): update its t
 ### Off-screen voices
 
 - Declare an off-screen voice in the brief's cast table as voice only. It is never drawn. With every line off screen and no frame showing them, the server flags the card `voice_only` and draws no plate; `plates/` and the plate count leave them out. If a plate for them turns up, a frame puts them on screen: fix the frame or accept the plate before the spend.
-- An off-screen voice that plays over another character's face is heard as that face speaking. Give it a source in frame (a wall grille, a phone in a hand) or a source treatment in post (band-limited intercom).
+- An off-screen voice that plays over another character's face is heard as that face speaking. On a model-voice take filmed since fictora-drama #834 the server lays a bodiless line (PA, radio, intercom, voice-only character, unseen narrator) after filming itself (take facts `laid_after_filming`): nothing to hand-lay, and `finish --voice` / `voice-line` refuse a second lay. On an older take give it a source in frame (a wall grille, a phone in a hand) or a source treatment in post (band-limited intercom).
 
 ### Background shouts
 

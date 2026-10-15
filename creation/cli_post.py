@@ -426,6 +426,12 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         default=None,
         help="Phonetic spelling sent to the voice instead of --text.",
     )
+    line.add_argument(
+        "--replace-laid",
+        action="store_true",
+        help="Make it although the server already laid this line on a take after filming (take facts "
+        "laid_after_filming); refused without it. Then finish with --mute over the server's line and --voice.",
+    )
 
     cue = sub.add_parser(
         "cue",
@@ -1033,6 +1039,16 @@ def dispatch_post(args: argparse.Namespace) -> int:
                     f"voice-fx {args.preset} on `{args.file.name}` {treated} -> `{made.name}`, $0.",
                 )
         print(made)
+        if args.desk is not None:
+            from creation.post.laid_lines import voice_fx_laid_notes
+
+            for note in voice_fx_laid_notes(
+                args.desk.expanduser().resolve(),
+                episode=args.episode,
+                file=args.file,
+                ranges=spans,
+            ):
+                print(note)
         print("Listen to it; then finish (or caption) with --take-file on it.")
         return 0
     if args.command == "revoice":
@@ -1054,6 +1070,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             text=args.text,
             episode=args.episode,
             spoken_text=args.spoken_text,
+            replace_laid=args.replace_laid,
         )
         return 0
     if args.command == "cue":

@@ -361,6 +361,7 @@ def run_voice_line(
     spoken_text: str | None = None,
     audio: AudioService | None = None,
     out: TextIO | None = None,
+    replace_laid: bool = False,
 ) -> Path:
     """Have the server render one dry line in a character's locked voice; save it and book its cost.
 
@@ -380,6 +381,9 @@ def run_voice_line(
         Generated-audio service (the Drama API by default).
     out
         Where the result is printed.
+    replace_laid
+        ``--replace-laid``: make it even though the server already laid this line on a take after
+        filming (take facts ``laid_after_filming``), to replace that line with ``finish --mute --voice``.
 
     Returns
     -------
@@ -389,7 +393,8 @@ def run_voice_line(
     Raises
     ------
     ValueError
-        An empty line, or a character with no locked voice.
+        An empty line, a character with no locked voice, or (without ``replace_laid``) a line the
+        server already laid on a take of the episode: refused before anything is spent.
     """
 
     out = out or sys.stdout
@@ -409,6 +414,21 @@ def run_voice_line(
     if not voice:
         raise ValueError(
             f"{name} has no locked voice on the cast card; run voice --audition then --pick N first"
+        )
+    # The server lays a bodiless off-screen line on new takes itself (fictora-drama #834): never make it twice.
+    from creation.post.laid_lines import laid_voice_line_refusal
+
+    already = laid_voice_line_refusal(
+        desk, episode=episode, cast_id=str(card["cast_id"]), name=name, text=line
+    )
+    if already and not replace_laid:
+        raise ValueError(already)
+    if already:
+        print(
+            "!! the server already laid this line on a take after filming (take facts laid_after_filming); "
+            "made anyway (--replace-laid): finish that take with --mute over the server's line so only this "
+            "one plays",
+            file=out,
         )
     service = audio or DramaApiAudio(desk, episode=episode)
     print(
