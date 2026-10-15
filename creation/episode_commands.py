@@ -2522,6 +2522,7 @@ def build_line_add_remove_patch(
     role: str | None = None,
     voice_description: str | None = None,
     provider_voice: str | None = None,
+    accept_notices: Sequence[str] = (),
 ) -> tuple[dict[str, Any], list[str]]:
     """Build the spine patch that adds a line, removes one, or both, and adds a voice-only character with its line.
 
@@ -2554,6 +2555,9 @@ def build_line_add_remove_patch(
         A line to drop: its id or its number in the episode.
     new_voice, role, voice_description, provider_voice
         A new voice-only character who speaks the added line.
+    accept_notices
+        Notice kinds the creator answered (``--accept-notice``), sent as the
+        patch's ``acknowledged_notices`` with a new voice (fictora-drama #833).
 
     Returns
     -------
@@ -2644,6 +2648,8 @@ def build_line_add_remove_patch(
         if provider_voice is not None:
             card["provider_voice"] = provider_voice
         patch["add_voice_only_cast"] = [card]
+        if accept_notices:
+            patch["acknowledged_notices"] = sorted(set(accept_notices))
         off_screen = True
         who = new_voice
         voice = (
@@ -2704,6 +2710,12 @@ REFUSAL_FIXES: dict[str, str] = {
         "--speaker-moves (the shot then moves the speaker), or put the line on a beat where the speaker moves"
     ),
     "voice_only_cast_needs_a_line": "a new voice comes with its line: send --new-voice together with --add",
+    # fictora-drama #833: a new voice matched to a listed real person is a one-tap notice, never a block.
+    "brief_needs_creator_choice": (
+        "the new voice names a real person (we never match a voice to one): describe an original voice instead, "
+        "or, if the creator says it is someone they made up, send the same command again with "
+        "--accept-notice real_person_not_allowed"
+    ),
     "voice_only_cast_on_screen": (
         "a new voice is heard, never seen: keep its line off screen and keep it out of every frame "
         "(lines {lines}, frames {frames})"
@@ -3173,6 +3185,7 @@ def run_line(
     language: str | None = None,
     shout: str | None = None,
     remove_shout: str | None = None,
+    accept_notices: Sequence[str] = (),
     out: Any = None,
 ) -> Path | None:
     """Change, add or remove a line on the server and on the desk in one step; with no change, list the lines.
@@ -3314,6 +3327,7 @@ def run_line(
                 spine, episode=episode, add=add, beat=beat, text=text, spoken=spoken, subtitle=subtitle,
                 speaker=speaker, off_screen=off_screen, speaker_moves=speaker_moves, remove=remove,
                 new_voice=new_voice, role=role, voice_description=voice_description, provider_voice=provider_voice,
+                accept_notices=accept_notices,
             )  # fmt: skip
             what = " and ".join(
                 part
@@ -8088,6 +8102,14 @@ def add_episode_parsers(
         help='With --new-voice: how the voice sounds ("tinny, clipped, calm").',
     )
     line.add_argument(
+        "--accept-notice",
+        action="append",
+        default=[],
+        choices=("real_person_not_allowed",),
+        help="With --new-voice: the creator saw the server's notice that the voice names a real person and "
+        "says it is someone they made up; sends acknowledged_notices (fictora-drama #833).",
+    )
+    line.add_argument(
         "--provider-voice",
         default=None,
         help="With --new-voice: an Eleven v3 voice. Left out, the server picks one: a current server from "
@@ -8702,6 +8724,7 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 language=args.language,
                 shout=args.shout,
                 remove_shout=args.remove_shout,
+                accept_notices=args.accept_notice,
             )
             return 0
         if args.command == "cast":

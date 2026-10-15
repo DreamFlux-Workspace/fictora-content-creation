@@ -43,6 +43,8 @@ from typing import Any, TextIO
 
 import httpx
 
+from creation.harness.http_util import api_error_text
+
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
 from creation.post.audio_service import AudioService, DramaApiAudio, download
@@ -63,6 +65,7 @@ from creation.post.media import media_duration, probe_video, run_ffmpeg
 from creation.post.whisper import line_windows, load_words, transcribe
 from creation.prices import audition_quote, audition_usd
 from creation.production_state import load_production
+from creation.stylised_only import server_notices, voice_notice_text
 from creation.voice_gate import (
     OLD_SERVER_NOTE,
     UNREACHABLE_NOTE,
@@ -473,7 +476,12 @@ def run_voice_audition(
 
 
 def run_voice_pick(
-    desk: Path, *, cast: str, pick: int | str, out: TextIO | None = None
+    desk: Path,
+    *,
+    cast: str,
+    pick: int | str,
+    accept_notices: Sequence[str] = (),
+    out: TextIO | None = None,
 ) -> str:
     """Lock audition candidate ``pick`` (its number, or its voice's name) on the character's cast card (spends nothing).
 
@@ -488,6 +496,10 @@ def run_voice_pick(
         When the character has no finished audition set on the desk.
     ValueError
         When ``pick`` is not a candidate number or a voice in the newest set.
+    SystemExit
+        When the server answers the one-tap notice (409 ``brief_needs_creator_choice``:
+        the voice names a listed real person) and ``accept_notices`` does not
+        answer it; the text says how to go on (fictora-drama #833).
     """
 
     out = out or sys.stdout
@@ -527,9 +539,19 @@ def run_voice_pick(
             "provider_voice": chosen["provider_voice"],
             "seconds": chosen["seconds"],
         }
-        run.post(
-            f"/v1/spines/{spine_id(desk)}/cast/{cast_id}/voice-auditions/pick", body
-        )
+        if accept_notices:
+            body["acknowledged_notices"] = sorted(set(accept_notices))
+        route = f"/v1/spines/{spine_id(desk)}/cast/{cast_id}/voice-auditions/pick"
+        status, answer = run.post_optional(route, body)
+        notices = server_notices(answer) if status == 409 else None
+        if notices:
+            raise SystemExit(
+                voice_notice_text(
+                    notices, f"voice --desk {desk} --cast {cast_id} --pick {pick}"
+                )
+            )
+        if not 200 <= status < 300:
+            raise SystemExit(f"HTTP {status} POST {route}: {api_error_text(answer)}")
         after = refresh_spine(run, desk, 1)
         # The human picked it: that is their yes on this voice for the voices gate. The server's pick
         # records it (fictora-drama #603); the desk mirrors it, and pushes it later on an older server.

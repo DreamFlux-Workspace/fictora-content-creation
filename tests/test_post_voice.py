@@ -36,6 +36,21 @@ class FakePostApi:
     def save(self, name: str, payload: Any) -> None:
         self.saved.append(name)
 
+    #: Set to answer the voice pick with the server's one-tap notice (fictora-drama #833).
+    pick_notice: dict[str, Any] | None = None
+
+    def post_optional(
+        self, path: str, body: dict[str, Any], **_: Any
+    ) -> tuple[int, Any]:
+        if self.pick_notice is not None and path.endswith("/voice-auditions/pick"):
+            if "real_person_not_allowed" not in (
+                body.get("acknowledged_notices") or []
+            ):
+                self.posts.append((path, body))
+                return 409, {"error": {"code": "brief_needs_creator_choice", "message": self.pick_notice["message"],
+                                       "details": {"notices": [self.pick_notice]}}}  # fmt: skip
+        return 200, self.post(path, body)
+
     def post(self, path: str, body: dict[str, Any], **_: Any) -> dict[str, Any]:
         self.posts.append((path, body))
         if path.endswith("/voice-auditions"):
@@ -764,3 +779,79 @@ def test_the_planned_window_prefers_the_soundtrack_then_the_shot_and_only_short_
     assert not voice_mod.is_short_line(
         "Wait for me here."
     ) and not voice_mod.is_short_line("…")
+
+
+# --- a voice matched to a listed real person: the one-tap notice (fictora-drama #833) -------------
+
+_VOICE_NOTICE = {
+    "kind": "real_person_not_allowed",
+    "message": "We can't match a voice to a real person (Taylor Swift). Describe an original voice with the same "
+    "vibe instead. If Taylor Swift is someone you made up, just continue.",
+    "real_people": ["Taylor Swift"],
+}
+
+
+def _listed_audition(desk: Path) -> None:
+    folder = desk / "shared" / "voices" / "kenji" / "audition-v1"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "auditions.json").write_text(json.dumps({"candidates": [
+        {"number": 1, "provider_voice": "Rachel", "file": "01-rachel.mp3", "url": "https://media.test/aud-1.mp3",
+         "seconds": 1.5},
+    ]}))  # fmt: skip
+
+
+def test_a_pick_the_server_pauses_says_how_to_go_on_and_changes_nothing(
+    post_desk: Path, post_api: FakePostApi
+) -> None:
+    _listed_audition(post_desk)
+    post_api.pick_notice = _VOICE_NOTICE
+
+    with pytest.raises(SystemExit) as paused:
+        voice_mod.run_voice_pick(post_desk, cast="kenji", pick=1, out=io.StringIO())
+
+    text = str(paused.value.code)
+    assert "We can't match a voice to a real person (Taylor Swift)" in text
+    assert "--accept-notice real_person_not_allowed" in text
+    assert "acknowledged_notices" not in post_api.posts[-1][1]
+
+
+def test_accept_notice_sends_acknowledged_notices_and_the_pick_locks(
+    post_desk: Path, post_api: FakePostApi
+) -> None:
+    _listed_audition(post_desk)
+    post_api.pick_notice = _VOICE_NOTICE
+
+    locked = voice_mod.run_voice_pick(
+        post_desk,
+        cast="kenji",
+        pick=1,
+        accept_notices=("real_person_not_allowed",),
+        out=io.StringIO(),
+    )
+
+    path, body = post_api.posts[-1]
+    assert path.endswith("/voice-auditions/pick") and locked == "Rachel"
+    assert body["acknowledged_notices"] == ["real_person_not_allowed"]
+
+
+def test_cli_voice_takes_accept_notice() -> None:
+    import argparse
+
+    from creation.cli_post import add_post_parsers
+
+    parser = argparse.ArgumentParser()
+    add_post_parsers(parser.add_subparsers(dest="command"))
+    args = parser.parse_args(
+        [
+            "voice",
+            "--desk",
+            "d",
+            "--cast",
+            "kenji",
+            "--pick",
+            "1",
+            "--accept-notice",
+            "real_person_not_allowed",
+        ]
+    )
+    assert args.accept_notice == ["real_person_not_allowed"]
