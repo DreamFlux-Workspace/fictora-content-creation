@@ -317,6 +317,88 @@ def test_confirm_filmed_is_sent(desk: Path, api: FakeApi) -> None:
     )
 
 
+def test_a_series_locked_after_episode_two_shows_the_servers_words(
+    desk: Path, api: FakeApi
+) -> None:
+    """A series keeps one spoken language (fictora-drama, 16 Oct 2026): the server decides."""
+
+    message = (
+        "This series already has episode 2 or later made in English, so its language is set for the "
+        "whole series: a series can't switch language part way through. To make a story in Japanese, "
+        "start a new story. Nothing was changed."
+    )
+    _language_route(
+        api,
+        refuse=(
+            409,
+            {
+                "error": {
+                    "code": "spoken_language_locked_mid_series",
+                    "message": message,
+                    "details": {"rule": "locked_mid_series", "episodes_made": [2]},
+                }
+            },
+        ),
+    )
+    out = io.StringIO()
+
+    assert not run_language(desk, spoken="ja", confirm_filmed=True, out=out)
+
+    text = out.getvalue()
+    assert message in text
+    last = text.rstrip().splitlines()[-1]
+    assert last.startswith("Refused: spoken_language_locked_mid_series")
+    assert "new story" in last
+    assert api.spine_doc["spoken_language"] == "en-US"
+
+
+def test_episode_one_published_asks_for_the_humans_yes_then_sends_it(
+    desk: Path, api: FakeApi
+) -> None:
+    message = (
+        "Episode 1 is already published in English. Changing the series to Japanese means filming "
+        "episode 1 again in Japanese, which costs tokens. Nothing has changed yet."
+    )
+    _language_route(
+        api,
+        refuse=(
+            409,
+            {
+                "error": {
+                    "code": "spoken_language_needs_episode_one_remake",
+                    "message": message,
+                    "details": {
+                        "rule": "needs_episode_one_remake",
+                        "episode_ordinal": 1,
+                    },
+                }
+            },
+        ),
+    )
+    out = io.StringIO()
+
+    assert not run_language(desk, spoken="ja", out=out)
+
+    text = out.getvalue()
+    assert message in text
+    last = text.rstrip().splitlines()[-1]
+    assert last.startswith("Refused: spoken_language_needs_episode_one_remake")
+    assert "--confirm-episode-one-remake" in last
+    assert all(
+        "confirm_episode_one_remake" not in (body or {})
+        for body in _language_bodies(api)
+    )
+
+    _language_route(api)
+    assert run_language(
+        desk, spoken="ja", confirm_episode_one_remake=True, out=io.StringIO()
+    )
+    assert all(
+        body and body["confirm_episode_one_remake"] is True
+        for body in _language_bodies(api)[1:]
+    )
+
+
 def test_a_server_without_the_route_is_refused_clearly(
     desk: Path, api: FakeApi
 ) -> None:

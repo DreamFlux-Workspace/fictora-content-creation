@@ -217,12 +217,30 @@ def _remember_language(desk: Path, language: str) -> None:
             )
 
 
+#: The series-language rule's refusals (fictora-drama, 16 Oct 2026): a series
+#: keeps one spoken language. The server decides; the kit shows its words.
+_SERIES_LANGUAGE_CODES = frozenset(
+    {"spoken_language_locked_mid_series", "spoken_language_needs_episode_one_remake"}
+)
+
+#: What the operator does next, per refusal code.
+_LANGUAGE_HINTS = {
+    "spoken_language_change_filmed": " Pass --confirm-filmed after the human's yes.",
+    "spoken_language_needs_episode_one_remake": (
+        " Ask the human: it means filming episode 1 again (costs tokens). "
+        "Pass --confirm-episode-one-remake only after their yes."
+    ),
+    "spoken_language_locked_mid_series": " The series keeps its language; another language is a new story.",
+}
+
+
 def run_language(
     desk: Path,
     *,
     spoken: str,
     preview: bool = False,
     confirm_filmed: bool = False,
+    confirm_episode_one_remake: bool = False,
     out: TextIO | None = None,
 ) -> bool:
     """Change the language the show is performed in (``language --desk D --spoken ja|ko|en``).
@@ -243,6 +261,11 @@ def run_language(
         Show the change and send nothing.
     confirm_filmed
         Change it even though takes were filmed in another language.
+    confirm_episode_one_remake
+        The human said yes to filming episode 1 again in the new language
+        (the server asks for it once episode 1 is published). The change
+        itself films nothing; episode 1 is filmed again with the usual film
+        command.
     out
         Text stream.
 
@@ -292,6 +315,10 @@ def run_language(
             "spoken_language": language,
             "confirm_filmed": confirm_filmed,
         }
+        # A series keeps one language (fictora-drama, 16 Oct 2026): the server
+        # decides. Sent only when set, so an older server sees what it did before.
+        if confirm_episode_one_remake:
+            body["confirm_episode_one_remake"] = True
         status, answer = run.post_optional(path, {**body, "preview": True})
         refused = _no_route(status, answer, "spoken-language")
         if refused is None and status >= 400:
@@ -301,12 +328,13 @@ def run_language(
             ):
                 for row in _effect_rows(details["effect"], spine):
                     print(row, file=out)
-            hint = (
-                " Pass --confirm-filmed after the human's yes."
-                if code == "spoken_language_change_filmed"
-                else ""
-            )
-            refused = f"{code}: {message}{hint}" if code else message
+            hint = _LANGUAGE_HINTS.get(code, "")
+            if code in _SERIES_LANGUAGE_CODES:
+                # The server's own words, whole: the verdict line is cut short.
+                print(f"  {message}", file=out)
+                refused = f"{code}.{hint}"
+            else:
+                refused = f"{code}: {message}{hint}" if code else message
         if refused is not None:
             _verdict(out, refused=refused)
             return False
