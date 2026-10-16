@@ -336,6 +336,15 @@ class ImpactMoment:
     #: Seconds the picture holds on the hit frame (the server's ``freeze_s``: a fight's strike freeze);
     #: 0 for none. The held frames replace the frames after the hit: same length, same sound.
     freeze: float = 0.0
+    #: The server's fitted hold and release (``hold_s`` / ``release_s``) when the take's end handle cuts
+    #: the punch-in short: the zoom is back to normal, and the shake at rest, on the last kept frame, so the
+    #: next take does not open wider. ``None`` keeps :data:`PUNCH_HOLD_SECONDS` / :data:`PUNCH_RELEASE_SECONDS`.
+    #: The kit never works these out itself: it draws what the server sends.
+    hold: float | None = None
+    release: float | None = None
+    #: ``False`` (the server's ``punch_in: false``): a frozen strike near the end with no room to ease out;
+    #: only the hit-stop plays, no zoom and no shake.
+    punch: bool = True
 
     def one_line(self) -> str:
         """``a gas tank explodes: big punch-in + shake at 2.04s`` (``+ 0.12s freeze`` when it holds)."""
@@ -392,18 +401,31 @@ def moment_move(moment: ImpactMoment, seconds: float) -> Move | None:
 
     if not moment.time <= seconds < moment.until:
         return None
+    if not moment.punch:
+        return Move(zoom=1.0, anchor_y=PUNCH_ANCHOR_Y, shift_x=0.0, shift_y=0.0)
     dt = seconds - moment.time
     blast = moment.style == "blast"
     peak = BLAST_PUNCH_ZOOM if blast else PUNCH_ZOOM
-    if dt < PUNCH_HOLD_SECONDS:
+    hold = PUNCH_HOLD_SECONDS if moment.hold is None else moment.hold
+    release = PUNCH_RELEASE_SECONDS if moment.release is None else moment.release
+    eased = 0.0
+    if dt < hold:
         zoom = peak
     else:
-        p = min(1.0, (dt - PUNCH_HOLD_SECONDS) / PUNCH_RELEASE_SECONDS)
-        zoom = peak + (1.0 - peak) * (p * p * (3.0 - 2.0 * p))
+        p = min(1.0, (dt - hold) / release) if release > 0 else 1.0
+        eased = p * p * (3.0 - 2.0 * p)
+        zoom = peak + (1.0 - peak) * eased
     if blast:
         sx, sy, envelope = _shake(dt, BLAST_SHAKE_AMPLITUDE, BLAST_SHAKE_SECONDS)
     else:
         sx, sy, envelope = _shake(dt, HIT_SHAKE_AMPLITUDE, HIT_SHAKE_SECONDS)
+    if moment.release is not None:
+        # The server fitted this moment before the end handle: its shake dies out with its release.
+        sx, sy, envelope = (
+            sx * (1.0 - eased),
+            sy * (1.0 - eased),
+            envelope * (1.0 - eased),
+        )
     # A blast fills the frame (centre); a hit aims where faces sit.
     return Move(
         zoom=max(zoom, 1.0 + 2.5 * envelope),
@@ -652,6 +674,27 @@ class ImpactPlanUnavailable(RuntimeError):
     """The server did not answer with a plan (no take job, unreachable, or an older server)."""
 
 
+def _fitted(
+    item: Mapping[str, Any], key: str, most: float, *, allow_zero: bool = False
+) -> float | None:
+    """The server's fitted ``hold_s`` / ``release_s`` on a moment, or ``None`` when it sent none."""
+
+    value = item.get(key)
+    if value is None:
+        return None
+    least_ok = value >= 0 if allow_zero else value > 0
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not least_ok
+        or value > most
+    ):
+        raise ImpactPlanUnavailable(
+            f"the server's impact plan has a malformed {key} ({value!r})"
+        )
+    return float(value)
+
+
 def plan_from_server_answer(body: Any) -> ImpactPlan:
     """The kit's :class:`ImpactPlan` from a ``POST /v1/jobs/{id}/impact-plan`` answer.
 
@@ -697,7 +740,16 @@ def plan_from_server_answer(body: Any) -> ImpactPlan:
             raise ImpactPlanUnavailable(
                 f"the server's impact plan has a malformed freeze ({freeze!r})"
             )
-        moments.append(ImpactMoment(time, until, style, label, source, float(freeze)))
+        hold, release = (
+            _fitted(item, "hold_s", 0.3, allow_zero=True),
+            _fitted(item, "release_s", 0.5),
+        )
+        punch = item.get("punch_in") is not False
+        moments.append(
+            ImpactMoment(
+                time, until, style, label, source, float(freeze), hold, release, punch
+            )
+        )
     skipped = tuple(str(reason) for reason in body.get("skipped") or [])
     return ImpactPlan(tuple(sorted(moments, key=lambda m: m.time)), skipped)
 
