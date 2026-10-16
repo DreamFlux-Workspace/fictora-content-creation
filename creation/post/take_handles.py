@@ -85,6 +85,9 @@ class TakeHandles:
     auto_end_s: float | None = None
     media_url: str | None = None
     is_original: bool | None = None
+    #: The server's fade over a cut-short end (``playable_window.end_fade_s``, 0.08 s): the kit's cut fades
+    #: the sound out exactly this long, as the server's join does. ``None`` (an older server): no fade.
+    end_fade_s: float | None = None
 
     @property
     def duration_s(self) -> float:
@@ -150,6 +153,18 @@ def handles_from(
         auto_end_s=_number(window.get("auto_end_s")),
         media_url=str(window["media_url"]) if window.get("media_url") else None,
         is_original=original if isinstance(original, bool) else None,
+        end_fade_s=_fade(window.get("end_fade_s")),
+    )
+
+
+def _fade(value: Any) -> float | None:
+    """The server's ``end_fade_s``, when it is a sane fade (0-1 s)."""
+
+    seconds = _number(value)
+    return (
+        seconds
+        if seconds is not None and not isinstance(value, bool) and 0 < seconds <= 1.0
+        else None
     )
 
 
@@ -277,7 +292,15 @@ def handle_frames(handles: TakeHandles, *, fps: float, frames: int) -> tuple[int
     return first, max(first + 1, stop)
 
 
-def keep_frames(take: Path, out: Path, *, first: int, stop: int, fps: float) -> Path:
+def keep_frames(
+    take: Path,
+    out: Path,
+    *,
+    first: int,
+    stop: int,
+    fps: float,
+    end_fade_s: float | None = None,
+) -> Path:
     """Keep frames ``first`` to ``stop - 1`` and the sound under exactly them, in a new file.
 
     Parameters
@@ -290,6 +313,9 @@ def keep_frames(take: Path, out: Path, *, first: int, stop: int, fps: float) -> 
         First frame kept and first frame dropped after the window, at ``fps``.
     fps
         The rate the frame numbers count at.
+    end_fade_s
+        Fade the sound out over this long before ``stop`` (the server's ``end_fade_s`` on a cut-short end);
+        ``None`` keeps it as it is.
 
     Returns
     -------
@@ -307,11 +333,15 @@ def keep_frames(take: Path, out: Path, *, first: int, stop: int, fps: float) -> 
     info = probe_video(take)
     picture, cover = video_streams(take)
     begin_s, stop_s = first / fps, stop / fps
+    fade = ""
+    if end_fade_s:
+        length = min(end_fade_s, stop_s - begin_s)
+        fade = f",afade=t=out:st={stop_s - begin_s - length:.6f}:d={length:.6f}"
     video = ["-map", f"0:v:{picture}",
              "-filter:v:0", f"select='between(n\\,{first}\\,{stop - 1})',setpts=N/FRAME_RATE/TB",
              "-r:v:0", f"{fps:g}", "-c:v", "libx264", "-crf", "16", "-preset", "medium", "-pix_fmt", "yuv420p"]  # fmt: skip
     audio = (
-        ["-map", "0:a:0", "-af", f"atrim=start={begin_s:.6f}:end={stop_s:.6f},asetpts=N/SR/TB",
+        ["-map", "0:a:0", "-af", f"atrim=start={begin_s:.6f}:end={stop_s:.6f},asetpts=N/SR/TB{fade}",
          "-c:a", "aac", "-b:a", "192k"]
         if info.has_audio
         else ["-an"]
@@ -452,6 +482,9 @@ def apply_take_handles(
     base = f"take-ep{record.episode:02d}-{record.take_id}"
     covered = "-cover" if video_streams(final)[1] is not None else ""
 
+    # The end is cut short: the sound fades out over the server's fade, as its join does (never recomputed).
+    fade = handles.end_fade_s if stop < total else None
+
     def cut(take: Path, out: Path) -> Path:
         rate = probe_video(take).fps or fps
         return keep_frames(
@@ -460,6 +493,7 @@ def apply_take_handles(
             first=round(first / fps * rate),
             stop=round(stop / fps * rate),
             fps=rate,
+            end_fade_s=fade,
         )
 
     carry = RecordCarry(desk, record, final, HANDLES_OP)

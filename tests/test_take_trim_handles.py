@@ -525,3 +525,40 @@ def test_reel_reads_a_cut_takes_events_minus_start(post_desk: Path) -> None:
     assert measured.events == (2.5,), (
         "the slam at 3.0 s filmed is at 2.5 s; the tap at 0.2 s was cut away"
     )
+
+
+@needs_ffmpeg
+def test_finish_fades_a_cut_short_end_with_the_servers_fade_on_every_record_file(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """fictora-drama #853: the kit's handle cut applies the server's ``end_fade_s``, never its own number."""
+
+    import creation.post.take_handles as take_handles_module
+
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    facts = {"take_facts": {"job_id": "job_take_t1", "shots": [], "sfx_cues": [],
+                            **_window(0.5, 4.5, source="auto")}}  # fmt: skip
+    facts["take_facts"]["playable_window"]["take_duration_s"] = 5.0
+    facts["take_facts"]["playable_window"]["end_fade_s"] = 0.07
+    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+        json.dumps(facts)
+    )
+    fades: list[object] = []
+    real = take_handles_module.keep_frames
+
+    def spy(*args: Any, **kwargs: Any) -> Path:
+        fades.append(kwargs.get("end_fade_s"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(take_handles_module, "keep_frames", spy)
+
+    def bed(spine: dict, music: str | None, target: Path) -> Path:
+        from conftest import make_tone
+
+        return make_tone(target.with_suffix(".wav"), seconds=6.0, freq=220, volume=0.05)
+
+    out = io.StringIO()
+    result = run_finish(post_desk, facts_fetcher=lambda *a: None, sfx_render=lambda c, t: t, bed_maker=bed,
+                        colour=False, thumbnail=False, stream=out)  # fmt: skip
+    assert result.complete, out.getvalue()
+    assert fades and all(fade == 0.07 for fade in fades), fades
