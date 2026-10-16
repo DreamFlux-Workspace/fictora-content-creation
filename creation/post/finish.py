@@ -334,6 +334,7 @@ from creation.post.sfx import (
     service_renderer,
 )
 from creation.post.impact_post import (
+    ContactRamp,
     IMPACT_PLAN_PATH,
     MAX_EDITOR_HITS,
     SOUND_MATCH_SECONDS,
@@ -342,6 +343,7 @@ from creation.post.impact_post import (
     ImpactPlanUnavailable,
     apply_impacts,
     impact_plan_request,
+    measure_tile_motion,
     impact_style,
     plan_from_server_answer,
     plan_impacts,
@@ -1279,6 +1281,7 @@ def run_finish(
     transcriber: Transcriber | None = None,
     cut_meter: Cuts | None = None,
     motion_meter: MotionMeter | None = None,
+    tile_meter: Callable[[Path], tuple[tuple[float, float], ...]] | None = None,
     ambience_maker: AmbienceMaker | None = None,
     thumbnail: bool = True,
     draw_thumbnail: bool = False,
@@ -1373,12 +1376,13 @@ def run_finish(
         take facts' ``prop_text``. Never invents words: a request with none is printed and
         skipped (blur the prop instead). Without any, the take facts' writing props are
         printed as a suggestion.
-    sfx_render, bed_maker, facts_fetcher, transcriber, cut_meter, motion_meter, voice_audio, ambience_maker
+    sfx_render, bed_maker, facts_fetcher, transcriber, cut_meter, motion_meter, tile_meter, voice_audio, ambience_maker
         Injected for tests (``bed_maker`` makes the harness bed on the server;
         ``transcriber`` makes a transcript of the take on the server;
         ``ambience_maker`` makes a locked-voice take's location ambience on the server;
         ``cut_meter`` measures the take's hard cuts, :func:`creation.post.edit.measure_cuts`;
         ``motion_meter`` its frame-difference trace, :func:`creation.post.sfx_motion.measure_motion`;
+        ``tile_meter`` its per-frame most-changed-tile difference, :func:`creation.post.impact_post.measure_tile_motion`;
         ``voice_audio`` makes the inner-voice dry lines, the Drama API by default;
         ``text_ocr`` reads frames for the drawn-text check, the ``tesseract`` command by default).
     thumbnail
@@ -2091,6 +2095,23 @@ def run_finish(
             ).speech
         # Hand cues are levelled against the bed like the planned effects (only the level changes).
         placed, levelled = level_hand_cues(hand, bed_reference(take))
+        # On a take whose impact plan slows a contact, a hand cue inside the ramp window is laid where its
+        # frame now shows, by the server's frame list, exactly as the planned effects (``on_ramp_frames``).
+        ramp = early_ramp(take) if placed.cues else None
+        if ramp is not None and placed.cues:
+            fps = probe_video(take).fps
+            placed = replace(
+                placed,
+                cues=tuple(
+                    (
+                        replace(
+                            cue, start=round(ramp.screen_seconds(cue.start, fps), 3)
+                        ),
+                        seconds,
+                    )
+                    for cue, seconds in placed.cues
+                ),
+            )
         laid = lay_cues(
             take,
             next_versioned_path(takes, f"{base}-cues", ".mp4"),
@@ -2719,12 +2740,45 @@ def run_finish(
                 speech=tuple(bed_state["speech"]) if bed_state["speech"] else None,
                 hits=impact_at[:MAX_EDITOR_HITS],
                 take_seconds=probe_video(take).duration_seconds,
+                # The picture change per frame: the server decides from it whether a ramp is drawn stepped.
+                tile_motion=(tile_meter or measure_tile_motion)(measured)
+                if impact_state["fight"]
+                else (),
             )
             return planner(body), ""
         except ImpactPlanUnavailable as exc:
             return None, str(exc)
         except (RuntimeError, OSError, MediaToolError) as exc:
             return None, f"the take could not be measured ({str(exc)[:120]})"
+
+    def early_ramp(take: Path) -> ContactRamp | None:
+        """The server's ramp for this fight take, asked once per take (the effects, the hand cues and the
+        impact step share it), whichever step asks first; ``None`` on any other take or without a plan.
+
+        Independent of the effects step: when it laid nothing or stopped before asking, the hand cues still
+        ask (measuring the take's cuts from its facts if the effects step did not).
+        """
+
+        if "server_plan" not in impact_state:
+            if not impact or legacy_rules():
+                return None
+            if impact_state["picture"] is None:
+                facts = facts_state["path"]
+                if facts is None:
+                    return None
+                payload = json.loads(facts.read_text(encoding="utf-8"))
+                impact_state["fight"] = fight_take(payload)
+                if not impact_state["fight"]:
+                    return None
+                _moved, _note, picture = filmed_cut_placement(
+                    plan_from_take_facts(payload), payload, take
+                )
+                impact_state["picture"] = picture
+            if not impact_state["fight"] or impact_state["picture"] is None:
+                return None
+            impact_state["server_plan"] = server_impacts(take)
+        plan, _why = impact_state["server_plan"]
+        return plan.ramp() if plan is not None else None
 
     def on_ramp_frames(plan: SfxPlan, take: Path) -> tuple[SfxPlan, str]:
         """Ask the server's impact plan now (fight takes only) and lay each effect in its ramp at its frame."""
@@ -2736,9 +2790,7 @@ def run_finish(
             or impact_state["picture"] is None
         ):
             return plan, ""
-        early = server_impacts(take)
-        impact_state["server_plan"] = early
-        ramp = early[0].ramp() if early[0] is not None else None
+        ramp = early_ramp(take)
         if ramp is None:
             return plan, ""
         fps = probe_video(take).fps

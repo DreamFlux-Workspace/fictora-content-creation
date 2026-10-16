@@ -129,16 +129,15 @@ def test_the_kit_draws_the_servers_frame_list_and_never_redoes_the_clock() -> No
         plan_from_server_answer(_answer({**RAMP, "fps": 24.0, "frames": [["x", 1]]}))
 
 
-def test_very_different_neighbours_step_instead_of_blending() -> None:
+def test_a_stepped_window_shows_whole_frames_and_a_blended_one_blends() -> None:
     import numpy as np
 
     from creation.post.impact_post import between_frames
 
     dark, light = np.zeros((32, 32, 3), np.uint8), np.full((32, 32, 3), 200, np.uint8)
-    assert (between_frames(dark, light, 0.3) == dark).all()
-    assert (between_frames(dark, light, 0.7) == light).all()
-    near = np.full((32, 32, 3), 4, np.uint8)
-    assert between_frames(dark, near, 0.5).mean() == pytest.approx(2.0, abs=0.6)
+    assert (between_frames(dark, light, 0.3, step=True) == dark).all()
+    assert (between_frames(dark, light, 0.7, step=True) == light).all()
+    assert between_frames(dark, light, 0.5).mean() == pytest.approx(100.0, abs=0.6)
 
 
 @needs_ffmpeg
@@ -205,4 +204,266 @@ def test_finish_lays_each_effect_in_the_ramp_at_its_frames_shown_time(
     )
     assert any(abs(a - b) > 0.05 for a, b in zip(plain, ramped)), (
         "an effect inside the window moved"
+    )
+
+
+def _video(path: Path, frames: list) -> Path:  # type: ignore[type-arg]
+    from creation.post.media import ffmpeg_bin
+
+    height, width = frames[0].shape[:2]
+    subprocess.run(
+        [ffmpeg_bin(), "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}",
+         "-r", str(FPS), "-i", "-", "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv444p", str(path)],
+        input=b"".join(f.tobytes() for f in frames), check=True,
+    )  # fmt: skip
+    return path
+
+
+@needs_ffmpeg
+def test_the_window_steps_or_blends_once_from_its_most_changed_tile(
+    tmp_path: Path,
+) -> None:
+    """The server's rule: a spark in one corner barely moves the whole-frame mean, one tile sees it."""
+
+    import numpy as np
+
+    from creation.post.impact_post import ramp_window_steps, tile_difference
+
+    width, height, count = 64, 112, 72
+    calm = [np.full((height, width, 3), 60 + k // 3, np.uint8) for k in range(count)]
+    burst = [frame.copy() for frame in calm]
+    for k in range(1, count, 2):
+        burst[k][0:14, 0:10] = 250
+    assert float(np.abs(burst[33].astype(int) - burst[34].astype(int)).mean()) < 6.0
+    assert tile_difference(burst[33][..., 0], burst[34][..., 0]) > 12.0
+    ramp = ContactRamp(1.0, 1.2, 2.0, 2.4, 0.3)
+    assert ramp_window_steps(_video(tmp_path / "burst.mp4", burst), ramp) is True
+    assert ramp_window_steps(_video(tmp_path / "calm.mp4", calm), ramp) is False
+
+
+def test_the_hit_frame_is_whole_on_the_kits_own_clock_too() -> None:
+    contact = 1.6 + 0.4 / FPS
+    ramp = ContactRamp(1.0, contact - 0.5, contact + 0.5, 2.3, 0.3)
+    position = ramp.source_position(round(contact * FPS), FPS)
+    assert position is not None and position == round(position)
+
+
+@needs_ffmpeg
+def test_finish_moves_a_hand_cue_in_the_ramp_like_the_effects(tmp_path: Path) -> None:
+    """A hand cue (``--cue FILE@T``) inside the ramp window is laid where its frame now shows."""
+
+    import copy
+    import json
+    import re
+    from datetime import date
+
+    from conftest import make_tone
+    from test_impact_server_plan import FIGHT_FACTS, _finish
+    from test_sfx_motion import _desk
+
+    from creation.post.hand import Placed
+
+    facts = copy.deepcopy(FIGHT_FACTS)
+    facts["take_facts"]["fight"] = True
+    server = ContactRamp(2.9, 3.2, 3.8, 4.4, 0.25)
+    frames = [
+        [i, round(server.source_seconds(i / FPS) * FPS, 4)]  # type: ignore[operator]
+        for i in range(70, 106)
+        if server.source_seconds(i / FPS) is not None
+    ]
+    ramp = {"start_s": 2.9, "slow_start_s": 3.2, "slow_end_s": 3.8, "end_s": 4.4, "speed": 0.3, "fps": 24.0,
+            "frames": frames}  # fmt: skip
+
+    def run(with_ramp: bool) -> float:
+        root = tmp_path / ("ramp" if with_ramp else "plain")
+        desk = _desk(root, date(2026, 10, 14), box_at=3.5)
+        (desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+            json.dumps(facts)
+        )
+        cue = make_tone(root / "clang.wav", seconds=0.3, freq=900)
+        moment = {"time_s": 3.5, "until_s": 4.3, "style": "hit", "label": "Ren elbows the guard",
+                  "source": "planned"}  # fmt: skip
+        answer = {"moments": [{**moment, "ramp": ramp} if with_ramp else moment]}
+        result, _log = _finish(
+            desk,
+            impact_planner=lambda *a: lambda body: plan_from_server_answer(answer),
+            cues=(Placed(cue, 3.45),),
+        )
+        step = next(s for s in result.steps if s.step == "cues")
+        (start,) = [float(t) for t in re.findall(r"@(\d+\.\d+)s", step.detail)]
+        return start
+
+    assert run(False) == pytest.approx(3.45, abs=0.006)
+    assert run(True) == pytest.approx(server.screen_seconds(3.45, FPS), abs=0.006), (
+        "the server's list, not the kit's maths"
+    )
+
+
+@needs_ffmpeg
+def test_a_stepped_window_draws_only_real_frames(tmp_path: Path) -> None:
+    """Before the hit (no punch-in yet) every frame of a stepped window is one of the take's own frames."""
+
+    import numpy as np
+
+    width, height, count = 64, 112, 72
+    frames = [np.full((height, width, 3), 20 + 3 * k, np.uint8) for k in range(count)]
+    for k in range(1, count, 2):
+        frames[k][0:14, 0:10] = 250  # a flickering spark: the window steps
+    take = _video(tmp_path / "take.mp4", frames)
+    answer = _answer(
+        {
+            "start_s": 0.9,
+            "slow_start_s": 1.15,
+            "slow_end_s": 1.85,
+            "end_s": 2.3,
+            "speed": 0.3,
+        }
+    )
+    plan = plan_from_server_answer(answer)
+    out = apply_impacts(take, plan, tmp_path / "out.mp4").output
+    drawn, source = _gray(out), _gray(take)
+    for index in range(round(0.95 * FPS), round(1.45 * FPS)):
+        assert min(abs(drawn[index] - s).mean() for s in source) < 1.0, (
+            f"frame {index} is a blend"
+        )
+
+
+def _gray(path: Path):  # type: ignore[no-untyped-def]
+    import numpy as np
+
+    from creation.post.media import ffmpeg_bin
+
+    raw = subprocess.run(
+        [ffmpeg_bin(), "-v", "error", "-i", str(path), "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+        capture_output=True, check=True,
+    ).stdout  # fmt: skip
+    return np.frombuffer(raw, np.uint8).reshape(-1, 112, 64).astype(np.float64)
+
+
+# --- review of #263: the server decides, the kit draws ---------------------------------------------------------
+
+
+def test_the_kits_fallback_rule_is_the_servers_twelve_any_pair_strictly_above() -> None:
+    """The same number and rule as fictora-drama ``impact_post`` (its own pin test asserts 12.0 too)."""
+
+    from creation.post.impact_post import RAMP_STEP_TILE_DIFFERENCE, window_steps
+
+    assert RAMP_STEP_TILE_DIFFERENCE == 12.0
+    ramp = ContactRamp(1.0, 1.2, 2.0, 2.4, 0.3)
+    calm = [(round(1.0 + k / FPS, 4), 5.0) for k in range(34)]
+    assert window_steps(ramp, calm, fps=FPS) is False
+    assert (
+        window_steps(ramp, [*calm[:10], (calm[10][0], 12.0), *calm[11:]], fps=FPS)
+        is False
+    )
+    assert (
+        window_steps(ramp, [*calm[:10], (calm[10][0], 12.5), *calm[11:]], fps=FPS)
+        is True
+    )
+    assert window_steps(ramp, [*calm, (3.5, 40.0)], fps=FPS) is False
+
+
+@needs_ffmpeg
+def test_the_servers_step_is_drawn_and_the_kits_own_look_is_only_for_an_older_server(
+    tmp_path: Path,
+) -> None:
+    import numpy as np
+
+    width, height, count = 64, 112, 58
+    calm = [
+        np.full((height, width, 3), 20 + 4 * k, np.uint8) for k in range(count)
+    ]  # 4 levels a frame
+    take = _video(tmp_path / "calm.mp4", calm)
+    source = _gray(take)
+    window = {
+        "start_s": 0.9,
+        "slow_start_s": 1.15,
+        "slow_end_s": 1.85,
+        "end_s": 2.3,
+        "speed": 0.3,
+    }
+
+    def blended(step: object, name: str) -> bool:
+        plan = plan_from_server_answer(
+            _answer({**window, **({} if step is None else {"step": step})})
+        )
+        drawn = _gray(apply_impacts(take, plan, tmp_path / f"{name}.mp4").output)
+        return any(
+            min(abs(drawn[i] - s).mean() for s in source) > 1.0
+            for i in range(round(0.95 * FPS), round(1.45 * FPS))
+        )
+
+    assert not blended(True, "server-steps"), (
+        "the server said step: the calm window is drawn stepped"
+    )
+    assert blended(False, "server-blends")
+    assert blended(None, "older-server"), (
+        "no step from the server: the kit's own look (calm, so it blends)"
+    )
+    with pytest.raises(ImpactPlanUnavailable):
+        plan_from_server_answer(_answer({**window, "step": "yes"}))
+
+
+@needs_ffmpeg
+def test_finish_sends_the_tile_motion_and_moves_a_hand_cue_even_when_the_effects_step_stops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import copy
+    import json
+    import re
+    from datetime import date
+
+    from conftest import make_tone
+    from test_impact_server_plan import FIGHT_FACTS, _finish
+    from test_sfx_motion import _desk
+
+    from creation.post import finish as finish_module
+    from creation.post.hand import Placed
+    from creation.post.media import MediaToolError
+
+    facts = copy.deepcopy(FIGHT_FACTS)
+    facts["take_facts"]["fight"] = True
+    server = ContactRamp(2.9, 3.2, 3.8, 4.4, 0.25)
+    frames = [
+        [i, round(server.source_seconds(i / FPS) * FPS, 4)]  # type: ignore[operator]
+        for i in range(70, 106)
+        if server.source_seconds(i / FPS) is not None
+    ]
+    ramp = {"start_s": 2.9, "slow_start_s": 3.2, "slow_end_s": 3.8, "end_s": 4.4, "speed": 0.3, "fps": 24.0,
+            "frames": frames, "step": True}  # fmt: skip
+    desk = _desk(tmp_path, date(2026, 10, 14), box_at=3.5)
+    (desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(json.dumps(facts))
+    cue = make_tone(tmp_path / "clang.wav", seconds=0.3, freq=900)
+    bodies: list[dict[str, object]] = []
+
+    def planner(body: dict[str, object]):  # type: ignore[no-untyped-def]
+        bodies.append(body)
+        moment = {
+            "time_s": 3.5,
+            "until_s": 4.3,
+            "style": "hit",
+            "label": "Ren elbows the guard",
+            "source": "planned",
+        }
+        return plan_from_server_answer({"moments": [{**moment, "ramp": ramp}]})
+
+    def stops(*_a: object, **_k: object) -> str:
+        raise MediaToolError("the effects step stopped before asking")
+
+    monkeypatch.setattr(finish_module, "stale_facts_reason", stops)
+    result, _log = _finish(
+        desk,
+        impact_planner=lambda *a: planner,
+        cues=(Placed(cue, 3.45),),
+        tile_meter=lambda _take: ((3.5, 30.0),),
+    )
+    assert next(s for s in result.steps if s.step == "sfx").status == "failed"
+    step = next(s for s in result.steps if s.step == "cues")
+    (start,) = [float(t) for t in re.findall(r"@(\d+\.\d+)s", step.detail)]
+    assert start == pytest.approx(server.screen_seconds(3.45, FPS), abs=0.006), (
+        "the hand cue still follows the ramp"
+    )
+    assert len(bodies) == 1, "one request per take"
+    assert bodies[0]["tile_motion"] == [[3.5, 30.0]], (
+        "the server gets the picture change it decides from"
     )
