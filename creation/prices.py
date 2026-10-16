@@ -392,8 +392,8 @@ def take_facts_usd(facts: dict, *, on: date) -> tuple[float, str] | None:
     clips = facts.get("shot_clips")
     if isinstance(clips, list) and clips:
         # A take filmed one clip per board row (fictora-drama shot clips): each
-        # clip was filmed and billed on its own, never the joined take's length.
-        return _shot_clips_usd(endpoint, resolution, clips, on=on)
+        # clip was filmed and billed on its own; the server says what each bills.
+        return _shot_clips_usd(clips)
     count = int(facts.get("reference_image_count") or 0)
     price = take_usd(
         endpoint, resolution, float(seconds), on=on, reference_images=count
@@ -407,28 +407,24 @@ def take_facts_usd(facts: dict, *, on: date) -> tuple[float, str] | None:
     )
 
 
-def _shot_clips_usd(
-    endpoint: str, resolution: str, clips: list, *, on: date
-) -> tuple[float, str] | None:
-    """Price a shot-clips take: each clip at its own billed seconds, no reference images (Turbo)."""
+def _shot_clips_usd(clips: list) -> tuple[float, str] | None:
+    """Book a shot-clips take at the dollars the server priced each clip (``billed_usd``); never re-priced here."""
 
     total = 0.0
     lengths: list[str] = []
     for clip in clips:
+        usd = clip.get("billed_usd") if isinstance(clip, dict) else None
         seconds = clip.get("billed_seconds") if isinstance(clip, dict) else None
-        if not isinstance(seconds, (int, float)):
+        try:
+            total += float(usd)
+        except (TypeError, ValueError):
             return None
-        price = take_usd(
-            endpoint, resolution, float(seconds), on=on, reference_images=0
+        lengths.append(
+            f"{float(seconds):g}" if isinstance(seconds, (int, float)) else "?"
         )
-        if price is None:
-            return None
-        total += price
-        lengths.append(f"{float(seconds):g}")
-    label = LANE_LABELS.get(endpoint, endpoint)
     return (
         total,
-        f"{label} {resolution}, {len(lengths)} shot clip(s) of {' + '.join(lengths)} s",
+        f"{len(lengths)} shot clip(s) of {' + '.join(lengths)} s, as the server priced them",
     )
 
 

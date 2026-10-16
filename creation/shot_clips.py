@@ -4,13 +4,14 @@ Founder-approved test (16 Oct 2026, Iron Saint "Low Tide"). The server keeps
 the opt-in on the spine (``shot_clips``, fictora-drama ``POST
 /v1/spines/{id}/shot-clips``, operators only). With it on:
 
-- a portrait board may hold five rows, so a 30 s episode of two takes can hold
-  nine shots (boards of 5 + 4 rows);
-- each H3 Turbo take is filmed as one short clip per board row: the clip starts
-  on its own row's left cell, is told only that row's words, films the row's
-  planned seconds (billed at least 5 s each) to its slice of the take's locked
-  voice track, and never starts on another clip's last frame;
-- the server cuts each clip to its row's seconds and joins them into the
+- a take may hold five rows (shots), so a 30 s episode of two takes can hold
+  nine shots (5 + 4), and the episode gets ONE board: a 3x3 grid, each cell one
+  shot's opening picture (natively 9:16, nothing cropped);
+- each H3 Turbo take is filmed as one short clip per row: the clip starts on
+  its shot's cell, is told only that shot's words, films the shot's planned
+  seconds (billed at least 5 s each) to its slice of the take's locked voice
+  track, and never starts on another clip's last frame;
+- the server cuts each clip on the take's frame grid and joins them into the
   take's one clip under the take's dialogue track. The desk then gets one take
   per board exactly as before, so ``finish`` (SFX, voices, impact, captions),
   ``join`` and reels run unchanged.
@@ -19,15 +20,17 @@ The kit's part is thin:
 
 - ``fictora-produce shot-clips --desk D [--on | --off]`` reads or sets the
   opt-in (free). Set it before the episode's boards are drawn: it is what lets
-  a board hold five rows.
+  a take hold five shots and the episode be drawn as one grid.
 - ``film --shot-clips`` is how an opted-in show is filmed. It prices from the
-  server's estimate, which counts every clip at its own billed length, and it
-  refuses (nothing sent) when that estimate does not price clips (an older
-  server) or when the flag and the show disagree. A film never goes out as
-  shot clips by accident, and an opted-in show never films without the flag.
-- the booked price of a filmed take is the sum of its clips (take facts
-  ``shot_clips``; :func:`creation.prices.take_facts_usd`), not the joined
-  take's length.
+  server's estimate, which counts every clip at its own billed length, passes
+  the server's price token back with the film (the server refuses a film whose
+  clips changed since), and refuses (nothing sent) when that estimate does not
+  price clips (an older server) or when the flag and the show disagree. A
+  film never goes out as shot clips by accident, and an opted-in show never
+  films without the flag.
+- the booked price of a filmed take is the dollars the server priced each of
+  its clips (take facts ``shot_clips[].billed_usd``); the kit never prices
+  clips itself.
 
 When the mode ships for real it becomes the default for action shows with no
 switch: this module, the command and the flag go.
@@ -252,11 +255,45 @@ def shot_clips_price_line(estimate: Mapping[str, Any]) -> str:
     cost = estimate.get("cost_estimate") or {}
     clips = shot_clips_priced(estimate) or 0
     seconds = cost.get("billed_seconds")
-    return (
-        f"Shot clips: {clips} clip(s), one per board row, each billed on its own (at least 5 s); "
-        f"{seconds} s billed in all. Each clip is cut to its row's seconds and the take is joined on the "
-        "server, so finish and join read one take per board as before."
+    boards = cost.get("boards")
+    board_words = (
+        f" and {boards} board(s) to draw" if isinstance(boards, int) and boards else ""
     )
+    return (
+        f"Shot clips: {clips} short clips, one per shot, each paid for on its own (at least 5 seconds each, "
+        f"{seconds} seconds in all){board_words}. The server trims each clip to its shot and joins them into "
+        "the take, so finishing works as usual."
+    )
+
+
+def shot_clips_quote(estimate: Mapping[str, Any] | None) -> str | None:
+    """The server's token naming the clips this estimate priced (sent back with the film), or ``None``."""
+
+    cost = estimate.get("cost_estimate") if isinstance(estimate, Mapping) else None
+    quote = cost.get("shot_clips_quote") if isinstance(cost, Mapping) else None
+    return quote if isinstance(quote, str) and quote else None
+
+
+def saved_shot_clips_quote(desk: Path, key: str) -> str | None:
+    """The token of the newest saved estimate for one film (``api/film-<key>-estimate*.json``), or ``None``.
+
+    The kit keeps nothing of its own: it passes back the token the server
+    answered with the number the human said yes to. The server refuses the film
+    if the clips changed since.
+    """
+
+    import json
+
+    folder = desk / "api"
+    found = sorted(
+        folder.glob(f"film-{key}-estimate*.json"), key=lambda path: path.stat().st_mtime
+    )
+    for path in reversed(found):
+        try:
+            return shot_clips_quote(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            continue
+    return None
 
 
 __all__ = [
@@ -269,5 +306,7 @@ __all__ = [
     "set_shot_clips",
     "shot_clips_film_refusal",
     "shot_clips_price_line",
+    "saved_shot_clips_quote",
     "shot_clips_priced",
+    "shot_clips_quote",
 ]

@@ -1143,6 +1143,7 @@ def video_request_body(
     single_frame_start: bool | None = None,
     desk: Path | None = None,
     shot_clips: bool = False,
+    shot_clips_quote: str | None = None,
 ) -> dict[str, Any]:
     """Build the ``POST /v1/video-generations`` reuse body that films episode ``episode`` alone.
 
@@ -1177,6 +1178,10 @@ def video_request_body(
         a show that films one clip per board row (:mod:`creation.shot_clips`).
         Such a show is never filmed without it (``step`` included); the body
         itself is unchanged, the server reads the show's opt-in.
+    shot_clips_quote
+        With ``shot_clips``: the token of the estimate the human said yes to,
+        passed through as ``shot_clips_quote``; the server refuses the film when
+        its clips are not the ones priced.
 
     Returns
     -------
@@ -1213,6 +1218,9 @@ def video_request_body(
     if single_frame_start is not None:
         # Only an explicit flag sends it; the server pins the run's opening at admission.
         extra = {**extra, "single_frame_start": bool(single_frame_start)}
+    if shot_clips and shot_clips_quote:
+        # The price the human said yes to: the server checks it is this film's clips.
+        extra = {**extra, "shot_clips_quote": shot_clips_quote}
     return reuse_generation_body(
         prompt=scene_prompt(spine, prompt),
         spine=spine,

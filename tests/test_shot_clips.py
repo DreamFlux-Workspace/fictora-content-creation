@@ -51,6 +51,8 @@ PRICED = {
         "usd_per_second": "0.04",
         "video_usd": "1.80",
         "shot_clips": 9,
+        "shot_clips_quote": "sc1:abc123",
+        "boards": 1,
     }
 }
 ROUTE = "/v1/spines/sp1/shot-clips"
@@ -63,27 +65,28 @@ def _opted_in(api: FakeApi) -> None:
 # --- the price of a filmed take ------------------------------------------------------------------
 
 
-def test_a_shot_clips_take_is_booked_as_the_sum_of_its_clips() -> None:
+def test_a_shot_clips_take_is_booked_at_the_dollars_the_server_priced_each_clip() -> (
+    None
+):
+    clip = {"row": 1, "planned_seconds": 3.0, "billed_seconds": 5, "billed_usd": "0.20"}
     facts = {
         "endpoint_id": TURBO,
         "resolution": "768P",
         "duration_seconds": 15.0,
         "reference_image_count": 0,
-        "shot_clips": [
-            {"job_id": f"c{n}", "row": n, "start_s": 3.0 * (n - 1), "planned_seconds": 3.0, "billed_seconds": 5}
-            for n in range(1, 6)
-        ],
+        "shot_clips": [dict(clip, job_id=f"c{n}") for n in range(1, 6)],
     }
-    whole = {key: value for key, value in facts.items() if key != "shot_clips"}
     day = date(2026, 10, 16)
 
-    clips = take_facts_usd(facts, on=day)
-    take = take_facts_usd(whole, on=day)
+    booked = take_facts_usd(facts, on=day)
 
-    assert clips is not None and take is not None
-    # Five clips of 5 s are 25 s billed, never the joined take's 15 s.
-    assert clips[0] == pytest.approx(take[0] * 25 / 15)
-    assert "5 shot clip(s) of 5 + 5 + 5 + 5 + 5 s" in clips[1]
+    assert booked is not None and booked[0] == pytest.approx(1.00)
+    assert (
+        "5 shot clip(s) of 5 + 5 + 5 + 5 + 5 s, as the server priced them" in booked[1]
+    )
+    # A clip the server did not price is never guessed by the kit.
+    unpriced = dict(facts, shot_clips=[{"row": 1, "billed_seconds": 5}])
+    assert take_facts_usd(unpriced, on=day) is None
 
 
 # --- the refusals, before anything is priced or sent ------------------------------------------------
@@ -95,12 +98,20 @@ def test_the_flag_and_the_show_must_agree() -> None:
 
     assert shot_clips_film_refusal(plain, flag=False, episode=2) is None
     assert shot_clips_film_refusal(opted, flag=True, episode=2) is None
-    assert "--shot-clips" in (shot_clips_film_refusal(opted, flag=False, episode=2) or "")
+    assert "--shot-clips" in (
+        shot_clips_film_refusal(opted, flag=False, episode=2) or ""
+    )
     assert shot_clips_film_refusal(plain, flag=True, episode=2) == NOT_OPTED_IN
-    assert films_shot_clips({"spine": opted}) and not films_shot_clips(plain) and not films_shot_clips(None)
+    assert (
+        films_shot_clips({"spine": opted})
+        and not films_shot_clips(plain)
+        and not films_shot_clips(None)
+    )
 
 
-def test_an_opted_in_show_is_never_priced_or_filmed_without_the_flag(desk30: Path, api30: FakeApi) -> None:
+def test_an_opted_in_show_is_never_priced_or_filmed_without_the_flag(
+    desk30: Path, api30: FakeApi
+) -> None:
     _filmed_once(desk30)
     _opted_in(api30)
     api30.routes[("POST", ESTIMATE)] = PRICED
@@ -111,7 +122,9 @@ def test_an_opted_in_show_is_never_priced_or_filmed_without_the_flag(desk30: Pat
     assert api30.posted(ESTIMATE) == [] and api30.posted(VIDEO) == []
 
 
-def test_the_flag_on_a_show_that_did_not_opt_in_sends_nothing(desk30: Path, api30: FakeApi) -> None:
+def test_the_flag_on_a_show_that_did_not_opt_in_sends_nothing(
+    desk30: Path, api30: FakeApi
+) -> None:
     _filmed_once(desk30)
     api30.routes[("POST", ESTIMATE)] = PRICED
 
@@ -121,10 +134,14 @@ def test_the_flag_on_a_show_that_did_not_opt_in_sends_nothing(desk30: Path, api3
     assert api30.posted(ESTIMATE) == []
 
 
-def test_a_server_that_does_not_price_clips_is_refused_before_spend(desk30: Path, api30: FakeApi) -> None:
+def test_a_server_that_does_not_price_clips_is_refused_before_spend(
+    desk30: Path, api30: FakeApi
+) -> None:
     _filmed_once(desk30)
     _opted_in(api30)
-    api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {"total_usd": "1.20", "takes": 2}}
+    api30.routes[("POST", ESTIMATE)] = {
+        "cost_estimate": {"total_usd": "1.20", "takes": 2}
+    }
 
     with pytest.raises(CommandStopped) as caught:
         run_film(desk30, episode=2, cause=CAUSE, shot_clips=True)
@@ -146,8 +163,9 @@ def test_film_prices_every_clip_then_films_with_the_same_body(
 
     text = run_film(desk30, episode=2, cause=CAUSE, shot_clips=True)
 
-    assert "Shot clips: 9 clip(s), one per board row" in text
-    assert "45 s billed in all" in text
+    assert "Shot clips: 9 short clips, one per shot" in text
+    assert "45 seconds in all) and 1 board(s) to draw" in text
+    assert "15 s a take" not in text
     assert "--episode 2 --shot-clips --cause" in text
     assert api30.posted(VIDEO) == []
     capsys.readouterr()
@@ -157,10 +175,14 @@ def test_film_prices_every_clip_then_films_with_the_same_body(
     assert api30.posted(VIDEO) == []
 
 
-def test_one_take_films_after_its_clips_were_priced_and_books_them(desk30: Path, api30: FakeApi) -> None:
+def test_one_take_films_after_its_clips_were_priced_and_books_them(
+    desk30: Path, api30: FakeApi
+) -> None:
     _filmed_once(desk30)
     _opted_in(api30)
-    api30.routes[("POST", ESTIMATE)] = {"cost_estimate": {**PRICED["cost_estimate"], "shot_clips": 4}}
+    api30.routes[("POST", ESTIMATE)] = {
+        "cost_estimate": {**PRICED["cost_estimate"], "shot_clips": 4}
+    }
     run_film(desk30, episode=2, take_id="t2", cause=CAUSE, shot_clips=True)
     _take_two_of_episode_two(api30)
     api30.routes[("GET", "/v1/jobs/job_take_e2t2/take-facts")] = {
@@ -169,17 +191,33 @@ def test_one_take_films_after_its_clips_were_priced_and_books_them(desk30: Path,
             "resolution": "768P",
             "duration_seconds": 15.0,
             "shot_clips": [
-                {"job_id": f"c{n}", "row": n, "start_s": 3.75 * (n - 1), "planned_seconds": 3.75, "billed_seconds": 5}
+                {
+                    "job_id": f"c{n}",
+                    "row": n,
+                    "start_s": 3.75 * (n - 1),
+                    "planned_seconds": 3.75,
+                    "billed_seconds": 5,
+                    "billed_usd": "0.20",
+                }
                 for n in range(1, 5)
             ],
         }
     }
 
-    text = run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True, shot_clips=True)
+    text = run_film(
+        desk30,
+        episode=2,
+        take_id="t2",
+        cause=CAUSE,
+        confirm_spend=True,
+        shot_clips=True,
+    )
 
     (body,) = api30.posted(VIDEO)
-    assert "shot_clips" not in body
-    # Four 5 s clips at $0.04/s: $0.80, not the joined take's 15 s ($0.60).
+    # The kit passes the server's token for the number the human said yes to, nothing of its own.
+    assert body["shot_clips_quote"] == "sc1:abc123"
+    assert {key for key in body if key.startswith("shot_clips")} == {"shot_clips_quote"}
+    # Four clips at the server's $0.20 each: $0.80, not the joined take's 15 s ($0.60).
     assert "$0.80 booked" in text
 
 
@@ -200,16 +238,28 @@ def test_the_film_body_is_the_plain_body(api30: FakeApi) -> None:
         stages.video_request_body(api30, **opted)
     clips = stages.video_request_body(api30, **opted, shot_clips=True)
     assert json.dumps(clips, sort_keys=True) == json.dumps(plain, sort_keys=True)
+    quoted = stages.video_request_body(
+        api30, **opted, shot_clips=True, shot_clips_quote="sc1:abc"
+    )
+    assert quoted.pop("shot_clips_quote") == "sc1:abc"
+    assert json.dumps(quoted, sort_keys=True) == json.dumps(plain, sort_keys=True)
 
 
 # --- the free switch -----------------------------------------------------------------------------------
 
 
-def test_the_switch_posts_the_route_and_reads_a_stale_version_again(api30: FakeApi) -> None:
+def test_the_switch_posts_the_route_and_reads_a_stale_version_again(
+    api30: FakeApi,
+) -> None:
     answers = iter(
         [
             (409, {"error": {"code": "spine_version_conflict"}}),
-            {"shot_clips": True, "changed": True, "applied": True, "notice": "From the next film on ..."},
+            {
+                "shot_clips": True,
+                "changed": True,
+                "applied": True,
+                "notice": "From the next film on ...",
+            },
         ]
     )
     api30.routes[("POST", ROUTE)] = lambda *_args: next(answers)
@@ -228,13 +278,19 @@ def test_an_older_server_without_the_route_changes_nothing(api30: FakeApi) -> No
         set_shot_clips(api30, api30.spine("sp1"), True)
 
 
-def test_the_commands_take_the_flags(desk30: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_commands_take_the_flags(
+    desk30: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from creation import episode_commands
     from creation import shot_clips as module
 
     seen: dict[str, object] = {}
     monkeypatch.setattr(episode_commands, "run_film", lambda *_a, **kw: seen.update(kw))
-    monkeypatch.setattr(module, "run_shot_clips", lambda _desk, *, set_to=None: seen.update(set_to=set_to))
+    monkeypatch.setattr(
+        module,
+        "run_shot_clips",
+        lambda _desk, *, set_to=None: seen.update(set_to=set_to),
+    )
 
     assert main(["film", "--desk", str(desk30), "--episode", "2", "--shot-clips"]) == 0
     assert seen.pop("shot_clips") is True

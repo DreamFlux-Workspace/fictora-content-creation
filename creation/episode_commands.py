@@ -85,6 +85,7 @@ from creation.cli_text import TextArgError, text_or_file
 from creation.new_cast import new_cast_notice, newcomers
 from creation.shot_clips import NOT_PRICED as SHOT_CLIPS_NOT_PRICED
 from creation.shot_clips import (
+    saved_shot_clips_quote,
     shot_clips_film_refusal,
     shot_clips_price_line,
     shot_clips_priced,
@@ -7363,6 +7364,7 @@ def _run_film(
         single_frame_start=trial,
         desk=desk,
         shot_clips=shot_clips,
+        shot_clips_quote=saved_shot_clips_quote(desk, key) if shot_clips else None,
     )
     _save_desk_json(desk, f"{unit}-request", body)
     if filmed_before and reason:
@@ -7717,6 +7719,9 @@ def _price_film(
         if take_index is not None
         else ""
     )
+    if shot_clips:
+        # Never "15 s a take": the server priced each clip at its own length.
+        source = "the server's price for every clip and board"
     lines = [
         *warnings,
         next_take_voices_line(desk, run, spine),
