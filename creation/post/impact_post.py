@@ -336,13 +336,61 @@ class ImpactMoment:
     #: Seconds the picture holds on the hit frame (the server's ``freeze_s``: a fight's strike freeze);
     #: 0 for none. The held frames replace the frames after the hit: same length, same sound.
     freeze: float = 0.0
+    #: The server's speed ramp around a planned contact (its ``ramp``), or ``None``. Never with a freeze.
+    ramp: ContactRamp | None = None
 
     def one_line(self) -> str:
-        """``a gas tank explodes: big punch-in + shake at 2.04s`` (``+ 0.12s freeze`` when it holds)."""
+        """``a gas tank explodes: big punch-in + shake at 2.04s`` (``+ 0.12s freeze`` or ``+ ramp`` when held)."""
 
         what = "big punch-in + shake" if self.style == "blast" else "punch-in + shake"
         held = f" + {self.freeze:.2f}s freeze" if self.freeze > 0 else ""
+        if self.ramp is not None:
+            held = f" + {self.ramp.slow_end - self.ramp.slow_start:.2f}s slow-mo ramp ({self.ramp.speed:.2f}x)"
         return f"{self.label}: {what}{held} at {self.time:.2f}s"
+
+
+@dataclass(frozen=True)
+class ContactRamp:
+    """The server's speed ramp on a planned contact (``POST /v1/jobs/{id}/impact-plan`` ``ramp``).
+
+    The take's frames play on a remapped clock from ``start`` to ``end``: a little fast to ``slow_start``,
+    ``speed`` (about 0.45x) to ``slow_end`` with the contact in the middle at its own time, fast again to
+    ``end``. The window's ends and the contact show their own frames, so the take keeps its length and
+    frame count and the sound is copied untouched (fictora-drama ``impact_post.ContactRamp``, same math).
+    """
+
+    start: float
+    slow_start: float
+    slow_end: float
+    end: float
+    speed: float
+
+    def source_seconds(self, seconds: float) -> float | None:
+        """The take time whose frame shows at ``seconds``, or ``None`` outside the window.
+
+        Parameters
+        ----------
+        seconds
+            Time into the take, as it plays.
+
+        Returns
+        -------
+        float | None
+            The frame's own time: continuous, rising, its own at the window's ends and at the contact.
+        """
+
+        if not self.start <= seconds <= self.end:
+            return None
+        hit = (self.slow_start + self.slow_end) / 2.0
+        into_slow = hit - self.speed * (hit - self.slow_start)
+        out_of_slow = hit + self.speed * (self.slow_end - hit)
+        if seconds < self.slow_start:
+            span = self.slow_start - self.start
+            return self.start + (into_slow - self.start) * ((seconds - self.start) / span if span > 0 else 1.0)
+        if seconds <= self.slow_end:
+            return hit + self.speed * (seconds - hit)
+        span = self.end - self.slow_end
+        return out_of_slow + (self.end - out_of_slow) * ((seconds - self.slow_end) / span if span > 0 else 1.0)
 
 
 def effect_seconds(style: ImpactStyle) -> float:
@@ -466,6 +514,27 @@ class ImpactPlan:
             after = index - (hit + max(1, round(moment.freeze * fps)))
             if 1 <= after <= FREEZE_RESUME_FRAMES:
                 return hit, 1.0 - after / (FREEZE_RESUME_FRAMES + 1)
+        return None
+
+    def source_seconds(self, seconds: float) -> float | None:
+        """The take time whose frame shows at ``seconds`` inside the server's ramp, else ``None``.
+
+        Parameters
+        ----------
+        seconds
+            Time into the take.
+
+        Returns
+        -------
+        float | None
+            :meth:`ContactRamp.source_seconds` of the ramp ``seconds`` falls in.
+        """
+
+        for moment in self.moments:
+            if moment.ramp is not None:
+                moved = moment.ramp.source_seconds(seconds)
+                if moved is not None:
+                    return moved
         return None
 
     def held_from(self, index: int, fps: float) -> int:
@@ -697,9 +766,33 @@ def plan_from_server_answer(body: Any) -> ImpactPlan:
             raise ImpactPlanUnavailable(
                 f"the server's impact plan has a malformed freeze ({freeze!r})"
             )
-        moments.append(ImpactMoment(time, until, style, label, source, float(freeze)))
+        moments.append(
+            ImpactMoment(time, until, style, label, source, float(freeze), _server_ramp(item.get("ramp"), time))
+        )
     skipped = tuple(str(reason) for reason in body.get("skipped") or [])
     return ImpactPlan(tuple(sorted(moments, key=lambda m: m.time)), skipped)
+
+
+def _server_ramp(value: object, time: float) -> ContactRamp | None:
+    """The server's ``ramp`` on a moment, or ``None``; a malformed one is no plan at all."""
+
+    if value is None:
+        return None
+    try:
+        assert isinstance(value, dict)
+        ramp = ContactRamp(
+            start=float(value["start_s"]),
+            slow_start=float(value["slow_start_s"]),
+            slow_end=float(value["slow_end_s"]),
+            end=float(value["end_s"]),
+            speed=float(value["speed"]),
+        )
+    except (AssertionError, KeyError, TypeError, ValueError) as exc:
+        raise ImpactPlanUnavailable(f"the server's impact plan has a malformed ramp ({value!r})"[:200]) from exc
+    ordered = 0 <= ramp.start < ramp.slow_start < time < ramp.slow_end < ramp.end
+    if not ordered or not 0 < ramp.speed < 1:
+        raise ImpactPlanUnavailable(f"the server's impact plan has a malformed ramp ({value!r})"[:200])
+    return ramp
 
 
 def impact_plan_request(
@@ -837,16 +930,54 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
         stdin=subprocess.PIPE, stderr=subprocess.PIPE,
     )  # fmt: skip
     assert reader.stdout is not None and writer.stdin is not None
+    stdout = reader.stdout
     size = width * height * 3
     index = 0
     # The server's freeze: held frames show the hit frame, with the hit frame's own move; nothing is added.
     anchor: np.ndarray | None = None
+    # The server's ramp: frames inside it show the take's frame on the ramp's clock, blended between its
+    # two neighbours (read ahead or kept back as needed); same frame count. No ramp, every frame as before.
+    ramped = any(moment.ramp is not None for moment in plan.moments)
+    decoded: dict[int, np.ndarray] = {}
+    next_read = 0
+    ended = False
+
+    def frame_at(position: int) -> np.ndarray | None:
+        nonlocal next_read, ended
+        while not ended and next_read <= position:
+            raw = stdout.read(size)
+            if len(raw) < size:
+                ended = True
+                break
+            decoded[next_read] = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
+            next_read += 1
+        return decoded.get(position)
+
     try:
         while True:
-            raw = reader.stdout.read(size)
-            if len(raw) < size:
+            own = frame_at(index)
+            if own is None:
                 break
-            frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
+            frame = own
+            oldest = index
+            remapped = plan.source_seconds(index / fps) if ramped else None
+            if remapped is not None:
+                position = remapped * fps
+                low = max(0, math.floor(position + 1e-9))
+                share = position - low
+                below = frame_at(low)
+                above = frame_at(low + 1) if share > 1e-6 else None
+                if below is not None:
+                    frame = below
+                    if above is not None:
+                        frame = np.clip(
+                            (1.0 - share) * below.astype(np.float32) + share * above.astype(np.float32) + 0.5,
+                            0,
+                            255,
+                        ).astype(np.uint8)
+                oldest = min(index, low)
+            for stale in [key for key in decoded if key < oldest - 1]:
+                del decoded[stale]
             source = plan.held_from(index, fps)
             easing = plan.resume(index, fps) if anchor is not None else None
             if source < index and anchor is not None:
@@ -898,6 +1029,7 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
 
 
 __all__ = [
+    "ContactRamp",
     "IMPACT_PLAN_PATH",
     "MAX_EDITOR_HITS",
     "SOUND_MATCH_SECONDS",
