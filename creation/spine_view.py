@@ -1901,18 +1901,32 @@ def extra_lookalike_lines(
             continue
         notes: list[str] = []
         for risk in board.get("extra_lookalike_risks") or []:
-            if not isinstance(risk, Mapping) or not risk.get("who") or not risk.get("resembles"):
+            if (
+                not isinstance(risk, Mapping)
+                or not risk.get("who")
+                or not risk.get("resembles")
+            ):
                 continue
             who, like = str(risk["who"]), str(risk["resembles"])
-            traits = ", ".join(str(trait) for trait in risk.get("traits") or []) or "their look"
+            traits = (
+                ", ".join(str(trait) for trait in risk.get("traits") or [])
+                or "their look"
+            )
             frames = [str(ordinal) for ordinal in risk.get("frame_ordinals") or []]
-            where = f" (frame{'s' if len(frames) > 1 else ''} {', '.join(frames)})" if frames else ""
+            where = (
+                f" (frame{'s' if len(frames) > 1 else ''} {', '.join(frames)})"
+                if frames
+                else ""
+            )
             lines.append(
                 f"  !! t{set_index} board: the unnamed extra {who!r}{where} is written with {traits}, like {like}; "
                 f"a hit on them can read as a hit on {like} (warning only)"
             )
             look = str(risk.get("fix_value") or "").strip()
-            notes.append(f"The unnamed {who} is not {like}: " + (look or f"a look of their own, unlike {like}"))
+            notes.append(
+                f"The unnamed {who} is not {like}: "
+                + (look or f"a look of their own, unlike {like}")
+            )
         if notes:
             note = " ".join(note.rstrip(".") + "." for note in notes).replace('"', "'")
             lines.append(
