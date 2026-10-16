@@ -364,9 +364,10 @@ class ContactRamp:
     slow_end: float
     end: float
     speed: float
-    #: Drawn stepped (each in-between frame the nearer real frame) instead of blended: one decision for the
-    #: whole window (:func:`ramp_window_steps`, the server's rule), made before the render.
-    step: bool = False
+    #: Drawn stepped (each in-between frame the nearer real frame) instead of blended: the server's one
+    #: decision for the window (its ``step``, on the tile motion this kit sent); ``None`` (an older server)
+    #: has the kit decide with the same rule (:func:`ramp_window_steps`) before the render.
+    step: bool | None = None
     #: The frame rate the server counted ``frames`` in (its ``fps``), when it sent them.
     fps: float | None = None
     #: The server's ``(output frame, source frame)`` for every frame of the window: the kit draws these and
@@ -924,8 +925,11 @@ def _server_ramp(value: object, time: float) -> ContactRamp | None:
         not isinstance(fps, (int, float)) or isinstance(fps, bool) or fps <= 0
     ):
         raise ImpactPlanUnavailable("the server's ramp frame list has no frame rate")
+    step = value.get("step")
+    if step is not None and not isinstance(step, bool):
+        raise ImpactPlanUnavailable("the server's ramp has a malformed step")
     ramp = ContactRamp(
-        ramp.start, ramp.slow_start, ramp.slow_end, ramp.end, ramp.speed,
+        ramp.start, ramp.slow_start, ramp.slow_end, ramp.end, ramp.speed, step=step,
         fps=float(fps) if listed else None, frames=listed,
     )  # fmt: skip
     ordered = 0 <= ramp.start < ramp.slow_start < time < ramp.slow_end < ramp.end
@@ -944,6 +948,7 @@ def impact_plan_request(
     speech: Sequence[tuple[float, float]] | None = None,
     hits: Sequence[ImpactHit] = (),
     take_seconds: float | None = None,
+    tile_motion: Sequence[tuple[float, float]] = (),
 ) -> dict[str, Any]:
     """The body of ``POST /v1/jobs/{id}/impact-plan``: what this kit measured on its copy of the take.
 
@@ -962,6 +967,8 @@ def impact_plan_request(
         ``--impact-at`` hits.
     take_seconds
         The take's length.
+    tile_motion
+        :func:`measure_tile_motion` on the take: the server decides from it whether a ramp is stepped.
 
     Returns
     -------
@@ -970,6 +977,11 @@ def impact_plan_request(
     """
 
     return {
+        **(
+            {"tile_motion": [[round(t, 4), round(v, 3)] for t, v in tile_motion]}
+            if tile_motion
+            else {}
+        ),
         "motion": [[round(t, 4), round(v, 4)] for t, v in trace],
         "shots": [
             {"shot_index": index, "start_seconds": start, "end_seconds": end}
@@ -1057,41 +1069,100 @@ def tile_difference(
     )
 
 
+def measure_tile_motion(
+    take: Path, *, start: float = 0.0, seconds: float | None = None
+) -> tuple[tuple[float, float], ...]:
+    """The take's most-changed-tile difference per frame, sent to the server with the impact-plan request.
+
+    The server's measure (fictora-drama ``impact_post.measure_tile_motion``): a 64 px grey copy, 4x4 tiles.
+
+    Parameters
+    ----------
+    take
+        The take.
+    start, seconds
+        The stretch to read (the whole take by default).
+
+    Returns
+    -------
+    tuple[tuple[float, float], ...]
+        ``(seconds, difference)`` for every frame after the first read; empty when it cannot be read.
+    """
+
+    width, height, fps, _bt709 = _probe(take)
+    small = max(_STEP_TILES, round(_STEP_PROBE_WIDTH * height / max(width, 1) / 2) * 2)
+    span = ["-t", f"{seconds:.4f}"] if seconds is not None else []
+    run = subprocess.run(
+        [ffmpeg_bin(), "-v", "error", "-ss", f"{max(0.0, start):.4f}", *span, "-i", str(take),
+         "-vf", f"scale={_STEP_PROBE_WIDTH}:{small},format=gray", "-f", "rawvideo", "-"],
+        stdin=subprocess.DEVNULL, capture_output=True, check=False, timeout=300,
+    )  # fmt: skip
+    size = _STEP_PROBE_WIDTH * small
+    if run.returncode != 0 or len(run.stdout) < 2 * size:
+        return ()
+    frames = np.frombuffer(
+        run.stdout[: len(run.stdout) // size * size], dtype=np.uint8
+    ).reshape(-1, small, _STEP_PROBE_WIDTH)
+    first = max(0.0, start)
+    return tuple(
+        (
+            round(first + index / fps, 4),
+            round(tile_difference(frames[index - 1], frames[index]), 3),
+        )
+        for index in range(1, len(frames))
+    )
+
+
+def window_steps(
+    ramp: ContactRamp, tile_motion: Sequence[tuple[float, float]], *, fps: float
+) -> bool:
+    """The server's rule (fictora-drama ``impact_post.window_steps``): any pair in the window above 12.
+
+    Parameters
+    ----------
+    ramp
+        The ramp.
+    tile_motion
+        :func:`measure_tile_motion`.
+    fps
+        The take's frame rate.
+
+    Returns
+    -------
+    bool
+        True when any pair inside the window (one frame past each end) scores above
+        :data:`RAMP_STEP_TILE_DIFFERENCE`.
+    """
+
+    margin = 1.0 / fps + 1e-6
+    return any(
+        difference > RAMP_STEP_TILE_DIFFERENCE
+        for seconds, difference in tile_motion
+        if ramp.start - margin <= seconds <= ramp.end + margin
+    )
+
+
 def ramp_window_steps(take: Path, ramp: ContactRamp) -> bool:
-    """Whether a ramp window is drawn stepped: one decision, from the window's own picture.
+    """For an older server's ramp (no ``step``): the server's rule on the kit's own copy of the window.
 
     Parameters
     ----------
     take
         The take.
     ramp
-        The server's ramp.
+        The ramp.
 
     Returns
     -------
     bool
-        True when two neighbouring frames in the window differ on their most-changed tile by more than
-        :data:`RAMP_STEP_TILE_DIFFERENCE`; False (blend) otherwise or when the window cannot be read.
+        :func:`window_steps` on the window's tile motion; False (blend) when it cannot be read.
     """
 
-    width, height, fps, _bt709 = _probe(take)
-    small = max(_STEP_TILES, round(_STEP_PROBE_WIDTH * height / max(width, 1) / 2) * 2)
-    run = subprocess.run(
-        [ffmpeg_bin(), "-v", "error", "-ss", f"{max(0.0, ramp.start - 1.0 / fps):.4f}",
-         "-t", f"{ramp.end - ramp.start + 2.0 / fps:.4f}", "-i", str(take),
-         "-vf", f"scale={_STEP_PROBE_WIDTH}:{small},format=gray", "-f", "rawvideo", "-"],
-        stdin=subprocess.DEVNULL, capture_output=True, check=False, timeout=120,
-    )  # fmt: skip
-    size = _STEP_PROBE_WIDTH * small
-    if run.returncode != 0 or len(run.stdout) < 2 * size:
-        return False
-    frames = np.frombuffer(
-        run.stdout[: len(run.stdout) // size * size], dtype=np.uint8
-    ).reshape(-1, small, _STEP_PROBE_WIDTH)
-    return any(
-        tile_difference(a, b) > RAMP_STEP_TILE_DIFFERENCE
-        for a, b in zip(frames, frames[1:])
+    fps = _probe(take)[2]
+    motion = measure_tile_motion(
+        take, start=ramp.start - 1.0 / fps, seconds=ramp.end - ramp.start + 2.0 / fps
     )
+    return window_steps(ramp, motion, fps=fps)
 
 
 def between_frames(
@@ -1185,11 +1256,11 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
     anchor: np.ndarray | None = None
     # The server's ramp: frames inside it show the take's frame on the ramp's clock, blended between its
     # two neighbours (read ahead or kept back as needed); same frame count. No ramp, every frame as before.
-    # One stepped-or-blended decision per ramp window, from the take's own picture (never frame by frame).
+    # One stepped-or-blended decision per ramp window: the server's; an older server's ramp is decided here.
     plan = ImpactPlan(
         tuple(
             replace(m, ramp=replace(m.ramp, step=ramp_window_steps(take, m.ramp)))
-            if m.ramp is not None
+            if m.ramp is not None and m.ramp.step is None
             else m
             for m in plan.moments
         ),
@@ -1286,7 +1357,9 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
 
 __all__ = [
     "RAMP_STEP_TILE_DIFFERENCE",
+    "measure_tile_motion",
     "ramp_window_steps",
+    "window_steps",
     "tile_difference",
     "between_frames",
     "ContactRamp",
