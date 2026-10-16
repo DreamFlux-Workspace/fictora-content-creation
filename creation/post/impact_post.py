@@ -386,11 +386,15 @@ class ContactRamp:
         out_of_slow = hit + self.speed * (self.slow_end - hit)
         if seconds < self.slow_start:
             span = self.slow_start - self.start
-            return self.start + (into_slow - self.start) * ((seconds - self.start) / span if span > 0 else 1.0)
+            return self.start + (into_slow - self.start) * (
+                (seconds - self.start) / span if span > 0 else 1.0
+            )
         if seconds <= self.slow_end:
             return hit + self.speed * (seconds - hit)
         span = self.end - self.slow_end
-        return out_of_slow + (self.end - out_of_slow) * ((seconds - self.slow_end) / span if span > 0 else 1.0)
+        return out_of_slow + (self.end - out_of_slow) * (
+            (seconds - self.slow_end) / span if span > 0 else 1.0
+        )
 
 
 def effect_seconds(style: ImpactStyle) -> float:
@@ -767,7 +771,15 @@ def plan_from_server_answer(body: Any) -> ImpactPlan:
                 f"the server's impact plan has a malformed freeze ({freeze!r})"
             )
         moments.append(
-            ImpactMoment(time, until, style, label, source, float(freeze), _server_ramp(item.get("ramp"), time))
+            ImpactMoment(
+                time,
+                until,
+                style,
+                label,
+                source,
+                float(freeze),
+                _server_ramp(item.get("ramp"), time),
+            )
         )
     skipped = tuple(str(reason) for reason in body.get("skipped") or [])
     return ImpactPlan(tuple(sorted(moments, key=lambda m: m.time)), skipped)
@@ -788,10 +800,14 @@ def _server_ramp(value: object, time: float) -> ContactRamp | None:
             speed=float(value["speed"]),
         )
     except (AssertionError, KeyError, TypeError, ValueError) as exc:
-        raise ImpactPlanUnavailable(f"the server's impact plan has a malformed ramp ({value!r})"[:200]) from exc
+        raise ImpactPlanUnavailable(
+            f"the server's impact plan has a malformed ramp ({value!r})"[:200]
+        ) from exc
     ordered = 0 <= ramp.start < ramp.slow_start < time < ramp.slow_end < ramp.end
     if not ordered or not 0 < ramp.speed < 1:
-        raise ImpactPlanUnavailable(f"the server's impact plan has a malformed ramp ({value!r})"[:200])
+        raise ImpactPlanUnavailable(
+            f"the server's impact plan has a malformed ramp ({value!r})"[:200]
+        )
     return ramp
 
 
@@ -949,7 +965,9 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
             if len(raw) < size:
                 ended = True
                 break
-            decoded[next_read] = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
+            decoded[next_read] = np.frombuffer(raw, dtype=np.uint8).reshape(
+                height, width, 3
+            )
             next_read += 1
         return decoded.get(position)
 
@@ -971,7 +989,9 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
                     frame = below
                     if above is not None:
                         frame = np.clip(
-                            (1.0 - share) * below.astype(np.float32) + share * above.astype(np.float32) + 0.5,
+                            (1.0 - share) * below.astype(np.float32)
+                            + share * above.astype(np.float32)
+                            + 0.5,
                             0,
                             255,
                         ).astype(np.uint8)
