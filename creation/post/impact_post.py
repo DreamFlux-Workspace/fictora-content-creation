@@ -364,6 +364,32 @@ class ContactRamp:
     slow_end: float
     end: float
     speed: float
+    #: The frame rate the server counted ``frames`` in (its ``fps``), when it sent them.
+    fps: float | None = None
+    #: The server's ``(output frame, source frame)`` for every frame of the window: the kit draws these and
+    #: never redoes the clock; ``()`` (an older server) falls back to :meth:`source_seconds`.
+    frames: tuple[tuple[int, float], ...] = ()
+
+    def source_position(self, index: int, fps: float) -> float | None:
+        """The (fractional) source frame output frame ``index`` shows, or ``None`` outside the window.
+
+        Parameters
+        ----------
+        index
+            Output frame, 0-based.
+        fps
+            The take's frame rate as the kit reads it.
+
+        Returns
+        -------
+        float | None
+            The server's own number when it sent the list at this frame rate, else the clock's.
+        """
+
+        if self.frames and self.fps is not None and abs(self.fps - fps) < 0.05:
+            return dict(self.frames).get(index)
+        moved = self.source_seconds(index / fps)
+        return None if moved is None else moved * fps
 
     def source_seconds(self, seconds: float) -> float | None:
         """The take time whose frame shows at ``seconds``, or ``None`` outside the window.
@@ -518,6 +544,29 @@ class ImpactPlan:
             after = index - (hit + max(1, round(moment.freeze * fps)))
             if 1 <= after <= FREEZE_RESUME_FRAMES:
                 return hit, 1.0 - after / (FREEZE_RESUME_FRAMES + 1)
+        return None
+
+    def source_position(self, index: int, fps: float) -> float | None:
+        """The source frame output frame ``index`` shows inside the server's ramp, else ``None``.
+
+        Parameters
+        ----------
+        index
+            Output frame, 0-based.
+        fps
+            The take's frame rate.
+
+        Returns
+        -------
+        float | None
+            :meth:`ContactRamp.source_position` of the ramp that covers it.
+        """
+
+        for moment in self.moments:
+            if moment.ramp is not None:
+                moved = moment.ramp.source_position(index, fps)
+                if moved is not None:
+                    return moved
         return None
 
     def source_seconds(self, seconds: float) -> float | None:
@@ -803,6 +852,22 @@ def _server_ramp(value: object, time: float) -> ContactRamp | None:
         raise ImpactPlanUnavailable(
             f"the server's impact plan has a malformed ramp ({value!r})"[:200]
         ) from exc
+    frames = value.get("frames") or []
+    fps = value.get("fps")
+    try:
+        listed = tuple((int(out), float(src)) for out, src in frames)
+    except (TypeError, ValueError) as exc:
+        raise ImpactPlanUnavailable(
+            "the server's impact plan has a malformed ramp frame list"
+        ) from exc
+    if listed and (
+        not isinstance(fps, (int, float)) or isinstance(fps, bool) or fps <= 0
+    ):
+        raise ImpactPlanUnavailable("the server's ramp frame list has no frame rate")
+    ramp = ContactRamp(
+        ramp.start, ramp.slow_start, ramp.slow_end, ramp.end, ramp.speed,
+        fps=float(fps) if listed else None, frames=listed,
+    )  # fmt: skip
     ordered = 0 <= ramp.start < ramp.slow_start < time < ramp.slow_end < ramp.end
     if not ordered or not 0 < ramp.speed < 1:
         raise ImpactPlanUnavailable(
@@ -895,6 +960,46 @@ def _probe(path: Path) -> tuple[int, int, float, bool]:
     )
 
 
+#: Above this mean difference (0-255) two neighbouring frames are too unlike to blend (a soft double image
+#: on a fast blow): the ramp shows the nearer one, stepped like anime on twos (the server's number).
+RAMP_STEP_DIFFERENCE = 6.0
+
+
+def between_frames(
+    below: np.ndarray, above: np.ndarray | None, share: float
+) -> np.ndarray:
+    """The picture between two frames: a blend when they are alike, else the nearer one (as the server).
+
+    Parameters
+    ----------
+    below, above
+        The frames either side (``above`` ``None`` at a whole frame).
+    share
+        How far past ``below`` (0-1).
+
+    Returns
+    -------
+    numpy.ndarray
+        ``below``, ``above`` or their blend.
+    """
+
+    if above is None or share <= 1e-6:
+        return below
+    sample = (slice(None, None, 8), slice(None, None, 8))
+    difference = float(
+        np.abs(below[sample].astype(np.int16) - above[sample].astype(np.int16)).mean()
+    )
+    if difference > RAMP_STEP_DIFFERENCE:
+        return above if share >= 0.5 else below
+    return np.clip(
+        (1.0 - share) * below.astype(np.float32)
+        + share * above.astype(np.float32)
+        + 0.5,
+        0,
+        255,
+    ).astype(np.uint8)
+
+
 def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
     """Render the moments onto the take: same size, length and frames, the sound copied untouched.
 
@@ -978,23 +1083,14 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
                 break
             frame = own
             oldest = index
-            remapped = plan.source_seconds(index / fps) if ramped else None
-            if remapped is not None:
-                position = remapped * fps
+            position = plan.source_position(index, fps) if ramped else None
+            if position is not None:
                 low = max(0, math.floor(position + 1e-9))
                 share = position - low
                 below = frame_at(low)
                 above = frame_at(low + 1) if share > 1e-6 else None
                 if below is not None:
-                    frame = below
-                    if above is not None:
-                        frame = np.clip(
-                            (1.0 - share) * below.astype(np.float32)
-                            + share * above.astype(np.float32)
-                            + 0.5,
-                            0,
-                            255,
-                        ).astype(np.uint8)
+                    frame = between_frames(below, above, share)
                 oldest = min(index, low)
             for stale in [key for key in decoded if key < oldest - 1]:
                 del decoded[stale]
@@ -1049,6 +1145,8 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
 
 
 __all__ = [
+    "RAMP_STEP_DIFFERENCE",
+    "between_frames",
     "ContactRamp",
     "IMPACT_PLAN_PATH",
     "MAX_EDITOR_HITS",

@@ -108,3 +108,34 @@ def test_a_drawn_ramp_moves_only_its_window_and_keeps_the_length_and_sound(
         ).stdout.strip()  # fmt: skip
 
     assert audio(ramped) == audio(take), "the sound is copied untouched"
+
+
+def test_the_kit_draws_the_servers_frame_list_and_never_redoes_the_clock() -> None:
+    listed = {**RAMP, "fps": 24.0, "frames": [[22, 21.5], [23, 22.25]]}
+    (moment,) = plan_from_server_answer(_answer(listed)).moments
+    assert moment.ramp is not None
+    assert moment.ramp.source_position(22, 24.0) == 21.5, (
+        "the server's number, not the kit's maths"
+    )
+    assert moment.ramp.source_position(30, 24.0) is None, (
+        "a frame the server did not list is its own"
+    )
+    assert moment.ramp.source_position(30, 30.0) == pytest.approx(
+        moment.ramp.source_seconds(1.0) * 30.0
+    ), "another frame rate falls back to the clock"
+    with pytest.raises(ImpactPlanUnavailable):
+        plan_from_server_answer(_answer({**RAMP, "frames": [[22, 21.5]]}))  # no fps
+    with pytest.raises(ImpactPlanUnavailable):
+        plan_from_server_answer(_answer({**RAMP, "fps": 24.0, "frames": [["x", 1]]}))
+
+
+def test_very_different_neighbours_step_instead_of_blending() -> None:
+    import numpy as np
+
+    from creation.post.impact_post import between_frames
+
+    dark, light = np.zeros((32, 32, 3), np.uint8), np.full((32, 32, 3), 200, np.uint8)
+    assert (between_frames(dark, light, 0.3) == dark).all()
+    assert (between_frames(dark, light, 0.7) == light).all()
+    near = np.full((32, 32, 3), 4, np.uint8)
+    assert between_frames(dark, near, 0.5).mean() == pytest.approx(2.0, abs=0.6)
