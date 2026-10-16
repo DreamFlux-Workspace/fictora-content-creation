@@ -391,6 +391,51 @@ class ContactRamp:
         moved = self.source_seconds(index / fps)
         return None if moved is None else moved * fps
 
+    def screen_seconds(self, source: float, fps: float) -> float:
+        """Where on screen the take's moment ``source`` shows, read off the server's frame list.
+
+        An effect laid at a picture event inside the window (a whoosh, a thud) belongs at this time. The
+        server's list is inverted (it rises frame by frame); only an older server's ramp with no list falls
+        back to the clock.
+
+        Parameters
+        ----------
+        source
+            A time on the take as filmed.
+        fps
+            The take's frame rate.
+
+        Returns
+        -------
+        float
+            The screen time; ``source`` itself outside the window.
+        """
+
+        if not self.start <= source <= self.end:
+            return source
+        if self.frames and self.fps is not None and abs(self.fps - fps) < 0.05:
+            target = source * self.fps
+            pairs = sorted(self.frames)
+            for (out_a, src_a), (out_b, src_b) in zip(pairs, pairs[1:]):
+                if src_a <= target <= src_b:
+                    share = (target - src_a) / (src_b - src_a) if src_b > src_a else 0.0
+                    return (out_a + share * (out_b - out_a)) / self.fps
+            return source
+        hit = (self.slow_start + self.slow_end) / 2.0
+        into_slow = hit - self.speed * (hit - self.slow_start)
+        out_of_slow = hit + self.speed * (self.slow_end - hit)
+        if source < into_slow:
+            span = into_slow - self.start
+            return self.start + (self.slow_start - self.start) * (
+                (source - self.start) / span if span > 0 else 1.0
+            )
+        if source <= out_of_slow:
+            return hit + (source - hit) / self.speed
+        span = self.end - out_of_slow
+        return self.slow_end + (self.end - self.slow_end) * (
+            (source - out_of_slow) / span if span > 0 else 1.0
+        )
+
     def source_seconds(self, seconds: float) -> float | None:
         """The take time whose frame shows at ``seconds``, or ``None`` outside the window.
 
@@ -545,6 +590,13 @@ class ImpactPlan:
             if 1 <= after <= FREEZE_RESUME_FRAMES:
                 return hit, 1.0 - after / (FREEZE_RESUME_FRAMES + 1)
         return None
+
+    def ramp(self) -> ContactRamp | None:
+        """The plan's one contact ramp, or ``None``."""
+
+        return next(
+            (moment.ramp for moment in self.moments if moment.ramp is not None), None
+        )
 
     def source_position(self, index: int, fps: float) -> float | None:
         """The source frame output frame ``index`` shows inside the server's ramp, else ``None``.

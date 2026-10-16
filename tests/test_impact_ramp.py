@@ -139,3 +139,70 @@ def test_very_different_neighbours_step_instead_of_blending() -> None:
     assert (between_frames(dark, light, 0.7) == light).all()
     near = np.full((32, 32, 3), 4, np.uint8)
     assert between_frames(dark, near, 0.5).mean() == pytest.approx(2.0, abs=0.6)
+
+
+@needs_ffmpeg
+def test_finish_lays_each_effect_in_the_ramp_at_its_frames_shown_time(
+    tmp_path: Path,
+) -> None:
+    """The kit asks for the server's ramp before laying effects and moves them by the server's frame list."""
+
+    import copy
+    import json
+    import re
+
+    from test_impact_server_plan import FIGHT_FACTS, _finish
+    from test_sfx_motion import _desk
+    from datetime import date
+
+    facts = copy.deepcopy(FIGHT_FACTS)
+    facts["take_facts"]["fight"] = True
+    facts["take_facts"]["sfx_cues"].append(
+        {"shot_index": 2, "sound": "rain on the dock", "kind": "ambience", "start_seconds": 3.45,
+         "duration_seconds": 1.0, "source": "sound_line"}
+    )  # fmt: skip
+    # The server's list is drawn from a slightly different clock than its header numbers say, so the test
+    # proves the kit follows the list (the server's mapping) and never its own maths.
+    server = ContactRamp(2.9, 3.2, 3.8, 4.4, 0.25)
+    frames = [
+        [index, round(server.source_seconds(index / FPS) * FPS, 4)]  # type: ignore[operator]
+        for index in range(70, 106)
+        if server.source_seconds(index / FPS) is not None
+    ]
+    ramp = {"start_s": 2.9, "slow_start_s": 3.2, "slow_end_s": 3.8, "end_s": 4.4, "speed": 0.3, "fps": 24.0,
+            "frames": frames}  # fmt: skip
+
+    def run(with_ramp: bool) -> tuple[list[float], int]:
+        root = tmp_path / ("ramp" if with_ramp else "plain")
+        desk = _desk(root, date(2026, 10, 14), box_at=3.5)
+        (desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
+            json.dumps(facts)
+        )
+        calls: list[int] = []
+
+        def planner(body: dict[str, object]):  # type: ignore[no-untyped-def]
+            calls.append(1)
+            moment = {"time_s": 3.5, "until_s": 4.3, "style": "hit", "label": "Ren elbows the guard",
+                      "source": "planned"}  # fmt: skip
+            return plan_from_server_answer(
+                {"moments": [{**moment, "ramp": ramp} if with_ramp else moment]}
+            )
+
+        result, _log = _finish(desk, impact_planner=lambda *a: planner)
+        sfx = next(s for s in result.steps if s.step == "sfx")
+        return [float(t) for t in re.findall(r"@(\d+\.\d+)s", sfx.detail)], len(calls)
+
+    plain, plain_calls = run(False)
+    ramped, ramped_calls = run(True)
+    assert plain_calls == 1 and ramped_calls == 1, (
+        "asked once: before the effects, reused by the impact step"
+    )
+    assert len(plain) == len(ramped) >= 2
+    # Where the server's list puts each moment (its own clock, 0.25x), not the header's 0.3x maths.
+    want = [round(server.screen_seconds(t, FPS), 2) for t in plain]
+    assert ramped == pytest.approx(want, abs=0.006), (
+        "each effect at its frame's shown time (the server's list)"
+    )
+    assert any(abs(a - b) > 0.05 for a, b in zip(plain, ramped)), (
+        "an effect inside the window moved"
+    )
