@@ -83,6 +83,12 @@ from creation.narrator_cast import (
 from creation.narrator_cast import question as narrator_question
 from creation.cli_text import TextArgError, text_or_file
 from creation.new_cast import new_cast_notice, newcomers
+from creation.shot_clips import NOT_PRICED as SHOT_CLIPS_NOT_PRICED
+from creation.shot_clips import (
+    shot_clips_film_refusal,
+    shot_clips_price_line,
+    shot_clips_priced,
+)
 from creation.story_objects import new_objects, new_objects_notice, suggested_objects
 from creation.desk_media_urls import drawn_cast_rows
 from creation.post.desk import name_matches
@@ -7147,6 +7153,7 @@ def run_film(
     out: Any = None,
     single_frame_start: bool = False,
     no_single_frame_start: bool = False,
+    shot_clips: bool = False,
 ) -> str:
     """Price, then film episode N alone, or only take K of it. Nothing earlier is filmed or booked again.
 
@@ -7186,6 +7193,11 @@ def run_film(
         on the film's pending unit, so a resume under the same key sends the
         same body; a server that will not take it stops the film with nothing
         charged.
+    shot_clips
+        ``--shot-clips``: the show films one clip per board row (a test
+        opt-in, :mod:`creation.shot_clips`). Required on such a show and
+        refused on any other; the price must come from a server estimate that
+        priced every clip.
 
     Returns
     -------
@@ -7224,6 +7236,7 @@ def run_film(
             confirm_spend=confirm_spend,
             out=out,
             single_frame_start=choice,
+            shot_clips=shot_clips,
         )
     finally:
         run.client.close()
@@ -7240,6 +7253,7 @@ def _run_film(
     confirm_spend: bool,
     out: Any,
     single_frame_start: bool | None = None,
+    shot_clips: bool = False,
 ) -> str:
     if episode < 1:
         raise CommandStopped("--episode is 1 or more")
@@ -7272,7 +7286,8 @@ def _run_film(
         )
     if not confirm_spend:
         return _price_film(desk, state, run, cfg, episode=episode, take_ids=take_ids, take_index=take_index, key=key,
-                           what=what, reason=reason, out=out, refilm=filmed_before)  # fmt: skip
+                           what=what, reason=reason, out=out, refilm=filmed_before,
+                           shot_clips=shot_clips)  # fmt: skip
     priced = load_production(desk).film_estimates.get(key)
     if priced is None:
         raise CommandStopped(
@@ -7290,8 +7305,10 @@ def _run_film(
         seed = seed_attempt_for(desk, episode=episode, take_ids=take_ids)
         unit = f"film-{key}" + (f"-s{seed}" if seed else "")
     spine = run.spine(state.spine_id or "")
-    stopped = film_stop_message(spine, episode=episode) or voices_film_refusal(
-        desk, spine, episode=episode, run=run
+    stopped = (
+        shot_clips_film_refusal(spine, flag=shot_clips, episode=episode)
+        or film_stop_message(spine, episode=episode)
+        or voices_film_refusal(desk, spine, episode=episode, run=run)
     )
     if stopped:
         raise CommandStopped(stopped)
@@ -7345,6 +7362,7 @@ def _run_film(
         seed_attempt=seed,
         single_frame_start=trial,
         desk=desk,
+        shot_clips=shot_clips,
     )
     _save_desk_json(desk, f"{unit}-request", body)
     if filmed_before and reason:
@@ -7628,7 +7646,13 @@ def _price_film(
     reason: str | None,
     out: Any,
     refilm: bool = False,
+    shot_clips: bool = False,
 ) -> str:
+    refused = shot_clips_film_refusal(
+        run.spine(state.spine_id or ""), flag=shot_clips, episode=episode
+    )
+    if refused:
+        raise CommandStopped(refused)
     estimate = stages.estimate_batch(
         run,
         spine_id=state.spine_id or "",
@@ -7641,6 +7665,9 @@ def _price_film(
     stopped = film_stop_message(spine, episode=episode)
     if stopped:
         raise CommandStopped(stopped)
+    if shot_clips and shot_clips_priced(estimate) is None:
+        # Price before spend: the kit's own table prices whole takes, never clips.
+        raise CommandStopped(SHOT_CLIPS_NOT_PRICED)
     cast_count = len(drawn_cast_rows(spine))
     usd, source, warnings = price_estimate(
         state, cfg, estimate, cast_count=cast_count, takes=len(take_ids)
@@ -7693,6 +7720,7 @@ def _price_film(
     lines = [
         *warnings,
         next_take_voices_line(desk, run, spine),
+        *([shot_clips_price_line(estimate)] if shot_clips else []),
         f"Film {scope}: about ${usd:.2f} ({source}){earlier}{others}.",
         envelope_line(desk, episode=episode, next_usd=usd),
     ]
@@ -7704,6 +7732,8 @@ def _price_film(
 
         lines += refilm_cause_lines(reason)
     flag = f" --take {take_ids[0]}" if take_index is not None else ""
+    if shot_clips:
+        flag += " --shot-clips"
     cause_flag = f' --cause "{reason}"' if reason else ""
     lines.append(
         f"Human yes to the number, then `fictora-produce film --desk <desk> --episode {episode}{flag}{cause_flag} --confirm-spend`."
@@ -8629,6 +8659,13 @@ def add_episode_parsers(
         action="store_true",
         help="The human said yes to the printed number.",
     )
+    film.add_argument(
+        "--shot-clips",
+        action="store_true",
+        help="Film a show that opted into shot clips (`shot-clips --on`, a test): each take films one clip "
+        "per board row, each billed on its own (at least 5 s), and the server joins them into the take. "
+        "Prices every clip first; an opted-in show is never filmed without it.",
+    )
     opening = film.add_mutually_exclusive_group()
     opening.add_argument(
         "--single-frame-start",
@@ -8984,6 +9021,7 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 confirm_spend=args.confirm_spend,
                 single_frame_start=args.single_frame_start,
                 no_single_frame_start=args.no_single_frame_start,
+                shot_clips=args.shot_clips,
             )
             return 0
         if args.command == "collect-takes":

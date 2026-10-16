@@ -389,6 +389,11 @@ def take_facts_usd(facts: dict, *, on: date) -> tuple[float, str] | None:
     seconds = facts.get("duration_seconds")
     if not endpoint or not resolution or not isinstance(seconds, (int, float)):
         return None
+    clips = facts.get("shot_clips")
+    if isinstance(clips, list) and clips:
+        # A take filmed one clip per board row (fictora-drama shot clips): each
+        # clip was filmed and billed on its own, never the joined take's length.
+        return _shot_clips_usd(endpoint, resolution, clips, on=on)
     count = int(facts.get("reference_image_count") or 0)
     price = take_usd(
         endpoint, resolution, float(seconds), on=on, reference_images=count
@@ -399,6 +404,31 @@ def take_facts_usd(facts: dict, *, on: date) -> tuple[float, str] | None:
     return (
         price,
         f"{label} {resolution}, {float(seconds):g} s, {count} reference image(s)",
+    )
+
+
+def _shot_clips_usd(
+    endpoint: str, resolution: str, clips: list, *, on: date
+) -> tuple[float, str] | None:
+    """Price a shot-clips take: each clip at its own billed seconds, no reference images (Turbo)."""
+
+    total = 0.0
+    lengths: list[str] = []
+    for clip in clips:
+        seconds = clip.get("billed_seconds") if isinstance(clip, dict) else None
+        if not isinstance(seconds, (int, float)):
+            return None
+        price = take_usd(
+            endpoint, resolution, float(seconds), on=on, reference_images=0
+        )
+        if price is None:
+            return None
+        total += price
+        lengths.append(f"{float(seconds):g}")
+    label = LANE_LABELS.get(endpoint, endpoint)
+    return (
+        total,
+        f"{label} {resolution}, {len(lengths)} shot clip(s) of {' + '.join(lengths)} s",
     )
 
 
