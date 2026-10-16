@@ -398,7 +398,7 @@ uv run fictora-produce arc --desk D --list [--episodes N]          # the three a
 uv run fictora-produce arc --desk D --pick K [--title T] [--line L] [--episodes N]   # keeps it; prints episode 2's directions
 uv run fictora-produce brief --desk D --episode N [--episodes N]   # directions for episode 3 on
 uv run fictora-produce brief --desk D (--edit @FILE | --strip-narration) [--preview]   # replace the story's stored brief; shows the change first
-uv run fictora-produce language --desk D --spoken ja|ko|en [--preview] [--confirm-filmed]   # change the show's spoken language; shows what it sets aside first
+uv run fictora-produce language --desk D --spoken ja|ko|en [--preview] [--confirm-filmed] [--confirm-episode-one-remake]   # change the show's spoken language; shows what it sets aside first
 uv run fictora-produce author --desk D --episode N (--direction K | --line "the human's words" [--title T])
 uv run fictora-produce rewrite --desk D --episode N --line "what to change, in the human's words" [--title T]   # a drafted, unapproved episode; free
 uv run fictora-produce approve --desk D --gate script              # then step (boards), approve board, step (estimate), step --confirm-spend

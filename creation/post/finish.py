@@ -2286,6 +2286,12 @@ def run_finish(
             # The effects duck under a laid thought or --voice line like under any line.
             plan = replace(plan, speech=(*plan.speech, *laid_voice_windows()))
         bed_state["speech"] = plan.speech
+        # A fight take may slow one contact in the impact step (the server's ramp). Its plan is asked for
+        # here, before the effects are laid, so each effect inside the ramp window is laid where its frame
+        # now shows (the server's own frame list; the hosted join does the same). The impact step reuses it.
+        plan, ramp_note = on_ramp_frames(plan, take)
+        if ramp_note:
+            filmed_note += f"; {ramp_note}"
         append_run_note(run_dir, f"Finish · sfx: {filmed_note}")
         dropped = (
             f"; dropped by sound notes: {', '.join(plan.dropped)}"
@@ -2720,6 +2726,39 @@ def run_finish(
         except (RuntimeError, OSError, MediaToolError) as exc:
             return None, f"the take could not be measured ({str(exc)[:120]})"
 
+    def on_ramp_frames(plan: SfxPlan, take: Path) -> tuple[SfxPlan, str]:
+        """Ask the server's impact plan now (fight takes only) and lay each effect in its ramp at its frame."""
+
+        if (
+            not impact
+            or legacy_rules()
+            or not impact_state["fight"]
+            or impact_state["picture"] is None
+        ):
+            return plan, ""
+        early = server_impacts(take)
+        impact_state["server_plan"] = early
+        ramp = early[0].ramp() if early[0] is not None else None
+        if ramp is None:
+            return plan, ""
+        fps = probe_video(take).fps
+        moved = tuple(
+            replace(c, start=round(ramp.screen_seconds(c.start, fps), 3))
+            for c in plan.cues
+        )
+        shifted = sum(
+            1
+            for a, b in zip(plan.cues, moved, strict=True)
+            if abs(a.start - b.start) >= 0.005
+        )
+        note = (
+            f"{shifted} effect(s) in the slow-motion window laid at their frames' shown time "
+            f"({ramp.start:.2f}-{ramp.end:.2f}s)"
+            if shifted
+            else ""
+        )
+        return replace(plan, cues=moved), note
+
     def do_impact(take: Path) -> StepReport:
         """The take's big impact beats punched up on the frame their effect plays (L-20261009-9).
 
@@ -2785,7 +2824,8 @@ def run_finish(
                     f"the take's cuts were not measured; !! {refresh}",
                 )
             return StepReport("impact", "skipped", "the take's cuts were not measured")
-        plan, unavailable = server_impacts(take)
+        # The plan asked for before the effects were laid (a fight take), else asked for now.
+        plan, unavailable = impact_state.get("server_plan") or server_impacts(take)
         if plan is not None:
             if not plan.moments:
                 return StepReport("impact", "skipped", f"server: {plan.one_line()}")

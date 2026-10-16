@@ -7850,6 +7850,12 @@ def add_episode_parsers(
         action="store_true",
         help="Change it although takes were filmed in another language (after the human's yes).",
     )
+    language.add_argument(
+        "--confirm-episode-one-remake",
+        action="store_true",
+        help="Episode 1 is published: change it and film episode 1 again in the new language "
+        "(only after the human's yes; filming still waits for the film command).",
+    )
 
     author = sub.add_parser(
         "author",
@@ -8730,6 +8736,7 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 spoken=args.spoken,
                 preview=args.preview,
                 confirm_filmed=args.confirm_filmed,
+                confirm_episode_one_remake=args.confirm_episode_one_remake,
             )
             return 0 if done or args.preview else 2
         if args.command == "author":

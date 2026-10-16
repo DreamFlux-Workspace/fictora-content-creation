@@ -345,13 +345,136 @@ class ImpactMoment:
     #: ``False`` (the server's ``punch_in: false``): a frozen strike near the end with no room to ease out;
     #: only the hit-stop plays, no zoom and no shake.
     punch: bool = True
+    #: The server's speed ramp around a planned contact (its ``ramp``), or ``None``. Never with a freeze.
+    ramp: ContactRamp | None = None
 
     def one_line(self) -> str:
-        """``a gas tank explodes: big punch-in + shake at 2.04s`` (``+ 0.12s freeze`` when it holds)."""
+        """``a gas tank explodes: big punch-in + shake at 2.04s`` (``+ 0.12s freeze`` or ``+ ramp`` when held)."""
 
         what = "big punch-in + shake" if self.style == "blast" else "punch-in + shake"
         held = f" + {self.freeze:.2f}s freeze" if self.freeze > 0 else ""
+        if self.ramp is not None:
+            held = f" + {self.ramp.slow_end - self.ramp.slow_start:.2f}s slow-mo ramp ({self.ramp.speed:.2f}x)"
         return f"{self.label}: {what}{held} at {self.time:.2f}s"
+
+
+@dataclass(frozen=True)
+class ContactRamp:
+    """The server's speed ramp on a planned contact (``POST /v1/jobs/{id}/impact-plan`` ``ramp``).
+
+    The take's frames play on a remapped clock from ``start`` to ``end``: a little fast to ``slow_start``,
+    ``speed`` (about 0.45x) to ``slow_end`` with the contact in the middle at its own time, fast again to
+    ``end``. The window's ends and the contact show their own frames, so the take keeps its length and
+    frame count and the sound is copied untouched (fictora-drama ``impact_post.ContactRamp``, same math).
+    """
+
+    start: float
+    slow_start: float
+    slow_end: float
+    end: float
+    speed: float
+    #: The frame rate the server counted ``frames`` in (its ``fps``), when it sent them.
+    fps: float | None = None
+    #: The server's ``(output frame, source frame)`` for every frame of the window: the kit draws these and
+    #: never redoes the clock; ``()`` (an older server) falls back to :meth:`source_seconds`.
+    frames: tuple[tuple[int, float], ...] = ()
+
+    def source_position(self, index: int, fps: float) -> float | None:
+        """The (fractional) source frame output frame ``index`` shows, or ``None`` outside the window.
+
+        Parameters
+        ----------
+        index
+            Output frame, 0-based.
+        fps
+            The take's frame rate as the kit reads it.
+
+        Returns
+        -------
+        float | None
+            The server's own number when it sent the list at this frame rate, else the clock's.
+        """
+
+        if self.frames and self.fps is not None and abs(self.fps - fps) < 0.05:
+            return dict(self.frames).get(index)
+        moved = self.source_seconds(index / fps)
+        return None if moved is None else moved * fps
+
+    def screen_seconds(self, source: float, fps: float) -> float:
+        """Where on screen the take's moment ``source`` shows, read off the server's frame list.
+
+        An effect laid at a picture event inside the window (a whoosh, a thud) belongs at this time. The
+        server's list is inverted (it rises frame by frame); only an older server's ramp with no list falls
+        back to the clock.
+
+        Parameters
+        ----------
+        source
+            A time on the take as filmed.
+        fps
+            The take's frame rate.
+
+        Returns
+        -------
+        float
+            The screen time; ``source`` itself outside the window.
+        """
+
+        if not self.start <= source <= self.end:
+            return source
+        if self.frames and self.fps is not None and abs(self.fps - fps) < 0.05:
+            target = source * self.fps
+            pairs = sorted(self.frames)
+            for (out_a, src_a), (out_b, src_b) in zip(pairs, pairs[1:]):
+                if src_a <= target <= src_b:
+                    share = (target - src_a) / (src_b - src_a) if src_b > src_a else 0.0
+                    return (out_a + share * (out_b - out_a)) / self.fps
+            return source
+        hit = (self.slow_start + self.slow_end) / 2.0
+        into_slow = hit - self.speed * (hit - self.slow_start)
+        out_of_slow = hit + self.speed * (self.slow_end - hit)
+        if source < into_slow:
+            span = into_slow - self.start
+            return self.start + (self.slow_start - self.start) * (
+                (source - self.start) / span if span > 0 else 1.0
+            )
+        if source <= out_of_slow:
+            return hit + (source - hit) / self.speed
+        span = self.end - out_of_slow
+        return self.slow_end + (self.end - self.slow_end) * (
+            (source - out_of_slow) / span if span > 0 else 1.0
+        )
+
+    def source_seconds(self, seconds: float) -> float | None:
+        """The take time whose frame shows at ``seconds``, or ``None`` outside the window.
+
+        Parameters
+        ----------
+        seconds
+            Time into the take, as it plays.
+
+        Returns
+        -------
+        float | None
+            The frame's own time: continuous, rising, its own at the window's ends and at the contact.
+        """
+
+        if not self.start <= seconds <= self.end:
+            return None
+        hit = (self.slow_start + self.slow_end) / 2.0
+        into_slow = hit - self.speed * (hit - self.slow_start)
+        out_of_slow = hit + self.speed * (self.slow_end - hit)
+        if seconds < self.slow_start:
+            span = self.slow_start - self.start
+            return self.start + (into_slow - self.start) * (
+                (seconds - self.start) / span if span > 0 else 1.0
+            )
+        if seconds <= self.slow_end:
+            return hit + self.speed * (seconds - hit)
+        span = self.end - self.slow_end
+        return out_of_slow + (self.end - out_of_slow) * (
+            (seconds - self.slow_end) / span if span > 0 else 1.0
+        )
 
 
 def effect_seconds(style: ImpactStyle) -> float:
@@ -488,6 +611,57 @@ class ImpactPlan:
             after = index - (hit + max(1, round(moment.freeze * fps)))
             if 1 <= after <= FREEZE_RESUME_FRAMES:
                 return hit, 1.0 - after / (FREEZE_RESUME_FRAMES + 1)
+        return None
+
+    def ramp(self) -> ContactRamp | None:
+        """The plan's one contact ramp, or ``None``."""
+
+        return next(
+            (moment.ramp for moment in self.moments if moment.ramp is not None), None
+        )
+
+    def source_position(self, index: int, fps: float) -> float | None:
+        """The source frame output frame ``index`` shows inside the server's ramp, else ``None``.
+
+        Parameters
+        ----------
+        index
+            Output frame, 0-based.
+        fps
+            The take's frame rate.
+
+        Returns
+        -------
+        float | None
+            :meth:`ContactRamp.source_position` of the ramp that covers it.
+        """
+
+        for moment in self.moments:
+            if moment.ramp is not None:
+                moved = moment.ramp.source_position(index, fps)
+                if moved is not None:
+                    return moved
+        return None
+
+    def source_seconds(self, seconds: float) -> float | None:
+        """The take time whose frame shows at ``seconds`` inside the server's ramp, else ``None``.
+
+        Parameters
+        ----------
+        seconds
+            Time into the take.
+
+        Returns
+        -------
+        float | None
+            :meth:`ContactRamp.source_seconds` of the ramp ``seconds`` falls in.
+        """
+
+        for moment in self.moments:
+            if moment.ramp is not None:
+                moved = moment.ramp.source_seconds(seconds)
+                if moved is not None:
+                    return moved
         return None
 
     def held_from(self, index: int, fps: float) -> int:
@@ -747,11 +921,62 @@ def plan_from_server_answer(body: Any) -> ImpactPlan:
         punch = item.get("punch_in") is not False
         moments.append(
             ImpactMoment(
-                time, until, style, label, source, float(freeze), hold, release, punch
+                time,
+                until,
+                style,
+                label,
+                source,
+                float(freeze),
+                hold=hold,
+                release=release,
+                punch=punch,
+                ramp=_server_ramp(item.get("ramp"), time),
             )
         )
     skipped = tuple(str(reason) for reason in body.get("skipped") or [])
     return ImpactPlan(tuple(sorted(moments, key=lambda m: m.time)), skipped)
+
+
+def _server_ramp(value: object, time: float) -> ContactRamp | None:
+    """The server's ``ramp`` on a moment, or ``None``; a malformed one is no plan at all."""
+
+    if value is None:
+        return None
+    try:
+        assert isinstance(value, dict)
+        ramp = ContactRamp(
+            start=float(value["start_s"]),
+            slow_start=float(value["slow_start_s"]),
+            slow_end=float(value["slow_end_s"]),
+            end=float(value["end_s"]),
+            speed=float(value["speed"]),
+        )
+    except (AssertionError, KeyError, TypeError, ValueError) as exc:
+        raise ImpactPlanUnavailable(
+            f"the server's impact plan has a malformed ramp ({value!r})"[:200]
+        ) from exc
+    frames = value.get("frames") or []
+    fps = value.get("fps")
+    try:
+        listed = tuple((int(out), float(src)) for out, src in frames)
+    except (TypeError, ValueError) as exc:
+        raise ImpactPlanUnavailable(
+            "the server's impact plan has a malformed ramp frame list"
+        ) from exc
+    if listed and (
+        not isinstance(fps, (int, float)) or isinstance(fps, bool) or fps <= 0
+    ):
+        raise ImpactPlanUnavailable("the server's ramp frame list has no frame rate")
+    ramp = ContactRamp(
+        ramp.start, ramp.slow_start, ramp.slow_end, ramp.end, ramp.speed,
+        fps=float(fps) if listed else None, frames=listed,
+    )  # fmt: skip
+    ordered = 0 <= ramp.start < ramp.slow_start < time < ramp.slow_end < ramp.end
+    if not ordered or not 0 < ramp.speed < 1:
+        raise ImpactPlanUnavailable(
+            f"the server's impact plan has a malformed ramp ({value!r})"[:200]
+        )
+    return ramp
 
 
 def impact_plan_request(
@@ -838,6 +1063,46 @@ def _probe(path: Path) -> tuple[int, int, float, bool]:
     )
 
 
+#: Above this mean difference (0-255) two neighbouring frames are too unlike to blend (a soft double image
+#: on a fast blow): the ramp shows the nearer one, stepped like anime on twos (the server's number).
+RAMP_STEP_DIFFERENCE = 6.0
+
+
+def between_frames(
+    below: np.ndarray, above: np.ndarray | None, share: float
+) -> np.ndarray:
+    """The picture between two frames: a blend when they are alike, else the nearer one (as the server).
+
+    Parameters
+    ----------
+    below, above
+        The frames either side (``above`` ``None`` at a whole frame).
+    share
+        How far past ``below`` (0-1).
+
+    Returns
+    -------
+    numpy.ndarray
+        ``below``, ``above`` or their blend.
+    """
+
+    if above is None or share <= 1e-6:
+        return below
+    sample = (slice(None, None, 8), slice(None, None, 8))
+    difference = float(
+        np.abs(below[sample].astype(np.int16) - above[sample].astype(np.int16)).mean()
+    )
+    if difference > RAMP_STEP_DIFFERENCE:
+        return above if share >= 0.5 else below
+    return np.clip(
+        (1.0 - share) * below.astype(np.float32)
+        + share * above.astype(np.float32)
+        + 0.5,
+        0,
+        255,
+    ).astype(np.uint8)
+
+
 def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
     """Render the moments onto the take: same size, length and frames, the sound copied untouched.
 
@@ -889,16 +1154,49 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
         stdin=subprocess.PIPE, stderr=subprocess.PIPE,
     )  # fmt: skip
     assert reader.stdout is not None and writer.stdin is not None
+    stdout = reader.stdout
     size = width * height * 3
     index = 0
     # The server's freeze: held frames show the hit frame, with the hit frame's own move; nothing is added.
     anchor: np.ndarray | None = None
+    # The server's ramp: frames inside it show the take's frame on the ramp's clock, blended between its
+    # two neighbours (read ahead or kept back as needed); same frame count. No ramp, every frame as before.
+    ramped = any(moment.ramp is not None for moment in plan.moments)
+    decoded: dict[int, np.ndarray] = {}
+    next_read = 0
+    ended = False
+
+    def frame_at(position: int) -> np.ndarray | None:
+        nonlocal next_read, ended
+        while not ended and next_read <= position:
+            raw = stdout.read(size)
+            if len(raw) < size:
+                ended = True
+                break
+            decoded[next_read] = np.frombuffer(raw, dtype=np.uint8).reshape(
+                height, width, 3
+            )
+            next_read += 1
+        return decoded.get(position)
+
     try:
         while True:
-            raw = reader.stdout.read(size)
-            if len(raw) < size:
+            own = frame_at(index)
+            if own is None:
                 break
-            frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
+            frame = own
+            oldest = index
+            position = plan.source_position(index, fps) if ramped else None
+            if position is not None:
+                low = max(0, math.floor(position + 1e-9))
+                share = position - low
+                below = frame_at(low)
+                above = frame_at(low + 1) if share > 1e-6 else None
+                if below is not None:
+                    frame = between_frames(below, above, share)
+                oldest = min(index, low)
+            for stale in [key for key in decoded if key < oldest - 1]:
+                del decoded[stale]
             source = plan.held_from(index, fps)
             easing = plan.resume(index, fps) if anchor is not None else None
             if source < index and anchor is not None:
@@ -950,6 +1248,9 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
 
 
 __all__ = [
+    "RAMP_STEP_DIFFERENCE",
+    "between_frames",
+    "ContactRamp",
     "IMPACT_PLAN_PATH",
     "MAX_EDITOR_HITS",
     "SOUND_MATCH_SECONDS",
