@@ -1142,6 +1142,8 @@ def video_request_body(
     seed_attempt: int | None = None,
     single_frame_start: bool | None = None,
     desk: Path | None = None,
+    shot_clips: bool = False,
+    shot_clips_quote: str | None = None,
 ) -> dict[str, Any]:
     """Build the ``POST /v1/video-generations`` reuse body that films episode ``episode`` alone.
 
@@ -1171,6 +1173,15 @@ def video_request_body(
     desk
         The series desk: an existing show's music lock (:mod:`creation.music_lock`)
         decides ``music_by_finish``. ``None`` reads only the voice mode.
+    shot_clips
+        ``film --shot-clips``: the human priced and said yes to every clip of
+        a show that films one clip per board row (:mod:`creation.shot_clips`).
+        Such a show is never filmed without it (``step`` included); the body
+        itself is unchanged, the server reads the show's opt-in.
+    shot_clips_quote
+        With ``shot_clips``: the token of the estimate the human said yes to,
+        passed through as ``shot_clips_quote``; the server refuses the film when
+        its clips are not the ones priced.
 
     Returns
     -------
@@ -1182,6 +1193,12 @@ def video_request_body(
         no music.
     """
 
+    from creation.shot_clips import shot_clips_film_refusal
+
+    refused = shot_clips_film_refusal(spine, flag=shot_clips, episode=episode)
+    if refused:
+        # Nothing is sent: a shot-clips show films only with the flag that priced its clips.
+        raise SystemExit(refused)
     extra = film_scope(
         run,
         episode=episode,
@@ -1201,6 +1218,9 @@ def video_request_body(
     if single_frame_start is not None:
         # Only an explicit flag sends it; the server pins the run's opening at admission.
         extra = {**extra, "single_frame_start": bool(single_frame_start)}
+    if shot_clips and shot_clips_quote:
+        # The price the human said yes to: the server checks it is this film's clips.
+        extra = {**extra, "shot_clips_quote": shot_clips_quote}
     return reuse_generation_body(
         prompt=scene_prompt(spine, prompt),
         spine=spine,

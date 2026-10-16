@@ -389,6 +389,11 @@ def take_facts_usd(facts: dict, *, on: date) -> tuple[float, str] | None:
     seconds = facts.get("duration_seconds")
     if not endpoint or not resolution or not isinstance(seconds, (int, float)):
         return None
+    clips = facts.get("shot_clips")
+    if isinstance(clips, list) and clips:
+        # A take filmed one clip per board row (fictora-drama shot clips): each
+        # clip was filmed and billed on its own; the server says what each bills.
+        return _shot_clips_usd(clips)
     count = int(facts.get("reference_image_count") or 0)
     price = take_usd(
         endpoint, resolution, float(seconds), on=on, reference_images=count
@@ -399,6 +404,27 @@ def take_facts_usd(facts: dict, *, on: date) -> tuple[float, str] | None:
     return (
         price,
         f"{label} {resolution}, {float(seconds):g} s, {count} reference image(s)",
+    )
+
+
+def _shot_clips_usd(clips: list) -> tuple[float, str] | None:
+    """Book a shot-clips take at the dollars the server priced each clip (``billed_usd``); never re-priced here."""
+
+    total = 0.0
+    lengths: list[str] = []
+    for clip in clips:
+        usd = clip.get("billed_usd") if isinstance(clip, dict) else None
+        seconds = clip.get("billed_seconds") if isinstance(clip, dict) else None
+        try:
+            total += float(usd)
+        except (TypeError, ValueError):
+            return None
+        lengths.append(
+            f"{float(seconds):g}" if isinstance(seconds, (int, float)) else "?"
+        )
+    return (
+        total,
+        f"{len(lengths)} shot clip(s) of {' + '.join(lengths)} s, as the server priced them",
     )
 
 
