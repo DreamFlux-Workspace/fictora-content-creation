@@ -128,6 +128,11 @@ from creation.production_state import (
     save_production,
 )
 from creation.touch_and_side import one_sided_side_lines, touch_owner_heads_up
+from creation.picture_spend import (
+    distinct_board_pictures,
+    server_board_price,
+    server_picture_spend,
+)
 from creation.spine_view import (
     beats_by_take,
     board_assets,
@@ -1115,6 +1120,7 @@ def board_report(
     made: list[tuple[int, Path]],
     redraw: bool,
     clip_seconds: int,
+    terminal: dict[str, Any] | None = None,
 ) -> list[str]:
     """Book the boards, record each take's estimate, and say brightness, shot list and the take price.
 
@@ -1138,6 +1144,11 @@ def board_report(
         True for a redraw.
     clip_seconds
         Take length the estimate is priced at.
+    terminal
+        The board run's terminal job. Its ``picture_spend`` is what is booked
+        (:func:`creation.picture_spend.server_picture_spend`); without it (an
+        older server) the distinct board pictures are booked at the kit's still
+        price, with a ``!!`` line.
 
     Returns
     -------
@@ -1172,16 +1183,37 @@ def board_report(
         server=state.server_lane(),
     )
     lines: list[str] = []
+    paid = server_picture_spend(terminal)
+    if paid is not None:
+        # The server's own count and price: one grid stands for every take of a shot-clips episode.
+        boards, each, booked_from = (
+            int(paid["boards"]),
+            paid["still_usd_each"],
+            "server",
+        )
+    else:
+        boards = distinct_board_pictures(
+            spine, episode=episode, sets=[index for index, _ in made]
+        )
+        each, booked_from = float(STILL_USD), "kit table"
+    cost = round(boards * each, 2)
+    if boards == len(made):
+        # One board a take: each take carries its own board, as before.
+        for index, _path in made:
+            take_id = f"t{index}"
+            record_spend(
+                desk,
+                episode=episode,
+                usd=each,
+                take_id=take_id if take_id in desk_takes else None,
+                unit="board",
+            )
+    elif cost:
+        # A grid shared by the takes (or a run that drew fewer than it downloaded): booked once, on the episode.
+        record_spend(desk, episode=episode, usd=cost, unit="board")
     for index, path in made:
         take_id = f"t{index}"
         on_desk = take_id in desk_takes
-        record_spend(
-            desk,
-            episode=episode,
-            usd=float(STILL_USD),
-            take_id=take_id if on_desk else None,
-            unit="board",
-        )
         if on_desk and take_price is not None:
             record_estimate(desk, episode=episode, take_id=take_id, usd=take_price)
         luma, source = (
@@ -1208,9 +1240,12 @@ def board_report(
     lines += board_picture_check_lines(
         spine, episode=episode, sets=[index for index, _ in made]
     )
-    cost = float(STILL_USD) * len(made)
     what = "Redrew" if redraw else "Drew"
-    lines.append(f"{what} {len(made)} board(s): ${cost:.2f} booked.")
+    lines.append(f"{what} {len(made)} board(s): ${cost:.2f} booked ({booked_from}).")
+    if paid is None:
+        lines.append(
+            "!! The server did not say what this draw paid for; booked from the kit's table: check the ledger."
+        )
     if take_price is None:
         label = lane_label(state.video_lane, server=state.server_lane())
         lines.append(
@@ -1389,6 +1424,7 @@ def drawing_spend_stop(
     kind: str,
     count: int,
     confirm_spend: bool,
+    server_price: Callable[[], tuple[int, float] | None] | None = None,
 ) -> StepResult | None:
     """Price a plate or board drawing; draw only on ``--confirm-spend`` after that price was shown.
 
@@ -1410,6 +1446,13 @@ def drawing_spend_stop(
         Pictures to draw (characters, or takes for boards).
     confirm_spend
         The operator's ``--confirm-spend``.
+    server_price
+        Boards only: asks the server's estimate for ``(boards, still_usd_each)``
+        (:func:`creation.picture_spend.server_board_price`), called only when a
+        price is shown (never on a legacy desk or a confirm). It replaces
+        ``count`` and the kit's still price: a shot-clips episode draws one grid
+        for all its takes. ``None`` (an older server) prices from the kit's
+        table, with a ``!!`` line.
 
     Returns
     -------
@@ -1432,14 +1475,20 @@ def drawing_spend_stop(
             f"Stopped, nothing drawn: no price shown for the {kind} yet. Run `fictora-produce step "
             f"--desk {desk}` without --confirm-spend, show the human the number, then confirm."
         )
-    usd = round(float(STILL_USD) * count, 2)
+    priced = server_price() if kind == "boards" and server_price is not None else None
+    if priced is not None:
+        boards, each = priced
+        usd = round(each * boards, 2)
+        what = f"{boards} storyboard(s) (server estimate)"
+    else:
+        usd = round(float(STILL_USD) * count, 2)
+        what = (
+            f"{count} character picture(s)"
+            if kind == "plates"
+            else f"{count} storyboard(s), one a take (!! kit table: the server gave no board price)"
+        )
     state.drawing_estimates[key] = usd
     save_production(desk, state)
-    what = (
-        f"{count} character picture(s)"
-        if kind == "plates"
-        else f"{count} storyboard(s), one a take"
-    )
     return StepResult(
         state.phase,
         f"{kind.capitalize()} for episode {state.episode_ordinal}: {what}, about ${usd:.2f}. "
@@ -1939,9 +1988,14 @@ def run_step(
                 kind="boards",
                 count=len(episode_by_ordinal(load_series(desk), ep).takes),
                 confirm_spend=confirm_spend,
+                # The server's number: a shot-clips episode draws one grid for all its takes.
+                server_price=lambda: server_board_price(
+                    run, spine_id=state.spine_id or "", episode=ep
+                ),
             )
             if priced is not None:
                 return priced
+            terminals: list[dict[str, Any]] = []
             stages.enrol_boards(
                 run,
                 spine_id=state.spine_id or "",
@@ -1953,6 +2007,7 @@ def run_step(
                 tag=f"ep{ep}",
                 episode=ep,
                 deadline_seconds=cfg.poll_boards_deadline_seconds,
+                on_terminal=terminals.append,
             )
             spine = run.spine(state.spine_id or "")
             save_spine_snapshot(desk, ep, spine)
@@ -1972,6 +2027,7 @@ def run_step(
                 made=made,
                 redraw=False,
                 clip_seconds=cfg.clip_duration_seconds,
+                terminal=terminals[-1] if terminals else None,
             )
             state.exposure_accept_dim = False
             state.phase = "wait_board"

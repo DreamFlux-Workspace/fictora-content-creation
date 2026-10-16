@@ -96,6 +96,11 @@ def test_confirming_plates_before_any_price_sends_nothing(
 
 
 def test_boards_are_priced_one_a_take(desk: Path, api: FakeApi) -> None:
+    # An older server with no board price: the kit's table, one a take.
+    api.routes[("POST", "/v1/spines/sp1/batches/estimate")] = (
+        404,
+        {"detail": "Not Found"},
+    )
     api.routes[("POST", BOARDS)] = {"job_id": "job_boards"}
     _boards_draw(api)
     set_phase(desk, "ready_boards_enrol")

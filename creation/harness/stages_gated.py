@@ -671,8 +671,13 @@ def enrol_boards(
     episode: int = 1,
     max_attempts: int = 3,
     deadline_seconds: float = 7200.0,
+    on_terminal: Callable[[dict[str, Any]], object] | None = None,
 ) -> dict[str, Any]:
     """Draw boards for episode ``episode`` and poll. Does not approve.
+
+    ``on_terminal`` is handed the run's completed terminal job, whose
+    ``result.picture_spend`` says what the draw paid for (the kit books that,
+    never its own count; ``creation.picture_spend``).
 
     Sends ``episode_count: N``. The server draws boards only for the episodes
     1..N that still lack them (fictora-drama #436), so episode N is drawn and
@@ -719,6 +724,8 @@ def enrol_boards(
         run.save(f"09_{tag}_boards_terminal{suffix}.json", terminal)
         last_terminal = terminal
         if terminal.get("status") == "completed":
+            if on_terminal is not None:
+                on_terminal(terminal)
             return run.spine(spine_id)
         if (
             _terminal_error_code(terminal) == "plan_media_spine_version_stale"

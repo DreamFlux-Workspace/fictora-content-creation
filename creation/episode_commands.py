@@ -6140,6 +6140,7 @@ def run_redraw_board(
             made=made,
             redraw=True,
             clip_seconds=cfg.clip_duration_seconds,
+            terminal=terminal if isinstance(terminal, dict) else None,
         )
     finally:
         run.client.close()
