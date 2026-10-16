@@ -1855,6 +1855,73 @@ def edge_duplicate_risk_lines(
     return lines
 
 
+def extra_lookalike_lines(
+    exposure: Mapping[str, Any] | None,
+    *,
+    desk: str,
+    episode: int,
+    sets: Collection[int] | None = None,
+) -> list[str]:
+    """The board gate's line per unnamed extra drawn with a named character's traits.
+
+    Iron Saint, 16 Oct 2026: the unnamed spearman was drawn with Toma's
+    topknot and a beard, so Ren's punch on him read as a punch on Toma. The
+    server (fictora-drama ``extras_apart_from_cast``) rewrites such an extra's
+    look before a new show's board is drawn (a continuing show from its Group B
+    episode) and returns what is still drawn alike on the board exposure route
+    (``extra_lookalike_risks``), only for boards awaiting approval: a
+    continuing show before its Group B episode, or a board drawn before the
+    fix. One ``!!`` line per extra, then the redraw that fixes it, its note the
+    server's look for the extra. Warnings only. A server without the field
+    prints nothing.
+
+    Parameters
+    ----------
+    exposure
+        ``GET .../boards/exposure`` JSON, or ``None`` when it was unavailable.
+    desk
+        Series desk (for the printed command).
+    episode
+        Episode ordinal.
+    sets
+        Only these boards (default every board in the response).
+
+    Returns
+    -------
+    list[str]
+        Printable lines; empty when no board has a lookalike extra.
+    """
+
+    lines: list[str] = []
+    for board in (exposure or {}).get("boards") or []:
+        if not isinstance(board, Mapping):
+            continue
+        set_index = int(board.get("set_index") or 1)
+        if sets is not None and set_index not in sets:
+            continue
+        notes: list[str] = []
+        for risk in board.get("extra_lookalike_risks") or []:
+            if not isinstance(risk, Mapping) or not risk.get("who") or not risk.get("resembles"):
+                continue
+            who, like = str(risk["who"]), str(risk["resembles"])
+            traits = ", ".join(str(trait) for trait in risk.get("traits") or []) or "their look"
+            frames = [str(ordinal) for ordinal in risk.get("frame_ordinals") or []]
+            where = f" (frame{'s' if len(frames) > 1 else ''} {', '.join(frames)})" if frames else ""
+            lines.append(
+                f"  !! t{set_index} board: the unnamed extra {who!r}{where} is written with {traits}, like {like}; "
+                f"a hit on them can read as a hit on {like} (warning only)"
+            )
+            look = str(risk.get("fix_value") or "").strip()
+            notes.append(f"The unnamed {who} is not {like}: " + (look or f"a look of their own, unlike {like}"))
+        if notes:
+            note = " ".join(note.rstrip(".") + "." for note in notes).replace('"', "'")
+            lines.append(
+                f"     fictora-produce redraw-board --desk {desk} --episode {episode} --take t{set_index} "
+                f'--note "{note}"'
+            )
+    return lines
+
+
 def _clip(text: str, size: int = 60) -> str:
     return text if len(text) <= size else text[: size - 1] + "…"
 
@@ -2008,6 +2075,7 @@ __all__ = [
     "covered_placement",
     "dialogue_line_ids",
     "edge_duplicate_risk_lines",
+    "extra_lookalike_lines",
     "episode_api_id",
     "episode_id_for",
     "episode_summary",

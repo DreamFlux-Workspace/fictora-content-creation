@@ -138,6 +138,7 @@ from creation.spine_view import (
     frames_digest,
     script_lines,
     edge_duplicate_risk_lines,
+    extra_lookalike_lines,
     shot_list_lines,
     spoken_lines,
 )
@@ -1197,6 +1198,10 @@ def board_report(
     lines += shot_list_lines(spine, episode=episode, sets=[index for index, _ in made])
     # One shot putting the same person at both edges (fictora-drama board_edge_risks; warnings only).
     lines += edge_duplicate_risk_lines(
+        exposure, desk=str(desk), episode=episode, sets=[index for index, _ in made]
+    )
+    # An unnamed extra drawn with a named character's traits (fictora-drama extras_apart_from_cast).
+    lines += extra_lookalike_lines(
         exposure, desk=str(desk), episode=episode, sets=[index for index, _ in made]
     )
     # The server's picture check of each board (warnings only; fictora-drama picture_checks).
