@@ -39,7 +39,7 @@ import math
 import re
 import subprocess
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from statistics import median
 from typing import Any, Literal
@@ -364,6 +364,9 @@ class ContactRamp:
     slow_end: float
     end: float
     speed: float
+    #: Drawn stepped (each in-between frame the nearer real frame) instead of blended: one decision for the
+    #: whole window (:func:`ramp_window_steps`, the server's rule), made before the render.
+    step: bool = False
     #: The frame rate the server counted ``frames`` in (its ``fps``), when it sent them.
     fps: float | None = None
     #: The server's ``(output frame, source frame)`` for every frame of the window: the kit draws these and
@@ -389,7 +392,12 @@ class ContactRamp:
         if self.frames and self.fps is not None and abs(self.fps - fps) < 0.05:
             return dict(self.frames).get(index)
         moved = self.source_seconds(index / fps)
-        return None if moved is None else moved * fps
+        if moved is None:
+            return None
+        position = moved * fps
+        # The hit frame itself is a whole frame, never a blend (the server's list says the same).
+        contact = (self.slow_start + self.slow_end) / 2.0
+        return float(round(position)) if index == round(contact * fps) else position
 
     def screen_seconds(self, source: float, fps: float) -> float:
         """Where on screen the take's moment ``source`` shows, read off the server's frame list.
@@ -1012,15 +1020,84 @@ def _probe(path: Path) -> tuple[int, int, float, bool]:
     )
 
 
-#: Above this mean difference (0-255) two neighbouring frames are too unlike to blend (a soft double image
-#: on a fast blow): the ramp shows the nearer one, stepped like anime on twos (the server's number).
-RAMP_STEP_DIFFERENCE = 6.0
+#: A ramp window whose picture changes this much between two neighbouring frames on its most-changed tile
+#: (mean 0-255 over one of 4x4 tiles of a small grey copy) is drawn stepped for the whole window: a blend
+#: would show the impact twice, faint. The server's number and rule (fictora-drama
+#: ``impact_post.RAMP_STEP_TILE_DIFFERENCE``); the kit measures its own copy of the take.
+RAMP_STEP_TILE_DIFFERENCE = 12.0
+_STEP_PROBE_WIDTH = 64
+_STEP_TILES = 4
+
+
+def tile_difference(
+    before: np.ndarray, after: np.ndarray, tiles: int = _STEP_TILES
+) -> float:
+    """The mean difference of the most-changed tile between two grey frames (0-255).
+
+    Parameters
+    ----------
+    before, after
+        Two grey frames of one size.
+    tiles
+        Tiles per side.
+
+    Returns
+    -------
+    float
+        The largest tile mean of ``|after - before|``.
+    """
+
+    height, width = before.shape[:2]
+    h, w = height // tiles * tiles, width // tiles * tiles
+    diff = np.abs(
+        after[:h, :w].astype(np.int16) - before[:h, :w].astype(np.int16)
+    ).astype(np.float32)
+    return float(
+        diff.reshape(tiles, h // tiles, tiles, w // tiles).mean(axis=(1, 3)).max()
+    )
+
+
+def ramp_window_steps(take: Path, ramp: ContactRamp) -> bool:
+    """Whether a ramp window is drawn stepped: one decision, from the window's own picture.
+
+    Parameters
+    ----------
+    take
+        The take.
+    ramp
+        The server's ramp.
+
+    Returns
+    -------
+    bool
+        True when two neighbouring frames in the window differ on their most-changed tile by more than
+        :data:`RAMP_STEP_TILE_DIFFERENCE`; False (blend) otherwise or when the window cannot be read.
+    """
+
+    width, height, fps, _bt709 = _probe(take)
+    small = max(_STEP_TILES, round(_STEP_PROBE_WIDTH * height / max(width, 1) / 2) * 2)
+    run = subprocess.run(
+        [ffmpeg_bin(), "-v", "error", "-ss", f"{max(0.0, ramp.start - 1.0 / fps):.4f}",
+         "-t", f"{ramp.end - ramp.start + 2.0 / fps:.4f}", "-i", str(take),
+         "-vf", f"scale={_STEP_PROBE_WIDTH}:{small},format=gray", "-f", "rawvideo", "-"],
+        stdin=subprocess.DEVNULL, capture_output=True, check=False, timeout=120,
+    )  # fmt: skip
+    size = _STEP_PROBE_WIDTH * small
+    if run.returncode != 0 or len(run.stdout) < 2 * size:
+        return False
+    frames = np.frombuffer(
+        run.stdout[: len(run.stdout) // size * size], dtype=np.uint8
+    ).reshape(-1, small, _STEP_PROBE_WIDTH)
+    return any(
+        tile_difference(a, b) > RAMP_STEP_TILE_DIFFERENCE
+        for a, b in zip(frames, frames[1:])
+    )
 
 
 def between_frames(
-    below: np.ndarray, above: np.ndarray | None, share: float
+    below: np.ndarray, above: np.ndarray | None, share: float, *, step: bool = False
 ) -> np.ndarray:
-    """The picture between two frames: a blend when they are alike, else the nearer one (as the server).
+    """The picture between two frames: their blend, or the nearer one in a stepped window (as the server).
 
     Parameters
     ----------
@@ -1028,6 +1105,8 @@ def between_frames(
         The frames either side (``above`` ``None`` at a whole frame).
     share
         How far past ``below`` (0-1).
+    step
+        The window is drawn stepped (:attr:`ContactRamp.step`).
 
     Returns
     -------
@@ -1037,11 +1116,7 @@ def between_frames(
 
     if above is None or share <= 1e-6:
         return below
-    sample = (slice(None, None, 8), slice(None, None, 8))
-    difference = float(
-        np.abs(below[sample].astype(np.int16) - above[sample].astype(np.int16)).mean()
-    )
-    if difference > RAMP_STEP_DIFFERENCE:
+    if step:
         return above if share >= 0.5 else below
     return np.clip(
         (1.0 - share) * below.astype(np.float32)
@@ -1110,7 +1185,20 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
     anchor: np.ndarray | None = None
     # The server's ramp: frames inside it show the take's frame on the ramp's clock, blended between its
     # two neighbours (read ahead or kept back as needed); same frame count. No ramp, every frame as before.
+    # One stepped-or-blended decision per ramp window, from the take's own picture (never frame by frame).
+    plan = ImpactPlan(
+        tuple(
+            replace(m, ramp=replace(m.ramp, step=ramp_window_steps(take, m.ramp)))
+            if m.ramp is not None
+            else m
+            for m in plan.moments
+        ),
+        plan.skipped,
+    )
     ramped = any(moment.ramp is not None for moment in plan.moments)
+    stepped = any(
+        moment.ramp is not None and moment.ramp.step for moment in plan.moments
+    )
     decoded: dict[int, np.ndarray] = {}
     next_read = 0
     ended = False
@@ -1142,7 +1230,7 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
                 below = frame_at(low)
                 above = frame_at(low + 1) if share > 1e-6 else None
                 if below is not None:
-                    frame = between_frames(below, above, share)
+                    frame = between_frames(below, above, share, step=stepped)
                 oldest = min(index, low)
             for stale in [key for key in decoded if key < oldest - 1]:
                 del decoded[stale]
@@ -1197,7 +1285,9 @@ def apply_impacts(take: Path, plan: ImpactPlan, out: Path) -> ImpactResult:
 
 
 __all__ = [
-    "RAMP_STEP_DIFFERENCE",
+    "RAMP_STEP_TILE_DIFFERENCE",
+    "ramp_window_steps",
+    "tile_difference",
     "between_frames",
     "ContactRamp",
     "IMPACT_PLAN_PATH",

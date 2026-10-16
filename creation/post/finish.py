@@ -2091,6 +2091,24 @@ def run_finish(
             ).speech
         # Hand cues are levelled against the bed like the planned effects (only the level changes).
         placed, levelled = level_hand_cues(hand, bed_reference(take))
+        # On a take whose impact plan slows a contact, a hand cue inside the ramp window is laid where its
+        # frame now shows, by the server's frame list, exactly as the planned effects (``on_ramp_frames``).
+        early = impact_state.get("server_plan")
+        ramp = early[0].ramp() if early and early[0] is not None else None
+        if ramp is not None and placed.cues:
+            fps = probe_video(take).fps
+            placed = replace(
+                placed,
+                cues=tuple(
+                    (
+                        replace(
+                            cue, start=round(ramp.screen_seconds(cue.start, fps), 3)
+                        ),
+                        seconds,
+                    )
+                    for cue, seconds in placed.cues
+                ),
+            )
         laid = lay_cues(
             take,
             next_versioned_path(takes, f"{base}-cues", ".mp4"),
