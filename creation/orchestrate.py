@@ -128,6 +128,7 @@ from creation.production_state import (
     save_production,
 )
 from creation.touch_and_side import one_sided_side_lines, touch_owner_heads_up
+from creation.shot_clips import films_shot_clips
 from creation.spine_view import (
     beats_by_take,
     board_assets,
@@ -1428,6 +1429,19 @@ def plates_job_done(desk: Path, state: ProductionState) -> None:
     save_production(desk, state)
 
 
+def _episode_estimate(
+    run: Any, state: ProductionState, episode: int
+) -> dict[str, Any] | None:
+    """The server's estimate for an episode (free), or ``None`` when it cannot be asked."""
+
+    try:
+        return stages.estimate_batch(
+            run, spine_id=state.spine_id or "", episode=episode
+        )
+    except SystemExit:
+        return None
+
+
 def drawing_spend_stop(
     desk: Path,
     state: ProductionState,
@@ -2642,6 +2656,10 @@ def _film(
                 seed_attempt=seed_attempt_for(desk, episode=ep),
                 expected_clips=expected,
                 single_frame_start=trial,
+                # The server decides per episode whether it films as shot clips (free to ask).
+                estimate=_episode_estimate(run, state, ep)
+                if films_shot_clips(before)
+                else None,
             )
         except stages.SingleFrameStartRefused as exc:
             # Nothing was admitted or charged: forget the choice and go back to

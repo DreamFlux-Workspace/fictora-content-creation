@@ -62,6 +62,12 @@ NOT_OPTED_IN = (
     "`fictora-produce shot-clips --desk <desk> --on` before its boards are drawn (a board may then hold "
     "five rows), then film. Nothing was sent or charged."
 )
+#: Said when the flag is given on an episode the server films as whole takes (founder, 17 Oct 2026:
+#: shot clips off, the episodes filmed as shot clips keep that mode and every other one films whole).
+WHOLE_TAKES_EPISODE = (
+    "Episode {episode} films whole takes (the server priced it that way): film it without --shot-clips. "
+    "Nothing was sent or charged."
+)
 #: Said when the server's estimate does not price clips.
 NOT_PRICED = (
     "The Drama API did not price this film as shot clips (an older deploy, or no estimate), so the price "
@@ -173,16 +179,18 @@ def run_shot_clips(
     try:
         spine = refresh_spine(run, desk, episode)
         if set_to is None:
-            on = films_shot_clips(spine)
-            print(
-                "Shot clips: "
-                + (
-                    "ON - each take films one clip per board row (film with --shot-clips)."
-                    if on
-                    else "off - whole takes."
-                ),
-                file=out,
+            body = spine_body(spine)
+            kept = body.get("shot_clips_episode_ids")
+            on = films_shot_clips(spine) and kept is None
+            line = (
+                "ON - each take films one clip per board row (film with --shot-clips)."
+                if on
+                else "off - whole takes."
             )
+            if films_shot_clips(spine) and isinstance(kept, list) and kept:
+                # Off after episodes were filmed as shot clips: the server keeps their clips.
+                line += f" {', '.join(str(e) for e in kept)} keep their shot clips (re-film with --shot-clips)."
+            print("Shot clips: " + line, file=out)
             return on
         try:
             answer = set_shot_clips(run, spine, set_to)
@@ -200,10 +208,43 @@ def run_shot_clips(
         run.client.close()  # type: ignore[attr-defined]
 
 
+def episode_films_clips(estimate: Mapping[str, Any] | None) -> bool | None:
+    """Whether the server films the estimated episode as shot clips; ``None`` when its estimate does not say.
+
+    The server decides per episode (fictora-drama ``shot_clips_episode``): a
+    story turned off after an episode was filmed as shot clips keeps that
+    episode's clips and films every other episode whole. A priced estimate
+    that counts clips is a shot-clips episode; one that does not is whole
+    takes.
+
+    Parameters
+    ----------
+    estimate
+        The ``batches/estimate`` answer for the episode (or one take of it).
+
+    Returns
+    -------
+    bool | None
+        ``None`` without dollars (the estimate was skipped, or an older server).
+    """
+
+    cost = estimate.get("cost_estimate") if isinstance(estimate, Mapping) else None
+    if not isinstance(cost, Mapping) or cost.get("total_usd") is None:
+        return None
+    return shot_clips_priced(estimate) is not None
+
+
 def shot_clips_film_refusal(
-    spine: Mapping[str, Any] | None, *, flag: bool, episode: int
+    spine: Mapping[str, Any] | None,
+    *,
+    flag: bool,
+    episode: int,
+    estimate: Mapping[str, Any] | None = None,
 ) -> str | None:
-    """Why a film cannot go out, before anything is priced or sent; ``None`` when it can.
+    """Why a film cannot go out, before anything is sent; ``None`` when it can.
+
+    The server's estimate for the episode decides (:func:`episode_films_clips`);
+    only without one does the show's switch (the spine's ``shot_clips``) decide.
 
     Parameters
     ----------
@@ -213,6 +254,8 @@ def shot_clips_film_refusal(
         ``--shot-clips`` was given.
     episode
         Episode being filmed.
+    estimate
+        The server's estimate for this film, when it has been priced.
 
     Returns
     -------
@@ -220,11 +263,40 @@ def shot_clips_film_refusal(
         The plain refusal, or ``None``.
     """
 
-    on = films_shot_clips(spine)
-    if on and not flag:
+    clips = episode_films_clips(estimate)
+    if clips is None:
+        clips = films_shot_clips(spine)
+    if clips and not flag:
         return NEEDS_FLAG.format(episode=episode)
-    if flag and not on:
-        return NOT_OPTED_IN
+    if flag and not clips:
+        if not films_shot_clips(spine):
+            return NOT_OPTED_IN
+        # The switch is still on yet no clips were priced: a server older than shot clips.
+        # Turned off (the server keeps only the filmed clip episodes): this episode films whole.
+        switch_on = spine_body(spine or {}).get("shot_clips_episode_ids") is None
+        return NOT_PRICED if switch_on else WHOLE_TAKES_EPISODE.format(episode=episode)
+    return None
+
+
+def saved_film_estimate(desk: Path, key: str) -> dict[str, Any] | None:
+    """The newest saved server estimate for one film (``api/film-<key>-estimate*.json``), or ``None``.
+
+    What the human said yes to: the film decides shot clips from the same answer.
+    """
+
+    import json
+
+    folder = desk / "api"
+    found = sorted(
+        folder.glob(f"film-{key}-estimate*.json"), key=lambda path: path.stat().st_mtime
+    )
+    for path in reversed(found):
+        try:
+            answer = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(answer, dict):
+            return answer
     return None
 
 
@@ -390,6 +462,9 @@ def clip_refilm_price_line(answer: Mapping[str, Any]) -> str:
 
 
 __all__ = [
+    "WHOLE_TAKES_EPISODE",
+    "episode_films_clips",
+    "saved_film_estimate",
     "CLIP_REFILM_MISSING",
     "CLIP_REFILM_ROUTE",
     "clip_refilm",
