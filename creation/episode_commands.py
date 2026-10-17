@@ -7155,6 +7155,7 @@ def run_film(
     single_frame_start: bool = False,
     no_single_frame_start: bool = False,
     shot_clips: bool = False,
+    clip: int | None = None,
 ) -> str:
     """Price, then film episode N alone, or only take K of it. Nothing earlier is filmed or booked again.
 
@@ -7199,6 +7200,13 @@ def run_film(
         opt-in, :mod:`creation.shot_clips`). Required on such a show and
         refused on any other; the price must come from a server estimate that
         priced every clip.
+    clip
+        ``--clip R`` (with ``--take tK --shot-clips``): film only row R of
+        take K again. The server draws its new opening picture, films one
+        clip, keeps the take's other clips and joins the take again; it prices
+        it first (``POST /v1/video-generations/{job}/takes/{K}/clips/{R}/refilm``)
+        and the kit passes its token back. The filmed take is collected and
+        booked as any one-take film.
 
     Returns
     -------
@@ -7238,9 +7246,145 @@ def run_film(
             out=out,
             single_frame_start=choice,
             shot_clips=shot_clips,
+            clip=clip,
         )
     finally:
         run.client.close()
+
+
+def _clip_refilm_scope(
+    desk: Path, *, episode: int, take_id: str | None, clip: int, shot_clips: bool
+) -> str:
+    """The film job that filmed ``take_id`` (where its one clip is re-filmed), or a plain stop."""
+
+    from creation.post.take_handles import take_coordinate
+
+    if take_id is None:
+        raise CommandStopped(
+            "--clip goes with --take tK: the take whose shot is filmed again"
+        )
+    if not shot_clips:
+        raise CommandStopped(
+            "--clip re-films one shot of a shot-clips take: add --shot-clips"
+        )
+    if clip < 1:
+        raise CommandStopped("--clip is the shot's row, 1 or more")
+    where = take_coordinate(desk, episode, take_id)
+    if where is None:
+        raise CommandStopped(
+            f"ep{episode:02d} {take_id} has no filmed clip on this desk yet: film the take first "
+            f"(`film --episode {episode} --take {take_id} --shot-clips`)"
+        )
+    return where.video_job_id
+
+
+def _price_clip_refilm(
+    desk: Path,
+    state: ProductionState,
+    run: DramaApiRunSession,
+    *,
+    episode: int,
+    take_id: str,
+    take_index: int,
+    clip: int,
+    job_id: str,
+    key: str,
+    reason: str | None,
+    out: Any,
+) -> str:
+    """Ask the server what re-filming one clip costs, record its number and token, and stop for the human's yes."""
+
+    from creation.shot_clips import (
+        CLIP_REFILM_MISSING,
+        clip_refilm,
+        clip_refilm_estimate,
+        clip_refilm_price_line,
+    )
+
+    refused = shot_clips_film_refusal(
+        run.spine(state.spine_id or ""), flag=True, episode=episode
+    )
+    if refused:
+        raise CommandStopped(refused)
+    try:
+        answer = clip_refilm(run, job_id=job_id, take=take_index, row=clip)
+    except LookupError:
+        raise CommandStopped(
+            CLIP_REFILM_MISSING.format(episode=episode, take=take_id)
+        ) from None
+    except RuntimeError as exc:
+        raise CommandStopped(str(exc)) from None
+    _save_desk_json(desk, f"film-{key}-estimate", clip_refilm_estimate(answer))
+    usd = float(answer.get("total_usd") or 0.0)
+    fresh = load_production(desk)
+    fresh.film_estimates[key] = usd
+    save_production(desk, fresh)
+    record_estimate(desk, episode=episode, take_id=take_id, usd=usd)
+    lines = [
+        clip_refilm_price_line(answer),
+        envelope_line(desk, episode=episode, next_usd=usd),
+    ]
+    if reason:
+        lines.append(f"Cause: {reason}")
+    cause_flag = f' --cause "{reason}"' if reason else ""
+    lines.append(
+        f"Human yes to the number, then `fictora-produce film --desk <desk> --episode {episode} --take {take_id} "
+        f"--shot-clips --clip {clip}{cause_flag} --confirm-spend`."
+    )
+    text = "\n".join(lines)
+    print(text, file=out)
+    return text
+
+
+def _film_clip_refilm(
+    desk: Path,
+    run: DramaApiRunSession,
+    *,
+    episode: int,
+    take_index: int,
+    clip: int,
+    job_id: str,
+    key: str,
+    unit: str,
+    idempotency_key: str,
+    what: str,
+) -> str:
+    """Send the per-clip re-film with the token the human said yes to; return the new film job's id."""
+
+    from creation.shot_clips import CLIP_REFILM_MISSING, clip_refilm
+
+    quote = saved_shot_clips_quote(desk, key)
+    if quote is None:
+        raise CommandStopped(
+            f"no server price for {what} on this desk: run it without --confirm-spend first, show the human "
+            "the number, then confirm"
+        )
+    try:
+        answer = clip_refilm(
+            run,
+            job_id=job_id,
+            take=take_index,
+            row=clip,
+            quote=quote,
+            idempotency_key=idempotency_key,
+        )
+    except LookupError:
+        raise CommandStopped(
+            CLIP_REFILM_MISSING.format(episode=episode, take=f"t{take_index}")
+        ) from None
+    except RuntimeError as exc:
+        _note(desk, episode, f"film {what} refused, nothing charged: {exc}")
+        raise CommandStopped(str(exc)) from None
+    new_job = str(answer.get("job_id") or "")
+    if not new_job:
+        raise CommandStopped(
+            "the server priced the clip re-film but admitted no film job; nothing was filmed"
+        )
+    fresh = load_production(desk)
+    fresh.pending[unit]["job_id"] = new_job
+    save_production(desk, fresh)
+    _save_desk_json(desk, f"{unit}-enrol", answer)
+    return new_job
 
 
 def _run_film(
@@ -7255,6 +7399,7 @@ def _run_film(
     out: Any,
     single_frame_start: bool | None = None,
     shot_clips: bool = False,
+    clip: int | None = None,
 ) -> str:
     if episode < 1:
         raise CommandStopped("--episode is 1 or more")
@@ -7264,6 +7409,12 @@ def _run_film(
         )
     cfg = load_production_config(desk)
     take_ids, take_index, key = _film_scope(desk, episode=episode, take_id=take_id)
+    clip_job: str | None = None
+    if clip is not None:
+        clip_job = _clip_refilm_scope(
+            desk, episode=episode, take_id=take_id, clip=clip, shot_clips=shot_clips
+        )
+        key = f"{key}-clip{clip}"
     slot = episode_by_ordinal(load_series(desk), episode)
     no_yes = [
         take.take_id
@@ -7285,6 +7436,16 @@ def _run_film(
             f"!! this re-films every take of episode {episode}; to re-film one take pass --take tK",
             file=out,
         )
+    if clip is not None:
+        what = f"{what} shot {clip}"
+    if (
+        not confirm_spend
+        and clip_job is not None
+        and take_index is not None
+        and clip is not None
+    ):
+        return _price_clip_refilm(desk, state, run, episode=episode, take_id=take_ids[0], take_index=take_index,
+                                  clip=clip, job_id=clip_job, key=key, reason=reason, out=out)  # fmt: skip
     if not confirm_spend:
         return _price_film(desk, state, run, cfg, episode=episode, take_ids=take_ids, take_index=take_index, key=key,
                            what=what, reason=reason, out=out, refilm=filmed_before,
@@ -7294,6 +7455,7 @@ def _run_film(
         raise CommandStopped(
             f"no price shown for {what} yet: run `film --episode {episode}"
             + (f" --take {take_id}" if take_id else "")
+            + (f" --shot-clips --clip {clip}" if clip is not None else "")
             + "` without --confirm-spend, show the human the number, then confirm"
         )
     resumed = _pending_film_unit(load_production(desk).pending, key)
@@ -7302,6 +7464,9 @@ def _run_film(
         # have raised the take's film count, which would pick a new seed and
         # so a new unit and key: a second paid job. Resume its unit instead.
         unit, seed = resumed
+    elif clip is not None:
+        # The server films the take's row on the take's own seed (its other clips are reused): no seed here.
+        seed, unit = None, f"film-{key}"
     else:
         seed = seed_attempt_for(desk, episode=episode, take_ids=take_ids)
         unit = f"film-{key}" + (f"-s{seed}" if seed else "")
@@ -7346,27 +7511,30 @@ def _run_film(
         print(stages.SINGLE_FRAME_START_NOTE, file=out)
     elif trial is False:
         print(stages.SINGLE_FRAME_START_OFF_NOTE, file=out)
-    server_style = server_caption_style(cfg)
-    body = stages.video_request_body(
-        run,
-        spine=spine,
-        prompt=state.prompt,
-        preset_id=state.preset_id,
-        preset_version=state.preset_version,
-        caption_style=server_style or SERVER_HOUSE_CAPTION_STYLE,
-        api_captions=server_style is not None,
-        video_lane=state.video_lane,
-        clip_duration_seconds=cfg.clip_duration_seconds,
-        cut_tempo=cfg.cut_tempo,
-        episode=episode,
-        reroll_take_index=take_index,
-        seed_attempt=seed,
-        single_frame_start=trial,
-        desk=desk,
-        shot_clips=shot_clips,
-        shot_clips_quote=saved_shot_clips_quote(desk, key) if shot_clips else None,
-    )
-    _save_desk_json(desk, f"{unit}-request", body)
+    body: dict[str, Any] = {}
+    if clip is None:
+        # A per-clip re-film sends no film body: the server builds the run from the take's own film.
+        server_style = server_caption_style(cfg)
+        body = stages.video_request_body(
+            run,
+            spine=spine,
+            prompt=state.prompt,
+            preset_id=state.preset_id,
+            preset_version=state.preset_version,
+            caption_style=server_style or SERVER_HOUSE_CAPTION_STYLE,
+            api_captions=server_style is not None,
+            video_lane=state.video_lane,
+            clip_duration_seconds=cfg.clip_duration_seconds,
+            cut_tempo=cfg.cut_tempo,
+            episode=episode,
+            reroll_take_index=take_index,
+            seed_attempt=seed,
+            single_frame_start=trial,
+            desk=desk,
+            shot_clips=shot_clips,
+            shot_clips_quote=saved_shot_clips_quote(desk, key) if shot_clips else None,
+        )
+        _save_desk_json(desk, f"{unit}-request", body)
     if filmed_before and reason:
         for current in take_ids:
             if any(t.take_id == current and t.filmed_count for t in slot.takes):
@@ -7394,6 +7562,11 @@ def _run_film(
             f"[film] Picking up job {job_id} from the last run (same key, no second charge).",
             file=sys.stderr,
         )
+    elif clip_job is not None and take_index is not None and clip is not None:
+        job_id = _film_clip_refilm(
+            desk, run, episode=episode, take_index=take_index, clip=clip, job_id=clip_job, key=key, unit=unit,
+            idempotency_key=str(pending["key"]), what=what,
+        )  # fmt: skip
     else:
         try:
             job = stages.post_video_generation(
@@ -8677,6 +8850,14 @@ def add_episode_parsers(
         "per board row, each billed on its own (at least 5 s), and the server joins them into the take. "
         "Prices every clip first; an opted-in show is never filmed without it.",
     )
+    film.add_argument(
+        "--clip",
+        type=int,
+        default=None,
+        help="With --take tK --shot-clips: film ONE shot (row) of that take again, from a new opening "
+        "picture; the take's other clips are kept and the server joins the take again. Priced by the "
+        "server first (one picture + one clip).",
+    )
     opening = film.add_mutually_exclusive_group()
     opening.add_argument(
         "--single-frame-start",
@@ -9034,6 +9215,7 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 single_frame_start=args.single_frame_start,
                 no_single_frame_start=args.no_single_frame_start,
                 shot_clips=args.shot_clips,
+                clip=args.clip,
             )
             return 0
         if args.command == "collect-takes":
