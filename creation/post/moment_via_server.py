@@ -34,7 +34,12 @@ from creation.post.reel import (
 )
 from creation.post.reel_cover import METRICS_FILE, cover_path, record_metrics_row
 from creation.post.reel_plan import OPERATOR_DIVIDER, post_operator_notes
-from creation.post.reel_server import ReelServer, ReelServerUnreachable, reel_job_id
+from creation.post.reel_server import (
+    ReelServer,
+    ReelServerTimedOut,
+    ReelServerUnreachable,
+    reel_job_id,
+)
 from creation.post.reel_via_server import (
     letterbox_finals,
     operator_body,
@@ -293,8 +298,9 @@ def make_moment(
             )
             try:
                 answer = client.make(job_id, episode_id_for(spine, last), request)
-            except ReelServerUnreachable:
-                if not client.reused:
+            except ReelServerUnreachable as exc:
+                # Out of time is out of time: keep the uploads record and never send the cut again.
+                if not client.reused or isinstance(exc, ReelServerTimedOut):
                     raise
                 client.forget_uploads()
                 client.reused = False

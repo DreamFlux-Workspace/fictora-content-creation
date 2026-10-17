@@ -280,3 +280,54 @@ def test_reused_uploads_the_server_cannot_read_are_sent_again_once(
 
     assert server.forgot == 1 and result.video is not None
     assert len(server.requests) == 1
+
+
+def test_a_reel_still_waiting_after_the_laptop_slept_stops_with_a_plain_line(
+    tmp_path: Path,
+) -> None:
+    """Iron Saint ep 2 (17 Oct 2026): take 2's reel was in flight when the laptop idled to sleep at 09:58;
+    the run sat there, silent, until the lid opened at 11:43. The wait is now on the wall clock, which runs
+    on through a sleep: the first look after waking is past the deadline and the reel stops with one line."""
+
+    import threading
+
+    from creation.post.reel_server import REEL_DEADLINE_SECONDS, ReelServerTimedOut
+
+    released = threading.Event()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        released.wait(5)  # the answer that never reached the sleeping laptop
+        return httpx.Response(200, json={"plan": {}})
+
+    server = _server(tmp_path, handler)
+    now = [1_000.0]
+
+    def clock() -> float:
+        now[0] += 60.0 * 60.0  # every look at the clock: an hour asleep
+        return now[0]
+
+    server.clock = clock
+    server.poll_seconds = 0.01
+    try:
+        with pytest.raises(ReelServerTimedOut) as raised:
+            server.make("video-1", "episode_02", {})
+    finally:
+        released.set()
+
+    assert isinstance(raised.value, ReelServerUnreachable), (
+        "every caller's 'did not answer' handling applies"
+    )
+    message = str(raised.value)
+    assert f"within {round(REEL_DEADLINE_SECONDS / 60)} minutes" in message
+    assert "the server cut the reel" in message and "sleep" in message
+
+
+def test_a_reel_inside_its_deadline_is_answered_as_before(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"plan": {"segments": []}})
+
+    server = _server(tmp_path, handler)
+    server.poll_seconds = 0.01
+
+    assert server.make("video-1", "episode_02", {}) == {"plan": {"segments": []}}
+    assert server._awake is None, "a test's run never starts caffeinate"
