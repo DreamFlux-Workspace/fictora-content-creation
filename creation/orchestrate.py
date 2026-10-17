@@ -1105,6 +1105,40 @@ def download_boards(
     return made
 
 
+def drawn_board_sets(spine: dict[str, Any], *, episode: int) -> set[int]:
+    """Takes of an episode whose live board the server drew (it names the job that drew it).
+
+    Parameters
+    ----------
+    spine
+        Spine JSON.
+    episode
+        Episode ordinal.
+
+    Returns
+    -------
+    set[int]
+        Set indices with a current, server-drawn board.
+    """
+
+    wanted = episode_id_for(spine, episode)
+    found: set[int] = set()
+    for asset in spine.get("media_assets") or []:
+        if (
+            not isinstance(asset, dict)
+            or asset.get("relation_type") != "episode"
+            or asset.get("relation_id") != wanted
+            or asset.get("stale")
+            or not asset.get("url")
+            or not asset.get("source_job_id")
+        ):
+            continue
+        match = re.search(r"_set(\d+)$", str(asset.get("asset_id") or ""))
+        if match:
+            found.add(int(match.group(1)))
+    return found
+
+
 def board_report(
     desk: Path,
     run: DramaApiRunSession,
@@ -1115,6 +1149,7 @@ def board_report(
     made: list[tuple[int, Path]],
     redraw: bool,
     clip_seconds: int,
+    drawn_earlier: bool = False,
 ) -> list[str]:
     """Book the boards, record each take's estimate, and say brightness, shot list and the take price.
 
@@ -1138,6 +1173,9 @@ def board_report(
         True for a redraw.
     clip_seconds
         Take length the estimate is priced at.
+    drawn_earlier
+        The boards were already drawn on the server (an earlier run): they are
+        picked up, and nothing is booked.
 
     Returns
     -------
@@ -1175,13 +1213,14 @@ def board_report(
     for index, path in made:
         take_id = f"t{index}"
         on_desk = take_id in desk_takes
-        record_spend(
-            desk,
-            episode=episode,
-            usd=float(STILL_USD),
-            take_id=take_id if on_desk else None,
-            unit="board",
-        )
+        if not drawn_earlier:
+            record_spend(
+                desk,
+                episode=episode,
+                usd=float(STILL_USD),
+                take_id=take_id if on_desk else None,
+                unit="board",
+            )
         if on_desk and take_price is not None:
             record_estimate(desk, episode=episode, take_id=take_id, usd=take_price)
         luma, source = (
@@ -1208,9 +1247,16 @@ def board_report(
     lines += board_picture_check_lines(
         spine, episode=episode, sets=[index for index, _ in made]
     )
-    cost = float(STILL_USD) * len(made)
-    what = "Redrew" if redraw else "Drew"
-    lines.append(f"{what} {len(made)} board(s): ${cost:.2f} booked.")
+    cost = 0.0 if drawn_earlier else float(STILL_USD) * len(made)
+    what = "Picked up" if drawn_earlier else ("Redrew" if redraw else "Drew")
+    lines.append(
+        f"{what} {len(made)} board(s): ${cost:.2f} booked"
+        + (
+            " (already drawn on the server; nothing new drawn)."
+            if drawn_earlier
+            else "."
+        )
+    )
     if take_price is None:
         label = lane_label(state.video_lane, server=state.server_lane())
         lines.append(
@@ -1902,8 +1948,45 @@ def run_step(
             )
 
         if state.phase == "ready_boards_enrol":
-            # Name check and hook-mouth check, before paying for the boards.
             spine_now = run.spine(state.spine_id or "")
+            take_count = len(episode_by_ordinal(load_series(desk), ep).takes)
+            if take_count and drawn_board_sets(spine_now, episode=ep) >= set(
+                range(1, take_count + 1)
+            ):
+                # Every take's board is already drawn on the server (an earlier run): pick them
+                # up. No price, no draw, nothing booked (Low Tide ep 2, 16 Oct 2026).
+                save_spine_snapshot(desk, ep, spine_now)
+                state.board_paths = {}
+                made = download_boards(desk, state, spine_now, episode=ep)
+                paths.extend(str(path) for _, path in made)
+                report = board_report(
+                    desk,
+                    run,
+                    state,
+                    spine_now,
+                    episode=ep,
+                    made=made,
+                    redraw=False,
+                    clip_seconds=cfg.clip_duration_seconds,
+                    drawn_earlier=True,
+                )
+                state.exposure_accept_dim = False
+                state.phase = "wait_board"
+                state.drawing_estimates.pop(f"boards-ep{ep:02d}", None)
+                save_production(desk, state)
+                _note(
+                    ep_dir,
+                    "Boards picked up (already drawn): "
+                    + "; ".join(report[: len(made)]),
+                )
+                return StepResult(
+                    state.phase,
+                    "\n".join(report)
+                    + "\nNext: look at the board and the shot list; check its rows follow the shot plan. "
+                    "Say yes (`fictora-produce approve --gate board`) or redraw one (`redraw-board --take tN --note 'what is wrong'`).",
+                    tuple(paths),
+                )
+            # Name check and hook-mouth check, before paying for the boards.
             stop = named_cast_stop(spine_now, episode=ep, desk=str(desk))
             if stop:
                 _note(ep_dir, stop)
@@ -1942,6 +2025,7 @@ def run_step(
             )
             if priced is not None:
                 return priced
+            resumed: list[str] = []
             stages.enrol_boards(
                 run,
                 spine_id=state.spine_id or "",
@@ -1953,6 +2037,7 @@ def run_step(
                 tag=f"ep{ep}",
                 episode=ep,
                 deadline_seconds=cfg.poll_boards_deadline_seconds,
+                on_resume=resumed.append,
             )
             spine = run.spine(state.spine_id or "")
             save_spine_snapshot(desk, ep, spine)
@@ -1972,6 +2057,8 @@ def run_step(
                 made=made,
                 redraw=False,
                 clip_seconds=cfg.clip_duration_seconds,
+                # The server already had them (409 boards_already_generated): nothing was drawn or charged.
+                drawn_earlier=bool(resumed),
             )
             state.exposure_accept_dim = False
             state.phase = "wait_board"
