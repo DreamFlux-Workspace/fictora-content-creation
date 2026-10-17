@@ -671,6 +671,7 @@ def enrol_boards(
     episode: int = 1,
     max_attempts: int = 3,
     deadline_seconds: float = 7200.0,
+    on_resume: Callable[[str], object] | None = None,
 ) -> dict[str, Any]:
     """Draw boards for episode ``episode`` and poll. Does not approve.
 
@@ -708,6 +709,9 @@ def enrol_boards(
             if not board_assets(ready, episode=episode):
                 raise
             run.emit("boards_resume", code="boards_already_generated", episode=episode)
+            if on_resume is not None:
+                # Nothing was drawn or charged: the caller books nothing for these boards.
+                on_resume("boards_already_generated")
             return ready
         run.save(f"08_{tag}_boards_enrol{suffix}.json", job)
         terminal = run.poll_job(

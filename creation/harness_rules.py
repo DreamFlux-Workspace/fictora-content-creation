@@ -65,7 +65,10 @@ _NOT_A_HAND_BEFORE = re.compile(
     re.IGNORECASE,
 )
 _NOT_A_HAND_AFTER = re.compile(
+    # "catches himself on one knee" is a body checking its fall, not a hand on a prop
+    # (Iron Saint ep 2 frame 8, 16 Oct 2026).
     r"^\s+(?:on|for|still|steady|tight|wide|close|there|a\s+beat|a\s+moment|"
+    r"himself|herself|themselves|itself|oneself|"
     r"(?:his|her|their|its|the)\s+(?:gaze|stare|breath|profile|look|eyes|ground|position|pose|frame|"
     r"shot|moment|silence|focus|nerve|tongue|composure|line))\b",
     re.IGNORECASE,
@@ -87,7 +90,12 @@ def _stages_a_hand_hold(text: str) -> bool:
 _FORBID_HOLD = re.compile(
     # A hyphenated compound ("no face-touching") is a standing contact rule,
     # not a ban on holding the prop the frame stages.
-    r"\b(?:no|not|never|forbid|forbidden|without|anyone)\b.{0,48}(?<!-)\b(?:hold|holding|grip|gripping|touch|touching)\b",
+    r"\b(?:no|not|never|forbid|forbidden|without|anyone)\b.{0,48}(?<!-)\b(?:hold|holding|grip|gripping)\b"
+    # A touch bans a hold only when a person or a hand does the touching ("no touching the lamp",
+    # "no one touching", "no hand touching", "anyone touching"). "No hook blade touching Ren's
+    # body" is a contact rule between an object and a body (Iron Saint ep 2 frame 8, 16 Oct 2026).
+    r"|\b(?:no|not|never|without|anyone)\s+(?:(?:one|anyone|someone|nobody|hands?|fingers?|palms?)\s+)?"
+    r"(?<!-)(?:touch|touches|touching)\b",
     re.IGNORECASE,
 )
 _ADULT_AGE = re.compile(r"\b([1-9]\d)\b")
