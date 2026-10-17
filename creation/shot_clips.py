@@ -296,7 +296,105 @@ def saved_shot_clips_quote(desk: Path, key: str) -> str | None:
     return None
 
 
+#: The server's per-clip re-film (fictora-drama: one new opening still, one clip, the rest reused).
+CLIP_REFILM_ROUTE = "/v1/video-generations/{job_id}/takes/{take}/clips/{row}/refilm"
+#: Said when the server is older than the per-clip re-film (nothing sent).
+CLIP_REFILM_MISSING = (
+    "This Drama API cannot re-film one clip yet (an older deploy): nothing was sent or charged. "
+    "Re-film the whole take with `film --episode {episode} --take {take} --shot-clips`, or wait for the deploy."
+)
+
+
+def clip_refilm(
+    run: _Api,
+    *,
+    job_id: str,
+    take: int,
+    row: int,
+    quote: str | None = None,
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    """Price (no ``quote``) or film (with the price's ``quote``) ONE clip of a shot-clips take, on the server.
+
+    The server decides everything: the new opening still (drawn at the row's
+    wind-up when it has a contact), the one clip, which clips are reused, the
+    price and its token. The kit only sends the row and passes the token back.
+
+    Parameters
+    ----------
+    run
+        Open API session.
+    job_id
+        The film job that filmed the take (``take_coordinate``).
+    take
+        The take of the episode, from 1.
+    row
+        The row (shot) to film again, from 1.
+    quote
+        The price's ``shot_clips_quote`` to film; ``None`` only prices.
+    idempotency_key
+        The film's retry key (required with ``quote``).
+
+    Returns
+    -------
+    dict[str, Any]
+        The server's answer (``total_usd``, ``shot_clips_quote``, ``notice``; ``job_id`` once admitted).
+
+    Raises
+    ------
+    LookupError
+        The server has no such route (an older deploy): nothing was sent.
+    RuntimeError
+        The server refused it (its words).
+    """
+
+    body: dict[str, Any] = {"preview": quote is None}
+    if quote is not None:
+        body["shot_clips_quote"] = quote
+    path = CLIP_REFILM_ROUTE.format(job_id=job_id, take=take, row=row)
+    status, answer = run.post_optional(path, body, idempotency_key=idempotency_key)
+    if 200 <= status < 300 and isinstance(answer, Mapping):
+        return dict(answer)
+    error = answer.get("error") if isinstance(answer, Mapping) else None
+    code = str(error.get("code") or "") if isinstance(error, Mapping) else ""
+    if status in (404, 405) and not code:
+        raise LookupError("no per-clip re-film route")
+    raise RuntimeError(
+        f"the server refused the clip re-film (HTTP {status}): {api_error_text(answer)}"
+    )
+
+
+def clip_refilm_estimate(answer: Mapping[str, Any]) -> dict[str, Any]:
+    """The answer saved as the film's estimate, so the film passes its token back (``saved_shot_clips_quote``)."""
+
+    return {
+        "clip_refilm": dict(answer),
+        "cost_estimate": {
+            "total_usd": answer.get("total_usd"),
+            "shot_clips": answer.get("clips_refilmed"),
+            "shot_clips_quote": answer.get("shot_clips_quote"),
+        },
+    }
+
+
+def clip_refilm_price_line(answer: Mapping[str, Any]) -> str:
+    """One plain line: what is drawn, what is filmed, what is reused, and the server's dollars."""
+
+    reused = answer.get("clips_reused")
+    return (
+        f"Re-film shot {answer.get('row')} of take {answer.get('take_index')} alone: one new opening picture "
+        f"(${float(answer.get('still_usd_each') or 0):.2f}) and one {answer.get('clip_billed_seconds')} second clip "
+        f"(${float(answer.get('clip_usd') or 0):.2f}); the take's other {reused} clip(s) are kept as filmed and the "
+        f"server joins the take again. About ${float(answer.get('total_usd') or 0):.2f} in all."
+    )
+
+
 __all__ = [
+    "CLIP_REFILM_MISSING",
+    "CLIP_REFILM_ROUTE",
+    "clip_refilm",
+    "clip_refilm_estimate",
+    "clip_refilm_price_line",
     "NEEDS_FLAG",
     "NOT_OPTED_IN",
     "NOT_PRICED",

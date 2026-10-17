@@ -415,8 +415,10 @@ def _shot_clips_usd(clips: list) -> tuple[float, str] | None:
     for clip in clips:
         usd = clip.get("billed_usd") if isinstance(clip, dict) else None
         seconds = clip.get("billed_seconds") if isinstance(clip, dict) else None
+        # A per-clip re-film: the server lists reused clips at $0 and adds the one new opening still.
+        still = clip.get("opening_still_usd") if isinstance(clip, dict) else None
         try:
-            total += float(usd)
+            total += float(usd) + (float(still) if still is not None else 0.0)
         except (TypeError, ValueError):
             return None
         lengths.append(

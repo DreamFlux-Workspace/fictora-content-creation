@@ -300,3 +300,156 @@ def test_the_commands_take_the_flags(
         seen.clear()
         assert main(["shot-clips", "--desk", str(desk30), *argv]) == 0
         assert seen["set_to"] is wanted
+
+
+# --- film ONE clip of a take again (fictora-drama: per-clip re-film, Low Tide 17 Oct 2026) -----------------------
+
+CLIP_ROUTE = "/v1/video-generations/job_video_A/takes/2/clips/1/refilm"
+CLIP_PRICE = {
+    "source_job_id": "job_video_A",
+    "episode_id": "ep_02",
+    "take_index": 2,
+    "row": 1,
+    "clips_refilmed": 1,
+    "clips_reused": 3,
+    "stills": 1,
+    "still_usd_each": "0.30",
+    "clip_billed_seconds": 5,
+    "clip_usd": "0.20",
+    "total_usd": "0.50",
+    "shot_clips_quote": "sc1r:feedface",
+    "admitted": False,
+    "notice": "Re-films row 1 of take 2 alone.",
+}
+
+
+def _clip_take(monkeypatch: pytest.MonkeyPatch, api: FakeApi) -> None:
+    """Take 2 of episode 2 was filmed by job_video_A; the server prices and admits its one-clip re-film."""
+
+    from creation.post import take_handles
+
+    monkeypatch.setattr(
+        take_handles,
+        "take_coordinate",
+        lambda desk, episode, take_id: take_handles.TakeCoordinate(
+            "job_video_A", 2, "job_take_A2"
+        ),
+    )
+
+    def route(_method: str, _path: str, body: dict | None) -> dict:
+        if body and body.get("preview") is False:
+            assert body["shot_clips_quote"] == "sc1r:feedface"
+            return {**CLIP_PRICE, "admitted": True, "job_id": "job_video_9"}
+        return CLIP_PRICE
+
+    api.routes[("POST", CLIP_ROUTE)] = route
+
+
+def test_film_one_clip_is_priced_by_the_server_then_films_with_its_token_and_books_only_what_it_filmed(
+    desk30: Path, api30: FakeApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _filmed_once(desk30)
+    _opted_in(api30)
+    _clip_take(monkeypatch, api30)
+
+    text = run_film(
+        desk30, episode=2, take_id="t2", cause=CAUSE, shot_clips=True, clip=1
+    )
+
+    assert api30.posted(CLIP_ROUTE) == [{"preview": True}]
+    assert api30.posted(ESTIMATE) == [] and api30.posted(VIDEO) == []
+    assert "Re-film shot 1 of take 2 alone: one new opening picture ($0.30)" in text
+    assert "one 5 second clip ($0.20)" in text and "About $0.50 in all" in text
+    assert "--take t2 --shot-clips --clip 1" in text
+
+    _take_two_of_episode_two(api30)
+    api30.routes[("GET", "/v1/jobs/job_take_e2t2/take-facts")] = {
+        "take_facts": {
+            "endpoint_id": TURBO,
+            "resolution": "768P",
+            "duration_seconds": 14.0,
+            # The server lists the reused clips at $0 and the new clip with its picture.
+            "shot_clips": [
+                {
+                    "job_id": "c1",
+                    "row": 1,
+                    "start_s": 0.0,
+                    "planned_seconds": 1.64,
+                    "billed_seconds": 5,
+                    "billed_usd": "0.20",
+                    "opening_still_usd": "0.30",
+                },
+                *(
+                    {
+                        "job_id": f"c{n}",
+                        "row": n,
+                        "start_s": 3.0 * n,
+                        "planned_seconds": 3.0,
+                        "billed_seconds": 5,
+                        "billed_usd": "0",
+                    }
+                    for n in (2, 3, 4)
+                ),
+            ],
+        }
+    }
+
+    filmed = run_film(
+        desk30,
+        episode=2,
+        take_id="t2",
+        cause=CAUSE,
+        confirm_spend=True,
+        shot_clips=True,
+        clip=1,
+    )
+
+    posted = api30.posted(CLIP_ROUTE)
+    assert posted[-1] == {"preview": False, "shot_clips_quote": "sc1r:feedface"}
+    # Nothing of the kit's own goes out: no film body, no seed.
+    assert api30.posted(VIDEO) == []
+    assert "$0.50 booked" in filmed
+
+
+def test_film_one_clip_needs_its_take_and_shot_clips_and_an_older_server_sends_nothing(
+    desk30: Path, api30: FakeApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from creation.shot_clips import CLIP_REFILM_MISSING
+
+    _filmed_once(desk30)
+    _opted_in(api30)
+    with pytest.raises(CommandStopped, match="--clip goes with --take tK"):
+        run_film(desk30, episode=2, cause=CAUSE, shot_clips=True, clip=1)
+    with pytest.raises(CommandStopped, match="add --shot-clips"):
+        run_film(desk30, episode=2, take_id="t2", cause=CAUSE, clip=1)
+    _clip_take(monkeypatch, api30)
+    api30.routes[("POST", CLIP_ROUTE)] = (404, {"detail": "Not Found"})
+    with pytest.raises(CommandStopped) as caught:
+        run_film(desk30, episode=2, take_id="t2", cause=CAUSE, shot_clips=True, clip=1)
+    assert str(caught.value) == CLIP_REFILM_MISSING.format(episode=2, take="t2")
+    assert api30.posted(VIDEO) == [] and api30.posted(ESTIMATE) == []
+    # Without a price shown, a confirm sends nothing.
+    with pytest.raises(CommandStopped, match="no price shown"):
+        run_film(
+            desk30,
+            episode=2,
+            take_id="t2",
+            cause=CAUSE,
+            confirm_spend=True,
+            shot_clips=True,
+            clip=1,
+        )
+
+
+def test_the_film_command_takes_the_clip_flag(
+    desk30: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from creation import episode_commands
+
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(episode_commands, "run_film", lambda *_a, **kw: seen.update(kw))
+    argv = ["film", "--desk", str(desk30), "--episode", "2", "--take", "t2"]
+    assert main([*argv, "--shot-clips", "--clip", "1"]) == 0
+    assert seen["clip"] == 1 and seen["shot_clips"] is True
+    assert main(argv) == 0
+    assert seen["clip"] is None
