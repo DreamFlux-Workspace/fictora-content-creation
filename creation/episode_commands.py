@@ -86,6 +86,7 @@ from creation.new_cast import new_cast_notice, newcomers
 from creation.shot_clips import NOT_PRICED as SHOT_CLIPS_NOT_PRICED
 from creation.shot_clips import (
     saved_shot_clips_quote,
+    saved_film_estimate,
     shot_clips_film_refusal,
     shot_clips_price_line,
     shot_clips_priced,
@@ -7472,7 +7473,13 @@ def _run_film(
         unit = f"film-{key}" + (f"-s{seed}" if seed else "")
     spine = run.spine(state.spine_id or "")
     stopped = (
-        shot_clips_film_refusal(spine, flag=shot_clips, episode=episode)
+        shot_clips_film_refusal(
+            spine,
+            flag=shot_clips,
+            episode=episode,
+            # The estimate the human said yes to decides, per episode.
+            estimate=saved_film_estimate(desk, key),
+        )
         or film_stop_message(spine, episode=episode)
         or voices_film_refusal(desk, spine, episode=episode, run=run)
     )
@@ -7533,6 +7540,8 @@ def _run_film(
             desk=desk,
             shot_clips=shot_clips,
             shot_clips_quote=saved_shot_clips_quote(desk, key) if shot_clips else None,
+            # The estimate the human said yes to: the server's per-episode answer.
+            estimate=saved_film_estimate(desk, key),
         )
         _save_desk_json(desk, f"{unit}-request", body)
     if filmed_before and reason:
@@ -7823,11 +7832,6 @@ def _price_film(
     refilm: bool = False,
     shot_clips: bool = False,
 ) -> str:
-    refused = shot_clips_film_refusal(
-        run.spine(state.spine_id or ""), flag=shot_clips, episode=episode
-    )
-    if refused:
-        raise CommandStopped(refused)
     estimate = stages.estimate_batch(
         run,
         spine_id=state.spine_id or "",
@@ -7835,6 +7839,15 @@ def _price_film(
         reroll_take_index=take_index,
     )
     _save_desk_json(desk, f"film-{key}-estimate", estimate)
+    # The server's estimate says whether this episode films as shot clips (per episode).
+    refused = shot_clips_film_refusal(
+        run.spine(state.spine_id or ""),
+        flag=shot_clips,
+        episode=episode,
+        estimate=estimate,
+    )
+    if refused:
+        raise CommandStopped(refused)
     state.remember_server_lane(server_lane(estimate))
     spine = run.spine(state.spine_id or "")
     stopped = film_stop_message(spine, episode=episode)

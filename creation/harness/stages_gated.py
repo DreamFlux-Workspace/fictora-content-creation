@@ -1148,6 +1148,7 @@ def video_request_body(
     desk: Path | None = None,
     shot_clips: bool = False,
     shot_clips_quote: str | None = None,
+    estimate: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the ``POST /v1/video-generations`` reuse body that films episode ``episode`` alone.
 
@@ -1186,6 +1187,10 @@ def video_request_body(
         With ``shot_clips``: the token of the estimate the human said yes to,
         passed through as ``shot_clips_quote``; the server refuses the film when
         its clips are not the ones priced.
+    estimate
+        The server's estimate for this film: it says whether the episode films
+        as shot clips (the server decides per episode). Without it the show's
+        switch decides.
 
     Returns
     -------
@@ -1199,7 +1204,9 @@ def video_request_body(
 
     from creation.shot_clips import shot_clips_film_refusal
 
-    refused = shot_clips_film_refusal(spine, flag=shot_clips, episode=episode)
+    refused = shot_clips_film_refusal(
+        spine, flag=shot_clips, episode=episode, estimate=estimate
+    )
     if refused:
         # Nothing is sent: a shot-clips show films only with the flag that priced its clips.
         raise SystemExit(refused)
@@ -1257,6 +1264,7 @@ def enrol_video(
     seed_attempt: int | None = None,
     expected_clips: int | None = None,
     single_frame_start: bool | None = None,
+    estimate: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Film episode ``episode``'s takes and collect them raw (hosted delivery only when asked and available).
 
@@ -1281,6 +1289,8 @@ def enrol_video(
     single_frame_start
         The opening choice (:func:`video_request_body`); the caller keeps it
         per key so a resume sends the same body.
+    estimate
+        The server's estimate for the episode (:func:`video_request_body`).
 
     Returns
     -------
@@ -1309,6 +1319,7 @@ def enrol_video(
         episode=episode,
         seed_attempt=seed_attempt,
         single_frame_start=single_frame_start,
+        estimate=estimate,
     )
     run.save("16_video_request.json", body)
     idem = video_enrol_key(run.prefix, episode, video_idempotency_suffix)

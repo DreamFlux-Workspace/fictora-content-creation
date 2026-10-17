@@ -119,19 +119,23 @@ def test_an_opted_in_show_is_never_priced_or_filmed_without_the_flag(
     with pytest.raises(CommandStopped, match="--shot-clips"):
         run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
 
-    assert api30.posted(ESTIMATE) == [] and api30.posted(VIDEO) == []
+    # Only the free estimate is asked (it says this episode films as clips); nothing is filmed.
+    assert api30.posted(VIDEO) == []
 
 
 def test_the_flag_on_a_show_that_did_not_opt_in_sends_nothing(
     desk30: Path, api30: FakeApi
 ) -> None:
     _filmed_once(desk30)
-    api30.routes[("POST", ESTIMATE)] = PRICED
+    # A show that never opted in: the server prices whole takes.
+    api30.routes[("POST", ESTIMATE)] = {
+        "cost_estimate": {"total_usd": "1.20", "takes": 2}
+    }
 
     with pytest.raises(CommandStopped, match="has not"):
         run_film(desk30, episode=2, take_id="t2", cause=CAUSE, shot_clips=True)
 
-    assert api30.posted(ESTIMATE) == []
+    assert api30.posted(VIDEO) == []
 
 
 def test_a_server_that_does_not_price_clips_is_refused_before_spend(
@@ -453,3 +457,121 @@ def test_the_film_command_takes_the_clip_flag(
     assert seen["clip"] == 1 and seen["shot_clips"] is True
     assert main(argv) == 0
     assert seen["clip"] is None
+
+
+# --- Shot clips turned off (founder, 17 Oct 2026): the server decides per episode -----------------------------
+
+WHOLE_TAKES = {"cost_estimate": {"total_usd": "1.20", "takes": 2}}
+
+
+def _turned_off(api: FakeApi, *, clip_episodes: list[str]) -> None:
+    """The server's story after off: the switch's flag stays, only the filmed clip episodes keep clips."""
+
+    api.spine_doc["shot_clips"] = True
+    api.spine_doc["shot_clips_episode_ids"] = clip_episodes
+
+
+def test_a_whole_take_episode_of_a_turned_off_show_films_without_the_flag(
+    desk30: Path, api30: FakeApi
+) -> None:
+    _filmed_once(desk30)
+    _turned_off(api30, clip_episodes=["ep_01"])
+    api30.routes[("POST", ESTIMATE)] = WHOLE_TAKES
+
+    text = run_film(desk30, episode=2, cause=CAUSE)
+
+    assert "Shot clips" not in text and "--shot-clips" not in text
+    with pytest.raises(CommandStopped, match="films whole takes"):
+        run_film(desk30, episode=2, cause=CAUSE, shot_clips=True)
+    try:
+        # The yes: decided from the estimate the human saw, never from the story's flag.
+        run_film(desk30, episode=2, cause=CAUSE, confirm_spend=True)
+    except CommandStopped as stopped:
+        assert "--shot-clips" not in str(stopped)
+    except AssertionError as unrouted:
+        assert "unexpected" in str(unrouted)
+
+
+def test_an_episode_filmed_as_clips_on_a_turned_off_show_still_needs_the_flag(
+    desk30: Path, api30: FakeApi
+) -> None:
+    _filmed_once(desk30)
+    _turned_off(api30, clip_episodes=["ep_02"])
+    api30.routes[("POST", ESTIMATE)] = PRICED
+
+    with pytest.raises(CommandStopped, match="film it with"):
+        run_film(desk30, episode=2, cause=CAUSE)
+    assert "Shot clips: 9 short clips" in run_film(
+        desk30, episode=2, cause=CAUSE, shot_clips=True
+    )
+
+
+def test_the_episode_decision_reads_only_the_servers_answers() -> None:
+    from creation.shot_clips import NOT_PRICED, WHOLE_TAKES_EPISODE, episode_films_clips
+
+    assert episode_films_clips(PRICED) is True
+    assert episode_films_clips(WHOLE_TAKES) is False
+    assert episode_films_clips({"estimate_skipped": True}) is None
+    # An answer without dollars does not say (a refused or partial estimate).
+    assert episode_films_clips({"cost_estimate": {"takes": 2}}) is None
+    off = {"shot_clips": True, "shot_clips_episode_ids": ["ep_01"]}
+    on = {"shot_clips": True}
+    # No estimate: the show's switch decides, as before.
+    assert shot_clips_film_refusal(on, flag=False, episode=2) is not None
+    assert shot_clips_film_refusal({}, flag=False, episode=2) is None
+    # The switch on but no clips priced: an older server. Turned off: a whole-take episode.
+    assert (
+        shot_clips_film_refusal(on, flag=True, episode=2, estimate=WHOLE_TAKES)
+        == NOT_PRICED
+    )
+    assert shot_clips_film_refusal(
+        off, flag=True, episode=2, estimate=WHOLE_TAKES
+    ) == WHOLE_TAKES_EPISODE.format(episode=2)
+    assert (
+        shot_clips_film_refusal(off, flag=False, episode=2, estimate=WHOLE_TAKES)
+        is None
+    )
+
+
+def test_the_status_says_off_and_names_the_episodes_that_keep_their_clips(
+    desk30: Path, api30: FakeApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import io
+    from types import SimpleNamespace
+
+    import creation.shot_clips as module
+    from creation.shot_clips import run_shot_clips
+
+    _turned_off(api30, clip_episodes=["ep_02"])
+    session = SimpleNamespace(client=SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(module, "open_api", lambda *_args: session)
+    monkeypatch.setattr(module, "refresh_spine", lambda *_args: api30.spine_doc)
+    out = io.StringIO()
+
+    assert run_shot_clips(desk30, out=out) is False
+    assert "off - whole takes. ep_02 keep their shot clips" in out.getvalue()
+
+
+def test_step_films_a_whole_take_episode_of_a_turned_off_show(
+    desk: Path, api: FakeApi
+) -> None:
+    from conftest import set_phase
+
+    from creation import orchestrate
+
+    set_phase(desk, "ready_video")
+    api.spine_doc["shot_clips"] = True
+    api.spine_doc["shot_clips_episode_ids"] = ["ep_99"]
+    api.routes[("POST", "/v1/spines/sp1/batches/estimate")] = WHOLE_TAKES
+    api.routes[("POST", "/v1/video-generations")] = SystemExit("reached the film")
+
+    # The server's estimate says whole takes: step films it (it reaches the film request).
+    with pytest.raises(SystemExit, match="reached the film"):
+        orchestrate.run_step(desk)
+
+    # Still on (no restriction) and the server prices clips: step never films shot clips.
+    set_phase(desk, "ready_video")
+    del api.spine_doc["shot_clips_episode_ids"]
+    api.routes[("POST", "/v1/spines/sp1/batches/estimate")] = PRICED
+    with pytest.raises((SystemExit, RuntimeError), match="--shot-clips"):
+        orchestrate.run_step(desk)
