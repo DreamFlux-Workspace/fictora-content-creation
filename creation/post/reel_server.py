@@ -277,6 +277,11 @@ class ReelServer:
 
         if self._awake is not None:
             self._awake.terminate()
+            try:
+                self._awake.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._awake.kill()
+                self._awake.wait()
             self._awake = None
         if self._own_run:
             self.run.client.close()

@@ -140,3 +140,37 @@ def test_the_offer_prints_a_question_and_writes_nothing(
         and "on yes: moment" in text
     )
     assert not (tmp_path / "reels" / "moments").exists()
+
+
+@needs_ffmpeg
+def test_a_moment_that_ran_out_of_time_keeps_its_uploads_and_is_never_sent_again(
+    reel_desk: Path,  # noqa: F811
+) -> None:
+    """As the reel (#266): a timed-out cut is not a reason to forget the uploads and send it all again."""
+
+    from creation.post.reel_server import ReelServerTimedOut, deadline_message
+
+    class _OutOfTime(FakeReelServer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.reused = True  # the takes came from uploads.json
+            self.makes = 0
+            self.forgot = 0
+
+        def make(
+            self, job_id: str, episode_id: str, body: dict[str, object]
+        ) -> dict[str, object]:
+            self.makes += 1
+            raise ReelServerTimedOut(deadline_message("the server cut the reel", 600.0))
+
+        def forget_uploads(self) -> None:
+            self.forgot += 1
+
+    server = _OutOfTime()
+    with pytest.raises(ReelServerTimedOut):
+        make_moment(
+            reel_desk, episodes=[1], part=3, stream=io.StringIO(), server=server
+        )
+
+    assert server.makes == 1, "the cut is sent once"
+    assert server.forgot == 0, "uploads.json is kept"
