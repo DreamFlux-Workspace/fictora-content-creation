@@ -29,6 +29,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import shutil
+import subprocess
+import sys
+import threading
 import time
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
@@ -47,6 +52,14 @@ REEL_REQUEST_SCHEMA = "DramaEpisodeReelRequest"
 #: The first render takes tens of seconds; the server allows 180 s plus downloads.
 REEL_TIMEOUT_SECONDS = 420.0
 UPLOAD_TIMEOUT_SECONDS = 600.0
+#: The whole server reel (its uploads, the cut, the downloads) ends within this much wall-clock time.
+#: httpx's timeouts are per read or write on the monotonic clock, which stops while a Mac sleeps: on
+#: Iron Saint ep 2 (17 Oct 2026) take 2's reel was in flight when the laptop idled to sleep at 09:58 and
+#: the run sat there until the lid opened at 11:43, about 2 h, with no message. A first reel takes
+#: well under a minute on the server; ten minutes is a hard stop, never a normal wait.
+REEL_DEADLINE_SECONDS = 600.0
+#: How often a waiting call looks at the wall clock.
+_DEADLINE_POLL_SECONDS = 1.0
 #: The episode folder's record of what was uploaded (digest -> URL).
 UPLOADS_FILE = "uploads.json"
 
@@ -67,6 +80,39 @@ class ReelServerError(RuntimeError):
 
 class ReelServerUnreachable(ReelServerError):
     """The server did not answer (network down, timed out, or a 5xx)."""
+
+
+class ReelServerTimedOut(ReelServerUnreachable):
+    """The server's reel engine did not finish within :data:`REEL_DEADLINE_SECONDS` of wall-clock time."""
+
+
+def deadline_message(what: str, seconds: float) -> str:
+    """The one plain line a reel that ran out of time prints (a laptop that slept counts as time)."""
+
+    minutes = max(1, round(seconds / 60))
+    return (
+        f"the server's reel engine did not finish within {minutes} minutes (stopped while {what}); "
+        "if the laptop went to sleep during the reel, that time counts"
+    )
+
+
+def keep_awake() -> subprocess.Popen[bytes] | None:
+    """On a Mac, hold off idle sleep while this process waits on the reel (``caffeinate -i -w PID``).
+
+    Closing the lid still sleeps the laptop (the wall-clock deadline covers that); an idle laptop on
+    battery no longer drops asleep in the middle of a reel. ``None`` anywhere else or without caffeinate.
+    """
+
+    tool = shutil.which("caffeinate") if sys.platform == "darwin" else None
+    if tool is None:
+        return None
+    try:
+        return subprocess.Popen(
+            [tool, "-i", "-w", str(os.getpid())],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )  # fmt: skip
+    except OSError:
+        return None
 
 
 class ReelEngineUnavailable(ReelServerError):
@@ -216,16 +262,61 @@ class ReelServer:
         self._own_http = http is None
         #: Waits between download tries (tests pass a no-op).
         self.sleep: Callable[[float], None] = time.sleep
+        #: The wall clock the deadline is kept on (``time.time`` runs on while a laptop sleeps; tests pass one).
+        self.clock: Callable[[], float] = time.time
+        self.deadline_seconds = REEL_DEADLINE_SECONDS
+        self.poll_seconds = _DEADLINE_POLL_SECONDS
+        self._started: float | None = None
+        # Only a real run holds off idle sleep (tests pass their own run).
+        self._awake = keep_awake() if self._own_run else None
         #: An upload was taken from ``uploads.json`` instead of sent (a failed reel then uploads again).
         self.reused = False
 
     def close(self) -> None:
         """Close the clients this object opened."""
 
+        if self._awake is not None:
+            self._awake.terminate()
+            self._awake = None
         if self._own_run:
             self.run.client.close()
         if self._own_http:
             self.http.close()
+
+    def _bounded(self, what: str, call: Callable[[], Any]) -> Any:
+        """Run one network call, giving up when the reel has run past its wall-clock deadline.
+
+        The deadline counts from this client's first call, across every upload, the cut and the
+        downloads, on :attr:`clock`. The call runs on a daemon thread; one that is given up on is
+        left to end by itself (a daemon never holds the process open).
+
+        Raises
+        ------
+        ReelServerTimedOut
+            Past the deadline (:func:`deadline_message`).
+        """
+
+        if self._started is None:
+            self._started = self.clock()
+        box: dict[str, Any] = {}
+
+        def work() -> None:
+            try:
+                box["value"] = call()
+            except BaseException as exc:  # re-raised on the caller's thread
+                box["error"] = exc
+
+        worker = threading.Thread(target=work, name=f"reel: {what}", daemon=True)
+        worker.start()
+        while True:
+            worker.join(self.poll_seconds)
+            if not worker.is_alive():
+                break
+            if self.clock() - self._started > self.deadline_seconds:
+                raise ReelServerTimedOut(deadline_message(what, self.deadline_seconds))
+        if "error" in box:
+            raise box["error"]
+        return box.get("value")
 
     # -- uploads --------------------------------------------------------------
 
@@ -283,8 +374,11 @@ class ReelServer:
         media = content_type(path, kind=kind)
         size = path.stat().st_size
         try:
-            status, slot = self.run.post_optional(
-                "/v1/uploads", {"content_type": media, "size_bytes": size}
+            status, slot = self._bounded(
+                f"asking for the upload of `{path.name}`",
+                lambda: self.run.post_optional(
+                    "/v1/uploads", {"content_type": media, "size_bytes": size}
+                ),
             )
         except httpx.HTTPError as exc:
             raise ReelServerUnreachable(
@@ -304,10 +398,13 @@ class ReelServer:
         url = str(slot.get("file_url") or slot.get("audio_url") or "")
         headers = {str(k): str(v) for k, v in (slot.get("headers") or {}).items()}
         try:
-            with path.open("rb") as handle:
-                response = self.http.put(
-                    str(slot["upload_url"]), content=handle.read(), headers=headers
-                )
+            content = path.read_bytes()
+            response = self._bounded(
+                f"uploading `{path.name}`",
+                lambda: self.http.put(
+                    str(slot["upload_url"]), content=content, headers=headers
+                ),
+            )
         except httpx.HTTPError as exc:
             raise ReelServerUnreachable(
                 f"uploading `{path.name}`: {type(exc).__name__}"
@@ -338,11 +435,14 @@ class ReelServer:
 
         path = REEL_ROUTE.format(job_id=job_id, episode_id=episode_id)
         try:
-            response = self.run.client.post(
-                self.run.url(path),
-                headers=self.run.headers(),
-                json=dict(body),
-                timeout=REEL_TIMEOUT_SECONDS,
+            response = self._bounded(
+                "the server cut the reel",
+                lambda: self.run.client.post(
+                    self.run.url(path),
+                    headers=self.run.headers(),
+                    json=dict(body),
+                    timeout=REEL_TIMEOUT_SECONDS,
+                ),
             )
         except httpx.HTTPError as exc:
             raise ReelServerUnreachable(f"{type(exc).__name__}") from exc
@@ -390,7 +490,10 @@ class ReelServer:
         try:
             # The shared media download: browser user agent, one more try
             # after a refusal or busy answer, never off https.
-            content = get_media(self.http, url, sleep=self.sleep)
+            content = self._bounded(
+                f"downloading {dest.name}",
+                lambda: get_media(self.http, url, sleep=self.sleep),
+            )
         except httpx.HTTPError as exc:
             raise ReelServerUnreachable(f"downloading {dest.name}: {exc}") from exc
         if not content:
@@ -428,7 +531,10 @@ __all__ = [
     "ReelEngineUnavailable",
     "ReelServer",
     "ReelServerError",
+    "ReelServerTimedOut",
     "ReelServerUnreachable",
+    "deadline_message",
+    "keep_awake",
     "content_type",
     "file_sha256",
     "operator_mode_supported",

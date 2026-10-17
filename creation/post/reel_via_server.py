@@ -73,6 +73,7 @@ from creation.post.reel_server import (
     SERVER_UNUSABLE,
     ReelServer,
     ReelServerError,
+    ReelServerTimedOut,
     ReelServerUnreachable,
     reel_job_id,
     unreachable_message,
@@ -997,8 +998,9 @@ def make_reel(
 
         try:
             answer = send()
-        except ReelServerUnreachable:
-            if not client.reused:
+        except ReelServerUnreachable as exc:
+            # Out of time is out of time: uploading everything again would only wait longer.
+            if not client.reused or isinstance(exc, ReelServerTimedOut):
                 raise
             # A file uploaded on an earlier run may be gone from storage: upload everything again, once.
             print(
