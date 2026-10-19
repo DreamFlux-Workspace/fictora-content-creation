@@ -10,6 +10,7 @@ from creation import episode_commands as ec
 from creation import orchestrate
 from creation.picture_checks import (
     LOOK_BEFORE_APPROVING,
+    MOTION_FIXES,
     WRONG_SCALE_FIX,
     picture_check_lines,
     plate_picture_check_lines,
@@ -241,3 +242,41 @@ def test_a_giant_drawn_at_another_size_says_where_its_size_comes_from() -> None:
     assert "silhouette:" in WRONG_SCALE_FIX
     # Only on that finding: another warning gets no size hint.
     assert WRONG_SCALE_FIX not in picture_check_lines([BACK_OF_HEAD], what="t2 board")
+
+
+def test_a_fight_takes_motion_findings_print_the_free_fix_first() -> None:
+    findings = [
+        {
+            "kind": kind,
+            "severity": "warn",
+            "where": {"shot": 2},
+            "message": f"shot 2: {kind}",
+        }
+        for kind in (
+            "unplanned_still",
+            "contact_no_spike",
+            "contact_reaction_missing",
+            "cut_off_plan",
+        )
+    ]
+    lines = picture_check_lines(findings, what="t1")
+
+    assert lines == [
+        "!! picture check: t1: shot 2: unplanned_still",
+        MOTION_FIXES["unplanned_still"],
+        "!! picture check: t1: shot 2: contact_no_spike",
+        MOTION_FIXES["contact_no_spike"],
+        "!! picture check: t1: shot 2: contact_reaction_missing",
+        MOTION_FIXES["contact_reaction_missing"],
+        "!! picture check: t1: shot 2: cut_off_plan",
+        MOTION_FIXES["cut_off_plan"],
+        LOOK_BEFORE_APPROVING,
+    ]
+    # Every paid step comes after a free one, and none of them is a creator-facing message.
+    for kind in ("unplanned_still", "contact_no_spike", "contact_reaction_missing"):
+        fix = MOTION_FIXES[kind]
+        assert "$0" in fix and fix.index("$0") < fix.index("re-film")
+    # Only on those findings.
+    assert not set(MOTION_FIXES.values()) & set(
+        picture_check_lines([BACK_OF_HEAD], what="t1")
+    )

@@ -7,7 +7,9 @@ line drawn on the back of the speaker's head, one person drawn twice, a man
 drawn for a woman's card, a forbidden element, a take that opens wide on a
 close-up board, letters drawn on a prop or a sign (``garbled_text`` /
 ``readable_text``), a creature drawn at another size than its card states
-(``wrong_scale``). Until now nothing compared the picture with its spec before a
+(``wrong_scale``), and on a fight take its motion read against the plan (fictora-drama
+``take_motion_check``: ``unplanned_still``, ``contact_no_spike``, ``cut_off_plan``,
+``contact_reaction_missing``). Until now nothing compared the picture with its spec before a
 human looked, and each miss became a paid redraw or a re-film.
 
 This module only prints them, one ``!!`` line each, plus "look before
@@ -51,6 +53,26 @@ WRONG_SCALE_FIX = (
     "height\"` (the server keeps Ren off the creature's own plate), then redraw the board "
     "(`redraw-board ... --same-shots`, $0.30)"
 )
+#: The server's motion check on a filmed fight take (fictora-drama ``take_motion_check``): the free fix first.
+MOTION_FIXES = {
+    "unplanned_still": (
+        "   free first: play past it with the take's handles (`fictora-produce trim --desk D --episode N --take tK "
+        "--start S --end E`, $0) or cut it out of the finished take (`trim --cut A-B`); re-film only if the fight "
+        "stalls there"
+    ),
+    "contact_no_spike": (
+        "   free first: watch the shot; if the blow is there, mark it (`finish ... --impact-at SECONDS`, $0) for "
+        "the punch-in and the hit sound; re-film the take only if no blow lands on screen"
+    ),
+    "contact_reaction_missing": (
+        "   free first: the punch-in and the hit sound sell it (`finish ... --impact-at SECONDS`, $0); re-film "
+        "only if the hit does not read"
+    ),
+    "cut_off_plan": (
+        "   watch the cut before finishing: a line or a hit sound planned across it may land on the wrong shot "
+        "(`finish ... --sfx-adjust` moves a sound, $0)"
+    ),
+}
 _SET_SUFFIX = re.compile(r"_set(\d+)$")
 
 
@@ -91,6 +113,8 @@ def picture_check_lines(raw: Any, *, what: str) -> list[str]:
             lines.append(WRONG_OUTFIT_FIX)
         if item.get("kind") == WRONG_SCALE:
             lines.append(WRONG_SCALE_FIX)
+        if (fix := MOTION_FIXES.get(str(item.get("kind")))) is not None:
+            lines.append(fix)
     return [*lines, LOOK_BEFORE_APPROVING]
 
 
