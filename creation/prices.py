@@ -391,8 +391,8 @@ def take_facts_usd(facts: dict, *, on: date) -> tuple[float, str] | None:
         return None
     clips = facts.get("shot_clips")
     if isinstance(clips, list) and clips:
-        # A take filmed one clip per board row (fictora-drama shot clips): each
-        # clip was filmed and billed on its own; the server says what each bills.
+        # A take filmed one clip per board row (the shot-clips test, 16-17 Oct 2026; removed 19 Oct):
+        # each clip was billed on its own, so a re-collected Low Tide take keeps the price it was booked at.
         return _shot_clips_usd(clips)
     count = int(facts.get("reference_image_count") or 0)
     price = take_usd(
