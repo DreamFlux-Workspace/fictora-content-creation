@@ -30,7 +30,6 @@ POST_COMMANDS = (
     frozenset(
         {
             "voice",
-            "shot-clips",
             "voice-mode",
             "music-lock",
             "caption-style",
@@ -292,22 +291,6 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--default-setup-line",
         action="store_true",
         help="Clear the episode's own setup line (the series title shows).",
-    )
-
-    shot_clips = sub.add_parser(
-        "shot-clips",
-        help="Whether the show films each take one clip per board row (a test opt-in, free): each clip starts "
-        "on its own row's first cell and is billed on its own (at least 5 s), and the server joins them into "
-        "the take with hard cuts; a board may hold five rows. Set it before the episode's boards are drawn. "
-        "Without --on/--off it prints the setting. Takes already filmed are kept.",
-    )
-    shot_clips.add_argument("--desk", type=Path, required=True)
-    shot_clips_switch = shot_clips.add_mutually_exclusive_group()
-    shot_clips_switch.add_argument(
-        "--on", dest="shot_clips_on", action="store_const", const=True, default=None
-    )
-    shot_clips_switch.add_argument(
-        "--off", dest="shot_clips_on", action="store_const", const=False
     )
 
     voice_mode = sub.add_parser(
@@ -1025,11 +1008,6 @@ def dispatch_post(args: argparse.Namespace) -> int:
             text=args.text, off=args.off, setup_line=args.setup_line,
             default_setup_line=args.default_setup_line,
         )  # fmt: skip
-    if args.command == "shot-clips":
-        from creation.shot_clips import run_shot_clips
-
-        run_shot_clips(args.desk, set_to=args.shot_clips_on)
-        return 0
     if args.command == "voice-mode":
         from creation.voice_mode import run_voice_mode
 
