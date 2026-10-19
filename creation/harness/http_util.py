@@ -203,6 +203,16 @@ def http_error_message(response: httpx.Response, detail: Any) -> str:
     return f"HTTP {response.status_code}: {api_error_text(detail)}"
 
 
+#: The server's refusal of a take whose board is still a shot-clips grid (fictora-drama #914).
+SHOT_CLIPS_BOARD_CODE = "shot_clips_board"
+#: What the operator does about it, in plain words.
+SHOT_CLIPS_BOARD_FIX = (
+    "This take's board was drawn for shot clips, which were removed. Redraw the board first "
+    "(`fictora-produce redraw-board --desk <desk> --episode N --take tK`), approve it, then film again. "
+    "Nothing was filmed or charged."
+)
+
+
 def api_error_text(body: Any) -> str:
     """Say what the server refused, from its error envelope, in one line.
 
@@ -244,6 +254,9 @@ def api_error_text(body: Any) -> str:
     choice = board_edit_choice(code, details if isinstance(details, dict) else None)
     if choice is not None:
         text += "\n" + choice
+    if code == SHOT_CLIPS_BOARD_CODE:
+        # Shot clips were removed (fictora-drama #914): a board still drawn as a shot-clips grid films nothing.
+        text += "\n" + SHOT_CLIPS_BOARD_FIX
     return text
 
 
