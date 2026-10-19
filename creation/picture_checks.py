@@ -53,7 +53,6 @@ WRONG_SCALE_FIX = (
     "height\"` (the server keeps Ren off the creature's own plate), then redraw the board "
     "(`redraw-board ... --same-shots`, $0.30)"
 )
-#: The server's motion check on a filmed fight take (fictora-drama ``take_motion_check``): the free fix first.
 #: The server's motion check on a filmed fight take (fictora-drama ``take_motion_check``): the free fix first. Every
 #: time it reports is on the take AS FILMED (the raw take, board frames included): ``trim --start/--end`` and
 #: ``finish --impact-at`` take those times as they are; ``trim --cut`` works on the FINISHED take, which starts at
