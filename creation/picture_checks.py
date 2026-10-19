@@ -54,23 +54,30 @@ WRONG_SCALE_FIX = (
     "(`redraw-board ... --same-shots`, $0.30)"
 )
 #: The server's motion check on a filmed fight take (fictora-drama ``take_motion_check``): the free fix first.
+#: The server's motion check on a filmed fight take (fictora-drama ``take_motion_check``): the free fix first. Every
+#: time it reports is on the take AS FILMED (the raw take, board frames included): ``trim --start/--end`` and
+#: ``finish --impact-at`` take those times as they are; ``trim --cut`` works on the FINISHED take, which starts at
+#: the take's trim start (take facts ``trim.start_s``), so subtract that first.
 MOTION_FIXES = {
     "unplanned_still": (
-        "   free first: play past it with the take's handles (`fictora-produce trim --desk D --episode N --take tK "
-        "--start S --end E`, $0) or cut it out of the finished take (`trim --cut A-B`); re-film only if the fight "
-        "stalls there"
+        "   free first (times are on the take as filmed): play past it with the take's handles (`fictora-produce "
+        "trim --desk D --episode N --take tK --start S --end E`, $0), or cut it out of the finished take (`trim "
+        "--cut A-B`, $0; the finished take starts at the take's trim start, so subtract that from both times); "
+        "re-film only if the fight stalls there"
     ),
     "contact_no_spike": (
-        "   free first: watch the shot; if the blow is there, mark it (`finish ... --impact-at SECONDS`, $0) for "
-        "the punch-in and the hit sound; re-film the take only if no blow lands on screen"
+        "   free first: watch the shot; if the blow is there, mark it (`finish ... --impact-at SECONDS`, seconds on "
+        "the take as filmed, $0) for the punch-in and the hit sound; re-film the take only if no blow lands on "
+        "screen"
     ),
     "contact_reaction_missing": (
-        "   free first: the punch-in and the hit sound sell it (`finish ... --impact-at SECONDS`, $0); re-film "
-        "only if the hit does not read"
+        "   free first: the punch-in and the hit sound sell it (`finish ... --impact-at SECONDS`, seconds on the "
+        "take as filmed, $0); re-film only if the hit does not read"
     ),
     "cut_off_plan": (
-        "   watch the cut before finishing: a line or a hit sound planned across it may land on the wrong shot "
-        "(`finish ... --sfx-adjust` moves a sound, $0)"
+        "   watch the cut before finishing (its time is on the take as filmed): a line or a hit sound planned "
+        "across it may land on the wrong shot; a sound that lands wrong can be turned down or dropped, not moved "
+        '(`finish ... --sfx-adjust "shot:N=-6"` or `"shot:N=drop"`, $0)'
     ),
 }
 _SET_SUFFIX = re.compile(r"_set(\d+)$")

@@ -280,3 +280,23 @@ def test_a_fight_takes_motion_findings_print_the_free_fix_first() -> None:
     assert not set(MOTION_FIXES.values()) & set(
         picture_check_lines([BACK_OF_HEAD], what="t1")
     )
+
+
+def test_the_motion_hints_say_whose_timeline_and_what_sfx_adjust_really_does() -> None:
+    import re
+
+    from creation.post.sfx import parse_adjustment
+
+    # Every time the server reports is on the take as filmed; trim --cut works on the finished take.
+    still = MOTION_FIXES["unplanned_still"]
+    assert "as filmed" in still and "trim start" in still and "subtract" in still
+    for kind in ("contact_no_spike", "contact_reaction_missing"):
+        assert "as filmed" in MOTION_FIXES[kind]
+    # --sfx-adjust turns a sound down or drops it; it never moves one. Each example it names parses.
+    cut = MOTION_FIXES["cut_off_plan"]
+    assert "moves" not in cut and "not moved" in cut
+    examples = re.findall(r'--sfx-adjust "([^"]+)"|`"([^"]+)"`', cut)
+    values = [first or second for first, second in examples]
+    assert values == ["shot:N=-6", "shot:N=drop"]
+    for value in values:
+        parse_adjustment(value.replace("N", "2"))
