@@ -169,3 +169,43 @@ def test_the_cue_command_passes_the_flag(
             tmp_path, episode=1, description="a monster", seconds=1.0, audio=_Audio()
         )
     assert sent and sent[0]["server_words_creature_cues"] is True
+
+
+def test_a_no_music_by_default_answer_is_nothing_to_lay_with_no_error_and_no_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """fictora-drama #942: ``audio-bed/render`` answers 409 ``no_music_by_default`` before anything is made."""
+
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(
+            409,
+            json={
+                "error": {
+                    "code": "no_music_by_default",
+                    "message": "Delivered videos carry no music.",
+                }
+            },
+        )
+
+    audio = _audio(tmp_path, monkeypatch, handler)
+    audio.sleep = lambda _s: (_ for _ in ()).throw(AssertionError("no retry"))  # type: ignore[method-assign]
+
+    answer = audio.music_bed(spine_id="sp1", brief=None, key="k1")
+
+    assert (
+        answer["audio_url"] is None
+        and answer["no_music"] is True
+        and answer["cost_usd"] == 0.0
+    )
+    assert calls == ["/v1/spines/sp1/audio-bed/render"], "asked once, never again"
+
+    # Any other refusal is still an error.
+    audio_other = _audio(
+        tmp_path, monkeypatch,
+        lambda _r: httpx.Response(409, json={"error": {"code": "budget_cap_exceeded", "message": "x"}}),
+    )  # fmt: skip
+    with pytest.raises(AudioServiceError):
+        audio_other.music_bed(spine_id="sp1", brief=None, key="k2")

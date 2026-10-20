@@ -167,6 +167,34 @@ def test_finish_lays_no_music_even_with_a_show_bed_pinned_from_before(
 
 
 @needs_ffmpeg
+def test_finish_never_asks_the_server_for_a_bed_and_a_no_music_answer_is_harmless(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """fictora-drama #942 answers ``audio-bed/render`` with 409 ``no_music_by_default``; finish never asks."""
+
+    from creation.post import audio_service
+
+    asked: list[str] = []
+
+    def music_bed(self: object, **kw: object) -> dict:
+        asked.append(str(kw.get("spine_id")))
+        return dict(audio_service.NO_MUSIC_ANSWER)
+
+    monkeypatch.setattr(audio_service.DramaApiAudio, "music_bed", music_bed)
+    _desk_take(post_desk, facts_with(NATIVE))
+    out = io.StringIO()
+
+    result = run_finish(
+        post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
+        thumbnail=False, stream=out,
+    )  # fmt: skip
+
+    assert result.complete and not result.stopped, out.getvalue()
+    assert asked == [], "finish lays no bed, so it never asks for one"
+    assert result.sound_line().startswith("Sound: no music ✓")
+
+
+@needs_ffmpeg
 def test_finish_flags_for_the_bed_level_and_duck_are_gone(post_desk: Path) -> None:
     _desk_take(post_desk, facts_with(NATIVE))
 
