@@ -271,7 +271,7 @@ def test_finish_lays_mute_voice_and_cue_at_filmed_times_with_no_shift_after_debo
     out = io.StringIO()
 
     result = run_finish(
-        post_desk, sfx_render=_fake_sfx, bed_maker=_fake_bed, facts_fetcher=lambda *a: None, colour=False,
+        post_desk, sfx_render=_fake_sfx, facts_fetcher=lambda *a: None, colour=False,
         mutes=((3.2, 4.0),), voices=(Placed(line, 2.5),), cues=(Placed(sting, 0.6),), stream=out,
     )  # fmt: skip
 
@@ -296,7 +296,7 @@ def test_finish_lays_mute_voice_and_cue_at_filmed_times_with_no_shift_after_debo
     )
     assert (
         result.sound_line()
-        == "Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓ · hand voice ✓ · hand cues ✓"
+        == "Sound: no music ✓ · SFX ✓ · mix ✓ · captions ✓ · hand voice ✓ · hand cues ✓"
     )
     notes = (post_desk / "ep01" / "run-notes.md").read_text()
     assert (
@@ -310,26 +310,6 @@ def test_finish_lays_mute_voice_and_cue_at_filmed_times_with_no_shift_after_debo
     assert [(v["file"], v["start"]) for v in record.hand_voices] == [
         ("voice-ep01-aya-v1.mp3", 2.5)
     ]
-
-
-@needs_ffmpeg
-def test_the_bed_ducks_under_a_hand_voice_line_like_speech(post_desk: Path) -> None:
-    quiet_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4")
-    line = make_tone(
-        post_desk / "ep01" / "voices" / "voice-ep01-aya-v1.mp3",
-        seconds=0.5,
-        freq=660,
-        volume=0.3,
-    )
-
-    result = run_finish(post_desk, bed_maker=_fake_bed, facts_fetcher=lambda *a: None, colour=False, duck_db=12.0,
-                        voices=(Placed(line, 3.0),), stream=io.StringIO())  # fmt: skip
-
-    mix = next(s for s in result.steps if s.step == "mix")
-    assert mix.status == "ran", mix.detail
-    assert "12 dB in 2 voice window(s)" in mix.detail, (
-        "the take's own sound at 0.2 s and the dry line at 3.0 s"
-    )
 
 
 @needs_ffmpeg
@@ -363,7 +343,7 @@ def test_a_hand_step_that_fails_makes_the_take_not_done(
 
     monkeypatch.setattr(finish_mod, "lay_cues", broken)
     out = io.StringIO()
-    result = run_finish(post_desk, sfx_render=_fake_sfx, bed_maker=_fake_bed, facts_fetcher=lambda *a: None,
+    result = run_finish(post_desk, sfx_render=_fake_sfx, facts_fetcher=lambda *a: None,
                         cues=(Placed(sting, 1.0),), stream=out)  # fmt: skip
 
     assert not result.complete
@@ -659,7 +639,7 @@ def test_finish_warns_when_a_hand_cue_doubles_an_auto_cue(post_desk: Path) -> No
     )
     out = io.StringIO()
 
-    result = run_finish(post_desk, sfx_render=_fake_sfx, bed_maker=_fake_bed, facts_fetcher=lambda *a: None,
+    result = run_finish(post_desk, sfx_render=_fake_sfx, facts_fetcher=lambda *a: None,
                         colour=False, cues=(Placed(slam, 3.4),), stream=out)  # fmt: skip
 
     cues = next(s for s in result.steps if s.step == "cues")
@@ -668,7 +648,7 @@ def test_finish_warns_when_a_hand_cue_doubles_an_auto_cue(post_desk: Path) -> No
 
     from creation.post.sfx import parse_adjustment
 
-    again = run_finish(post_desk, sfx_render=_fake_sfx, bed_maker=_fake_bed, facts_fetcher=lambda *a: None,
+    again = run_finish(post_desk, sfx_render=_fake_sfx, facts_fetcher=lambda *a: None,
                        colour=False, cues=(Placed(slam, 3.4),), sfx_adjust=(parse_adjustment("door=drop"),),
                        stream=io.StringIO())  # fmt: skip
     assert "!!" not in next(s for s in again.steps if s.step == "cues").detail
@@ -719,7 +699,7 @@ def test_finish_burns_a_caption_label_where_asked_with_no_spoken_line(
     out = io.StringIO()
 
     result = run_finish(
-        post_desk, sfx_render=_fake_sfx, bed_maker=_fake_bed, facts_fetcher=lambda *a: None, colour=False,
+        post_desk, sfx_render=_fake_sfx, facts_fetcher=lambda *a: None, colour=False,
         caption_labels=(("Blinking!", 2.5, 3.1),), stream=out,
     )  # fmt: skip
 

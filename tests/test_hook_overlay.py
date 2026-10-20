@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 from conftest import make_take, needs_ffmpeg
-from test_post_finish import FACTS, TWO_LINES, _board, fake_bed, fake_sfx
+from test_post_finish import FACTS, TWO_LINES, _board, fake_sfx
 from test_reel import reel_desk  # noqa: F401  (fixture)
 from reel_fake_server import FakeReelServer
 
@@ -249,7 +249,7 @@ def test_finish_burns_the_hook_line_on_the_first_take_before_the_mark(
     _board(post_desk)
     _set_hook(post_desk, ON)
 
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, stream=io.StringIO())  # fmt: skip
 
     steps = [s.step for s in result.steps]
@@ -274,7 +274,7 @@ def test_finish_keeps_a_lowered_hook_line_off_the_captions_it_burned(
     _board(post_desk)
     _set_hook(post_desk, ON)
 
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, stream=io.StringIO(),
                         hook_line_position="lower")  # fmt: skip
 

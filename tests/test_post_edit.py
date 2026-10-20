@@ -185,7 +185,7 @@ def test_finish_deboards_first_and_later_steps_keep_the_raw_timeline(
     cues: list[SfxCue] = []
     out = io.StringIO()
 
-    result = run_finish(post_desk, sfx_render=_fake_sfx(cues), bed_maker=_fake_bed, facts_fetcher=lambda *a: None,
+    result = run_finish(post_desk, sfx_render=_fake_sfx(cues), facts_fetcher=lambda *a: None,
                         colour=False, stream=out)  # fmt: skip
 
     assert result.complete, out.getvalue()
@@ -222,7 +222,7 @@ def test_finish_no_deboard_keeps_the_board_frames(post_desk: Path) -> None:
     board = _board_png(post_desk / "ep01" / "boards" / "board-ep01-t1-1-v1.png")
     approve_board(post_desk, episode=1, take_id="t1", image=board)
 
-    result = run_finish(post_desk, deboard=False, bed_maker=_fake_bed, facts_fetcher=lambda *a: None,
+    result = run_finish(post_desk, deboard=False, facts_fetcher=lambda *a: None,
                         colour=False, stream=io.StringIO())  # fmt: skip
 
     assert result.steps[0].step == "deboard" and result.steps[0].status == "skipped"

@@ -86,6 +86,17 @@ class AudioServiceError(RuntimeError):
     """The server refused or failed a generated-audio request (message says what to do)."""
 
 
+#: The server's refusal code for a music bed: delivered videos carry no music (fictora-drama #942).
+NO_MUSIC_BY_DEFAULT = "no_music_by_default"
+#: :meth:`DramaApiAudio.music_bed`'s answer to that refusal: nothing to lay, nothing spent.
+NO_MUSIC_ANSWER: dict[str, Any] = {
+    "audio_url": None,
+    "no_music": True,
+    "cached": False,
+    "cost_usd": 0.0,
+}
+
+
 #: Request flag: the server words a creature or monster cue (fictora-drama #826).
 CREATURE_CUE_FLAG = "server_words_creature_cues"
 #: The stop when the server is older than that: nothing was made or spent.
@@ -318,12 +329,24 @@ class DramaApiAudio:
     def music_bed(
         self, *, spine_id: str, brief: str | None, key: str
     ) -> dict[str, Any]:
-        """POST ``/v1/spines/{id}/audio-bed/render`` (never pinned from here)."""
+        """POST ``/v1/spines/{id}/audio-bed/render`` (never pinned from here).
+
+        A ``409 no_music_by_default`` (the server's default since 20 Oct 2026) returns
+        :data:`NO_MUSIC_ANSWER` (``audio_url`` ``None``): nothing to lay, no error, no retry.
+        Nothing in the kit asks for a bed today; this keeps any caller safe.
+        """
 
         body: dict[str, Any] = {"pin": False}
         if brief:
             body["brief"] = brief
-        return self._post(f"/v1/spines/{spine_id}/audio-bed/render", body, key)
+        try:
+            return self._post(f"/v1/spines/{spine_id}/audio-bed/render", body, key)
+        except AudioServiceError as exc:
+            # No music by default (founder decision, 20 Oct 2026; fictora-drama #942): the server answers 409
+            # before anything is made or paid. Nothing to lay: no error, no retry.
+            if NO_MUSIC_BY_DEFAULT in str(exc):
+                return dict(NO_MUSIC_ANSWER)
+            raise
 
     def transcribe(
         self, *, audio_url: str, language: str, spine_id: str | None, key: str

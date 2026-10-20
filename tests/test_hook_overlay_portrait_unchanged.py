@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 from conftest import make_take, needs_ffmpeg
-from test_post_finish import FACTS, TWO_LINES, _board, fake_bed, fake_sfx
+from test_post_finish import FACTS, TWO_LINES, _board, fake_sfx
 from test_reel import reel_desk  # noqa: F401  (fixture)
 
 from creation.post.finish import run_finish
@@ -105,7 +105,7 @@ def test_finish_without_a_hook_line_runs_the_commands_it_always_ran(
     calls = _recording(monkeypatch, [post_desk, REPO])
 
     # Subtle (today's house captions) must burn exactly what the golden recorded; a new show's Bold is new.
-    result = run_finish(post_desk, caption_style="subtle", sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, caption_style="subtle", sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, stream=io.StringIO())  # fmt: skip
 
     assert result.complete

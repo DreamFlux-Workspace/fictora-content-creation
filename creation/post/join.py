@@ -1,6 +1,6 @@
 """Join finished takes into one file: an episode's 30 s / 60 s cut, or a series cut across episodes.
 
-Free: ffmpeg on this laptop, no paid call (the bed is the one already pinned).
+Free: ffmpeg on this laptop, no paid call. No music is laid (founder decision, 20 Oct 2026).
 
 What ``join`` does, in order:
 
@@ -19,19 +19,16 @@ What ``join`` does, in order:
    count and sound (L-20261001-9). The stand-in is said in the run notes.
 2. **Checks, before anything is written.** Every picture 24 fps and the same
    size; the pre-bed take the same length as its picture (one frame of slack).
-3. **One bed.** Each take's pre-bed sound (voice, effects, hand cues) is joined
-   with its captioned picture, never the finished sound, so no take's own bed
-   is stitched in (sound joined on the samples, so every part starts exactly
+3. **One mix, no music.** Each take's sound before the mix (``pre_bed``: voice,
+   effects, hand cues) is joined with its captioned picture, never the
+   finished sound (sound joined on the samples, so every part starts exactly
    on its picture). Each part gets one gain to the parts' median loudness (no
-   loudnorm). The show's bed is looped seamlessly (silent head and tail cut,
-   1 s equal-power crossfade at each loop point) to cover the whole join, then
-   mixed under it by :func:`creation.post.mix.mix_take`: ducked under the
-   voice, a measured gain to about -18 LUFS, ONE limiter. The bed is the
-   harness's (the harness bed pinned on the desk, else the one the takes were
-   finished with, :func:`creation.post.bed.harness_bed`); there is no flag to
-   pass a file of your own. When every take already carries the harness's music
-   in its own soundtrack (finish record ``music_in_take``) no bed is laid, only
-   the gain and limiter; a join that mixes such takes with bedded ones is refused.
+   loudnorm), then :func:`creation.post.mix.mix_take` sets a measured gain to
+   about -18 LUFS under ONE limiter. No music bed goes under (founder
+   decision, 20 Oct 2026: delivered videos carry voice, effects and room sound
+   only; a trending sound is added in Instagram or TikTok at posting). A take
+   whose own sound still carries music (finish record ``music_in_take``: an
+   older finish) is named with a ``!!`` line, never refused.
 4. **Seams.** Takes of one episode are filmed to hand off on the same frame, so
    they meet on a straight cut; episodes meet on a 0.25 s dissolve (picture
    ``xfade`` and sound ``acrossfade``). ``--dissolve S`` sets every seam.
@@ -91,13 +88,6 @@ import numpy as np
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
 from creation.ops.state import episode_by_ordinal, load_series
-from creation.post.bed import (
-    MUSIC_IS_HARNESS,
-    bed_level,
-    chosen_record_level,
-    harness_bed,
-    pinned_bed,
-)
 from creation.post.episode_name import next_episode_path
 from creation.post.finish_record import (
     FinishRecord,
@@ -119,7 +109,6 @@ from creation.post.media import (
 from creation.post.mix import (
     BED_FADE_IN_SECONDS,
     BED_FADE_OUT_SECONDS,
-    check_duck_db,
     mix_take,
 )
 from creation.post.seam_fix import (
@@ -173,10 +162,6 @@ SPEECH_PAD_SECONDS = 0.3
 #: the search reaches out this far for them before falling back to every window.
 SEAM_QUIET_WINDOWS = 5
 SEAM_SEARCH_SECONDS = 6.0
-#: Loop points in the bed are crossfaded over this long (at most a quarter of the bed).
-BED_LOOP_CROSSFADE_SECONDS = 1.0
-#: A bed's head and tail quieter than this are cut before it is looped.
-BED_SILENCE_DB = -50
 BED_RATE = 48000
 #: ``join`` exit code: the master was written but a seam steps too far; nothing marked.
 JOIN_NOT_DONE = 5
@@ -259,8 +244,6 @@ class JoinResult:
     parts: list[JoinPart]
     master: Path
     marked: Path | None
-    #: ``None`` when every take carries the harness's music in its own soundtrack.
-    bed: Path | None
     gains_db: list[float]
     dissolves: list[float]
     seams: list[float]
@@ -273,8 +256,6 @@ class JoinResult:
     seam_levels: list[SeamLevel] = field(default_factory=list)
     #: ``{"by": ..., "why": ..., "seams": [...]}`` when a human accepted loud seams with ``--accept-seam``.
     accepted: dict[str, Any] | None = None
-    #: The bed's level across the join (:func:`creation.post.bed.bed_level`).
-    bed_db: float | None = None
     #: What ``join`` laid / trimmed on its loud seams (new desks; ``None`` when it tried nothing).
     seam_fix: SeamFixReport | None = None
 
@@ -315,11 +296,7 @@ class JoinResult:
                 f"{p.label} `{p.picture.name}` {g:+.1f} dB"
                 for p, g in zip(self.parts, self.gains_db)
             ),
-            (
-                f"Bed: one bed across the join, `{self.bed.name}`; {self.mix_line}"
-                if self.bed is not None
-                else f"Bed: none, every take carries the harness's music in its own soundtrack; {self.mix_line}"
-            ),
+            f"Music: none (add a trending sound in Instagram or TikTok when posting); {self.mix_line}",
             f"Seams: {seams}",
             f"Frames / seconds: {self.fps:.2f}; loudness {self.loudness}",
         ]
@@ -350,7 +327,6 @@ class JoinResult:
                                                            strict=True))],
             "fps": self.fps,
             "loudness": self.loudness,
-            "bed_db": self.bed_db,
             "accepted": self.accepted,
             **({"seam_fix": self.seam_fix.as_json()} if self.seam_fix is not None else {}),
         }  # fmt: skip
@@ -870,50 +846,6 @@ def write_wav(samples: np.ndarray, out: Path) -> Path:
     if written.returncode != 0:
         raise MediaToolError(
             f"could not write {out.name}: {written.stderr.decode(errors='replace')[-300:]}"
-        )
-    return out
-
-
-def loop_bed(
-    bed: Path,
-    seconds: float,
-    out: Path,
-    *,
-    crossfade: float = BED_LOOP_CROSSFADE_SECONDS,
-) -> Path:
-    """Loop ``bed`` seamlessly to at least ``seconds``: silent head and tail cut, equal-power crossfades.
-
-    A generated bed is about 30 s and usually ends on a decay; looping it as it
-    is (``-stream_loop``) leaves a dip or a gap at every loop point. Done on the
-    samples (numpy): ffmpeg's ``acrossfade`` chained over several inputs
-    dropped copies at random in testing, so no sound is joined with it.
-
-    Raises
-    ------
-    ValueError
-        When the bed is silent.
-    MediaToolError
-        When the bed cannot be decoded, or the loop comes out short.
-    """
-
-    samples = decode_stereo(bed)
-    loud = np.flatnonzero(np.abs(samples).max(axis=1) > 10 ** (BED_SILENCE_DB / 20))
-    if loud.size == 0 or (loud[-1] - loud[0]) < 0.1 * BED_RATE:
-        raise ValueError(f"the bed `{bed.name}` is silent")
-    body = samples[loud[0] : loud[-1] + 1]
-    overlap = int(min(crossfade, len(body) / BED_RATE / 4) * BED_RATE)
-    ramp = (np.arange(overlap) + 0.5)[:, None] / max(overlap, 1) * (math.pi / 2)
-    fade_out, fade_in = np.cos(ramp), np.sin(ramp)
-    need = int(math.ceil(seconds * BED_RATE))
-    looped = body
-    while len(looped) < need:
-        seam = looped[len(looped) - overlap :] * fade_out + body[:overlap] * fade_in
-        looped = np.concatenate([looped[: len(looped) - overlap], seam, body[overlap:]])
-    write_wav(looped[:need], out)
-    covered = media_duration(out)
-    if covered < seconds - 0.05:
-        raise MediaToolError(
-            f"the looped bed covers {covered:.2f}s of {seconds:.2f}s; the tail would lose its music"
         )
     return out
 
@@ -1619,8 +1551,6 @@ def run_join(
     take_files: tuple[Path, ...] = (),
     from_records: tuple[Path, ...] = (),
     dissolve: float | None = None,
-    bed_db: float | None = None,
-    duck_db: float | None = None,
     gain_match: bool | None = None,
     watermark_y: int | None = None,
     accept_seam: str | None = None,
@@ -1632,7 +1562,7 @@ def run_join(
     caption_colour: str | None = None,
     stream: TextIO | None = None,
 ) -> JoinResult:
-    """Join finished takes with one bed across them, and mark the joined file once.
+    """Join finished takes (no music under them), and mark the joined file once.
 
     Parameters
     ----------
@@ -1646,12 +1576,6 @@ def run_join(
         With ``take_files``: the recorded file each unrecorded take file was copied from (:func:`file_parts`).
     dissolve
         Seconds at every seam; default a cut between takes, 0.25 s between episodes.
-    bed_db
-        ``--bed-db``. Default: the desk's ``series.json`` ``bed_db``, else the level
-        every take was finished at when one was chosen, else measured from the bed
-        (:func:`creation.post.bed.bed_level`).
-    duck_db
-        Exact duck depth; default what the takes were finished with.
     gain_match
         Gain every part to the parts' median loudness first. ``None`` (the
         default) matches unless every part finished within ±0.5 LU of -18 LUFS
@@ -1671,8 +1595,7 @@ def run_join(
         (``--no-seam-fix``) measures and refuses as before. Not tried with
         ``accept_seam`` or on an older desk.
     ending
-        ``hard`` (default): the episode ends on its last frame, the bed stops
-        with it. ``freeze-black``: the marked file holds its last frame, then
+        ``hard`` (default): the episode ends on its last frame. ``freeze-black``: the marked file holds its last frame, then
         cuts to black (:func:`creation.post.ending.apply_ending`); the master
         stays as joined.
     hook_line, no_hook_line
@@ -1694,8 +1617,7 @@ def run_join(
     Raises
     ------
     ValueError
-        When the parts cannot be joined (unfinished, mixed size or rate, one part, no harness bed, or
-        takes carrying their own music mixed with bedded ones).
+        When the parts cannot be joined (unfinished, mixed size or rate, one part).
     FileNotFoundError
         When a named file is gone.
     MediaToolError
@@ -1741,43 +1663,15 @@ def run_join(
             caption_colour=caption_colour,
         )  # fmt: skip
     dissolves = seam_dissolves(parts, dissolve)
-    records = [part.record for part in parts]
-    duck_db = (
-        duck_db if duck_db is not None else _agreed([r.duck_db for r in records], None)
-    )
-    check_duck_db(duck_db)
+    # No music bed (founder decision, 20 Oct 2026). A take an older finish left with music in its own
+    # sound is named, never refused: finish it again for a no-music join.
     in_take = [part.label for part in parts if part.record.music_in_take]
-    bed: Path | None = None
-    level = None
-    if in_take and len(in_take) != len(parts):
-        bedded = ", ".join(
-            part.label for part in parts if not part.record.music_in_take
-        )
-        raise ValueError(
-            f"{', '.join(in_take)} carry the harness's music in their own soundtrack and {bedded} were finished "
-            "with the show's bed: one bed across the join would double the music on the first. Join them "
-            "separately, or re-finish so every take has its music the same way."
-        )
-    if not in_take:
-        recorded_bed = _agreed([r.bed for r in records], None)
-        bed = pinned_bed(desk)
-        if bed is None and recorded_bed:
-            found = records[0].resolve(desk, "bed")
-            bed = found if found is not None and harness_bed(desk, found) else None
-        if bed is None or not bed.is_file():
-            raise ValueError(
-                "no harness bed to lay across the join: `finish` a take first (it finds or has the server make "
-                f"the show's bed and pins it). join never makes one (it is free). {MUSIC_IS_HARNESS}"
-            )
-        level = bed_level(
-            desk,
-            bed,
-            flag=bed_db,
-            recorded=chosen_record_level(
-                [(r.bed_db, r.bed_db_source) for r in records]
-            ),
-        )
-        bed_db = level.db
+    music_note = (
+        f"!! {', '.join(in_take)} still carry music in their own sound (an older finish): finish them "
+        "again for a no-music join"
+        if in_take
+        else ""
+    )
 
     episode_set = sorted({part.episode for part in parts})
     if len(episode_set) == 1:
@@ -1800,12 +1694,12 @@ def run_join(
 
     print(
         f"Joining {len(parts)} take(s): {', '.join(p.label for p in parts)} "
-        f"({'one bed' if bed is not None else 'music in each take'}, free)",
+        "(no music, free)",
         file=out,
         flush=True,
     )
-    if level is not None:
-        print(f"Bed level: {level.one_line()}", file=out, flush=True)
+    if music_note:
+        print(music_note, file=out, flush=True)
     skip_note = None
     if gain_match is None:
         gain_match, why = gain_match_needed(finished_levels(desk, parts))
@@ -1875,7 +1769,6 @@ def run_join(
         tuple[Path, Path | None],
     ]:
         kept = [n - h - t for n, h, t in zip(lengths, heads, tails, strict=True)]
-        total = sum(kept) - sum(dissolves)
         work.mkdir(parents=True, exist_ok=True)
         bedless = work / "joined-no-bed.mkv"
         rides: list[SeamRide] = []
@@ -1886,37 +1779,23 @@ def run_join(
             else None,
             rides_out=rides,
         )  # fmt: skip
-        looped = (
-            loop_bed(bed, total + 1.0, work / "bed-looped.wav")
-            if bed is not None
-            else None
-        )
-        mixed = mix_take(
-            bedless,
-            target,
-            bed=looped,
-            bed_db=bed_db if bed_db is not None else -16.5,
-            duck_db=duck_db if looped is not None else None,
-            music_in_take=looped is None,
-        )
+        mixed = mix_take(bedless, target, bed=None)
         fps = assert_house_fps(target)
         speech, notes = joined_speech(heads, tails)
         notes += [ride.text(parts) for ride in rides]
-        return seams, mixed, fps, speech, notes, (bedless, looped)
+        return seams, mixed, fps, speech, notes, (bedless, None)
 
     def render(base: Joined, beds: list[SeamBed], target: Path) -> Path:
         """``base`` mixed again from its own sound before the mix, at its take gain, with the seam beds."""
 
-        bedless, looped = base.sources
+        bedless, _ = base.sources
         count = int(round(media_duration(bedless) * BED_RATE))
         layer = write_wav(
             lay_beds(np.zeros((count, 2)), beds),
             target.with_name(f"{target.stem}-layer.wav"),
         )
         mix_take(
-            bedless, target, bed=looped, bed_db=bed_db if bed_db is not None else -16.5,
-            duck_db=duck_db if looped is not None else None, music_in_take=looped is None,
-            seam_layer=layer, gain_db=base.mixed.gain_db,
+            bedless, target, bed=None, seam_layer=layer, gain_db=base.mixed.gain_db,
         )  # fmt: skip
         layer.unlink(missing_ok=True)
         return target
@@ -1970,13 +1849,13 @@ def run_join(
     if title_note:
         speech_notes.append(title_note)
     result = JoinResult(
-        parts=parts, master=master, marked=None, bed=bed, gains_db=gains, dissolves=dissolves, seams=seams,
+        parts=parts, master=master, marked=None, gains_db=gains, dissolves=dissolves, seams=seams,
         seam_steps_db=[level.step_db for level in levels], fps=round(fps, 3),
         loudness=loudness_now or f"{mixed.mix_lufs:.1f} LUFS", mix_line=mixed.one_line(), seam_levels=levels,
-        bed_db=bed_db, seam_fix=fix_report,
+        seam_fix=fix_report,
     )  # fmt: skip
-    if level is not None:
-        result.notes.append(f"bed level {level.one_line()}")
+    if music_note:
+        result.notes.append(music_note)
     result.notes += [f"SUBSTITUTED: {p.stands_in}" for p in parts if p.stands_in]
     result.notes += speech_notes
     if result.loud_seams and accept_seam:

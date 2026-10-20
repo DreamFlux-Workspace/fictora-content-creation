@@ -278,6 +278,48 @@ def resolve_caption_style(desk: Path, given: str | None = None) -> tuple[str, st
     )
 
 
+def posting_caption_style(desk: Path, given: str | None = None) -> tuple[str, str]:
+    """The caption style for an Instagram reel or a TikTok part: never ``none`` (founder decision, 20 Oct 2026).
+
+    Every Instagram and TikTok video keeps its captions on (it is watched with
+    the sound off, and the trending sound added at posting may cover the
+    lines). The style is the usual one (:func:`resolve_caption_style`); a
+    ``none`` from the flag or the desk becomes the show's own style instead
+    (``bold`` for a new show, ``subtle`` for a continuing one; ``house`` on a
+    desk created before 6 Oct 2026), with a note saying so.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    given
+        ``--caption-style`` on ``reel`` / ``moment``; ``None`` reads the desk.
+
+    Returns
+    -------
+    tuple[str, str]
+        The builders' style (never ``none``) and ``""`` or a note.
+    """
+
+    style, note = resolve_caption_style(desk, given)
+    if style != "none":
+        return style, note
+    fallback = (
+        LEGACY_CAPTION_STYLE
+        if _legacy_desk(desk)
+        else CONTINUING_SHOW_CAPTION_STYLE
+        if desk_has_finished_episodes(desk)
+        else NEW_SHOW_CAPTION_STYLE
+    )
+    said = (
+        "--caption-style none" if given is not None else "the desk's caption_style none"
+    )
+    return canonical_caption_style(fallback), (
+        f"{said} is not used here: every Instagram and TikTok video keeps its captions on; "
+        f"captioned {caption_style_word(fallback)}"
+    )
+
+
 #: ``--caption-scale`` bounds: half to twice the style's own size.
 CAPTION_SCALE_RANGE = (0.5, 2.0)
 

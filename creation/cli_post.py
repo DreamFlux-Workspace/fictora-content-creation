@@ -115,7 +115,8 @@ def add_caption_style_arg(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="bold: one short white line at a time, one yellow word, bigger and lower (a new show's "
         "default); subtle (or house, its older name): the yellow Arial Bold word flicker (a show with "
-        "finished episodes keeps it); plain: white whole lines; none: no captions. Default: caption_style "
+        "finished episodes keeps it); plain: white whole lines; none: no captions (finish and caption only: "
+        "a reel or a TikTok part always keeps its captions on). Default: caption_style "
         "in the desk's production.config.json, else bold for a new show and subtle for a continuing one.",
     )
 
@@ -311,10 +312,9 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     music_lock = sub.add_parser(
         "music-lock",
-        help="Where the show's music comes from, kept all season (free): finish (no music in the take; "
-        "finish lays the show's bed) or in-take (the harness's music is in each take; no bed). Read once "
-        "from the show's first finished episode, else set by its first finish. Without --set it prints "
-        "the show's lock and the harness's. Takes already finished keep their music.",
+        help="An older show's music lock (free): finish (no music in the take) or in-take (the harness's music "
+        "is in each take). New videos carry no music (20 Oct 2026); the lock only matters for an older "
+        "episode's takes and their music-free stem. Without --set it prints the show's lock and the harness's.",
     )
     music_lock.add_argument("--desk", type=Path, required=True)
     music_lock.add_argument(
@@ -453,7 +453,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     bed = sub.add_parser(
         "set-bed",
-        help="Gone: the music is the harness's, never a file you pin. Says how to ask for a change (music-note).",
+        help="Gone: delivered videos carry no music (20 Oct 2026). Says what to do instead.",
     )
     bed.add_argument("--desk", type=Path, default=None)
     bed.add_argument("--path", type=Path, default=None, help=argparse.SUPPRESS)
@@ -556,8 +556,9 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     fin = sub.add_parser(
         "finish",
-        help="Finish an accepted take on this laptop: board frames out, SFX, the harness's music bed, colour match to the board, mix, captions, "
-        f"Sokii mark. Exits {FINISH_INCOMPLETE} (NOT DONE) when music, SFX or the mix did not go on.",
+        help="Finish an accepted take on this laptop: board frames out, SFX, colour match to the board, mix, captions, "
+        "Sokii mark. No music: voice, effects and room sound only (a trending sound is added in Instagram or "
+        f"TikTok at posting). Exits {FINISH_INCOMPLETE} (NOT DONE) when SFX or the mix did not go on.",
     )
     fin.add_argument("--desk", type=Path, required=True)
     fin.add_argument("--episode", type=int, default=1)
@@ -605,23 +606,10 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--colour-strength", type=float, default=1.0, help="0..1 toward the board."
     )
     fin.add_argument(
-        "--bed-db",
-        type=float,
-        default=None,
-        help="Music bed level in the mix (dB on the bed file). Default: the desk's series.json bed_db, else "
-        "measured from the bed so it sits about 9 dB under the dialogue (printed with why).",
-    )
-    fin.add_argument(
         "--music",
         default=None,
         help='A music change note for the harness ("calmer"): saved like `music-note`, never used to make or '
         f"pick music here. {HELP_SUFFIX}",
-    )
-    fin.add_argument(
-        "--duck-db",
-        type=float,
-        default=None,
-        help="Duck the bed exactly N dB (1-30) under the voice.",
     )
     fin.add_argument(
         "--sfx-adjust",
@@ -719,7 +707,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     join = sub.add_parser(
         "join",
-        help="Join finished takes into one file (free): one harness bed across the join, a cut between takes and a "
+        help="Join finished takes into one file (free): no music (voice, effects and room only), a cut between takes and a "
         f"0.25 s dissolve between episodes, 24 fps asserted, seam steps under 5 dB, marked once. Exits "
         f"{JOIN_NOT_DONE} (NOT DONE, nothing marked) when a seam steps more than 5 dB.",
     )
@@ -753,19 +741,6 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         type=float,
         default=None,
         help="Seconds at every seam (0 = straight cut).",
-    )
-    join.add_argument(
-        "--bed-db",
-        type=float,
-        default=None,
-        help="Default: the desk's series.json bed_db, else the level the takes were finished at when one "
-        "was chosen, else measured from the bed (about 9 dB under the dialogue).",
-    )
-    join.add_argument(
-        "--duck-db",
-        type=float,
-        default=None,
-        help="Default: what the takes were finished with.",
     )
     gain = join.add_mutually_exclusive_group()
     gain.add_argument(
@@ -825,7 +800,8 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "reel",
         help="A social reel (IG/TikTok) cut from the episode's rendered footage: local, $0, no new video. "
         "Opens on the strongest frame as a short flash-forward, ends on the new fact; captions re-timed "
-        "from the accepted cut; one bed; the Sokii mark. Writes only under <desk>/reels/.",
+        "from the accepted cut and always on; no music (add a trending sound in Instagram or TikTok when "
+        "posting); the Sokii mark. Writes only under <desk>/reels/.",
     )
     reel.add_argument("--desk", type=Path, required=True)
     reel.add_argument("--episode", type=int, required=True)
@@ -888,7 +864,8 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     moment = sub.add_parser(
         "moment",
         help="A TikTok part (a moment): several finished episodes joined and cut as one story by the server's "
-        "engine, with a PART N title bar, a hook line, one bed and a `Part N+1 →` end card; in reels/moments/. $0. "
+        "engine, with a PART N title bar, a hook line, captions always on, no music (add a trending sound in "
+        "TikTok when posting) and a `Part N+1 →` end card; in reels/moments/. $0. "
         "Either --episodes A-B --part N, or --auto for every part of the show (episodes grouped into about a minute).",
     )
     moment.add_argument("--desk", type=Path, required=True)
@@ -960,7 +937,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
     if args.command in REVIEW_COMMANDS:
         return dispatch_review(args)
 
-    from creation.post.bed import MUSIC_IS_HARNESS
+    from creation.post.bed import NO_MUSIC_RULE
     from creation.post.handmade import run_cue, run_voice_line
     from creation.post.voice import run_revoice, run_voice_audition, run_voice_pick
 
@@ -1078,7 +1055,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
         )
         return 0
     if args.command == "set-bed":
-        print(f"set-bed is gone. {MUSIC_IS_HARNESS}")
+        print(f"set-bed is gone. {NO_MUSIC_RULE}")
         return 2
     if args.command == "music-note":
         from creation.post.music_send import DEFAULT_WAIT_SECONDS, run_music_note
@@ -1117,9 +1094,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             deboard=not args.no_deboard,
             colour=not args.no_colour_match,
             colour_strength=args.colour_strength,
-            bed_db=args.bed_db,
             music=text_or_file(args.music, flag="--music") if args.music else None,
-            duck_db=args.duck_db,
             sfx_adjust=tuple(parse_adjustment(raw) for raw in args.sfx_adjust),
             line_starts=tuple(args.line_start) if args.line_start else None,
             line_ends=tuple(args.line_end) if args.line_end else None,
@@ -1340,8 +1315,6 @@ def dispatch_post(args: argparse.Namespace) -> int:
             take_files=tuple(args.take_file or ()),
             from_records=tuple(args.from_record or ()),
             dissolve=args.dissolve,
-            bed_db=args.bed_db,
-            duck_db=args.duck_db,
             gain_match=False
             if args.no_gain_match
             else True

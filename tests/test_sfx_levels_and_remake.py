@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 from conftest import make_take, make_tone, needs_ffmpeg
-from test_post_finish import FACTS, TWO_LINES, fake_bed
+from test_post_finish import FACTS, TWO_LINES
 
 from creation.post.finish import run_finish
 from creation.post.sfx import (
@@ -220,8 +220,10 @@ def test_a_re_make_asks_the_server_for_the_same_sound_under_a_new_key() -> None:
 
 
 @needs_ffmpeg
-def test_finish_levels_a_buried_cue_over_the_bed_on_its_own(post_desk: Path) -> None:
-    """What operators did by hand (``--sfx-adjust "cup=+10"``) the finish now does."""
+def test_finish_keeps_a_quiet_cue_at_its_planned_level_with_no_music_under_it(
+    post_desk: Path,
+) -> None:
+    """No music bed since 20 Oct 2026: nothing to level a cue against, so it keeps its planned level."""
 
     make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
     (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
@@ -232,10 +234,12 @@ def test_finish_levels_a_buried_cue_over_the_bed_on_its_own(post_desk: Path) -> 
         return make_tone(target, seconds=cue.seconds, freq=300, volume=0.07)
 
     out = io.StringIO()
-    result = run_finish(post_desk, sfx_render=quiet, bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+    result = run_finish(post_desk, sfx_render=quiet, facts_fetcher=lambda *a: None,
                         stream=out)  # fmt: skip
     sfx = next(s for s in result.steps if s.step == "sfx")
-    assert "levelled over the music bed: a door slams +" in sfx.detail, sfx.detail
+    assert sfx.status == "ran" and "levelled over the music bed" not in sfx.detail, (
+        sfx.detail
+    )
     mix = next(s for s in result.steps if s.step == "mix")
     assert "!! cue 'a door slams'" not in mix.detail, mix.detail
 
@@ -302,7 +306,9 @@ def test_a_buried_hand_cue_is_raised_like_a_planned_effect(tmp_path: Path) -> No
 
 
 @needs_ffmpeg
-def test_finish_levels_a_buried_hand_cue_over_the_bed(post_desk: Path) -> None:
+def test_finish_keeps_a_quiet_hand_cue_at_its_level_with_no_music_under_it(
+    post_desk: Path,
+) -> None:
     from creation.post.hand import Placed
 
     make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
@@ -317,10 +323,8 @@ def test_finish_levels_a_buried_hand_cue_over_the_bed(post_desk: Path) -> None:
     )
     out = io.StringIO()
     result = run_finish(post_desk, sfx_render=lambda c, t: make_tone(t, seconds=c.seconds, freq=500, volume=0.6),
-                        bed_maker=fake_bed, facts_fetcher=lambda *a: None, colour=False,
+                        facts_fetcher=lambda *a: None, colour=False,
                         cues=(Placed(quiet, 3.4),), stream=out)  # fmt: skip
     cues = next(s for s in result.steps if s.step == "cues")
     assert cues.status == "ran", cues.detail
-    assert (
-        "levelled over the music bed: cue-oden-simmer-v1.mp3 @3.40s +" in cues.detail
-    ), cues.detail
+    assert "levelled over the music bed" not in cues.detail, cues.detail

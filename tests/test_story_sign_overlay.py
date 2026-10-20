@@ -15,7 +15,7 @@ from pathlib import Path
 
 from conftest import needs_ffmpeg
 from PIL import Image
-from test_post_finish import fake_bed, fake_sfx
+from test_post_finish import fake_sfx
 from test_take_text_sign_lettering import _fake_ocr, _findings, _set_video, _sign
 
 from creation.post.finish import run_finish
@@ -70,7 +70,7 @@ def _finish(post_desk: Path, facts: dict, **kwargs):
     )
     out = io.StringIO()
     result = run_finish(post_desk, facts_fetcher=lambda *a: None, text_ocr=_fake_ocr, sfx_render=fake_sfx([]),
-                        bed_maker=fake_bed, thumbnail=False, colour=False, stream=out, **kwargs)  # fmt: skip
+                        thumbnail=False, colour=False, stream=out, **kwargs)  # fmt: skip
     return result, out.getvalue()
 
 

@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 
 from conftest import make_take, make_tone, needs_ffmpeg
-from test_post_finish import FACTS, TWO_LINES, fake_bed
+from test_post_finish import FACTS, TWO_LINES
 
 from creation.harness_rules import (
     OPENING_WINDOW_SECONDS,
@@ -105,7 +105,6 @@ def test_finish_lays_the_hook_at_zero_and_says_flat_when_take_one_has_none(
     run_finish(
         post_desk,
         sfx_render=render,
-        bed_maker=fake_bed,
         facts_fetcher=lambda *a: None,
         stream=out,
     )
@@ -128,7 +127,6 @@ def test_finish_lays_the_hook_at_zero_and_says_flat_when_take_one_has_none(
     result = run_finish(
         post_desk,
         sfx_render=render,
-        bed_maker=fake_bed,
         facts_fetcher=lambda *a: None,
         stream=out,
     )
@@ -167,7 +165,6 @@ def test_a_hand_cue_at_zero_is_the_opening_hook_finish_counts(post_desk: Path) -
         sfx_render=lambda c, target: make_tone(
             target, seconds=c.seconds, freq=300, volume=0.8
         ),
-        bed_maker=fake_bed,
         facts_fetcher=lambda *a: None,
         cues=(Placed(cue, 0.0),),
         stream=out,

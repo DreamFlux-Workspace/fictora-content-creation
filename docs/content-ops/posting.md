@@ -30,7 +30,7 @@ A reel is made by itself after every finish (and after an edit that writes a new
 
 1. **Caption.** Copy only the part above `----- Not part of the caption: for you, not for Instagram -----`. It says "Part N" and "Follow for part N+1." Strangers don't know what an episode is; a numbered part tells them there's a story to start.
 2. **Cover.** Instagram ignores a cover attached inside the MP4. In the editor tap **Edit cover**, then **Add from camera roll**, and pick `reels/epNN/reel-epNN-vN-cover-vN.jpg` (the series title in yellow with "PART N" under it, the still the reel made for free; `reels/epNN/latest.json` names the current one). If the run printed `⚠ no face found on the cover picture`, look at the cover first. Without this the grid shows a random frame.
-3. **Sound.** Add a trending sound in the Instagram editor and turn its volume down so the voices stay clear.
+3. **Sound.** The video carries no music (voices, effects and room sound only). Add a trending sound in the Instagram or TikTok editor that fits the account (eerie for horror, soft for BL and food, playful-spooky for horror-comedy) and turn its volume down so the voices stay clear. If this reel truly needs its own score (a jumpscare sting), ask the Fictora team for its "with score" version and choose which one to post.
 4. Post in the account's slot.
 
 ## The results sheet: `reels/metrics.csv`

@@ -10,7 +10,7 @@ a take no record names, on a desk finished before the kit wrote records, is
 worked out from its accepted file by :mod:`creation.post.reel_sources`, every
 inferred step printed with a ⚠):
 
-- **Picture and sound before the bed**: the record's ``pre_bed`` (colour-matched,
+- **Picture and sound before the mix**: the record's ``pre_bed`` (colour-matched,
   uncaptioned, unmarked; voice, effects and hand cues), or ``--source``. Cutting
   the finished file would cut burned captions mid-word, so it is never used.
 - **Captions**: the cues of the accepted cut's ``.ass`` (the record master's, or
@@ -19,21 +19,22 @@ inferred step printed with a ⚠):
   (:func:`creation.captions.build_ass`), so a caption never rides on a
   reordered picture it does not belong to. English shows keep their word
   flicker; other spoken languages their whole English lines.
-- **Bed**: the harness's bed (the record's, else the harness bed pinned on the
-  desk; a hand-pinned file is never used, :func:`creation.post.bed.harness_bed`),
-  laid ONCE under the whole reel like ``join`` (looped seamlessly, ducked under
-  the voice, measured gain to about -18 LUFS, one limiter), so the music runs on
-  across every cut. A take whose record says the harness's music is in its own
-  soundtrack (``music_in_take``) gets no bed: its music cuts with the picture.
+- **No music** (founder decision, 20 Oct 2026): no bed is laid; the reel
+  carries voice, effects and room sound only (measured gain to about -18 LUFS,
+  one limiter), and a trending sound is added inside Instagram or TikTok at
+  posting. A take whose source still carries music (an older desk's mixed
+  file, or ``music_in_take``) is named with a ``!!`` line.
+- **Captions always on**: a reel never goes out without them
+  (:func:`creation.captions.posting_caption_style`).
 
 A letterbox show's reel (spine ``delivery_format: letterbox``, 4:3 sources, :func:`reel_letterbox`)
 is delivered like the episode's own file: after the mix it goes on the 9:16 black canvas, its
 captions in the band under the picture, then the mark in the top band and the title block above
 the picture (:mod:`creation.post.letterbox`); no hook line overlay. Portrait reels are unchanged.
 
-Render: each run of picture is cut on the frame grid; the sound before the bed
-is cut with short equal-power crossfades centred on each cut (no clicks); the
-bed goes under; captions; the Sokii mark top left (:func:`creation.post.watermark.watermark`,
+Render: each run of picture is cut on the frame grid; the sound before the mix
+is cut with short equal-power crossfades centred on each cut (no clicks); no
+music goes under; captions; the Sokii mark top left (:func:`creation.post.watermark.watermark`,
 as ``finish`` applies it). A ``patches`` entry in the plan (a ``blur`` box made
 on the accepted file after finish) is applied to the source first.
 
@@ -79,7 +80,7 @@ from creation.captions import (
     burn_ass,
     captions_whole_lines,
     find_ffmpeg,
-    resolve_caption_style,
+    posting_caption_style,
 )
 from creation.post.faces import Detector, detector_for, face_track, nearest_scores
 from creation.post.finish_record import FinishRecord, finish_records, record_for_file
@@ -987,7 +988,7 @@ def render_reel(
     ``cover`` (the reel's cover image) becomes the reel's first frame in the mark
     step's own encode (:mod:`creation.post.cover_frame`); ``None`` leaves it as filmed.
 
-    The reel ends hard on its last frame (the bed stops with it); a plan whose
+    The reel ends hard on its last frame; a plan whose
     ``ending`` is ``freeze-black`` holds that frame, then cuts to black
     (:func:`creation.post.ending.apply_ending`).
 
@@ -1017,13 +1018,8 @@ def render_reel(
         When a segment names a take with no source, or the sources differ in size.
     """
 
-    from creation.post.bed import (
-        bed_level,
-        chosen_record_level,
-        harness_bed,
-        pinned_bed,
-    )
-    from creation.post.join import decode_stereo, loop_bed, write_wav
+    from creation.post.join import decode_stereo, write_wav
+    from creation.post.reel_via_server import reel_music_note
     from creation.post.ending import apply_ending
     from creation.post.mix import mix_take
     from creation.post.reel_plan import BLACK_SECONDS, FREEZE_SECONDS
@@ -1045,30 +1041,6 @@ def render_reel(
     fps = next(iter(infos.values())).fps or 24.0
     runs = _runs(plan.segments, fps)
     report: list[str] = []
-    record = next((s.record for s in sources if s.record is not None), None)
-    # A source that already carries its take's bed (an older desk's mix) gets no second bed.
-    baked = [s.take_id for s in sources if s.inferred and s.inferred.bed_in_source]
-    # Nor does a take whose own soundtrack carries the harness's music.
-    in_take = [
-        s.take_id for s in sources if s.record is not None and s.record.music_in_take
-    ]
-    bed: Path | None = None
-    bed_db = -16.5  # mix_take's default; unused when no bed goes under
-    if not baked and not in_take:
-        recorded = record.resolve(desk, "bed") if record and record.bed else None
-        bed = (
-            recorded if recorded is not None and harness_bed(desk, recorded) else None
-        ) or pinned_bed(desk)
-        level = bed_level(
-            desk,
-            bed,
-            flag=None,
-            recorded=chosen_record_level([(record.bed_db, record.bed_db_source)])
-            if record
-            else None,
-        )
-        bed_db = level.db
-    duck_db = record.duck_db if record else None
     with tempfile.TemporaryDirectory() as tmp:
         scratch = Path(tmp)
         pictures = {t: _patched(s, scratch, patches) for t, s in by_take.items()}
@@ -1096,42 +1068,9 @@ def render_reel(
         )  # fmt: skip
         mixed = scratch / "reel-mix.mp4"
         total = reel_seconds(plan.segments, fps)
-        if in_take and not baked:
-            mix = mix_take(
-                bedless,
-                mixed,
-                bed=None,
-                bed_db=bed_db,
-                duck_db=None,
-                music_in_take=True,
-            )
-            report.append(
-                f"no bed laid: {', '.join(in_take)} carry the harness's music in their own soundtrack, so the "
-                f"music cuts with the picture (40 ms crossfades); {mix.one_line()}"
-            )
-            silent = [t for t in used if t not in in_take]
-            if silent:
-                report.append(
-                    f"!! {', '.join(silent)} were finished with the show's bed, which is not in their source: "
-                    "their stretch of the reel has no music"
-                )
-        elif baked:
-            mix = mix_take(bedless, mixed, bed=None, bed_db=bed_db, duck_db=duck_db)
-            report.append(
-                f"⚠ no bed laid: {', '.join(baked)} cut from a file with its own bed in, so the music cuts with "
-                f"the picture (40 ms crossfades); {mix.one_line()}"
-            )
-        elif bed is not None and bed.is_file():
-            looped = loop_bed(bed, total + 1.0, scratch / "bed-looped.wav")
-            mix = mix_take(bedless, mixed, bed=looped, bed_db=bed_db, duck_db=duck_db)
-            report.append(
-                f"bed `{bed.name}` once under the whole reel at {level.one_line()}; {mix.one_line()}"
-            )
-        else:
-            mix = mix_take(bedless, mixed, bed=None, bed_db=bed_db, duck_db=duck_db)
-            report.append(
-                f"!! no bed on the record or the desk: the reel has no music; {mix.one_line()}"
-            )
+        # No music bed (founder decision, 20 Oct 2026): the reel's own sound, gained and limited.
+        mix = mix_take(bedless, mixed, bed=None)
+        report.append(f"{reel_music_note(sources)}; {mix.one_line()}")
         loudness = f"{mix.mix_lufs:.1f} LUFS"
         band, band_colour = None, None
         if letterbox is not None:
@@ -1859,7 +1798,7 @@ def make_reel(
     else:
         # Every caption the reel will carry, re-timed through the cut as render_reel burns them:
         # the hook line never sits on one (founder, 7 Oct 2026, L-20261005-11).
-        hook_style, _ = resolve_caption_style(desk, caption_style)
+        hook_style, _ = posting_caption_style(desk, caption_style)
         reel_captions = (
             []
             if hook_style == "none"
@@ -1929,7 +1868,7 @@ def make_reel(
             file=out,
         )
         return result
-    style, style_note = resolve_caption_style(desk, caption_style)
+    style, style_note = posting_caption_style(desk, caption_style)
     panels: list[tuple[int, int, Any]] = []
     # A desk created before 6 Oct 2026 never draws panels (creation.rules_epoch; frozen, do not change).
     if not no_panels and not legacy:

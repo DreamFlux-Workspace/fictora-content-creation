@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 from conftest import make_take, needs_ffmpeg
-from test_post_finish import FACTS, _board, fake_bed, fake_sfx
+from test_post_finish import FACTS, _board, fake_sfx
 
 from creation import captions as cap
 from creation.caption_bold import build_bold_ass
@@ -209,7 +209,7 @@ def test_portrait_finish_sets_a_stale_off_screen_line_upright(post_desk: Path) -
     _board(post_desk)
     out = io.StringIO()
 
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
                         cut_meter=lambda _take: (2.5,), stream=out)  # fmt: skip
 
     log = out.getvalue()

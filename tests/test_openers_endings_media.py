@@ -183,7 +183,7 @@ def test_finish_cuts_the_held_head_after_deboard(post_desk: Path) -> None:
 
     raw = _board_take(post_desk)
     out = io.StringIO()
-    result = run_finish(post_desk, bed_maker=_fake_bed, facts_fetcher=lambda *a: None,
+    result = run_finish(post_desk, facts_fetcher=lambda *a: None,
                         colour=False, stream=out)  # fmt: skip
 
     assert result.complete, out.getvalue()
@@ -250,7 +250,7 @@ def test_finish_cuts_the_held_head_under_a_hook_card(post_desk: Path) -> None:
 
     raw = _board_take(post_desk)
     out = io.StringIO()
-    result = run_finish(post_desk, bed_maker=_fake_bed, facts_fetcher=lambda *a: None,
+    result = run_finish(post_desk, facts_fetcher=lambda *a: None,
                         colour=False, hook_line="The board is gone", stream=out)  # fmt: skip
 
     assert result.complete, out.getvalue()
@@ -292,7 +292,7 @@ def test_finish_take_file_made_by_deboard_cuts_its_clones(post_desk: Path) -> No
         pytest.approx(FPS),
     )
     out = io.StringIO()
-    result = run_finish(post_desk, take_file=held.output, bed_maker=_fake_bed,
+    result = run_finish(post_desk, take_file=held.output,
                         facts_fetcher=lambda *a: None, colour=False, stream=out)  # fmt: skip
 
     assert result.complete, out.getvalue()

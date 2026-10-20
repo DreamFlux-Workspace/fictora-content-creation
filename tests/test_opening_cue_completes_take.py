@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 from conftest import make_take, make_tone, needs_ffmpeg
-from test_post_finish import FACTS, TWO_LINES, fake_bed
+from test_post_finish import FACTS, TWO_LINES
 
 from creation.post.finish import run_finish
 from creation.post.finish_record import write_finish_record
@@ -81,7 +81,7 @@ def test_a_hand_cue_at_the_opening_completes_a_take_whose_other_effects_are_in_t
     out = io.StringIO()
 
     result = run_finish(
-        post_desk, sfx_render=silent_sfx([]), bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+        post_desk, sfx_render=silent_sfx([]), facts_fetcher=lambda *a: None,
         cut_meter=lambda _take: (2.5,), cues=(Placed(cue, 0.0),), thumbnail=False, stream=out,
     )  # fmt: skip
 
@@ -126,7 +126,7 @@ def test_an_effect_silent_after_its_re_make_is_left_out_with_a_warning_and_the_t
     calls: list[str] = []
 
     result = run_finish(
-        post_desk, sfx_render=silent_sfx(calls), bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+        post_desk, sfx_render=silent_sfx(calls), facts_fetcher=lambda *a: None,
         cut_meter=lambda _take: (2.5,), thumbnail=False, stream=out,
     )  # fmt: skip
 
@@ -167,7 +167,7 @@ def test_a_render_the_server_could_not_do_still_stops_the_take(post_desk: Path) 
         raise RuntimeError("HTTP 503")
 
     result = run_finish(
-        post_desk, sfx_render=down, bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+        post_desk, sfx_render=down, facts_fetcher=lambda *a: None,
         cut_meter=lambda _take: (2.5,), thumbnail=False, stream=io.StringIO(),
     )  # fmt: skip
 

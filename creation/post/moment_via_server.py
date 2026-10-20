@@ -3,7 +3,9 @@
 Founder, 13 Oct 2026: TikTok clips were removed; a moment is the TikTok format instead. PART N
 of a show: the episodes play whole and in order, cut as one story (the server's
 ``reel_moment``: dead air cut at scene edges, never a line, never inside a shot), with a title
-bar, a hook line under it, one bed under the whole part and an end card ("Part N+1 →").
+bar, a hook line under it and an end card ("Part N+1 →"). Captions always on and no music
+(founder decision, 20 Oct 2026): no bed is sent or laid; a trending sound is added inside
+TikTok at posting.
 
 The kit sends each episode's pre-caption takes and caption cues, every take naming its
 episode, to the reel route in mode ``moment`` and saves what comes back under
@@ -43,7 +45,7 @@ from creation.post.reel_server import (
 from creation.post.reel_via_server import (
     letterbox_finals,
     operator_body,
-    reel_bed,
+    reel_music_note,
     take_cue_emphasis,
     take_timing,
 )
@@ -198,7 +200,7 @@ def make_moment(
         The server refused or failed the moment.
     """
 
-    from creation.captions import episode_caption_lines, resolve_caption_style
+    from creation.captions import episode_caption_lines, posting_caption_style
     from creation.post.desk import saved_spine
     from creation.spine_view import episode_id_for
 
@@ -212,7 +214,7 @@ def make_moment(
             f"no saved spine with beats in ep{last:02d}/api/: the moment plans from its beats"
         )
     spine = found[0]
-    style, style_note = resolve_caption_style(desk, caption_style)
+    style, style_note = posting_caption_style(desk, caption_style)
     with tempfile.TemporaryDirectory(prefix="fictora-moment-") as tmp:
         scratch = Path(tmp)
         per_episode: list[tuple[int, list[TakeSource], list[Any]]] = []
@@ -240,7 +242,7 @@ def make_moment(
             != 1
         ):
             raise ValueError("the takes differ in size; a moment needs one frame size")
-        bed = reel_bed(desk, everything)
+        music_line = reel_music_note(everything)
         client = server or ReelServer(desk, last)
         try:
             job_id = reel_job_id(desk, last, [s.take_id for s in per_episode[-1][1]])
@@ -276,11 +278,8 @@ def make_moment(
                             "sound_events_s": events,
                         }
                     )
-            bed_upload = (
-                client.upload(bed.bed, kind="audio") if bed.bed is not None else None
-            )
             request = operator_body(
-                takes=takes, bed=bed, bed_upload=bed_upload, still_upload=None, caption_style=style, pov=False,
+                takes=takes, still_upload=None, caption_style=style, pov=False,
                 seconds=15.0, ending=None, hook_line=hook_line, no_hook_line=False, hook_line_position=None,
                 no_cover=False, cover_frame=None, plan=None, part=part,
             )  # fmt: skip
@@ -336,7 +335,7 @@ def make_moment(
     result = MomentResult(
         part=part, episodes=episodes, video=paths["video"], cover=cover, plan_path=paths["plan"], post=paths["post"],
         seconds=int(answer.get("duration_ms") or 0) / 1000.0,
-        lines=[bed.note, *[str(x) for x in answer.get("report") or []], *([style_note] if style_note else [])],
+        lines=[music_line, *[str(x) for x in answer.get("report") or []], *([style_note] if style_note else [])],
     )  # fmt: skip
     for line in [*result.lines, *[f"⚠ {n}" for n in posting_notes]]:
         print(f"- {line}", file=out)

@@ -31,7 +31,7 @@ from creation.post.soundtrack import (
     soundtrack_lines,
     unheard_lines,
 )
-from test_post_finish import FACTS, TWO_LINES, fake_bed, fake_sfx
+from test_post_finish import FACTS, TWO_LINES, fake_sfx
 
 #: The dialogue track's lines, where TWO_LINES puts the voices (Kenji 1-2 s, Aya 3.2-4 s).
 LINES = [
@@ -174,21 +174,21 @@ def test_captions_are_timed_on_known_line_windows_without_detecting_speech() -> 
 
 
 @needs_ffmpeg
-def test_finish_lays_room_tone_bed_ducked_in_line_windows_effects_on_measured_cuts_and_line_captions(
+def test_finish_lays_room_tone_effects_on_measured_cuts_and_line_captions_and_no_music(
     post_desk: Path,
 ) -> None:
     raw = _desk_take(post_desk, facts_with(TARGET))
     assert unheard_lines(raw, soundtrack_from(facts_with(TARGET))) == []
     out = io.StringIO()
     result = run_finish(
-        post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+        post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
         transcriber=no_transcript, cut_meter=lambda _take: (3.9,), stream=out,
     )  # fmt: skip
 
     log = out.getvalue()
     assert result.complete, log
     assert [s.step for s in result.steps] == [
-        "deboard", "sfx", AMBIENCE_STEP, ROOM_TONE_STEP, "bed", "colour", "impact", "mix", "captions", "watermark",
+        "deboard", "sfx", AMBIENCE_STEP, ROOM_TONE_STEP, "colour", "impact", "mix", "captions", "watermark",
         "thumbnail",
     ]  # fmt: skip
     # The fixture spine names no location: no ambience cue, room tone is the fallback (test_target_audio_ambience).
@@ -202,10 +202,8 @@ def test_finish_lays_room_tone_bed_ducked_in_line_windows_effects_on_measured_cu
     assert (
         "effects duck under the 2 line window(s) of the dialogue track" in detail["sfx"]
     )
-    # (b) the bed ducks exactly in the dialogue track's line windows.
-    assert (
-        "ducking 12 dB in 2 voice window(s) (the take's line windows)" in detail["mix"]
-    )
+    # (b) no music bed goes under the locked voices (founder decision, 20 Oct 2026).
+    assert "no music" in detail["mix"]
     # (d) room tone: the gap between the lines is no longer digital silence; both lines heard where the facts say.
     assert (
         "2 of 2 line(s) have voice in their window (levels only); transcript check skipped"
@@ -225,45 +223,34 @@ def test_finish_lays_room_tone_bed_ducked_in_line_windows_effects_on_measured_cu
     assert "3.20-" in detail["captions"]
     # Shown in the summary.
     assert "Soundtrack: locked voices, 2 line(s)" in log
-    assert "Sound: music ✓ · SFX ✓ · mix ✓ · room tone ✓ · captions ✓" in log
+    assert "Sound: no music ✓ · SFX ✓ · mix ✓ · room tone ✓ · captions ✓" in log
     record = json.loads(
         next(
             (post_desk / "ep01" / "takes").glob("take-ep01-t1-finish-v*.json")
         ).read_text()
     )
-    assert record["duck_db"] == 12.0, (
-        "join re-lays the bed at the depth this take was finished at"
+    assert record["duck_db"] is None and record["bed"] is None, (
+        "no bed, nothing to duck"
     )
     assert Path(record["pre_bed"]).name.startswith("take-ep01-t1-room-tone-"), (
-        "join's bed goes over the room tone"
+        "join mixes the take with its room tone"
     )
 
 
 @needs_ffmpeg
-def test_finish_stops_loudly_without_a_bed_and_never_ships_a_voice_only_take(
+def test_a_locked_voice_take_needs_room_tone_and_no_music_to_be_delivered(
     post_desk: Path,
 ) -> None:
     _desk_take(post_desk, facts_with(TARGET))
 
-    def no_bed(*_: object) -> Path:
-        raise RuntimeError("no bed pinned and the server could not make one")
-
     out = io.StringIO()
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=no_bed, facts_fetcher=lambda *a: None,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
                         cut_meter=lambda _take: (), stream=out)  # fmt: skip
 
-    assert not result.complete and "music" in result.sound_missing
-    assert "no music bed" in result.stopped
-    assert [s.step for s in result.steps] == [
-        "deboard", "sfx", AMBIENCE_STEP, ROOM_TONE_STEP, "bed",
-    ]  # fmt: skip
-    assert "!! STOPPED" in out.getvalue()
-    assert not list((post_desk / "ep01" / "takes").glob("*-sokii-*.mp4")), (
-        "nothing deliverable is written"
-    )
-    assert not list((post_desk / "ep01" / "takes").glob("*-mix-*.mp4"))
-    assert "STOPPED" in (post_desk / "ep01" / "run-notes.md").read_text()
-    assert result.as_json()["stopped"]
+    # Before 20 Oct 2026 a locked take with no music bed stopped here; music is no longer needed.
+    assert result.complete and not result.stopped, out.getvalue()
+    assert "music" not in result.sound_missing and "!! STOPPED" not in out.getvalue()
+    assert list((post_desk / "ep01" / "takes").glob("*-sokii-*.mp4"))
 
 
 @needs_ffmpeg
@@ -314,10 +301,9 @@ def _finish_report(post_desk: Path, facts: dict) -> list[tuple[str, str, str]]:
     for path in (post_desk / "ep01" / "api").glob("take-facts-*"):
         path.unlink()
     _desk_take(post_desk, facts)
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
                         cut_meter=lambda _take: (3.9,), colour=False, stream=io.StringIO())  # fmt: skip
     assert result.complete and not result.locked_voices and not result.stopped
-    # The second run finds the bed the first one made and pinned: the same file either way.
     return [(s.step, s.status, s.detail.replace("-v2", "-v1").replace("made bed", "pinned bed"))
             for s in result.steps]  # fmt: skip
 
@@ -336,7 +322,6 @@ def test_native_and_older_server_takes_finish_exactly_as_before(
     assert list(steps) == [
         "deboard",
         "sfx",
-        "bed",
         "colour",
         "impact",
         "mix",
@@ -349,5 +334,5 @@ def test_native_and_older_server_takes_finish_exactly_as_before(
         and "measured cuts" not in steps["sfx"]
     )
     assert "a door slams @3.00s" in steps["sfx"]
-    assert "sidechain compressor" in steps["mix"]
+    assert "ducking none; no music" in steps["mix"]
     assert "(lines)" not in steps["captions"] and "(speech)" in steps["captions"]

@@ -59,11 +59,6 @@ def fake_sfx(calls: list[str]):
     return render
 
 
-def fake_bed(spine: dict, music: str | None, target: Path) -> Path:
-    # Loud enough that the mixed take has no silence left: captions must be timed on the take before the bed.
-    return make_tone(target.with_suffix(".wav"), seconds=6.0, freq=220, volume=0.9)
-
-
 def _board(post_desk: Path) -> Path:
     board = post_desk / "ep01" / "boards" / "board-ep01-t1-1-v1.png"
     board.parent.mkdir(parents=True, exist_ok=True)
@@ -73,7 +68,7 @@ def _board(post_desk: Path) -> Path:
 
 
 @needs_ffmpeg
-def test_finish_lays_sfx_music_mix_captions_and_mark_as_new_versions(
+def test_finish_lays_sfx_mix_captions_and_mark_as_new_versions_and_no_music(
     post_desk: Path,
 ) -> None:
     raw = make_take(
@@ -85,14 +80,13 @@ def test_finish_lays_sfx_music_mix_captions_and_mark_as_new_versions(
     _board(post_desk)
     calls: list[str] = []
     out = io.StringIO()
-    result = run_finish(post_desk, sfx_render=fake_sfx(calls), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx(calls),
                         facts_fetcher=lambda *a: None, stream=out)  # fmt: skip
 
     assert result.complete, out.getvalue()
     assert [s.step for s in result.steps] == [
         "deboard",
         "sfx",
-        "bed",
         "colour",
         "impact",
         "mix",
@@ -118,26 +112,28 @@ def test_finish_lays_sfx_music_mix_captions_and_mark_as_new_versions(
     assert result.final.name == "take-ep01-t1-sokii-v1.mp4"
     assert raw.stat().st_size > 0
     assert calls == ["a door slams"]
-    assert load_series(post_desk).bed_path.startswith("shared/beds/show-bed-v1")
+    assert load_series(post_desk).bed_path is None, (
+        "no music bed is found, made or pinned"
+    )
     booked = [(entry.unit, entry.take_id) for entry in load_series(post_desk).spend_log]
-    assert booked == [("sfx", "t1"), ("bed", None)], (
-        "finish books what the money bought"
+    assert booked == [("sfx", "t1")], (
+        "finish books what the money bought, and buys no music"
     )
     captions = next(s for s in result.steps if s.step == "captions")
     assert "3.2" in captions.detail.split("'Wait for me here.' (speech); ")[1][:5], (
         "Aya's caption starts on her line at 3.2 s, not on the door slam at 3.0 s: timed on the take before post"
     )
     mix = next(s for s in result.steps if s.step == "mix")
-    assert "NO MUSIC BED" not in mix.detail
-    assert "!!" not in mix.detail, "a door slam at full level is heard over the bed"
+    assert "no music" in mix.detail
+    assert "!!" not in mix.detail
     assert (
         out.getvalue().rstrip().splitlines()[-2]
-        == "Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓"
+        == "Sound: no music ✓ · SFX ✓ · mix ✓ · captions ✓"
     )
     notes = (post_desk / "ep01" / "run-notes.md").read_text()
     assert "Finish summary" in notes and "NOT DONE" not in notes
 
-    again = run_finish(post_desk, sfx_render=fake_sfx(calls), bed_maker=fake_bed,
+    again = run_finish(post_desk, sfx_render=fake_sfx(calls),
                        facts_fetcher=lambda *a: None, stream=io.StringIO())  # fmt: skip
     assert again.final.name == "take-ep01-t1-sokii-v2.mp4"
     assert calls == ["a door slams"], (
@@ -146,58 +142,21 @@ def test_finish_lays_sfx_music_mix_captions_and_mark_as_new_versions(
 
 
 @needs_ffmpeg
-def test_finish_warns_when_a_cue_is_buried_under_the_bed(post_desk: Path) -> None:
-    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
-    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
-        json.dumps(FACTS)
-    )
-
-    def faint(
-        cue: SfxCue, target: Path
-    ) -> Path:  # -47 dB RMS: passes the shape check, lost under a 0 dB bed
-        return make_tone(target, seconds=cue.seconds, freq=300, volume=0.05)
-
-    out = io.StringIO()
-    # A bed this loud: the cue is raised as far as levelling goes (+18 dB) and is still buried.
-    result = run_finish(post_desk, sfx_render=faint, bed_maker=fake_bed, bed_db=12.0,
-                        facts_fetcher=lambda *a: None, stream=out)  # fmt: skip
-
-    sfx = next(s for s in result.steps if s.step == "sfx")
-    assert "levelled over the music bed: a door slams +" in sfx.detail, sfx.detail
-    mix = next(s for s in result.steps if s.step == "mix")
-    assert mix.status == "ran" and "!! cue 'a door slams' @3.00s peaks" in mix.detail
-    assert "!! cue 'a door slams'" in out.getvalue()
-    assert "!! cue 'a door slams'" in (post_desk / "ep01" / "run-notes.md").read_text()
-
-
-@needs_ffmpeg
 def test_finish_without_sfx_says_not_done_and_the_cli_exits_5(post_desk: Path, monkeypatch: pytest.MonkeyPatch,
                                                                 capsys: pytest.CaptureFixture[str]) -> None:  # fmt: skip
     make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
-    stubbed = functools.partial(
-        run_finish, bed_maker=fake_bed, facts_fetcher=lambda *a: None
-    )
+    stubbed = functools.partial(run_finish, facts_fetcher=lambda *a: None)
     monkeypatch.setattr(cli_post, "run_finish", stubbed)
 
     code = main(["finish", "--desk", str(post_desk)])
 
     assert code == FINISH_INCOMPLETE
     err = capsys.readouterr().err
-    assert "Sound: music ✓ · SFX ✗ · mix ✓ · captions ✓" in err
+    assert "Sound: no music ✓ · SFX ✗ · mix ✓ · captions ✓" in err
     assert "NOT DONE: this take has no SFX" in err
     assert (
         "Finish NOT DONE: no SFX" in (post_desk / "ep01" / "run-notes.md").read_text()
     )
-
-
-@needs_ffmpeg
-def test_finish_refuses_a_bad_duck_depth_before_any_step(post_desk: Path) -> None:
-    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
-    with pytest.raises(ValueError, match="--duck-db"):
-        run_finish(post_desk, duck_db=45.0, stream=io.StringIO())
-    assert [p.name for p in (post_desk / "ep01" / "takes").glob("*.mp4")] == [
-        "take-ep01-t1-raw-v1.mp4"
-    ]
 
 
 @needs_ffmpeg
@@ -211,7 +170,7 @@ def test_finish_fetches_take_facts_when_none_are_saved(post_desk: Path) -> None:
         path.write_text(json.dumps(FACTS))
         return path
 
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed, facts_fetcher=fetch,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]), facts_fetcher=fetch,
                         colour=False, stream=io.StringIO())  # fmt: skip
     assert fetched == [(1, "t1")]
     assert result.complete
@@ -241,9 +200,9 @@ def test_when_the_server_refuses_audio_finish_says_not_done_and_keeps_the_ffmpeg
     result = run_finish(post_desk, facts_fetcher=lambda *a: None, stream=out)
 
     assert not result.complete
-    assert result.sound_missing == ("music", "SFX")
+    assert result.sound_missing == ("SFX",)
     status = {s.step: s.status for s in result.steps}
-    assert status == {"deboard": "skipped", "sfx": "failed", "bed": "failed", "colour": "skipped", "impact": "skipped", "mix": "ran", "captions": "ran",
+    assert status == {"deboard": "skipped", "sfx": "failed", "colour": "skipped", "impact": "skipped", "mix": "ran", "captions": "ran",
                       "watermark": "ran"}  # fmt: skip
     assert "operator_audio_unavailable" in out.getvalue()
     assert "$" not in out.getvalue(), "cost never reaches printed output"
@@ -261,65 +220,6 @@ def _decoded(path: Path) -> bytes:
         capture_output=True,
         check=True,
     ).stdout
-
-
-@needs_ffmpeg
-@pytest.mark.parametrize("duck_db", [None, 9.0])
-def test_finish_writes_the_mix_buses_and_review_reads_a_duck_depth_in_band(
-    post_desk: Path, duck_db: float | None
-) -> None:
-    import subprocess
-
-    from creation.post.media import media_duration
-    from creation.post.mix import bus_paths
-    from creation.post.review import DUCK_TARGET_DB, review_take
-
-    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
-    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
-        json.dumps(FACTS)
-    )
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed, duck_db=duck_db,
-                        facts_fetcher=lambda *a: None, stream=io.StringIO())  # fmt: skip
-    assert result.complete
-
-    mix = post_desk / "ep01" / "takes" / "take-ep01-t1-mix-v1.mp4"
-    buses = bus_paths(mix)
-    assert [b.name for b in buses] == [
-        "take-ep01-t1-mix-v1-raw-bus.wav",
-        "take-ep01-t1-mix-v1-ducked-bus.wav",
-        "take-ep01-t1-mix-v1-key-bus.wav",
-    ]
-    for bus in buses:
-        layout = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "stream=channels,sample_rate,codec_name",
-             "-of", "csv=p=0", str(bus)],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip()  # fmt: skip
-        assert layout == "pcm_s16le,48000,1", (bus.name, layout)
-        assert abs(media_duration(bus) - 5.0) < 0.05, bus.name
-    # Every bus runs the length the mix runs (the raw bus is the bed cut to it), to a few samples. The
-    # ducked bus used to come out 0.05-0.3 s short, by a different amount each run: the compressor ended
-    # at whichever input hit its end first and dropped the bed it had read ahead of the key.
-    total = media_duration(buses[0])
-    for bus in buses[1:]:
-        assert abs(media_duration(bus) - total) < 0.005, (
-            bus.name,
-            media_duration(bus),
-            total,
-        )
-    assert "buses for review" in (post_desk / "ep01" / "run-notes.md").read_text()
-
-    loud = next(
-        s for s in review_take(post_desk, take_file=result.final).sections
-        if s.name == "Loudness"
-    )  # fmt: skip
-    duck = loud.data["duck"]
-    assert duck is not None, loud.details
-    low, high = DUCK_TARGET_DB
-    assert low <= duck["under_db"] <= high, duck
-    assert abs(duck["outside_db"]) < 1.5, "the bed is not ducked where nobody speaks"
-    if duck_db is not None:
-        assert abs(duck["under_db"] - duck_db) < 1.0, duck
 
 
 @needs_ffmpeg
@@ -432,7 +332,7 @@ def test_captions_on_a_revoiced_take_are_timed_on_its_revoice_words(
     )
     out = io.StringIO()
 
-    result = run_finish(post_desk, take_file=revoiced, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, take_file=revoiced, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, stream=out)  # fmt: skip
 
     captions = next(s for s in result.steps if s.step == "captions")
@@ -464,7 +364,7 @@ def test_a_hand_voice_line_on_a_revoiced_take_is_timed_where_it_was_laid(
     from creation.post.hand import Placed
 
     result = run_finish(post_desk, take_file=revoiced, voices=(Placed(line, 3.5),),
-                        sfx_render=fake_sfx([]), bed_maker=fake_bed,
+                        sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, stream=io.StringIO())  # fmt: skip
 
     captions = next(s for s in result.steps if s.step == "captions")
@@ -512,7 +412,7 @@ def test_finish_names_every_planned_cue_it_does_not_lay_with_the_reason(
         return laid(cue, target)
 
     out = io.StringIO()
-    result = run_finish(post_desk, sfx_render=render, bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+    result = run_finish(post_desk, sfx_render=render, facts_fetcher=lambda *a: None,
                         sfx_adjust=(parse_adjustment("hum=drop"),), stream=out)  # fmt: skip
 
     sfx = next(s for s in result.steps if s.step == "sfx")
@@ -526,7 +426,7 @@ def test_finish_names_every_planned_cue_it_does_not_lay_with_the_reason(
     ), sfx.detail
     printed = out.getvalue()
     assert (
-        "Sound: music ✓ · SFX ✓ (!! 1 planned cue(s) not laid) · mix ✓ · captions ✓"
+        "Sound: no music ✓ · SFX ✓ (!! 1 planned cue(s) not laid) · mix ✓ · captions ✓"
         in printed
     ), printed
     assert (
@@ -552,7 +452,7 @@ def test_finish_with_caption_style_none_burns_no_captions_and_is_still_done(
         json.dumps(FACTS)
     )
     out = io.StringIO()
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, thumbnail=False,
                         caption_style="none", stream=out)  # fmt: skip
     assert result.complete, out.getvalue()
@@ -579,7 +479,7 @@ def test_dropping_every_planned_cue_lays_no_effect_and_the_take_is_still_done(
     _board(post_desk)
     calls: list[str] = []
     out = io.StringIO()
-    result = run_finish(post_desk, sfx_render=fake_sfx(calls), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx(calls),
                         facts_fetcher=lambda *a: None,
                         sfx_adjust=(parse_adjustment("door=drop"),), stream=out)  # fmt: skip
 

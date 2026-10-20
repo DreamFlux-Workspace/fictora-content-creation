@@ -2,11 +2,12 @@
 
 ``finish`` writes ``epNN/takes/take-epNN-tK-finish-vN.json`` after every run.
 ``join`` needs two files per take that the finished (marked) file no longer
-separates: the take before the bed went on (``pre_bed``, what the mix read:
-voice, effects, hand cues, the look) and the un-marked captioned picture
-(``master``, what the mark went on). With them the join lays ONE bed across
-all takes instead of stitching each take's own bed, and marks the joined file
-once.
+separates: the take before the mix (``pre_bed``, what the mix read: voice,
+effects, hand cues, the look) and the un-marked captioned picture (``master``,
+what the mark went on). With them the join mixes all takes' sound once and
+marks the joined file once. Since 20 Oct 2026 no music bed is laid (founder
+decision: delivered videos carry no music), so a new record names no ``bed``;
+older records keep the bed they were finished with, and nothing reads it.
 
 A take edited after ``finish`` (``trim``, ``tempo``, ``freeze``, ``soften``, ``blur`` on
 a file a record names) gets a new record from :func:`carry_finish_record`: the
@@ -39,8 +40,9 @@ class FinishRecord:
     pre_bed: str | None
     master: str
     final: str
+    #: The music bed an older finish laid; ``None`` since 20 Oct 2026 (no music in delivered videos).
     bed: str | None
-    bed_db: float
+    bed_db: float | None
     duck_db: float | None
     path: Path | None = None
     #: Edits made after ``finish`` (``trim``, ``tempo``, ...), oldest first; empty on a record ``finish`` wrote.
@@ -92,9 +94,9 @@ def write_finish_record(
     pre_bed: Path | None,
     master: Path,
     final: Path,
-    bed: Path | None,
-    bed_db: float,
     duck_db: float | None,
+    bed: Path | None = None,
+    bed_db: float | None = None,
     edits: Sequence[Mapping[str, Any]] = (),
     hand_voices: Sequence[Mapping[str, Any]] = (),
     inner_voice: Sequence[Mapping[str, Any]] = (),
@@ -112,19 +114,21 @@ def write_finish_record(
     episode, take_id
         The take.
     complete
-        Music, SFX and the mix all went on.
+        SFX and the mix went on.
     pre_bed
         What the mix read (the take before the bed), or ``None`` when the mix never ran.
     master
         The un-marked last file (what the mark went on).
     final
         The finished file.
-    bed, bed_db, duck_db
-        The bed and how it was mixed.
+    duck_db
+        The exact duck depth the mix was asked for (``None``: none).
+    bed, bed_db
+        An older record's music bed, carried on an edit; ``None`` on a new finish (no music).
     bed_db_source
         Where ``bed_db`` came from (``join`` carries only a chosen one).
     music_in_take
-        The harness's music is in the take's own soundtrack (no bed was laid).
+        The take still carries music finish could not take out (the video model's, or no stem).
     edits
         Edits made after ``finish`` that the three files carry, oldest first.
     hand_voices

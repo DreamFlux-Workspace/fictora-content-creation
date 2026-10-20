@@ -137,7 +137,7 @@ def test_a_letterbox_reel_is_cut_from_the_9_16_letterbox_file(
     operator = reel_server.requests[0]["operator"]
     take = operator["takes"][0]
     assert take["captions_burned"] is True and take["marked"] is True
-    assert operator["bands_in_source"] is True and operator["music_in_take"] is True
+    assert operator["bands_in_source"] is True and "music_in_take" not in operator
     assert "bed_url" not in operator
     assert result.video is not None
     assert (probe_video(result.video).width, probe_video(result.video).height) == (

@@ -38,8 +38,8 @@ from typing import Any
 import pytest
 from conftest import make_take, needs_ffmpeg
 from test_hook_overlay_portrait_unchanged import REPO, _recording
-from test_post_finish import FACTS, TWO_LINES, _board, fake_bed, fake_sfx
-from test_post_join import finished_take, noise_bed
+from test_post_finish import FACTS, TWO_LINES, _board, fake_sfx
+from test_post_join import finished_take
 
 from creation.ops.floor import init_series_desk
 from creation.post import episode_name
@@ -126,7 +126,7 @@ def test_a_portrait_native_finish_runs_the_commands_it_always_ran(
     calls = _recording(monkeypatch, [post_desk, REPO])
 
     # Subtle (today's house captions) must burn exactly what the golden recorded; a new show's Bold is new.
-    result = run_finish(post_desk, caption_style="subtle", sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, caption_style="subtle", sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, stream=io.StringIO())  # fmt: skip
 
     assert result.complete
@@ -158,7 +158,7 @@ def test_a_portrait_locked_voice_finish_runs_the_commands_it_always_ran(
     calls = _recording(monkeypatch, [post_desk, REPO])
 
     # Subtle (today's house captions) must burn exactly what the golden recorded; a new show's Bold is new.
-    result = run_finish(post_desk, caption_style="subtle", sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, caption_style="subtle", sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, cut_meter=lambda _take: (2.5,),
                         stream=io.StringIO())  # fmt: skip
 
@@ -176,7 +176,6 @@ def test_a_portrait_join_runs_the_commands_it_always_ran(
     desk = init_series_desk(tmp_path, "Join Test", band="30s", episode_count=1)
     finished_take(desk, 1, "t1", grey=70, tone=0.1)
     finished_take(desk, 1, "t2", grey=90, tone=0.1, box=(1.0, 1.5))
-    noise_bed(desk)
     calls = _recording(monkeypatch, [desk, REPO])
     # The marked episode's readable name carries the day it was made (14 Oct 2026): pinned here.
     monkeypatch.setattr(episode_name, "today", lambda: date(2026, 10, 14))

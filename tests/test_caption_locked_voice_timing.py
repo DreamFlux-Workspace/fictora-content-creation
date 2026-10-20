@@ -248,13 +248,13 @@ def _locked_desk(post_desk: Path) -> Path:
 
 
 def _finish(post_desk: Path, transcriber):
-    from test_post_finish import fake_bed, fake_sfx
+    from test_post_finish import fake_sfx
 
     from creation.post.finish import run_finish
 
     out = io.StringIO()
     result = run_finish(
-        post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+        post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
         transcriber=transcriber, cut_meter=lambda _take: (2.5,), stream=out,
     )  # fmt: skip
     return result, out.getvalue()
@@ -344,7 +344,7 @@ def test_with_the_hook_card_on_the_masters_ass_keeps_the_dialogue_captions(
     """L-20261006-8: a re-burn from the master's .ass dropped every dialogue caption."""
 
     from test_hook_overlay import ON, _set_hook
-    from test_post_finish import FACTS, TWO_LINES, _board, fake_bed, fake_sfx
+    from test_post_finish import FACTS, TWO_LINES, _board, fake_sfx
 
     from creation.post.finish import run_finish
     from creation.post.finish_record import _load
@@ -355,7 +355,7 @@ def test_with_the_hook_card_on_the_masters_ass_keeps_the_dialogue_captions(
     )
     _board(post_desk)
     _set_hook(post_desk, ON)
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, stream=io.StringIO())  # fmt: skip
     assert next(s for s in result.steps if s.step == "hook-line").status == "ran"
     record = sorted((post_desk / "ep01" / "takes").glob("take-ep01-t1-finish-v*.json"))[

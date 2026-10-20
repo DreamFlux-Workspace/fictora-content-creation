@@ -21,7 +21,7 @@ from creation.post import speaker_screen as ss
 from creation.post.finish import run_finish
 from creation.post.line_check import ScriptLine, check_take_lines
 from creation.post.whisper import Word
-from test_post_finish import fake_bed, fake_sfx
+from test_post_finish import fake_sfx
 
 HANA_LINE = "Who left the cabin door open again?"
 SOTA_LINE = "I told you never to come back here."
@@ -397,7 +397,7 @@ def _take(
 def _finish(desk: Path, **kw: object) -> tuple[object, str]:
     out = io.StringIO()
     result = run_finish(
-        desk, sfx_render=fake_sfx([]), bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+        desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
         transcriber=lambda *a: (_ for _ in ()).throw(AssertionError("transcript is on the desk")),
         stream=out, **kw,
     )  # fmt: skip

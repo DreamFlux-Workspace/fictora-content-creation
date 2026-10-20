@@ -227,12 +227,12 @@ def _panel_desk(post_desk: Path, genre: str) -> None:
 def _run(post_desk: Path, **kwargs: Any):
     import io
 
-    from test_finish_inner_voice import FakeAudio, _bed, _sfx
+    from test_finish_inner_voice import FakeAudio, _sfx
 
     from creation.post.finish import run_finish
 
     out = io.StringIO()
-    result = run_finish(post_desk, sfx_render=_sfx, bed_maker=_bed, facts_fetcher=lambda *a: None,
+    result = run_finish(post_desk, sfx_render=_sfx, facts_fetcher=lambda *a: None,
                         voice_audio=FakeAudio(), stream=out, **kwargs)  # fmt: skip
     return result, out.getvalue()
 
