@@ -203,7 +203,7 @@ from creation.post.colour import colour_match
 from creation.post.deboard import deboard as deboard_take
 from creation.post.deboard import opened_on_earlier_drawing, pick_board
 from creation.post.edit import BlurBox, measure_cuts
-from creation.post.finish_record import write_finish_record
+from creation.post.finish_record import latest_finish_record, write_finish_record
 from creation.post.hand import (
     TAKE_UNDER_VOICE_DUCK_DB,
     HandPlan,
@@ -1510,10 +1510,12 @@ def run_finish(
         soundtrack_from(facts_payload) if facts_payload is not None else Soundtrack()
     )
     # Delivered videos carry no music (founder decision, 20 Oct 2026): voice, effects and room sound only,
-    # and a trending sound is added inside Instagram or TikTok at posting. finish lays no bed. Music the
-    # harness baked into the take (music.laid) comes out by mixing, not filming: the take's sound becomes its
-    # stored music-free stem (voices, room, effects; same timeline as the raw take). Music that cannot come
-    # out (the video model's, model_music; or no stem stored) is named with a !! line: only a re-film drops it.
+    # and a trending sound is added inside Instagram or TikTok at posting. finish lays no bed. A NEW take
+    # (never finished) the harness baked music into (music.laid) has it taken out by mixing, not filming: its
+    # sound becomes the stored music-free stem (voices, room, effects; same timeline as the raw take). An
+    # older take finished before keeps the music it was finished with: nothing is stripped automatically
+    # (founder, 20 Oct 2026); its music is removed only on request, with a "no music" note to the server.
+    # Music that cannot come out (the video model's, model_music; or no stem stored) gets a !! line.
     music_why = (
         "the harness's music is in the take's soundtrack (take facts music.laid)"
         if soundtrack.music_laid
@@ -1523,7 +1525,13 @@ def run_finish(
     )
     music_in_take = bool(music_why)
     music_note = ""
-    if music_in_take and soundtrack.music_stem_url and take_file is None:
+    finished_before = latest_finish_record(desk, episode, take_id) is not None
+    if (
+        music_in_take
+        and soundtrack.music_stem_url
+        and take_file is None
+        and not finished_before
+    ):
         source = remix_onto_stem(
             source,
             soundtrack.music_stem_url,
@@ -1533,22 +1541,33 @@ def run_finish(
         append_run_note(
             run_dir,
             f"No music: the harness's music baked into {take_id} was taken out (its music-free stem "
-            f"`{source.name}`); delivered videos carry no music.",
+            f"`{source.name}`); new videos carry no music.",
         )
         print(
             f"[music] {take_id}: the baked-in music was swapped for the take's music-free stem "
-            "(delivered videos carry no music).",
+            "(new videos carry no music).",
             file=out,
             flush=True,
         )
         music_why, music_in_take = "", False
+    elif music_in_take and finished_before and soundtrack.music_stem_url:
+        music_note = (
+            f"!! {take_id} was finished before with music ({music_why}) and keeps it: nothing is stripped "
+            'automatically. To remove it, ask the server with a "no music" note for this episode (free).'
+        )
+        append_run_note(run_dir, f"Finish · {music_note}")
     elif music_in_take:
         fix = (
             "finish the newest raw take (without --take-file) to swap in its music-free stem"
             if soundtrack.music_stem_url
-            else "only filming it again removes it (the server now films with no music)"
+            else (
+                "the video model made it"
+                if model_scored(facts_payload)
+                else "no music-free stem was stored"
+            )
+            + ", so only filming it again removes it (the server now films with no music)"
         )
-        music_note = f"!! {take_id} carries music ({music_why}) and delivered videos carry none: {fix}."
+        music_note = f"!! {take_id} carries music ({music_why}): {fix}."
         append_run_note(run_dir, f"Finish · {music_note}")
     locked = soundtrack.target_audio
     if locked:

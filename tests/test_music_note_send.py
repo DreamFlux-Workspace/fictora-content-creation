@@ -329,6 +329,35 @@ def test_a_no_music_note_the_harness_can_take_out_is_applied(
     assert "no music: the music is taken out of ep02" in capsys.readouterr().out
 
 
+def test_an_old_episode_can_have_its_music_removed_on_request_free_through_the_server(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Founder, 20 Oct 2026: new videos carry no music; an older episode keeps its music unless asked.
+
+    The operator asks with a "no music" note: it goes to the server's music-notes route (the silence
+    re-mix onto each take's voices, free), never stripped in the kit. A take whose music the video
+    model made itself can only change by filming again: the plan says so and nothing is filmed.
+    """
+
+    model_take = _take(
+        "refilm", take=2, take_index=2, take_job_id="job_take_t2", refilm_usd=1.0
+    )
+    _route(api, kind="silence", takes=[_take("remix"), model_take], refilm_usd=1.0)
+
+    assert _note(desk, "--episode", "1", "no music") == 0
+
+    ((body, _key),) = _posts(api)
+    assert (
+        body["note"] == "no music"
+        and body["episode_ordinal"] == 1
+        and body["dry_run"] is True
+    )
+    text = capsys.readouterr().out
+    assert "re-mixed onto its voices, free, no filming" in text
+    assert "only filming it again changes it" in text
+    assert load_series(desk).spend_log == [], "asking costs nothing"
+
+
 def test_an_episode_new_music_note_says_it_is_for_that_episode_only(
     desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
 ) -> None:

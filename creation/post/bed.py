@@ -11,7 +11,9 @@ The kit lays no bed, finds none, makes none and pins none (the old show bed,
 its level and ``--bed-db`` are gone). If a reel truly needs its own score
 (say a jumpscare sting), the server makes a separate "with score" version on
 request from the stored stems ($0); the no-music version stays the default and
-the operator chooses at posting time. The music, and every rule about it, is
+the operator chooses at posting time. Older episodes keep their music: nothing
+is stripped automatically; a "no music" note removes it on request (free). The music,
+and every rule about it, is
 the server's (fictora-drama); the kit keeps no music logic or state of its own.
 
 What stays here: an operator's music change note (``music-note`` or
@@ -42,7 +44,8 @@ NO_MUSIC_RULE = (
     "trending sound inside Instagram or TikTok that fits the account (eerie for horror, soft for BL and "
     "food, playful-spooky for horror-comedy). If one reel truly needs its own score (a jumpscare sting), "
     'ask the Fictora team for its "with score" version from the server; the no-music version stays the '
-    "default and you choose which to post."
+    "default and you choose which to post. An older episode keeps its music unless you ask: send it the "
+    'note "no music" (free); clips whose music the video model made can only change by filming again.'
 )
 
 

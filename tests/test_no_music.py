@@ -222,6 +222,33 @@ def test_baked_in_music_with_a_stem_is_taken_out_on_every_show(
 
 
 @needs_ffmpeg
+def test_an_older_take_finished_with_music_keeps_it_and_is_never_stripped_automatically(
+    post_desk: Path,
+) -> None:
+    """Founder, 20 Oct 2026: old episodes stay as they are; their music goes only on request."""
+
+    _desk_take(
+        post_desk, facts_with({**NATIVE, "music": {"laid": True, "stem_url": STEM_URL}})
+    )
+    final = post_desk / "ep01" / "takes" / "take-ep01-t1-final-v1.mp4"
+    write_finish_record(
+        post_desk, episode=1, take_id="t1", complete=True, pre_bed=final, master=final,
+        final=final, duck_db=None, music_in_take=True,
+    )  # fmt: skip
+    out = io.StringIO()
+
+    result = run_finish(
+        post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
+        stem_fetcher=_never, thumbnail=False, stream=out,
+    )  # fmt: skip
+
+    assert result.complete, out.getvalue()
+    assert result.music_in_take, "the music it was finished with stays"
+    assert "nothing is stripped automatically" in result.music_warning
+    assert '"no music" note' in result.music_warning
+
+
+@needs_ffmpeg
 @pytest.mark.parametrize(
     "facts",
     [
@@ -302,7 +329,7 @@ def test_music_notes_are_saved_scoped_and_never_empty(post_desk: Path) -> None:
         record_music_note(post_desk, "   ")
 
 
-def test_set_bed_and_music_lock_are_gone_and_music_note_saves_the_change(
+def test_set_bed_is_gone_and_music_note_and_music_lock_still_work(
     post_desk: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     track = make_tone(post_desk / "track.wav", seconds=1.0, freq=330, volume=0.5)
@@ -310,14 +337,8 @@ def test_set_bed_and_music_lock_are_gone_and_music_note_saves_the_change(
     assert main(["set-bed", "--desk", str(post_desk), "--path", str(track)]) == 2
     assert NO_MUSIC_RULE in capsys.readouterr().out
     assert load_series(post_desk).bed_path is None, "nothing was pinned"
-    assert (
-        main(
-            ["music-lock", "--desk", str(post_desk), "--set", "finish", "--reason", "x"]
-        )
-        == 2
-    )
-    assert NO_MUSIC_RULE in capsys.readouterr().out
-    assert "music_lock" not in load_series(post_desk).extra
+    # The music lock stays for older episodes (founder, 20 Oct 2026): it still reads.
+    assert main(["music-lock", "--desk", str(post_desk)]) == 0
 
     assert (
         main(
@@ -339,6 +360,7 @@ def test_set_bed_and_music_lock_are_gone_and_music_note_saves_the_change(
     assert (
         "set-bed" in cli_post.POST_COMMANDS and "music-note" in cli_post.POST_COMMANDS
     )
+    assert "music-lock" in cli_post.POST_COMMANDS
 
 
 # --- join -------------------------------------------------------------------------------------------------------

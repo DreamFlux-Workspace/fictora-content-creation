@@ -312,14 +312,23 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     music_lock = sub.add_parser(
         "music-lock",
-        help="Gone: delivered videos carry no music (20 Oct 2026), so there is no show music to lock. "
-        "Says what to do instead.",
+        help="An older show's music lock (free): finish (no music in the take) or in-take (the harness's music "
+        "is in each take). New videos carry no music (20 Oct 2026); the lock only matters for an older "
+        "episode's takes and their music-free stem. Without --set it prints the show's lock and the harness's.",
     )
-    music_lock.add_argument("--desk", type=Path, default=None)
+    music_lock.add_argument("--desk", type=Path, required=True)
     music_lock.add_argument(
-        "--set", dest="set_to", default=None, help=argparse.SUPPRESS
+        "--set",
+        dest="set_to",
+        default=None,
+        choices=("finish", "in-take"),
+        help="Change the show's music on purpose (only on the human's say-so); needs --reason.",
     )
-    music_lock.add_argument("--reason", default=None, help=argparse.SUPPRESS)
+    music_lock.add_argument(
+        "--reason",
+        default=None,
+        help="Why the music changes (logged on the desk and sent to the harness).",
+    )
 
     caption_style = sub.add_parser(
         "caption-style",
@@ -982,8 +991,10 @@ def dispatch_post(args: argparse.Namespace) -> int:
         run_voice_mode(args.desk, set_to=args.set_to)
         return 0
     if args.command == "music-lock":
-        print(f"music-lock is gone. {NO_MUSIC_RULE}")
-        return 2
+        from creation.music_lock import run_music_lock
+
+        run_music_lock(args.desk, set_to=args.set_to, reason=args.reason)
+        return 0
     if args.command == "caption-style":
         from creation.caption_preview import run_caption_style
 

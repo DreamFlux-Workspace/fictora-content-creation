@@ -26,8 +26,12 @@ from creation.music_lock import (
     DeskMusicLock,
     desk_music_lock,
     infer_desk_music_lock,
+    run_music_lock,
+    server_kind,
+    set_server_music_lock,
     store_desk_music_lock,
     stored_desk_music_lock,
+    take_music_refusal,
 )
 from creation.ops.state import load_series
 from creation.rules_epoch import run_rules_epoch
@@ -60,6 +64,7 @@ def old_desk(post_desk: Path) -> Path:
 
 
 SHOW_BED = "shared/beds/show-bed-v1.mp3"
+STEM_URL = "https://media.example.com/tenants/t/drama/tracks/stem.wav"
 
 
 # --- the lock, read once ------------------------------------------------------------------------
@@ -99,6 +104,84 @@ def test_a_show_whose_first_episode_carried_the_harness_music_is_in_take(
     _record(old_desk, 1, "t1", bed=None, music_in_take=True)
     assert infer_desk_music_lock(old_desk) == DeskMusicLock(
         kind="in_take", origin="inferred", episode=1
+    )
+
+
+# --- the lock's own rules (kept for older episodes; finish no longer refuses) ---------------------
+
+
+def test_the_refusal_is_only_for_a_new_take_with_music_on_a_finish_show(
+    tmp_path: Path,
+) -> None:
+    finish = DeskMusicLock(kind="finish", origin="inferred", episode=1, bed=SHOW_BED)
+    in_take = DeskMusicLock(kind="in_take", origin="inferred", episode=1)
+    why = "take facts music.laid"
+
+    refusal = take_music_refusal(
+        finish, music_in_take=True, music_why=why, finished_before=False, desk=tmp_path
+    )
+    assert (
+        refusal is not None
+        and refusal.startswith("!! NOT DONE")
+        and "show-bed-v1.mp3" in refusal
+    )
+    assert "L-20261005-2" in refusal and "music-lock" in refusal
+    for lock, music, before in (
+        (finish, False, False),
+        (finish, True, True),
+        (in_take, True, False),
+        (None, True, False),
+    ):
+        assert (
+            take_music_refusal(
+                lock,
+                music_in_take=music,
+                music_why=why,
+                finished_before=before,
+                desk=tmp_path,
+            )
+            is None
+        )
+
+
+def test_a_change_needs_a_reason_and_a_known_kind(old_desk: Path) -> None:
+    with pytest.raises(ValueError, match="needs a reason"):
+        run_music_lock(old_desk, set_to="in-take", reason=" ")
+    with pytest.raises(ValueError, match="finish or in-take"):
+        run_music_lock(old_desk, set_to="scored", reason="x")
+    assert stored_desk_music_lock(old_desk) is None
+
+
+def test_the_stem_remix_applies_only_to_a_new_take_with_music_on_a_finish_show() -> (
+    None
+):
+    from creation.music_lock import stem_remix_applies
+
+    finish = DeskMusicLock(kind="finish", origin="inferred")
+    assert stem_remix_applies(
+        finish, music_in_take=True, finished_before=False, stem_url=STEM_URL
+    )
+    for lock, music, before, stem in (
+        (finish, True, False, None),
+        (finish, True, True, STEM_URL),
+        (finish, False, False, STEM_URL),
+        (DeskMusicLock(kind="in_take", origin="inferred"), True, False, STEM_URL),
+        (None, True, False, STEM_URL),
+    ):
+        assert not stem_remix_applies(
+            lock, music_in_take=music, finished_before=before, stem_url=stem
+        )
+    # With a stem there is nothing to refuse.
+    assert (
+        take_music_refusal(
+            finish,
+            music_in_take=True,
+            music_why="x",
+            finished_before=False,
+            desk=Path("."),
+            stem_url=STEM_URL,
+        )
+        is None
     )
 
 
@@ -196,3 +279,27 @@ def test_a_locked_existing_show_whose_music_is_laid_in_finish_films_with_music_b
     set_phase(desk, "complete", film_estimates={"ep01": 1.2})
     run_film(desk, episode=1, cause="seedlings ep 4", confirm_spend=True)
     assert model_show.posted(VIDEO)[-1]["music_by_finish"] is True
+
+
+def test_the_server_lock_is_sent_with_its_reason_and_an_older_server_is_said() -> None:
+    assert (
+        server_kind("finish", locked_voices=True),
+        server_kind("in_take", locked_voices=True),
+    ) == ("finish", "track")
+    assert server_kind("in_take", locked_voices=False) == "model"
+    stale = (409, {"error": {"code": "spine_version_conflict"}})
+    run = _Run(
+        [stale, (200, {"applied": True, "notice": "Earlier episodes keep their music"})]
+    )
+    spine = {"spine_id": "s1", "spine_version": "sha256:" + "0" * 64}
+
+    answer = set_server_music_lock(run, spine, "finish", reason="keep the theme")
+
+    assert answer["applied"] is True
+    assert [body["spine_version"][-1] for _path, body in run.posted] == ["0", "1"]
+    assert run.posted[0] == (
+        "/v1/spines/s1/music-lock",
+        {**run.posted[0][1], "kind": "finish", "reason": "keep the theme"},
+    )
+    with pytest.raises(RuntimeError, match="older deploy"):
+        set_server_music_lock(_Run([(404, None)]), spine, "finish", reason="x")
