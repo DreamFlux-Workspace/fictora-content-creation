@@ -1182,8 +1182,8 @@ def video_request_body(
         ``DramaVideoGenerationCreateRequest`` JSON. On a show whose voice mode
         is ``model``, or an existing show (``desk`` created before 6 Oct 2026)
         whose music lock is ``finish``, it carries ``music_by_finish: true``:
-        the kit lays the show's theme in finish, so the takes are filmed with
-        no music.
+        the takes are filmed with no music. Since 20 Oct 2026 no delivered
+        video carries music on any show (the server's rule; the kit lays none).
     """
 
     extra = film_scope(
@@ -1196,8 +1196,9 @@ def video_request_body(
     from creation.voice_mode import show_voices
 
     if not show_voices(run, spine).locked or music_by_finish_wanted(desk, run, spine):
-        # The kit lays the show's theme in finish, so the server films the
-        # takes with no music (fictora-drama music_by_finish; operator only):
+        # The server films the takes with no music (fictora-drama
+        # music_by_finish; operator only). Since 20 Oct 2026 the server films
+        # every show with no music; this keeps the body as it was for:
         # a model-voice show, as its episodes before option C were filmed,
         # and an existing show whose music lock is ``finish`` (fictora-drama
         # show music lock; L-20261005-2). A new show's body is as before.

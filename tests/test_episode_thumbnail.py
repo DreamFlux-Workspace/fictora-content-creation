@@ -103,7 +103,6 @@ def _finish(post_desk: Path, stream: io.StringIO | None = None, **kwargs: object
     return run_finish(
         post_desk,
         sfx_render=fake_sfx,
-        bed_maker=fake_bed,
         facts_fetcher=lambda *a: None,
         stream=stream or io.StringIO(),
         **kwargs,

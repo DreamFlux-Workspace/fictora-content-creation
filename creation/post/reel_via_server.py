@@ -14,17 +14,21 @@ desk knows, sends it, and keeps the episode folder's books with the same
 helpers as the local reel (``latest.json``, hand-edited plans, ``metrics.csv``,
 the operator's notes under the caption).
 
-What is sent, per take: the picture and sound before the bed and captions (the
+What is sent, per take: the picture and sound before the mix and captions (the
 finish record's ``pre_bed`` or ``--source``, blur patches applied here first;
 a letterbox show's 9:16 letterbox final), the accepted caption cues (no em or en
-dash), the take facts' shots and sound events, the harness bed and its level,
-a saved server cover, the desk's caption style, POV and hook-line flags.
+dash), the take facts' shots and sound events, a saved server cover, the desk's caption style, POV and hook-line flags.
 Outputs in ``reels/epNN/`` with the local reel's names and versioning, plus
 ``uploads.json`` (uploads remembered by digest). When the server can't be used
 for the run (it does not answer, cannot take uploads, ``operator_upload_unavailable``,
 or has no operator reel route), the local reel engine cuts it with the desk's
 same rules and one line says so (:func:`creation.post.reel.local_fallback_reel`);
 a refusal about the content still stops. The finish is done either way.
+
+No music (founder decision, 20 Oct 2026): no bed is sent and none is laid; the
+reel carries voice, sound effects and room sound only, and a trending sound is
+added inside Instagram or TikTok at posting. A "with score" version, for a reel
+that truly needs one, is the server's to make on request; the kit asks for none.
 """
 
 from __future__ import annotations
@@ -380,88 +384,36 @@ class ReelResult:
         return f"Reel {self.video.name}{cached}: {self.seconds:.2f} s, {self.loudness}, {self.captions}{cover}; {order}"
 
 
-@dataclass(frozen=True)
-class BedChoice:
-    """The bed the server lays under the reel, at what level, or why none."""
-
-    bed: Path | None
-    bed_db: float
-    duck_db: float | None
-    music_in_take: bool
-    note: str
+#: The reel's sound line: no music goes under (founder decision, 20 Oct 2026).
+NO_MUSIC_NOTE = "no music: voice, effects and room sound only; add a trending sound in Instagram or TikTok when posting"
 
 
-def reel_bed(desk: Path, sources: Sequence[TakeSource]) -> BedChoice:
-    """The harness bed for the reel: the record's, else the one pinned on the desk; none when the takes carry music.
+def reel_music_note(sources: Sequence[TakeSource]) -> str:
+    """The reel's sound line: no music, plus a ``!!`` naming takes whose source still carries music.
 
     Parameters
     ----------
-    desk
-        Series desk.
     sources
         The takes the reel cuts.
 
     Returns
     -------
-    BedChoice
-        What the server is asked to lay.
+    str
+        :data:`NO_MUSIC_NOTE`, and the takes cut from a file with music in it (an older desk's
+        mixed file, or a take the harness's music is baked into), which only a re-finish removes.
     """
 
-    from creation.post.bed import (
-        bed_level,
-        chosen_record_level,
-        harness_bed,
-        pinned_bed,
-    )
-
-    record = next((s.record for s in sources if s.record is not None), None)
-    # A source that already carries its take's bed (an older desk's mix) gets no second bed.
-    baked = [s.take_id for s in sources if s.inferred and s.inferred.bed_in_source]
-    # Nor does a take whose own soundtrack carries the harness's music.
-    in_take = [
-        s.take_id for s in sources if s.record is not None and s.record.music_in_take
+    carry = [
+        s.take_id
+        for s in sources
+        if (s.inferred and s.inferred.bed_in_source)
+        or (s.record is not None and s.record.music_in_take)
     ]
-    duck_db = record.duck_db if record else None
-    if in_take or baked:
-        why = (
-            f"{', '.join(in_take)} carry the harness's music in their own soundtrack"
-            if in_take
-            else f"⚠ {', '.join(baked)} cut from a file with its own bed in"
-        )
-        note = f"no bed: {why}, so the music cuts with the picture"
-        silent = [
-            s.take_id
-            for s in sources
-            if s.take_id not in in_take and s.take_id not in baked
-        ]
-        if silent:
-            note += (
-                f"; !! {', '.join(silent)} were finished with the show's bed, which is not in their source: "
-                "their stretch of the reel has no music"
-            )
-        return BedChoice(None, -16.5, duck_db, True, note)
-    recorded = record.resolve(desk, "bed") if record and record.bed else None
-    bed = (
-        recorded if recorded is not None and harness_bed(desk, recorded) else None
-    ) or pinned_bed(desk)
-    level = bed_level(
-        desk,
-        bed,
-        flag=None,
-        recorded=chosen_record_level([(record.bed_db, record.bed_db_source)])
-        if record
-        else None,
-    )
-    if bed is None or not bed.is_file():
-        return BedChoice(
-            None,
-            level.db,
-            duck_db,
-            False,
-            "!! no bed on the record or the desk: the reel has no music",
-        )
-    return BedChoice(
-        bed, level.db, duck_db, False, f"bed `{bed.name}` at {level.one_line()}"
+    if not carry:
+        return NO_MUSIC_NOTE
+    return (
+        f"{NO_MUSIC_NOTE}; !! {', '.join(carry)} still carry music in their source (an older finish): "
+        "finish them again for a no-music reel"
     )
 
 
@@ -532,8 +484,6 @@ def saved_take_cover(
 def operator_body(
     *,
     takes: Sequence[Mapping[str, Any]],
-    bed: BedChoice,
-    bed_upload: tuple[str, str] | None,
     still_upload: tuple[str, str] | None,
     caption_style: str,
     pov: bool,
@@ -560,13 +510,13 @@ def operator_body(
 
     ``recipe`` (the opening) is sent only when it is not the default, so a server
     from before recipes still takes every default reel.
+
+    No bed is ever sent (founder decision, 20 Oct 2026: no music in delivered videos), so the
+    server lays none.
     """
 
     operator: dict[str, Any] = {
         "takes": list(takes),
-        "bed_db": round(max(-40.0, min(12.0, bed.bed_db)), 1),
-        "duck_db": bed.duck_db,
-        "music_in_take": bed.music_in_take,
         "caption_style": caption_style,
         "pov": pov,
     }
@@ -580,8 +530,6 @@ def operator_body(
         operator["no_panels"] = True
     if recipe is not None and recipe != DEFAULT_RECIPE:
         operator["opening"] = parse_recipe(recipe)
-    if bed_upload is not None:
-        operator["bed_url"], operator["bed_sha256"] = bed_upload
     if still_upload is not None:
         operator["cover_still_url"], operator["cover_still_sha256"] = still_upload
     body: dict[str, Any] = {
@@ -794,7 +742,7 @@ def make_reel(
         ``hook_text``, ``draft``, the server's report and warnings.
     """
 
-    from creation.captions import resolve_caption_style
+    from creation.captions import posting_caption_style
     from creation.post.desk import saved_spine
     from creation.spine_view import episode_id_for
 
@@ -908,18 +856,17 @@ def make_reel(
             flush=True,
         )
     # The show's style (bold / house for subtle / plain / none); Bold sends each line's emphasis word.
-    style, style_note = resolve_caption_style(desk, caption_style)
+    style, style_note = posting_caption_style(desk, caption_style)
     from creation.captions import episode_caption_lines
 
     caption_lines = episode_caption_lines(spine, episode) if style == "bold" else []
-    bed = reel_bed(desk, srcs)
+    music_line = reel_music_note(srcs)
     finals = letterbox_finals(desk, spine, srcs, warnings)
     if finals is not None:
-        bed = BedChoice(
-            None, bed.bed_db, bed.duck_db, True,
+        music_line = (
             "letterbox: cut from the 9:16 letterbox files (captions in the band, the mark and title block on "
-            "them, their music cuts with the picture)",
-        )  # fmt: skip
+            f"them); {music_line}"
+        )
         print(
             "[letterbox] 4:3 takes on a letterbox show: the reel is cut from each take's 9:16 letterbox file "
             "(as finish makes it)",
@@ -981,14 +928,11 @@ def make_reel(
                         "marked": burned,
                     }
                 )
-            bed_upload = (
-                client.upload(bed.bed, kind="audio") if bed.bed is not None else None
-            )
             still_upload = (
                 client.upload(still, kind="image") if still is not None else None
             )
             request = operator_body(
-                takes=takes, bed=bed, bed_upload=bed_upload, still_upload=still_upload, caption_style=style,
+                takes=takes, still_upload=still_upload, caption_style=style,
                 pov=pov, seconds=seconds, ending=ending, hook_line=hook_line, no_hook_line=no_hook_line,
                 hook_line_position=hook_line_position, no_cover=no_cover, cover_frame=cover_frame, plan=body,
                 bands_in_source=finals is not None, watermark_y=watermark_y, no_panels=no_panels,
@@ -1078,7 +1022,7 @@ def make_reel(
     result.posting_notes = posting_notes + [
         w for w in all_warnings if w.startswith("cover")
     ]
-    result.lines = [bed.note, *report] + ([style_note] if style_note else [])
+    result.lines = [music_line, *report] + ([style_note] if style_note else [])
     for line in result.lines:
         print(f"- {line}", file=out)
     for line in result.posting_notes:
@@ -1305,7 +1249,7 @@ def auto_reel(
 
 
 __all__ = [
-    "BedChoice",
+    "NO_MUSIC_NOTE",
     "ReelResult",
     "ReelServerError",
     "auto_reel",
@@ -1315,7 +1259,7 @@ __all__ = [
     "operator_body",
     "plan_lines",
     "record_reel",
-    "reel_bed",
+    "reel_music_note",
     "run_reel",
     "saved_take_cover",
     "take_cues",

@@ -101,7 +101,7 @@ The raw take has the model's sound only. After the human says Use it:
 uv run fictora-produce finish --desk ~/Downloads/documents/my-show-…
 ```
 
-Sound effects (from the take facts), the show's music bed, colour match to the approved board, a mix near −18 LUFS, captions, the Sokii mark. Each step writes a new `take-epNN-tK-<step>-vN.mp4`. The last line must read `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`; `NOT DONE` exits 5.
+Sound effects (from the take facts), colour match to the approved board, a mix near −18 LUFS (no music: a trending sound is added in Instagram or TikTok at posting), captions, the Sokii mark. Each step writes a new `take-epNN-tK-<step>-vN.mp4`. The last line must read `Sound: no music ✓ · SFX ✓ · mix ✓ · captions ✓`; `NOT DONE` exits 5.
 
 ### Change a character's voice (never regenerate)
 
@@ -191,7 +191,7 @@ creation/
   ops/              Desk floor, luma, gates
   recover.py        Cancel job + video retry suffix
   cli_post.py       finish, voice, revoice, music-note, rescore-music
-  post/             Local finish: sfx, bed, colour, mix, watermark, voice, Whisper; audio_service = the one generated-audio interface
+  post/             Local finish: sfx, colour, mix (no music), watermark, voice, Whisper; audio_service = the one generated-audio interface
 tests/              Unit tests (no live API)
 scripts/            smoke_live, e2e helpers
 docs/content-ops/   Operator runbook (human + agent)

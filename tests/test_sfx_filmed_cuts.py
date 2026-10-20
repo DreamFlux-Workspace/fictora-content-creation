@@ -19,7 +19,7 @@ from creation.post.sfx import (
     plan_from_take_facts,
     planned_shots,
 )
-from test_post_finish import FACTS, TWO_LINES, fake_bed
+from test_post_finish import FACTS, TWO_LINES
 
 #: Hanakaze Sweets ep 2 t1: planned shot changes 3.80 / 7.50 / 11.20 s; the take cuts at 3.875 / 7.333 / 10.958 s
 #: (and a 0.083 s board-frame flash at the head).
@@ -110,7 +110,7 @@ def test_finish_lays_the_cue_on_the_filmed_shot(post_desk: Path) -> None:
         return (2.9,)  # planned change at 2.5 s; the take cuts at 2.9 s
 
     result = run_finish(post_desk, sfx_render=lambda cue, target: make_tone(target, seconds=cue.seconds, freq=300),
-                        bed_maker=fake_bed, facts_fetcher=lambda *a: None, cut_meter=cuts,
+                        facts_fetcher=lambda *a: None, cut_meter=cuts,
                         stream=io.StringIO())  # fmt: skip
 
     sfx = next(s for s in result.steps if s.step == "sfx")
@@ -139,7 +139,7 @@ def test_a_freeze_output_is_measured_on_its_raw_take(post_desk: Path) -> None:
 
     result = run_finish(post_desk, take_file=post_desk / "ep01" / "takes" / "take-ep01-t1-freeze-v1.mp4",
                         sfx_render=lambda cue, target: make_tone(target, seconds=cue.seconds, freq=300),
-                        bed_maker=fake_bed, facts_fetcher=lambda *a: None, cut_meter=cuts,
+                        facts_fetcher=lambda *a: None, cut_meter=cuts,
                         stream=io.StringIO())  # fmt: skip
 
     assert measured == [raw.name], (
@@ -159,7 +159,7 @@ def test_when_the_cuts_cannot_be_measured_the_plan_is_kept(post_desk: Path) -> N
         raise RuntimeError("ffmpeg cut trace failed")
 
     result = run_finish(post_desk, sfx_render=lambda cue, target: make_tone(target, seconds=cue.seconds, freq=300),
-                        bed_maker=fake_bed, facts_fetcher=lambda *a: None, cut_meter=broken,
+                        facts_fetcher=lambda *a: None, cut_meter=broken,
                         stream=io.StringIO())  # fmt: skip
 
     sfx = next(s for s in result.steps if s.step == "sfx")

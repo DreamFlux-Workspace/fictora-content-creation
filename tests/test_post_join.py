@@ -1,4 +1,4 @@
-"""join: finished takes into one file with one bed across it (real ffmpeg on tiny synthetic clips; no API)."""
+"""join: finished takes into one file, no music under it (real ffmpeg on tiny synthetic clips; no API)."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from creation import cli_post
 from creation.cli_produce import main
 from creation.ops.floor import init_series_desk
 from creation.post import join as join_module
-from creation.post.bed import pin_bed
 from creation.post.episode_name import today
 from creation.post.finish import run_finish
 from creation.post.finish_record import write_finish_record
@@ -90,15 +89,6 @@ def finished_take(desk: Path, episode: int, take_id: str, *, seconds: float = 2.
     return {"pre_bed": pre_bed, "master": master, "final": final, "record": record}
 
 
-def noise_bed(desk: Path, *, seconds: float = 1.5, tail: float = 0.3) -> Path:
-    """A short generated-style bed: steady noise that ends on ``tail`` seconds of silence."""
-
-    path = desk / "shared" / "beds" / "show-bed-v1.wav"
-    _run(["-f", "lavfi", "-i", f"anoisesrc=c=white:a=0.3:d={seconds}:r=48000", "-af",
-          f"apad=pad_dur={tail}", "-c:a", "pcm_s16le", str(path)])  # fmt: skip
-    return pin_bed(desk, path)
-
-
 def frame_at(video: Path, seconds: float) -> np.ndarray:
     frames = decode_frames(video, width=SIZE[0], height=SIZE[1], fps=24)
     return frames[min(len(frames) - 1, int(round(seconds * 24)))]
@@ -121,12 +111,11 @@ def join_desk(tmp_path: Path) -> Path:
 
 
 @needs_ffmpeg
-def test_an_episode_joins_on_one_continuous_bed_with_captions_and_one_mark(
+def test_an_episode_joins_with_no_music_captions_and_one_mark(
     join_desk: Path,
 ) -> None:
     one = finished_take(join_desk, 1, "t1", grey=70)
     finished_take(join_desk, 1, "t2", grey=90, box=(1.0, 1.5))
-    noise_bed(join_desk)
     out = io.StringIO()
 
     result = run_join(join_desk, episodes=(1,), stream=out)
@@ -149,13 +138,11 @@ def test_an_episode_joins_on_one_continuous_bed_with_captions_and_one_mark(
     assert abs(result.fps - 24) < 0.2
     assert len(result.seam_steps_db) == 1 and abs(result.seam_steps_db[0]) < 5
 
-    # One continuous bed: the take audio is silent, so the joined sound IS the bed. No dip where a take's own
-    # bed would restart (its 1 s fade-in at the seam) and none at the bed's loop points (its silent tail).
+    # No music (founder decision, 20 Oct 2026): the takes' sound is silent, so the joined sound is too.
+    # A bed pinned on the desk is never laid.
     levels = np.array(measure_rms_windows(result.master, window_seconds=0.1))
-    body = levels[12:-17]
-    assert body.min() > np.median(body) - 4, (
-        f"the bed dips inside the join: {np.round(body, 1).tolist()}"
-    )
+    assert levels.max() < -60, f"music under the join: {np.round(levels, 1).tolist()}"
+    assert any(line.startswith("Music: none") for line in result.summary_lines())
 
     # Straight cut: no blended frame at the seam.
     for t in (2.4, 2.5, 2.55):
@@ -198,7 +185,6 @@ def test_a_series_cut_dissolves_between_episodes_and_captions_land_on_the_joined
     finished_take(join_desk, 1, "t2", seconds=2.0, grey=40)
     finished_take(join_desk, 2, "t1", seconds=2.0, grey=200, box=(1.0, 1.5))
     finished_take(join_desk, 2, "t2", seconds=2.0, grey=200)
-    noise_bed(join_desk)
 
     result = run_join(join_desk, episodes=(1, 2), stream=io.StringIO())
 
@@ -224,7 +210,6 @@ def test_a_seam_step_over_5_db_stops_the_join_unmarked_and_gain_matching_fixes_i
 ) -> None:
     finished_take(join_desk, 1, "t1", tone=0.01)
     finished_take(join_desk, 1, "t2", tone=0.5)
-    noise_bed(join_desk)
     monkeypatch.setattr(
         cli_post, "run_join", functools.partial(run_join, stream=io.StringIO())
     )
@@ -270,7 +255,6 @@ def test_join_refuses_mixed_rates_and_sizes_before_writing(
 ) -> None:
     finished_take(join_desk, 1, "t1")
     finished_take(join_desk, 1, "t2", **second)
-    noise_bed(join_desk)
 
     with pytest.raises(ValueError, match=wanted):
         run_join(join_desk, episodes=(1,), stream=io.StringIO())
@@ -281,7 +265,6 @@ def test_join_refuses_mixed_rates_and_sizes_before_writing(
 def test_join_refuses_takes_all_at_25_fps(join_desk: Path) -> None:
     finished_take(join_desk, 1, "t1", fps=25)
     finished_take(join_desk, 1, "t2", fps=25)
-    noise_bed(join_desk)
 
     with pytest.raises(ValueError, match="not 24 fps: ep01 t1, ep01 t2"):
         run_join(join_desk, episodes=(1,), stream=io.StringIO())
@@ -295,7 +278,6 @@ def test_the_joined_file_is_measured_at_24_fps(join_desk: Path, monkeypatch: pyt
 
     finished_take(join_desk, 1, "t1")
     finished_take(join_desk, 1, "t2")
-    noise_bed(join_desk)
     checked: list[str] = []
 
     def spy(path: Path) -> float:
@@ -313,7 +295,6 @@ def test_take_files_in_the_order_given_and_unfinished_files_are_refused(
 ) -> None:
     one = finished_take(join_desk, 1, "t1", grey=70)
     two = finished_take(join_desk, 1, "t2", grey=90)
-    noise_bed(join_desk)
     trimmed = clip(
         join_desk / "ep01" / "takes" / "take-ep01-t2-trim-v1.mp4", seconds=2.0, grey=90
     )
@@ -356,7 +337,6 @@ def test_take_files_in_the_order_given_and_unfinished_files_are_refused(
 @needs_ffmpeg
 def test_an_episode_with_an_unfinished_take_is_refused(join_desk: Path) -> None:
     finished_take(join_desk, 1, "t1")
-    noise_bed(join_desk)
 
     with pytest.raises(ValueError, match="no finished t2"):
         run_join(join_desk, episodes=(1,), stream=io.StringIO())
@@ -383,15 +363,12 @@ def test_finish_writes_the_record_join_reads(post_desk: Path) -> None:
     def sfx(cue, target: Path) -> Path:
         return make_tone(target, seconds=cue.seconds, freq=300, volume=0.3)
 
-    def bed(spine, music, target: Path) -> Path:
-        return make_tone(target.with_suffix(".wav"), seconds=2.0, freq=220, volume=0.5)
-
     api = post_desk / "ep01" / "api"
     for take_id in ("t1", "t2"):
         make_take(post_desk / "ep01" / "takes" / f"take-ep01-{take_id}-raw-v1.mp4", seconds=3.0,
                   tones=((1.8, 2.2, 440),))  # fmt: skip
         (api / f"take-facts-ep01-{take_id}-v1.json").write_text(json.dumps(FACTS))
-        finished = run_finish(post_desk, take_id=take_id, sfx_render=sfx, bed_maker=bed,
+        finished = run_finish(post_desk, take_id=take_id, sfx_render=sfx,
                               facts_fetcher=lambda *a: None, stream=io.StringIO())  # fmt: skip
         assert finished.complete
     record = json.loads(
@@ -417,7 +394,6 @@ def test_finish_writes_the_record_join_reads(post_desk: Path) -> None:
         "take-ep01-t1-sfx-v1.mp4",
         "take-ep01-t2-sfx-v1.mp4",
     ]
-    assert result.bed.name.startswith("show-bed-v1")
     assert (
         result.marked is not None
         and result.marked.name == f"post-test_ep01_draft_v1_{today().isoformat()}.mp4"
@@ -437,7 +413,6 @@ def test_a_take_trimmed_after_finish_joins_and_the_join_is_shorter_by_the_cut(
 ) -> None:
     finished_take(join_desk, 1, "t1", grey=70, tone=0.2)
     two = finished_take(join_desk, 1, "t2", grey=90, tone=0.2, box=(0.0, 2.5))
-    noise_bed(join_desk)
 
     code = main(["trim", "--desk", str(join_desk), "--take", "t2", "--take-file", str(two["final"]),
                  "--cut", "0.5-1.0"])  # fmt: skip
@@ -482,7 +457,6 @@ def test_a_take_re_timed_after_finish_joins_at_its_new_length(
 ) -> None:
     finished_take(join_desk, 1, "t1", grey=70, tone=0.2)
     two = finished_take(join_desk, 1, "t2", grey=90, tone=0.2)
-    noise_bed(join_desk)
 
     assert main(["tempo", "--desk", str(join_desk), "--take", "t2", "--take-file", str(two["final"]),
                  "--factor", "0.8"]) == 0  # fmt: skip
@@ -504,7 +478,6 @@ def test_an_edit_whose_record_lost_a_file_says_so_and_join_refuses_it(
 ) -> None:
     finished_take(join_desk, 1, "t1", grey=70, tone=0.2)
     two = finished_take(join_desk, 1, "t2", grey=90, tone=0.2)
-    noise_bed(join_desk)
     two["pre_bed"].unlink()
 
     assert main(["trim", "--desk", str(join_desk), "--take", "t2", "--take-file", str(two["final"]),
@@ -534,7 +507,6 @@ def test_a_freeze_on_the_finished_take_keeps_the_sound_before_the_bed(
 ) -> None:
     finished_take(join_desk, 1, "t1", grey=70, tone=0.2)
     two = finished_take(join_desk, 1, "t2", grey=90, tone=0.2)
-    noise_bed(join_desk)
 
     assert main(["freeze", "--desk", str(join_desk), "--take", "t2", "--take-file", str(two["master"]),
                  "--at", "1.0", "--hold", "0.5"]) == 0  # fmt: skip
@@ -712,7 +684,6 @@ def test_accept_seam_marks_the_join_and_records_who_and_why(
 ) -> None:
     finished_take(join_desk, 1, "t1", tone=0.01)
     finished_take(join_desk, 1, "t2", tone=0.5)
-    noise_bed(join_desk)
     monkeypatch.setattr(
         cli_post, "run_join", functools.partial(run_join, stream=io.StringIO())
     )
@@ -763,7 +734,6 @@ def test_join_skips_matching_by_default_and_gain_match_forces_it(
 ) -> None:
     finished_take(join_desk, 1, "t1", tone=0.01)
     finished_take(join_desk, 1, "t2", tone=0.5)
-    noise_bed(join_desk)
     monkeypatch.setattr(
         join_module, "finished_levels", lambda desk, parts: [-18.1, -17.8]
     )
@@ -895,7 +865,6 @@ def test_a_series_cut_with_a_quiet_ending_into_a_louder_opening_is_marked(
     for take_id in ("t1", "t2"):
         finished_take(join_desk, 1, take_id, seconds=4.0, tone=0.1)
         finished_take(join_desk, 2, take_id, seconds=4.0, tone=0.25)
-    noise_bed(join_desk)
 
     result = run_join(
         join_desk,

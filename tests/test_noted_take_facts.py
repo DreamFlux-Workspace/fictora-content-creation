@@ -177,7 +177,7 @@ def test_refresh_fetches_with_the_spine_and_prints_the_level_change_and_the_drop
 def test_finish_lays_the_noted_level_and_never_renders_a_dropped_cue(
     post_desk: Path,
 ) -> None:
-    from test_post_finish import TWO_LINES, fake_bed, fake_sfx
+    from test_post_finish import TWO_LINES, fake_sfx
 
     make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
     (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
@@ -186,7 +186,7 @@ def test_finish_lays_the_noted_level_and_never_renders_a_dropped_cue(
     rendered: list[str] = []
     out = io.StringIO()
 
-    result = run_finish(post_desk, sfx_render=fake_sfx(rendered), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx(rendered),
                         facts_fetcher=lambda *a: None, colour=False, stream=out)  # fmt: skip
 
     assert rendered == ["a door slams"], "a dropped cue is never rendered or laid"
@@ -198,7 +198,7 @@ def test_finish_lays_the_noted_level_and_never_renders_a_dropped_cue(
 
 @needs_ffmpeg
 def test_finish_on_older_facts_lays_every_cue_at_minus_8(post_desk: Path) -> None:
-    from test_post_finish import TWO_LINES, fake_bed, fake_sfx
+    from test_post_finish import TWO_LINES, fake_sfx
 
     make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
     (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
@@ -206,7 +206,7 @@ def test_finish_on_older_facts_lays_every_cue_at_minus_8(post_desk: Path) -> Non
     )
     rendered: list[str] = []
 
-    result = run_finish(post_desk, sfx_render=fake_sfx(rendered), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx(rendered),
                         facts_fetcher=lambda *a: None, colour=False, stream=io.StringIO())  # fmt: skip
 
     sfx = next(s for s in result.steps if s.step == "sfx")

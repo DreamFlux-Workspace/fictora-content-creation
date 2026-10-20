@@ -33,7 +33,7 @@ from creation.captions import (
 )
 from creation.post.finish import run_finish
 from creation.post.hand import Placed
-from test_post_finish import FACTS, fake_bed, fake_sfx
+from test_post_finish import FACTS, fake_sfx
 
 LINES = [CaptionLine("l1", "Wait for me here."), CaptionLine("l2", "Not tonight.")]
 
@@ -175,7 +175,7 @@ def test_finish_times_an_english_take_on_its_saved_transcript(post_desk: Path) -
     def no_server_transcript(*_: object) -> Path:
         raise AssertionError("an English take is never sent for a transcript")
 
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, transcriber=no_server_transcript,
                         thumbnail=False, stream=io.StringIO())  # fmt: skip
     detail = next(s.detail for s in result.steps if s.step == "captions")
@@ -191,7 +191,7 @@ def test_finish_without_a_transcript_warns_about_extra_speech(post_desk: Path) -
     (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
         json.dumps(FACTS)
     )
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, thumbnail=False,
                         stream=io.StringIO())  # fmt: skip
     detail = next(s.detail for s in result.steps if s.step == "captions")
@@ -212,7 +212,7 @@ def test_a_locked_voice_take_stays_on_its_soundtrack_lines_even_with_a_transcrip
         post_desk / "ep01" / "takes" / "take-ep01-t1-review-words-v1.json",
         [("Wait for me here.", 2.0, 3.0), ("Not tonight.", 4.2, 4.8)],
     )
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, cut_meter=lambda _take: (2.5,),
                         thumbnail=False, stream=io.StringIO())  # fmt: skip
     detail = next(s.detail for s in result.steps if s.step == "captions")
@@ -246,7 +246,7 @@ def test_finish_captions_from_the_current_spine_not_a_stale_desk_copy(
         asked.append((desk, episode))
         return current
 
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, spine_fetcher=fetch,
                         thumbnail=False, stream=io.StringIO())  # fmt: skip
     detail = next(s.detail for s in result.steps if s.step == "captions")
@@ -268,7 +268,7 @@ def test_finish_says_so_when_the_current_spine_cannot_be_read(post_desk: Path) -
     def offline(desk: Path, episode: int) -> dict:
         raise OSError("no network")
 
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, spine_fetcher=offline,
                         thumbnail=False, stream=io.StringIO())  # fmt: skip
     detail = next(s.detail for s in result.steps if s.step == "captions")
@@ -294,7 +294,7 @@ def test_finish_captions_narration_laid_with_voice_in_the_heard_not_seen_style(
         json.dumps({"line": "The city never sleeps."})
     )
     out = io.StringIO()
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, voices=(Placed(narration, 0.2),),
                         thumbnail=False, stream=out)  # fmt: skip
     detail = next(s.detail for s in result.steps if s.step == "captions")
@@ -321,7 +321,7 @@ def test_a_voice_line_that_is_a_script_line_is_captioned_once(post_desk: Path) -
     voices = post_desk / "ep01" / "voices"
     redo = make_tone(voices / "voice-ep01-aya-v1.wav", seconds=0.8, freq=660)
     redo.with_suffix(".json").write_text(json.dumps({"line": "Not tonight!"}))
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, voices=(Placed(redo, 3.2),),
                         thumbnail=False, stream=io.StringIO())  # fmt: skip
     detail = next(s.detail for s in result.steps if s.step == "captions")
@@ -339,7 +339,7 @@ def test_a_voice_line_with_no_saved_words_is_named(post_desk: Path) -> None:
         json.dumps(FACTS)
     )
     bare = make_tone(post_desk / "ep01" / "voices" / "voice-ep01-x-v1.wav", seconds=0.5)
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, voices=(Placed(bare, 0.2),),
                         thumbnail=False, stream=io.StringIO())  # fmt: skip
     detail = next(s.detail for s in result.steps if s.step == "captions")

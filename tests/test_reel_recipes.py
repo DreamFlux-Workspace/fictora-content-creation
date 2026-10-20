@@ -27,7 +27,6 @@ from creation.post.reel_via_server import (
     auto_reel,
     DEFAULT_RECIPE,
     TRIAL_RECIPES,
-    BedChoice,
     operator_body,
     parse_recipe,
     plan_recipe,
@@ -37,8 +36,7 @@ from creation.post.reel_via_server import (
 
 def _body(recipe: str | None) -> dict:
     return operator_body(
-        takes=[{"take_id": "t1"}], bed=BedChoice(None, -20.0, None, True, "no bed"), bed_upload=None,
-        still_upload=None, caption_style="house", pov=False, seconds=15.0, ending=None, hook_line=None,
+        takes=[{"take_id": "t1"}], still_upload=None, caption_style="house", pov=False, seconds=15.0, ending=None, hook_line=None,
         no_hook_line=False, hook_line_position=None, no_cover=False, cover_frame=None, plan=None, recipe=recipe,
     )  # fmt: skip
 

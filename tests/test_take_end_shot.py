@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 from conftest import make_take, needs_ffmpeg
-from test_post_finish import FACTS, TWO_LINES, fake_bed, fake_sfx
+from test_post_finish import FACTS, TWO_LINES, fake_sfx
 
 from creation.post.finish import run_finish
 from creation.post.sfx import PlannedShot, filmed_shot_windows
@@ -64,7 +64,7 @@ def _finish(post_desk: Path, cuts: tuple[float, ...]) -> str:
     )
     out = io.StringIO()
     run_finish(
-        post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+        post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
         cut_meter=lambda _take: cuts, thumbnail=False, stream=out,
     )  # fmt: skip
     return out.getvalue()

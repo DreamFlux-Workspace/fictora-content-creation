@@ -367,9 +367,9 @@ def test_a_desk_with_no_finish_record_reels_from_the_accepted_file(
     assert inferred["edits"][0]["frames"] == [48, 60] and inferred["bed_in_source"]
     sent = reel_server.requests[0]["operator"]
     assert sent["takes"][0]["cues"][-1]["text"].endswith("me")
-    # The source is the mix, its bed already in: no second bed, the music cuts with the picture.
-    assert "bed_url" not in sent and sent["music_in_take"] is True
-    assert any(line.startswith("no bed:") for line in result.lines)
+    # No bed is sent (no music); the source is an older mix with its bed in, so the reel says so.
+    assert "bed_url" not in sent and "music_in_take" not in sent
+    assert any("still carry music in their source" in line for line in result.lines)
     assert _snapshot(desk) == before  # nothing outside reels/ was written or touched
 
     # The plan re-renders: the inferred take is inferred again from its accepted file.

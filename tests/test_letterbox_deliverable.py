@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from conftest import make_take, needs_ffmpeg
-from test_post_finish import FACTS, _board, fake_bed, fake_sfx
+from test_post_finish import FACTS, _board, fake_sfx
 
 from creation.captions import (
     Cue,
@@ -379,7 +379,7 @@ def test_finish_builds_the_9_16_letterbox_file_with_mark_title_and_band_captions
     _board(post_desk)
     out = io.StringIO()
 
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
                         cut_meter=lambda _take: (2.5,), stream=out)  # fmt: skip
 
     log = out.getvalue()
@@ -454,7 +454,7 @@ def test_join_marks_and_titles_the_joined_letterbox_file_once(tmp_path: Path) ->
     from creation.ops.floor import init_series_desk
     from creation.post.finish_record import write_finish_record
     from creation.post.letterbox import pad_to_canvas
-    from test_post_join import clip, noise_bed
+    from test_post_join import clip
 
     desk = init_series_desk(tmp_path, "Join LB", band="30s", episode_count=1)
     api = desk / "ep01" / "api"
@@ -480,7 +480,6 @@ def test_join_marks_and_titles_the_joined_letterbox_file_once(tmp_path: Path) ->
         write_finish_record(desk, episode=1, take_id=take_id, complete=True, pre_bed=pre, master=master,
                             final=master, bed=None, bed_db=-16.5, duck_db=None,
                             letterbox={"letterbox": True, "caption_colour": "yellow"})  # fmt: skip
-    noise_bed(desk)
     out = io.StringIO()
 
     result = run_join(desk, episodes=(1,), stream=out)

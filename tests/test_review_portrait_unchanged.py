@@ -20,7 +20,7 @@ import pytest
 from conftest import make_take, needs_ffmpeg
 from test_hook_overlay_portrait_unchanged import REPO, _recording
 from test_letterbox_portrait_unchanged import _same
-from test_post_finish import FACTS, TWO_LINES, _board, fake_bed, fake_sfx
+from test_post_finish import FACTS, TWO_LINES, _board, fake_sfx
 from test_reel import reel_desk  # noqa: F401
 
 from creation.post.finish import run_finish
@@ -53,7 +53,7 @@ def test_review_of_a_portrait_finished_take_runs_the_commands_it_always_ran(
     )
     _board(post_desk)
     # Subtle (today's house captions) must burn exactly what the golden recorded; a new show's Bold is new.
-    result = run_finish(post_desk, caption_style="subtle", sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, caption_style="subtle", sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, stream=io.StringIO())  # fmt: skip
     assert result.complete and result.final is not None
     calls = _recording(monkeypatch, [post_desk, REPO])

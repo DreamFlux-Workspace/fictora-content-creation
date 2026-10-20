@@ -25,7 +25,7 @@ from creation.post.sfx_motion import (
     opening_hook_names_an_action,
     snap_to_action,
 )
-from test_post_finish import FACTS, TWO_LINES, fake_bed
+from test_post_finish import FACTS, TWO_LINES
 
 FPS = 24
 
@@ -268,7 +268,7 @@ def _desk(root: Path, day: date, box_at: float | None) -> Path:
 
 def _finish(desk: Path, **kw):
     return run_finish(desk, sfx_render=lambda cue, target: make_tone(target, seconds=cue.seconds, freq=300),
-                      bed_maker=fake_bed, facts_fetcher=lambda *a: None, cut_meter=lambda _take: (),
+                      facts_fetcher=lambda *a: None, cut_meter=lambda _take: (),
                       stream=io.StringIO(), **kw)  # fmt: skip
 
 

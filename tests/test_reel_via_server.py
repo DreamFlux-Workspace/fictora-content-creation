@@ -103,7 +103,7 @@ def test_a_legacy_desk_never_calls_the_server(
 
 
 @needs_ffmpeg
-def test_the_server_gets_the_takes_cues_shots_bed_and_the_desks_choices(
+def test_the_server_gets_the_takes_cues_shots_and_the_desks_choices_and_never_a_bed(
     reel_desk: Path, reel_server: FakeReelServer
 ) -> None:
     run_reel(
@@ -129,14 +129,14 @@ def test_the_server_gets_the_takes_cues_shots_bed_and_the_desks_choices(
     assert take["cues"][0]["start_s"] == pytest.approx(0.3)
     assert [s["index"] for s in take["shots"]] == [1, 2, 3, 4]
     assert take["captions_burned"] is False and take["marked"] is False
-    # The picture before the bed and captions, and the harness bed, are what was uploaded.
+    # Only the picture before the mix and captions is uploaded: no music (founder decision, 20 Oct 2026),
+    # even though this desk has a show bed pinned from before.
     assert [(kind, path.name) for kind, path in reel_server.uploads] == [
-        ("video", "take-ep01-t1-colour-v1.mp4"), ("audio", "show-bed-v1.wav"),
+        ("video", "take-ep01-t1-colour-v1.mp4"),
     ]  # fmt: skip
-    assert operator["bed_url"].endswith(".wav") and len(operator["bed_sha256"]) == 64
-    assert (
-        operator["bed_db"] == 1.6 and operator["music_in_take"] is False
-    )  # measured up to -27 LUFS
+    assert not {"bed_url", "bed_sha256", "bed_db", "duck_db", "music_in_take"} & set(
+        operator
+    )
     assert operator["caption_style"] == "plain" and operator["pov"] is False
 
 
@@ -236,11 +236,10 @@ def test_a_pov_brief_on_the_desk_is_sent_as_pov(tmp_path: Path) -> None:
 
 
 def test_operator_body_carries_only_what_is_set() -> None:
-    from creation.post.reel_via_server import BedChoice, operator_body
+    from creation.post.reel_via_server import operator_body
 
     body = operator_body(
-        takes=[{"take_id": "t1"}], bed=BedChoice(None, -60.0, None, True, "no bed"), bed_upload=None,
-        still_upload=("https://assets.test/still.jpg", "a" * 64), caption_style="house", pov=False,
+        takes=[{"take_id": "t1"}], still_upload=("https://assets.test/still.jpg", "a" * 64), caption_style="house", pov=False,
         seconds=15.0, ending=None, hook_line=None, no_hook_line=True, hook_line_position=None,
         no_cover=False, cover_frame=None, plan=None,
     )  # fmt: skip
@@ -250,20 +249,18 @@ def test_operator_body_carries_only_what_is_set() -> None:
     assert (
         "hook_line" not in body and "plan" not in body and "cover_frame_s" not in body
     )
-    assert body["operator"]["bed_db"] == -40.0  # the server's floor
-    assert (
-        "bed_url" not in body["operator"] and body["operator"]["music_in_take"] is True
-    )
+    assert not {"bed_url", "bed_db", "duck_db", "music_in_take"} & set(
+        body["operator"]
+    ), "no music"
     assert body["operator"]["cover_still_url"] == "https://assets.test/still.jpg"
 
 
 @pytest.mark.parametrize("ending", ["push-hold", "hard", "freeze-black"])
 def test_an_ending_the_operator_picks_is_sent(ending: str) -> None:
-    from creation.post.reel_via_server import BedChoice, operator_body
+    from creation.post.reel_via_server import operator_body
 
     body = operator_body(
-        takes=[{"take_id": "t1"}], bed=BedChoice(None, -20.0, None, True, "no bed"), bed_upload=None,
-        still_upload=None, caption_style="house", pov=False, seconds=15.0, ending=ending, hook_line=None,
+        takes=[{"take_id": "t1"}], still_upload=None, caption_style="house", pov=False, seconds=15.0, ending=ending, hook_line=None,
         no_hook_line=False, hook_line_position=None, no_cover=False, cover_frame=None, plan=None,
     )  # fmt: skip
 
@@ -472,7 +469,7 @@ def test_a_letterbox_reel_is_cut_from_the_9_16_letterbox_file(
     operator = reel_server.requests[0]["operator"]
     take = operator["takes"][0]
     assert take["captions_burned"] is True and take["marked"] is True
-    assert operator["bands_in_source"] is True and operator["music_in_take"] is True
+    assert operator["bands_in_source"] is True and "music_in_take" not in operator
     assert "bed_url" not in operator
     assert result.video is not None
     assert (probe_video(result.video).width, probe_video(result.video).height) == (

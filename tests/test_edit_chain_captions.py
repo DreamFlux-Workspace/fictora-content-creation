@@ -32,9 +32,6 @@ def _finish(desk: Path, take_file: Path, asked: list[str]) -> tuple[object, str]
         desk,
         take_file=take_file,
         sfx_render=lambda cue, target: make_tone(target, seconds=cue.seconds, freq=300),
-        bed_maker=lambda spine, music, target: make_tone(
-            target.with_suffix(".wav"), seconds=6.0, freq=220
-        ),
         facts_fetcher=lambda *a: None,
         transcriber=transcriber,
         stream=out,

@@ -1,7 +1,7 @@
 """A hand-laid line over a take that carries the harness's music: the take drops under it (L-20261004-5).
 
-New desks only. A legacy desk, or a take whose music is a bed the kit lays (the mix ducks that bed), lays
-the line over the take as filmed.
+New desks only. A legacy desk, or a take that carries no music (no music in delivered videos since
+20 Oct 2026), lays the line over the take as filmed.
 """
 
 from __future__ import annotations
@@ -83,9 +83,8 @@ def _finish_voice_step(desk: Path, *, music: bool) -> Path:
     facts = facts_with({**NATIVE, "music": {"laid": True}} if music else NATIVE)
     (desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(json.dumps(facts))
     line = _line(desk / "ep01" / "voices" / "voice-ep01-aya-v1.wav")
-    bed = make_tone(desk / "bed.wav", seconds=6.0, freq=220, volume=0.2)
     result = run_finish(
-        desk, sfx_render=fake_sfx([]), bed_maker=lambda *_a: bed, facts_fetcher=lambda *a: None,
+        desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
         colour=False, thumbnail=False, voices=(Placed(line, LINE_AT),), stream=io.StringIO(),
     )  # fmt: skip
     step = next(s for s in result.steps if s.step == "voice")
@@ -111,7 +110,7 @@ def test_finish_ducks_the_takes_music_under_a_hand_line_on_a_new_desk(
 
 
 @needs_ffmpeg
-def test_finish_leaves_the_take_alone_when_the_kit_lays_the_bed(
+def test_finish_leaves_the_take_alone_when_it_carries_no_music(
     post_desk: Path, tmp_path: Path
 ) -> None:
     voiced = _finish_voice_step(post_desk, music=False)

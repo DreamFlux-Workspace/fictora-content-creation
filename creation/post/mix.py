@@ -1,4 +1,9 @@
-"""Mix one take: the show bed under the take's own sound, ducked under the voice, at a measured gain.
+"""Mix one take: the take's own sound at a measured gain, one limiter (a bed under it only if one is given).
+
+Since 20 Oct 2026 (founder decision: delivered videos carry no music) no caller
+passes a music bed: ``finish``, ``join`` and the local reel mix the take's own
+sound (voice, effects, room) alone. The bed input below stays only as the mix
+primitive's.
 
 - The take's own audio (voice, and the SFX layer when it ran) gets one gain,
   measured so the mix lands near -18 LUFS (band -20 to -15): the take is
@@ -235,9 +240,9 @@ class MixResult:
         bed = (
             ""
             if self.bed
-            else "; no bed: the harness's music is in the take"
+            else "; music in the take (not taken out)"
             if self.music_in_take
-            else "; NO MUSIC BED"
+            else "; no music"
         )
         return (
             f"auto take gain {self.gain_db:+.1f} dB (take {self.take_lufs:.1f} LUFS) -> mix {self.mix_lufs:.1f} LUFS "

@@ -14,7 +14,7 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] Japanese/Korean: register fits who speaks to whom; a dialect has a native speaker's yes, or standard language
 - [ ] Japanese/Korean-voiced: `start --language ja|ko` (it cannot be changed later)
 - [ ] A creature inspired by a reference is written as a new original design; no stock character names ("Mara Voss")
-- [ ] Music bed described by instruments and mood; no composer or studio named
+- [ ] No music asked for: the videos carry none (a trending sound is added in Instagram or TikTok at posting)
 
 ## After the draft, before the look
 
@@ -140,17 +140,18 @@ Then watch the file in `takes/`. A take that will be re-filmed gets no `finish`,
 
 ## Before the take is handed over
 
-- [ ] Local finish ran (`fictora-produce finish`) and ended `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`; the raw take is never the deliverable
+- [ ] Local finish ran (`fictora-produce finish`) and ended `Sound: no music ✓ · SFX ✓ · mix ✓ · captions ✓`; the raw take is never the deliverable
 - [ ] `review` run again on the finished file: loudness in band, safe zones clear, zone sheet looked at for faces
-- [ ] Ducking under the voice about 8–9 dB (`review` reads it from the mix buses `finish` saves, band 6–12 dB; `--duck-db 9` when a line must sit clearly over the bed)
+- [ ] No music on the delivered file (no `music !!` on the sound line; a take that has it is named to the human for a re-film)
 - [ ] No loudnorm anywhere; per-take gain and one limiter
-- [ ] Wrong take dialogue (stray or garbled speech, a wrong line): take audio dropped and rebuilt (voices, effects, ambience, bed), no muted ranges; every hand cue answers a visible action, inside its own take, and audible
+- [ ] Wrong take dialogue (stray or garbled speech, a wrong line): take audio dropped and rebuilt (voices, effects, ambience), no muted ranges; every hand cue answers a visible action, inside its own take, and audible
 - [ ] Captions are English, in the 55–70% band, on screen only while the line is spoken; no `NOT ENGLISH` in the finish summary
 - [ ] Off-screen and voice-only lines are in italic (the same face as the rest); every on-screen line is upright; one caption face in the whole episode
 - [ ] Any `trim` / `tempo` done after `finish`, on the finished file, with the producer's yes; what was cut shown; first frame after a cut checked; new length stated (shorter than the band is fine). `deboard` holds board frames and never cuts
 - [ ] No post overlay covers the key reveal (test frames of the key shots looked at)
 - [ ] Previews, rough cuts and "just combine" files carry the house captions too
-- [ ] Join: one bed across it, 24 fps, seam steps under 5 dB
+- [ ] Join: no music under it, 24 fps, seam steps under 5 dB
+- [ ] At posting: a trending sound added inside Instagram or TikTok that fits the account (eerie for horror, soft for BL and food, playful-spooky for horror-comedy); captions on; the "with score" version only when the reel truly needs it and was asked for
 - [ ] Un-marked master kept (`…-cap-vN.mp4`); the marked `…-sokii-vN.mp4` is the delivered copy
 - [ ] Job ids are in `run-notes.md`; no compiled prompt was fetched or saved
 - [ ] The delivered file copied (not moved) into `<Series> - finished episodes`; the desk folder not moved or renamed

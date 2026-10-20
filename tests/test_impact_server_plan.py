@@ -34,7 +34,7 @@ from creation.post.impact_post import (
     plan_from_server_answer,
 )
 from creation.post.sfx import plan_from_take_facts
-from test_post_finish import FACTS, fake_bed
+from test_post_finish import FACTS
 from test_sfx_motion import _desk
 from conftest import make_tone
 
@@ -65,7 +65,7 @@ def _finish(desk: Path, **kw: Any):  # type: ignore[no-untyped-def]
     out = io.StringIO()
     kw.setdefault("cut_meter", lambda _take: ())
     result = run_finish(desk, sfx_render=lambda cue, target: make_tone(target, seconds=cue.seconds, freq=300),
-                        bed_maker=fake_bed, facts_fetcher=lambda *a: None, stream=out, **kw)  # fmt: skip
+                        facts_fetcher=lambda *a: None, stream=out, **kw)  # fmt: skip
     return result, out.getvalue()
 
 

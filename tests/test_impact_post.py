@@ -34,7 +34,6 @@ from creation.post.impact_post import (
 )
 from creation.post.lineage import KEEPS_TIMELINE
 from creation.post.sfx import SfxCue
-from test_post_finish import fake_bed
 from test_sfx_motion import _desk
 
 FPS = 24
@@ -317,7 +316,7 @@ def test_rendered_blast_and_hit_on_the_impact_frame(tmp_path: Path) -> None:
 
 def _finish(desk: Path, **kw):
     return run_finish(desk, sfx_render=lambda cue, target: make_tone(target, seconds=cue.seconds, freq=300),
-                      bed_maker=fake_bed, facts_fetcher=lambda *a: None, cut_meter=lambda _take: (),
+                      facts_fetcher=lambda *a: None, cut_meter=lambda _take: (),
                       stream=io.StringIO(), **kw)  # fmt: skip
 
 

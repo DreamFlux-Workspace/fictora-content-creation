@@ -102,7 +102,7 @@ def test_finish_holds_a_start_on_an_earlier_drawing_of_the_board(
     out = io.StringIO()
 
     result = run_finish(post_desk, facts_fetcher=lambda *a: None, sfx_render=lambda cue, t: t,
-                        bed_maker=lambda *a: None, colour=False, thumbnail=False, stream=out)  # fmt: skip
+                        colour=False, thumbnail=False, stream=out)  # fmt: skip
 
     step = next(s for s in result.steps if s.step == "deboard")
     assert step.status == "ran" and step.output is not None, step.detail

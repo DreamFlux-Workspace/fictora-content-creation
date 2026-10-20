@@ -494,7 +494,7 @@ def test_a_legacy_finish_burns_what_the_golden_recorded_and_says_house(
     """No caption style on a legacy desk is house, byte for byte (the golden from before #141)."""
 
     from test_hook_overlay_portrait_unchanged import REPO, _check, _recording
-    from test_post_finish import FACTS, TWO_LINES, _board, fake_bed, fake_sfx
+    from test_post_finish import FACTS, TWO_LINES, _board, fake_sfx
 
     from creation.post.finish import run_finish
 
@@ -506,7 +506,7 @@ def test_a_legacy_finish_burns_what_the_golden_recorded_and_says_house(
     _board(post_desk)
     calls = _recording(monkeypatch, [post_desk, REPO])
     out = io.StringIO()
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, stream=out)  # fmt: skip
     assert result.complete
     captions = (post_desk / "ep01" / "takes" / "take-ep01-t1-cap-v1.ass").read_text(

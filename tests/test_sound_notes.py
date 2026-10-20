@@ -303,7 +303,7 @@ def test_plan_changes_list_added_and_dropped_cues() -> None:
 def test_finish_says_its_facts_are_older_than_the_sound_notes_and_points_to_refresh(
     post_desk: Path,
 ) -> None:
-    from test_post_finish import TWO_LINES, fake_bed, fake_sfx
+    from test_post_finish import TWO_LINES, fake_sfx
 
     make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
     (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
@@ -314,7 +314,7 @@ def test_finish_says_its_facts_are_older_than_the_sound_notes_and_points_to_refr
     (post_desk / "ep01" / "api" / "03_spine.json").write_text(json.dumps(spine))
     out = io.StringIO()
 
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, colour=False, stream=out)  # fmt: skip
 
     text = out.getvalue()

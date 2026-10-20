@@ -37,7 +37,7 @@ You never need the private `fictora-drama` repo. Never paste the API token into 
 2. Copy `.env.example` → `.env` and set **`FICTORA_DRAMA_GENERATION_SERVICE_TOKEN`** (from engineering) (nothing else: no provider key goes on this laptop; generated audio is made on the server).
 3. Open the **repo root** in Cursor (so the **episode-production** skill loads).
 4. Optional check (no spend): `uv run python scripts/smoke_live.py --phase read`
-5. For the local finish (sound effects, music, mix, captions, mark), install **ffmpeg with libass** on macOS:
+5. For the local finish (sound effects, mix, captions, mark; no music), install **ffmpeg with libass** on macOS:
    `brew install ffmpeg` (use `ffmpeg-full` only if `ffmpeg -filters` lists no `ass`). `fictora-produce start` warns when it is missing.
 
 ---
@@ -64,7 +64,7 @@ Desk:
 Workflow:
 - One `fictora-produce step` per turn until I approve gates.
 - After boards, estimate → I say yes → `step --confirm-spend`.
-- When I say Use it, run `uv run fictora-produce finish --desk <desk>`. The last line must read `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`; NOT DONE (exit 5) is not a deliverable.
+- When I say Use it, run `uv run fictora-produce finish --desk <desk>`. The last line must read `Sound: no music ✓ · SFX ✓ · mix ✓ · captions ✓`; NOT DONE (exit 5) is not a deliverable.
 
 Start with `start`, print desk path and phase, wait for my "aligned" before the first paid step.
 ```
@@ -168,11 +168,13 @@ uv run fictora-produce finish --desk <desk>
 | `ep01/takes/take-ep01-t1-raw-v1.mp4` | As filmed; never the deliverable |
 | `ep01/takes/take-ep01-t1-sfx-v1.mp4` | Sound effects laid from the take facts |
 | `ep01/takes/take-ep01-t1-colour-v1.mp4` | Look matched to your approved board |
-| `ep01/takes/take-ep01-t1-mix-v1.mp4` | Music bed under the voice, near −18 LUFS |
+| `ep01/takes/take-ep01-t1-mix-v1.mp4` | The take's own sound (voice, effects, room), near −18 LUFS; no music |
 | `ep01/takes/take-ep01-t1-cap-v1.mp4` | House captions |
 | `ep01/takes/take-ep01-t1-sokii-v1.mp4` | **Ship candidate**: Sokii mark top left |
 
-The last line reads `Sound: music ✓ · SFX ✓ · mix ✓ · captions ✓`. **NOT DONE** (exit 5) names what is missing; that file is not a deliverable. Wrong caption timing? Re-run with `--line-start <seconds>` and/or `--line-end <seconds>` once per line. Bed too loud under a line? `--duck-db 12`.
+The last line reads `Sound: no music ✓ · SFX ✓ · mix ✓ · captions ✓`. **NOT DONE** (exit 5) names what is missing; that file is not a deliverable. Wrong caption timing? Re-run with `--line-start <seconds>` and/or `--line-end <seconds>` once per line.
+
+**No music in the videos we deliver** (founder decision, 20 Oct 2026). The finished take, the joined episode, the Instagram reel and the TikTok part carry the voices, the sound effects and the room sound only. When you post, add a trending sound inside Instagram or TikTok that fits the account: eerie for horror, soft for BL and food, playful-spooky for horror-comedy. Keep the captions on. If one reel truly needs its own score (a jumpscare sting, say), ask the Fictora team for its "with score" version; the no-music version stays the default, and you choose which one to post when you post it.
 
 A character's voice feels off? Never regenerate: `voice --audition`, you pick, `voice --pick N`, `revoice` the takes already filmed that they speak in, then `finish --take-file <revoice file>` (skill: "Change a character's voice").
 

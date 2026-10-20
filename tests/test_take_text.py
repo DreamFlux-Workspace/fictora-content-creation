@@ -9,7 +9,7 @@ from pathlib import Path
 
 from conftest import make_take, needs_ffmpeg
 from PIL import Image, ImageDraw, ImageFont
-from test_post_finish import fake_bed, fake_sfx
+from test_post_finish import fake_sfx
 
 from creation.post import take_text
 from creation.post.finish import run_finish
@@ -245,7 +245,7 @@ def test_finish_summary_carries_the_drawn_text_warning(post_desk: Path) -> None:
     out = io.StringIO()
 
     result = run_finish(post_desk, facts_fetcher=lambda *a: None, text_ocr=_fake_ocr, sfx_render=fake_sfx([]),
-                        bed_maker=fake_bed, thumbnail=False, stream=out)  # fmt: skip
+                        thumbnail=False, stream=out)  # fmt: skip
 
     summary = "\n".join(result.summary_lines())
     assert "!! DRAWN TEXT in the raw take `take-ep01-t1-raw-v1.mp4`" in summary

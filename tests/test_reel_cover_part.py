@@ -76,10 +76,10 @@ def test_the_cli_part_flag_saves_it_on_the_desk(
 
 
 def test_operator_body_sends_part_only_when_given() -> None:
-    from creation.post.reel_via_server import BedChoice, operator_body
+    from creation.post.reel_via_server import operator_body
 
     common = dict(
-        takes=[], bed=BedChoice(None, -16.5, None, False, ""), bed_upload=None, still_upload=None,
+        takes=[], still_upload=None,
         caption_style="house", pov=False, seconds=15.0, ending=None, hook_line=None, no_hook_line=False,
         hook_line_position=None, no_cover=False, cover_frame=None, plan=None,
     )  # fmt: skip

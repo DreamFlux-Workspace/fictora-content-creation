@@ -10,7 +10,7 @@ Allowed:
 
 - Many episode folders on one series desk, all waiting at once.
 - One review queue. A human clears `look`, then `plates`, then several scripts, then several boards.
-- Shared plates, look, voices, and the series bed. Episode 2 does not redraw the cast.
+- Shared plates, look and voices. Episode 2 does not redraw the cast.
 - API enrol of plates or boards for different episodes after the shared plates are approved.
 
 Not allowed:

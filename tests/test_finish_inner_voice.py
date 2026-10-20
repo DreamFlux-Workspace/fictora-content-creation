@@ -172,7 +172,7 @@ def _desk_with_cues(
 
 def _finish(post_desk: Path, audio: FakeAudio, **kwargs: Any):
     out = io.StringIO()
-    result = run_finish(post_desk, sfx_render=_sfx, bed_maker=_bed, facts_fetcher=lambda *a: None,
+    result = run_finish(post_desk, sfx_render=_sfx, facts_fetcher=lambda *a: None,
                         voice_audio=audio, stream=out, **kwargs)  # fmt: skip
     return result, out.getvalue()
 
@@ -364,7 +364,7 @@ def test_a_refusal_from_the_route_names_the_cue_and_the_rest_of_the_take_still_f
     assert result.sound_missing == (INNER_VOICE_STEP,)
     status = {s.step: s.status for s in result.steps}
     assert all(
-        status[name] == "ran" for name in ("sfx", "bed", "mix", "captions", "watermark")
+        status[name] == "ran" for name in ("sfx", "mix", "captions", "watermark")
     ), status
     (why,) = result.inner_voice_not_laid
     assert why.startswith("iv_ep01_01 (Aya): HTTP 409 operator_audio_unavailable")

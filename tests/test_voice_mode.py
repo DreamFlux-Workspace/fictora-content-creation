@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import copy
 import io
-import json
 from pathlib import Path
 from typing import Any
 
@@ -420,14 +419,14 @@ def test_film_on_a_locked_show_is_still_held_for_the_voices(
     assert model_show.posted(VIDEO) == []
 
 
-# --- finish lays the show's music on a model-voice take ------------------------------------------------
+# --- a model-voice take finishes with no music too ------------------------------------------------------
 
 
 @needs_ffmpeg
-def test_a_model_voice_take_gets_the_shows_bed_as_before(post_desk: Path) -> None:
+def test_a_model_voice_take_finishes_with_no_music(post_desk: Path) -> None:
     """A take filmed in voice mode ``model`` has no soundtrack block (a native run) and no baked music."""
 
-    from test_harness_music import _desk_take, _made_bed
+    from test_no_music import _desk_take
     from test_post_finish import fake_sfx
     from test_target_audio_soundtrack import facts_with
 
@@ -436,14 +435,13 @@ def test_a_model_voice_take_gets_the_shows_bed_as_before(post_desk: Path) -> Non
     facts = facts_with(None)
     facts["take_facts"]["model_music"] = False
     _desk_take(post_desk, facts)
-    calls: list[str | None] = []
-
     result = run_finish(
-        post_desk, sfx_render=fake_sfx([]), bed_maker=_made_bed(calls),
+        post_desk, sfx_render=fake_sfx([]),
         facts_fetcher=lambda *a: None, thumbnail=False, stream=io.StringIO(),
     )  # fmt: skip
 
     assert result.complete
-    assert next(s for s in result.steps if s.step == "bed").status == "ran"
-    assert not result.music_in_take
-    assert json.loads(json.dumps(calls)) == [None]
+    assert "bed" not in {s.step for s in result.steps}
+    assert not result.music_in_take and result.sound_line().startswith(
+        "Sound: no music ✓"
+    )

@@ -80,6 +80,14 @@ def test_a_moment_sends_every_take_with_its_episode_and_keeps_its_own_files_and_
         for t in body["operator"]["takes"]
     )
     assert body["operator"]["part"] == 3
+    # No music (founder decision, 20 Oct 2026): no bed is uploaded or sent, though the desk has one pinned.
+    assert [kind for kind, _path in server.uploads] == ["video"] * len(
+        body["operator"]["takes"]
+    )
+    assert not {"bed_url", "bed_sha256", "bed_db", "duck_db", "music_in_take"} & set(
+        body["operator"]
+    )
+    assert "no music" in "\n".join(made.lines)
     folder = reel_desk / "reels" / "moments"
     assert made.video == folder / "moment-part03-v1.mp4" and made.video.is_file()
     assert made.post is not None and made.post.is_file()

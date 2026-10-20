@@ -12,7 +12,6 @@ from test_post_join import (
     clip,
     finished_take,
     frame_at,
-    noise_bed,
     region,
 )
 
@@ -74,7 +73,6 @@ def test_a_recaptioned_copy_of_the_master_joins_in_its_place_and_is_noted(
 ) -> None:
     one = finished_take(join_desk, 1, "t1", grey=70)
     two = finished_take(join_desk, 1, "t2", grey=90)
-    noise_bed(join_desk)
     fixed = recaption(
         two["master"],
         join_desk / "ep01" / "takes" / "take-ep01-t2-recap-v1.mp4",
@@ -98,7 +96,6 @@ def test_without_from_record_the_copy_is_refused_and_the_flag_is_named(
 ) -> None:
     one = finished_take(join_desk, 1, "t1")
     two = finished_take(join_desk, 1, "t2")
-    noise_bed(join_desk)
     fixed = recaption(
         two["master"],
         join_desk / "ep01" / "takes" / "take-ep01-t2-recap-v1.mp4",
@@ -116,7 +113,6 @@ def test_a_copy_of_another_length_is_refused(
 ) -> None:
     one = finished_take(join_desk, 1, "t1")
     two = finished_take(join_desk, 1, "t2")
-    noise_bed(join_desk)
     other = clip(
         join_desk / "ep01" / "takes" / "take-ep01-t2-recap-v1.mp4", seconds=2.0, grey=70
     )
@@ -131,7 +127,6 @@ def test_a_copy_with_other_sound_is_refused(
 ) -> None:
     one = finished_take(join_desk, 1, "t1")
     two = finished_take(join_desk, 1, "t2")
-    noise_bed(join_desk)
     louder = recaption(
         two["master"],
         join_desk / "ep01" / "takes" / "take-ep01-t2-recap-v1.mp4",
@@ -149,7 +144,6 @@ def test_a_copy_of_the_marked_final_is_refused(
 ) -> None:
     one = finished_take(join_desk, 1, "t1")
     two = finished_take(join_desk, 1, "t2")
-    noise_bed(join_desk)
     fixed = recaption(
         two["final"],
         join_desk / "ep01" / "takes" / "take-ep01-t2-recap-v1.mp4",
@@ -167,7 +161,6 @@ def test_from_record_must_name_a_recorded_file_and_a_file_to_stand_in_for(
 ) -> None:
     one = finished_take(join_desk, 1, "t1")
     two = finished_take(join_desk, 1, "t2")
-    noise_bed(join_desk)
     stray = clip(
         join_desk / "ep01" / "takes" / "take-ep01-t2-other-v1.mp4", seconds=2.5, grey=70
     )

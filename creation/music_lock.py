@@ -1,51 +1,21 @@
-"""A show's music stays the same across its episodes (founder decision, 2026-10-08).
+"""A show's old music lock, and the take's music-free stem (no music in delivered videos since 20 Oct 2026).
 
-Music is always the harness's (the 1 Oct rule): the kit never lays a file or a
-description the operator chooses. But a show must sound like itself all
-season. Two shows changed music between episodes because an update changed
-where the music came from:
+Founder decision, 20 Oct 2026: every delivered video carries NO music (voice,
+sound effects and room sound only; a trending sound is added inside Instagram
+or TikTok at posting). ``finish`` lays no bed on any show, so the music lock
+(founder decision, 8 Oct 2026: one source of music per show all season, kept
+in ``series.json`` ``music_lock``) no longer decides anything in ``finish``,
+and ``music-lock`` only says so. What stays here:
 
-- L-20261005-2 (Seedlings): its early episodes' takes carried no music and
-  ``finish`` laid the show's bed; after the server started baking its scored
-  cues into the take (fictora-drama #572/#589), ``finish`` (#110) skipped the
-  show's bed on every take whose facts said ``music.laid``: the show's music
-  became the harness's track music mid-season.
-- L-20261005-22 (Beach Court): episodes 1-3 were finished with the show's
-  pinned theme; episode 4 came back with music baked in, so ``finish`` skipped
-  the theme.
-
-So the desk records where the show's music comes from, once
-(``series.json`` ``music_lock``):
-
-- ``finish``: the takes carry no music and ``finish`` lays the show's bed
-  (``bed``, the harness bed pinned on the desk);
-- ``in_take``: the harness's music is in each take (baked into its track, or
-  the video model's), and ``finish`` lays no bed.
-
-Existing shows only (founder decision, 2026-10-08, after review): music is
-meant to change episode to episode and scene to scene with the mood, so a desk
-created since 6 Oct 2026 (:func:`creation.rules_epoch.is_legacy` false) keeps
-no lock and finishes exactly as before (:func:`lock_applies`).
-
-On an existing show it is read once from the show's finished episodes (the first finished episode
-decides, :func:`infer_desk_music_lock`), else written by the first ``finish``
-of the show. Later ``finish`` runs honour it: a take never finished before
-that comes back with the harness's music baked into its track on a ``finish``
-show is fixed by mixing, not filming: ``finish`` swaps the take's sound for its
-stored music-free stem (voices, room and effects; take facts
-``soundtrack.music.stem_url``, :func:`remix_onto_stem`) and lays the show's
-bed on it. Only a take whose music the video model made itself (no stem) is
-NOT DONE with a plain ``!!`` line: it can only change by filming again. A take
-finished before keeps what it had. The server keeps the
-same choice per show (``GET/POST /v1/spines/{id}/music-lock``, fictora-drama
-show music lock) and, with the kit's ``music_by_finish``, films a ``finish``
-show's takes with no music, so ``finish`` lays the bed as on its first
-episodes.
-
-``fictora-produce music-lock --desk D [--set finish|in-take --reason "..."]``
-reads it, or changes it on purpose: the change is written to the desk (with
-its reason, in ``shared/music-lock-log.jsonl`` and the episode's run notes)
-and sent to the server.
+- :func:`remix_onto_stem`: a take the harness's music was baked into (take
+  facts ``soundtrack.music.laid``) gets its stored music-free stem (voices,
+  room, effects; ``soundtrack.music.stem_url``) in place of its sound, by
+  mixing, not filming. ``finish`` does it on every such take.
+- :func:`music_by_finish_wanted`: an existing show (created before 6 Oct 2026)
+  whose lock was ``finish`` still asks the server to film with no music in the
+  take (``music_by_finish``), as before. The server owns the no-music rule for
+  every show; this only keeps an older server's answer the same.
+- Reading a desk's stored or inferred lock (:func:`desk_music_lock`), for that.
 """
 
 from __future__ import annotations
@@ -61,7 +31,6 @@ from typing import Any, Literal, Protocol, TextIO
 
 import httpx
 
-from creation.harness.http_util import api_error_text
 from creation.ops.state import load_series, save_series
 
 DeskMusicKind = Literal["finish", "in_take"]
@@ -75,12 +44,6 @@ MUSIC_LOCK_LOG = Path("shared") / "music-lock-log.jsonl"
 MUSIC_LOCK_WORDS: Mapping[str, str] = {
     "finish": "no music in the take; finish lays the show's bed",
     "in_take": "the harness's music is in each take; finish lays no bed",
-}
-#: The server's kinds, in the kit's words.
-SERVER_LOCK_WORDS: Mapping[str, str] = {
-    "track": "the harness's scored music, in each take's track",
-    "finish": "no music in the take; finish lays the show's theme",
-    "model": "the video model's own music",
 }
 
 
@@ -276,41 +239,6 @@ def desk_music_lock(desk: Path, *, out: TextIO | None = None) -> DeskMusicLock |
     )
 
 
-def stem_remix_applies(
-    lock: DeskMusicLock | None,
-    *,
-    music_in_take: bool,
-    finished_before: bool,
-    stem_url: str | None,
-) -> bool:
-    """Whether ``finish`` swaps this take's sound for its music-free stem and lays the show's bed.
-
-    Parameters
-    ----------
-    lock
-        The desk's lock.
-    music_in_take
-        The take carries the harness's music.
-    finished_before
-        The take has a finish record (it keeps its music).
-    stem_url
-        The take's stored music-free stem (take facts ``soundtrack.music.stem_url``).
-
-    Returns
-    -------
-    bool
-        True for a never-finished take with baked-in music and a stem, on a ``finish`` show.
-    """
-
-    return (
-        lock is not None
-        and lock.kind == "finish"
-        and music_in_take
-        and not finished_before
-        and stem_url is not None
-    )
-
-
 def remix_onto_stem(
     take: Path,
     stem_url: str,
@@ -347,58 +275,6 @@ def remix_onto_stem(
          "-af", "apad", "-t", f"{seconds:.3f}", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", str(out)]
     )  # fmt: skip
     return out
-
-
-def take_music_refusal(
-    lock: DeskMusicLock | None,
-    *,
-    music_in_take: bool,
-    music_why: str,
-    finished_before: bool,
-    desk: Path,
-    stem_url: str | None = None,
-) -> str | None:
-    """Why ``finish`` cannot honour the show's music on this take, or ``None`` when it can.
-
-    Parameters
-    ----------
-    lock
-        The desk's lock (``None``: nothing finished yet, the take decides).
-    music_in_take
-        The take carries the harness's music (take facts ``music.laid`` or ``model_music``).
-    music_why
-        Which fact says so.
-    finished_before
-        The take has a finish record (it keeps the music it was finished with).
-    desk
-        Series desk (for the command lines).
-    stem_url
-        The take's music-free stem: with one, ``finish`` re-mixes instead (:func:`stem_remix_applies`).
-
-    Returns
-    -------
-    str | None
-        The plain ``!!`` sentence for a take never finished before whose
-        music cannot be taken out (the video model made it, or no stem was
-        stored) on a show whose music is laid in finish; else ``None``.
-    """
-
-    if (
-        lock is None
-        or lock.kind != "finish"
-        or not music_in_take
-        or finished_before
-        or stem_url
-    ):
-        return None
-    bed = f" (`{Path(lock.bed).name}`)" if lock.bed else ""
-    return (
-        f"!! NOT DONE: this show's music is laid in finish{bed}, as its earlier episodes' was, but this take came "
-        f"back with music in it ({music_why}) that cannot be taken out: the video model made it (or no music-free "
-        "stem was stored), so only filming again changes it (L-20261005-2, L-20261005-22). Re-film the take: the "
-        "kit sends music_by_finish, so the server films this show with no music in the take. Or change the show's "
-        f'music on purpose: `fictora-produce music-lock --desk {desk} --set in-take --reason "..."`.'
-    )
 
 
 def music_by_finish_wanted(
@@ -457,164 +333,6 @@ def server_music_lock(run: _Api, spine_id: str) -> dict[str, Any] | None:
     return None
 
 
-def server_kind(kind: DeskMusicKind, *, locked_voices: bool) -> str:
-    """The server's lock for a desk kind: ``finish``; or, in the take, the track's (locked voices) or the model's."""
-
-    if kind == "finish":
-        return "finish"
-    return "track" if locked_voices else "model"
-
-
-def set_server_music_lock(
-    run: _Api, spine: Mapping[str, Any], kind: str, *, reason: str
-) -> dict[str, Any]:
-    """``POST …/music-lock`` (free); a stale spine version is read again and sent once more.
-
-    Raises
-    ------
-    RuntimeError
-        The server is older than the route, or refused the change.
-    """
-
-    from creation.post.desk import spine_body
-
-    body = spine_body(spine)
-    sid = str(body.get("spine_id") or "")
-    path = MUSIC_LOCK_ROUTE.format(spine_id=sid)
-    for attempt in (1, 2):
-        status, answer = run.post_optional(
-            path,
-            {
-                "spine_version": body.get("spine_version"),
-                "kind": kind,
-                "reason": reason,
-            },
-        )
-        if 200 <= status < 300 and isinstance(answer, Mapping):
-            return dict(answer)
-        error = answer.get("error") if isinstance(answer, Mapping) else None
-        code = str(error.get("code") or "") if isinstance(error, Mapping) else ""
-        if status == 409 and code == "spine_version_conflict" and attempt == 1:
-            body = spine_body(run.spine(sid))
-            continue
-        if status in (404, 405) and not code:
-            raise RuntimeError(
-                "this Drama API has no music-lock route yet (an older deploy): only the desk was changed"
-            )
-        raise RuntimeError(
-            f"the server refused the music lock (HTTP {status}): {api_error_text(answer)}"
-        )
-    raise AssertionError("unreachable")
-
-
-def run_music_lock(
-    desk: Path,
-    *,
-    set_to: str | None = None,
-    reason: str | None = None,
-    out: TextIO | None = None,
-) -> DeskMusicLock | None:
-    """``music-lock --desk D [--set finish|in-take --reason "..."]``: read or change the show's music (free).
-
-    Parameters
-    ----------
-    desk
-        Series desk bound to a story.
-    set_to
-        ``finish`` or ``in-take`` to change it on purpose; ``None`` to read it.
-    reason
-        Why (required with ``set_to``): logged on the desk and sent to the server.
-    out
-        Text stream.
-
-    Returns
-    -------
-    DeskMusicLock | None
-        The desk's lock after the call.
-
-    Raises
-    ------
-    ValueError
-        ``--set`` without ``--reason``, or an unknown kind.
-    """
-
-    from creation.ops.notes import append_run_note
-    from creation.post.desk import open_api, refresh_spine
-    from creation.production_state import load_production
-    from creation.voice_mode import show_voices
-
-    out = out or sys.stdout
-    desk = desk.expanduser().resolve()
-    kind: DeskMusicKind | None = None
-    if set_to is not None:
-        kind = set_to.replace("-", "_")  # type: ignore[assignment]
-        if kind not in DESK_MUSIC_KINDS:
-            raise ValueError(f"music lock is finish or in-take, not {set_to!r}")
-        if not (reason or "").strip():
-            raise ValueError(
-                'changing a show\'s music needs a reason: --reason "why the music changes"'
-            )
-    if not lock_applies(desk):
-        if kind is not None:
-            raise ValueError(f"Not changed: {NEW_SHOW_MUSIC_IS_FRESH}")
-        print(NEW_SHOW_MUSIC_IS_FRESH, file=out)
-        return None
-    lock = desk_music_lock(desk, out=out)
-    episode = load_production(desk).episode_ordinal
-    run = open_api(desk, episode)
-    try:
-        spine = refresh_spine(run, desk, episode)
-        if kind is not None:
-            text = " ".join(str(reason).split())
-            bed = lock.bed if lock is not None and kind == "finish" else None
-            lock = store_desk_music_lock(
-                desk,
-                DeskMusicLock(
-                    kind=kind, origin="changed", episode=episode, bed=bed, reason=text
-                ),
-                out=out,
-            )
-            if (desk / f"ep{episode:02d}" / "run-notes.md").is_file():
-                append_run_note(
-                    desk / f"ep{episode:02d}",
-                    f"Music lock changed on purpose: {lock.line()}",
-                )
-            wanted = server_kind(kind, locked_voices=show_voices(run, spine).locked)
-            try:
-                answer = set_server_music_lock(run, spine, wanted, reason=text)
-            except RuntimeError as exc:
-                print(f"!! {exc}", file=out)
-            else:
-                if answer.get("notice"):
-                    print(str(answer["notice"]), file=out)
-        server = server_music_lock(run, str(spine.get("spine_id") or ""))
-    finally:
-        run.client.close()
-    print(
-        lock.line()
-        if lock is not None
-        else "Music for the next take: not set yet (the show's first finish sets it).",
-        file=out,
-    )
-    if server is not None and isinstance(server.get("music_lock"), Mapping):
-        server_lock = server["music_lock"]
-        mixed = (
-            " Its filmed episodes used more than one kind of music."
-            if server.get("mixed")
-            else ""
-        )
-        print(
-            f"The harness: {SERVER_LOCK_WORDS.get(str(server_lock.get('kind')), server_lock.get('kind'))} "
-            f"({server.get('source')}).{mixed}",
-            file=out,
-        )
-    print(
-        f'Change it on purpose: fictora-produce music-lock --desk {desk} --set finish|in-take --reason "..."',
-        file=out,
-    )
-    return lock
-
-
 __all__ = [
     "DESK_MUSIC_KINDS",
     "MUSIC_LOCK_LOG",
@@ -624,16 +342,11 @@ __all__ = [
     "DeskMusicLock",
     "desk_music_lock",
     "infer_desk_music_lock",
-    "run_music_lock",
-    "server_kind",
     "server_music_lock",
-    "set_server_music_lock",
     "store_desk_music_lock",
     "stored_desk_music_lock",
-    "take_music_refusal",
     "NEW_SHOW_MUSIC_IS_FRESH",
     "lock_applies",
     "music_by_finish_wanted",
     "remix_onto_stem",
-    "stem_remix_applies",
 ]

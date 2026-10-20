@@ -503,9 +503,6 @@ def test_finish_summary_shows_not_english(post_desk: Path) -> None:
     result = run_finish(
         post_desk,
         sfx_render=lambda cue, target: make_tone(target, seconds=cue.seconds, freq=300),
-        bed_maker=lambda spine, music, target: make_tone(
-            target.with_suffix(".wav"), seconds=6.0, freq=220
-        ),
         facts_fetcher=lambda *a: None,
         stream=out,
     )

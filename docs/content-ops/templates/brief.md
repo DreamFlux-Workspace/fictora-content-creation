@@ -29,7 +29,7 @@ These must be spoken in a line. Decide now.
 
 Reference crops go in `reference/`. An image sets the medium. Words do not.
 
-Music bed: instruments and mood only, never a composer or studio. Japanese/Korean-voiced: `start --language ja|ko`.
+Music: none in the delivered videos (a trending sound is added in Instagram or TikTok at posting). Japanese/Korean-voiced: `start --language ja|ko`.
 
 ## Lines (three maximum per take)
 

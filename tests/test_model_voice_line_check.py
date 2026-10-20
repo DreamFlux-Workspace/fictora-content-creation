@@ -21,7 +21,7 @@ from creation.post import line_check as lc
 from creation.post.finish import run_finish
 from creation.post.line_check import ScriptLine, check_take_lines, normalise
 from creation.post.whisper import Word, _tokens
-from test_post_finish import FACTS, fake_bed, fake_sfx
+from test_post_finish import FACTS, fake_sfx
 
 KENJI = "I told you to wait for me here."
 AYA = "You never listen to anything I say."
@@ -354,7 +354,7 @@ def _model_take(
 def _finish(desk: Path, **kw: object) -> tuple[object, str]:
     out = io.StringIO()
     result = run_finish(
-        desk, sfx_render=fake_sfx([]), bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+        desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
         transcriber=_no_transcriber, stream=out, **kw,
     )  # fmt: skip
     return result, out.getvalue()
@@ -494,7 +494,7 @@ def test_no_transcript_makes_one_on_the_server_and_checks_it(post_desk: Path) ->
         return moved
 
     out = io.StringIO()
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
                         transcriber=transcriber, stream=out)  # fmt: skip
     assert asked == ["t1"] and result.line_faults
     assert "made on the server now, $0" in out.getvalue()
@@ -509,7 +509,7 @@ def test_a_check_that_cannot_run_is_loud_but_not_a_stop(post_desk: Path) -> None
         raise ValueError("no stored URL")
 
     out = io.StringIO()
-    result = run_finish(post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+    result = run_finish(post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
                         transcriber=transcriber, stream=out)  # fmt: skip
     assert not result.line_faults and result.steps
     assert (

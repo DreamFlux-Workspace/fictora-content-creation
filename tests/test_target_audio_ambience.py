@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 from conftest import SPINE, make_take, needs_ffmpeg
-from test_post_finish import FACTS, TWO_LINES, fake_bed, fake_sfx
+from test_post_finish import FACTS, TWO_LINES, fake_sfx
 from test_target_audio_soundtrack import NATIVE, TARGET, facts_with
 
 from creation.post.ambience import (
@@ -109,7 +109,7 @@ def _finish(
     post_desk: Path, maker, *, take_id: str = "t1", out: io.StringIO | None = None
 ):
     return run_finish(
-        post_desk, take_id=take_id, sfx_render=fake_sfx([]), bed_maker=fake_bed,
+        post_desk, take_id=take_id, sfx_render=fake_sfx([]),
         facts_fetcher=lambda *a: None, cut_meter=lambda _take: (3.9,), colour=False,
         ambience_maker=maker, stream=out or io.StringIO(),
     )  # fmt: skip
@@ -375,7 +375,7 @@ def test_finish_makes_the_location_ambience_and_lays_it_instead_of_room_tone(
         "the heard-check still runs"
     )
     assert not list((post_desk / "ep01" / "takes").glob("*-room-tone-*.mp4"))
-    assert "Sound: music ✓ · SFX ✓ · mix ✓ · ambience ✓ · captions ✓" in log
+    assert "Sound: no music ✓ · SFX ✓ · mix ✓ · ambience ✓ · captions ✓" in log
     assert f'- ambience: ran — ambience: "{description}", -28 dB' in log, (
         "in the summary"
     )
@@ -521,7 +521,7 @@ def test_the_ambience_and_the_bed_duck_under_a_laid_voice_line_too(
     monkeypatch.setattr(finish_module, "lay_ambience", spy_lay)
     monkeypatch.setattr(finish_module, "mix_take", spy_mix)
     result = run_finish(
-        post_desk, sfx_render=fake_sfx([]), bed_maker=fake_bed, facts_fetcher=lambda *a: None,
+        post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
         cut_meter=lambda _take: (3.9,), colour=False, ambience_maker=fake_maker([]),
         voices=(Placed(voice, 2.4),), over_locked_voices=True, stream=io.StringIO(),
     )  # fmt: skip
