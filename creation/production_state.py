@@ -65,7 +65,7 @@ class ProductionState:
     #: ``stale_storyboard_sets``); cleared when the board is drawn again.
     boards_stale: list[str] = field(default_factory=list)
     #: Series arcs offered by the episode-2 brief (``arc --list``) and the one kept (``arc --pick``).
-    arc_options: list[dict[str, str]] = field(default_factory=list)
+    arc_options: list[dict[str, Any]] = field(default_factory=list)
     series_arc: dict[str, Any] | None = None
     #: Prices ``film`` showed the human (``ep02`` or ``ep02-t3`` -> USD); ``--confirm-spend`` needs one.
     film_estimates: dict[str, float] = field(default_factory=dict)
