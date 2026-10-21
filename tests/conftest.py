@@ -372,26 +372,16 @@ def _voices_gate_off_by_default(
     )
 
 
-@pytest.fixture
-def pitch_gate() -> None:
-    """Ask for the real pitch gate (see ``_pitch_gate_off_by_default``)."""
-
-
 @pytest.fixture(autouse=True)
-def _pitch_gate_off_by_default(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Tests of plates and boards predate the pitch card: the stop before them is off unless a test asks
-    for ``pitch_gate`` (tests/test_pitch_card.py), so their desks need no pitch yes and their flows stay
-    as they were.
-    """
+def _no_desk_pitch_carry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Paid steps carry an old desk pitch yes to the server first; tests have no server for it."""
 
-    if "pitch_gate" in request.fixturenames:
-        return
     from creation import episode_commands, orchestrate
 
-    monkeypatch.setattr(orchestrate, "pitch_gate_refusal", lambda *a, **k: None)
-    monkeypatch.setattr(episode_commands, "pitch_gate_refusal", lambda *a, **k: None)
+    monkeypatch.setattr(orchestrate, "carry_before_paid_step", lambda *a, **k: None)
+    monkeypatch.setattr(
+        episode_commands, "carry_before_paid_step", lambda *a, **k: None
+    )
 
 
 @pytest.fixture

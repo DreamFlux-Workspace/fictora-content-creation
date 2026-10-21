@@ -81,11 +81,8 @@ CONTINUING_FIXES: frozenset[str] = frozenset(
         # script, the voice and the timing never see it. Moved to Group A on 9 Oct 2026 (rollout rule:
         # captions only), in step with fictora-drama. To narrow it again, move it back to Group B.
         "caption_dashes",
-        # The pitch card before paid drawing (#155; was Group B). On a continuing desk it reminds and never
-        # holds (#185, founder 8 Oct 2026: :func:`creation.pitch_card.pitch_gate_refusal` prints the reminder
-        # and goes ahead); a new desk is still held until the yes. Founder-approved for every episode of every
-        # desk on 9 Oct 2026. To narrow it again, move it back to Group B.
-        "pitch_card",
+        # (The pitch card left this list on 21 Oct 2026: it is the server's card now, and the server holds
+        # paid drawing for it on every desk from the next episode on; see :mod:`creation.pitch_card`.)
         # Each flicker caption word appears when it is actually said, on the transcript's word times, and
         # shows what was said (#135; was Group B). Caption TIMING inside a line only: the font, style,
         # colour, size and place of the captions are untouched, and a line with no transcript words is

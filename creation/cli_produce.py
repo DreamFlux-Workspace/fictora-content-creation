@@ -215,9 +215,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     pitch = sub.add_parser(
         "pitch",
-        help="The episode's pitch card (free): with --file, check it and store it as epNN/pitch-vN.json "
-        "(never overwritten) and print it; without, print the current one. On desks from 6 Oct 2026 `step` "
-        "draws no plates or boards until the card has the human's yes (`approve --gate pitch`).",
+        help="The episode's pitch card (free): the server's card of the written script (shots, lines, faces, "
+        "world rules), printed. The server draws no boards and films nothing for the episode until the card has "
+        'the human\'s yes (`approve --gate pitch`). `--change "..."` records a change the human asked for.',
     )
     pitch.add_argument("--desk", type=Path, required=True)
     pitch.add_argument(
@@ -227,10 +227,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Episode ordinal (default: the desk's current episode).",
     )
     pitch.add_argument(
+        "--change",
+        default=None,
+        help="A change the human asked for on the card they saw (recorded on the server; make it with "
+        "`line`, `edit` or `rewrite`).",
+    )
+    pitch.add_argument(
         "--file",
         type=Path,
         default=None,
-        help="The card: pitch.md (one `## field` heading per field) or pitch.json.",
+        help=argparse.SUPPRESS,
     )
 
     ap = sub.add_parser(
@@ -249,8 +255,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--episode",
         type=int,
         default=None,
-        help="Pitch only: the episode whose newest pitch card the human said yes to "
-        "(default: the desk's current episode). Desk-only record, free.",
+        help="Pitch only: the episode whose card the human said yes to "
+        "(default: the desk's current episode). Sent to the server, free.",
     )
     ap.add_argument(
         "--path",
@@ -543,15 +549,23 @@ def _run_command(args: argparse.Namespace) -> int:
                 print(f"  file: {path}")
             return 0
         if args.command == "pitch":
-            from creation.pitch_card import PitchRefused, run_pitch
+            from creation.pitch_card import PitchError, run_pitch
 
+            if args.file is not None:
+                print(
+                    "The desk pitch file is gone: the pitch card is the server's card of the written script. "
+                    "Write the idea into the brief, draft the script, then `fictora-produce pitch --desk D "
+                    "--episode N` shows the card to approve.",
+                    file=sys.stderr,
+                )
+                return 2
             try:
                 return run_pitch(
                     args.desk,
                     episode=args.episode or _desk_episode(args.desk),
-                    file=args.file,
+                    change=args.change,
                 )
-            except PitchRefused as exc:
+            except PitchError as exc:
                 print(exc, file=sys.stderr)
                 return 2
         if (
@@ -561,11 +575,15 @@ def _run_command(args: argparse.Namespace) -> int:
         ):
             raise ValueError("--episode is for --gate pitch only")
         if args.command == "approve" and args.gate == "pitch":
-            from creation.pitch_card import run_approve_pitch
+            from creation.pitch_card import PitchError, run_approve_pitch
 
-            run_approve_pitch(
-                args.desk, episode=args.episode or _desk_episode(args.desk)
-            )
+            try:
+                run_approve_pitch(
+                    args.desk, episode=args.episode or _desk_episode(args.desk)
+                )
+            except PitchError as exc:
+                print(exc, file=sys.stderr)
+                return 2
             return 0
         if (
             args.command == "approve"
