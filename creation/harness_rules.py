@@ -16,6 +16,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from creation.ops.state import episode_beat_pattern
 from creation.spine_view import beats_by_take, episode_id_for
 
 #: Words that make the server refuse the take: inner voice must not be written
@@ -244,7 +245,8 @@ def early_extra_shots_stop(
     shots = list(beat.get("shot_plan") or []) if plan is None else list(plan)
     if len(shots) <= 1:
         return None
-    pattern = tuple(int(count) for count in spine.get("beats_per_storyboard_set") or ())
+    # The episode's own takes (one more for a moment given two takes, fictora-drama #967).
+    pattern = episode_beat_pattern(dict(spine), episode_ordinal=episode)
     groups = beats_by_take(spine, episode=episode, take_count=len(pattern) or 1)
     beat_id = str(beat.get("beat_id"))
     for group in groups:

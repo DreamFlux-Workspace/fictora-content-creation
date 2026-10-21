@@ -594,13 +594,15 @@ def take_caption_lines(
         line of the episode was returned because the split is not known.
     """
 
-    from creation.spine_view import beats_by_take
+    from creation.ops.state import episode_beat_pattern
+    from creation.spine_view import beats_by_take, episode_id_for
 
     body = spine.get("spine", spine)
-    pattern = tuple(
-        int(n)
-        for n in body.get("beats_per_storyboard_set") or ()
-        if isinstance(n, int) or str(n).isdigit()
+    # The episode's own takes: one more for a moment given two takes (fictora-drama #967).
+    pattern = episode_beat_pattern(
+        spine,
+        episode_ordinal=episode_ordinal,
+        episode_id=episode_id_for(body, episode_ordinal),
     )
     count = take_count if take_count is not None else (len(pattern) or None)
     if count == 1 and take_index == 1:

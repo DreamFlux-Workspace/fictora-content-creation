@@ -41,8 +41,20 @@ CHOICE_ACTIONS: dict[str, str] = {
     "line_fit_use": "use",
     "line_fit_trim": "trim",
     "line_fit_edit": "edit",
+    "line_fit_two_takes": "two_takes",
 }
-CHOICES = ("use", "trim", "edit")
+CHOICES = ("use", "trim", "edit", "two_takes")
+#: ``--choose`` spellings: ``two-takes`` is the typed form of the server's ``two_takes``.
+CHOOSE_ARGS: dict[str, str] = {
+    "use": "use",
+    "trim": "trim",
+    "edit": "edit",
+    "two-takes": "two_takes",
+    "two_takes": "two_takes",
+}
+#: The server's code when "No, give it two takes" can no longer be applied
+#: (the episode was written since, or already films the most takes).
+TWO_TAKES_UNAVAILABLE = "line_fit_two_takes_unavailable"
 
 
 class LineFitStopped(RuntimeError):
@@ -127,6 +139,8 @@ def command(desk: Path | str, proposal_id: str, choice: str | None = None) -> st
     text = f"fictora-produce line-fit --desk {desk} --proposal {proposal_id}"
     if choice == "edit":
         return text + " --choose edit --edit @lines.txt"
+    if choice == "two_takes":
+        return text + " --choose two-takes"
     return text + (f" --choose {choice}" if choice else "")
 
 
@@ -172,6 +186,13 @@ def proposal_card(proposal: Mapping[str, Any], *, desk: Path | str = "<desk>") -
     for offer in proposal.get("choices") or []:
         choice = CHOICE_ACTIONS.get(str(offer.get("action")))
         rows.append(f"    {offer.get('label')}: {offer.get('text')}")
+        extra = proposal.get("extra_take")
+        if choice == "two_takes" and isinstance(extra, Mapping):
+            # The take the choice adds, as the server sent it (fictora-drama #967).
+            rows.append(
+                f"      Adds a take after take {extra.get('after_take')} "
+                f"({extra.get('beats')} beats)."
+            )
         if choice:
             rows.append(f"      {command(desk, pid, choice)}")
     return "\n".join(rows)
@@ -414,12 +435,29 @@ def _follow_redraft(
 
 
 def _applied(
-    desk: Path, proposal: Mapping[str, Any], answer: Mapping[str, Any], *, out: TextIO
+    desk: Path,
+    proposal: Mapping[str, Any],
+    answer: Mapping[str, Any],
+    *,
+    out: TextIO,
+    run: Any = None,
 ) -> None:
     from creation.orchestrate import save_spine_snapshot, sync_spine_lines
 
     spine = answer.get("spine")
     episode = int(proposal.get("episode_ordinal") or 1)
+    spine_id = (
+        spine.get("spine_id") if isinstance(spine, Mapping) else None
+    ) or proposal.get("spine_id")
+    if run is not None and spine_id:
+        # The story as GET answers it: it lists each episode's own takes
+        # (``episode_take_patterns``), so an episode given two takes gets its slot.
+        try:
+            fresh = run.spine(str(spine_id))
+        except Exception:  # noqa: BLE001 - the choose answer's spine still stands
+            fresh = None
+        if isinstance(fresh, Mapping):
+            spine = fresh
     print(f"Server: applied ({answer.get('proposal_id')}).", file=out)
     if isinstance(spine, Mapping):
         save_spine_snapshot(desk, episode, dict(spine))
@@ -450,7 +488,8 @@ def run_line_fit(
     proposal_id
         The proposal; with no id, the desk's open ones.
     choose
-        ``use``, ``trim`` or ``edit``; ``None`` only shows.
+        ``use``, ``trim``, ``edit`` or ``two-takes`` (sent as ``two_takes``,
+        only when the proposal offers it); ``None`` only shows.
     edit
         With ``choose == "edit"``: the creator's lines (:func:`read_edit_lines`).
     out
@@ -468,8 +507,10 @@ def run_line_fit(
     """
 
     out = out or sys.stdout
-    if choose is not None and choose not in CHOICES:
-        raise LineFitStopped(f"--choose is one of {', '.join(CHOICES)}")
+    if choose is not None:
+        if choose not in CHOOSE_ARGS:
+            raise LineFitStopped("--choose is one of use, trim, edit, two-takes")
+        choose = CHOOSE_ARGS[choose]
     if (edit is not None) != (choose == "edit"):
         raise LineFitStopped(
             "--edit @file goes with --choose edit (and --choose edit needs --edit)"
@@ -500,6 +541,16 @@ def run_line_fit(
             )
         proposal = proposals[0]
         pid = str(proposal["proposal_id"])
+        if choose == "two_takes" and not any(
+            offer.get("action") == "line_fit_two_takes"
+            for offer in proposal.get("choices") or []
+            if isinstance(offer, Mapping)
+        ):
+            # An older server, the switch off, or a proposal that does not offer it.
+            raise LineFitStopped(
+                f"line-fit {pid}: the server does not offer two takes for this moment; nothing was sent. "
+                "Its choices are on the card: " + command(desk, pid)
+            )
         body: dict[str, Any] = {
             "choice": choose,
             "source_sha256": proposal.get("source_sha256"),
@@ -516,15 +567,26 @@ def run_line_fit(
         if status >= 400 or not isinstance(answer, Mapping):
             from creation.harness.http_util import api_error_text
 
+            if status == 409 and _error_of(answer).get("code") == TWO_TAKES_UNAVAILABLE:
+                # The server's own sentence, then the card again for trim or edit.
+                raise LineFitStopped(
+                    f"Refused (HTTP 409): {_error_of(answer).get('message') or api_error_text(answer)}\n"
+                    f"Trim or edit instead: {command(desk, pid)}"
+                )
             raise LineFitStopped(f"Refused (HTTP {status}): {api_error_text(answer)}")
         result = str(answer.get("status"))
         if result == "applied":
-            _applied(desk, proposal, answer, out=out)
+            _applied(desk, proposal, answer, out=out, run=run)
             return 0
         if result == "needs_choice" and isinstance(
             answer.get("next_proposal"), Mapping
         ):
-            print("Server: needs_choice (the edited lines still do not fit).", file=out)
+            print(
+                "Server: needs_choice (the edited lines still do not fit)."
+                if choose == "edit"
+                else "Server: needs_choice (another moment still does not fit).",
+                file=out,
+            )
             print(proposal_card(answer["next_proposal"], desk=desk), file=out)
             return 0
         if result == "redrafting" and answer.get("job_id"):
@@ -556,7 +618,10 @@ def add_line_fit_parser(sub: Any) -> None:
         help="The proposal; default: the desk's open ones.",
     )
     parser.add_argument(
-        "--choose", choices=CHOICES, default=None, help="The creator's choice."
+        "--choose",
+        choices=("use", "trim", "edit", "two-takes"),
+        default=None,
+        help="The creator's choice (two-takes: keep every word; the episode films one more take).",
     )
     parser.add_argument(
         "--edit",
@@ -581,6 +646,7 @@ def dispatch_line_fit(args: argparse.Namespace) -> int:
 __all__ = [
     "LINE_NEEDS_CREATOR_CHOICE",
     "NEEDS_CREATOR_CHOICE_CAUSE",
+    "TWO_TAKES_UNAVAILABLE",
     "LineFitStopped",
     "add_line_fit_parser",
     "command",
