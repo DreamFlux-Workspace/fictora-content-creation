@@ -489,9 +489,18 @@ def test_a_monster_cue_is_sent_as_written_for_the_server_to_word(
 
 
 class FakeSpineApi:
-    def __init__(self, spine: dict[str, Any]) -> None:
+    def __init__(self, spine: dict[str, Any], *, owns_text: bool = True) -> None:
         self.spine_body = spine
         self.client = self
+        self.owns_text = owns_text
+
+    def get_optional(self, path: str) -> tuple[int, Any]:
+        assert path == "/v1/capabilities"
+        return (
+            (200, {"on_screen_text": True})
+            if self.owns_text
+            else (404, {"detail": "Not Found"})
+        )
 
     def close(self) -> None:
         pass
@@ -501,6 +510,24 @@ class FakeSpineApi:
 
     def save(self, name: str, payload: Any) -> None:
         pass
+
+
+class FakeLabelsApi(FakeSpineApi):
+    """The server's caption-labels route: keeps the labels and answers them drawn, with a note."""
+
+    def __init__(self, spine: dict[str, Any]) -> None:
+        super().__init__(spine)
+        self.put: list[tuple[str, dict[str, Any]]] = []
+
+    def put_optional(self, path: str, body: dict[str, Any]) -> tuple[int, Any]:
+        self.put.append((path, copy.deepcopy(body)))
+        labels = [
+            {"label_id": f"label_{n}", "take": body["take"], "start_s": item["start_s"],
+             "end_s": item["end_s"], "text": item["text"].replace("\u2014", "\u2026")}
+            for n, item in enumerate(body["labels"])
+        ]  # fmt: skip
+        return 200, {"labels": labels, "warnings": [{"code": "line_long", "message": "A server note."}],
+                     "changed": True}  # fmt: skip
 
 
 @needs_ffmpeg
@@ -527,6 +554,8 @@ def test_voice_line_renders_in_the_locked_voice_saves_it_and_books_it(
         and call["text"] == "Wait for me here."
     )
     assert call["language"] == "en" and call["spoken_text"] is None
+    # D4: the server voices only a heard-only line already in this episode's script.
+    assert call["episode_id"] == SPINE["episode_summaries"][0]["episode_id"]
     assert call["key"] == revoice_key(
         "voice-ep01-kenji",
         {"text": "Wait for me here.", "voice": "Roger", "language": "en"},
@@ -548,6 +577,24 @@ def test_voice_line_refuses_a_character_with_no_locked_voice(
     audio = FakeAudio()
     with pytest.raises(ValueError, match="no locked voice"):
         handmade.run_voice_line(post_desk, cast="Kenji", text="Hi.", audio=audio)
+    assert audio.calls == []
+
+
+def test_voice_line_on_an_older_server_stops_before_anything_is_sent(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        handmade,
+        "open_api",
+        lambda desk, episode: FakeSpineApi(copy.deepcopy(SPINE), owns_text=False),
+    )
+    audio = FakeAudio()
+    with pytest.raises(
+        RuntimeError, match="cannot check a voice line against the script"
+    ):
+        handmade.run_voice_line(
+            post_desk, cast="Kenji", text="Wait for me here.", audio=audio
+        )
     assert audio.calls == []
 
 
@@ -685,7 +732,7 @@ def test_finish_cli_passes_caption_labels(
 
 @needs_ffmpeg
 def test_finish_burns_a_caption_label_where_asked_with_no_spoken_line(
-    post_desk: Path,
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     takes = post_desk / "ep01" / "takes"
     write_frames(
@@ -697,11 +744,19 @@ def test_finish_burns_a_caption_label_where_asked_with_no_spoken_line(
         json.dumps(FACTS)
     )
     out = io.StringIO()
+    labels_api = FakeLabelsApi(copy.deepcopy(SPINE))
+    monkeypatch.setattr("creation.post.desk.open_api", lambda desk, episode: labels_api)
 
     result = run_finish(
         post_desk, sfx_render=_fake_sfx, facts_fetcher=lambda *a: None, colour=False,
-        caption_labels=(("Blinking!", 2.5, 3.1),), stream=out,
+        caption_labels=(("Blinking\u2014", 2.5, 3.1),), stream=out,
     )  # fmt: skip
+
+    # D2: saved on the server first; the take burns the server's labels (its words, its notes).
+    ((path, body),) = labels_api.put
+    assert path.endswith("/caption-labels") and body["take"] == 1
+    assert body["labels"] == [{"text": "Blinking\u2014", "start_s": 2.5, "end_s": 3.1}]
+    assert "[caption-label] note: A server note." in out.getvalue()
 
     assert result.complete, out.getvalue()
     ass = sorted(takes.glob("take-ep01-t1-cap-v*.ass"))[-1].read_text()

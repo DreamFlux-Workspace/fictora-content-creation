@@ -27,10 +27,10 @@ from creation.post.delivery_geometry import layout, title_sizes
 from creation.post.finish import run_finish
 from creation.post.join import run_join
 from creation.post.letterbox import (
+    HOOK_LINE_FILE,
     TitleBlock,
     fit_title,
     italic_overrides,
-    record_desk_hook_line,
     resolve_caption_colour,
     title_block,
     voice_end_spans,
@@ -212,11 +212,12 @@ def test_the_title_block_is_the_setup_line_white_and_the_hook_line_yellow(
     )
     over, _ = title_block(SPINE, 1, desk=tmp_path, override="He came to take her arm.")
     assert (over.hook, over.hook_source) == ("He came to take her arm.", "--hook-line")
-    record_desk_hook_line(
-        tmp_path,
-        1,
-        {"kind": "custom", "text": "It came with a secret."},
-        why="older server",
+    # A pick an older run kept on the desk is still read (the kit writes none since 21 Oct 2026).
+    (tmp_path / HOOK_LINE_FILE).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / HOOK_LINE_FILE).write_text(
+        json.dumps(
+            {"episodes": {"1": {"kind": "custom", "text": "It came with a secret."}}}
+        )
     )
     picked, _ = title_block(SPINE, 1, desk=tmp_path)
     assert picked.hook == "It came with a secret." and "desk" in picked.hook_source

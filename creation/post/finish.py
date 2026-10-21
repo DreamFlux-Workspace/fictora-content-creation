@@ -1246,6 +1246,7 @@ def run_finish(
     voices: tuple[Placed, ...] = (),
     cues: tuple[Placed, ...] = (),
     caption_labels: tuple[tuple[str, float, float], ...] = (),
+    clear_caption_labels: bool = False,
     sign_overlay: bool = False,
     prop_texts: tuple[PropTextRequest, ...] = (),
     prop_boxes: tuple[BlurBox, ...] = (),
@@ -1328,7 +1329,10 @@ def run_finish(
         ``--cue`` hand cues laid after the SFX step (take seconds as filmed).
     caption_labels
         ``--caption-label`` ``(text, start, end)``: a caption with no spoken line under it
-        (take seconds as filmed), drawn with the other captions.
+        (take seconds as filmed). Saved on the server first (:mod:`creation.post.caption_labels`,
+        decision D2); the take burns the labels the server keeps, given or not.
+    clear_caption_labels
+        ``--no-caption-labels``: clear the take's labels on the server.
     sign_overlay
         ``--sign-overlay``: where the text check finds possible lettering in a shot whose
         take facts carry one story sign (``story_signs``), draw the sign's exact words in
@@ -1592,6 +1596,16 @@ def run_finish(
             )
     found_spine = saved_spine(desk, episode)
     spine = found_spine[0] if found_spine else None
+    # Caption labels live on the server (D2, 21 Oct 2026): any given are saved there first, then the
+    # take burns the labels the server keeps (a re-finish keeps them too).
+    from creation.post.caption_labels import finish_caption_labels
+
+    labels_answer, spine = finish_caption_labels(
+        desk, episode, thoughts.take_number(take_id), caption_labels, spine,
+        clear=clear_caption_labels, out=out,
+    )  # fmt: skip
+    caption_labels = labels_answer
+    spine = dict(spine) if spine is not None else None
     board = approved_board(desk, episode, take_id)
     audio = DramaApiAudio(desk, episode=episode)
     sfx_render = sfx_render or service_renderer(audio, spine_id(desk))

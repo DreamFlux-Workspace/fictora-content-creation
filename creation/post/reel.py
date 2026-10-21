@@ -110,7 +110,6 @@ from creation.post.reel_plan import (
     plan_json,
     plan_reel,
     post_operator_notes,
-    post_text,
     posting_warnings,
     reel_seconds,
     retime_cues,
@@ -1647,7 +1646,6 @@ def make_reel(
     """
 
     from creation.post.desk import saved_spine
-    from creation.spine_view import episode_summary
 
     from creation.post.reel_cover import series_part
 
@@ -1868,6 +1866,11 @@ def make_reel(
             file=out,
         )
         return result
+    # The post caption is the server's (decision D5, 21 Oct 2026), asked before anything is rendered:
+    # an older or unreachable server stops the reel here, never a caption the kit wrote itself.
+    from creation.on_screen_text import server_post_text
+
+    caption = server_post_text(desk, episode, part=part_found.number)
     style, style_note = posting_caption_style(desk, caption_style)
     panels: list[tuple[int, int, Any]] = []
     # A desk created before 6 Oct 2026 never draws panels (creation.rules_epoch; frozen, do not change).
@@ -1880,7 +1883,6 @@ def make_reel(
             fps=takes[0].fps if takes else 24.0,
             skip_takes=[s.take_id for s in srcs if s.inferred and s.inferred.burned],
         )  # fmt: skip
-    summary = episode_summary(spine, episode)
     series = str(spine.get("title") or desk.name)
     # The cover is drawn first (its picture comes from the takes, not the reel) and goes on
     # the reel's first frame in the mark step's own encode: Discord and the phones show a
@@ -1910,19 +1912,11 @@ def make_reel(
         if cover is not None:
             result.cover = cover
         return _legacy_reel_files(
-            result, paths, episode=episode, spine=spine, summary=summary, series=series, seconds=secs,
+            result, paths, episode=episode, caption=caption, seconds=secs,
             loudness=loud, captions_line=cap_line, report=report, style_note=style_note, out=out,
         )  # fmt: skip
     posting, posting_notes = _posting(desk)
     posting_notes += cover_warnings
-    caption = post_text(
-        series=series,
-        episode=part_found.number,
-        title=str(summary.get("title") or ""),
-        question=str(summary.get("hook_question") or ""),
-        genre=str(spine.get("microdrama_genre") or ""),
-        premise_line=str(spine.get("premise_line") or ""),
-    )  # fmt: skip
     todo = post_operator_notes(cover=cover.name if cover else None, **posting)
     write_new(
         paths["post"], caption + "\n" + OPERATOR_DIVIDER + "\n" + "\n".join(todo) + "\n"
@@ -1952,9 +1946,7 @@ def _legacy_reel_files(
     paths: Mapping[str, Path],
     *,
     episode: int,
-    spine: Mapping[str, Any],
-    summary: Mapping[str, Any],
-    series: str,
+    caption: str,
     seconds: float,
     loudness: str,
     captions_line: str,
@@ -1964,22 +1956,13 @@ def _legacy_reel_files(
 ) -> ReelResult:
     """The end of a reel for a desk created before 2026-10-06: the post text alone.
 
-    Frozen for desks created before 2026-10-06; do not change (:mod:`creation.rules_epoch`).
-    The one exception (founder, 7 Oct 2026): the caller draws the cover image and makes
-    it the reel's first frame before this runs.
+    Frozen for desks created before 2026-10-06 (:mod:`creation.rules_epoch`), with two
+    exceptions: the caller draws the cover image and makes it the reel's first frame
+    (founder, 7 Oct 2026), and the post text is the server's (decision D5, 21 Oct 2026:
+    "Part N" and the server's layout, as every other reel).
     """
 
-    write_new(
-        paths["post"],
-        post_text(
-            series=series,
-            episode=episode,
-            title=str(summary.get("title") or ""),
-            question=str(summary.get("hook_question") or ""),
-            genre=str(spine.get("microdrama_genre") or ""),
-            premise_line=str(spine.get("premise_line") or ""),
-        ),  # fmt: skip
-    )
+    write_new(paths["post"], caption)
     result.video, result.post, result.seconds, result.loudness, result.captions = (
         paths["video"], paths["post"], seconds, loudness, captions_line,
     )  # fmt: skip

@@ -229,6 +229,12 @@ class FakeApi:
         if path.endswith("/look-options") and ("GET", path) not in self.routes:
             # A deploy whose look-options route the test did not set: read as an older server (no offer).
             return 404, {"detail": "Not Found"}
+        if "/post-text" in path and ("GET", path.split("?", 1)[0]) not in self.routes:
+            # The server writes the reel's post caption (decision D5): a stand-in answer.
+            self.calls.append(("GET", path, None, None))
+            return 200, {
+                "text": "Shared Heat · Part 1\nFollow for part 2.\n\n#shortdrama\n"
+            }
         if path == "/v1/capabilities" and ("GET", path) not in self.routes:
             # A deploy whose capabilities the test did not set: read as an older server.
             return 404, {"detail": "Not Found"}

@@ -82,9 +82,8 @@ from creation.ops.state import (
 )
 from creation.plan_prompt import (
     _without_kit_directive,
-    ensure_plan_prompt,
+    plan_prompt,
     narrator_warning,
-    server_cast_floor,
 )
 from creation.picture_checks import (
     board_picture_check_lines,
@@ -892,7 +891,7 @@ def bind_desk(
     api_dir.mkdir(parents=True, exist_ok=True)
     state = ensure_production(
         desk,
-        prompt=ensure_plan_prompt(prompt),
+        prompt=plan_prompt(prompt),
         preset_id=pid,
         preset_version=version,
         video_lane=video_lane,
@@ -1642,11 +1641,9 @@ def run_step(
                 on_screen=narrator_on_screen, ask=ask, rerun=rerun, out=sys.stderr,
             )  # fmt: skip
         if state.phase == "new":
-            # A server whose season bible holds one person (fictora-drama #582)
-            # is asked for exactly the people the story needs; an older one for two.
-            effective_prompt = ensure_plan_prompt(
-                state.prompt, cast_floor=server_cast_floor(run)
-            )
+            # The premise goes as the creator wrote it (decision D6, 21 Oct 2026): the server
+            # writes the cast to its own floor and rules; a directive an older run stored is taken off.
+            effective_prompt = plan_prompt(state.prompt)
             if effective_prompt != state.prompt:
                 state.prompt = effective_prompt
             narration = narrator_warning(effective_prompt, desk=desk)

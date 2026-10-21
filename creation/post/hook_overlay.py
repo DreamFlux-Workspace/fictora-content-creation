@@ -44,7 +44,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
-from creation.caption_dashes import drawn_text as no_dash_text
+from creation.on_screen_text import drawn_texts
 from creation.captions import (
     CAPTION_BAND,
     FONT_NAME,
@@ -438,10 +438,9 @@ def overlay_ass(
     black outline and shadow. Title bar: a solid dark band with white text.
     """
 
-    # No em or en dash on the picture (6 Oct 2026; creation.caption_dashes).
-    overlay = replace(
-        overlay, text=no_dash_text(overlay.text), title=no_dash_text(overlay.title)
-    )
+    # The words as the server draws them, no em or en dash (creation.on_screen_text).
+    text, title = drawn_texts([overlay.text, overlay.title], kind="title")
+    overlay = replace(overlay, text=text, title=title)
     left = round(SIDE_MARGIN * width / 1080)
     right = width - round(RIGHT_RAIL_X * width) + left
     room = width - left - right

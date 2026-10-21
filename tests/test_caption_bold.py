@@ -22,7 +22,6 @@ from creation.caption_bold import (
     spine_emphasis,
     word_key,
 )
-from creation.caption_dashes import DASH_IN_CAPTION
 from creation.captions import (
     Cue,
     LetterboxBand,
@@ -239,7 +238,9 @@ def test_bold_draws_no_em_or_en_dash() -> None:
     )
     ass = build_ass(cues, width=768, height=1344, style="bold")
     body = "\n".join(e[9] for e in _events(ass))
-    assert not DASH_IN_CAPTION.search(body)
+    assert (
+        "\u2014" not in body and "\u2013" not in body
+    )  # the server's drawn words are burned
     assert "D-9341" in body  # a hyphen inside a word stays
     assert "Please…" in body
 
