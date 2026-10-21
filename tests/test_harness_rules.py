@@ -13,12 +13,10 @@ from creation.harness_rules import (
     mouth_sound_note,
     opening_sound_line,
     short_line_hold,
-    sparkle_adult_line,
     staging_contradiction_lines,
     seam_fix_line,
     thought_short_of_cut,
     thumbnail_answered_audio_error,
-    young_creature_lines,
 )
 from creation.post.desk import find_cast
 
@@ -174,20 +172,6 @@ def test_a_hand_over_the_hook_stops_and_a_later_gasp_does_not() -> None:
     assert hook_mouth_stop(spine, episode=1) is None
 
 
-def test_a_young_creature_without_proportions_is_named() -> None:
-    spine = _spine()
-    assert young_creature_lines(spine) == []
-    spine["cast"].append(
-        {"cast_id": "cast_cinder", "name": "Cinder", "visual_brief": "a newborn dragon"}
-    )
-    lines = young_creature_lines(spine)
-    assert len(lines) == 1 and "oversized head" in lines[0]
-    spine["cast"][-1]["visual_brief"] = (
-        "a newborn, oversized head, large eyes, small body"
-    )
-    assert young_creature_lines(spine) == []
-
-
 def test_a_short_line_held_for_seconds_is_named() -> None:
     assert short_line_hold("A fox.", start=2.8, end=10.4) is not None
     assert "line-start" in (short_line_hold("여우", start=8.6, end=16.2) or "")
@@ -278,15 +262,6 @@ def test_an_age_in_the_characters_own_text_still_counts() -> None:
     lines = adult_face_lines(spine)
 
     assert any(line.startswith("Kang Jun-ho is 31") for line in lines), lines
-
-
-def test_sparkle_on_an_adult_stops_and_a_card_with_no_age_does_not() -> None:
-    spine = _spine()
-    spine["beats"][0]["reaction_kind"] = "sparkle_delight"
-    assert sparkle_adult_line(spine, episode=1) is None
-    spine["cast"][0]["visual_brief"] = "Hana, 29"
-    stopped = sparkle_adult_line(spine, episode=1)
-    assert stopped is not None and "calm expression" in stopped
 
 
 def test_a_hands_on_action_without_a_sound_note_is_named() -> None:

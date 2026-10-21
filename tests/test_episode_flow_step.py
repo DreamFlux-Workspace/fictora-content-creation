@@ -85,20 +85,21 @@ def test_step_new_drafts_alone_syncs_lines_and_prints_the_script_gate(
     assert load_production(desk).phase == "ready_cast_enrol"
 
 
-def test_a_young_creature_without_proportions_stops_before_the_plates(
+def test_a_young_creature_is_left_to_the_server_at_the_plates(
     desk: Path, api: FakeApi
 ) -> None:
+    # The server writes a young creature's proportions on a new card
+    # (fictora-drama #969, decisions C12): the kit no longer stops here.
     api.spine_doc["cast"].append(
         {"cast_id": "cast_cinder", "name": "Cinder", "visual_brief": "a newborn dragon"}
     )
-    set_phase(desk, "ready_cast_enrol")
+    set_phase(desk, "ready_cast_enrol", drawing_estimates=SHOWN_PRICES)
     api.routes[("POST", "/v1/spines/sp1/cast/enrol")] = {"job_id": "job_cast"}
+    api.jobs["job_cast"] = {"status": "completed"}
 
-    with pytest.raises(RuntimeError, match="oversized head"):
-        orchestrate.run_step(desk)
+    orchestrate.run_step(desk, confirm_spend=True)
 
-    assert api.posted("/v1/spines/sp1/cast/enrol") == []
-    assert load_production(desk).phase == "ready_cast_enrol"
+    assert api.posted("/v1/spines/sp1/cast/enrol")
 
 
 def test_a_hand_over_the_hook_stops_before_the_boards(desk: Path, api: FakeApi) -> None:

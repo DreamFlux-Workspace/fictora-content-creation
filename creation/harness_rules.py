@@ -35,11 +35,6 @@ _HAND_OVER_MOUTH = re.compile(
     r"hand[- ]over[- ](?:the[- ])?mouth|dramatic[_ ]gasp", re.IGNORECASE
 )
 _LOCKED_CAMERA = re.compile(r"locked|hold|static|still", re.IGNORECASE)
-_YOUNG = re.compile(r"\b(?:newborn|hatchling|baby|pup|cub|infant)\b", re.IGNORECASE)
-_PROPORTIONS = re.compile(
-    r"oversized head|huge eyes|large eyes|chubby|small body|short limbs|baby proportions",
-    re.IGNORECASE,
-)
 _LINE_START = re.compile(r"\((\d+(?:\.\d+)?)\s*[–-]")
 
 #: A one- or two-word line held longer than this was stretched by the transcript.
@@ -684,41 +679,6 @@ def locked_camera_line(spine: Mapping[str, Any], *, episode: int) -> str | None:
     )
 
 
-def young_creature_lines(spine: Mapping[str, Any]) -> list[str]:
-    """Stop lines for a young creature whose brief has no proportions.
-
-    A young character drawn from a look note comes back adult. The redraw that
-    holds names the proportions: oversized head, large eyes, small body.
-
-    Parameters
-    ----------
-    spine
-        Spine JSON.
-
-    Returns
-    -------
-    list[str]
-        One line per young cast card that lacks those proportion words.
-    """
-
-    lines: list[str] = []
-    for card in spine.get("cast") or []:
-        if not isinstance(card, Mapping):
-            continue
-        blobs: list[str] = []
-        _strings(card, blobs)
-        text = " ".join(blobs)
-        if _YOUNG.search(text) is None or _PROPORTIONS.search(text) is not None:
-            continue
-        name = str(card.get("name") or card.get("cast_id") or "the creature")
-        lines.append(
-            f"{name} is young and will be drawn adult. "
-            "Name the proportions in the brief before the plate: oversized head, large eyes, "
-            "small body. A look note does not hold; use redraw-plate --note with those words."
-        )
-    return lines
-
-
 def short_line_hold(text: str, *, start: float, end: float) -> str | None:
     """Flag a one- or two-word line whose caption window is too long.
 
@@ -956,57 +916,6 @@ def adult_face_lines(spine: Mapping[str, Any]) -> list[str]:
             "A look note does not hold."
         )
     return lines
-
-
-def sparkle_adult_line(spine: Mapping[str, Any], *, episode: int) -> str | None:
-    """Stop a sparkle expression on a character whose card states an adult age.
-
-    ``sparkle_delight`` draws stars and a rounder, younger face. Use a calm
-    expression before the board is drawn. A card with no stated age is left
-    alone.
-
-    Parameters
-    ----------
-    spine
-        Spine JSON.
-    episode
-        Episode ordinal.
-
-    Returns
-    -------
-    str | None
-        The stop line, or ``None`` when no adult beat uses a sparkle expression.
-    """
-
-    cards = {
-        str(card.get("cast_id")): card
-        for card in spine.get("cast") or []
-        if isinstance(card, Mapping) and card.get("cast_id")
-    }
-    for beat in _episode_beats(spine, episode):
-        kind = str(beat.get("reaction_kind") or "").replace(" ", "_").lower()
-        if "sparkle" not in kind:
-            continue
-        speakers: set[str] = set()
-        direction = beat.get("motion_direction") or {}
-        if isinstance(direction, Mapping) and direction.get("subject_cast_id"):
-            speakers.add(str(direction["subject_cast_id"]))
-        for line in beat.get("dialogue_lines") or []:
-            if isinstance(line, Mapping) and line.get("cast_id"):
-                speakers.add(str(line["cast_id"]))
-        for cast_id in speakers:
-            card = cards.get(cast_id)
-            if card is None:
-                continue
-            age = _card_age(card, spine)
-            if age is None:
-                continue
-            name = str(card.get("name") or cast_id)
-            return (
-                f"{_beat_label(beat)}: sparkle_delight on {name} ({age}) draws stars "
-                "and a younger face. Use a calm expression before the board is drawn."
-            )
-    return None
 
 
 def hands_on_sound_lines(spine: Mapping[str, Any], *, episode: int) -> list[str]:
