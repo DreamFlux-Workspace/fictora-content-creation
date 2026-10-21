@@ -694,7 +694,7 @@ def _check_run_length(episodes: int | None) -> None:
 
 def run_arc_list(
     desk: Path, *, episodes: int | None = None, out: Any = None
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """Read the episode-2 brief and record its series arcs on the desk. Spends nothing.
 
     Parameters
@@ -708,8 +708,8 @@ def run_arc_list(
 
     Returns
     -------
-    list[dict[str, str]]
-        ``[{arc_id, title, line}, ...]``.
+    list[dict[str, Any]]
+        ``[{arc_id, title, line, uses_cast?}, ...]``.
     """
 
     out = out or sys.stdout
@@ -732,22 +732,78 @@ def run_arc_list(
             "only on a story drafted with episode 1 alone, after episode 1 is approved and before an arc is kept. "
             f"Brief saved to {saved}."
         )
-    options = [
-        {"arc_id": str(a["arc_id"]), "title": str(a["title"]), "line": str(a["line"])}
-        for a in arcs
-    ]
+    options: list[dict[str, Any]] = []
+    for a in arcs:
+        option: dict[str, Any] = {
+            "arc_id": str(a["arc_id"]),
+            "title": str(a["title"]),
+            "line": str(a["line"]),
+        }
+        # Who drives the arc goes back to the server with the pick, as it sent it.
+        if isinstance(a.get("uses_cast"), list) and a["uses_cast"]:
+            option["uses_cast"] = [str(c) for c in a["uses_cast"]]
+        options.append(option)
     state = load_production(desk)
     state.arc_options = options
     save_production(desk, state)
-    if brief.get("recap"):
-        print(f"recap: {brief['recap']}", file=out)
-    for number, arc in enumerate(options, start=1):
-        print(f"{number}. {arc['title']} — {arc['line']}", file=out)
+    _print_previously(brief, out)
+    _print_choices(options, "arc_id", _choice_who(brief), out)
     print(
         f"(saved {saved.name}; paste the arcs to the human, then `arc --pick N`)",
         file=out,
     )
     return options
+
+
+def _choice_who(brief: dict[str, Any]) -> dict[str, str]:
+    """Who drives each arc or direction, by its id, as the server words it ("Lauryn and Morris").
+
+    Read from the brief's ``choice_views`` (fictora-drama, 21 Oct 2026); an older
+    server sends none and nothing is printed for it.
+    """
+
+    who: dict[str, str] = {}
+    for view in brief.get("choice_views") or []:
+        if isinstance(view, dict) and view.get("choice_id") and view.get("who"):
+            who[str(view["choice_id"])] = str(view["who"])
+    return who
+
+
+def _print_previously(brief: dict[str, Any], out: Any) -> None:
+    """The last episode's name, the short recap and the full story so far, as the server sent them.
+
+    The server cuts the recap short and splits the full story into paragraphs
+    (``previously``, ``recap_full``); an older server sends only ``recap``.
+    """
+
+    previously = (
+        brief.get("previously") if isinstance(brief.get("previously"), dict) else None
+    )
+    if previously and previously.get("title"):
+        print(
+            f"previously: episode {previously.get('episode_ordinal')}, {previously['title']}",
+            file=out,
+        )
+    if brief.get("recap"):
+        print(f"recap: {brief['recap']}", file=out)
+    paragraphs = [str(p) for p in (previously or {}).get("paragraphs") or [] if p]
+    full = paragraphs or ([str(brief["recap_full"])] if brief.get("recap_full") else [])
+    if full and " ".join(full) != brief.get("recap"):
+        print("story so far:", file=out)
+        for paragraph in full:
+            print(f"  {paragraph}", file=out)
+
+
+def _print_choices(
+    choices: list[dict[str, Any]], id_key: str, who: dict[str, str], out: Any
+) -> None:
+    """One line per choice, and who drives it under it when the server says."""
+
+    for number, choice in enumerate(choices, start=1):
+        print(f"{number}. {choice.get('title')} — {choice.get('line')}", file=out)
+        driver = who.get(str(choice.get(id_key) or ""))
+        if driver:
+            print(f"   who: {driver}", file=out)
 
 
 def run_arc_pick(
@@ -799,7 +855,16 @@ def run_arc_pick(
         spine = run.spine(state.spine_id or "")
         body: dict[str, Any] = {
             "spine_version": spine["spine_version"],
-            "arc": {"arc_id": offered["arc_id"], "title": new_title, "line": new_line},
+            "arc": {
+                "arc_id": offered["arc_id"],
+                "title": new_title,
+                "line": new_line,
+                **(
+                    {"uses_cast": offered["uses_cast"]}
+                    if offered.get("uses_cast")
+                    else {}
+                ),
+            },
         }
         if episodes is not None:
             body["season_target_episode_count"] = episodes
@@ -826,8 +891,7 @@ def run_arc_pick(
     saved = _save_desk_json(desk, "brief-ep02", brief)
     directions = list(brief.get("directions") or [])
     print(f"kept arc {option}: {new_title} — {new_line}", file=out)
-    for number, direction in enumerate(directions, start=1):
-        print(f"{number}. {direction.get('title')} — {direction.get('line')}", file=out)
+    _print_choices(directions, "direction_id", _choice_who(brief), out)
     print(
         f"(saved {saved.name}; the human picks one: `author --episode 2 --direction N` or --line)",
         file=out,
@@ -879,8 +943,8 @@ def run_brief(
             file=out,
         )
     directions = list(brief.get("directions") or [])
-    for number, direction in enumerate(directions, start=1):
-        print(f"{number}. {direction.get('title')} — {direction.get('line')}", file=out)
+    _print_previously(brief, out)
+    _print_choices(directions, "direction_id", _choice_who(brief), out)
     print(f"(saved {saved.name})", file=out)
     return directions
 
