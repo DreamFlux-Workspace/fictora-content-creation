@@ -150,13 +150,12 @@ from creation.harness_rules import (
     hook_mouth_stop,
     locked_camera_line,
     near_touch_line,
-    silent_first_beat_lines,
     sparkle_adult_line,
     staging_contradiction_lines,
-    thin_take_lines,
     word_age_lines,
     young_creature_lines,
 )
+from creation import line_fit
 from creation.hook_line import gate_hook_line_lines
 from creation.pitch_card import (
     pitch_gate_refusal,
@@ -495,8 +494,6 @@ def script_gate_text(desk: Path, spine: dict[str, Any], *, episode: int) -> str:
     if camera:
         text += "\n" + camera
     notes = [
-        *thin_take_lines(spine, episode=episode, take_count=len(slot.takes)),
-        *silent_first_beat_lines(spine, episode=episode, take_count=len(slot.takes)),
         *word_age_lines(spine),
         *restraint_beat_lines(spine, episode=episode),
         *staging_contradiction_lines(spine, episode=episode),
@@ -1690,7 +1687,14 @@ def run_step(
                 # Not a failure: the desk stays at `new` until the creator chooses.
                 raise RuntimeError(str(exc)) from exc
             except SystemExit as exc:
-                pause = locked_lines_pause(str(exc.code), desk=desk)
+                # fictora-drama #962: the server's fitted version and choice (details.fit_proposals),
+                # printed word for word; an older server's refusal text still pauses the old way.
+                proposals = line_fit.proposals_from_exit(exc)
+                pause = (
+                    line_fit.pause_text(proposals, desk=desk)
+                    if proposals
+                    else locked_lines_pause(str(exc.code), desk=desk)
+                )
                 if pause is None:
                     raise
                 _note(ep_dir, pause)
@@ -1699,7 +1703,11 @@ def run_step(
                 # pause again from its plan job instead of paying for a second draft.
                 record = state.pending.get(unit)
                 if record is not None:
-                    record["paused"] = locked_lines_pause_code(str(exc.code))
+                    record["paused"] = (
+                        line_fit.LINE_NEEDS_CREATOR_CHOICE
+                        if proposals
+                        else locked_lines_pause_code(str(exc.code))
+                    )
                     save_production(desk, state)
                 raise RuntimeError(pause) from exc
             state.spine_id = spine_id
@@ -2783,8 +2791,16 @@ LOCKED_LINES_OUT_OF_BOUNDS = "locked_lines_out_of_bounds"
 #: The server's refusal when a locked line is not in the show's spoken language (fictora-drama #650):
 #: "Line N ... is locked in English on a Korean show: give the Korean line ..., or unlock it".
 LOCKED_LINE_NOT_IN_SHOW_LANGUAGE = "locked_line_not_in_show_language"
+#: The server's stop when a creator's line cannot fit its take and it wrote a fitted version
+#: (fictora-drama #962); its job also carries the old ``locked_lines_out_of_bounds`` first.
+LINE_NEEDS_CREATOR_CHOICE = line_fit.LINE_NEEDS_CREATOR_CHOICE
 #: Draft pauses that are the creator's choice, never a failure: the desk stays at ``new``.
-LOCKED_LINE_PAUSES = (LOCKED_LINES_OUT_OF_BOUNDS, LOCKED_LINE_NOT_IN_SHOW_LANGUAGE)
+#: The line-fit code comes first: a job that carries it carries the old code too.
+LOCKED_LINE_PAUSES = (
+    LINE_NEEDS_CREATOR_CHOICE,
+    LOCKED_LINES_OUT_OF_BOUNDS,
+    LOCKED_LINE_NOT_IN_SHOW_LANGUAGE,
+)
 
 
 def locked_lines_pause_code(message: str) -> str | None:
@@ -2818,6 +2834,13 @@ def locked_lines_pause(message: str, *, desk: Path | str = "<desk>") -> str | No
     code = locked_lines_pause_code(message)
     if code is None:
         return None
+    if code == LINE_NEEDS_CREATOR_CHOICE:
+        # The proposals did not reach the kit with the failure: the server holds them; show them from there.
+        return (
+            "PAUSED for the creator: a line does not fit its take and the server wrote a fitted version; "
+            "nothing was drafted. Show the creator the server's card word for word: "
+            f"`fictora-produce line-fit --desk {desk}`, then run their choice."
+        )
     # The server's own words: "<code> at scene_prompt: <refusal>".
     found = re.search(
         rf"{code} at scene_prompt: (.+?)(?: \(\+\d+ more in details\.errors\)| \(details |$)",

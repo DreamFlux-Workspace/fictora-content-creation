@@ -33,6 +33,7 @@ from creation.episode_commands import (
     dispatch_episode,
     run_approve_look,
 )
+from creation.line_fit import add_line_fit_parser, dispatch_line_fit
 from creation.narrator_cast import add_narrator_answer_args, interactive_ask
 from creation.plan_prompt import narrator_warning
 from creation.ops.floor import init_series_desk
@@ -358,6 +359,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     add_post_parsers(sub)
     add_episode_parsers(sub)
+    add_line_fit_parser(sub)
 
     for command_parser in sub.choices.values():
         command_parser.add_argument(
@@ -425,6 +427,8 @@ def _run_command(args: argparse.Namespace) -> int:
             print(exc, file=sys.stderr)
             return 2
         return 0
+    if args.command == "line-fit":
+        return dispatch_line_fit(args)
     if args.command in EPISODE_COMMANDS:
         try:
             return dispatch_episode(args)

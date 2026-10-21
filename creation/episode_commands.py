@@ -88,6 +88,7 @@ from creation.story_objects import new_objects, new_objects_notice, suggested_ob
 from creation.desk_media_urls import drawn_cast_rows
 from creation.post.desk import name_matches
 from creation.harness import stages_gated as stages
+from creation import line_fit
 from creation.harness.http_util import api_error_text, describe_job_error
 from creation.harness.minor_scene_refusal import (
     MINOR_IN_INTIMATE_SCENE,
@@ -345,6 +346,26 @@ class EditRefused(CommandStopped):
         self.items = list(items)
 
 
+class LineFitPause(EditRefused):
+    """A line edit the server answered ``409 line_needs_creator_choice``: its fitted version waits (drama #962).
+
+    The message is :func:`creation.line_fit.pause_text`: the server's card word
+    for word and the ``line-fit`` command for each choice. Nothing was changed.
+    """
+
+
+def _raise_line_fit_pause(
+    exc: BaseException, desk: Path, changed: Sequence[str]
+) -> None:
+    """Raise :class:`LineFitPause` when a refusal carries ``fit_proposals``; else return."""
+
+    proposals = line_fit.proposals_from_exit(exc)
+    if proposals:
+        raise LineFitPause(
+            line_fit.pause_text(proposals, desk=desk), items=change_items(changed)
+        ) from None
+
+
 #: Commands that print a change before sending it, so they end on a verdict line (L-20261001-25).
 EDIT_VERDICT_COMMANDS = frozenset({"edit", "line", "cast", "language"})
 
@@ -590,6 +611,10 @@ def run_unit(
     state.attempts[unit] = state.attempts.get(unit, 0) + 1
     save_production(desk, state)
     if terminal.get("status") != "completed":
+        proposals = line_fit.fit_proposals(terminal)
+        if proposals:
+            # fictora-drama #962: the episode waits on the creator's choice, not a failure to retry.
+            raise CommandStopped(line_fit.pause_text(proposals, desk=desk))
         raise CommandStopped(f"job {job_id} ({unit}) {describe_job_error(terminal)}")
     return terminal
 
@@ -2933,6 +2958,7 @@ def _send_story_edit(
                     )
                     notes = say_patch_warnings(spine, answer, out=out, desk=desk)
                 except SystemExit as exc:
+                    _raise_line_fit_pause(exc, desk, changed)
                     if "cascade_required" not in str(exc.code):
                         raise CommandStopped(str(exc.code)) from None
                     cascade = True
@@ -2951,6 +2977,8 @@ def _send_story_edit(
                     preview_only=preview_only,
                     out=out,
                 )
+        except LineFitPause:
+            raise
         except CommandStopped as exc:
             fields = _explain_field_refusal(run, str(exc), patch, changed)
             raise EditRefused(
@@ -2960,6 +2988,7 @@ def _send_story_edit(
                 items=change_items(changed),
             ) from None
         except SystemExit as exc:
+            _raise_line_fit_pause(exc, desk, changed)
             code = exc.code
             raise EditRefused(
                 code if isinstance(code, str) else api_error_text(code),

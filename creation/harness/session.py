@@ -14,6 +14,7 @@ import httpx
 from creation.harness.http_util import (
     HOSTED_POST_OFF_HINT,
     RETRY_ATTEMPTS,
+    ApiRefused,
     ServerBusy,
     api_error_text,
     api_headers,
@@ -154,8 +155,10 @@ class DramaApiRunSession:
                     detail=detail,
                 )
             )
-        raise SystemExit(
-            f"HTTP {response.status_code} {response.request.method} {response.request.url}: {api_error_text(detail)}"
+        raise ApiRefused(
+            f"HTTP {response.status_code} {response.request.method} {response.request.url}: {api_error_text(detail)}",
+            status=response.status_code,
+            body=detail,
         )
 
     def get(self, path: str) -> dict[str, Any]:

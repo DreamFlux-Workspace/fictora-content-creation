@@ -22,7 +22,7 @@ from conftest import SHOWN_PRICES, set_phase
 from creation import episode_commands as ec
 from creation import orchestrate
 from creation.cli_produce import main
-from creation.harness_rules import silent_first_beat_lines, word_age_lines
+from creation.harness_rules import word_age_lines
 from creation.pitch_card import (
     PG_RULE,
     PitchRefused,
@@ -449,7 +449,11 @@ def _spine(**beat_changes: Any) -> dict[str, Any]:
     return spine
 
 
-def test_a_take_whose_first_beat_is_silent_is_warned() -> None:
+def test_the_script_gate_never_asks_for_lines_on_a_silent_beat_or_a_quiet_take(
+    desk: Path,
+) -> None:
+    """Silent beats are fine and pacing is the server's (drama #959): no kit warning names either."""
+
     spine = spine_fixture(episodes=1)
     first = spine["beats"][0]
     second = copy.deepcopy(first)
@@ -457,13 +461,11 @@ def test_a_take_whose_first_beat_is_silent_is_warned() -> None:
     first["dialogue_lines"] = []
     spine["beats"].append(second)
 
-    lines = silent_first_beat_lines(spine, episode=1, take_count=1)
+    text = orchestrate.script_gate_text(desk, spine, episode=1)
 
-    assert lines and "take t1: its first beat (beat 1) has no line" in lines[0]
-    assert (
-        silent_first_beat_lines(spine_fixture(episodes=1), episode=1, take_count=1)
-        == []
-    )
+    assert "has no line. Put a line on it" not in text
+    assert "A take wants" not in text
+    assert "has no spoken line" not in text
 
 
 @pytest.mark.parametrize(

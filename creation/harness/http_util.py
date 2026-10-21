@@ -346,6 +346,46 @@ def draft_retry_line(error: Mapping[str, Any]) -> str | None:
     )
 
 
+class ApiRefused(SystemExit):
+    """A drama API refusal (an error status) that keeps the server's whole answer.
+
+    A ``SystemExit`` with the same text as before, so every caller that catches
+    those is unchanged; a caller that needs the answer's ``details`` (a
+    ``line_needs_creator_choice`` refusal's ``fit_proposals``) reads ``body``
+    instead of parsing the text, which cuts ``details`` short.
+
+    Parameters
+    ----------
+    message
+        The stop text.
+    status
+        The HTTP status.
+    body
+        The parsed answer (text when it was not JSON).
+    """
+
+    def __init__(self, message: str, *, status: int, body: Any) -> None:
+        super().__init__(message)
+        self.status = status
+        self.body = body
+
+
+class JobFailed(SystemExit):
+    """A job that ended failed or cancelled, with its terminal body kept (``job``).
+
+    Parameters
+    ----------
+    message
+        The stop text (:func:`describe_job_error`).
+    job
+        The terminal job body.
+    """
+
+    def __init__(self, message: str, *, job: Mapping[str, Any]) -> None:
+        super().__init__(message)
+        self.job = dict(job)
+
+
 def _raise_for_status(response: httpx.Response) -> None:
     if response.is_success:
         return
@@ -353,7 +393,9 @@ def _raise_for_status(response: httpx.Response) -> None:
         detail: Any = response.json()
     except ValueError:
         detail = response.text
-    raise SystemExit(http_error_message(response, detail))
+    raise ApiRefused(
+        http_error_message(response, detail), status=response.status_code, body=detail
+    )
 
 
 def _payload_summary(payload: dict[str, Any]) -> str:

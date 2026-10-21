@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, Mapping, TextIO
 
 from creation import episode_commands as ec
+from creation import line_fit
 from creation.cast_commands import declared_language, language_code
 from creation.cli_text import TextArgError, text_or_file
 from creation.harness.http_util import api_error_text
@@ -76,6 +77,18 @@ def _no_route(status: int, body: Any, what: str) -> str | None:
     if status in (404, 405) and not code:
         return f"this server has no {what} route yet (fictora-drama #582 is not deployed); nothing was sent"
     return None
+
+
+def _line_fit_stop(status: int, answer: Any, *, desk: Path, out: TextIO) -> None:
+    """Stop on ``409 line_needs_creator_choice`` with the server's card and the ``line-fit`` command (drama #962)."""
+
+    proposals = line_fit.fit_proposals(answer) if status == 409 else []
+    if proposals:
+        print(
+            "Not applied: a line in the brief does not fit its take; nothing was changed.",
+            file=out,
+        )
+        raise ec.CommandStopped(line_fit.pause_text(proposals, desk=desk))
 
 
 def _verdict(
@@ -497,6 +510,7 @@ def run_brief_edit(
         body = {"spine_version": spine["spine_version"], "scene_prompt": new}
         status, answer = run.put_optional(path, {**body, "preview": True})
         refused = _no_route(status, answer, "brief (scene-prompt)")
+        _line_fit_stop(status, answer, desk=desk, out=out)
         if refused is None and status >= 400:
             code, message, _ = _error(answer)
             refused = f"{code}: {message}" if code else message
@@ -512,6 +526,7 @@ def run_brief_edit(
             _verdict(out, preview=True)
             return False
         status, answer = run.put_optional(path, body)
+        _line_fit_stop(status, answer, desk=desk, out=out)
         if status >= 400:
             code, message, _ = _error(answer)
             _verdict(out, refused=f"{code}: {message}" if code else message)
