@@ -63,7 +63,7 @@ def _sent(api: FakeApi) -> list[tuple[str, str]]:
 def test_expression_cause_can_be_set_on_a_frame_that_lacks_it(
     desk: Path, api: FakeApi
 ) -> None:
-    """The mood-jump advice says `--set expression_cause="..."`; the saved frame leaves it out."""
+    """A row that changes a face's mood names its cause (`--set expression_cause="..."`); the saved frame leaves it out."""
 
     brief = _frame(api)["visual_brief"]
     brief.pop("expression_cause", None)
