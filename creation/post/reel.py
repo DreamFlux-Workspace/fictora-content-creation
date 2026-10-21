@@ -979,7 +979,7 @@ def render_reel(
     watermark_y: int | None = None,
     hook: HookOverlay | None = None,
     letterbox: LetterboxReel | None = None,
-    panels: Sequence[tuple[int, int, Any]] = (),
+    panels: Any = None,
     cover: Path | None = None,
 ) -> tuple[float, str, str, list[str]]:
     """Cut the plan from the sources into ``paths['video']`` (and its ``.ass``).
@@ -994,8 +994,9 @@ def render_reel(
     ``hook`` (:mod:`creation.post.hook_overlay`) is burned over the captions,
     before the mark; None draws nothing and runs exactly the commands it always ran.
 
-    ``panels`` (:func:`creation.post.system_panels.reel_panels`): a system or
-    game genre's panels, on the reel's timeline, burned after the captions and
+    ``panels`` (:func:`creation.post.system_panels.reel_layer`): a system or
+    game genre's panels as the server placed and drew them on the reel's timeline,
+    burned after the captions and
     before the hook line; empty draws nothing and runs exactly the commands it
     always ran.
 
@@ -1117,14 +1118,11 @@ def render_reel(
                 f"{len(cues)} caption cue(s), {grain}, re-timed through the segment map"
             )
         if panels:
-            from creation.post.delivery_geometry import layout
-            from creation.post.system_panels import burn_panels
+            from creation.post.system_panels import burn_layer
 
             paneled = scratch / "reel-panels.mp4"
-            pic = layout().picture if letterbox is not None else None
-            burn_panels(
+            burn_layer(
                 panels, captioned, paths["video"].with_name(paths["video"].stem + "-panels.ass"), paneled,
-                picture=(pic.x, pic.y, pic.width, pic.height) if pic is not None else None,
             )  # fmt: skip
             captioned = paneled
             report.append(f"{len(panels)} system panel(s) drawn through the cut")
@@ -1872,17 +1870,23 @@ def make_reel(
 
     caption = server_post_text(desk, episode, part=part_found.number)
     style, style_note = posting_caption_style(desk, caption_style)
-    panels: list[tuple[int, int, Any]] = []
+    panels: Any = None
     # A desk created before 6 Oct 2026 never draws panels (creation.rules_epoch; frozen, do not change).
+    # The server places and draws them through the cut (fictora-drama ``system-panels`` route).
     if not no_panels and not legacy:
-        from creation.post.system_panels import reel_panels
+        from creation.post.system_panels import reel_layer, show_takes_panels
         from creation.spine_view import episode_id_for
 
-        panels = reel_panels(
-            spine, episode_id_for(spine, episode), [(t.take_id, t.duration) for t in takes], plan.segments,
-            fps=takes[0].fps if takes else 24.0,
-            skip_takes=[s.take_id for s in srcs if s.inferred and s.inferred.burned],
-        )  # fmt: skip
+        if show_takes_panels(spine):
+            from creation.post.delivery_geometry import layout
+
+            pic = layout().picture if boxed is not None else None
+            panels = reel_layer(
+                desk, episode, episode_id_for(spine, episode), [(t.take_id, t.duration) for t in takes],
+                plan.segments, fps=takes[0].fps if takes else 24.0,
+                skip_takes=[s.take_id for s in srcs if s.inferred and s.inferred.burned],
+                picture=(pic.x, pic.y, pic.width, pic.height) if pic is not None else None,
+            )  # fmt: skip
     series = str(spine.get("title") or desk.name)
     # The cover is drawn first (its picture comes from the takes, not the reel) and goes on
     # the reel's first frame in the mark step's own encode: Discord and the phones show a
