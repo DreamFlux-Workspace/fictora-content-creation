@@ -23,7 +23,7 @@ Write real ages. Each character gets a clearly different outfit and silhouette; 
 
 ## Facts the picture cannot show
 
-These must be spoken in a line. Decide now.
+Every key fact is shown in the picture, or said in a line when the picture cannot show it. Decide now.
 
 ## Look
 

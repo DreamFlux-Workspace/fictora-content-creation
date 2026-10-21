@@ -300,8 +300,8 @@ def script_lines(
     """The script gate: per take, each beat's shot (``motion_intent``) and its lines.
 
     A beat's background shouts (``crowd_lines``) print in the order they play,
-    marked ``[background]``; they are not characters and never count toward a
-    take's three lines.
+    marked ``[background]``; they are not characters and are never counted as
+    speakers.
 
     Parameters
     ----------

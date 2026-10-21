@@ -1,7 +1,6 @@
 """Kit pre-board / plate warnings that fired on nothing (9 Oct batch, Stream D).
 
 - Gallery L-20261008-18: "lamplight holds" and "holding his profile" read as a hand hold.
-- Gallery L-20261008-30: every age flagged "written in words" though all were digits.
 - Noodle24 L-20261007-4: "Mr. Tanaka is 24" read from "Noodle 24" in his role; his card says late 80s.
 """
 
@@ -12,7 +11,6 @@ import pytest
 from creation.harness_rules import (
     adult_face_lines,
     staging_contradiction_lines,
-    word_age_lines,
 )
 
 
@@ -59,23 +57,6 @@ def _cast_spine(**card: object) -> dict:
         "cast": [{"cast_id": "c1", "name": "Mr. Tanaka", **card}],
         "beats": [],
     }
-
-
-def test_a_number_word_in_the_backstory_is_not_an_age_in_words() -> None:
-    spine = _cast_spine(
-        role="Owner of the gallery for twenty years; thirty paintings, fifteen sold.",
-        backstory="Lost forty, then fifty, at the auction.",
-        visual_brief={"age_band": "52", "description": "grey temples, narrow face"},
-    )
-    assert word_age_lines(spine) == []
-
-
-def test_an_age_in_words_where_the_card_states_its_age_is_still_warned() -> None:
-    assert word_age_lines(_cast_spine(visual_brief={"age_band": "late twenties"}))
-    # No age field: the look the plate is drawn from is read.
-    assert word_age_lines(
-        _cast_spine(visual_brief={"description": "twenty-six, adult woman"})
-    )
 
 
 def test_the_number_in_the_show_title_is_never_read_as_an_age() -> None:

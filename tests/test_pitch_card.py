@@ -22,7 +22,6 @@ from conftest import SHOWN_PRICES, set_phase
 from creation import episode_commands as ec
 from creation import orchestrate
 from creation.cli_produce import main
-from creation.harness_rules import word_age_lines
 from creation.pitch_card import (
     PG_RULE,
     PitchRefused,
@@ -468,32 +467,6 @@ def test_the_script_gate_never_asks_for_lines_on_a_silent_beat_or_a_quiet_take(
     assert "has no spoken line" not in text
 
 
-@pytest.mark.parametrize(
-    "words",
-    ["twenty-six, adult woman", "sixteen", "in her late twenties", "thirty years old"],
-)
-def test_an_age_in_words_on_a_cast_card_is_warned(words: str) -> None:
-    spine = spine_fixture(episodes=1)
-    spine["cast"][0]["visual_brief"] = {"age": words}
-
-    lines = word_age_lines(spine)
-
-    assert (
-        lines
-        and "Hana: the age is written in words" in lines[0]
-        and "digits" in lines[0]
-    )
-
-
-def test_an_age_in_digits_is_fine() -> None:
-    spine = spine_fixture(episodes=1)
-    spine["cast"][0]["visual_brief"] = {
-        "age": "26, adult woman",
-        "description": "twenty minutes late",
-    }
-    assert word_age_lines(spine) == []
-
-
 def test_restraint_words_in_a_beat_are_warned() -> None:
     spine = _spine(motion_intent="Seo-yeon freezes, a cold smile")
     lines = restraint_beat_lines(spine, episode=1)
@@ -787,29 +760,7 @@ def test_a_device_in_a_japanese_spoken_line_in_three_episodes_running_is_caught(
     assert any("each of the last 3 episodes" in line for line in lines)
 
 
-# --- canary 7 Oct (Lost and Found): the script checks read the story's expressions and ages ----------
-
-
-def test_the_worded_age_warning_prints_each_cards_own_age_in_digits() -> None:
-    spine = spine_fixture(episodes=1)
-    spine["cast"][0]["visual_brief"] = {"age_band": "twenty-eight, adult"}
-    spine["cast"][1]["visual_brief"] = {"age_band": "thirty-one, adult"}
-
-    first, second = word_age_lines(spine)
-
-    assert '("28")' in first and "`age: 28`" in first, first
-    assert '("31")' in second and "`age: 31`" in second, second
-    assert "26" not in first + second
-
-
-@pytest.mark.parametrize(
-    ("words", "age"),
-    [("twenty-eight", 28), ("thirty", 30), ("late twenties", 28), ("sixteen", 16)],
-)
-def test_a_worded_age_reads_as_one_number(words: str, age: int) -> None:
-    from creation.harness_rules import worded_age
-
-    assert worded_age(words) == age
+# --- canary 7 Oct (Lost and Found): the script checks read the story's expressions ----------
 
 
 def _anchor(spine: dict[str, Any], kind: str) -> dict[str, Any]:

@@ -17,7 +17,6 @@ from creation.ops.luma import measure_board_luma
 from creation.ops.notes import ensure_run_notes
 from creation.ops.preflight import PreflightReport, evaluate_preflight
 from creation.ops.state import (
-    MAX_LINES_PER_TAKE,
     QUEUE_FILENAME,
     Band,
     EpisodeState,
@@ -239,8 +238,9 @@ def approve_series_gate(
 def approve_script(desk: Path, *, episode: int) -> GateRecord:
     """Record a human yes on the episode lines.
 
-    More than three lines on a take does not block the yes: it is recorded with
-    a loud warning in the gate note, and preflight warns again before the take.
+    The kit sets no lines-per-take limit: pacing and whether a line fits its
+    take are the server's (decisions 21 Oct, B1 and B10; fictora-drama #959,
+    #962). Silent beats are free.
 
     Parameters
     ----------
@@ -252,23 +252,12 @@ def approve_script(desk: Path, *, episode: int) -> GateRecord:
     Returns
     -------
     GateRecord
-        Approved script gate. ``note`` starts with ``WARNING`` when a take has
-        more than three lines.
+        Approved script gate (``note`` is ``lines``).
     """
 
     series = load_series(desk)
     slot = episode_by_ordinal(series, episode)
-    long_takes = [
-        f"{take.take_id} has {len(take.lines)} lines"
-        for take in slot.takes
-        if len(take.lines) > MAX_LINES_PER_TAKE
-    ]
     note = "lines"
-    if long_takes:
-        note = (
-            f"WARNING: {'; '.join(long_takes)}; maximum is {MAX_LINES_PER_TAKE}. "
-            "A four-line 15s take drops a line, usually the one that carries the story."
-        )
     slot.script = GateRecord(status="approved", at_utc=utc_now(), note=note)
     save_series(desk, series)
     write_queue(desk, series)

@@ -25,7 +25,6 @@ from creation.prices import STILL_USD
 from creation.production_state import load_production
 from creation.ops.state import (
     ENVELOPE_STOP_MULTIPLIER,
-    MAX_LINES_PER_TAKE,
     EpisodeState,
     PreflightOverride,
     SeriesState,
@@ -36,9 +35,7 @@ from creation.ops.state import (
 )
 
 #: Checks that warn loudly instead of blocking. Everything else is a human gate and blocks.
-WARNING_CODES = frozenset(
-    {"line_count", "board_luma", "estimate", "envelope", "handoff", "reroll"}
-)
+WARNING_CODES = frozenset({"board_luma", "estimate", "envelope", "handoff", "reroll"})
 
 
 @dataclass(frozen=True)
@@ -248,7 +245,6 @@ def evaluate_preflight(
             "plates_approved", series.plates.status, "Shared plates are not approved."
         ),
         _approved("script_approved", episode.script.status, "Lines are not approved."),
-        _line_count(take),
         _approved(
             "board_approved",
             take.board.status,
@@ -365,17 +361,6 @@ def _board_current(
             else "ok"
         ),
     )
-
-
-def _line_count(take: TakeState) -> PreflightCheck:
-    count = len(take.lines)
-    if count > MAX_LINES_PER_TAKE:
-        return PreflightCheck(
-            code="line_count",
-            ok=False,
-            detail=f"{take.take_id} has {count} lines; maximum is {MAX_LINES_PER_TAKE}. A four-line take drops a line.",
-        )
-    return PreflightCheck(code="line_count", ok=True, detail=f"{count} lines")
 
 
 def _board_luma(episode: EpisodeState, take: TakeState, desk: Path) -> PreflightCheck:

@@ -90,7 +90,9 @@ def test_an_open_gate_blocks_and_cannot_be_overridden(tmp_path: Path) -> None:
         confirm_preflight(desk, episode=1, take_id="t1", confirm_unit="ep01-t1")
 
 
-def test_four_lines_are_approved_with_a_warning_not_refused(tmp_path: Path) -> None:
+def test_the_kit_sets_no_lines_per_take_limit(tmp_path: Path) -> None:
+    """Pacing and line fit are the server's (decisions 21 Oct, B1/B10): four lines
+    on a take approve with no warning, and preflight says nothing about line count."""
     desk = init_series_desk(tmp_path, "Lines Test", band="15s", episode_count=1)
     set_take_lines(
         desk,
@@ -99,9 +101,9 @@ def test_four_lines_are_approved_with_a_warning_not_refused(tmp_path: Path) -> N
         lines=[SpokenLine("Hana", f"line {n}") for n in range(4)],
     )
     record = approve_script(desk, episode=1)
-    assert record.status == "approved" and record.note.startswith(
-        "WARNING: t1 has 4 lines"
-    )
+    assert record.status == "approved" and record.note == "lines"
+    report = preflight_take(desk, episode=1, take_id="t1")
+    assert all(check.code != "line_count" for check in report.checks)
 
 
 # --- hand-off frame on a new episode (Hanakaze ep 2-3: warned on every episode 2 on) ---------------
