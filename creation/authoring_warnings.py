@@ -18,6 +18,16 @@ server, so nothing is printed then.
 The kit prints them, groups them per episode and take, and adds them to the run
 notes. It never exits non-zero for one, never refuses, never shortens a line.
 A code it does not know is shown by its ``message``.
+
+Approved lines (fictora-drama #961, 21 Oct 2026): when a line the creator
+approved for an episode comes back changed in a draft, the job result
+(``author``, ``rewrite``, the episode-1 draft) carries ``script_line_restored``
+("Your approved line "…" came back as "…". I put it back.") or, when it could
+not be put back, ``script_line_changed`` / ``script_line_speaker_changed`` /
+``script_line_missing`` ("… could not be put back: <why>. …"). The kit prints
+the server's ``message`` word for word. A put-back line is said on its own
+(``epNN SCRIPT: <message>``), never under :data:`HEADER`, because the server
+did change the draft.
 """
 
 from __future__ import annotations
@@ -194,6 +204,10 @@ def _counted(words: Any, target: Any) -> str:
 SCRIPT_CONTRACT_CODES = frozenset(
     {"script_line_changed", "script_line_speaker_changed", "script_line_missing"}
 )
+#: A line the creator approved for the episode came back changed in the draft
+#: and the server put it back word for word (fictora-drama #961). Nothing to
+#: run: the message is said as the server wrote it.
+SCRIPT_LINE_RESTORED_CODE = "script_line_restored"
 
 
 def _episode_number(episode_id: str, spine: Mapping[str, Any] | None) -> str:
@@ -286,6 +300,9 @@ def warning_line(
     if code in PACING_CODES:
         # Read to the producer before boards: trim the pause or give it an action, or keep it.
         return f"pace: {message}"
+    if code == SCRIPT_LINE_RESTORED_CODE:
+        # Already put back on the server: the server's words, no command.
+        return f"SCRIPT: {message}"
     if code in SCRIPT_CONTRACT_CODES:
         # Ask the human: put the approved line back, or keep the draft's. Never fixed silently.
         return f"SCRIPT: {message} To put it back: {script_fix_command(warning, spine)}"
@@ -369,14 +386,25 @@ def warning_lines(
     Returns
     -------
     list[str]
-        Printable lines (indented under one header per episode), then the
-        pacing note as one line of its own (:func:`pacing_lines`).
+        First each put-back approved line (``epNN SCRIPT: <message>``, no
+        header: the server changed the draft), then the other warnings
+        indented under one header per episode, then the pacing note as one
+        line of its own (:func:`pacing_lines`).
     """
 
     pace = pacing_lines(warnings, spine, desk=desk)
-    warnings = [w for w in warnings if str(w.get("code") or "") not in PACING_CODES]
+    restored = [
+        f"{_episode_label(warning_episode_id(w, spine), spine)} {warning_line(w, spine)}"
+        for w in warnings
+        if str(w.get("code") or "") == SCRIPT_LINE_RESTORED_CODE
+    ]
+    warnings = [
+        w
+        for w in warnings
+        if str(w.get("code") or "") not in PACING_CODES | {SCRIPT_LINE_RESTORED_CODE}
+    ]
     if not warnings:
-        return pace
+        return restored + pace
     groups: dict[str, list[tuple[int, int, Mapping[str, Any]]]] = {}
     for index, warning in enumerate(warnings):
         take = warning.get("take")
@@ -390,7 +418,7 @@ def warning_lines(
             named = warning.get("code") == "take_words_over_target"
             prefix = f"t{take} " if take and not named else ""
             lines.append(f"  {prefix}{warning_line(warning, spine)}")
-    return lines + pace
+    return restored + lines + pace
 
 
 def say_warnings(
@@ -432,6 +460,7 @@ __all__ = [
     "FIELD",
     "HEADER",
     "SCRIPT_CONTRACT_CODES",
+    "SCRIPT_LINE_RESTORED_CODE",
     "script_fix_command",
     "authoring_warnings",
     "for_episode",

@@ -207,3 +207,35 @@ def test_run_unit_reads_the_rewrite_job_id() -> None:
     assert (
         ec.admitted_job_id({"rewrite_job_id": "job_rw", "status": "queued"}) == "job_rw"
     )
+
+
+def test_rewrite_says_the_put_back_line_word_for_word(desk: Path, api: FakeApi) -> None:
+    # fictora-drama #961: a rewrite job's result carries what the draft did to the approved lines.
+    restored = (
+        'Your approved line "We\'re closed." came back as "Closed." I put it back.'
+    )
+    _serve_notes(api)
+    _rewritten(api, "job_pilot_rewrite_1")
+    api.jobs["job_pilot_rewrite_1"] = {
+        "status": "completed",
+        "result": {
+            "spine_id": "sp1",
+            "episode_ordinal": 2,
+            "authoring_warnings": [
+                {
+                    "schema_version": "fictora.drama-authoring-warning.v1",
+                    "path": "episodes[ep_02].lines",
+                    "code": "script_line_restored",
+                    "message": restored,
+                    "episode_id": "ep_02",
+                    "script_text": "We're closed.",
+                }
+            ],
+        },
+    }
+    out = io.StringIO()
+
+    ec.run_rewrite(desk, episode=2, line="Ren swaps the sugar", out=out)
+
+    assert f"ep02 SCRIPT: {restored}" in out.getvalue()
+    assert restored in (desk / "ep02" / "run-notes.md").read_text(encoding="utf-8")

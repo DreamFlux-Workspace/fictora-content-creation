@@ -434,3 +434,103 @@ def test_the_pacing_note_is_one_line_said_once_per_episode_across_steps(
     other = {**gap, "episode_id": "ep_03", "path": "episodes[ep_03].takes[1]"}
     assert warning_lines([other], desk=tmp_path) == [f"ep_03 pace: {other['message']}"]
     assert json.loads((tmp_path / PACING_SAID_FILE).read_text()) == ["ep_02", "ep_03"]
+
+
+# --- approved lines put back (fictora-drama #961, 21 Oct 2026) --------------------------------
+
+#: The server's own words, as ``script_contract.approved_line_notices`` writes them.
+RESTORED = (
+    'Your approved line "Squeeze harder. I want them all to see you flinch." '
+    'came back as "Squeeze harder." I put it back.'
+)
+NOT_RESTORED = (
+    'Your approved line "Komugi is missing." was left out of the draft, and it could not be '
+    "put back: the writers left no free beat for it. Use your line, or keep the draft this way."
+)
+
+
+def _restored(episode_id: str = "ep_02") -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA,
+        "path": f"beats[beat_{episode_id}_03].dialogue_lines[line_{episode_id}_04].text",
+        "code": "script_line_restored",
+        "message": RESTORED,
+        "episode_id": episode_id,
+        "beat_id": f"beat_{episode_id}_03",
+        "line_id": f"line_{episode_id}_04",
+        "script_text": "Squeeze harder. I want them all to see you flinch.",
+        "script_speaker": "Dez",
+    }
+
+
+def _not_restored(episode_id: str = "ep_02") -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA,
+        "path": f"episodes[{episode_id}].lines",
+        "code": "script_line_missing",
+        "message": NOT_RESTORED,
+        "episode_id": episode_id,
+        "script_text": "Komugi is missing.",
+        "script_speaker": "Mina",
+    }
+
+
+def test_a_put_back_line_is_said_word_for_word_on_its_own_not_under_the_nothing_changed_header() -> (
+    None
+):
+    spine = {"episode_summaries": [{"episode_id": "ep_02", "ordinal": 2}]}
+
+    lines = warning_lines([_line_long(), _restored(), _not_restored()], spine)
+
+    assert lines[0] == f"ep02 SCRIPT: {RESTORED}"
+    assert lines[1] == f"ep02 {HEADER}:"
+    assert sum(RESTORED in line for line in lines) == 1
+    # The one that could not be put back keeps the server's words, then the command.
+    assert (
+        f"  SCRIPT: {NOT_RESTORED} To put it back: "
+        'line --desk D --episode 2 --add --beat N --speaker "Mina" --text "Komugi is missing."'
+    ) in lines
+    # Alone: no header at all.
+    assert warning_lines([_restored()], spine) == [f"ep02 SCRIPT: {RESTORED}"]
+
+
+def test_author_says_the_put_back_line_word_for_word_and_notes_it(
+    desk: Path, api: FakeApi
+) -> None:
+    text = _author(
+        desk,
+        api,
+        {
+            "status": "completed",
+            "result": {"authoring_warnings": [_restored(), _not_restored()]},
+        },
+    )
+
+    assert f"ep02 SCRIPT: {RESTORED}" in text
+    assert f"SCRIPT: {NOT_RESTORED}" in text
+    assert RESTORED in _notes(desk, 2)
+    assert load_production(desk).phase == "wait_script"
+
+
+def test_the_draft_step_says_the_put_back_line_word_for_word(
+    desk: Path, api: FakeApi
+) -> None:
+    api.spine_doc = {
+        **api.spine_doc,
+        "episode_summaries": api.spine_doc["episode_summaries"][:1],
+    }
+    episode_id = api.spine_doc["episode_summaries"][0]["episode_id"]
+    api.routes[("POST", "/v1/prompt-video-authoring-drafts")] = {
+        "plan_job_id": "job_plan",
+        "spine_id": "sp1",
+    }
+    api.jobs["job_plan"] = {
+        "status": "completed",
+        "result": {"authoring_warnings": [_restored(episode_id)]},
+    }
+    set_phase(desk, "new", spine_id=None)
+
+    result = orchestrate.run_step(desk)
+
+    assert f"ep01 SCRIPT: {RESTORED}" in result.message
+    assert RESTORED in _notes(desk, 1)
