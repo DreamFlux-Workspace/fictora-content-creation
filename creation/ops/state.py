@@ -28,7 +28,6 @@ LETTERBOX_TAKES_FOR_BAND: dict[str, int] = {"15s": 2, "30s": 3, "60s": 6}
 LETTERBOX_TAKE_SECONDS_FOR_BAND: dict[str, int] = {"15s": 7, "30s": 10, "60s": 10}
 #: Seconds one letterbox (4:3) take films at 30 s and 60 s.
 LETTERBOX_TAKE_SECONDS = 10
-MAX_LINES_PER_TAKE = 3
 #: Preflight warns (never blocks) past this multiple of the envelope.
 ENVELOPE_STOP_MULTIPLIER = 2.0
 #: Warn-only spend envelopes. One source: ``creation.prices`` (sized for R2V; Turbo takes sit inside them).
