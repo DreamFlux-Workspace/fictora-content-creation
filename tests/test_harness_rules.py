@@ -16,7 +16,6 @@ from creation.harness_rules import (
     short_line_hold,
     sparkle_adult_line,
     staging_contradiction_lines,
-    thin_take_lines,
     seam_fix_line,
     thought_short_of_cut,
     thumbnail_answered_audio_error,
@@ -218,14 +217,15 @@ def test_a_near_touch_and_a_hold_that_is_also_forbidden_are_named() -> None:
     assert len(lines) == 1 and "redraw with no note" in lines[0]
 
 
-def test_a_take_with_fewer_than_three_lines_is_named() -> None:
-    spine = _spine()
-    lines = thin_take_lines(spine, episode=1, take_count=1)
-    assert len(lines) == 1 and "2 spoken" in lines[0]
-    spine["beats"][2]["dialogue_lines"] = [
-        {"line_id": "l3", "cast_id": "cast_hana", "text": "Look."}
-    ]
-    assert thin_take_lines(spine, episode=1, take_count=1) == []
+def test_the_kit_keeps_no_lines_per_take_rule_of_its_own() -> None:
+    """The server owns take pacing (drama #959): a take near 20 words, full lines and fast
+    reactions, silent beats fine. The kit no longer says "a take wants 3 lines"."""
+
+    import creation.harness_rules as rules
+
+    assert not hasattr(rules, "LINES_PER_TAKE")
+    assert not hasattr(rules, "thin_take_lines")
+    assert not hasattr(rules, "silent_first_beat_lines")
 
 
 def test_an_adult_age_without_adult_features_is_named() -> None:

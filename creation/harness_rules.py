@@ -16,7 +16,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from creation.spine_view import beats_by_take, episode_id_for, spoken_lines
+from creation.spine_view import beats_by_take, episode_id_for
 
 #: Words that make the server refuse the take: inner voice must not be written
 #: into the take as fixture lines.
@@ -44,9 +44,6 @@ _LINE_START = re.compile(r"\((\d+(?:\.\d+)?)\s*[–-]")
 
 #: A one- or two-word line held longer than this was stretched by the transcript.
 SHORT_LINE_HOLD_SECONDS = 3.0
-
-#: Spoken lines a take should carry so the cut stays punchy.
-LINES_PER_TAKE = 3
 
 _NEAR_TOUCH = re.compile(r"an inch|stops short|almost touch|just short", re.IGNORECASE)
 _CLEAR_GAP = re.compile(
@@ -848,91 +845,6 @@ def staging_contradiction_lines(spine: Mapping[str, Any], *, episode: int) -> li
             f"{label}: the frame both stages a hold and forbids it. "
             "A beat rewrite does not change stored staging. "
             "Edit the frame (`edit --frame N --set ...`), then redraw with no note."
-        )
-    return lines
-
-
-def thin_take_lines(
-    spine: Mapping[str, Any], *, episode: int, take_count: int
-) -> list[str]:
-    """Warn when a take has fewer than three spoken lines.
-
-    A take with one or two lines, or none, plays slow. A line or a visible
-    action wants to land every few seconds.
-
-    Parameters
-    ----------
-    spine
-        Spine JSON.
-    episode
-        Episode ordinal.
-    take_count
-        How many takes the episode is cut into.
-
-    Returns
-    -------
-    list[str]
-        One line per thin take.
-    """
-
-    if take_count < 1:
-        return []
-    lines: list[str] = []
-    for index, group in enumerate(
-        beats_by_take(spine, episode=episode, take_count=take_count), start=1
-    ):
-        count = sum(len(spoken_lines(spine, beat)) for beat in group)
-        if count >= LINES_PER_TAKE:
-            continue
-        if count == 0:
-            lines.append(
-                f"take t{index} has no spoken line. Put a line or a visible action on it."
-            )
-            continue
-        lines.append(
-            f"take t{index} has {count} spoken line(s). A take wants {LINES_PER_TAKE} lines, "
-            "and a line or a visible action every 3 to 4 seconds."
-        )
-    return lines
-
-
-def silent_first_beat_lines(
-    spine: Mapping[str, Any], *, episode: int, take_count: int
-) -> list[str]:
-    """Warn when a take's first beat has no line though the take has lines.
-
-    The first beat carries the hook: a line on it (or a visible action already
-    in motion) lands by about 0.5 s. A take with no line at all is
-    :func:`thin_take_lines`' warning, not this one.
-
-    Parameters
-    ----------
-    spine
-        Spine JSON.
-    episode
-        Episode ordinal.
-    take_count
-        How many takes the episode is cut into.
-
-    Returns
-    -------
-    list[str]
-        One line per take whose beat 1 is silent.
-    """
-
-    if take_count < 1:
-        return []
-    lines: list[str] = []
-    for index, group in enumerate(
-        beats_by_take(spine, episode=episode, take_count=take_count), start=1
-    ):
-        if not group or spoken_lines(spine, group[0]):
-            continue
-        if not any(spoken_lines(spine, beat) for beat in group[1:]):
-            continue
-        lines.append(
-            f"take t{index}: its first beat ({_beat_label(group[0])}) has no line. Put a line on it "
-            "(`line --add --beat N`), or make sure it opens mid-motion on a visible action."
         )
     return lines
 

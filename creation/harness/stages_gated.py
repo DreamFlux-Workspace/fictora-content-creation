@@ -10,6 +10,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from creation.harness.http_util import (
     HOSTED_POST_OFF_HINT,
+    JobFailed,
     api_error_text,
     describe_job_error,
     server_already_retried,
@@ -353,7 +354,7 @@ def start_draft(
             time.sleep(5.0)
             continue
         break
-    raise SystemExit(f"plan {describe_job_error(last_plan)}")
+    raise JobFailed(f"plan {describe_job_error(last_plan)}", job=last_plan)
 
 
 _DRAFT_ROUTE = "/v1/prompt-video-authoring-drafts"
