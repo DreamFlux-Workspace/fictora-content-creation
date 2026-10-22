@@ -240,10 +240,11 @@ from creation.post.hook_overlay import (
 )
 from creation.post import letterbox as lb
 from creation.post.system_panels import (
-    PlacedPanel,
-    burn_panels,
+    NO_PANELS,
+    PanelLayer,
+    burn_layer,
     show_takes_panels,
-    take_panels,
+    take_layer,
 )
 from creation.post.media import (
     MediaToolError,
@@ -1246,6 +1247,7 @@ def run_finish(
     voices: tuple[Placed, ...] = (),
     cues: tuple[Placed, ...] = (),
     caption_labels: tuple[tuple[str, float, float], ...] = (),
+    clear_caption_labels: bool = False,
     sign_overlay: bool = False,
     prop_texts: tuple[PropTextRequest, ...] = (),
     prop_boxes: tuple[BlurBox, ...] = (),
@@ -1328,7 +1330,10 @@ def run_finish(
         ``--cue`` hand cues laid after the SFX step (take seconds as filmed).
     caption_labels
         ``--caption-label`` ``(text, start, end)``: a caption with no spoken line under it
-        (take seconds as filmed), drawn with the other captions.
+        (take seconds as filmed). Saved on the server first (:mod:`creation.post.caption_labels`,
+        decision D2); the take burns the labels the server keeps, given or not.
+    clear_caption_labels
+        ``--no-caption-labels``: clear the take's labels on the server.
     sign_overlay
         ``--sign-overlay``: where the text check finds possible lettering in a shot whose
         take facts carry one story sign (``story_signs``), draw the sign's exact words in
@@ -1592,6 +1597,16 @@ def run_finish(
             )
     found_spine = saved_spine(desk, episode)
     spine = found_spine[0] if found_spine else None
+    # Caption labels live on the server (D2, 21 Oct 2026): any given are saved there first, then the
+    # take burns the labels the server keeps (a re-finish keeps them too).
+    from creation.post.caption_labels import finish_caption_labels
+
+    labels_answer, spine = finish_caption_labels(
+        desk, episode, thoughts.take_number(take_id), caption_labels, spine,
+        clear=clear_caption_labels, out=out,
+    )  # fmt: skip
+    caption_labels = labels_answer
+    spine = dict(spine) if spine is not None else None
     board = approved_board(desk, episode, take_id)
     audio = DramaApiAudio(desk, episode=episode)
     sfx_render = sfx_render or service_renderer(audio, spine_id(desk))
@@ -1776,22 +1791,41 @@ def run_finish(
         )
 
     # System panels (system and game genres only): the writer's panels on this
-    # take's beats, drawn after the captions (fictora-drama ``system_panels``).
-    panels: list[tuple[int, int, PlacedPanel]] = []
+    # take's beats, placed and drawn by the server (fictora-drama ``system-panels``
+    # route), burned here after the captions. Asked before any work, so an older
+    # server stops the finish with the fix (--no-panels) instead of half a take.
+    panels: PanelLayer = NO_PANELS
     panels_note = ""
     # A desk created before 6 Oct 2026 never draws panels (creation.rules_epoch; frozen, do not change).
     if show_takes_panels(spine) and not legacy_rules():
         if no_panels:
             panels_note = "turned off (--no-panels)"
         else:
+            from creation.post.delivery_geometry import layout as _panel_layout
+            from creation.post.system_panels import CANVAS as _PANEL_CANVAS
             from creation.spine_view import episode_id_for
 
             lengths, _ = take_lengths(desk, episode, take_id, source=source)
-            panels = take_panels(
-                spine,
+            if letterbox:
+                # Drawn on the 9:16 canvas the 4:3 picture is put on, kept on the picture.
+                _pic = _panel_layout().picture
+                panel_size = _PANEL_CANVAS
+                panel_picture: tuple[int, int, int, int] | None = (
+                    _pic.x, _pic.y, _pic.width, _pic.height,
+                )  # fmt: skip
+            else:
+                _info = probe_video(source)
+                panel_size, panel_picture = (_info.width, _info.height), None
+            panels = take_layer(
+                desk,
+                episode,
                 episode_id_for(spine or {}, episode),
                 thoughts.take_number(take_id),
                 lengths,
+                width=panel_size[0],
+                height=panel_size[1],
+                picture=panel_picture,
+                take_count=len((spine or {}).get("beats_per_storyboard_set") or ()),
             )
 
     def step(name: str, doing: str, work: Callable[[Path], StepReport]) -> None:
@@ -3253,25 +3287,14 @@ def run_finish(
         return StepReport("letterbox", "ran", detail, canvas)
 
     def do_system_panels(take: Path) -> StepReport:
-        picture = None
-        if letterbox:
-            from creation.post.delivery_geometry import layout
-
-            pic = layout().picture
-            picture = (pic.x, pic.y, pic.width, pic.height)
-        # Burned from its own -overlay file: the .ass beside the video keeps the captions too (L-20261006-8).
+        # The server's layer (placed and drawn there); burned from its own -overlay file:
+        # the .ass beside the video keeps the captions too (L-20261006-8).
         ass = next_versioned_path(takes, f"{base}-panels-overlay", ".ass")
-        drawn = burn_panels(
-            panels,
-            take,
-            ass,
-            next_versioned_path(takes, f"{base}-panels", ".mp4"),
-            picture=picture,
+        drawn = burn_layer(
+            panels, take, ass, next_versioned_path(takes, f"{base}-panels", ".mp4")
         )
         keep_captions_beside(drawn, ass)
-        detail = f"{len(panels)} panel(s): " + "; ".join(
-            panel.describe() for _, _, panel in panels
-        )
+        detail = panels.describe()
         append_run_note(
             run_dir, f"System panels -> `{drawn.name}` (`{ass.name}`): {detail}"
         )

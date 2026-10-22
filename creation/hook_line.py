@@ -14,10 +14,15 @@ filmed; it spends nothing.
   operator's own line; ``--off`` shows none.
 * A stale ``spine_version`` (409 ``spine_version_conflict``) is read again and
   sent once more.
-* An older server (no route: a bare 404 or 405), or one that refuses custom
-  text, gets the pick recorded on the desk (``shared/hook-line.json``):
-  ``finish`` and ``join`` use it, and the run says the app still shows the
-  server's pick.
+* The server checks the line (seven words or fewer, no question to the
+  viewer, not the first spoken line) and its warnings are printed word for
+  word. An older server (no route: a bare 404 or 405, or one that refuses
+  custom text) stops the command: the kit no longer keeps its own pick on the
+  desk (decision D1, 21 Oct 2026). A pick an older run left in
+  ``shared/hook-line.json`` is still read until the server holds one.
+* ``finish``, ``join`` and ``reel`` with ``--hook-line TEXT`` or
+  ``--no-hook-line`` save the choice here first and burn what the server
+  answers (:func:`save_burned_hook_line`).
 
 ``finish`` burns the hook line on a portrait show's first take, and a
 letterbox show's title block carries it for the whole video
@@ -28,9 +33,7 @@ letterbox show's title block carries it for the whole video
 the same route (``title_line: {kind: custom, text}``) and
 ``--default-setup-line`` clears it (``{kind: default}``: the series title).
 It goes as its own send, after any hook-line choice. A server without the
-field (it refuses it, has no route, or answers without ``title_line``) gets
-the line kept on the desk (``shared/setup-line.json``) for finish, join and
-reel; a later one the server stores drops it.
+field stops the command; the kit no longer keeps the line on the desk.
 """
 
 from __future__ import annotations
@@ -50,8 +53,6 @@ from creation.post.letterbox import (
     clear_desk_setup_line,
     desk_hook_line,
     desk_setup_line,
-    record_desk_hook_line,
-    record_desk_setup_line,
 )
 
 #: The server's opening route (the app's opening picker uses it too).
@@ -67,6 +68,11 @@ KNOWN_NOT_FOUND = frozenset(
 )
 #: The longest hook line the server takes (fictora-drama ``HOOK_LINE_MAX_CHARS``); longer is a 422.
 HOOK_LINE_MAX_CHARS = 120
+#: What an older server means for a hook line or setup line, in plain words.
+OLDER_SERVER_HOOK_LINE = (
+    "this Drama API cannot keep this episode's {what} yet (an older deploy). The kit no longer keeps its own "
+    "copy on the desk: update the server, then run this again"
+)
 #: Stale-version codes: the server's, and the name the kit's plan routes use.
 STALE_CODES = frozenset({"spine_version_conflict", "spine_version_stale"})
 
@@ -254,12 +260,12 @@ def choose_hook_line(
     Returns
     -------
     dict[str, Any] | None
-        The route's answer, or ``None`` when the pick was recorded on the desk instead.
+        The route's answer.
 
     Raises
     ------
     RuntimeError
-        Any other refusal (an option that does not exist, a job open on the story, ...).
+        An older server, or any other refusal (an option that does not exist, a job open on the story, ...).
     """
 
     from creation.spine_view import episode_id_for
@@ -284,22 +290,7 @@ def choose_hook_line(
         older = (status == 404 and code not in KNOWN_NOT_FOUND) or status == 405
         custom_refused = choice.get("kind") == "custom" and status == 422
         if older or custom_refused:
-            text = _choice_text(body, episode, choice) or ""
-            why = (
-                "this Drama API has no hook-line route yet (an older deploy)"
-                if older
-                else f"this Drama API does not take your own hook line yet ({api_error_text(answer)})"
-            )
-            saved = record_desk_hook_line(
-                desk, episode, {**dict(choice), "text": text}, why=why
-            )
-            shown = repr(text) if text else "no hook line"
-            print(
-                f"Recorded on the desk, not on the server: {why}. finish and join use {shown} "
-                f"(`{saved.relative_to(desk)}`); the app will still show the server's pick.",
-                file=out,
-            )
-            return None
+            raise RuntimeError(OLDER_SERVER_HOOK_LINE.format(what="hook line"))
         raise RuntimeError(
             f"the server refused the hook line (HTTP {status}): {api_error_text(answer)}"
         )
@@ -335,12 +326,12 @@ def choose_setup_line(
     Returns
     -------
     dict[str, Any] | None
-        The route's answer, or ``None`` when the line was kept on the desk instead.
+        The route's answer.
 
     Raises
     ------
     RuntimeError
-        Any other refusal (an unknown episode, a job open on the story, ...).
+        An older server, or any other refusal (an unknown episode, a job open on the story, ...).
     """
 
     from creation.spine_view import episode_id_for
@@ -374,19 +365,7 @@ def choose_setup_line(
             or status == 405
         )
         if older:
-            why = "this Drama API does not keep an episode's setup line yet (before fictora-drama #628)"
-            saved = record_desk_setup_line(desk, episode, dict(choice), why=why)
-            shown = (
-                repr(choice.get("text"))
-                if choice.get("kind") == "custom"
-                else "the series title"
-            )
-            print(
-                f"Recorded on the desk, not on the server: {why}. finish, join and reel use {shown} "
-                f"(`{saved.relative_to(desk)}`); the app will still show the server's.",
-                file=out,
-            )
-            return None
+            raise RuntimeError(OLDER_SERVER_HOOK_LINE.format(what="setup line"))
         raise RuntimeError(
             f"the server refused the setup line (HTTP {status}): {api_error_text(answer)}"
         )
@@ -419,6 +398,96 @@ def _read_spine(run: _Api, desk: Path, episode: int) -> dict[str, Any]:
     body = spine_body(run.spine(spine_id(desk)))
     save_spine_snapshot(desk, episode, body)
     return body
+
+
+def print_server_warnings(answer: Mapping[str, Any], out: TextIO) -> None:
+    """Print the server's warnings on a hook line, word for word."""
+
+    for warning in answer.get("warnings") or []:
+        message = warning.get("message") if isinstance(warning, Mapping) else warning
+        print(f"note: {message}", file=out)
+
+
+def save_burned_hook_line(
+    desk: Path,
+    episode: int,
+    *,
+    text: str | None = None,
+    off: bool = False,
+    out: TextIO | None = None,
+    api: _Api | None = None,
+) -> str | None:
+    """``finish`` / ``join`` / ``reel --hook-line TEXT`` or ``--no-hook-line``: save it on the server first.
+
+    Decision D1 (21 Oct 2026): the operator's own line, or turning it off, is
+    saved on the story through the opening route, exactly as ``hook-line
+    --text`` / ``--off`` do; the server checks it and its warnings print word
+    for word; the burn uses the line the server answers. Every surface (the
+    app, the next finish, join, reels) then shows the same line.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    episode
+        Episode ordinal.
+    text
+        The operator's own line, or ``None`` with ``off``.
+    off
+        Turn the hook line off.
+    out
+        Text stream.
+    api
+        Open API session (tests); the desk's own otherwise.
+
+    Returns
+    -------
+    str | None
+        The hook line the server holds now (``None``: off).
+
+    Raises
+    ------
+    ValueError
+        Neither or both of ``text`` and ``off``.
+    RuntimeError
+        An older server, or the server refused the line.
+    """
+
+    from creation.post.desk import open_api
+
+    stream: TextIO = out if out is not None else sys.stdout
+    if (text is None) == (not off):
+        raise ValueError("--hook-line TEXT or --no-hook-line, one of them")
+    words = " ".join((text or "").split())
+    if text is not None and not words:
+        raise ValueError("--hook-line needs the words of the hook line")
+    choice: dict[str, Any] = (
+        {"kind": "custom", "text": words} if text is not None else {"kind": "off"}
+    )
+    desk = desk.expanduser().resolve()
+    session = open_api(desk, episode) if api is None else None
+    run: _Api = api if api is not None else session  # type: ignore[assignment]
+    try:
+        spine = _read_spine(run, desk, episode)
+        answer = (
+            choose_hook_line(
+                desk, run, spine, episode=episode, choice=choice, out=stream
+            )
+            or {}
+        )
+        _read_spine(run, desk, episode)
+    finally:
+        if session is not None:
+            session.client.close()
+    clear_desk_hook_line(desk, episode)
+    shown = answer.get("hook_line")
+    print(
+        f"[hook-line] saved on the server for episode {episode}: "
+        + (repr(shown) if shown else "off (no hook line shows)"),
+        file=stream,
+    )
+    print_server_warnings(answer, stream)
+    return str(shown) if shown else None
 
 
 def run_hook_line(
@@ -529,11 +598,7 @@ def run_hook_line(
                 ),
                 file=stream,
             )
-            for warning in answer.get("warnings") or []:
-                message = (
-                    warning.get("message") if isinstance(warning, Mapping) else warning
-                )
-                print(f"note: {message}", file=stream)
+            print_server_warnings(answer, stream)
         if setup is not None:
             if choice is not None:
                 # The hook-line send moved the spine's version: read it again first.
@@ -577,5 +642,7 @@ __all__ = [
     "gate_hook_line_lines",
     "hook_line_options",
     "list_lines",
+    "print_server_warnings",
     "run_hook_line",
+    "save_burned_hook_line",
 ]

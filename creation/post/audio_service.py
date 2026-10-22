@@ -67,6 +67,12 @@ HINTS = {
     "operator_audio_unavailable": "the Drama API has no media storage configured for generated audio; tell engineering",
     "operator_upload_unavailable": "the Drama API cannot take uploads; this kit only transcribes stored take URLs",
     "voice_not_locked": "this character has no locked voice: run `voice --audition`, then `voice --pick N`",
+    # Decision D4 (21 Oct 2026): voice-line voices only an off-screen line or a thought already in the script.
+    "voice_line_not_in_script": (
+        'add the line to the script first: `line --add --beat N --speaker NAME --text "..." --off-screen`, '
+        "or a thought with `inner-voice`; then run voice-line again (nothing was spent)"
+    ),
+    "voice_line_on_screen": "this line is said on screen: re-film the take instead of laying a dry line (nothing was spent)",
     "audio_url_not_owned": "the transcript needs a file in our storage (the take's stored URL), not a local file",
     "idempotency_conflict": "this request key was used with another body; tell engineering (the desk's keys are stable)",
     "budget_cap_exceeded": "the audio budget cap is reached; tell engineering",
@@ -159,11 +165,14 @@ class AudioService(Protocol):
         language: str,
         key: str,
         spoken_text: str | None = None,
+        episode_id: str | None = None,
     ) -> dict[str, Any]:
         """``{audio_url, seconds, provider_voice, reading: {checked, read_right, …}, cost_usd}``.
 
         ``text`` is the performed line in the show's ``language``; ``spoken_text`` (when the
         script has one) is what the voice model is sent, so the server's reading re-check applies.
+        ``episode_id`` (the ``voice-line`` command) asks the server to voice only a heard-only line
+        already in that episode's script (decision D4); it refuses anything else before spending.
         """
         ...
 
@@ -280,12 +289,15 @@ class DramaApiAudio:
         language: str,
         key: str,
         spoken_text: str | None = None,
+        episode_id: str | None = None,
     ) -> dict[str, Any]:
-        """POST ``…/voice-lines``."""
+        """POST ``…/voice-lines`` (with ``episode_id``: a heard-only script line only, D4)."""
 
         body: dict[str, Any] = {"text": text, "language": language}
         if spoken_text:
             body["spoken_text"] = spoken_text
+        if episode_id:
+            body["episode_id"] = episode_id
         return self._post(
             f"/v1/spines/{spine_id}/cast/{cast_id}/voice-lines", body, key
         )

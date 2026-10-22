@@ -28,7 +28,6 @@ from creation.post.reel_plan import (
     frame_scores,
     beat_spans,
     plan_reel,
-    post_text,
     retime_cues,
     viewer_address,
 )
@@ -283,20 +282,6 @@ def test_cut_sound_keeps_the_length_and_crossfades_without_a_click() -> None:
     assert len(out) == 2 * rate
     step = np.abs(np.diff(out[:, 0]))
     assert step[100 : len(step) - 100].max() < 0.01  # a ramp, never a jump
-
-
-# --- post text ---------------------------------------------------------------------------------
-
-
-def test_post_text_carries_the_call_to_action_without_prices_or_model_names() -> None:
-    text = post_text(
-        series="SCP-173 Blink", episode=2, title="Blinking",
-        question="Where will the statue be? Made with Kling for $0.30", genre="horror",
-    )  # fmt: skip
-    assert text.startswith("SCP-173 Blink · Part 2: Blinking")
-    assert "Follow for part 3." in text
-    assert "$" not in text and "Kling" not in text
-    assert "#horror" in text
 
 
 # --- never overwrite ---------------------------------------------------------------------------

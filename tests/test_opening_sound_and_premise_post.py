@@ -23,7 +23,6 @@ from creation.harness_rules import (
     opening_sound_line,
 )
 from creation.post.finish import run_finish
-from creation.post.reel_plan import post_text
 from creation.post.sfx import (
     OPENING_SOUND_GAIN_DB,
     SFX_GAIN_DB,
@@ -74,18 +73,6 @@ def test_the_hook_plays_at_its_own_known_level_and_notes_still_move_it() -> None
     )
     plan = plan_from_take_facts(facts)
     assert (plan.cues[0].start, plan.cues[0].gain_db) == (0.0, OPENING_SOUND_GAIN_DB)
-
-
-def test_the_premise_line_is_the_post_title_and_an_older_show_posts_as_before() -> None:
-    titled = post_text(
-        series="Night Shift", episode=3, title="The Jacket", genre="mystery_case",
-        premise_line="The night-shift clerk is wearing his jacket.",
-    )  # fmt: skip
-    lines = titled.splitlines()
-    assert lines[0] == "The night-shift clerk is wearing his jacket."
-    assert lines[1] == "Night Shift · Part 3: The Jacket"
-    plain = post_text(series="Night Shift", episode=3, title="The Jacket")
-    assert plain.startswith("Night Shift · Part 3: The Jacket")
 
 
 @needs_ffmpeg

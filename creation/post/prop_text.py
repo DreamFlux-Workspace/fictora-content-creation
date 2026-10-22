@@ -12,14 +12,18 @@ take facts::
 
 ``text`` is the words the story intends ("I kept it dry for you. — Mom"),
 empty when the story gives none. When the words matter, ``finish --prop-text
-"TEXT"[@SHOT] --prop-box x,y,w,h`` writes them in a handwriting face, in the
+"@SHOT" --prop-box x,y,w,h`` writes them in a handwriting face, in the
 script they are written in (Latin: Caveat; Hangul: Nanum Pen Script; kana and
 kanji: Yomogi; all SIL OFL, shipped in ``assets/fonts``), on a paper plate over
 the prop's box, for that shot's window only. ``--prop-text @3`` takes the
 story's words for shot 3 from the take facts.
 
-It never invents words: with no text given and none in the take facts nothing
-is written (blur the prop instead: ``blur --box``). The box is the operator's
+It never invents words, and since 21 Oct 2026 (decision D3) it writes only
+the story's words from the take facts: words typed on the command line that
+the story does not give are refused (put them in the story first, then use
+``@SHOT``); with none in the take facts nothing is written (blur the prop
+instead: ``blur --box``). ``"TEXT"`` alone still picks the shot whose story
+words they are. The box is the operator's
 (the same ``x,y,w,h`` convention as ``blur --box``), or the take facts' own
 ``box`` when a server sends one.
 """
@@ -315,6 +319,17 @@ def plan_prop_overlays(
     notes: list[str] = []
     for position, request in enumerate(requests):
         label = f"--prop-text {request.text or ''}{'@' + str(request.shot) if request.shot else ''}".strip()
+        if request.text and not any(
+            p.text and _key(p.text) == _key(request.text) for p in props
+        ):
+            # Decision D3 (21 Oct 2026): the words come from the story (the server's take facts), never the
+            # command line, so the server's rules have read them.
+            notes.append(
+                f"{label}: these words are not the story's words for any prop in this take. Put them in the "
+                "story first (edit the frame or the line), film or refresh the take facts, then use "
+                "--prop-text @SHOT. Nothing drawn"
+            )
+            continue
         shot = request.shot
         if shot is None:
             wanted = _key(request.text)

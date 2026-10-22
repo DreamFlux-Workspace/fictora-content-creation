@@ -514,9 +514,11 @@ def test_a_letterbox_take_without_its_letterbox_final_is_cut_as_portrait_with_a_
 
 
 @needs_ffmpeg
-def test_reel_captions_go_to_the_server_without_a_dash(
+def test_reel_captions_go_to_the_server_as_the_take_has_them(
     reel_desk: Path, reel_server: FakeReelServer
 ) -> None:
+    """The server's reel draws the words itself (its own dash rule; D7): the kit sends them as they are."""
+
     cap = reel_desk / "ep01" / "takes" / "take-ep01-t1-cap-v1.ass"
     cap.write_text(
         "[Events]\n"
@@ -528,8 +530,7 @@ def test_reel_captions_go_to_the_server_without_a_dash(
     run_reel(reel_desk, episode=1, seconds=6.0, stream=io.StringIO())
 
     texts = [c["text"] for c in reel_server.requests[0]["operator"]["takes"][0]["cues"]]
-    assert not any(ch in t for t in texts for ch in "—–")
-    assert texts[-1] == "It was me…"
+    assert texts[-1] == "It was me–"
 
 
 def _spine_emphasis(desk: Path, words: dict[str, str]) -> None:

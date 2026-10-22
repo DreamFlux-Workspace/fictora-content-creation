@@ -1,29 +1,27 @@
-"""Normalize creator premises before Drama plan / season-bible authoring.
+"""The creator's premise as the draft sends it, and the brief's narrator lines.
+
+Until 21 Oct 2026 the kit appended its own cast directive to every premise
+(at least two cast members, or one; never an invented narrator; a voice heard
+and never seen). Decision D6 of the kit/server reconcile: the server owns the
+writer's wording and its own cast floor (fictora-drama #582 and the season
+bible prompt), so the premise now goes exactly as the creator wrote it; a
+directive an older run stored on the desk is taken off before it is sent
+(:func:`plan_prompt`).
 
 Also reads a brief for narrator and voice-over lines (the draft warns about
-them; ``brief --strip-narration`` takes them out) and asks the server how few
-cast members a story may have.
+them; ``brief --strip-narration`` takes them out).
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 from creation.narrator_cast import named_like_narrator
 
-# Marker so re-bind and idempotent re-step do not stack the directive.
+# The directives this kit appended until 21 Oct 2026, kept only to take them off a stored brief.
 _CAST_FLOOR_MARKER = "[fictora:season-bible-cast-min=2]"
-#: The directive for a server whose season bible holds one person (fictora-drama #582).
 _SOLO_MARKER = "[fictora:season-bible-cast-min=1]"
-
-#: The directive this kit appended until 2026-10-01. It asked every
-#: member for a full visual_brief, so the second member the minimum forced into a
-#: one-creature show came out as a narrator with a face (Sighted ep 1,
-#: 2026-10-01, L-20261001-2 / -4); his plate was later drawn inside the film job.
-#: Kept only so an undrafted desk that still carries it gets the new directive.
 _OLD_CAST_FLOOR_SUFFIX = (
     f"\n\n{_CAST_FLOOR_MARKER} "
     "The season bible cast array must include at least two distinct named characters, "
@@ -31,7 +29,6 @@ _OLD_CAST_FLOOR_SUFFIX = (
     "Episode 1 may show only one person on screen; the second may be voice-only, "
     "off-screen, or introduced later."
 )
-
 _CAST_FLOOR_SUFFIX = (
     f"\n\n{_CAST_FLOOR_MARKER} "
     "The season bible cast array must include at least two distinct named characters, "
@@ -44,7 +41,6 @@ _CAST_FLOOR_SUFFIX = (
     "Never invent a narrator, storyteller or voice-over character to reach two. "
     "If the premise itself asks for narration, the narrator is the voice heard and never seen above."
 )
-
 _SOLO_SUFFIX = (
     f"\n\n{_SOLO_MARKER} "
     "The season bible cast array holds exactly the people the story needs: one person is a whole cast. "
@@ -53,12 +49,6 @@ _SOLO_SUFFIX = (
     'kept out of every frame, and a visual_brief whose anchors read "never shown on screen; heard only as a voice". '
     "A creature, crowd or passer-by the story only shows is not a cast member."
 )
-
-_SCENE_PROMPT_MAX_LEN = 20_000
-
-#: What a server before one-person shows requires (its capabilities name no ``cast_floor``).
-OLDER_SERVER_CAST_FLOOR = 2
-CAPABILITIES_ROUTE = "/v1/capabilities"
 
 
 def _without_kit_directive(text: str) -> str:
@@ -70,74 +60,21 @@ def _without_kit_directive(text: str) -> str:
     return text
 
 
-def ensure_plan_prompt(
-    prompt: str, *, cast_floor: int = OLDER_SERVER_CAST_FLOOR
-) -> str:
-    """Append the season-bible cast directive the server needs, once.
-
-    A server before one-person shows (fictora-drama
-    ``DramaAuthoringSeasonBibleDraft.cast``, ``min_length=2``) rejects a season
-    bible with one cast entry, so a solo premise still needs a second roster
-    member: a voice heard and never seen, or a second drawn character the story
-    needs, never a narrator invented to reach two. A server that reports
-    ``cast_floor`` 1 (#582) gets the one-person directive instead: exactly the
-    people the story needs. A prompt carrying another directive this kit wrote
-    (the older two-member one that asked every member for a full
-    ``visual_brief``, or the one for the other floor) gets the right one in its
-    place; this runs only before the draft, so no drafted spine's prompt changes.
-    A marker the operator wrote mid-text is left alone.
+def plan_prompt(prompt: str) -> str:
+    """The premise the draft sends: the creator's words, with any directive this kit once appended taken off.
 
     Parameters
     ----------
     prompt
-        Creator premise from ``fictora-produce start`` or ``bind``.
-    cast_floor
-        The server's ``cast_floor`` (:func:`server_cast_floor`); 2 when unknown.
+        Creator premise from ``fictora-produce start`` or ``bind`` (or as a desk stored it).
 
     Returns
     -------
     str
-        Prompt safe to send as ``scene_prompt`` on draft enrol.
-
-    Raises
-    ------
-    ValueError
-        When appending the directive would exceed the API scene_prompt limit.
+        The premise, stripped. The server writes the cast to its own floor and rules.
     """
 
-    text = _without_kit_directive(prompt.strip())
-    if _CAST_FLOOR_MARKER in text or _SOLO_MARKER in text:
-        return text
-    combined = text + (_SOLO_SUFFIX if cast_floor <= 1 else _CAST_FLOOR_SUFFIX)
-    if len(combined) > _SCENE_PROMPT_MAX_LEN:
-        msg = (
-            f"prompt length {len(text)} leaves no room for cast floor directive "
-            f"(max {_SCENE_PROMPT_MAX_LEN})"
-        )
-        raise ValueError(msg)
-    return combined
-
-
-def server_cast_floor(run: Any) -> int:
-    """The fewest cast members the server's season bible accepts.
-
-    Parameters
-    ----------
-    run
-        The desk's API session.
-
-    Returns
-    -------
-    int
-        ``cast_floor`` from ``GET /v1/capabilities``; 2 when the server does
-        not say (a deploy before one-person shows) or cannot be asked.
-    """
-
-    status, body = run.get_optional(CAPABILITIES_ROUTE)
-    if status != 200 or not isinstance(body, Mapping):
-        return OLDER_SERVER_CAST_FLOOR
-    floor = body.get("cast_floor")
-    return floor if isinstance(floor, int) and floor >= 1 else OLDER_SERVER_CAST_FLOOR
+    return _without_kit_directive(prompt.strip())
 
 
 #: ``Speaker (V.O.): line`` / ``- **Narrator:** line`` / ``> VO: line``.
