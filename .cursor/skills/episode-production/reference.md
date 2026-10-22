@@ -31,6 +31,15 @@ Three layers, later wins:
 | `rules_epoch` | stamped `"2026-10-06"` by `start` | Which rules the desk runs under. `"legacy"`, or unset on a desk created before 6 Oct 2026 (`series.json` `day`, else the folder's date): the desk keeps its original behaviour (SKILL "Desks created before 6 Oct 2026"). `rules-epoch --desk D [--set legacy\|2026-10-06]` prints or sets it; `bind` keeps it |
 | `poll_*_deadline_seconds` | 1800–7200 | Poll caps (below) |
 
+## Work on a story made in the app
+
+A creator's app story belongs to their app account. To make its next episode from a desk:
+
+1. `uv run fictora-produce stories --title "Hana"`: find the story id (read only, spends nothing).
+2. `uv run fictora-produce start --spine-id ID [--series "Desk name"]`: the server lists the new desk on the story; the creator stays the owner, so the story stays in their app library and the new episode shows there. The desk reads cast, episodes, show language, art style and caption look from the server.
+3. Make only the next episode (`author --episode N`). Never re-film or edit the creator's earlier episodes, and never publish for them.
+4. `uv run fictora-produce detach --desk D` when done: the desk can no longer read or write the story; the story is unchanged.
+
 ## Phase machine (`fictora-produce`)
 
 One machine per desk, pointed at one episode (`episode_ordinal` in `production.json`; `status` prints it). `author --episode N` points it at episode N with its lines at the script gate. `epNN` below is that episode.
