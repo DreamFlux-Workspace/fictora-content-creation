@@ -43,7 +43,7 @@ already has; :mod:`creation.post.reel` measures them and renders the cut.
 
 A line addressed to the viewer (a call to action, "comment below", "what would
 you do?") never goes in: its span is cut out of every segment, with a ⚠. The
-call to action belongs in the post text (:func:`post_text`). A POV episode
+call to action belongs in the post text (the server's, ``GET .../post-text``). A POV episode
 (the brief opens "POV: …", founder decision 6 Oct 2026; detected like
 fictora-drama's ``pov_episode.scene_prompt_is_pov``) keeps a line said to the
 camera ("what would you do?"): the camera is the viewer standing in the scene.
@@ -173,15 +173,6 @@ _SAID_TO_YOU = re.compile(
 #: fictora-drama ``pov_episode``: a markdown heading, and "POV:" / "POV -" / "POV —" opening the first prose line.
 _HEADING = re.compile(r"^\s*#")
 _POV_OPENING = re.compile(r"^[\s>*_\-\"'“‘(\[]*pov\s*[:：\-–—]", re.IGNORECASE)
-
-#: Words that never go in the post text: other apps, model and provider names.
-_POST_BANNED = re.compile(
-    r"\b(minimax|hailuo|h3|kling|seedance|sora|veo|runway|pika|luma|fal|gpt|openai|chatgpt|"
-    r"claude|anthropic|gemini|elevenlabs|eleven ?v3|whisper|midjourney|stable diffusion|"
-    r"character\.?ai|zeta|melting|reelshort|dramabox|shortmax|talkie|replika|fictora drama)\b",
-    re.IGNORECASE,
-)
-_PRICE = re.compile(r"[$€£¥₹]|\b\d+(\.\d+)?\s?(usd|dollars?|cents?)\b", re.IGNORECASE)
 
 
 # --- inputs ------------------------------------------------------------------------------------
@@ -1908,100 +1899,6 @@ def strongest_from_json(raw: Any) -> Strongest | None:
         return None
 
 
-def genre_hashtags(genre: str, *, limit: int = 2) -> list[str]:
-    """One hashtag word per genre: ``slice_of_life`` -> ``sliceoflife``, never ``#slice #of``.
-
-    Several genres may be given, split by ``,`` ``/`` ``|`` or ``;``. Each is
-    lowercased and loses everything but letters and digits.
-
-    Parameters
-    ----------
-    genre
-        The spine's ``microdrama_genre`` (``war_god_return``, ``Slice of Life``,
-        ``romance, horror``).
-    limit
-        At most this many.
-
-    Returns
-    -------
-    list[str]
-        Tag words without the ``#``, in order, no repeats.
-    """
-
-    tags: list[str] = []
-    for entry in re.split(r"[,/|;]+", genre or ""):
-        tag = re.sub(r"[^a-z0-9]+", "", entry.lower())
-        if tag and tag not in tags:
-            tags.append(tag)
-    return tags[:limit]
-
-
-def post_text(
-    *,
-    series: str,
-    episode: int,
-    title: str = "",
-    question: str = "",
-    genre: str = "",
-    has_next: bool = True,
-    premise_line: str = "",
-) -> str:
-    """The suggested post text: where the call to action goes (never in the reel).
-
-    Plain words; a sentence naming another app, a model or provider, or a price
-    is left out.
-
-    Parameters
-    ----------
-    series, episode, title
-        What the post is.
-    question
-        The episode's hook question (asked of the viewer here, in the post, not on screen).
-    genre
-        For up to two plain hashtags, one per genre (:func:`genre_hashtags`).
-    has_next
-        Whether to point at the next episode.
-    premise_line
-        The show's one-sentence premise (``spine.premise_line``). When set it is the post's
-        title and "Series · Part N" moves under it.
-
-    Returns
-    -------
-    str
-        The post text, ending in a newline. A stranger scrolling past reads "Part N"
-        (a numbered story they can start), never "Episode N"; "PART N" itself is never on
-        screen in the reel (:data:`_CALL_TO_ACTION`), only here and on the cover image.
-    """
-
-    legacy = legacy_rules()
-    # A desk created before 2026-10-06 keeps "Episode N" (frozen; do not change).
-    head = f"{series} · {'Episode' if legacy else 'Part'} {episode}" + (
-        f": {title}" if title else ""
-    )
-    lines = [premise_line.strip(), head, ""] if premise_line.strip() else [head, ""]
-    if question:
-        lines.append(question.strip())
-    if legacy:
-        lines.append(
-            f"Episode {episode + 1} is next. Follow so you don't miss it."
-            if has_next
-            else "Follow for the next one."
-        )
-    else:
-        lines.append(
-            f"Follow for part {episode + 1}."
-            if has_next
-            else "Follow for the next one."
-        )
-    tags = genre_hashtags(genre)
-    if tags:
-        lines += ["", " ".join(f"#{t}" for t in [*tags, "shortdrama"])]
-    kept = [
-        line for line in lines if not (_POST_BANNED.search(line) or _PRICE.search(line))
-    ]
-    return "\n".join(kept).strip() + "\n"
-
-
 #: The line between the post's caption and the operator's notes in ``post-epNN-vN.txt``.
 OPERATOR_DIVIDER = "----- Not part of the caption: for you, not for Instagram -----"
 #: Where the posting rules live (one lane per account, slots at least 2 h apart).
@@ -2099,7 +1996,6 @@ __all__ = [
     "ending_from_json",
     "frame_scores",
     "genre_family",
-    "genre_hashtags",
     "last_beat_from_json",
     "plan_edges",
     "payoff_end",
@@ -2107,7 +2003,6 @@ __all__ = [
     "plan_reel",
     "OPERATOR_DIVIDER",
     "post_operator_notes",
-    "post_text",
     "posting_warnings",
     "reel_seconds",
     "retime_cues",

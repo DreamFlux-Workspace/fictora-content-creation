@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from typing import Any, Collection, Mapping, Sequence
 
 from creation.crowd_lines import beat_rows
-from creation.mood_jump import mood_jump_lines
 from creation.ops.state import SpokenLine, episode_beat_pattern
 from creation.shot_plan import plan_lines
 
@@ -2066,7 +2065,6 @@ def shot_list_lines(
                     f"({above.shot_scale}, {above.camera_angle}): the cut will not read as a new shot"
                 )
         lines += pose_change_at_cut_lines(frames, cast_names=cast_names)
-        lines += mood_jump_lines(frames, cast_names=cast_names)
         lines += off_screen_speaker_lines(
             spine, frames, take_beats, cast_names=cast_names
         )

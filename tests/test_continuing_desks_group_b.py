@@ -19,7 +19,6 @@ from conftest import make_take
 
 from creation.captions import Span, build_line_cues
 from creation.ops.floor import init_series_desk
-from creation.pitch_card import pitch_gate_refusal
 from creation.production_config import load_production_config
 from creation.rules_epoch import (
     CONTINUING_FIXES,
@@ -46,10 +45,10 @@ def _old_desk(
 
 def test_the_allow_lists_are_group_a_and_group_b_only() -> None:
     # caption_dashes moved to Group A on 9 Oct 2026 (captions only), in step with the server.
-    # pitch_card moved to Group A on 9 Oct 2026 (founder): a reminder on every continuing desk.
+    # pitch_card left the list on 21 Oct 2026: the server's card and hold (decision A).
     # per_word_captions moved to Group A on 9 Oct 2026 (founder): Group B is empty in the kit.
     assert CONTINUING_FIXES == frozenset(
-        {"seam_bed", "caption_dashes", "pitch_card", "per_word_captions"}
+        {"seam_bed", "caption_dashes", "per_word_captions"}
     )
     assert CONTINUING_FIXES_FROM_EPISODE == frozenset()
 
@@ -148,41 +147,6 @@ def test_per_word_timing_on_every_episode_of_every_desk(
     assert timed("2026-09-26-z", None) is False
 
 
-def test_the_pitch_card_reminds_every_continuing_desk_on_every_episode_and_never_holds(
-    tmp_path: Path, capsys: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """``pitch_card`` is Group A since 9 Oct 2026 (founder): before the boundary, after it, Group B off."""
-
-    from creation import rules_epoch
-
-    on = _old_desk(tmp_path, start=3)
-    off = _old_desk(tmp_path, name="2026-09-26-off")
-    for desk, episode in ((on, 2), (on, 3), (off, 1), (off, 3)):
-        # Reminded, never held (founder decision 8 Oct 2026, #185).
-        assert pitch_gate_refusal(desk, episode=episode, stage="the plates") is None
-        err = capsys.readouterr().err
-        assert (
-            f"Reminder before the plates: Episode {episode} has no pitch card." in err
-        )
-        assert "Going ahead" in err
-    # A new desk is still held.
-    new = init_series_desk(tmp_path / "new", "New", band="30s", episode_count=1)
-    refusal = pitch_gate_refusal(new, episode=1, stage="the plates")
-    assert refusal is not None and refusal.startswith("Stopped before the plates.")
-    # Off the allow-list, the old behaviour: no reminder before a desk's Group B episode, or with it unset.
-    monkeypatch.setattr(
-        rules_epoch, "CONTINUING_FIXES", rules_epoch.CONTINUING_FIXES - {"pitch_card"}
-    )
-    monkeypatch.setattr(
-        rules_epoch,
-        "CONTINUING_FIXES_FROM_EPISODE",
-        rules_epoch.CONTINUING_FIXES_FROM_EPISODE | {"pitch_card"},
-    )
-    for desk, episode in ((on, 2), (off, 3)):
-        assert pitch_gate_refusal(desk, episode=episode, stage="the plates") is None
-        assert "Reminder" not in capsys.readouterr().err
-
-
 def test_the_command_proposes_past_every_started_episode_and_writes_only_with_apply(
     tmp_path: Path,
 ) -> None:
@@ -225,7 +189,6 @@ def test_a_decorated_command_runs_under_its_episodes_rules(
     """``under_desk_rules`` reads ``episode`` / ``episode_ordinal`` (run_finish, run_reel, caption_take)."""
 
     from creation import rules_epoch
-    from creation.caption_dashes import drawn_text
     from creation.rules_epoch import continuing_fix_now, under_desk_rules
 
     # Group B is empty since 9 Oct 2026; a stand-in name checks the episode reading.
@@ -241,10 +204,6 @@ def test_a_decorated_command_runs_under_its_episodes_rules(
     def caption(desk: Path, *, episode_ordinal: int = 1) -> bool:
         return continuing_fix_now("a_later_fix")
 
-    @under_desk_rules
-    def dashes(desk: Path, *, episode: int = 1) -> str:
-        return drawn_text("Please—")
-
     desk = _old_desk(tmp_path, start=2)
     assert [finish(desk, episode=1), finish(desk, episode=2), finish(desk)] == [
         False,
@@ -255,6 +214,3 @@ def test_a_decorated_command_runs_under_its_episodes_rules(
         False,
         True,
     ]
-    # caption_dashes is Group A since 9 Oct 2026: every episode, Group B on or off.
-    assert [dashes(desk, episode=1), dashes(desk, episode=2)] == ["Please…", "Please…"]
-    assert dashes(_old_desk(tmp_path, name="2026-09-26-nob"), episode=1) == "Please…"

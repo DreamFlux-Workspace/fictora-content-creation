@@ -261,7 +261,7 @@ def take_timing(
 def take_cues(source: TakeSource) -> tuple[Cue, ...]:
     """The take's accepted caption cues: rebuilt ones, else its ``.ass``, else none.
 
-    No em or en dash goes to the burn (:mod:`creation.caption_dashes`, 6 Oct 2026).
+    The server's reel draws the words itself (its own dash rule).
     """
 
     return tuple(cue for cue, _ in take_cue_emphasis(source))
@@ -276,12 +276,8 @@ def take_cue_emphasis(
     ``.ass`` read back, ``Cue.emphasis``), else the writer's word on the spine
     line the cue's words belong to (``lines``: :func:`creation.captions.episode_caption_lines`),
     else ``None`` (the server's Bold fallback picks, as the local reel's did).
-    No em or en dash goes to the burn (:mod:`creation.caption_dashes`, 6 Oct 2026).
+    The server's reel draws the words itself (its own dash rule); they go as the take has them.
     """
-
-    from dataclasses import replace as with_text
-
-    from creation.caption_dashes import caption_text
 
     if source.cues is not None:
         cues = source.cues
@@ -295,8 +291,7 @@ def take_cue_emphasis(
         word = words[cue.emphasis] if 0 <= cue.emphasis < len(words) else None
         if word is None:
             word = spine_emphasis_word(cue.text, lines)
-        word = caption_text(word).strip() if word else None
-        out.append((with_text(cue, text=caption_text(cue.text)), word or None))
+        out.append((cue, (word or "").strip() or None))
     return out
 
 

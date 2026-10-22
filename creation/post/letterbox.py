@@ -39,11 +39,10 @@ import re
 import statistics
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from creation.caption_dashes import drawn_text as no_dash_text
+from creation.on_screen_text import drawn_texts
 from creation.captions import (
     FONTS_DIR,
     FONT_NAME,
@@ -149,7 +148,7 @@ def resolve_caption_colour(
     return DEFAULT_CAPTION_COLOUR, "the default"
 
 
-# --- the hook line the operator picked on the desk ----------------------------------------------------
+# --- a hook line an older run kept on the desk (read only; the server holds it since 21 Oct 2026) -----
 
 
 def _hook_file(desk: Path) -> Path:
@@ -169,68 +168,6 @@ def desk_hook_line(desk: Path, episode: int) -> dict[str, Any] | None:
     if not isinstance(entry, dict):
         return None
     return dict(entry) if entry.get("text") or entry.get("kind") == "off" else None
-
-
-def record_desk_hook_line(
-    desk: Path, episode: int, choice: Mapping[str, Any], *, why: str
-) -> Path:
-    """Save the operator's hook-line pick on the desk (the server could not store it)."""
-
-    path = _hook_file(desk)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    raw: dict[str, Any] = (
-        json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-    )
-    episodes = dict(raw.get("episodes") or {})
-    episodes[str(episode)] = {
-        **dict(choice),
-        "why": why,
-        "recorded_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    }
-    path.write_text(
-        json.dumps({"episodes": episodes}, indent=2) + "\n", encoding="utf-8"
-    )
-    return path
-
-
-def keep_finish_hook_line(
-    desk: Path, episode: int, *, hook_line: str | None, no_hook_line: bool
-) -> Path | None:
-    """Save ``finish --hook-line TEXT`` / ``--no-hook-line`` as the episode's desk pick, so ``join`` lays it too.
-
-    Without this, ``join`` (and the next ``finish``) fell back to the spine's
-    ``hook_line_selected`` and the joined episode opened on a different line
-    than the finished take (L-20261006-5). The pick goes to the same file
-    ``hook-line`` writes on an older server (``shared/hook-line.json``); a later
-    ``hook-line --pick`` the server stores drops it again.
-
-    Parameters
-    ----------
-    desk
-        Series desk.
-    episode
-        Episode ordinal the finish was for.
-    hook_line
-        ``--hook-line`` as given (blank or ``None``: nothing to keep).
-    no_hook_line
-        ``--no-hook-line`` was given.
-
-    Returns
-    -------
-    Path | None
-        The file written, or ``None`` when neither flag was given.
-    """
-
-    text = " ".join(str(hook_line or "").split())
-    if no_hook_line:
-        choice: dict[str, Any] = {"kind": "off", "text": ""}
-        why = "finish --no-hook-line"
-    elif text:
-        choice = {"kind": "custom", "text": text}
-        why = "finish --hook-line"
-    else:
-        return None
-    return record_desk_hook_line(desk, episode, choice, why=why)
 
 
 def clear_desk_hook_line(desk: Path, episode: int) -> bool:
@@ -273,25 +210,6 @@ def desk_setup_line(desk: Path, episode: int) -> dict[str, Any] | None:
         text = " ".join(str(entry.get("text") or "").split())
         return {"kind": "custom", "text": text} if text else None
     return {"kind": "default"}
-
-
-def record_desk_setup_line(
-    desk: Path, episode: int, choice: Mapping[str, Any], *, why: str
-) -> Path:
-    """Keep the operator's setup line on the desk (the server could not store it)."""
-
-    path = desk.expanduser().resolve() / SETUP_LINE_FILE
-    path.parent.mkdir(parents=True, exist_ok=True)
-    episodes = _episodes(path)
-    episodes[str(episode)] = {
-        **dict(choice),
-        "why": why,
-        "recorded_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    }
-    path.write_text(
-        json.dumps({"episodes": episodes}, indent=2) + "\n", encoding="utf-8"
-    )
-    return path
 
 
 def clear_desk_setup_line(desk: Path, episode: int) -> bool:
@@ -483,10 +401,9 @@ def title_ass(
     """
 
     place = layout(width, height)
-    # No em or en dash on the picture (6 Oct 2026; creation.caption_dashes).
-    block = replace(
-        block, setup=no_dash_text(block.setup), hook=no_dash_text(block.hook)
-    )
+    # The words as the server draws them, no em or en dash (creation.on_screen_text).
+    setup, hook = drawn_texts([block.setup, block.hook], kind="title")
+    block = replace(block, setup=setup, hook=hook)
     fitted = fit_title(block, place)
     end = _ass_time(duration if duration else 24 * 3600 - 1)
     lines = [(TITLE_SETUP_COLOUR, line) for line in fitted.setup] + [
@@ -952,7 +869,6 @@ __all__ = [
     "SETUP_LINE_FILE",
     "clear_desk_setup_line",
     "desk_setup_line",
-    "record_desk_setup_line",
     "FittedTitle",
     "TitleBlock",
     "VoiceEnd",
@@ -961,11 +877,9 @@ __all__ = [
     "drawn_on_shot",
     "fit_title",
     "is_letterbox_take",
-    "keep_finish_hook_line",
     "italic_overrides",
     "mark_and_title",
     "pad_to_canvas",
-    "record_desk_hook_line",
     "resolve_caption_colour",
     "title_ass",
     "title_block",

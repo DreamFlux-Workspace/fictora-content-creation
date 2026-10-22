@@ -85,7 +85,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
-from creation.caption_dashes import drawn_text as no_dash_text
+from creation.on_screen_text import drawn_texts
 from creation.rules_epoch import under_desk_rules
 from creation.ops.folder import next_versioned_path
 
@@ -1692,7 +1692,7 @@ def build_line_cues(
     as they were heard, and is the text shown; without it the line's words are
     spread over its span by length (:func:`time_words`: an estimate).
 
-    Every cue's text goes through :func:`creation.caption_dashes.caption_text`
+    Every cue's text goes through :func:`creation.on_screen_text.drawn_texts` (the server's dash rule)
     (no em or en dash on the picture; the script and the voice keep theirs).
 
     With ``chunking="bold"`` (the Bold style) each line shows one short chunk
@@ -1752,12 +1752,13 @@ def build_line_cues(
             timed = list(heard) if heard else time_words(text, span)
             line_cues = build(timed, hold_until=next_start, hold=hold)
         slanted = i < len(italic) and italic[i]
-        # The cue's text is drawn without an em or en dash (after timing, so word timings
-        # are unchanged): "Please—" shows "Please…" (creation.caption_dashes).
+        # The cue's text is drawn as the server draws it (after timing, so word timings
+        # are unchanged): "Please—" shows "Please…" (creation.on_screen_text).
+        shown = drawn_texts([c.text for c in line_cues])
         groups.append(
             [
-                replace(c, text=no_dash_text(c.text), italic=slanted or c.italic)
-                for c in line_cues
+                replace(c, text=text, italic=slanted or c.italic)
+                for c, text in zip(line_cues, shown, strict=True)
             ]
         )
     return groups
@@ -2072,7 +2073,7 @@ def build_ass(
     :func:`italic_size`, so both draw at the same em.
 
     No cue draws an em or en dash: a cut-off ("Please—") shows "Please…",
-    a dash between words a comma (:func:`creation.caption_dashes.caption_text`).
+    a dash between words a comma (:func:`creation.on_screen_text.drawn_texts` (the server's dash rule)).
 
     A cue too wide for one line is wrapped into two balanced lines
     (:func:`wrap_caption`; ``WrapStyle: 2`` so libass adds no breaks of its
@@ -2127,8 +2128,11 @@ def build_ass(
         raise ValueError(
             f"caption style {style!r} draws no captions; use bold, subtle (house) or plain"
         )
-    # No em or en dash on the picture (6 Oct 2026): every cue, after timing (creation.caption_dashes).
-    cues = [replace(c, text=no_dash_text(c.text)) for c in cues]
+    # Every cue as the server draws it (no em or en dash), after timing (creation.on_screen_text).
+    cues = [
+        replace(c, text=text)
+        for c, text in zip(cues, drawn_texts([c.text for c in cues]), strict=True)
+    ]
     scale = height / HOUSE_CANVAS_HEIGHT * size_scale
     size = max(8, round(house_font_size(height) * size_scale))
     margin_v = caption_margin_v(height)
