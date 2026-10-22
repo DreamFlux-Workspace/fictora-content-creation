@@ -295,11 +295,27 @@ def test_the_cli_takes_the_hook_line_flags(
         seen.update(kwargs)
 
     monkeypatch.setattr("creation.post.reel.run_reel", fake_reel)
+    saved: list[tuple[int, str | None, bool]] = []
+
+    def fake_save(
+        desk: Path,
+        episode: int,
+        *,
+        text: str | None = None,
+        off: bool = False,
+        out: Any = None,
+    ) -> str:
+        # The server keeps (and may tidy) the line first; the reel burns its answer (D1).
+        saved.append((episode, text, off))
+        return "She lies."
+
+    monkeypatch.setattr("creation.hook_line.save_burned_hook_line", fake_save)
 
     assert main(["reel", "--desk", str(tmp_path), "--episode", "2", "--hook-line", "She lies",
                  "--hook-line-position", "lower"]) == 0  # fmt: skip
+    assert saved == [(2, "She lies", False)]
     assert (seen["hook_line"], seen["no_hook_line"], seen["hook_line_position"]) == (
-        "She lies",
+        "She lies.",
         False,
         "lower",
     )

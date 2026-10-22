@@ -27,10 +27,8 @@ from creation.post.reel_plan import (
     TakeInput,
     check_plan,
     genre_family,
-    genre_hashtags,
     plan_json,
     plan_reel,
-    post_text,
 )
 
 FPS = 24.0
@@ -381,28 +379,6 @@ def test_the_optional_ending_is_recorded_and_hard_is_the_default() -> None:
 
 
 # --- 5. one hashtag per genre -------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("genre", "tags"),
-    [
-        ("slice_of_life", ["sliceoflife"]),
-        ("war_god_return", ["wargodreturn"]),
-        ("Slice of Life", ["sliceoflife"]),
-        ("urban_romance, horror", ["urbanromance", "horror"]),
-        ("bl / cozy / mystery", ["bl", "cozy"]),
-        ("horror", ["horror"]),
-        ("", []),
-    ],
-)
-def test_genre_hashtags_are_one_word_per_genre(genre: str, tags: list[str]) -> None:
-    assert genre_hashtags(genre) == tags
-
-
-def test_post_text_never_splits_a_genre_into_words() -> None:
-    text = post_text(series="Tea House", episode=3, genre="slice_of_life")
-    assert "#sliceoflife #shortdrama" in text
-    assert "#slice" not in text.replace("#sliceoflife", "") and "#of" not in text
 
 
 def test_plan_json_is_serialisable_with_every_new_field() -> None:

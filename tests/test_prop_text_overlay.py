@@ -82,13 +82,22 @@ def test_the_storys_words_come_from_the_take_facts_for_the_shot() -> None:
     assert "a folded note" in overlay.describe()
 
 
-def test_given_words_find_their_shot_and_win_over_the_facts() -> None:
+def test_the_storys_words_find_their_shot_and_free_words_are_refused() -> None:
+    """Decision D3 (21 Oct 2026): a prop's words come from the story (the take facts) only."""
+
     [overlay], _ = plan_prop_overlays(
-        _facts(NOTE), [PropTextRequest("Back soon", None)], [BOX]
+        _facts(NOTE), [PropTextRequest(WORDS, None)], [BOX]
     )
-    assert (overlay.text, overlay.shot_index) == ("Back soon", 1)
-    [phone], _ = plan_prop_overlays(
+    assert (overlay.text, overlay.shot_index) == (WORDS, 1)
+    overlays, notes = plan_prop_overlays(
         _facts(NOTE, PHONE), [PropTextRequest("곧 갈게", 2)], [BOX]
+    )
+    assert (
+        overlays == [] and "not the story's words" in notes[0] and "@SHOT" in notes[0]
+    )
+    korean = {**PHONE, "text": "곧 갈게"}
+    [phone], _ = plan_prop_overlays(
+        _facts(NOTE, korean), [PropTextRequest("곧 갈게", 2)], [BOX]
     )
     assert (phone.text, phone.family) == ("곧 갈게", HANGUL_HAND[0])
 
@@ -114,7 +123,7 @@ def test_no_box_or_no_shot_means_nothing_is_written() -> None:
     [overlay], _ = plan_prop_overlays(_facts(boxed), [PropTextRequest("", 1)], [])
     assert overlay.box == (10, 20, 100, 50)
     overlays, notes = plan_prop_overlays(
-        _facts(NOTE, {**NOTE, "shot_index": 2}), [PropTextRequest("Hi", None)], [BOX]
+        _facts(NOTE, {**NOTE, "shot_index": 2}), [PropTextRequest(WORDS, None)], [BOX]
     )
     assert overlays == [] and "add @SHOT" in notes[0]
 

@@ -17,8 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Collection, Mapping, Sequence
 
 from creation.crowd_lines import beat_rows
-from creation.mood_jump import mood_jump_lines
-from creation.ops.state import SpokenLine
+from creation.ops.state import SpokenLine, episode_beat_pattern
 from creation.shot_plan import plan_lines
 
 _SET_SUFFIX = re.compile(r"_set(\d+)$")
@@ -149,7 +148,10 @@ def beats_by_take(
         if isinstance(b, dict) and b.get("episode_id") == wanted
     ]
     beats.sort(key=lambda beat: int(beat.get("ordinal") or 0))
-    pattern = tuple(int(n) for n in spine.get("beats_per_storyboard_set") or ())
+    # The episode's own takes (one more for a moment given two takes, fictora-drama #967).
+    pattern = episode_beat_pattern(
+        dict(spine), episode_ordinal=episode, episode_id=wanted
+    )
     grouped: list[list[dict[str, Any]]] = [[] for _ in range(max(1, take_count))]
     for position, beat in enumerate(beats, start=1):
         ordinal = int(beat.get("ordinal") or position)
@@ -2063,7 +2065,6 @@ def shot_list_lines(
                     f"({above.shot_scale}, {above.camera_angle}): the cut will not read as a new shot"
                 )
         lines += pose_change_at_cut_lines(frames, cast_names=cast_names)
-        lines += mood_jump_lines(frames, cast_names=cast_names)
         lines += off_screen_speaker_lines(
             spine, frames, take_beats, cast_names=cast_names
         )

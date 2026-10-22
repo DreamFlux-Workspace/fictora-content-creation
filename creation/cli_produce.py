@@ -89,8 +89,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     start = sub.add_parser(
         "start", help="Create desk + bind prompt (does not call API yet)."
     )
-    start.add_argument("--series", required=True)
-    start.add_argument("--prompt", required=True, help=f"The premise. {HELP_SUFFIX}")
+    start.add_argument(
+        "--series",
+        default=None,
+        help="Desk name (with --spine-id: the story's title by default).",
+    )
+    start.add_argument(
+        "--prompt",
+        default=None,
+        help=f"The premise (not with --spine-id). {HELP_SUFFIX}",
+    )
+    start.add_argument(
+        "--spine-id",
+        default=None,
+        help="Attach an existing server story (e.g. one made in the app) to a new desk instead of "
+        "making a new story. The owner is unchanged. Find the id with: fictora-produce stories --title T",
+    )
     start.add_argument("--band", default="15s", choices=("15s", "30s", "60s"))
     start.add_argument(
         "--episodes",
@@ -107,6 +121,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     start.add_argument("--video-lane", default="minimax-h3")
     add_production_config_args(start)
+
+    stories = sub.add_parser(
+        "stories", help="Find server stories by title (read only, spends nothing)."
+    )
+    stories.add_argument("--title", default=None)
+    detach = sub.add_parser(
+        "detach",
+        help="Take an attached desk off its story (the story and its owner are unchanged).",
+    )
+    detach.add_argument("--desk", type=Path, required=True)
 
     bind = sub.add_parser("bind", help="Bind API orchestration to an existing desk.")
     bind.add_argument("--desk", type=Path, required=True)
@@ -215,9 +239,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     pitch = sub.add_parser(
         "pitch",
-        help="The episode's pitch card (free): with --file, check it and store it as epNN/pitch-vN.json "
-        "(never overwritten) and print it; without, print the current one. On desks from 6 Oct 2026 `step` "
-        "draws no plates or boards until the card has the human's yes (`approve --gate pitch`).",
+        help="The episode's pitch card (free): the server's card of the written script (shots, lines, faces, "
+        "world rules), printed. The server draws no boards and films nothing for the episode until the card has "
+        'the human\'s yes (`approve --gate pitch`). `--change "..."` records a change the human asked for.',
     )
     pitch.add_argument("--desk", type=Path, required=True)
     pitch.add_argument(
@@ -227,10 +251,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Episode ordinal (default: the desk's current episode).",
     )
     pitch.add_argument(
+        "--change",
+        default=None,
+        help="A change the human asked for on the card they saw (recorded on the server; make it with "
+        "`line`, `edit` or `rewrite`).",
+    )
+    pitch.add_argument(
         "--file",
         type=Path,
         default=None,
-        help="The card: pitch.md (one `## field` heading per field) or pitch.json.",
+        help=argparse.SUPPRESS,
     )
 
     ap = sub.add_parser(
@@ -249,8 +279,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--episode",
         type=int,
         default=None,
-        help="Pitch only: the episode whose newest pitch card the human said yes to "
-        "(default: the desk's current episode). Desk-only record, free.",
+        help="Pitch only: the episode whose card the human said yes to "
+        "(default: the desk's current episode). Sent to the server, free.",
     )
     ap.add_argument(
         "--path",
@@ -444,7 +474,41 @@ def _run_command(args: argparse.Namespace) -> int:
                 print(line)
             print("Use one with: fictora-produce start … --preset-id ID")
             return 0
+        if args.command == "stories":
+            from creation.attach_story import stories_command
+
+            return stories_command(args.title)
+        if args.command == "detach":
+            from creation.attach_story import detach_story
+
+            return detach_story(args.desk)
+        if args.command == "start" and args.spine_id:
+            from creation.attach_story import AttachRefused, attach_story
+
+            if args.prompt:
+                print(
+                    "Stopped: --spine-id attaches an existing story; leave out --prompt.",
+                    file=sys.stderr,
+                )
+                return 2
+            try:
+                attach_story(
+                    args.spine_id,
+                    parent=args.parent,
+                    series=args.series,
+                    video_lane=args.video_lane,
+                )
+            except AttachRefused as exc:
+                print(f"Stopped: {exc}", file=sys.stderr)
+                return 2
+            return 0
         if args.command == "start":
+            if not args.series or not args.prompt:
+                print(
+                    "Stopped: start needs --series and --prompt (or --spine-id to attach a story).",
+                    file=sys.stderr,
+                )
+                return 2
             config = config_from_args(args)  # refused before the desk is made
             prompt = text_or_file(args.prompt, flag="--prompt")
             # Check the preset before anything lands on disk: a wrong id used to leave a
@@ -543,15 +607,23 @@ def _run_command(args: argparse.Namespace) -> int:
                 print(f"  file: {path}")
             return 0
         if args.command == "pitch":
-            from creation.pitch_card import PitchRefused, run_pitch
+            from creation.pitch_card import PitchError, run_pitch
 
+            if args.file is not None:
+                print(
+                    "The desk pitch file is gone: the pitch card is the server's card of the written script. "
+                    "Write the idea into the brief, draft the script, then `fictora-produce pitch --desk D "
+                    "--episode N` shows the card to approve.",
+                    file=sys.stderr,
+                )
+                return 2
             try:
                 return run_pitch(
                     args.desk,
                     episode=args.episode or _desk_episode(args.desk),
-                    file=args.file,
+                    change=args.change,
                 )
-            except PitchRefused as exc:
+            except PitchError as exc:
                 print(exc, file=sys.stderr)
                 return 2
         if (
@@ -561,11 +633,15 @@ def _run_command(args: argparse.Namespace) -> int:
         ):
             raise ValueError("--episode is for --gate pitch only")
         if args.command == "approve" and args.gate == "pitch":
-            from creation.pitch_card import run_approve_pitch
+            from creation.pitch_card import PitchError, run_approve_pitch
 
-            run_approve_pitch(
-                args.desk, episode=args.episode or _desk_episode(args.desk)
-            )
+            try:
+                run_approve_pitch(
+                    args.desk, episode=args.episode or _desk_episode(args.desk)
+                )
+            except PitchError as exc:
+                print(exc, file=sys.stderr)
+                return 2
             return 0
         if (
             args.command == "approve"

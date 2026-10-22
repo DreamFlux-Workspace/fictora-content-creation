@@ -88,6 +88,12 @@ def _print_warning(message: str) -> None:
     print(f"WARNING: {message}", file=sys.stderr, flush=True)
 
 
+#: The request header a client announces what it can show in (fictora-drama ``drama_pitch_gate``).
+CLIENT_CAPABILITIES_HEADER = "X-Drama-Client-Capabilities"
+#: What the kit announces: it shows the server's pitch card.
+CLIENT_CAPABILITIES = "pitch-card-1"
+
+
 def api_headers(
     token: str,
     session_id: str,
@@ -114,6 +120,10 @@ def api_headers(
         "X-Drama-Session-Id": session_id,
         "Content-Type": "application/json",
         "Accept": "application/json",
+        # The kit shows the server's pitch card and approves it there, so the
+        # server holds paid drawing and filming until the card's yes (decision
+        # A, 21 Oct 2026). An episode already on its boards is never held.
+        CLIENT_CAPABILITIES_HEADER: CLIENT_CAPABILITIES,
     }
     if idempotency_key:
         headers["Idempotency-Key"] = idempotency_key

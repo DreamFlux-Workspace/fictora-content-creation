@@ -23,6 +23,49 @@ from creation.production_state import (
 from fake_api import FakeApi, png_bytes, spine_fixture
 
 
+def stand_in_server_draw(texts: list[str], kind: str) -> list[str]:
+    """What the tests take as the server's on-screen text answer (fictora-drama owns the real rule).
+
+    A dash ending a text is drawn as an ellipsis and one between words as a
+    comma, enough for the kit's tests to see the server's answer burned as is.
+    """
+
+    import re
+
+    out = []
+    for text in texts:
+        drawn = re.sub(r"[ \t]*[\u2013\u2014]+[ \t]*$", "\u2026", text)
+        drawn = re.sub(r"[ \t]*[\u2013\u2014]+[ \t]*", ", ", drawn)
+        out.append(drawn)
+    return out
+
+
+@pytest.fixture(autouse=True)
+def _server_draws_on_screen_text(request: pytest.FixtureRequest) -> Any:
+    """The server draws every caption and title (creation.on_screen_text); tests stand in for it.
+
+    Mark a test ``real_on_screen_text`` to exercise the HTTP path instead.
+    """
+
+    if request.node.get_closest_marker("real_on_screen_text") is not None:
+        yield
+        return
+    from creation import on_screen_text
+    from creation.on_screen_text import drawer_override
+
+    def post_text(desk: Path, episode: int, *, part: int, has_next: bool = True) -> str:
+        # The server writes the reel's post caption (D5); a stand-in answer for the tests.
+        return f"Series · Part {part}\nFollow for part {part + 1}.\n\n#shortdrama\n"
+
+    real = on_screen_text.server_post_text
+    on_screen_text.server_post_text = post_text  # type: ignore[assignment]
+    try:
+        with drawer_override(stand_in_server_draw):
+            yield
+    finally:
+        on_screen_text.server_post_text = real  # type: ignore[assignment]
+
+
 @pytest.fixture(autouse=True)
 def _one_reel_per_run(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
@@ -372,26 +415,16 @@ def _voices_gate_off_by_default(
     )
 
 
-@pytest.fixture
-def pitch_gate() -> None:
-    """Ask for the real pitch gate (see ``_pitch_gate_off_by_default``)."""
-
-
 @pytest.fixture(autouse=True)
-def _pitch_gate_off_by_default(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Tests of plates and boards predate the pitch card: the stop before them is off unless a test asks
-    for ``pitch_gate`` (tests/test_pitch_card.py), so their desks need no pitch yes and their flows stay
-    as they were.
-    """
+def _no_desk_pitch_carry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Paid steps carry an old desk pitch yes to the server first; tests have no server for it."""
 
-    if "pitch_gate" in request.fixturenames:
-        return
     from creation import episode_commands, orchestrate
 
-    monkeypatch.setattr(orchestrate, "pitch_gate_refusal", lambda *a, **k: None)
-    monkeypatch.setattr(episode_commands, "pitch_gate_refusal", lambda *a, **k: None)
+    monkeypatch.setattr(orchestrate, "carry_before_paid_step", lambda *a, **k: None)
+    monkeypatch.setattr(
+        episode_commands, "carry_before_paid_step", lambda *a, **k: None
+    )
 
 
 @pytest.fixture

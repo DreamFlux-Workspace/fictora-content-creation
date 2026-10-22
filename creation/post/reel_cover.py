@@ -47,7 +47,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from creation.caption_dashes import drawn_text as no_dash_text
+from creation.on_screen_text import drawn_text
 from creation.captions import (
     FONT_NAME,
     FONTS_DIR,
@@ -292,8 +292,8 @@ def cover_layout(
     room = max(1, width - left - right)
     centre_x = left + room // 2
     part_text = f"PART {part}"
-    # No em or en dash on the picture (6 Oct 2026; creation.caption_dashes).
-    title = no_dash_text(" ".join(series.split()))
+    # The title as the server draws it, no em or en dash (creation.on_screen_text).
+    title = drawn_text(" ".join(series.split()), kind="title")
     title_lines: list[str] = []
     title_size = _scaled(TITLE_FONT_SIZE, height)
     if title:
