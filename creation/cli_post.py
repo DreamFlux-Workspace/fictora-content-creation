@@ -74,12 +74,13 @@ def add_hook_line_args(parser: argparse.ArgumentParser) -> None:
         "--hook-line",
         default=None,
         metavar="TEXT",
-        help="Burn this on-screen hook line over the first ~3 s instead of the one the creator selected.",
+        help="Your own on-screen hook line: saved on the server first as the episode's hook line (the app, "
+        "join and reels show it too), checked there, and the server's line is burned over the first ~3 s.",
     )
     group.add_argument(
         "--no-hook-line",
         action="store_true",
-        help="No hook line (and no letterbox title bar), whatever the spine says.",
+        help="Turn the episode's hook line off on the server (no letterbox title bar either), then burn none.",
     )
     parser.add_argument(
         "--thought-db",
@@ -419,14 +420,16 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     line = sub.add_parser(
         "voice-line",
         help="One dry line in a character's locked voice, made on the server ($0.10 per 1,000 characters, "
-        "Whisper-checked). Saved to epNN/voices/; lay it with finish --voice PATH@SECONDS.",
+        "Whisper-checked): only an off-screen line or a thought already in the episode's script (add it "
+        "first with `line --add ... --off-screen` or `inner-voice`); an on-screen line is refused before any "
+        "spend (re-film the take instead). Saved to epNN/voices/; lay it with finish --voice PATH@SECONDS.",
     )
     line.add_argument("--desk", type=Path, required=True)
     line.add_argument("--cast", required=True, help="cast_id or name.")
     line.add_argument(
         "--text",
         required=True,
-        help="The line as performed, in the show's spoken language.",
+        help="The line as the script has it (its words, or the performed line in the show's spoken language).",
     )
     line.add_argument("--episode", type=int, default=1)
     line.add_argument(
@@ -649,9 +652,9 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     fin.add_argument(
         "--prop-text", action="append", default=[], metavar='"TEXT"[@SHOT]',
         help="Write a prop's real words on it (a note, a letter, a phone the video drew letters on): "
-        "TEXT in a handwriting face in its own script (Latin, Hangul, Japanese), on --prop-box for "
-        "shot SHOT's window only. \"@3\" alone takes the story's words for shot 3 from the take facts "
-        "(prop_text). Never makes words up: with none, blur the prop (blur --box) (repeat, one --prop-box each).",
+        "\"@3\" takes the story's words for shot 3 from the take facts (prop_text), in a handwriting face "
+        "in their own script, on --prop-box for that shot's window only. Words the story does not give are "
+        "refused: put them in the story first. With none, blur the prop (blur --box) (repeat, one --prop-box each).",
     )  # fmt: skip
     fin.add_argument(
         "--prop-box", action="append", default=[], type=parse_box, metavar="X,Y,W,H",
@@ -660,7 +663,12 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     fin.add_argument(
         "--caption-label", action="append", default=[], metavar="TEXT@A-B",
         help="A caption with no spoken line under it (a short line the take never says clearly): "
-        "TEXT@A-B seconds on the take as filmed, drawn like the other captions (repeat).",
+        "TEXT@A-B seconds on the take as filmed (repeat). Saved on the server first as the take's labels "
+        "(checked there; its notes print), and every finish of the take burns the server's labels.",
+    )  # fmt: skip
+    fin.add_argument(
+        "--no-caption-labels", action="store_true",
+        help="Clear this take's caption labels on the server; none are burned.",
     )  # fmt: skip
     fin.add_argument(
         "--cue", action="append", default=[],
@@ -784,13 +792,13 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--hook-line",
         default=None,
         metavar="TEXT",
-        help="Letterbox shows only: the title block's yellow line on the joined file instead of the "
-        "episode's hook line (the desk's pick from `hook-line`, else the spine's).",
+        help="Letterbox shows only: your own hook line, saved on the server first as the episode's hook "
+        "line and burned as the server answers it in the title block's yellow line.",
     )
     title.add_argument(
         "--no-hook-line",
         action="store_true",
-        help="Letterbox shows only: no title block on the joined file.",
+        help="Letterbox shows only: turn the episode's hook line off on the server; no title block.",
     )
     join.add_argument(
         "--json", action="store_true", help="Print the report as JSON on stdout."
@@ -913,6 +921,34 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     add_review_parser(sub)
 
 
+def _save_hook_line_first(args: argparse.Namespace) -> None:
+    """``--hook-line TEXT`` / ``--no-hook-line`` on finish, join or reel: saved on the server, then burned (D1).
+
+    The server checks the line and its warnings print word for word; the burn
+    uses the line the server answers, so the app, join and every reel show the
+    same one (decision D1, 21 Oct 2026). The kit keeps no copy on the desk.
+    """
+
+    from creation.hook_line import save_burned_hook_line
+    from creation.production_state import load_production
+
+    episode = (
+        args.episode
+        or load_production(args.desk.expanduser().resolve()).episode_ordinal
+    )
+    stream = sys.stderr if getattr(args, "json", False) else sys.stdout
+    saved = save_burned_hook_line(
+        args.desk,
+        episode,
+        text=args.hook_line if args.hook_line else None,
+        off=bool(args.no_hook_line) and not args.hook_line,
+        out=stream,
+    )
+    if args.hook_line:
+        args.hook_line = saved
+        args.no_hook_line = saved is None
+
+
 def dispatch_post(args: argparse.Namespace) -> int:
     """Run one local post command.
 
@@ -936,6 +972,10 @@ def dispatch_post(args: argparse.Namespace) -> int:
         return dispatch_edit(args)
     if args.command in REVIEW_COMMANDS:
         return dispatch_review(args)
+    if args.command in ("finish", "join", "reel") and (
+        getattr(args, "hook_line", None) or getattr(args, "no_hook_line", False)
+    ):
+        _save_hook_line_first(args)
 
     from creation.post.bed import NO_MUSIC_RULE
     from creation.post.handmade import run_cue, run_voice_line
@@ -1105,6 +1145,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             caption_labels=tuple(
                 parse_caption_label(raw) for raw in args.caption_label
             ),
+            clear_caption_labels=args.no_caption_labels,
             prop_texts=tuple(parse_prop_text(raw) for raw in args.prop_text),
             prop_boxes=tuple(args.prop_box),
             thumbnail=not args.no_thumbnail,
@@ -1126,22 +1167,6 @@ def dispatch_post(args: argparse.Namespace) -> int:
             print(json.dumps(result.as_json(), indent=2))
         else:
             print(result.final)
-        if result.complete and (args.hook_line or args.no_hook_line):
-            from creation.post.letterbox import keep_finish_hook_line
-
-            # `join` (and the next finish) lays the line this finish burned, not the spine's (L-20261006-5).
-            named = re.search(r"take-ep(\d+)-", Path(str(result.final)).name)
-            kept = keep_finish_hook_line(
-                args.desk,
-                int(named.group(1)) if named else (args.episode or 1),
-                hook_line=args.hook_line,
-                no_hook_line=args.no_hook_line,
-            )
-            if kept is not None:
-                print(
-                    f"[hook-line] kept for join: {kept}",
-                    file=sys.stderr if args.json else sys.stdout,
-                )
         if result.complete and not args.no_reel:
             from creation.post import reel as reel_module
 

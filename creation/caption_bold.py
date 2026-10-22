@@ -40,7 +40,7 @@ from collections.abc import Collection, Sequence
 from dataclasses import replace
 from typing import Any
 
-from creation.caption_dashes import caption_text as no_dash_text
+from creation.on_screen_text import drawn_texts
 from creation.captions import (
     _BREAK_BEFORE,
     _NEVER_END_ON,
@@ -294,12 +294,13 @@ def bold_groups(words: Sequence[Cue]) -> list[list[int]]:
 
 
 def _shown_words(words: Sequence[str]) -> list[str]:
-    """The chunk's words as drawn: no em or en dash (:mod:`creation.caption_dashes`), one entry per word."""
+    """The chunk's words as the server draws them (:mod:`creation.on_screen_text`), one entry per word."""
 
-    whole = no_dash_text(" ".join(words)).split()
+    drawn = drawn_texts([" ".join(words), *words])
+    whole = drawn[0].split()
     if len(whole) == len(words):
         return whole
-    return [no_dash_text(w) or w for w in words]
+    return [shown or word for word, shown in zip(words, drawn[1:], strict=True)]
 
 
 def bold_cues(
@@ -511,7 +512,7 @@ def build_bold_ass(
 
     Cues that are not Bold yet (house flicker cues, cues read back from a
     file) are turned into Bold first (:func:`bold_from_flicker`). Every cue's
-    words go through :func:`creation.caption_dashes.caption_text`.
+    words go through :func:`creation.on_screen_text.drawn_texts` (the server's dash rule).
     ``size_scale`` (``--caption-scale``) multiplies Bold's size and edge.
     """
 

@@ -116,29 +116,23 @@ def test_a_setup_line_over_60_characters_is_refused_before_sending(
         ),  # took the call, but said nothing of a setup line
     ],
 )
-def test_an_older_server_gets_the_setup_line_kept_on_the_desk_for_finish_and_join(
+def test_an_older_server_stops_and_nothing_is_kept_on_the_desk(
     hook_desk: tuple[Path, dict],  # noqa: F811
     answer: tuple[int, Any],
 ) -> None:
+    """The server holds the setup line (21 Oct 2026); the kit keeps no copy of its own."""
+
     desk, spine = hook_desk
-    out = io.StringIO()
 
-    run_hook_line(
-        desk, episode=1, setup_line=SETUP, out=out, api=FakeApi(spine, [answer])
-    )
+    with pytest.raises(RuntimeError, match="cannot keep this episode's setup line yet"):
+        run_hook_line(
+            desk,
+            episode=1,
+            setup_line=SETUP,
+            out=io.StringIO(),
+            api=FakeApi(spine, [answer]),
+        )
 
-    assert "the app will still show" in out.getvalue()
-    assert desk_setup_line(desk, 1) == {"kind": "custom", "text": SETUP}
-    block, _ = title_block(spine, 1, desk=desk)
-    assert block is not None and block.setup == SETUP
-    # A later setup line the server stores drops the desk's.
-    run_hook_line(
-        desk,
-        episode=1,
-        setup_line=SETUP,
-        out=io.StringIO(),
-        api=FakeApi(spine, [_ok(SETUP)]),
-    )
     assert desk_setup_line(desk, 1) is None
 
 

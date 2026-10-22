@@ -225,7 +225,6 @@ def test_a_decorated_command_runs_under_its_episodes_rules(
     """``under_desk_rules`` reads ``episode`` / ``episode_ordinal`` (run_finish, run_reel, caption_take)."""
 
     from creation import rules_epoch
-    from creation.caption_dashes import drawn_text
     from creation.rules_epoch import continuing_fix_now, under_desk_rules
 
     # Group B is empty since 9 Oct 2026; a stand-in name checks the episode reading.
@@ -241,10 +240,6 @@ def test_a_decorated_command_runs_under_its_episodes_rules(
     def caption(desk: Path, *, episode_ordinal: int = 1) -> bool:
         return continuing_fix_now("a_later_fix")
 
-    @under_desk_rules
-    def dashes(desk: Path, *, episode: int = 1) -> str:
-        return drawn_text("Please—")
-
     desk = _old_desk(tmp_path, start=2)
     assert [finish(desk, episode=1), finish(desk, episode=2), finish(desk)] == [
         False,
@@ -255,6 +250,3 @@ def test_a_decorated_command_runs_under_its_episodes_rules(
         False,
         True,
     ]
-    # caption_dashes is Group A since 9 Oct 2026: every episode, Group B on or off.
-    assert [dashes(desk, episode=1), dashes(desk, episode=2)] == ["Please…", "Please…"]
-    assert dashes(_old_desk(tmp_path, name="2026-09-26-nob"), episode=1) == "Please…"

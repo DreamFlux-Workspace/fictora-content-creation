@@ -10,8 +10,8 @@ from typing import Any
 
 import pytest
 
-from creation.hook_line import run_hook_line
-from creation.post.letterbox import desk_hook_line, title_block
+from creation.hook_line import run_hook_line, save_burned_hook_line
+from creation.post.letterbox import desk_hook_line
 
 OPTIONS = [
     {"style": "stakes", "text": "Miss three payments, lose everything"},
@@ -115,30 +115,44 @@ def test_a_stale_version_is_read_again_and_sent_once_more_never_twice_more(
 
 
 @pytest.mark.parametrize("status", [404, 405])
-def test_an_older_server_gets_the_pick_recorded_on_the_desk_for_finish_and_join(
+def test_an_older_server_stops_and_nothing_is_kept_on_the_desk(
     hook_desk: tuple[Path, dict], status: int
 ) -> None:
+    """Decision D1 (21 Oct 2026): the server holds the hook line; the kit keeps no copy of its own."""
+
     desk, spine = hook_desk
     api = FakeApi(spine, [(status, {"detail": "Not Found"})])
-    out = io.StringIO()
-    run_hook_line(
-        desk,
-        episode=1,
-        text="He came to take her arm. It came with a secret.",
-        out=out,
-        api=api,
-    )
-    assert "the app will still show the server's pick" in out.getvalue()
-    assert (
-        desk_hook_line(desk, 1)["text"]
-        == "He came to take her arm. It came with a secret."
-    )
-    block, _ = title_block(spine, 1, desk=desk)
-    assert block.hook == "He came to take her arm. It came with a secret."
-    # A later pick the server stores drops the desk's.
-    api = FakeApi(spine, [_ok(OPTIONS[1]["text"])])
-    run_hook_line(desk, episode=1, pick=2, out=io.StringIO(), api=api)
+    with pytest.raises(RuntimeError, match="cannot keep this episode's hook line yet"):
+        run_hook_line(
+            desk, episode=1, text="He came to take her arm.", out=io.StringIO(), api=api
+        )
     assert desk_hook_line(desk, 1) is None
+
+
+def test_finish_hook_line_is_saved_on_the_server_first_and_its_answer_burned(
+    hook_desk: tuple[Path, dict],
+) -> None:
+    """``finish/join/reel --hook-line TEXT``: saved first, the server's notes printed word for word (D1)."""
+
+    desk, spine = hook_desk
+    api = FakeApi(spine, [_ok("He came to take her arm.")])
+    out = io.StringIO()
+
+    shown = save_burned_hook_line(
+        desk, 1, text="  He came   to take her arm.  ", out=out, api=api
+    )
+
+    assert shown == "He came to take her arm."
+    assert api.sent[0][1]["hook_line"] == {
+        "kind": "custom",
+        "text": "He came to take her arm.",
+    }
+    assert "note: A long hook line." in out.getvalue()
+    api = FakeApi(spine, [_ok(None)])
+    assert save_burned_hook_line(desk, 1, off=True, out=io.StringIO(), api=api) is None
+    assert api.sent[0][1]["hook_line"] == {"kind": "off"}
+    with pytest.raises(ValueError):
+        save_burned_hook_line(desk, 1, out=io.StringIO(), api=api)
 
 
 def test_a_known_refusal_is_said_plainly_and_nothing_is_recorded(

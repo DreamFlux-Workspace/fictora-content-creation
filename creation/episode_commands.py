@@ -2295,7 +2295,7 @@ def _frame_settable(
     lists it (``brief_fields``, read from ``/openapi.json`` only when a key is
     absent), else when the kit knows the server leaves it out while empty
     (:data:`OPTIONAL_VISUAL_BRIEF_FIELDS`). L-20261006-36: ``expression_cause``,
-    which the mood-jump advice asks for, was refused and took every other field
+    which names the cause of a row's change of mood, was refused and took every other field
     of the command with it.
     """
 
