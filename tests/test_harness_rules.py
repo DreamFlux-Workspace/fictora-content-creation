@@ -11,7 +11,6 @@ from creation.harness_rules import (
     late_opening_line,
     locked_camera_line,
     mouth_sound_note,
-    near_touch_line,
     opening_sound_line,
     short_line_hold,
     sparkle_adult_line,
@@ -196,13 +195,8 @@ def test_a_short_line_held_for_seconds_is_named() -> None:
     assert short_line_hold("Holding my hand now?", start=1.0, end=8.0) is None
 
 
-def test_a_near_touch_and_a_hold_that_is_also_forbidden_are_named() -> None:
+def test_a_hold_that_is_also_forbidden_is_named() -> None:
     spine = _spine()
-    assert near_touch_line(spine, episode=1) is None
-    spine["beats"][0]["motion_intent"] = "his hand stops an inch away"
-    assert near_touch_line(spine, episode=1) is not None
-    spine["beats"][0]["motion_intent"] = "his hand stops a hand's width above the back"
-    assert near_touch_line(spine, episode=1) is None
     spine["frames"] = [
         {
             "frame_id": "frame_1",
@@ -393,3 +387,14 @@ def test_the_pictures_own_plan_is_the_camera_when_the_episode_has_one() -> None:
     assert locked_camera_line(spine, episode=1) is None
     spine["frames"][0]["visual_brief"]["row_direction"]["camera_move"] = "locked"
     assert locked_camera_line(spine, episode=1) is not None
+
+
+def test_the_kit_keeps_no_copy_of_checks_the_server_owns() -> None:
+    """Decisions 21 Oct: the server reads worded ages correctly (B7) and turns a
+    near-touch into a gap with a ban before drawing (C9), so the kit's own
+    warnings for them are gone."""
+
+    import creation.harness_rules as rules
+
+    assert not hasattr(rules, "near_touch_line")
+    assert not hasattr(rules, "word_age_lines")

@@ -31,6 +31,15 @@ Three layers, later wins:
 | `rules_epoch` | stamped `"2026-10-06"` by `start` | Which rules the desk runs under. `"legacy"`, or unset on a desk created before 6 Oct 2026 (`series.json` `day`, else the folder's date): the desk keeps its original behaviour (SKILL "Desks created before 6 Oct 2026"). `rules-epoch --desk D [--set legacy\|2026-10-06]` prints or sets it; `bind` keeps it |
 | `poll_*_deadline_seconds` | 1800–7200 | Poll caps (below) |
 
+## Work on a story made in the app
+
+A creator's app story belongs to their app account. To make its next episode from a desk:
+
+1. `uv run fictora-produce stories --title "Hana"`: find the story id (read only, spends nothing).
+2. `uv run fictora-produce start --spine-id ID [--series "Desk name"]`: the server lists the new desk on the story; the creator stays the owner, so the story stays in their app library and the new episode shows there. The desk reads cast, episodes, show language, art style and caption look from the server.
+3. Make only the next episode (`author --episode N`). Never re-film or edit the creator's earlier episodes, and never publish for them.
+4. `uv run fictora-produce detach --desk D` when done: the desk can no longer read or write the story; the story is unchanged.
+
 ## Phase machine (`fictora-produce`)
 
 One machine per desk, pointed at one episode (`episode_ordinal` in `production.json`; `status` prints it). `author --episode N` points it at episode N with its lines at the script gate. `epNN` below is that episode.
@@ -77,7 +86,7 @@ Always a deviation: a finished episode longer than its 15 / 30 / 60 s band; any 
 
 ## Characters and age
 
-Characters may be any age: children, teenagers, adults, the elderly. Write the real age as digits ("10, primary-school kid", "16", "28") and the plate draws it. Never in words ("sixteen", "twenty-six", "late twenties"): the server read "twenty-six, adult woman" as under 18 and refused the scene, and changing the age afterwards made every plate stale (The Gallery Heiress, $0.90). The script gate warns on a worded age.
+Characters may be any age: children, teenagers, adults, the elderly. Write the real age ("10, primary-school kid", "16", "28") and the plate draws it. Digits are preferred; the server reads an age in words ("sixteen", "twenty-six") correctly, so it is not a warning.
 
 The hard line: never romantic, sexual, suggestive or fan-service framing of anyone under 18. Their age and body are never sexualised, and they are never in a romance arc (no love interest, crush, dating, or someone else's romance aimed at them). A romance lead is 18+. The server rejects a breach as `minor_in_romance_arc`. A child is also never in a romantic, sexual or intimate scene, not even as a bystander: a beat or frame that puts someone under 18 on screen (its cast, blocking, an unnamed child figure, the beat's mover or on-screen speaker; a line heard off screen does not count) while its staging is intimate (making love, undressing, a kiss between adults, a romantic dinner …; family affection such as a goodnight kiss on the forehead is fine) is refused as `minor_in_intimate_scene` at authoring, `edit`/`line`/cascade, board admission, the estimate and film admission, before anything is paid. The kit prints each scene (`episode 1 frame 4 (frame_ep01_04): Mina is under 18 and on screen; "they kiss" makes it intimate`) and its fix: move the child out of that shot (`edit --frame F --set 'cast_refs=[…]'` naming everyone else) or change the scene so it is not intimate. Never age the child up to keep the scene. PG staging (no kissing, embracing or face contact) applies to everyone. Asked for a minor in a romance: say no and offer the character at 18+ or the relationship as non-romantic.
 
@@ -139,7 +148,7 @@ The writers pick an anime expression (`reaction_kind`) for every emotional momen
 
 - Faces, eyes, mouths and key props never sit in a zone. Bodies, hands, floor and set may run through. Off-centre and two-shots are fine; do not centre faces by default.
 - There is no face detector: look at every cell of the board. The boards `step` lists (`look at row R cell C: …`, never `!!`) a frame whose written placement could put a face or prop in a zone. Written words are not a finding (they raised 3 false alarms as `!!` lines): look at that cell, and at every other cell, since a face drawn into a zone with clean words is not listed. `review` measures the finished take's caption box (house yellow on sampled frames, and every cue of the burned `.ass` laid out on the frame) and prints each finding with its times. A face or key prop in a zone: fix the frame's placement (`edit --frame … --set …`), then `redraw-board`.
-- Captions: the block stays in 55–70% of the height. `finish` and `caption` put the text bottom at 62% and wrap a too-wide caption onto two balanced lines (only one too long for two is set smaller).
+- Captions follow the show's caption style, with the server's numbers: Bold text bottom at 76%; Subtle block in 55–70% of the height, bottom at 62%. `finish` and `caption` wrap a too-wide caption onto two balanced lines (only one too long for two is set smaller).
 - The Sokii mark: top left, just under the top strip, `23:121` on 768×1344 (x = 3% of width, y = 9% of height), 0.6 opacity. Never top right.
 
 ## Board checks, in full
@@ -152,7 +161,7 @@ The writers pick an anime expression (`reaction_kind`) for every emotional momen
 - **What the server already did.** After the frames author, a speaking row framed wider than medium is tightened (to a medium two-shot, over-shoulder medium or medium close-up) and logged; off-screen lines and silent rows keep their width, so wide geography goes on a silent row. A row's direction speaks only the line anchored to that row, and the anchored row stages its speaker saying it. The script writer is told which rows each beat plays on: on a one-take row board three beats on four rows play on rows 1, 3 and 4 (beat 1 keeps row 2), not 1, 2, 3. A character added to a frame is staged from their own nearest frame, and a pose or gaze filed under the wrong character is replaced, both logged. These are logs, not board warnings: still read every row.
 - **Speaking mouths.** No clench, grit, pressed or closed mouth on a speaking row. Big acting before and after the line.
 - **One person, twice (Turbo).** On the default lane the video model gets one picture, the board, and draws from every panel of it. The same person drawn in several panels (kneeling at the end of row 3, standing at the start of row 4) can come out as two of them in one shot, and look-alike extras read as the same face. The shot list prints `!!` when one character is in the cells either side of a cut in plainly different postures (standing, kneeling, sitting, lying, crouching, as the frame's pose says them; other poses are not guessed at). Warning only: watch that cut in the take.
-- The hook (frame 0 mid-motion on a face), the hand-off frame (a frame with picture, never a fade or black), no readable text or digits, safe zones.
+- The hook (frame 0 already moving: the strongest image on the server's spectacle-first genres, a face on every other genre; SKILL.md, Hook), the hand-off frame (a frame with picture, never a fade or black), no readable text or digits, safe zones.
 - Brightness is information only, never a block: report it; a dark board is the human's call. (`--accept-dim` is accepted and ignored.)
 
 ## Spend

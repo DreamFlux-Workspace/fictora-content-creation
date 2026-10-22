@@ -7,9 +7,8 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] A new desk, never an existing one overwritten: if the date and slug already exist, the human chose (continue it, or a new name)
 - [ ] `fictora-produce start` carries `--cut-tempo` chosen from the scene (shot plan) and the nearest `--preset-id`; a look frame to pin, or look notes planned for the preset's world
 - [ ] No arc asked for and no later episode outlined (episode 1 alone)
-- [ ] Hook: frame 0 mid-motion on a face, first line by ~0.5 s (or a silent open the picture carries), the reveal by ~3 s
+- [ ] Hook: frame 0 already moving (the strongest image on the server's spectacle-first genres, a face on every other genre), first line by ~0.5 s (or a silent open the picture carries), what the episode is about clear by ~3 s
 - [ ] Real ages written; nobody under 18 in any romance; voice-only characters marked in the cast table
-- [ ] Each line said TO someone; a silent comic beat costs a line in 15 s, and the human chose
 - [ ] Source material: licence and credit named (SCP is CC BY-SA 3.0, credit the author); no unlicensed look copied
 - [ ] Japanese/Korean: register fits who speaks to whom; a dialect has a native speaker's yes, or standard language
 - [ ] Japanese/Korean-voiced: `start --language ja|ko` (it cannot be changed later)
@@ -55,12 +54,10 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] Three or fewer lines per 15s take
 - [ ] Lines are in the language they will be spoken, with the translation beside them
 - [ ] Each line has its own cell with no competing business
-- [ ] Facts the picture cannot show are in a line
-- [ ] A silent comic beat was paid for with a line, and the human chose it
-- [ ] Every line is said TO someone in the room, or to an off-screen voice with a source
+- [ ] Every key fact is shown in the picture, or said when the picture cannot show it
 - [ ] Every brief line the writers changed or dropped is shown beside the spine line; a "keep exactly" line that was dropped, moved to another speaker or translated is fixed
 - [ ] Japanese / Korean lines sound native for who speaks to whom; a dialect has a native speaker's yes
-- [ ] First beat carries the hook: mid-motion on a face, a line by ~0.5 s (or a silent open the picture carries), the reveal by ~3 s
+- [ ] First beat carries the hook: already moving (a face, or the strongest image on a spectacle-first genre), a line by ~0.5 s (or a silent open the picture carries), what the episode is about clear by ~3 s
 - [ ] Authoring notes (`note: … words (10 recommended)`) shown to the human; they are nudges, the creator decides, nothing was blocked
 - [ ] Human said yes to the lines
 
@@ -79,8 +76,8 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] A redraw followed an edit (frame, beat or look note) the human saw before and after; `--same-shots` only for a random bad draw with the right frames
 - [ ] Both men (or both figures) appear once per frame unless the brief says otherwise
 - [ ] No readable text or digits in frame
-- [ ] Frame 0 is mid-motion on a face, not a wide or a still
-- [ ] Visible cause: every action row follows a visible face reacting to its cause, or shares its frame; a death or a break names who or what causes it
+- [ ] Frame 0 is already moving (the strongest image on a spectacle-first genre, else a face), never an empty room, a slow drift or a still
+- [ ] Visible cause (eye check; the server's writer stages it): every action row follows a visible face reacting to its cause, or shares its frame; a death or a break shows who or what causes it
 - [ ] A child: camera at or above their eye level; a fall or landing feet-first or seated, legs together
 - [ ] Every frame on the board shares one location string; no line moved between beats
 - [ ] A repurposed episode: title and summary updated before the redraw
@@ -112,7 +109,7 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 
 - [ ] Cast approved and on screen
 - [ ] Every speaking voice kept or picked (filming refuses until it is)
-- [ ] Lines approved, three or fewer
+- [ ] Lines approved
 - [ ] Board approved and bright enough
 - [ ] Hand-off in place when there is a predecessor
 - [ ] `POST /v1/spines/{id}/batches/estimate` number is on the table
@@ -145,7 +142,7 @@ Then watch the file in `takes/`. A take that will be re-filmed gets no `finish`,
 - [ ] No music on the delivered file (no `music !!` on the sound line; a take that has it is named to the human for a re-film)
 - [ ] No loudnorm anywhere; per-take gain and one limiter
 - [ ] Wrong take dialogue (stray or garbled speech, a wrong line): take audio dropped and rebuilt (voices, effects, ambience), no muted ranges; every hand cue answers a visible action, inside its own take, and audible
-- [ ] Captions are English, in the 55–70% band, on screen only while the line is spoken; no `NOT ENGLISH` in the finish summary
+- [ ] Captions are English, where the show's caption style puts them (Bold bottom at 76%, Subtle in the 55–70% band), on screen only while the line is spoken; no `NOT ENGLISH` in the finish summary
 - [ ] Off-screen and voice-only lines are in italic (the same face as the rest); every on-screen line is upright; one caption face in the whole episode
 - [ ] Any `trim` / `tempo` done after `finish`, on the finished file, with the producer's yes; what was cut shown; first frame after a cut checked; new length stated (shorter than the band is fine). `deboard` holds board frames and never cuts
 - [ ] No post overlay covers the key reveal (test frames of the key shots looked at)

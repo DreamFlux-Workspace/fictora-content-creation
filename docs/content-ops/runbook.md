@@ -40,8 +40,8 @@ The band is season-locked on the spine. Choose 15s or 30s and hold it.
 Fixed properties of a take:
 
 - A declared shot plan (below). A continuous shot is boarded as the beginning and end of each phase of one camera move; the camera is a little closer in each cell.
-- Three spoken lines maximum. A four-line 15s take drops a line, usually the one that carries the story.
-- A hand-off frame. Spoken successors paste the prior last frame into cell 1a. A making (wordless) take pastes the next take's opening into its last cell. Prefer ending a spoken take on a wide.
+- How many lines it holds is the server's (pacing and line fit). A line that cannot fit comes back with a fitted version and a choice; a silent beat is free.
+- A hand-off frame. Spoken successors paste the prior last frame into cell 1a. A making (wordless) take pastes the next take's opening into its last cell. The server ends a take and opens the next on the same close-up of the lead (see the board gate's seams).
 - 9:16. Portrait. 768P on the H3 lane.
 
 ### Shot plan per take
@@ -63,7 +63,6 @@ Coverage rules. Check them on the board before the board gate; a board that brea
 - The reply gets the listener's angle: a reverse, or across the counter. Never the same two-shot again.
 - Horror: never a whole take on one held shot, and never a fixed wide. The scare gets an insert or a point of view; the threat comes toward the camera; the monster's defining behaviour is on screen (SCP-173 moves only when unseen: cut away and back, and it is closer).
 - One spoken line per beat, nothing else happening during it (a beat that also carried a drawing and a reaction lost its line).
-- End on a wide for the hand-off.
 - When the human names a beat's shots, set them on the beat: `edit --desk D --episode N --beat B --shot "size|subject|camera|angle"` (repeat, 1–4; shot 1 is the beat's first row), then `redraw-board` if the board is already drawn. Write the camera move with direction and size there too.
 - `one_shot` means no cuts. Each board row still keeps its own camera: one phase of the move per row, not a new shot per row.
 
@@ -89,11 +88,11 @@ This is the order `fictora-produce` runs them in.
                                                                                   5 Board
 ```
 
-1. **Brief.** One line of premise, the cast, the set, the hook, the lines. If the story needs a fact the picture cannot show, that fact must be spoken in a line. Decide now. Episode 1 is made on its own: no series arc yet (see Series arc). Source material: name its licence and credit (SCP is CC BY-SA 3.0: credit the article's author); never copy the look of an image that is not under that licence. A creature inspired by a reference (a film monster, an SCP, a game boss) is written as a new original design: its own shape, skin and colouring, described in our words, never the reference's.
+1. **Brief.** One line of premise, the cast, the set, the hook, the lines. Every key fact is shown in the picture, or said when the picture cannot show it (the server's rule; a silent episode shows it). Episode 1 is made on its own: no series arc yet (see Series arc). Source material: name its licence and credit (SCP is CC BY-SA 3.0: credit the article's author); never copy the look of an image that is not under that licence. A creature inspired by a reference (a film monster, an SCP, a game boss) is written as a new original design: its own shape, skin and colouring, described in our words, never the reference's.
 2. **Draft.** The first `step` writes the story on the API. Compare its lines with the brief before the script gate. The draft writes episode 1 alone (`outline_mode=arc_at_episode_two`, `episode_count: 1`); later episodes are written with `author --episode N`.
 3. **Cast plates.** One full-length figure plus a bust per character, plus object plates for any prop that must stay consistent, plus a location sheet for a set that recurs. Gate: show the plates, get a yes.
    **3b. Voices.** The draft locked a voice per character and every take speaks in it, so the human hears it before filming. The plates yes prints each speaking character's voice; offer an audition (`voice --cast NAME --audition`, about $0.02-0.05 a character, after a yes), then the human keeps it (`voice --cast NAME --keep`, or `--keep-all`) or picks another (`--pick N`). Filming is refused until every speaking voice in the episode has that yes. The yeses live on the server (`spine.voice_approvals`), shared with the creator app; a desk's old `shared/voices/approvals.json` yeses move there on their own, and the desk file is read only when the server is older or unreachable (the kit prints a note). A desk that filmed before this gate is grandfathered. The gate applies only to a show whose voice mode is `locked`: a show whose earlier episodes were filmed with the video model's own voices keeps them (`voice mode model`, no gate) unless the human switches it (`voice-mode --desk D [--set locked|model]`; ask at the start of every new episode on such a show: "Keep the same voices as earlier episodes (recommended) or switch to locked voices?").
-4. **Script.** Beats and lines per take, three lines maximum. Gate: the lines, in the original language, with the translation, and every line the writers changed from the brief.
+4. **Script.** Beats and lines per take (how many is the server's). Gate: the lines, in the original language, with the translation, and every line the writers changed from the brief.
 5. **Board.** The storyboard mosaic. Measure mean luma and report it with the board; a dark board is the human's call, not a fault. Gate: the board image itself, checked against the board checks below.
 6. **Estimate.** Price the batch before enrolling it. The line always names the lane and its $/s. If it starts with `!! SERVER ESTIMATE FAILED`, the server gave no dollars and the kit priced from its own table; `!! SERVER ESTIMATE DOES NOT ADD UP` means the server's own parts (rate x seconds, video + stills) disagree with its total and the higher is shown. Tell the human either before they say yes. The server prices on `priced_on`, fal's billing day (San Francisco time), and the kit trusts it: on a rate-change day the morning in India is still the old rate.
 7. **Take.** The only expensive call. Everything above exists to make this call succeed once.
@@ -160,10 +159,10 @@ Budgets are **warnings, never a hard stop**: first 15 s episode of a new series 
 
 ### The hook: the first three seconds
 
-- Frame 0 is mid-motion on a face: a hand already moving, a head already turning. It is the cover frame. Never an establishing wide, never a still.
+- Frame 0 is already moving. The server's spectacle-first genres (action, fantasy, horror, mystery and the like: the writer holds the list) open on the strongest image; every other genre opens on a face (a hand already moving, a head already turning). It is the cover frame. Never an empty room, a slow drift or a still.
 - The first line lands by about 0.5 s.
 - A silent opening is allowed when the picture carries the hook (power shown, an emotional close-up, an impossible image). Otherwise the first line is 10 words or fewer, with no backstory.
-- The premise's reveal (the thing the episode is about) is on screen or said by about 3 s, after the commitment. When it must land by 3 s, keep the first line to about 2 s (a 4-second first line put episode 2's reveal at 4 s).
+- What the episode is about is clear by about 3 s. A separate rule: what a commitment costs is revealed only after the character commits. Both are the server writer's. When the premise must land by 3 s, keep the first line to about 2 s (a 4-second first line put episode 2's reveal at 4 s).
 - Lines 10 words or fewer; a take about 22 spoken words or fewer. The last beat lands one new fact, never a fade (a quiet genre may close softly). Never a line to the viewer, except in a POV episode: a character speaking to the camera as if it were the viewer (a brief that opens "POV: …") is the story and stays; a call to action or a question about the show never does. At most one spectacle beat per take; none is fine.
 - The word counts come back from the server as authoring notes (fictora-drama #538): `note: beat 3 line runs 14 words (10 recommended) — …`, printed after the draft, `author`, `line` / `edit` and a cascade preview, and added to `run-notes.md`. They never block and the kit never shortens a line: tell the human, the creator decides. Pacing comes back the same way, but quieter (fictora-drama, 9 Oct 2026; Hana L-20260930-9, Gallery L-20261008-23; founder decision: subtle, never blocking): at most one line an episode, `epNN pace: Take 2: about 2.4 seconds pass before the line on beat 4, which may feel slow. …`, when a silent, still beat runs about 2.5 s or more or the next line comes about 1.5 s or more after the last one (estimated from the plan, free). The kit says it once per episode on a desk, whichever step comes first (remembered in `.pacing-notes-said.json`), never again after the draft, `author`, `line` / `edit` or a cascade. Mention it to the producer once; they can keep it.
 - Check it in the brief, the script and the board, before the board gate. A board that opens on a wide or a pause is redrawn: say it with `redraw-board --take tK --note "opens on a close-up of …"`, or fix the frame (`edit --frame … --set …`) and then `redraw-board`. A weak open is never fixed by re-filming.
@@ -179,7 +178,7 @@ Every episode goes to TikTok, Instagram Reels and YouTube Shorts with one layout
 | Right rail | right 12% of the width, lower two thirds of the height | like, comment, share |
 
 - Faces, eyes, mouths and key props never sit in a covered zone. Bodies, hands, floor and set may run through them. Composition is otherwise free: faces are not forced to the centre (it looked ugly).
-- Captions sit in the band 55–70% of the height.
+- Captions follow the show's caption style (the server's numbers): Bold bottom at 76% of the height, Subtle in the band 55–70%.
 - The Sokii mark sits top left, just under the top strip: `23:121` on 768×1344 (x = 3% of the width, y = 9% of the height), 0.6 opacity. Never top right.
 - There is no face detector. The boards `step` lists a frame whose written placement could put a face or prop in a zone (`look at row R cell C: …`, never `!!`: written words are not a finding). Look at that cell and at every other cell. On the finished take `review` measures the caption box (sampled frames and every cue of the burned `.ass`) and gives each finding its times. A face or key prop in a zone: fix the frame's placement with `edit --frame`, then `redraw-board`.
 - On the finished take, `fictora-produce review --desk D --episode N --take tK` measures the caption box on sampled frames against these zones and the 55–70% band, and writes a zone sheet (`<take>-zones-vN.png`, zones shaded red) for the face check. It warns and never blocks; faces are still the human's look.
@@ -198,7 +197,7 @@ The writers pick an anime expression (`reaction_kind`) for every emotional momen
 Check before the board gate:
 
 - The rows follow the declared shot plan.
-- **Visible cause.** Every action row is preceded by a visible face reacting to its cause, or shares the frame with it. "Jealousy → breaks the sign" did not read when the face was hidden and the insert showed only hands. When a direction ends on something dying or breaking, write who or what causes it ("the falling beam crushes the lamp", "the cold kills the bird"); left unsaid, the board pins it on the nearest hand.
+- **Visible cause** (an eye check; the server's writer stages it). Every action row is preceded by a visible face reacting to its cause, or shares the frame with it. "Jealousy → breaks the sign" did not read when the face was hidden and the insert showed only hands. A death or a break on the board should show who or what causes it; if it lands on the nearest hand instead, redraw with a note.
 - **Each row opens on the emotion the row before it ended on.** A calm smile right after the sign broke read wrong.
 - **The picture shows the rule.** A change the viewer must see as a jump goes in its own row. H3 blends the cells of one row into one move. A move the beat states (closer, at arm's length) is drawn nearer in the next row that shows it; on a `punchy` horror take the threat gets its own insert or point-of-view row.
 - **Speakers.** The speaker is in the frame of the row their line plays on, at a medium shot or closer, or the line plays over someone else's face. No off-screen speaker is drawn: not as a sleeve, a hand, a cane or a shadow. The board shot list prints the line and speaker on each row and warns when the speaker is not drawn there.
@@ -231,7 +230,7 @@ Repurposing an episode (a new idea on an episode already authored): update its t
 
 ### Background shouts
 
-- Background people (a soldier, kids, a vendor) may shout one short line: at most 6 words, at most 2 per beat, in a generic crowd voice. They are never characters: no card, no plate, no voice to approve, never counted as speakers or toward the three lines a take holds. The script gate prints them beside the beat's line as `[background] Soldier: "Charge!"`. Change one with `line --shout sN --text "..."`, drop one with `line --remove-shout sN` (`line` lists the numbers). Who shouts cannot be changed: someone who really talks is a character, so drop the shout and `line --add` the words to someone in the cast.
+- Background people (a soldier, kids, a vendor) may shout one short line in a generic crowd voice, within the server's limits (at most 6 words, 2 per beat, 2 per take). They are never characters: no card, no plate, no voice to approve, never counted as speakers. The script gate prints them beside the beat's line as `[background] Soldier: "Charge!"`. Change one with `line --shout sN --text "..."`, drop one with `line --remove-shout sN` (`line` lists the numbers). Who shouts cannot be changed: someone who really talks is a character, so drop the shout and `line --add` the words to someone in the cast.
 
 ### Language
 
@@ -245,11 +244,11 @@ Repurposing an episode (a new idea on an episode already authored): update its t
 - Only an image sets the medium. A reference frame as the first image decides ink or photography.
 - `--preset-id` is required at `start` even when the look will be our own frame. `uv run fictora-produce presets` lists the published ids. `start` checks the id before it makes the desk; if an older kit left a desk that was made but never bound, `start` prints the exact `bind --desk …` command that finishes it. Pick the nearest: the horror preset (Dead Light) is a draft and cannot be picked yet, so horror takes Cold Gate (`modern-dark-fantasy`).
 - A pinned look frame wins over the preset: the preset keeps only its shot composition, and its world, palette, finish and reference images leave every drawing. Pin it before the plates; anything drawn earlier still carries the preset's world (meadows, baskets, a white cat). Without a look frame, steer that world with look notes (`look-note --desk D --add "indoors, an arcade; no meadows"`, at most five) before the plates are drawn.
-- Say what you want. Never name what you don't. "No mirrors" puts mirrors in the frame.
+- In notes and scene words, say what you want. Never name what you don't: "No mirrors" puts mirrors in the frame. Things that must not appear go only in the server's own ban list, which the server writes.
 - Every unnamed extra (a new crew, guards) gets a written look of their own in the brief or the redraw note: a different face, hair and build, their own stencil or name. Left unwritten, the board draws one shared face (episode 2 drew the dead lead's face and stencil on the new crew) and the video may show the same person twice. Describe extras by look in a note, not by designation ("D-7", "guard 2"): naming them only works once the server's unnamed-figures field ships.
 - How many people: a series holds up to 50 named characters; unnamed background people never count. One shot shows at most 4 people. One take has at most 8 named people, and at most 6 of them speak on H3 Turbo (the default) or 3 on H3 Max and Seedance; the server's writer splits takes to stay inside these. There is no cap of four on a series: four is the opening cast and the most people in one shot. A new creature the episode turns on (a giant, a monster) is a character with a card, never a story object. When a guest's arc ends (they die, move away, are done), mark them as gone: `fictora-produce cast-exit --desk D --cast NAME --after-episode N` (one server call, any stage). The next episodes' writers then see one line for them instead of their whole card. `--clear` brings them back. Free.
 - Give every named character a clearly different outfit and silhouette, so no two read alike at a glance. Avoid stock names the writers reach for ("Mara Voss"); pick a name of your own.
-- Extreme close-ups of eyes or skin drift photo-real on a drawn look unless the row's note names the show's style ("flat anime, clean ink lines, no photographic texture").
+- Extreme close-ups: the server guards every board against a photo-real look. Check by eye; if a close-up of eyes or skin still drifts, the redraw note names the show's style ("flat anime, clean ink lines, no photographic texture").
 - Redraw notes (`redraw-plate --note`, `look-note`, a frame edit) describe shapes, never judgements: "short, round and fat, two clumsy pleats", not "crooked".
 - Faces come from crops of references, never from the reference wholesale, and never from a real person's likeness.
 - Describe the artwork once. The look is settled for the series. A near-copy of the reference is a fault. Look drift between episodes is a fault.
@@ -260,7 +259,7 @@ Repurposing an episode (a new idea on an episode already authored): update its t
 - No shot per beat. A fight or a conversation is three or four continuous moves with the reactions inside them.
 - Board one continuous move as a row: beginning of the phase on the left, end on the right. Two moments per row, never more.
 - Ask once: "no cut anywhere; the camera is a little closer in each cell."
-- A wordless, locked-camera take for a two-hander always reads as a slideshow. Every take carries lines; every shot carries a camera move.
+- A silent take is allowed, also for a two-hander, but it must move: a visible action every 3 to 4 seconds and a camera move on every shot. A wordless, locked-camera take reads as a slideshow.
 - A take that opens mid-action with nothing to draw will render the storyboard. Give it something to open on.
 - A making or montage take is boarded backwards: it must end on the next take's first frame.
 - After an exit, name the destination and put their back to the portal. "Two steps toward the desk, back to the mirror" is an exit. "Back to the camera" faces the glass they just left.
@@ -268,7 +267,6 @@ Repurposing an episode (a new idea on an episode already authored): update its t
 ### Continuity
 
 - Paste, don't redraw. The previous take's real last frame goes into the next board's first cell.
-- Hand off on a wide.
 - The hand-off is the last frame with picture — never a fade, never black.
 - When an object must match across takes, crop its reference from the take you accepted.
 
@@ -283,8 +281,7 @@ Repurposing an episode (a new idea on an episode already authored): update its t
 
 ### Dialogue
 
-- Three lines maximum per fifteen seconds. A 15 s take is three beats, so a silent comic beat (a pause, a stare, a freeze) costs a line. Say so at the brief.
-- Ask who each line is said TO. A line said to nobody is exposition; give it a listener in the room or an off-screen voice.
+- How many lines a take holds is the server's; the kit sets no count. A silent beat is free.
 - To lock lines word for word, write "Keep these lines exactly as written." in the brief's Lines section, with each line's beat and take filled. The server puts back a locked line the writers trimmed or reworded; a dropped, moved or translated one is still caught at the script gate. A locked line that cannot fit pauses the draft for the creator (nothing drafted): edit the brief together, `bind --prompt` the edited brief (or `brief --edit` it) and `step`. The edited brief is always a new draft; `step` on the unchanged brief only shows the pause again and pays nothing. **Script contract (fictora-drama, 9 Oct 2026):** the brief's Lines (or Script / Dialogue) section is the approved script even without the lock sentence: after every first draft the server puts back its trimmed, reworded, moved or dropped lines and their speakers (a dropped minor speaker's short call-out comes back as a background shout), on every show and language. The lock sentence still adds the pause for a line that cannot fit. Whatever the draft still says differently prints after `step`/`author`/`rewrite` as `SCRIPT: …` with the `line` command that puts it back: ask the human, never fix it silently.
 - A line needs its own cell with no competing business.
 - Never write a character speaking with a full mouth.

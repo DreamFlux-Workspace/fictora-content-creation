@@ -28,7 +28,6 @@ LETTERBOX_TAKES_FOR_BAND: dict[str, int] = {"15s": 2, "30s": 3, "60s": 6}
 LETTERBOX_TAKE_SECONDS_FOR_BAND: dict[str, int] = {"15s": 7, "30s": 10, "60s": 10}
 #: Seconds one letterbox (4:3) take films at 30 s and 60 s.
 LETTERBOX_TAKE_SECONDS = 10
-MAX_LINES_PER_TAKE = 3
 #: Preflight warns (never blocks) past this multiple of the envelope.
 ENVELOPE_STOP_MULTIPLIER = 2.0
 #: Warn-only spend envelopes. One source: ``creation.prices`` (sized for R2V; Turbo takes sit inside them).
@@ -486,6 +485,76 @@ def _untouched(take: TakeState) -> bool:
     )
 
 
+def _ordinal_of(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def episode_beat_pattern(
+    spine: Any, *, episode_ordinal: int | None = None, episode_id: str | None = None
+) -> tuple[int, ...]:
+    """Return one episode's beats per take, as the server films it.
+
+    An episode the creator gave two takes for one moment ("No, give it two
+    takes", fictora-drama #967) films one take more than the show's
+    ``beats_per_storyboard_set``. The server lists every episode's own pattern
+    in the spine response's ``episode_take_patterns``; this reads it (by
+    ``episode_id``, else by ordinal). An older server sends no such list, and an
+    episode it does not name films the show's pattern, so both fall back to
+    ``beats_per_storyboard_set``.
+
+    Parameters
+    ----------
+    spine
+        ``GET /v1/spines/{id}`` JSON (bare, or ``{"spine": ...}``).
+    episode_ordinal
+        1-based episode number.
+    episode_id
+        The episode's API id (``ep01``); wins over the ordinal when both match rows.
+
+    Returns
+    -------
+    tuple[int, ...]
+        Beats per take, take 1 first; empty when the spine has no pattern.
+    """
+
+    outer = spine if isinstance(spine, dict) else {}
+    body = outer.get("spine", outer) if isinstance(outer.get("spine"), dict) else outer
+    rows = body.get("episode_take_patterns") or outer.get("episode_take_patterns") or []
+    by_id: tuple[int, ...] | None = None
+    by_ordinal: tuple[int, ...] | None = None
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        counts = row.get("beats_per_storyboard_set")
+        if not isinstance(counts, list) or not counts:
+            continue
+        try:
+            pattern = tuple(int(n) for n in counts)
+        except (TypeError, ValueError):
+            continue
+        if episode_id is not None and row.get("episode_id") == episode_id:
+            by_id = pattern
+        elif (
+            episode_ordinal is not None
+            and _ordinal_of(row.get("episode_ordinal")) == episode_ordinal
+        ):
+            by_ordinal = by_ordinal or pattern
+    found = by_id or by_ordinal
+    if found:
+        return found
+    show = body.get("beats_per_storyboard_set") if isinstance(body, dict) else None
+    try:
+        return tuple(int(n) for n in show) if isinstance(show, list) else ()
+    except (TypeError, ValueError):
+        return ()
+
+
 def spine_take_count(spine: dict[str, Any]) -> int | None:
     """Return how many takes the server's story films per episode.
 
@@ -539,6 +608,9 @@ def spine_take_seconds(spine: dict[str, Any], band: str) -> int | None:
 def sync_take_slots_to_spine(series: SeriesState, spine: dict[str, Any]) -> list[str]:
     """Give every episode as many take slots as the server's story films.
 
+    Each episode's count is its own (:func:`episode_beat_pattern`): an episode
+    the creator gave two takes for one moment films one more.
+
     The desk opens its slots from the band (two at 30 s); a 4:3 letterbox story
     films 10-second takes, so the server's spine holds three (or six at 60 s; two 7-second takes at 15 s).
     The spine wins: missing slots are added, and trailing slots the story does
@@ -558,11 +630,12 @@ def sync_take_slots_to_spine(series: SeriesState, spine: dict[str, Any]) -> list
         One plain line per change or kept slot; empty when nothing changed.
     """
 
-    count = spine_take_count(spine)
-    if count is None:
+    if spine_take_count(spine) is None:
         return []
     notes: list[str] = []
     for episode in series.episodes:
+        # An episode given two takes for one moment films one take more (fictora-drama #967).
+        count = len(episode_beat_pattern(spine, episode_ordinal=episode.ordinal))
         have = len(episode.takes)
         if have < count:
             for index in range(have + 1, count + 1):

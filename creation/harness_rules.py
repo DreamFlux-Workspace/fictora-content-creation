@@ -16,6 +16,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from creation.ops.state import episode_beat_pattern
 from creation.spine_view import beats_by_take, episode_id_for
 
 #: Words that make the server refuse the take: inner voice must not be written
@@ -45,10 +46,6 @@ _LINE_START = re.compile(r"\((\d+(?:\.\d+)?)\s*[–-]")
 #: A one- or two-word line held longer than this was stretched by the transcript.
 SHORT_LINE_HOLD_SECONDS = 3.0
 
-_NEAR_TOUCH = re.compile(r"an inch|stops short|almost touch|just short", re.IGNORECASE)
-_CLEAR_GAP = re.compile(
-    r"hand's width|hands width|a clear gap|not touching|no contact", re.IGNORECASE
-)
 _HOLD = re.compile(
     r"\b(?:hold|holds|holding|grip|grips|gripping|catch|catches|grasp|grasps)\b",
     re.IGNORECASE,
@@ -248,7 +245,8 @@ def early_extra_shots_stop(
     shots = list(beat.get("shot_plan") or []) if plan is None else list(plan)
     if len(shots) <= 1:
         return None
-    pattern = tuple(int(count) for count in spine.get("beats_per_storyboard_set") or ())
+    # The episode's own takes (one more for a moment given two takes, fictora-drama #967).
+    pattern = episode_beat_pattern(dict(spine), episode_ordinal=episode)
     groups = beats_by_take(spine, episode=episode, take_count=len(pattern) or 1)
     beat_id = str(beat.get("beat_id"))
     for group in groups:
@@ -775,34 +773,6 @@ def _episode_text(spine: Mapping[str, Any], episode: int) -> str:
     return " ".join(blobs)
 
 
-def near_touch_line(spine: Mapping[str, Any], *, episode: int) -> str | None:
-    """Warn when a near-touch will be drawn as contact.
-
-    "An inch away" and "stops short" are drawn as a touch. Say the gap as a
-    hand's width and forbid the contact before the board is drawn.
-
-    Parameters
-    ----------
-    spine
-        Spine JSON.
-    episode
-        Episode ordinal.
-
-    Returns
-    -------
-    str | None
-        The warning, or ``None`` when the episode does not ask for a near-touch.
-    """
-
-    text = _episode_text(spine, episode)
-    if _NEAR_TOUCH.search(text) is None or _CLEAR_GAP.search(text) is not None:
-        return None
-    return (
-        "A near-touch ('an inch', 'stops short') is drawn as contact. "
-        "Say a hand's width of gap, and forbid the touch, before the board is drawn."
-    )
-
-
 def staging_contradiction_lines(spine: Mapping[str, Any], *, episode: int) -> list[str]:
     """Name frames that both stage a hold and forbid that hold.
 
@@ -849,101 +819,8 @@ def staging_contradiction_lines(spine: Mapping[str, Any], *, episode: int) -> li
     return lines
 
 
-_WORD_AGE = re.compile(
-    r"\b(?:(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[- ](?:one|two|three|four|five|six|seven|eight|nine)"
-    r"|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen"
-    r"|(?:early|mid|late)[- ](?:teens|twenties|thirties|forties|fifties|sixties|seventies|eighties)"
-    r"|(?:ten|eleven|twelve|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)"
-    r"(?=[- ](?:years?|yrs?|year-old)\b|,|\s*\())",
-    re.IGNORECASE,
-)
-
-
-_UNITS = {
-    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
-    "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
-    "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
-}  # fmt: skip
-_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70,
-         "eighty": 80, "ninety": 90}  # fmt: skip
-_DECADES = {"teens": 10, "twenties": 20, "thirties": 30, "forties": 40, "fifties": 50,
-            "sixties": 60, "seventies": 70, "eighties": 80}  # fmt: skip
-#: A band written in words, as one age in digits: early 2x -> 23, mid -> 25, late -> 28 (teens: 13, 15, 18).
+#: An age band, as one age in digits: early 2x -> 23, mid -> 25, late -> 28.
 _BAND_YEARS = {"early": 3, "mid": 5, "late": 8}
-
-
-def worded_age(words: str) -> int | None:
-    """``twenty-eight`` -> 28, ``thirty`` -> 30, ``late twenties`` -> 28 (one age to write as digits)."""
-
-    parts = [p for p in re.split(r"[- ]+", words.strip().lower()) if p]
-    if len(parts) == 2 and parts[0] in _BAND_YEARS and parts[1] in _DECADES:
-        return _DECADES[parts[1]] + _BAND_YEARS[parts[0]]
-    if len(parts) == 2 and parts[0] in _TENS and parts[1] in _UNITS:
-        return _TENS[parts[0]] + _UNITS[parts[1]]
-    if len(parts) == 1:
-        return _TENS.get(parts[0]) or _UNITS.get(parts[0])
-    return None
-
-
-def word_age_lines(spine: Mapping[str, Any]) -> list[str]:
-    """Warn when a cast card writes an age in words ("twenty-six", "late twenties").
-
-    The server read "twenty-six, adult woman" as under 18 and refused the scene
-    (The Gallery Heiress, L-20261006-10); changing the age afterwards made every
-    plate stale ($0.90). Ages are written as digits, before the plates.
-
-    Parameters
-    ----------
-    spine
-        Spine JSON.
-
-    Returns
-    -------
-    list[str]
-        One line per card.
-    """
-
-    lines: list[str] = []
-    for card in spine.get("cast") or []:
-        if not isinstance(card, Mapping):
-            continue
-        found = sorted(
-            {match.group(0).lower() for match in _WORD_AGE.finditer(_age_text(card))}
-        )
-        if found:
-            name = card.get("name") or card.get("cast_id")
-            # The card's own age in digits, never a fixed example (canary 7 Oct: "26" for 28 and 31).
-            digits = next(
-                (str(age) for age in map(worded_age, found) if age is not None), "N"
-            )
-            lines.append(
-                f'!! {name}: the age is written in words ({", ".join(found)}). Write it as digits ("{digits}") '
-                f"before the plates: `cast --desk D --name {name} --look @look.txt` with `age: {digits}`."
-            )
-    return lines
-
-
-def _age_text(card: Mapping[str, Any]) -> str:
-    """Where a card states its character's age: its age fields, else the look the plate is drawn from.
-
-    The words-age check scanned the whole card (role, backstory, persona), so a
-    number word anywhere ("twenty years at the gallery") flagged every card of a
-    show whose ages were all digits (Gallery L-20261008-30). The server reads the
-    age from the age fields and the look; a backstory is not drawn.
-    """
-
-    brief = card.get("visual_brief")
-    fields: list[str] = []
-    for holder in (card, brief if isinstance(brief, Mapping) else {}):
-        for key in _AGE_FIELDS:
-            value = holder.get(key)
-            if isinstance(value, str) and value.strip():
-                fields.append(value)
-    if fields:
-        return " ".join(fields)
-    look: list[str] = []
-    _strings(brief, look)
-    return " ".join(look)
 
 
 def _card_text(card: Mapping[str, Any]) -> str:

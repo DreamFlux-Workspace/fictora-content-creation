@@ -148,10 +148,8 @@ from creation.harness_rules import (
     hands_on_sound_lines,
     hook_mouth_stop,
     locked_camera_line,
-    near_touch_line,
     sparkle_adult_line,
     staging_contradiction_lines,
-    word_age_lines,
     young_creature_lines,
 )
 from creation import line_fit
@@ -493,15 +491,11 @@ def script_gate_text(desk: Path, spine: dict[str, Any], *, episode: int) -> str:
     if camera:
         text += "\n" + camera
     notes = [
-        *word_age_lines(spine),
         *restraint_beat_lines(spine, episode=episode),
         *staging_contradiction_lines(spine, episode=episode),
         *adult_face_lines(spine),
         *hands_on_sound_lines(spine, episode=episode),
     ]
-    near = near_touch_line(spine, episode=episode)
-    if near:
-        notes.append(near)
     sparkle = sparkle_adult_line(spine, episode=episode)
     if sparkle:
         notes.append(sparkle)
@@ -2003,15 +1997,13 @@ def run_step(
                     "Stopped before the boards. " + mouth + " Nothing was sent."
                 )
             conflicts = staging_contradiction_lines(spine_now, episode=ep)
-            near = near_touch_line(spine_now, episode=ep)
             sparkle = sparkle_adult_line(spine_now, episode=ep)
-            if conflicts or near or sparkle:
+            if conflicts or sparkle:
                 raise RuntimeError(
                     "Stopped before the boards. Nothing was sent.\n"
                     + "\n".join(
                         [
                             *conflicts,
-                            *([near] if near else []),
                             *([sparkle] if sparkle else []),
                         ]
                     )

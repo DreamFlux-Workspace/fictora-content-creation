@@ -92,6 +92,87 @@ def test_arc_list_then_pick_keeps_the_arc_and_saves_episode_twos_directions(
     assert (desk / "api" / "brief-ep02-v1.json").is_file()
 
 
+def test_arc_list_prints_the_servers_episode_name_short_and_full_recap_and_who_drives_each_arc(
+    desk: Path, api: FakeApi
+) -> None:
+    """fictora-drama 21 Oct 2026: the server cuts the recap short and says who drives each choice."""
+
+    arcs = {
+        **ARCS,
+        "arc_options": [
+            {**ARCS["arc_options"][0], "uses_cast": ["cast_02", "cast_01"]},
+            *ARCS["arc_options"][1:],
+        ],
+        "previously": {
+            "episode_ordinal": 1,
+            "title": "Closing Time",
+            "paragraphs": ["Hana closed the shop on Ren.", "Ren stood in the rain."],
+        },
+        "recap_full": "Hana closed the shop on Ren. Ren stood in the rain.",
+        "choice_views": [
+            {
+                "choice_id": "arc_1",
+                "hook": "Ren opens across the street.",
+                "who": "Ren and Hana",
+                "faces": [],
+            },
+        ],
+    }
+    briefs = [
+        arcs,
+        {
+            **DIRECTIONS,
+            "choice_views": [
+                {"choice_id": "dir_2", "who": "Ren", "hook": "x", "faces": []}
+            ],
+        },
+    ]
+    api.routes[("POST", "/v1/spines/sp1/director/brief")] = lambda *_: briefs.pop(0)
+    api.routes[("POST", "/v1/spines/sp1/series-arc")] = {
+        "spine_id": "sp1",
+        "spine_version": "v6",
+    }
+    out = io.StringIO()
+
+    ec.run_arc_list(desk, out=out)
+    printed = out.getvalue()
+    assert "previously: episode 1, Closing Time" in printed
+    assert "recap: Hana closed the shop on Ren." in printed
+    assert (
+        "story so far:\n  Hana closed the shop on Ren.\n  Ren stood in the rain."
+        in printed
+    )
+    assert (
+        "1. The rival shop — Ren opens across the street.\n   who: Ren and Hana"
+        in printed
+    )
+    assert "2. The old recipe — Hana hunts her grandmother's mochi.\n3." in printed
+
+    ec.run_arc_pick(desk, option=1, out=out)
+    # Who drives the arc goes back to the server with the pick, as it sent it.
+    assert api.posted("/v1/spines/sp1/series-arc")[0]["arc"]["uses_cast"] == [
+        "cast_02",
+        "cast_01",
+    ]
+    assert "2. Sabotage — Someone swaps the sugar.\n   who: Ren" in out.getvalue()
+
+
+def test_an_older_server_without_the_new_fields_still_prints(
+    desk: Path, api: FakeApi
+) -> None:
+    api.routes[("POST", "/v1/spines/sp1/director/brief")] = ARCS
+    out = io.StringIO()
+    ec.run_arc_list(desk, out=out)
+    printed = out.getvalue()
+    assert "recap: Hana closed the shop on Ren." in printed
+    assert (
+        "previously:" not in printed
+        and "story so far:" not in printed
+        and "who:" not in printed
+    )
+    assert "1. The rival shop — Ren opens across the street." in printed
+
+
 def test_arc_list_on_a_story_with_no_arc_pick_records_nothing(
     desk: Path, api: FakeApi
 ) -> None:
