@@ -148,9 +148,7 @@ from creation.harness_rules import (
     hands_on_sound_lines,
     hook_mouth_stop,
     locked_camera_line,
-    sparkle_adult_line,
     staging_contradiction_lines,
-    young_creature_lines,
 )
 from creation import line_fit
 from creation.hook_line import gate_hook_line_lines
@@ -491,9 +489,6 @@ def script_gate_text(desk: Path, spine: dict[str, Any], *, episode: int) -> str:
         *adult_face_lines(spine),
         *hands_on_sound_lines(spine, episode=episode),
     ]
-    sparkle = sparkle_adult_line(spine, episode=episode)
-    if sparkle:
-        notes.append(sparkle)
     if notes:
         text += "\n" + "\n".join(notes)
     # The hook line's words and options, read with the script (founder, 7 Oct 2026, L-20261005-11).
@@ -1767,11 +1762,8 @@ def run_step(
             # brought in: only their pictures are new (the approved ones are
             # reused), and the enrol carries the episode's own tag.
             spine_now = run.spine(state.spine_id)
-            young = young_creature_lines(spine_now)
-            if young:
-                raise RuntimeError(
-                    "Stopped before the plates. Nothing was sent.\n" + "\n".join(young)
-                )
+            # A young creature's proportions and sparkle on adults are the
+            # server's own swaps now (fictora-drama #969, decisions C12).
             for line in [
                 *adult_face_lines(spine_now),
                 *one_sided_side_lines(spine_now),
@@ -1983,16 +1975,10 @@ def run_step(
                     "Stopped before the boards. " + mouth + " Nothing was sent."
                 )
             conflicts = staging_contradiction_lines(spine_now, episode=ep)
-            sparkle = sparkle_adult_line(spine_now, episode=ep)
-            if conflicts or sparkle:
+            if conflicts:
                 raise RuntimeError(
                     "Stopped before the boards. Nothing was sent.\n"
-                    + "\n".join(
-                        [
-                            *conflicts,
-                            *([sparkle] if sparkle else []),
-                        ]
-                    )
+                    + "\n".join(conflicts)
                 )
             if not is_legacy(desk):
                 voices_first = voices_first_refusal(
