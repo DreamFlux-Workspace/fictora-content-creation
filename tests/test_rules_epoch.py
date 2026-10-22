@@ -379,10 +379,8 @@ def test_a_legacy_reel_is_flat_with_no_books_or_auto_reel_and_now_a_cover(
         "reel-plan-ep01-v1.json",
     ]  # fmt: skip
     post = result.post.read_text(encoding="utf-8")  # type: ignore[union-attr]
-    assert post == (
-        "The door was never locked.\nTiny Show · Episode 1: The Door\n\n"
-        "Episode 2 is next. Follow so you don't miss it.\n\n#mystery #shortdrama\n"
-    )
+    # The post caption is the server's on older desks too (decision D5, 21 Oct 2026); conftest stands in for it.
+    assert post == "Series · Part 1\nFollow for part 2.\n\n#shortdrama\n"
     said = out.getvalue()
     assert "metrics" not in said and "latest" not in said
     assert "is also the reel's first frame" in said
