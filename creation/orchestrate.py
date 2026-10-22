@@ -154,11 +154,7 @@ from creation.harness_rules import (
 )
 from creation import line_fit
 from creation.hook_line import gate_hook_line_lines
-from creation.pitch_card import (
-    pitch_gate_refusal,
-    restraint_beat_lines,
-    script_pitch_lines,
-)
+from creation.pitch_card import carry_before_paid_step
 from creation.stranded_voice import explain_film_refusal, stranded_preflight
 from creation.stylised_only import BriefNoticePause
 from creation.voice_gate import film_refusal as voices_film_refusal
@@ -491,7 +487,6 @@ def script_gate_text(desk: Path, spine: dict[str, Any], *, episode: int) -> str:
     if camera:
         text += "\n" + camera
     notes = [
-        *restraint_beat_lines(spine, episode=episode),
         *staging_contradiction_lines(spine, episode=episode),
         *adult_face_lines(spine),
         *hands_on_sound_lines(spine, episode=episode),
@@ -503,10 +498,12 @@ def script_gate_text(desk: Path, spine: dict[str, Any], *, episode: int) -> str:
         text += "\n" + "\n".join(notes)
     # The hook line's words and options, read with the script (founder, 7 Oct 2026, L-20261005-11).
     text += "\n" + "\n".join(gate_hook_line_lines(desk, spine, episode))
-    # The approved pitch (every desk that has one): read the lines against it.
-    pitch = script_pitch_lines(desk, spine, episode=episode)
-    if pitch:
-        text += "\n" + "\n".join(pitch)
+    # The pitch card is the server's card of this script (decision A, 21 Oct 2026).
+    text += (
+        f"\nPitch card: the server's card of this script. Show it (`fictora-produce pitch --desk {desk} "
+        f"--episode {episode}`) and, after the human's yes, `fictora-produce approve --desk {desk} --gate pitch "
+        f"--episode {episode}`: the server draws no boards for this episode until then."
+    )
     return text
 
 
@@ -1501,9 +1498,10 @@ def run_step(
 ) -> StepResult:
     """Run the next automated API step for the current phase.
 
-    On a desk created on or after 6 Oct 2026 it first refuses a plate or board
-    drawing, with nothing sent, while the episode's pitch card has no yes
-    (:func:`creation.pitch_card.pitch_gate_refusal`).
+    The server holds a board drawing (and filming) while the episode's pitch
+    card has no yes (the kit sends ``pitch-card-1``); an old desk yes on the
+    episode in progress is carried to the server first
+    (:func:`creation.pitch_card.carry_before_paid_step`).
 
     Before a paid plate or board drawing it refuses, with nothing sent, when the
     desk drew a look frame the look yes does not cover (:func:`look_gate_refusal`).
@@ -1558,14 +1556,9 @@ def run_step(
     desk = desk.expanduser().resolve()
     state = load_production(desk)
     if state.phase in PAID_DRAWING_PHASES:
-        # The producer's yes to the idea comes before every other stop (new desks only).
-        pitch = pitch_gate_refusal(
-            desk,
-            episode=state.episode_ordinal,
-            stage="the plates" if state.phase == "ready_cast_enrol" else "the boards",
-        )
-        if pitch:
-            raise RuntimeError(pitch)
+        # The server holds paid drawing until the episode's card has its yes; an
+        # old desk yes on the episode in progress is carried there once.
+        carry_before_paid_step(desk, state.episode_ordinal)
         refusal = look_gate_refusal(desk)
         if refusal:
             raise RuntimeError(refusal)
@@ -1911,15 +1904,8 @@ def run_step(
                 "wait_spend": "spend",
             }[state.phase]
             if state.phase == "wait_spend" and confirm_spend:
-                # Filming is paid too: a pitch rewritten after the boards holds it until its new yes.
-                pitch = pitch_gate_refusal(
-                    desk,
-                    episode=ep,
-                    stage="filming",
-                    rerun="`step --confirm-spend` again",
-                )
-                if pitch:
-                    raise RuntimeError(pitch)
+                # Filming is paid too: the server holds it while the card needs a yes.
+                carry_before_paid_step(desk, ep)
                 # The voices gate: nothing films until every speaking voice has the human's yes.
                 refused = voices_film_refusal(
                     desk, run.spine(state.spine_id or ""), episode=ep, run=run

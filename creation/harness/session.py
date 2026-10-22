@@ -155,8 +155,17 @@ class DramaApiRunSession:
                     detail=detail,
                 )
             )
+        hint = ""
+        error = detail.get("error") if isinstance(detail, dict) else None
+        if isinstance(error, dict) and error.get("code") == "pitch_not_approved":
+            # The server holds paid work until the episode's card has its yes.
+            hint = (
+                " Show the human the card (`fictora-produce pitch --desk D --episode N`); after their yes, "
+                "`fictora-produce approve --desk D --gate pitch --episode N`, then run the same command again."
+            )
         raise ApiRefused(
-            f"HTTP {response.status_code} {response.request.method} {response.request.url}: {api_error_text(detail)}",
+            f"HTTP {response.status_code} {response.request.method} {response.request.url}: "
+            f"{api_error_text(detail)}{hint}",
             status=response.status_code,
             body=detail,
         )

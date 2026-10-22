@@ -212,7 +212,7 @@ from creation.stranded_voice import (
     voices_left_without_lines,
 )
 from creation.voice_gate import film_refusal as voices_film_refusal
-from creation.pitch_card import pitch_gate_refusal
+from creation.pitch_card import carry_before_paid_step
 from creation.rules_epoch import is_legacy
 from creation.voice_mode import (
     VOICE_MODE_WORDS,
@@ -485,22 +485,20 @@ def _save_desk_json(desk: Path, stem: str, payload: Any) -> Path:
 
 
 def _hold_for_pitch(desk: Path, command: str, *, episode: int | None = None) -> None:
-    """Refuse a paid command, before anything is sent, while the episode's newest pitch lacks its yes (new desks).
+    """Before a paid command: carry an old desk pitch yes for the episode to the server (free, best effort).
 
-    ``episode`` defaults to the desk's current one. Older desks are never held.
+    The server itself holds the command while the episode's card has no yes
+    (the kit sends ``pitch-card-1``). ``episode`` defaults to the desk's current one.
     """
 
+    del command  # the server names what it held
     desk = desk.expanduser().resolve()
     if episode is None:
         try:
             episode = load_production(desk).episode_ordinal
         except (FileNotFoundError, ValueError):
             episode = 1
-    refusal = pitch_gate_refusal(
-        desk, episode=episode, stage=f"`{command}`", rerun=f"`{command}` again"
-    )
-    if refusal:
-        raise RuntimeError(refusal)
+    carry_before_paid_step(desk, episode)
 
 
 def _hold_for_look(desk: Path, command: str) -> None:
