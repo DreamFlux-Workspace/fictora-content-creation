@@ -244,7 +244,7 @@ def _finish(post_desk: Path, **kwargs: object):
 
 @needs_ffmpeg
 def test_finish_saves_the_cover_and_names_it_in_the_record(
-    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch, server_cover: None
 ) -> None:
     _desk_with_take(post_desk)
     _fake(post_desk, monkeypatch)
