@@ -20,7 +20,7 @@ filmed; it spends nothing.
   custom text) stops the command: the kit no longer keeps its own pick on the
   desk (decision D1, 21 Oct 2026). A pick an older run left in
   ``shared/hook-line.json`` is still read until the server holds one.
-* ``finish``, ``join`` and ``reel`` with ``--hook-line TEXT`` or
+* ``finish`` and ``join`` with ``--hook-line TEXT`` or
   ``--no-hook-line`` save the choice here first and burn what the server
   answers (:func:`save_burned_hook_line`).
 
@@ -417,13 +417,13 @@ def save_burned_hook_line(
     out: TextIO | None = None,
     api: _Api | None = None,
 ) -> str | None:
-    """``finish`` / ``join`` / ``reel --hook-line TEXT`` or ``--no-hook-line``: save it on the server first.
+    """``finish`` / ``join --hook-line TEXT`` or ``--no-hook-line``: save it on the server first.
 
     Decision D1 (21 Oct 2026): the operator's own line, or turning it off, is
     saved on the story through the opening route, exactly as ``hook-line
     --text`` / ``--off`` do; the server checks it and its warnings print word
     for word; the burn uses the line the server answers. Every surface (the
-    app, the next finish, join, reels) then shows the same line.
+    app, the next finish, join) then shows the same line.
 
     Parameters
     ----------

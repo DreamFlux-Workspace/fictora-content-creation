@@ -1,6 +1,6 @@
-# Posting reels: lanes, accounts, slots and the results sheet
+# Posting episodes: lanes, accounts and slots
 
-Our reels average about 40–140 views. Part of that is the reel; part of it is how we post. This page is the posting side.
+This page is the posting side: which account a show goes on, and when. Reels, TikTok parts ("moments") and clips were retired by the founder on 23 Oct 2026: the finished episode itself is what goes on Instagram and TikTok.
 
 ## One lane per account
 
@@ -16,34 +16,14 @@ Write the lane and account on the show's desk, in `production.config.json`:
 }
 ```
 
-These are for you only: they are never sent to the server and never go in the caption. `reel` prints them with the post text and writes them in the results sheet.
+These are for you only: they are never sent to the server and never go in the caption.
 
 ## Stagger the slots: at least 2 hours apart
 
-Today the four accounts post within 10–20 minutes of each other. Four accounts going live together, every day, looks like one operator running a network, which is exactly what Instagram tries to spot and hold back. Give each account its own `posting_slot`, **at least 2 hours from every other account's slot**, and keep to it every day (for example 12:30, 15:00, 18:30 and 21:00 IST).
+Four accounts going live together, every day, looks like one operator running a network, which is exactly what Instagram tries to spot and hold back. Give each account its own `posting_slot`, **at least 2 hours from every other account's slot**, and keep to it every day (for example 12:30, 15:00, 18:30 and 21:00 IST).
 
-An account with no `posting_slot` gets a ⚠ on every `reel`. It never stops the reel.
+## What to do in Instagram or TikTok for each episode
 
-## What to do in Instagram for each reel
-
-A reel is made by itself after every finish (and after an edit that writes a new finished file) in `reels/epNN/`; `reel` re-cuts it by hand. A name with `-draft-` means the episode still had takes to finish: wait for the full reel. Each reel writes `reels/epNN/post-epNN-vN.txt` and prints it at the end of the run:
-
-1. **Caption.** Copy only the part above `----- Not part of the caption: for you, not for Instagram -----`. It says "Part N" and "Follow for part N+1." Strangers don't know what an episode is; a numbered part tells them there's a story to start.
-2. **Cover.** Instagram ignores a cover attached inside the MP4. In the editor tap **Edit cover**, then **Add from camera roll**, and pick `reels/epNN/reel-epNN-vN-cover-vN.jpg` (the series title in yellow with "PART N" under it, the still the reel made for free; `reels/epNN/latest.json` names the current one). If the run printed `⚠ no face found on the cover picture`, look at the cover first. Without this the grid shows a random frame.
-3. **Sound.** The video carries no music (voices, effects and room sound only). Add a trending sound in the Instagram or TikTok editor that fits the account (eerie for horror, soft for BL and food, playful-spooky for horror-comedy) and turn its volume down so the voices stay clear. If this reel truly needs its own score (a jumpscare sting), ask the Fictora team for its "with score" version and choose which one to post.
-4. Post in the account's slot.
-
-## The results sheet: `reels/metrics.csv`
-
-`<desk>/reels/metrics.csv` has one row per episode. Every new reel updates that episode's row to name it (the reels it replaced go in `superseded`); once you have filled a row in (posted), it is never changed, and a re-cut after posting gets its own row. The kit fills what it knows: reel and cover file, series, part, account, lane, planned slot, the cold open's role and time, and the hook text. You fill the rest by hand from the reel's insights about 48 hours after posting:
-
-| Column | What to write |
-| --- | --- |
-| `posted_at` | When it actually went up (`2026-10-06 18:32 IST`) |
-| `views` | Plays |
-| `hold_3s_pct` | Share of viewers still watching at 3 s, if Instagram shows it |
-| `avg_watch_pct` | Average watch time as a share of the reel's length |
-| `follows`, `saves`, `shares` | From the insights |
-| `notes` | Anything odd: posted late, wrong cover, a trend sound that took off |
-
-This is how we find out which covers, cold opens, lanes and slots work. It is manual for now; keep it filled so the numbers can be read across shows.
+1. **Video.** Post the finished episode (the `-sokii` file from `finish`, or the joined episode from `join`).
+2. **Sound.** The video carries no music (voices, effects and room sound only). Add a trending sound in the Instagram or TikTok editor that fits the account (eerie for horror, soft for BL and food, playful-spooky for horror-comedy) and turn its volume down so the voices stay clear. If an episode truly needs its own score (a jumpscare sting), ask the Fictora team for its "with score" version and choose which one to post.
+3. Post in the account's slot.

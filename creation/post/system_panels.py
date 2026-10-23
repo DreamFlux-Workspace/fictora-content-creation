@@ -1,9 +1,9 @@
 """System panels on a finished take: the status windows a system or game genre is told through.
 
-The server places and draws them; the kit only asks and burns. ``finish`` and
-the desk's own reel cut send the takes' filmed lengths to the Drama API
+The server places and draws them; the kit only asks and burns. ``finish``
+sends the takes' filmed lengths to the Drama API
 (``POST /v1/spines/{spine_id}/episodes/{episode_id}/system-panels``) and get
-back the placed panels and the ready ASS layer, which they burn after the
+back the placed panels and the ready ASS layer, which it burns after the
 captions. The kit used to carry its own copy of the placement and drawing
 rules (fictora-drama ``system_panels.py`` and ``system_panel_render.py``);
 the two drifted, so the copy is gone and the server's rules are the only ones.
@@ -37,9 +37,9 @@ SYSTEM_PANEL_GENRES = frozenset(
 ROUTE = "/v1/spines/{spine_id}/episodes/{episode_id}/system-panels"
 #: A take whose length is unknown counts as this long when placing later takes' panels.
 NOMINAL_TAKE_MS = 15_000
-#: The house canvas a reel's layer is drawn for (libass scales it to the video).
+#: The house canvas a layer is drawn for (libass scales it to the video).
 CANVAS = (1080, 1920)
-#: What an older server (no route) is told; ``{command}`` is ``finish`` or ``reel``.
+#: What an older server (no route) is told; ``{command}`` is ``finish``.
 OLDER_SERVER = "this Drama API cannot draw system panels yet; {command} with --no-panels until it is updated"
 #: 404 codes the route answers on purpose; any other 404 means the server predates it.
 _KNOWN_NOT_FOUND = frozenset({"spine_not_found", "episode_not_found"})
@@ -198,7 +198,7 @@ def request_layer(
     body
         ``DramaSystemPanelsRequest`` as JSON.
     command
-        The command the fix names (``finish`` or ``reel``).
+        The command the fix names (``finish``).
     api
         An open session (tests); the desk's own by default.
 
@@ -307,74 +307,6 @@ def take_layer(
     return request_layer(desk, episode, episode_id, body, api=api)
 
 
-def reel_layer(
-    desk: Path,
-    episode: int,
-    episode_id: str,
-    takes: Sequence[tuple[str, float]],
-    segments: Sequence[Any],
-    *,
-    fps: float = 24.0,
-    skip_takes: Sequence[str] = (),
-    picture: tuple[int, int, int, int] | None = None,
-    api: _Api | None = None,
-) -> PanelLayer:
-    """The episode's panels moved onto a desk-cut reel through its cut, drawn by the server.
-
-    Parameters
-    ----------
-    desk, episode, episode_id
-        The episode.
-    takes
-        ``(take_id, duration_s)`` of the reel's takes (``t1``, ``t2`` ...).
-    segments
-        The reel's segments in order (``.take``, ``.start``, ``.end`` in seconds).
-    fps
-        The reel's frame rate.
-    skip_takes
-        Takes cut from a file whose text is already burned in (it carries its panels).
-    picture
-        The picture's box on a letterbox reel.
-    api
-        An open session (tests).
-
-    Returns
-    -------
-    PanelLayer
-        On the reel's timeline (the house canvas; libass scales it to the reel).
-    """
-
-    numbered = {
-        take_id: int(take_id[1:])
-        for take_id, _ in takes
-        if take_id[:1] == "t" and take_id[1:].isdigit()
-    }
-    if not numbered:
-        return NO_PANELS
-    lengths = {numbered[t]: d for t, d in takes if t in numbered}
-    durations = take_ms([lengths.get(n) for n in range(1, max(numbered.values()) + 1)])
-    cut = [
-        {
-            "take": seg.take,
-            "start_s": max(0.0, float(seg.start)),
-            "end_s": max(0.0, float(seg.end)),
-        }
-        for seg in segments
-        if seg.take in numbered
-    ]
-    if not cut:
-        return NO_PANELS
-    body: dict[str, Any] = {
-        "take_ms": durations,
-        "width": CANVAS[0],
-        "height": CANVAS[1],
-        "reel": {"segments": cut, "fps": fps, "skip_takes": list(skip_takes)},
-    }
-    if picture is not None:
-        body["picture"] = list(picture)
-    return request_layer(desk, episode, episode_id, body, command="reel", api=api)
-
-
 def burn_layer(layer: PanelLayer, video: Path, ass_path: Path, out: Path) -> Path:
     """Write the server's ASS layer to ``ass_path`` and burn it onto ``video`` as ``out``.
 
@@ -383,7 +315,7 @@ def burn_layer(layer: PanelLayer, video: Path, ass_path: Path, out: Path) -> Pat
     layer
         The server's layer (not empty).
     video, ass_path, out
-        The take or reel, the ASS to write, the burned file.
+        The take, the ASS to write, the burned file.
 
     Returns
     -------
@@ -417,7 +349,6 @@ __all__ = [
     "SystemPanelsUnavailable",
     "burn_layer",
     "layer_from_answer",
-    "reel_layer",
     "request_layer",
     "show_takes_panels",
     "take_layer",

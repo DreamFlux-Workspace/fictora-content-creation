@@ -28,10 +28,9 @@ Inspected on the real desks (6 Oct 2026, read only): every desk under
 timestamp in ``production.json`` or ``production.config.json``.
 
 Code that has the desk asks :func:`is_legacy`. Pure text and picture helpers
-that never see a desk (dash removal, the face detector, the reel planner's
-genre words) ask :func:`legacy_rules`, which is what the command running now
+that never see a desk (dash removal, the face detector) ask :func:`legacy_rules`, which is what the command running now
 set with :func:`desk_rules` (``fictora-produce`` sets it once per command from
-``--desk``; ``run_finish``, ``run_reel`` and ``caption_take`` set it too, so a
+``--desk``; ``run_finish`` and ``caption_take`` set it too, so a
 direct call is covered).
 
 The legacy code paths these gates pick are frozen for desks created before

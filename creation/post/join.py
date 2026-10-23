@@ -1431,7 +1431,7 @@ def _agreed(values: list[Any], default: Any) -> Any:
 
 
 def _join_cover(desk: Path, episodes: tuple[int, ...]) -> tuple[Path | None, str]:
-    """The cover for the joined file's first frame (the episode's newest reel cover), and its note.
+    """The cover for the joined file's first frame (the episode's newest saved cover image), and its note.
 
     The first frame is the preview Discord, WhatsApp and the phones show
     (:mod:`creation.post.cover_frame`). A series cut takes its first episode's cover.
@@ -1447,8 +1447,8 @@ def _join_cover(desk: Path, episodes: tuple[int, ...]) -> tuple[Path | None, str
     cover = episode_cover(desk, episodes[0])
     if cover is None:
         return None, (
-            f"cover frame: none yet for episode {episodes[0]} (no reel cover on the desk): make the reel "
-            "(`reel`), then join again for the cover as the first frame"
+            f"cover frame: none for episode {episodes[0]} (no saved cover image on the desk); "
+            "the first frame is the picture's"
         )
     return (
         cover,

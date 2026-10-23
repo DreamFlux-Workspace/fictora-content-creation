@@ -11,11 +11,8 @@ from typing import Any
 import pytest
 from conftest import make_take, needs_ffmpeg
 from test_post_finish import FACTS, TWO_LINES, _board, fake_sfx
-from test_reel import reel_desk  # noqa: F401  (fixture)
-from reel_fake_server import FakeReelServer
 
 from creation.captions import CAPTION_BAND, text_width
-from creation.cli_produce import main
 from creation.post import hook_overlay as hk
 from creation.post.finish import run_finish
 from creation.post.hook_overlay import (
@@ -25,7 +22,6 @@ from creation.post.hook_overlay import (
     hook_end,
     overlay_ass,
 )
-from creation.post.reel import run_reel
 
 W, H = 1080, 1920
 
@@ -108,7 +104,7 @@ def test_a_face_in_the_upper_band_moves_it_just_above_the_captions() -> None:
 def test_a_line_moved_down_for_a_face_never_sits_on_the_first_caption() -> None:
     """L-20261005-11 (Sweet Racket, Last Call): the face check dropped the line to just above the
     caption band while the first caption was up. Founder, 7 Oct 2026: it stays at the top then; the
-    caption keeps its timing. Same rule as the server's ``reel_overlays.decide_hook``."""
+    caption keeps its timing. Same rule as the server's hook decision."""
 
     def placed(captions: list[tuple[float, float]], **kw: Any) -> HookOverlay:
         decision = decide(
@@ -210,7 +206,7 @@ def test_a_real_four_three_take_defers_to_the_servers_letterbox() -> None:
     assert decision.overlay is None and "4:3" in (decision.skipped or "")
 
 
-# --- end to end: reel plan JSON, reel render, finish step ---------------------------------------
+# --- end to end: the finish step ---------------------------------------
 
 
 def _set_hook(desk: Path, hook: dict[str, Any]) -> None:
@@ -218,24 +214,6 @@ def _set_hook(desk: Path, hook: dict[str, Any]) -> None:
     spine = json.loads(path.read_text())
     spine["episode_summaries"][0]["hook_line_selected"] = hook
     path.write_text(json.dumps(spine))
-
-
-@needs_ffmpeg
-def test_the_reel_records_the_servers_hook_line_and_sends_the_operators_choices(
-    reel_desk: Path,  # noqa: F811
-    reel_server: FakeReelServer,
-) -> None:
-    _set_hook(reel_desk, ON)
-
-    result = run_reel(reel_desk, episode=1, seconds=6.0, stream=io.StringIO())
-    run_reel(reel_desk, episode=1, seconds=6.0, stream=io.StringIO(), no_hook_line=True)
-
-    # The spine's pick is the server's to read; the request names only the operator's flags.
-    first, second = reel_server.requests
-    assert "hook_line" not in first and first["no_hook_line"] is False
-    assert second["no_hook_line"] is True
-    body = json.loads(result.plan_path.read_text())
-    assert body["hook_line"]["mode"] == "hook" and result.hook_text
 
 
 @needs_ffmpeg
@@ -286,51 +264,23 @@ def test_finish_keeps_a_lowered_hook_line_off_the_captions_it_burned(
     assert _pos(drawn.read_text(encoding="utf-8"))[0] == "8"
 
 
-def test_the_cli_takes_the_hook_line_flags(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    seen: dict[str, Any] = {}
+def test_the_cli_takes_the_hook_line_flags() -> None:
+    import argparse
 
-    def fake_reel(desk: Path, **kwargs: Any) -> None:
-        seen.update(kwargs)
+    from creation.cli_post import add_post_parsers
 
-    monkeypatch.setattr("creation.post.reel.run_reel", fake_reel)
-    saved: list[tuple[int, str | None, bool]] = []
-
-    def fake_save(
-        desk: Path,
-        episode: int,
-        *,
-        text: str | None = None,
-        off: bool = False,
-        out: Any = None,
-    ) -> str:
-        # The server keeps (and may tidy) the line first; the reel burns its answer (D1).
-        saved.append((episode, text, off))
-        return "She lies."
-
-    monkeypatch.setattr("creation.hook_line.save_burned_hook_line", fake_save)
-
-    assert main(["reel", "--desk", str(tmp_path), "--episode", "2", "--hook-line", "She lies",
-                 "--hook-line-position", "lower"]) == 0  # fmt: skip
-    assert saved == [(2, "She lies", False)]
-    assert (seen["hook_line"], seen["no_hook_line"], seen["hook_line_position"]) == (
-        "She lies.",
+    parser = argparse.ArgumentParser()
+    add_post_parsers(parser.add_subparsers(dest="command"))
+    args = parser.parse_args(["finish", "--desk", "d", "--episode", "2", "--hook-line", "She lies",
+                              "--hook-line-position", "lower"])  # fmt: skip
+    assert (args.hook_line, args.no_hook_line, args.hook_line_position) == (
+        "She lies",
         False,
         "lower",
     )
     with pytest.raises(SystemExit):
-        main(
-            [
-                "reel",
-                "--desk",
-                str(tmp_path),
-                "--episode",
-                "2",
-                "--hook-line",
-                "x",
-                "--no-hook-line",
-            ]
+        parser.parse_args(
+            ["finish", "--desk", "d", "--hook-line", "x", "--no-hook-line"]
         )
 
 
@@ -355,29 +305,3 @@ def test_the_default_face_check_asks_the_faces_module_for_the_upper_band(
 
 class _HookDecided(Exception):
     pass
-
-
-@needs_ffmpeg
-def test_the_local_reel_hands_its_captions_to_the_hook_line(
-    reel_desk: Path,  # noqa: F811
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The reel's captions, re-timed through the cut, reach the hook decision (L-20261005-11)."""
-
-    seen: dict[str, Any] = {}
-
-    def recording(*args: Any, **kwargs: Any) -> Any:
-        seen.update(kwargs)
-        raise _HookDecided
-
-    monkeypatch.setattr("creation.post.reel.reel_hook", recording)
-    _set_hook(reel_desk, ON)
-    with pytest.raises(_HookDecided):
-        run_reel(
-            reel_desk, episode=1, seconds=6.0, stream=io.StringIO(),
-            server_refused=RuntimeError("no server in this test"), hook_line_position="lower",
-        )  # fmt: skip
-
-    captions = seen["captions"]
-    assert captions and all(end > start >= 0.0 for start, end in captions)
-    assert captions[0][0] < 3.0, "a caption plays under the hook line's window"

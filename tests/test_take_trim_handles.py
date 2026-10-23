@@ -501,33 +501,6 @@ def test_review_of_a_cut_file_plans_its_shot_changes_minus_start(
 
 
 @needs_ffmpeg
-def test_reel_reads_a_cut_takes_events_minus_start(post_desk: Path) -> None:
-    from creation.post.finish_record import FinishRecord
-    from creation.post.reel import TakeSource, measure_take
-
-    source = make_take(
-        post_desk / "ep01" / "takes" / "take-ep01-t1-handles-prebed-v1.mp4", seconds=4.0
-    )
-    facts = {"take_facts": {"job_id": "j", "shots": [{"shot_index": 9, "start_seconds": 0.0, "end_seconds": 5.0}],
-                            "sfx_cues": [
-        {"sound": "slam", "kind": "event", "start_seconds": 3.0, "shot_index": 9},
-        {"sound": "tap", "kind": "event", "start_seconds": 0.2, "shot_index": 9},
-    ]}}  # fmt: skip
-    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
-        json.dumps(facts)
-    )
-    record = FinishRecord(episode=1, take_id="t1", complete=True, pre_bed=None, master="m.mp4", final="f.mp4",
-                          bed=None, bed_db=-20.0, duck_db=None,
-                          edits=({"op": "handles", "start_s": 0.5, "end_s": 4.5},))  # fmt: skip
-
-    measured = measure_take(post_desk, 1, TakeSource("t1", source, None, record, None))
-
-    assert measured.events == (2.5,), (
-        "the slam at 3.0 s filmed is at 2.5 s; the tap at 0.2 s was cut away"
-    )
-
-
-@needs_ffmpeg
 def test_finish_fades_a_cut_short_end_with_the_servers_fade_on_every_record_file(
     post_desk: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

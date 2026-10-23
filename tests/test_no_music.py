@@ -27,7 +27,6 @@ from test_post_join import finished_take
 from test_target_audio_soundtrack import NATIVE, TARGET, facts_with
 
 from creation import cli_post
-from creation.captions import posting_caption_style
 from creation.cli_produce import main
 from creation.ops.state import load_series, save_series
 from creation.post import finish as finish_module
@@ -37,7 +36,6 @@ from creation.post.finish import AMBIENCE_STEP, ROOM_TONE_STEP, run_finish
 from creation.post.finish_record import latest_finish_record, write_finish_record
 from creation.post.join import run_join
 from creation.post.soundtrack import soundtrack_from
-from creation.production_config import load_production_config, save_production_config
 
 STEM_URL = "https://media.example.com/tenants/t/drama/tracks/stem.wav"
 
@@ -444,20 +442,6 @@ def test_join_names_takes_an_older_finish_left_with_music_and_never_refuses(
 
 
 # --- captions stay on for Instagram and TikTok ------------------------------------------------------------------
-
-
-def test_a_reel_or_tiktok_part_never_goes_out_without_captions(post_desk: Path) -> None:
-    style, note = posting_caption_style(post_desk, "none")
-    assert style == "bold" and "keeps its captions on" in note, (
-        "a new show's style instead"
-    )
-    assert posting_caption_style(post_desk, "plain") == ("plain", "")
-
-    config = load_production_config(post_desk)
-    config.caption_style = "none"
-    save_production_config(post_desk, config)
-    style, note = posting_caption_style(post_desk)
-    assert style != "none" and "the desk's caption_style none" in note
 
 
 # --- effects the server laid in the track ---------------------------------------------------------------------

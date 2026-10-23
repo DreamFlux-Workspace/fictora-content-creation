@@ -221,71 +221,6 @@ def server_owns_text(run: Any) -> bool:
     )
 
 
-#: The server's post caption route (fictora-drama, 21 Oct 2026).
-POST_TEXT_ROUTE = "/v1/spines/{spine_id}/episodes/{episode_id}/post-text"
-POST_TEXT_OLDER_SERVER = (
-    "this Drama API cannot write the reel's post caption yet (an older deploy). The kit no longer writes its "
-    "own: update the server, then make the reel again"
-)
-
-
-def server_post_text(
-    desk: Path, episode: int, *, part: int, has_next: bool = True
-) -> str:
-    """The reel's post caption for Instagram and TikTok, as the server writes it (decision D5).
-
-    Parameters
-    ----------
-    desk
-        Series desk.
-    episode
-        Episode ordinal.
-    part
-        The part number the caption names ("Part N").
-    has_next
-        Whether to point at the next part.
-
-    Returns
-    -------
-    str
-        The caption, ending in a newline.
-
-    Raises
-    ------
-    OnScreenTextUnavailable
-        An older server, or the server could not be asked: the reel stops before it is made.
-    """
-
-    from creation.harness.http_util import api_error_text
-    from creation.post.desk import open_api
-
-    desk = desk.expanduser().resolve()
-    run = open_api(desk, episode)
-    try:
-        sid, eid = _episode_id(desk, episode, run)
-        path = POST_TEXT_ROUTE.format(spine_id=sid, episode_id=eid)
-        status, answer = run.get_optional(
-            f"{path}?part={part}&has_next={'true' if has_next else 'false'}"
-        )
-    except (OSError, httpx.TransportError) as exc:
-        raise OnScreenTextUnavailable(
-            f"the server could not be reached for the reel's post caption ({exc}); run this again"
-        ) from exc
-    finally:
-        run.client.close()
-    if status in (404, 405) and not (
-        isinstance(answer, Mapping)
-        and isinstance(answer.get("error"), Mapping)
-        and answer["error"].get("code") in ("spine_not_found", "episode_not_found")
-    ):
-        raise OnScreenTextUnavailable(POST_TEXT_OLDER_SERVER)
-    if status != 200 or not isinstance(answer, Mapping) or not answer.get("text"):
-        raise OnScreenTextUnavailable(
-            f"the server did not write the reel's post caption (HTTP {status}): {api_error_text(answer)}"
-        )
-    return str(answer["text"])
-
-
 def drawn_text(text: str, *, kind: TextKind = "caption") -> str:
     """Return one text as the server says the picture draws it.
 
@@ -310,9 +245,7 @@ __all__ = [
     "OLDER_SERVER",
     "ON_SCREEN_TEXT_ROUTE",
     "OnScreenTextUnavailable",
-    "POST_TEXT_ROUTE",
     "ask_server",
-    "server_post_text",
     "server_owns_text",
     "drawer_override",
     "drawn_text",

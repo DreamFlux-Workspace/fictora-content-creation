@@ -63,10 +63,10 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--caption-style",
         default=None,
-        help="Caption style for the show, read by local finish, caption and reel: bold (one short white line "
+        help="Caption style for the show, read by local finish and caption: bold (one short white line "
         "at a time, one yellow word; a new show's default), subtle (yellow Arial Bold word flicker; house is "
         "its older name), plain (white whole lines) or none (no captions). Unset: the look approval shows "
-        "both on a still and saves bold unless the human picks subtle. finish/caption/reel --caption-style "
+        "both on a still and saves bold unless the human picks subtle. finish/caption --caption-style "
         "overrides it per run. The server burns its own house captions; none turns them off there too.",
     )
     parser.add_argument(

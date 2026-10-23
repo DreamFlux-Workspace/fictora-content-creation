@@ -27,11 +27,11 @@ READ_OR_LOCAL_COMMANDS = frozenset(
         "expressions", "spine", "take-facts", "check-lines", "plates",
         # local post (ffmpeg on this laptop)
         "join", "trim", "tempo", "freeze", "soften", "blur", "zoom", "deboard", "voice-fx", "review", "keep-take",
-        # local post that writes only on the desk: the reel (under reels/); a music change note saved or
+        # local post that writes only on the desk: a music change note saved or
         # planned (a dry run) -- `music-note --yes` changes the story's music and is checked (``sends``);
         # set-bed only refuses now (the music is the harness's); a re-score planned (`rescore-music --yes`
         # changes the story's music and is checked like `music-note --yes`)
-        "reel", "music-note", "set-bed", "rescore-music",
+        "music-note", "set-bed", "rescore-music",
     }
 )  # fmt: skip
 #: Flag that lets a command through on a shared story.

@@ -1,8 +1,8 @@
-"""Portrait unchanged: with no hook line and no letterbox, finish and reel run the same ffmpeg commands as before.
+"""Portrait unchanged: with no hook line and no letterbox, finish runs the same ffmpeg commands as before.
 
 Founder requirement (5 Oct 2026): the hook-line overlay and the letterbox title bar
 may not disturb anything else. With the hook line off (or none on the spine) and a
-portrait show, every ffmpeg command finish and reel run (filter graphs, captions,
+portrait show, every ffmpeg command finish runs (filter graphs, captions,
 timing) must equal the ones recorded on origin/main before the overlay existed
 (``tests/golden/portrait-unchanged.json``). Regenerate only on purpose:
 ``UPDATE_GOLDEN=1 uv run --group test pytest tests/test_hook_overlay_portrait_unchanged.py``.
@@ -22,7 +22,6 @@ from typing import Any
 import pytest
 from conftest import make_take, needs_ffmpeg
 from test_post_finish import FACTS, TWO_LINES, _board, fake_sfx
-from test_reel import reel_desk  # noqa: F401  (fixture)
 
 from creation.post.finish import run_finish
 
