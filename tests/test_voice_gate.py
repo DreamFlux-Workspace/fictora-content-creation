@@ -1,4 +1,4 @@
-"""The voices gate: shown after the plates yes; filming refused until every speaking voice is kept or picked.
+"""The voices gate: shown after the script's yes; filming refused until every speaking voice is kept or picked.
 
 Every test here asks for ``voice_gate`` so the real gate runs (it is off by default in conftest).
 """
@@ -100,10 +100,10 @@ def _keep(desk: Path, *flags: str) -> int:
     return produce_main(["voice", "--desk", str(desk), *flags, *heard])
 
 
-# --- The gate shows after the plates ---------------------------------------------------------------
+# --- One step at a time: the voices come after the script's yes (founder phone test, 22 Oct 2026) ---
 
 
-def test_the_plates_yes_shows_each_speaking_voice_and_what_to_run(
+def test_the_plates_yes_leads_to_the_script_and_says_nothing_about_voices(
     desk: Path, voiced: FakeApi
 ) -> None:
     set_phase(desk, "wait_plates")
@@ -111,22 +111,13 @@ def test_the_plates_yes_shows_each_speaking_voice_and_what_to_run(
 
     result = orchestrate.approve_gate(desk, gate="plates")
 
-    text = result.message
-    assert "Voices gate (before filming)" in text
-    assert "Hana (cast_hana): Aria: warm low alto, unhurried [needs a yes]" in text
-    assert "sample: https://media.test/hana-ref.mp3" in text
-    assert "Ren (cast_ren): Liam [needs a yes]" in text
-    # Listen first: the sample or an audition, and a keep only once the human heard it.
-    assert "Hear each voice with the human first" in text
-    assert f"voice --desk {desk} --cast cast_hana --keep --heard" in text
-    # Quoted from Ren's own lines at the server's per-character rate, not a flat $0.30 (L-20261008-25).
-    assert f"voice --desk {desk} --cast cast_ren --audition (about $" in text
-    assert "$0.30" not in text
-    assert f"voice --desk {desk} --keep-all --heard" in text
+    assert "Human: approve script lines." in result.message
+    assert "Voices gate" not in result.message
+    assert "--keep-all" not in result.message
     assert load_production(desk).phase == "wait_script"
 
 
-def test_step_at_the_script_gate_repeats_the_voices(
+def test_step_at_the_script_gate_asks_for_the_script_only(
     desk: Path, voiced: FakeApi
 ) -> None:
     set_phase(desk, "wait_script")
@@ -134,7 +125,67 @@ def test_step_at_the_script_gate_repeats_the_voices(
     text = orchestrate.run_step(desk).message
 
     assert "Waiting on human gate `script`" in text
+    assert "Voices gate" not in text
+
+
+def test_the_script_yes_shows_each_speaking_voice_keep_all_first(
+    desk: Path, voiced: FakeApi
+) -> None:
+    set_phase(desk, "wait_script")
+    voiced.routes[("POST", "/v1/spines/sp1/approve")] = {"spine_version": "v6"}
+
+    result = orchestrate.approve_gate(desk, gate="script")
+
+    text = result.message
+    assert (
+        "script approved on the API. Next: the voices (below), then fictora-produce step (boards)."
+        in text
+    )
+    assert "Voices gate (before filming)" in text
+    assert "Hana (cast_hana): Aria: warm low alto, unhurried [needs a yes]" in text
+    assert "sample: https://media.test/hana-ref.mp3" in text
     assert "Ren (cast_ren): Liam [needs a yes]" in text
+    # Keep all voices leads (the app's filled button), then hearing them; a keep only once heard.
+    keep_all = text.index(
+        f"Keep all voices, once the human heard every one: fictora-produce voice --desk {desk} --keep-all --heard"
+    )
+    assert keep_all < text.index("Or hear the voices with the human first")
+    assert f"voice --desk {desk} --cast cast_hana --keep --heard" in text
+    # Quoted from Ren's own lines at the server's per-character rate, not a flat $0.30 (L-20261008-25).
+    assert f"voice --desk {desk} --cast cast_ren --audition (about $" in text
+    assert "$0.30" not in text
+    assert load_production(desk).phase == "ready_boards_enrol"
+
+
+def test_the_script_yes_prints_the_servers_voices_line(
+    desk: Path, voiced: FakeApi
+) -> None:
+    set_phase(desk, "wait_script")
+    voiced.routes[("POST", "/v1/spines/sp1/approve")] = {"spine_version": "v6"}
+    said = (
+        "Script approved. Before I draw the storyboard, hear the voices Hana and Ren will speak in. "
+        "Keep them all, or hear them and pick others."
+    )
+    voiced.routes[("GET", "/v1/spines/sp1/voices-step")] = {
+        "due": True,
+        "text": said,
+        "buttons": [
+            {"label": "Keep all voices", "action": "keep_all_voices", "primary": True},
+            {"label": "Hear the voices", "action": "hear_voices"},
+        ],
+    }
+
+    text = orchestrate.approve_gate(desk, gate="script").message
+
+    assert f"Sokii: {said}" in text
+    asked = [
+        path
+        for (verb, path, _b, _k) in voiced.calls
+        if verb == "GET" and "/voices-step" in path
+    ]
+    assert any(
+        path.endswith("?episode_ordinal=1&moment=after_script") for path in asked
+    )
 
 
 # --- Filming is refused until the voices have a yes -----------------------------------------------
