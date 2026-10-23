@@ -1913,15 +1913,11 @@ def run_step(
                     no_single_frame_start=no_single_frame_start,
                     _spend_yes=True,
                 )
-            voices = ""
-            if state.phase == "wait_script" and state.spine_id:
-                voices = voices_gate_text(
-                    desk, run.spine(state.spine_id), episode=ep, run=run
-                )
+            # One step at a time (founder phone test, 22 Oct 2026): the voices
+            # come after the script's yes, never beside the script.
             return StepResult(
                 state.phase,
-                f"Waiting on human gate `{gate}` (episode {ep}). Use fictora-produce approve."
-                + (f"\n{voices}" if voices else ""),
+                f"Waiting on human gate `{gate}` (episode {ep}). Use fictora-produce approve.",
                 (),
             )
 
@@ -3098,16 +3094,16 @@ def approve_gate(
             traits = f"\n{traits}" if traits else ""
             # A character a later episode brought in is approved after that
             # episode's script yes: go on to its boards.
-            # The voices gate comes after the plates: the human hears each voice before any filming.
-            voices = voices_gate_text(
-                desk, run.spine(state.spine_id or ""), episode=ep, run=run
-            )
-            voices = f"\n{voices}" if voices else ""
             if (
                 ep >= 2
                 and episode_by_ordinal(load_series(desk), ep).script.status
                 == "approved"
             ):
+                # The script already has its yes: the voices come now, before the boards.
+                voices = voices_gate_text(
+                    desk, run.spine(state.spine_id or ""), episode=ep, run=run
+                )
+                voices = f"\n{voices}" if voices else ""
                 state.phase = "ready_boards_enrol"
                 save_production(desk, state)
                 return StepResult(
@@ -3130,7 +3126,7 @@ def approve_gate(
             )
             return StepResult(
                 state.phase,
-                f"Plates approved ({record.status}). Human: approve script lines.{traits}{voices}{captions}",
+                f"Plates approved ({record.status}). Human: approve script lines.{traits}{captions}",
                 (),
             )
 
@@ -3187,6 +3183,17 @@ def approve_gate(
             camera = locked_camera_line(spine, episode=ep)
             if camera:
                 warning += "\n" + camera
+            # One step at a time (founder phone test, 22 Oct 2026): Script, then
+            # Voices, then Storyboard. The voices are heard and kept now, before
+            # the boards; filming still waits for every yes.
+            voices = voices_gate_text(desk, spine, episode=ep, run=run)
+            if voices:
+                return StepResult(
+                    state.phase,
+                    f"Episode {ep} script approved on the API. Next: the voices (below), then "
+                    f"fictora-produce step (boards).{warning}\n{voices}",
+                    (),
+                )
             return StepResult(
                 state.phase,
                 f"Episode {ep} script approved on the API. Next: fictora-produce step (boards).{warning}",

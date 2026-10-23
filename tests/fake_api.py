@@ -223,6 +223,12 @@ class FakeApi:
         if path.endswith("/voice-mode") and ("GET", path) not in self.routes:
             # A deploy whose voice-mode route the test did not set: read as an older server (locked).
             return 404, {"detail": "Not Found"}
+        if "/voices-step" in path and ("GET", path.split("?", 1)[0]) not in self.routes:
+            # A deploy whose Voices step route the test did not set: read as an older server (the kit's words).
+            return 404, {"detail": "Not Found"}
+        if "/voices-step" in path:
+            self.calls.append(("GET", path, None, None))
+            return 200, self._answer("GET", path.split("?", 1)[0], None)
         if path.endswith("/music-blend") and ("GET", path) not in self.routes:
             # A deploy whose music-blend route the test did not set: read as an older server (the genre's).
             return 404, {"detail": "Not Found"}
