@@ -68,7 +68,7 @@ Coverage rules. Check them on the board before the board gate; a board that brea
 
 Sound and captions are built after the take comes back, never asked of the model:
 
-- **No music in the videos we deliver** (founder decision, 20 Oct 2026). Every finished take, joined episode, Instagram reel and TikTok part carries the voices, the sound effects and the room sound only. The kit lays no music. When you post, add a trending sound inside Instagram or TikTok: the server's suggested post text names the sound mood for the show's genre (its last line, "Sound for Instagram and TikTok: …"); the kit does not pick one. Captions stay on. If one reel truly needs its own score (a jumpscare sting, say), ask the Fictora team for its "with score" version: the server makes it from the stored sound, at no cost. The no-music version stays the default; you choose which one to post when you post it. New videos already come with no music; an older episode keeps its music unless the human asks for it to be removed (free; see Light and sound).
+- **No music in the videos we deliver** (founder decision, 20 Oct 2026). Every finished take and joined episode carries the voices, the sound effects and the room sound only. The kit lays no music. When you post, add a trending sound inside Instagram or TikTok that fits the show; the kit does not pick one. Captions stay on. If one episode truly needs its own score (a jumpscare sting, say), ask the Fictora team for its "with score" version: the server makes it from the stored sound, at no cost. The no-music version stays the default; you choose which one to post when you post it. New videos already come with no music; an older episode keeps its music unless the human asks for it to be removed (free; see Light and sound).
 - Effects and room sound are ducked under the voice where they would cover a line. The mix LUFS says nothing about ducking.
 - Per-take gain plus one limiter. Never loudnorm on a take.
 - `finish` lays the take's own effects from its take facts. Exteriors come back near-silent (−38 LUFS) and get the most from them. A sound the Sound lines missed is a hand cue: [sound-cues.md](sound-cues.md) (one per visible action, shape measured, clamped to its own take).
@@ -346,7 +346,7 @@ Faults accepted without a re-film (calibration): a door frame in the opening sec
 - An overlay added in post (a title, a sticker, a blur, a hand caption) never covers the key reveal. Render test frames of the key shots with the overlay on and look at them before the full render.
 - Keep the un-marked master. `finish` writes every step to its own file; the captioned file before the mark (`…-cap-vN.mp4`) is the master, the marked file (`…-sokii-vN.mp4`) is what goes out. Never delete the master to save space.
 - The join (`fictora-produce join --desk D --episode N`, or `--episodes 1 2 3` for a series cut): no music under it, 24 fps, and the level step at each seam under 5 dB (a 5 dB step is audible; over it the join says `NOT DONE` and exits 5). In a series cut the episode seams are levelled first (the last and first 4 s of the two episodes move toward each other, at most 10 dB together). Place cues on each take before the join, never on the joined file. Never join the marked `-sokii` files by hand: that stitches two marks.
-- The reel cut (`fictora-produce reel --desk D --episode N`, after the episode is accepted): a separate IG / TikTok edit cut from the footage already rendered. Local, $0, no new video and no server route. It opens on the strongest frame as a short flash-forward and ends on the new fact; it trims the calm setup and keeps one pivot; captions are the accepted ones re-timed through the cut; no line to the viewer and no end-card question (the call to action goes in the suggested post text). It writes only under `reels/` and never overwrites. Detail: reference.md, Reel cut.
+- Reels, TikTok parts ("moments") and clips were retired (founder, 23 Oct 2026): post the finished episode itself. Never offer a reel.
 - `join` reads the record `finish` leaves beside each take. A take finished before the kit had `join` has no record: run `finish` on it again first. A take cut with `trim` or `tempo` after `finish` carries a new record (the same cut on the take before the mix and the master), so it joins at its new length; an edit that prints `No finish record` is refused by `join`: finish again, then edit. A re-captioned copy of a finished take joins with `--take-file COPY --from-record <its -cap master>`: same size, frames and sound are checked, and the stand-in is written in the run notes (L-20261001-9).
 
 ## Scratch tools
@@ -399,7 +399,7 @@ fixtures/      beats, lines, camera
 voices/        auditions, pick, generated lines
 sfx/  beds/
 takes/         raw, mix, captioned final, joined episode
-reels/         social reel cuts, their plans and post text (`reel`)
+reels/         (older desks only) reel cuts the retired `reel` step left; nothing writes here now
 scripts/       tools used this run
 artifact/      series write-up
 api/           JSON from the drama API (not the review surface)

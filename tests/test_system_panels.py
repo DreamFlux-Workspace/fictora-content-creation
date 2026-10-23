@@ -15,14 +15,12 @@ from typing import Any
 import pytest
 
 from creation.post import system_panels as sp
-from creation.post.reel_plan import Segment
 from creation.post.system_panels import (
     OLDER_SERVER,
     PanelLayer,
     SystemPanelsUnavailable,
     burn_layer,
     layer_from_answer,
-    reel_layer,
     show_takes_panels,
     take_layer,
 )
@@ -142,26 +140,6 @@ def test_nothing_drawn_reads_as_no_panels() -> None:
     assert not layer_from_answer(answer)
 
 
-def test_a_reel_sends_its_cut(tmp_path: Path) -> None:
-    api = FakeApi()
-    reel_layer(_desk(tmp_path), 1, "ep01", [("t1", 10.0), ("t2", 12.0)],
-               [Segment("t1", 5.0, 8.0, "cold_open"), Segment("t2", 0.0, 3.0, "turn")],
-               fps=30.0, skip_takes=["t2"], api=api)  # fmt: skip
-    body = api.sent[0][1]
-    assert body["take_ms"] == [10000, 12000] and (body["width"], body["height"]) == (
-        1080,
-        1920,
-    )
-    assert body["reel"] == {
-        "segments": [
-            {"take": "t1", "start_s": 5.0, "end_s": 8.0},
-            {"take": "t2", "start_s": 0.0, "end_s": 3.0},
-        ],
-        "fps": 30.0,
-        "skip_takes": ["t2"],
-    }
-
-
 @pytest.mark.parametrize(
     "status,answer",
     [(404, {"detail": "Not Found"}), (405, {"detail": "Method Not Allowed"})],
@@ -205,7 +183,7 @@ def test_a_named_refusal_is_not_an_older_server(tmp_path: Path) -> None:
     )
 
 
-def test_finish_and_reel_take_no_panels() -> None:
+def test_finish_takes_no_panels() -> None:
     import argparse
 
     from creation.cli_post import add_post_parsers
@@ -214,9 +192,6 @@ def test_finish_and_reel_take_no_panels() -> None:
     add_post_parsers(parser.add_subparsers(dest="command"))
     assert parser.parse_args(
         ["finish", "--desk", "d", "--episode", "1", "--take", "t1", "--no-panels"]
-    ).no_panels
-    assert parser.parse_args(
-        ["reel", "--desk", "d", "--episode", "1", "--no-panels"]
     ).no_panels
 
 
@@ -268,7 +243,7 @@ def _panel_desk(post_desk: Path, genre: str) -> None:
 
 
 def serve_panels(monkeypatch: pytest.MonkeyPatch, api: FakeApi) -> FakeApi:
-    """Answer the desk's system-panels calls from ``api`` (finish and reel open their own session)."""
+    """Answer the desk's system-panels calls from ``api`` (finish opens its own session)."""
 
     class _Session(FakeApi):
         class client:  # noqa: N801 - mirrors DramaApiRunSession.client
@@ -359,6 +334,7 @@ def test_the_kit_keeps_no_copy_of_the_rules() -> None:
         "place_panels",
         "take_panels",
         "reel_panels",
+        "reel_layer",
         "system_panels_ass",
         "panel_area",
         "burn_panels",

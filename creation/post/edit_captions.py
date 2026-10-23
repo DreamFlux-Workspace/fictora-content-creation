@@ -32,7 +32,7 @@ from typing import Any
 
 #: Edits that leave every frame where it was: the captions are copied as they are.
 SAME_TIMING = frozenset({"blur", "freeze", "soften"})
-#: Shorter than this after a re-time, a cue is dropped (as :func:`creation.post.reel_sources.shift_cues`).
+#: Shorter than this after a re-time, a cue is dropped.
 MIN_CUE_SECONDS = 0.05
 
 _ASS_TIME = re.compile(r"^(\d+):(\d{2}):(\d{2})\.(\d{2})$")
@@ -179,8 +179,8 @@ def carry_ass(
         if mapper is None:
             return CaptionCarry(
                 None,
-                f"!! captions NOT carried from `{source.name}`: {how}; the edited take has no .ass, so its reel "
-                "is uncaptioned. Run finish again on the take, then make the edit again.",
+                f"!! captions NOT carried from `{source.name}`: {how}; the edited take has no .ass, so later "
+                "steps find no captions on it. Run finish again on the take, then make the edit again.",
             )
         maps.append(mapper)
         hows.append(how)

@@ -327,7 +327,7 @@ def run_caption_style(
         config.caption_style = word
         save_production_config(desk, config)
         print(
-            f"Captions set to {word} for this show (finish, caption and reel read it; episodes "
+            f"Captions set to {word} for this show (finish and caption read it; episodes "
             "already finished keep what they were burned with until finished again).",
             file=out,
         )

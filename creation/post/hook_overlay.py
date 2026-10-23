@@ -5,13 +5,13 @@ Founder decisions of 5 Oct 2026 (fictora-drama ``episode_openings``):
 * **hook** (portrait shows, the main path). The episode's selected hook line
   (``episode_summaries[].hook_line_selected.text``; nothing when ``kind`` is
   ``off``) is burned in large white bold type with a heavy outline over the
-  first ~3 s of the finished episode (its first take, at ``finish``) and of
-  every reel. It sits in the upper safe band just below the top 8% UI strip,
+  first ~3 s of the finished episode (its first take, at ``finish``).
+  It sits in the upper safe band just below the top 8% UI strip,
   kept out of the right-hand rail, on at most two lines. When a face sits in
   the upper band it moves to just above the caption band, unless a caption is
   on screen while it is up: then it stays at the top, so it never sits on the
   first caption (founder, 7 Oct 2026, L-20261005-11; captions are never held
-  for it; the server's ``reel_overlays.decide_hook`` is the same rule). It leaves at the
+  for it; the server's hook decision is the same rule). It leaves at the
   first cut after ~3 s (2.5-4 s), else with a quick fade at 3 s. It is skipped
   when it says the same words as the episode's first spoken line.
 * **title_bar** (only when the show's ``delivery_format`` is ``letterbox``).
@@ -22,7 +22,7 @@ Founder decisions of 5 Oct 2026 (fictora-drama ``episode_openings``):
   server's letterbox delivery already puts the title in its band.
 
 With no hook line (or ``--no-hook-line``) on a portrait show nothing is drawn
-and finish and reel run exactly the commands they always ran
+and finish runs exactly the commands they always ran
 (``tests/test_hook_overlay_portrait_unchanged.py``).
 
 Assumptions and dependencies:
@@ -312,7 +312,7 @@ def decide(
     series_title: str | None = None,
     captions: Sequence[tuple[float, float]] = (),
 ) -> HookDecision:
-    """Decide the overlay for one episode's finished video or reel.
+    """Decide the overlay for one episode's finished video.
 
     Parameters
     ----------

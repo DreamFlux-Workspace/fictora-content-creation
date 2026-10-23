@@ -1,13 +1,13 @@
 """The ``.ass`` beside a finished master holds its dialogue captions AND the text drawn over them (L-20261006-8).
 
 Every tool after ``finish`` reads the master's captions from the ``.ass``
-beside it (``master.with_suffix(".ass")``): the reel, the trim-handle cut, an
+beside it (``master.with_suffix(".ass")``): the trim-handle cut, an
 edit's caption carry, a hand re-burn. ``finish`` burns the captions first and
 then, on some takes, more text over them (the hook card on an episode's first
 take, the system panels). Those steps wrote their own burn file beside their
 own video, and that video became the master, so the master's ``.ass`` held
 only the hook card (or the panels): a 64 px re-burn from it dropped every
-dialogue caption (L-20261006-8, L-20261005-7), and the reel read the hook card
+dialogue caption (L-20261006-8, L-20261005-7), and a caption reader took the hook card
 as the take's only caption.
 
 Now each overlay step burns from its own ``-overlay`` file, and the ``.ass``
@@ -15,7 +15,7 @@ beside its video is the captions file with the overlay's events added: the
 captions keep their styles and cues; the overlay's events follow with their
 own styles, a higher layer (drawn on top, as burned), and the event name
 :data:`OVERLAY_NAME`. A re-burn of that file draws both; every caption reader
-(:func:`creation.post.reel.parse_ass_cues`) skips the overlay events, so the
+(:func:`parse_ass_cues`) skips the overlay events, so the
 captions it reads are the dialogue captions only.
 
 A tooling fix: the burned pictures are unchanged, so it applies to every desk.
@@ -26,6 +26,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+from creation.captions import Cue
 
 #: The ``Name`` field of an event drawn over the captions (hook card, panels): not a caption.
 OVERLAY_NAME = "overlay"
@@ -163,10 +165,73 @@ def write_beside(video: Path, *, captions: Path | None, overlay: Path) -> Path:
     return target
 
 
+def parse_ass_cues(text: str, *, overlays: bool = False) -> list[Cue]:
+    """The caption events of an ASS file as cues (style ``Italic`` -> italic; override tags dropped).
+
+    A Bold caption (:mod:`creation.caption_bold`) is read as what it shows:
+    the words not yet said (hidden) are dropped, so its cues build up word by
+    word like the house flicker, and its yellow word is the cue's ``emphasis``.
+
+    Parameters
+    ----------
+    text
+        The ``.ass`` file text.
+    overlays
+        Also read the events drawn over the captions (a finished master's hook
+        card or panels, :mod:`creation.post.master_captions`). Default: the
+        captions only.
+
+    Returns
+    -------
+    list[Cue]
+        Every caption ``Dialogue`` event, in file order.
+    """
+
+    def seconds(stamp: str) -> float:
+        h, m, s = stamp.strip().split(":")
+        return int(h) * 3600 + int(m) * 60 + float(s)
+
+    cues: list[Cue] = []
+    for line in text.splitlines():
+        if not line.startswith("Dialogue:"):
+            continue
+        fields_ = line.split(":", 1)[1].split(",", 9)
+        if len(fields_) < 10:
+            continue
+        if not overlays and is_overlay_event(fields_):
+            # The hook card or a panel kept beside the master's captions: drawn, but not a caption.
+            continue
+        raw = fields_[9]
+        # A Bold caption lays its whole chunk out and hides the words not yet said: keep what shows.
+        raw = re.split(r"\{[^}]*\\alpha&HFF&[^}]*\}", raw, maxsplit=1)[0]
+        raw = raw.replace("\\N", " ").replace("\\n", " ").replace("\\h", " ")
+        # Bold's yellow word (the house colour switched on inside the line) stays the yellow word.
+        marked = re.sub(r"\{[^}]*\\c&H0000E5FF&[^}]*\}", "\x00", raw)
+        marked = re.sub(r"\{[^}]*\}", "", marked)
+        marked = re.sub(r"\s+", " ", marked).strip()
+        emphasis = next(
+            (i for i, word in enumerate(marked.split()) if word.startswith("\x00")), -1
+        )
+        body = marked.replace("\x00", "")
+        if not body:
+            continue
+        cues.append(
+            Cue(
+                seconds(fields_[1]),
+                seconds(fields_[2]),
+                body,
+                italic=fields_[3].strip().lower() == "italic",
+                emphasis=emphasis,
+            )
+        )
+    return cues
+
+
 __all__ = [
     "OVERLAY_LAYER_LIFT",
     "OVERLAY_NAME",
     "combined_ass",
     "is_overlay_event",
+    "parse_ass_cues",
     "write_beside",
 ]

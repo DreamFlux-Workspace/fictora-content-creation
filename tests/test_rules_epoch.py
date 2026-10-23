@@ -28,12 +28,6 @@ from creation.captions import (
 )
 from creation.ops.floor import init_series_desk
 from creation.post import faces
-from creation.post.reel_plan import (
-    ReelPlan,
-    Segment,
-    check_plan,
-    genre_family,
-)
 from creation.production_config import (
     ProductionConfig,
     load_production_config,
@@ -195,37 +189,6 @@ def _words(tmp_path: Path) -> Path:
     return words
 
 
-def test_a_legacy_reel_rebuilds_captions_as_before(tmp_path: Path) -> None:
-    from creation.post.reel_sources import rebuild_cues
-
-    desk = _old_desk(tmp_path)
-    words = _words(tmp_path)
-    windows = [
-        (0.3, 1.2, "Open the door", False),
-        (3.1, 3.9, "Who is there", False),
-        (4.6, 5.3, "It was me", False),
-    ]
-    with desk_rules(desk):
-        notes: list[str] = []
-        cues = rebuild_cues(SOURCES_SPINE, desk=desk, episode=1, take_index=1, duration=6.0,
-                            words_json=words, notes=notes, label="cap-v1.mp4")  # fmt: skip
-        # Before #135: timed on the words json, each line's words spread over its span.
-        assert cues is not None and cues[0].start == pytest.approx(0.3)
-        assert "timed on `words.json` (words, words, words)" in notes[-1]
-        assert not any("ESTIMATED" in n for n in notes)
-        notes = []
-        rebuild_cues(SOURCES_SPINE, desk=desk, episode=1, take_index=1, duration=6.0,
-                     windows=windows, notes=notes, label="cap-v1.mp4")  # fmt: skip
-        assert notes[-1] == (
-            "⚠ captions rebuilt (no .ass for `cap-v1.mp4`): 3 spine line(s), word flicker, the wording and "
-            "3 window(s) the run notes recorded for `cap-v1.mp4` (slant: the spine)"
-        )
-    notes = []
-    rebuild_cues(SOURCES_SPINE, desk=tmp_path, episode=1, take_index=1, duration=6.0,
-                 words_json=words, notes=notes, label="cap-v1.mp4")  # fmt: skip
-    assert "speech timestamps `words.json`" in notes[-1]
-
-
 def test_a_legacy_finish_times_each_flicker_word_like_a_new_desk(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -285,48 +248,6 @@ def test_a_legacy_desk_keeps_house_captions_and_is_never_asked(tmp_path: Path) -
 # --- #133 ------------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("genre", "old", "new"),
-    [("system_regression", "default", "action"), ("isekai", "default", "action"),
-     ("last_human", "default", "action"), ("horror", "horror", "horror"), ("revenge", "action", "action")],
-)  # fmt: skip
-def test_legacy_genre_words_are_the_old_lists(
-    tmp_path: Path, genre: str, old: str, new: str
-) -> None:
-    desk = _old_desk(tmp_path)
-    with desk_rules(desk):
-        assert genre_family(genre) == old
-    assert genre_family(genre) == new
-
-
-def test_a_legacy_cold_open_inside_the_last_beat_is_still_warned(
-    tmp_path: Path,
-) -> None:
-    from test_reel_openers_endings import CUES, take
-
-    desk = _old_desk(tmp_path)
-
-    def plan() -> ReelPlan:
-        return ReelPlan(
-            episode=4, seconds=6.0,
-            segments=[Segment("t1", 12.0, 13.5, "cold_open"), Segment("t1", 0.0, 3.0, "plant"),
-                      Segment("t1", 11.25, 15.0, "new_fact")],
-            last_beat=("t1", 11.25, 15.0),
-        )  # fmt: skip
-
-    with desk_rules(desk):
-        legacy = plan()
-        warnings = check_plan(legacy, [take(cues=CUES)])
-    assert (
-        "the cold open t1 12.00-13.50 s is inside the last beat (t1 11.25-15.00 s, the new fact): the reel "
-        "opens on its own ending. Take the cold open from the pivot or the peak before the reveal"
-    ) in warnings
-    assert not any("flash-forward" in n for n in legacy.notes)
-    new = plan()
-    assert not any("ending" in w for w in check_plan(new, [take(cues=CUES)]))
-    assert any("that's the flash-forward" in n for n in new.notes)
-
-
 class _Cascade:
     def __init__(self, name: str, calls: list[str]) -> None:
         self.name, self.calls = name, calls
@@ -353,60 +274,6 @@ def test_a_legacy_desk_reads_faces_without_the_profile_cascade(
     calls.clear()
     faces.detector_for(desk, 1)(frame)  # type: ignore[misc]
     assert "profile" not in calls
-
-
-@needs_ffmpeg
-def test_a_legacy_reel_is_flat_with_no_books_or_auto_reel_and_now_a_cover(
-    tmp_path: Path,
-) -> None:
-    """Frozen, with one exception (founder, 7 Oct 2026): the cover image and its first frame."""
-
-    from test_reel import _make_reel_desk
-
-    from creation.post.reel import auto_reel, run_reel
-
-    desk = _legacy(_make_reel_desk(tmp_path))
-    out = io.StringIO()
-    assert auto_reel(desk, 1, trigger="finish", stream=out) is None
-    assert out.getvalue() == "" and not (desk / "reels").exists()
-
-    out = io.StringIO()
-    result = run_reel(desk, episode=1, seconds=6.0, stream=out)
-
-    assert result.video is not None and result.cover is not None
-    assert sorted(p.name for p in (desk / "reels").iterdir()) == [
-        "post-ep01-v1.txt", "reel-ep01-v1-cover-v1.jpg", "reel-ep01-v1.ass", "reel-ep01-v1.mp4",
-        "reel-plan-ep01-v1.json",
-    ]  # fmt: skip
-    post = result.post.read_text(encoding="utf-8")  # type: ignore[union-attr]
-    # The post caption is the server's on older desks too (decision D5, 21 Oct 2026); conftest stands in for it.
-    assert post == "Series · Part 1\nFollow for part 2.\n\n#shortdrama\n"
-    said = out.getvalue()
-    assert "metrics" not in said and "latest" not in said
-    assert "is also the reel's first frame" in said
-    assert said.rstrip().splitlines()[-1].startswith("Reel reel-ep01-v1.mp4: ")
-    assert "; no cover image" not in said
-
-
-@needs_ffmpeg
-def test_a_legacy_reel_runs_the_commands_it_ran_before(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The portrait golden as recorded before #133: the reel's files flat in ``reels/``."""
-
-    from test_hook_overlay_portrait_unchanged import GOLDEN, REPO, _recording
-    from test_reel import _make_reel_desk
-
-    from creation.post.reel import run_reel
-
-    desk = _legacy(_make_reel_desk(tmp_path))
-    calls = _recording(monkeypatch, [desk, REPO])
-    # --no-cover: everything but the cover (founder, 7 Oct 2026) runs exactly as before.
-    result = run_reel(desk, episode=1, seconds=6.0, stream=io.StringIO(), no_cover=True)
-    assert result.ass is not None
-    golden = json.loads(GOLDEN.read_text())["reel"]
-    before_133 = json.loads(json.dumps(golden).replace("/reels/ep01/", "/reels/"))
-    assert [*calls, [result.ass.read_text(encoding="utf-8")]] == before_133
 
 
 @needs_ffmpeg
@@ -497,34 +364,6 @@ def test_a_legacy_finish_never_draws_system_panels(
     assert "system-panels" not in text
     assert not list((post_desk / "ep01" / "takes").glob("*panels*"))
     assert cued == plain
-
-
-@needs_ffmpeg
-def test_a_legacy_reel_never_draws_system_panels(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A system-genre reel with panel cues runs the commands the pre-#133 golden recorded."""
-
-    from test_hook_overlay_portrait_unchanged import GOLDEN, REPO, _recording
-    from test_reel import _make_reel_desk
-    from test_system_panels import _cue
-
-    from creation.post.reel import run_reel
-
-    desk = _legacy(_make_reel_desk(tmp_path))
-    spine_path = desk / "ep01" / "api" / "spine.json"
-    body = json.loads(spine_path.read_text(encoding="utf-8"))
-    body["microdrama_genre"] = "system_leveling"
-    body["beats"][0]["system_panels"] = [_cue(appear_at_ms=0)]
-    spine_path.write_text(json.dumps(body), encoding="utf-8")
-    calls = _recording(monkeypatch, [desk, REPO])
-    # --no-cover: everything but the cover (founder, 7 Oct 2026) runs exactly as before.
-    result = run_reel(desk, episode=1, seconds=6.0, stream=io.StringIO(), no_cover=True)
-    assert result.ass is not None
-    assert not list((desk / "reels").glob("*panels*"))
-    golden = json.loads(GOLDEN.read_text())["reel"]
-    before_133 = json.loads(json.dumps(golden).replace("/reels/ep01/", "/reels/"))
-    assert [*calls, [result.ass.read_text(encoding="utf-8")]] == before_133
 
 
 # --- continuing desks (founder decision, 7 Oct 2026) ------------------------------------------

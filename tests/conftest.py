@@ -50,35 +50,10 @@ def _server_draws_on_screen_text(request: pytest.FixtureRequest) -> Any:
     if request.node.get_closest_marker("real_on_screen_text") is not None:
         yield
         return
-    from creation import on_screen_text
     from creation.on_screen_text import drawer_override
 
-    def post_text(desk: Path, episode: int, *, part: int, has_next: bool = True) -> str:
-        # The server writes the reel's post caption (D5); a stand-in answer for the tests.
-        return f"Series · Part {part}\nFollow for part {part + 1}.\n\n#shortdrama\n"
-
-    real = on_screen_text.server_post_text
-    on_screen_text.server_post_text = post_text  # type: ignore[assignment]
-    try:
-        with drawer_override(stand_in_server_draw):
-            yield
-    finally:
-        on_screen_text.server_post_text = real  # type: ignore[assignment]
-
-
-@pytest.fixture(autouse=True)
-def _one_reel_per_run(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A plain reel run makes both openings (13 Oct 2026); the tests of a single reel's books see one.
-
-    Mark a test ``both_openings`` to see the pair.
-    """
-
-    if request.node.get_closest_marker("both_openings") is None:
-        from creation.post import reel_via_server
-
-        monkeypatch.setattr(reel_via_server, "BOTH_OPENINGS", False)
+    with drawer_override(stand_in_server_draw):
+        yield
 
 
 @pytest.fixture
@@ -425,37 +400,6 @@ def _no_desk_pitch_carry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         episode_commands, "carry_before_paid_step", lambda *a, **k: None
     )
-
-
-@pytest.fixture
-def reel_server(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """The stand-in for the server's reel engine every reel in a test talks to (``reels`` made offline).
-
-    Every test gets one (:func:`_offline_reel_server`): no test ever uploads to or calls the real
-    Drama API. A test that checks what was sent asks for this fixture by name.
-    """
-
-    from creation.post import reel_via_server
-    from reel_fake_server import FakeReelServer
-
-    fake = FakeReelServer()
-    monkeypatch.setattr(reel_via_server, "ReelServer", lambda desk, episode: fake)
-    real_job = reel_via_server.reel_job_id
-
-    def job_id(desk: Path, episode: int, take_ids: list[str]) -> str:
-        # A test desk with no clip record is filmed by video job ``video-1``.
-        try:
-            return real_job(desk, episode, take_ids)
-        except reel_via_server.ReelServerError:
-            return "video-1"
-
-    monkeypatch.setattr(reel_via_server, "reel_job_id", job_id)
-    return fake
-
-
-@pytest.fixture(autouse=True)
-def _offline_reel_server(reel_server: Any) -> None:
-    """The reel after ``finish`` and every ``reel`` run against :func:`reel_server`, never the network."""
 
 
 @pytest.fixture(autouse=True)

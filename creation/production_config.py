@@ -63,8 +63,7 @@ class ProductionConfig:
     #: Posting, for the operator only (never sent to the server, never in the caption): the
     #: show's lane (one lane per account, e.g. ``mystery``), the Instagram ``account`` it posts
     #: on (``@handle``) and its ``posting_slot`` (``"18:30 IST"``; at least 2 h from the other
-    #: accounts' slots, docs/content-ops/posting.md). ``reel`` prints them with the post text
-    #: and writes them in ``reels/metrics.csv``.
+    #: accounts' slots, docs/content-ops/posting.md).
     lane: str | None = None
     account: str | None = None
     posting_slot: str | None = None
@@ -78,10 +77,9 @@ class ProductionConfig:
     #: ``continuing-fixes --desk D --apply`` (in step with the server spine's
     #: ``continuing_fixes_from_episode``), never by hand-editing ``rules_epoch``.
     continuing_fixes_from_episode: int | None = None
-    #: The series episode number of this desk's episode 1, for "PART N" on the reel cover, the post
-    #: text and ``reels/metrics.csv`` (NOCLIP, L-20261008-9: one desk per episode made every cover
-    #: "PART 1"). Set by ``reel --part N``; ``None``: read from a one-episode desk's name
-    #: (``…-ep03``), else the desk's own episode ordinal (:func:`creation.post.reel_cover.series_part`).
+    #: The series episode number of this desk's episode 1 (NOCLIP, L-20261008-9: one desk per
+    #: episode made every cover "PART 1"). Kept so older desks' configs still load; the retired
+    #: reel step (23 Oct 2026) was its only writer. ``None``: the desk's own episode ordinal.
     first_part: int | None = None
     poll_plan_deadline_seconds: float = 1800.0
     poll_cast_deadline_seconds: float = 3600.0
@@ -89,7 +87,7 @@ class ProductionConfig:
     poll_video_deadline_seconds: float = 7200.0
 
 
-#: Caption styles only ``finish``, ``caption`` and ``reel`` burn; the server does not know them.
+#: Caption styles only ``finish`` and ``caption`` burn; the server does not know them.
 LOCAL_CAPTION_STYLES = frozenset({"bold", "subtle", "plain", "none"})
 #: The server's caption recipe a desk with a local (or unchosen) style is captioned in.
 SERVER_HOUSE_CAPTION_STYLE = "house"

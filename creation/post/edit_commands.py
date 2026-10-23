@@ -181,8 +181,8 @@ class RecordCarry:
     def _carry_captions(self, edit: dict[str, Any]) -> str | None:
         """Carry the master's ``.ass`` onto the edited master, re-timed as the picture was (canary 7 Oct 2026).
 
-        ``reel`` reads a take's captions beside the record's master;
-        without this an edit after finish left the reel uncaptioned.
+        Later steps read a take's captions beside the record's master;
+        without this an edit after finish left them uncaptioned.
         """
 
         from creation.post.edit_captions import captions_for_record, carry_ass
@@ -239,12 +239,6 @@ def _take_args(parser: argparse.ArgumentParser, *, take_file_help: str) -> None:
         help="Take id (default: the take --take-file names, else t1).",
     )
     parser.add_argument("--take-file", type=Path, default=None, help=take_file_help)
-    parser.add_argument(
-        "--no-reel",
-        action="store_true",
-        help="Make no reel. By default an edit that writes a new finished file (a new finish record) "
-        "makes the episode's social reel again in reels/epNN/ ($0, local).",
-    )
 
 
 def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -558,30 +552,6 @@ def _source(args: argparse.Namespace, desk: Path) -> Path:
             raise FileNotFoundError(f"take not found: {path}")
         return path
     return latest_raw_take(desk, args.episode, args.take_id)
-
-
-def reel_after_edit(
-    args: argparse.Namespace, desk: Path, record: Path | None, out: TextIO
-) -> None:
-    """Make the episode's reel again after an edit that wrote a new deliverable (its finish record).
-
-    Parameters
-    ----------
-    args
-        The edit's arguments (``command``, ``episode``, ``no_reel``).
-    desk
-        Series desk.
-    record
-        The finish record the edit wrote; ``None`` (no new deliverable): no reel.
-    out
-        Where the reel's report goes.
-    """
-
-    if record is None or getattr(args, "no_reel", False):
-        return
-    from creation.post import reel as reel_module
-
-    reel_module.auto_reel(desk, args.episode, trigger=args.command, stream=out)
 
 
 def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> int:
@@ -901,5 +871,4 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
         append_run_note(run_dir, "\n".join(lines))
     for line in lines:
         print(line, file=out)
-    reel_after_edit(args, desk, record, out)
     return 0

@@ -1772,7 +1772,7 @@ def _beside_cues(take: Path) -> list[Any]:
     ass = take.with_suffix(".ass")
     if not ass.is_file():
         return []
-    from creation.post.reel import parse_ass_cues
+    from creation.post.master_captions import parse_ass_cues
 
     return parse_ass_cues(ass.read_text(encoding="utf-8"))
 

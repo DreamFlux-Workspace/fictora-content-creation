@@ -168,12 +168,12 @@ def test_the_letterbox_mark_lays_the_cover_on_the_first_frame(tmp_path: Path) ->
     assert _frames(out) == _frames(video)
 
 
-def test_a_join_with_no_reel_cover_yet_says_so(tmp_path: Path) -> None:
+def test_a_join_with_no_saved_cover_says_so(tmp_path: Path) -> None:
     from creation.post.join import _join_cover
 
     cover, note = _join_cover(tmp_path, (3,))
 
-    assert cover is None and "no reel cover on the desk" in note
+    assert cover is None and "no saved cover image on the desk" in note
 
 
 def _one_take_desk(

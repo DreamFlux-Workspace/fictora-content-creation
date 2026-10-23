@@ -286,7 +286,7 @@ def test_letterbox_keeps_its_own_layout_whatever_the_style() -> None:
 
 
 def test_a_bold_file_read_back_by_the_reel_rebuilds_the_same_captions() -> None:
-    from creation.post.reel import parse_ass_cues
+    from creation.post.master_captions import parse_ass_cues
 
     cues = _bold(
         ["Open the door now.", "Please wait."],
@@ -340,8 +340,8 @@ def test_the_flag_overrides_the_show(tmp_path: Path) -> None:
     assert resolve_caption_style(tmp_path, "bold") == ("bold", "")
 
 
-@pytest.mark.parametrize("command", ["finish", "reel"])
-def test_finish_and_reel_take_bold_and_subtle(command: str) -> None:
+@pytest.mark.parametrize("command", ["finish"])
+def test_finish_takes_bold_and_subtle(command: str) -> None:
     from creation.cli_post import add_post_parsers
 
     parser = argparse.ArgumentParser()

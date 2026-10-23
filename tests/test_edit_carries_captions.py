@@ -2,13 +2,11 @@
 
 The canary: after ``finish``, ``blur --take-file …handles-v1.mp4`` wrote record
 ``take-ep01-t1-finish-v3.json`` whose master ``take-ep01-t1-blur-master-v1.mp4``
-had no ``.ass``; the reel (server and local) and the clips then said "t1: no
-accepted caption cues (.ass); the reel is uncaptioned".
+had no ``.ass``, so every later step that reads the take's captions found none.
 """
 
 from __future__ import annotations
 
-import io
 from pathlib import Path
 
 import pytest
@@ -17,7 +15,7 @@ from conftest import needs_ffmpeg, shot_frames, write_frames
 from creation.cli_produce import main
 from creation.post.edit_captions import captions_for_record, carry_ass
 from creation.post.finish_record import finish_records, write_finish_record
-from creation.post.reel import parse_ass_cues, take_sources
+from creation.post.master_captions import parse_ass_cues
 
 BLUE = (40, 60, 200)
 YELLOW = (250, 220, 60)
@@ -116,7 +114,7 @@ def test_an_edit_the_kit_cannot_retime_writes_nothing_and_says_so_loudly(
     assert carried.out is None and not (tmp_path / "out.ass").exists()
     assert (
         carried.line.startswith("!! captions NOT carried")
-        and "uncaptioned" in carried.line
+        and "no captions" in carried.line
     )
 
 
@@ -146,21 +144,19 @@ def _record_desk(desk: Path) -> Path:
     return takes
 
 
-def test_the_reel_finds_the_captions_of_a_master_an_older_blur_wrote_without_them(
+def test_the_captions_of_a_master_an_older_blur_wrote_without_them_are_carried(
     tmp_path: Path,
 ) -> None:
     takes = _record_desk(tmp_path / "desk")
-    out = io.StringIO()
+    record = finish_records(tmp_path / "desk", 1)[-1]
 
-    [source] = take_sources(tmp_path / "desk", 1, stream=out)
+    captions, notes = captions_for_record(tmp_path / "desk", record)
 
-    assert source.captions == takes / "take-ep01-t1-blur-master-v1.ass", out.getvalue()
-    assert _times(source.captions) == _times(
-        takes / "take-ep01-t1-handles-master-v1.ass"
-    )
-    assert (
-        "carried from `take-ep01-t1-handles-master-v1.ass` through the blur"
-        in out.getvalue()
+    assert captions == takes / "take-ep01-t1-blur-master-v1.ass", notes
+    assert _times(captions) == _times(takes / "take-ep01-t1-handles-master-v1.ass")
+    assert any(
+        "carried from `take-ep01-t1-handles-master-v1.ass` through the blur" in n
+        for n in notes
     )
 
 
@@ -191,13 +187,13 @@ def _finished(post_desk: Path) -> tuple[Path, Path]:
 
 
 @needs_ffmpeg
-def test_after_blur_the_reel_finds_the_captions(
+def test_after_blur_the_captions_are_found(
     post_desk: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     takes, final = _finished(post_desk)
 
     assert main(["blur", "--desk", str(post_desk), "--take-file", str(final), "--box", "20,40,40,30",
-                 "--from", "0.5", "--to", "2.5", "--no-reel"]) == 0  # fmt: skip
+                 "--from", "0.5", "--to", "2.5"]) == 0  # fmt: skip
 
     said = capsys.readouterr().out
     carried = takes / "take-ep01-t1-blur-master-v1.ass"
@@ -206,8 +202,8 @@ def test_after_blur_the_reel_finds_the_captions(
         "- Captions: `take-ep01-t1-cap-v1.ass` -> `take-ep01-t1-blur-master-v1.ass`"
         in said
     )
-    [source] = take_sources(post_desk, 1, stream=io.StringIO())
-    assert source.captions == carried and _times(carried) == _times(
+    captions, _ = captions_for_record(post_desk, finish_records(post_desk, 1)[-1])
+    assert captions == carried and _times(carried) == _times(
         takes / "take-ep01-t1-cap-v1.ass"
     )
 
@@ -218,8 +214,7 @@ def test_after_a_trim_the_cues_are_shifted_like_the_picture(
 ) -> None:
     takes, final = _finished(post_desk)
 
-    assert main(["trim", "--desk", str(post_desk), "--take-file", str(final), "--cut", "1.46-2.5",
-                 "--no-reel"]) == 0  # fmt: skip
+    assert main(["trim", "--desk", str(post_desk), "--take-file", str(final), "--cut", "1.46-2.5"]) == 0  # fmt: skip
 
     said = capsys.readouterr().out
     carried = takes / "take-ep01-t1-trim-master-v1.ass"
@@ -229,5 +224,5 @@ def test_after_a_trim_the_cues_are_shifted_like_the_picture(
         (1.2, 1.5, "Who is"),
         (1.6, 1.9, "It was me"),
     ]
-    [source] = take_sources(post_desk, 1, stream=io.StringIO())
-    assert source.captions == carried
+    captions, _ = captions_for_record(post_desk, finish_records(post_desk, 1)[-1])
+    assert captions == carried

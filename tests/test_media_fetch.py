@@ -105,51 +105,6 @@ def test_stems_and_music_downloads_go_through_the_media_fetch(
     assert out.read_bytes() == b"RIFFstem"
 
 
-def test_the_reel_servers_own_client_sends_a_browser_user_agent(tmp_path: Path) -> None:
-    """Uploads and downloads both go through ``ReelServer.http``."""
-
-    from creation.post.reel_server import ReelServer
-
-    server = ReelServer(tmp_path, 1, run=object())
-    try:
-        assert server.http.headers["user-agent"] == BROWSER_USER_AGENT
-    finally:
-        server.http.close()
-
-
-def test_reel_downloads_go_through_the_media_fetch(tmp_path: Path) -> None:
-    from creation.post.reel_server import ReelServer, ReelServerUnreachable
-
-    answers = iter([httpx.Response(503), httpx.Response(200, content=b"mp4")])
-    seen: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request.headers.get("user-agent", ""))
-        return next(answers)
-
-    server = ReelServer(
-        tmp_path,
-        1,
-        run=object(),
-        http=httpx.Client(transport=httpx.MockTransport(handler)),
-    )
-    server.sleep = lambda _s: None
-    out = server.download("https://pub-x.r2.dev/reel.mp4", tmp_path / "reel.mp4")
-    assert out.read_bytes() == b"mp4"
-    assert seen == [BROWSER_USER_AGENT, BROWSER_USER_AGENT]
-
-    missing = ReelServer(
-        tmp_path,
-        1,
-        run=object(),
-        http=httpx.Client(
-            transport=httpx.MockTransport(lambda _r: httpx.Response(404))
-        ),
-    )
-    with pytest.raises(ReelServerUnreachable, match="HTTP 404"):
-        missing.download("https://pub-x.r2.dev/gone.mp4", tmp_path / "gone.mp4")
-
-
 def test_a_redirect_off_https_is_refused() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.scheme == "https":

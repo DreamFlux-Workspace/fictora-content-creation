@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from typing import Any
 from pathlib import Path
@@ -44,9 +43,6 @@ POST_COMMANDS = (
             "rescore-music",
             "finish",
             "join",
-            "reel",
-            "reel-results",
-            "moment",
         }
     )
     | EDIT_COMMANDS
@@ -67,15 +63,15 @@ def _impact_hits(values: list[Any]) -> tuple[Any, ...]:
 
 
 def add_hook_line_args(parser: argparse.ArgumentParser) -> None:
-    """``--hook-line`` / ``--no-hook-line`` / ``--hook-line-position`` on ``finish`` and ``reel``."""
+    """``--hook-line`` / ``--no-hook-line`` / ``--hook-line-position`` on ``finish``."""
 
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         "--hook-line",
         default=None,
         metavar="TEXT",
-        help="Your own on-screen hook line: saved on the server first as the episode's hook line (the app, "
-        "join and reels show it too), checked there, and the server's line is burned over the first ~3 s.",
+        help="Your own on-screen hook line: saved on the server first as the episode's hook line (the app "
+        "and join show it too), checked there, and the server's line is burned over the first ~3 s.",
     )
     group.add_argument(
         "--no-hook-line",
@@ -106,7 +102,7 @@ def add_hook_line_args(parser: argparse.ArgumentParser) -> None:
 
 
 def add_caption_style_arg(parser: argparse.ArgumentParser) -> None:
-    """``--caption-style bold|subtle|house|plain|none`` on ``finish``, ``caption`` and ``reel`` (default: the show's)."""
+    """``--caption-style bold|subtle|house|plain|none`` on ``finish`` and ``caption`` (default: the show's)."""
 
     from creation.captions import CAPTION_STYLES
 
@@ -116,8 +112,7 @@ def add_caption_style_arg(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="bold: one short white line at a time, one yellow word, bigger and lower (a new show's "
         "default); subtle (or house, its older name): the yellow Arial Bold word flicker (a show with "
-        "finished episodes keeps it); plain: white whole lines; none: no captions (finish and caption only: "
-        "a reel or a TikTok part always keeps its captions on). Default: caption_style "
+        "finished episodes keeps it); plain: white whole lines; none: no captions. Default: caption_style "
         "in the desk's production.config.json, else bold for a new show and subtle for a continuing one.",
     )
 
@@ -148,22 +143,11 @@ def add_caption_colour_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def add_ending_arg(parser: argparse.ArgumentParser, *, reel: bool = False) -> None:
-    """``--ending`` on ``reel`` (push-hold|hard|freeze-black) and ``join`` (hard|freeze-black)."""
+def add_ending_arg(parser: argparse.ArgumentParser) -> None:
+    """``--ending`` on ``join`` (hard|freeze-black)."""
 
-    from creation.post.reel_plan import BLACK_SECONDS, ENDING_STYLES, FREEZE_SECONDS
-    from creation.post.reel_via_server import SERVER_ENDING_STYLES
+    from creation.post.ending import BLACK_SECONDS, ENDING_STYLES, FREEZE_SECONDS
 
-    if reel:
-        parser.add_argument(
-            "--ending",
-            choices=SERVER_ENDING_STYLES,
-            default=None,
-            help="push-hold (the server's default): the last frame holds 0.6 s while the camera eases in. "
-            f"hard: end on the last frame. freeze-black: hold the last frame {FREEZE_SECONDS:g} s (the sound "
-            f"stops on it), then {BLACK_SECONDS:g} s of black. A legacy desk's local reel: hard or freeze-black.",
-        )
-        return
     parser.add_argument(
         "--ending",
         choices=ENDING_STYLES,
@@ -287,7 +271,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         default=None,
         metavar="TEXT",
         help="A letterbox episode's own setup line (the white title line, at most 60 characters), "
-        "alone or with a hook-line choice; finish, join and reel use it before the series title.",
+        "alone or with a hook-line choice; finish and join use it before the series title.",
     )
     hook_setup.add_argument(
         "--default-setup-line",
@@ -343,7 +327,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         dest="set_to",
         default=None,
         choices=("bold", "subtle", "house", "plain", "none"),
-        help="Save this style for the show (finish, caption and reel read it).",
+        help="Save this style for the show (finish and caption read it).",
     )
 
     blend = sub.add_parser(
@@ -699,12 +683,6 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         action="store_true",
         help="No cover on the deliverable (not even a saved one).",
     )
-    fin.add_argument(
-        "--no-reel",
-        action="store_true",
-        help="Make no reel. By default every complete finish makes the episode's social reel in "
-        "reels/epNN/ ($0, local; a draft while takes are still to finish; skipped when nothing changed).",
-    )
     add_caption_style_arg(fin)
     add_caption_scale_arg(fin)
     add_caption_colour_arg(fin)
@@ -804,128 +782,15 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--json", action="store_true", help="Print the report as JSON on stdout."
     )
 
-    reel = sub.add_parser(
-        "reel",
-        help="A social reel (IG/TikTok) cut from the episode's rendered footage: local, $0, no new video. "
-        "Opens on the strongest frame as a short flash-forward, ends on the new fact; captions re-timed "
-        "from the accepted cut and always on; no music (add a trending sound in Instagram or TikTok when "
-        "posting); the Sokii mark. Writes only under <desk>/reels/.",
-    )
-    reel.add_argument("--desk", type=Path, required=True)
-    reel.add_argument("--episode", type=int, required=True)
-    reel.add_argument(
-        "--seconds",
-        type=float,
-        default=15.0,
-        help="Target length, 6-30 s (default 15).",
-    )
-    reel.add_argument(
-        "--plan-only", action="store_true",
-        help="Write and print the plan (reels/reel-plan-epNN-vN.json); render nothing.",
-    )  # fmt: skip
-    reel.add_argument(
-        "--plan", type=Path, default=None, help="Render this (hand-edited) plan JSON."
-    )
-    reel.add_argument(
-        "--take-file", action="append", default=None, metavar="[tK=]FILE",
-        help="The accepted finished file of a take (picks its finish record; with none, its source and captions "
-        "are worked out from the desk, each step printed with a ⚠). Default: the newest record, else the newest "
-        "-sokii file the run notes name.",
-    )  # fmt: skip
-    reel.add_argument(
-        "--source", action="append", default=None, metavar="[tK=]FILE",
-        help="The take's picture before captions (default: the finish record's pre_bed).",
-    )  # fmt: skip
-    reel.add_argument(
-        "--captions", action="append", default=None, metavar="[tK=]FILE.ass",
-        help="The accepted cut's caption file (default: the record master's .ass).",
-    )  # fmt: skip
-    add_caption_style_arg(reel)
-    add_hook_line_args(reel)
-    reel.add_argument("--watermark-y", type=int, default=None)
-    add_ending_arg(reel, reel=True)
-    reel.add_argument(
-        "--no-cover", action="store_true",
-        help="Write no cover image (by default every reel writes reels/<reel>-cover-vN.jpg: "
-        "PART N and the series title, free, for Instagram's Edit cover).",
-    )  # fmt: skip
-    reel.add_argument(
-        "--part", type=int, default=None, metavar="N",
-        help="The series episode number the cover's PART N and the post text show (a show made one desk per "
-        "episode: every desk's episode is 1). Saved on the desk (production.config.json first_part), so "
-        "finish, join and later reels keep it. Default: the saved number, else a one-episode desk's name "
-        "(noclip-ep03 is PART 3), else the desk's own episode number.",
-    )  # fmt: skip
-    reel.add_argument(
-        "--cover-frame", type=float, default=None, metavar="S",
-        help="Draw the cover on the reel's picture at S seconds (default: a saved server cover, "
-        "else the strongest frame).",
-    )  # fmt: skip
-
-    reel.add_argument(
-        "--recipes", default=None, metavar="LIST",
-        help="Make one reel per recipe for trial posts (our accounts only; the app always makes the one "
-        "default reel): `trial` (both: flash-forward, with its reverse cymbal into the cut back, and "
-        "straight) or a comma list of flash-forward|straight. Each is its own reel and its own row in "
-        "reels/metrics.csv; `reel-results` adds the posted ones up. $0.",
-    )  # fmt: skip
-    moment = sub.add_parser(
-        "moment",
-        help="A TikTok part (a moment): several finished episodes joined and cut as one story by the server's "
-        "engine, with a PART N title bar, a hook line, captions always on, no music (add a trending sound in "
-        "TikTok when posting) and a `Part N+1 →` end card; in reels/moments/. $0. "
-        "Either --episodes A-B --part N, or --auto for every part of the show (episodes grouped into about a minute).",
-    )
-    moment.add_argument("--desk", type=Path, required=True)
-    which = moment.add_mutually_exclusive_group(required=True)
-    which.add_argument(
-        "--episodes",
-        default=None,
-        metavar="A-B",
-        help="The episodes to join: 1-3 or 1,2,3 (at most 6).",
-    )
-    which.add_argument(
-        "--auto",
-        action="store_true",
-        help="Group every finished episode into parts and make each.",
-    )
-    moment.add_argument(
-        "--part",
-        type=int,
-        default=None,
-        metavar="N",
-        help="PART N (with --episodes; default 1).",
-    )
-    moment.add_argument(
-        "--next",
-        dest="next_text",
-        default=None,
-        metavar="TEXT",
-        help="The end card's words.",
-    )
-    moment.add_argument(
-        "--hook-line",
-        dest="moment_hook",
-        default=None,
-        metavar="TEXT",
-        help="The hook line under the title bar.",
-    )
-    add_caption_style_arg(moment)
-    results = sub.add_parser(
-        "reel-results",
-        help="The posted reels' numbers by recipe, from reels/metrics.csv of the given desks (or folders of desks).",
-    )
-    results.add_argument("paths", type=Path, nargs="+", metavar="DESK")
-
     add_edit_parsers(sub)
     add_review_parser(sub)
 
 
 def _save_hook_line_first(args: argparse.Namespace) -> None:
-    """``--hook-line TEXT`` / ``--no-hook-line`` on finish, join or reel: saved on the server, then burned (D1).
+    """``--hook-line TEXT`` / ``--no-hook-line`` on finish or join: saved on the server, then burned (D1).
 
     The server checks the line and its warnings print word for word; the burn
-    uses the line the server answers, so the app, join and every reel show the
+    uses the line the server answers, so the app and join show the
     same one (decision D1, 21 Oct 2026). The kit keeps no copy on the desk.
     """
 
@@ -972,7 +837,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
         return dispatch_edit(args)
     if args.command in REVIEW_COMMANDS:
         return dispatch_review(args)
-    if args.command in ("finish", "join", "reel") and (
+    if args.command in ("finish", "join") and (
         getattr(args, "hook_line", None) or getattr(args, "no_hook_line", False)
     ):
         _save_hook_line_first(args)
@@ -1167,170 +1032,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             print(json.dumps(result.as_json(), indent=2))
         else:
             print(result.final)
-        if result.complete and not args.no_reel:
-            from creation.post import reel as reel_module
-
-            # The reel follows every finish ($0, local); a failure is printed, the finish stands.
-            named = re.search(r"take-ep(\d+)-", Path(str(result.final)).name)
-            reel_module.auto_reel(
-                args.desk,
-                int(named.group(1)) if named else (args.episode or 1),
-                trigger="finish",
-                stream=sys.stderr if args.json else sys.stdout,
-            )
-        if result.complete:
-            from creation.post.moment_via_server import offer_moment_after_finish
-
-            # Episode 3 or 4: ask the creator about a moment and recommend its episodes (never made unasked).
-            named = re.search(r"take-ep(\d+)-", Path(str(result.final)).name)
-            offer_moment_after_finish(
-                args.desk,
-                int(named.group(1)) if named else (args.episode or 1),
-                stream=sys.stderr if args.json else sys.stdout,
-            )
         return 0 if result.complete else FINISH_INCOMPLETE
-    if args.command == "reel":
-        from creation.post.reel import run_reel
-        from creation.post.reel_server import (
-            ReelServerError,
-            ReelServerUnreachable,
-            unreachable_message,
-        )
-
-        if args.part is not None:
-            from creation.post.reel_cover import remember_part
-
-            try:
-                saved = remember_part(args.desk, args.episode, args.part)
-            except ValueError as exc:
-                print(f"Reel not made: {exc}", file=sys.stderr)
-                return 1
-            print(
-                f"PART {args.part}: saved on the desk ({saved.name} first_part); finish, join and "
-                "later reels use it"
-            )
-        if args.recipes is not None:
-            from creation.post.reel_via_server import recipe_list
-
-            if args.plan is not None or args.plan_only:
-                print(
-                    "Reel not made: --recipes plans each reel itself (no --plan / --plan-only)",
-                    file=sys.stderr,
-                )
-                return 1
-            try:
-                recipes = recipe_list(args.recipes)
-            except ValueError as exc:
-                print(f"Reel not made: {exc}", file=sys.stderr)
-                return 1
-            made_names: list[str] = []
-            cuts: dict[str, tuple[object, ...]] = {}
-            for recipe in recipes:
-                print(f"== recipe {recipe} ==")
-                try:
-                    one = run_reel(
-                        args.desk, episode=args.episode, seconds=args.seconds,
-                        take_files=tuple(args.take_file or ()), sources=tuple(args.source or ()),
-                        captions=tuple(args.captions or ()), caption_style=args.caption_style,
-                        watermark_y=args.watermark_y, ending=args.ending, hook_line=args.hook_line,
-                        no_hook_line=args.no_hook_line, hook_line_position=args.hook_line_position,
-                        no_cover=args.no_cover, cover_frame=args.cover_frame, no_panels=args.no_panels,
-                        recipe=recipe,
-                    )  # fmt: skip
-                except ReelServerUnreachable as exc:
-                    print(
-                        f"{unreachable_message(args.desk, args.episode)} ({exc})",
-                        file=sys.stderr,
-                    )
-                    return 1
-                except (ReelServerError, ValueError) as exc:
-                    print(f"Reel {recipe} not made: {exc}", file=sys.stderr)
-                    return 1
-                cut = tuple(
-                    (g.get("take"), g.get("start_s"), g.get("end_s"))
-                    for g in one.plan.get("segments") or []
-                )
-                twin = next((r for r, c in cuts.items() if c == cut), None)
-                cuts[recipe] = cut
-                name = one.video.name if one.video else "(plan only)"
-                # Two recipes can land on the same cut (no flash-forward window found): post one.
-                made_names.append(
-                    f"{recipe}: {name}"
-                    + (f" (the same cut as {twin}: post only one)" if twin else "")
-                )
-            print(
-                "Trial reels (post each as an Instagram trial reel; fill its metrics row after):"
-            )
-            for line in made_names:
-                print(f"  {line}")
-            return 0
-        try:
-            made = run_reel(
-                args.desk,
-                episode=args.episode,
-                seconds=args.seconds,
-                plan_only=args.plan_only,
-                plan_file=args.plan,
-                take_files=tuple(args.take_file or ()),
-                sources=tuple(args.source or ()),
-                captions=tuple(args.captions or ()),
-                caption_style=args.caption_style,
-                watermark_y=args.watermark_y,
-                ending=args.ending,
-                hook_line=args.hook_line,
-                no_hook_line=args.no_hook_line,
-                hook_line_position=args.hook_line_position,
-                no_cover=args.no_cover,
-                cover_frame=args.cover_frame,
-                no_panels=args.no_panels,
-            )
-            if not args.plan_only and not args.take_file:
-                from creation.post.cover_frame import cover_one_take_final
-
-                # A 15 s episode's final file takes the reel's cover as its first frame.
-                cover_one_take_final(args.desk, args.episode, made, sys.stdout)
-        except ReelServerUnreachable as exc:
-            print(
-                f"{unreachable_message(args.desk, args.episode)} ({exc})",
-                file=sys.stderr,
-            )
-            return 1
-        except ReelServerError as exc:
-            print(f"Reel not made: {exc}", file=sys.stderr)
-            return 1
-        return 0
-    if args.command == "moment":
-        from creation.post.moment_via_server import parse_episodes, run_moments
-        from creation.post.reel_server import (
-            ReelServerError,
-            ReelServerUnreachable,
-            unreachable_message,
-        )
-
-        episodes = None
-        try:
-            episodes = parse_episodes(args.episodes) if args.episodes else None
-            run_moments(
-                args.desk, episodes=episodes, part=args.part, next_text=args.next_text, hook_line=args.moment_hook,
-                caption_style=args.caption_style,
-            )  # fmt: skip
-        except ReelServerUnreachable as exc:
-            print(
-                f"{unreachable_message(args.desk, (episodes or [1])[-1])} ({exc})",
-                file=sys.stderr,
-            )
-            return 1
-        except (ReelServerError, ValueError) as exc:
-            print(f"Moment not made: {exc}", file=sys.stderr)
-            return 1
-        return 0
-    if args.command == "reel-results":
-        from creation.post.reel_results import metrics_sheets, results_lines, tally
-
-        sheets = metrics_sheets(args.paths)
-        for line in results_lines(tally(sheets), sheets=len(sheets)):
-            print(line)
-        return 0
     if args.command == "join":
         joined = run_join(
             args.desk,

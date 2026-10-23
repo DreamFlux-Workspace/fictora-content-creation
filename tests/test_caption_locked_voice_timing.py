@@ -22,10 +22,9 @@ from types import SimpleNamespace
 import pytest
 from conftest import make_take, needs_ffmpeg
 
-from creation.captions import CaptionLine, Span, time_lines
+from creation.captions import CaptionLine, Cue, Span, time_lines
 from creation.post import caption_timing as ct
-from creation.post.master_captions import OVERLAY_NAME, combined_ass
-from creation.post.reel import parse_ass_cues
+from creation.post.master_captions import OVERLAY_NAME, combined_ass, parse_ass_cues
 from creation.post.whisper import Word
 
 W = ct.ONSET_WINDOW_SECONDS
@@ -383,3 +382,16 @@ def test_a_transcript_heard_well_after_the_measured_voice_is_not_trusted() -> No
     )  # fmt: skip
     assert timing.methods == ("lines", "lines")
     assert timing.anchors[0] == Span(1.0, 2.0)
+
+
+def test_ass_cues_round_trip_with_italic() -> None:
+    text = (
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Dialogue: 0,0:00:01.45,0:00:03.20,House,,0,0,0,,Couple?!\\NWhat?!\n"
+        "Dialogue: 0,0:00:09.90,0:00:11.00,Italic,,0,0,0,,{\\i1}Cleaner.\n"
+    )
+    cues = parse_ass_cues(text)
+    assert cues == [
+        Cue(1.45, 3.2, "Couple?! What?!", False),
+        Cue(9.9, 11.0, "Cleaner.", True),
+    ]

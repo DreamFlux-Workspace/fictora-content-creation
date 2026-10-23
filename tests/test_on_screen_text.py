@@ -127,36 +127,3 @@ def test_capabilities_say_whether_the_server_owns_the_text() -> None:
             return 404, {"detail": "Not Found"}
 
     assert server_owns_text(Older()) is False
-
-
-def test_the_post_caption_is_the_servers(
-    post_desk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    seen: list[str] = []
-
-    class Posts(FakeRun):
-        def get_optional(self, path: str) -> tuple[int, Any]:
-            seen.append(path)
-            return super().get_optional(path)
-
-    monkeypatch.setattr("creation.post.desk.open_api", lambda desk, episode: Posts())
-
-    caption = on_screen_text.server_post_text(post_desk, 1, part=2)
-
-    assert caption == "Shared Heat · Part 2\nFollow for part 3.\n"
-    assert seen[-1].split("?")[0].endswith("/post-text") and "part=2" in seen[-1]
-
-
-def test_an_older_server_writes_no_post_caption(
-    post_desk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    class Older(FakeRun):
-        def get_optional(self, path: str) -> tuple[int, Any]:
-            return 404, {"detail": "Not Found"}
-
-    monkeypatch.setattr("creation.post.desk.open_api", lambda desk, episode: Older())
-
-    with pytest.raises(
-        OnScreenTextUnavailable, match="cannot write the reel's post caption"
-    ):
-        on_screen_text.server_post_text(post_desk, 1, part=1)

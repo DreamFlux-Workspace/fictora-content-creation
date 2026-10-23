@@ -381,7 +381,7 @@ def bold_whole_line(cue: Cue, marked: Collection[int] = ()) -> Cue:
 def bold_from_flicker(cues: Sequence[Cue]) -> list[Cue]:
     """Turn word-flicker cues (or cues read back from any caption file) into Bold cues.
 
-    A reel moves the accepted cut's caption cues through its edits: those cues
+    An edit moves the accepted cut's caption cues through its re-time: those cues
     build up word by word (house flicker, or Bold read back with its unsaid
     words dropped). Each word is recovered at the start of the cue that first
     shows it; words that play on without a gap and in the same face are one

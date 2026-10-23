@@ -877,7 +877,7 @@ def first_line_start(
         The earliest onset, or ``None`` when no line is known.
     """
 
-    from creation.post.reel import parse_ass_cues
+    from creation.post.master_captions import parse_ass_cues
 
     starts = [float(t) for t in hand_starts]
     if ass_text is not None:
@@ -3306,7 +3306,7 @@ def run_finish(
         # face goes back to the top while a caption this run burned is on screen.
         overlay = hook.overlay
         if "ass" in burned_captions:
-            from creation.post.reel import parse_ass_cues
+            from creation.post.master_captions import parse_ass_cues
 
             cues = parse_ass_cues(burned_captions["ass"].read_text(encoding="utf-8"))
             overlay = clear_of_captions(overlay, [(c.start, c.end) for c in cues])
@@ -3391,12 +3391,6 @@ def run_finish(
                 f"no cover on the desk yet. Drawing one on the server costs ${THUMBNAIL_USD:.2f}; "
                 f"after the human's yes, finish again with --thumbnail"
             )
-            if not legacy_rules():
-                # A desk created before 6 Oct 2026 keeps the note as it was (its reel makes no cover).
-                ask += (
-                    ". For Instagram you need none: the reel step (`reel --desk D --episode N`) "
-                    "makes a free cover image to upload with Edit cover"
-                )
             append_run_note(run_dir, f"Finish · thumbnail: skipped, {ask}")
             return StepReport("thumbnail", "skipped", ask)
         if answer.get("reused"):

@@ -2,8 +2,8 @@
 
 ``review`` on a letterbox show's 9:16 file measures only the picture (the 4:3
 take on the canvas, y 555-1365), not the black bands, the title or the band
-captions. A portrait take and a portrait reel must run exactly the ffmpeg
-commands they ran before. The golden file is recorded on origin/main (8faeaaa)
+captions. A portrait take must run exactly the ffmpeg
+commands it ran before. The golden file is recorded on origin/main (8faeaaa)
 before any of that code. Regenerate only on purpose:
 ``UPDATE_GOLDEN=1 uv run pytest tests/test_review_portrait_unchanged.py``.
 """
@@ -21,7 +21,6 @@ from conftest import make_take, needs_ffmpeg
 from test_hook_overlay_portrait_unchanged import REPO, _recording
 from test_letterbox_portrait_unchanged import _same
 from test_post_finish import FACTS, TWO_LINES, _board, fake_sfx
-from test_reel import reel_desk  # noqa: F401
 
 from creation.post.finish import run_finish
 from creation.post.review import review_take
