@@ -303,26 +303,7 @@ def test_a_legacy_finish_burns_what_the_golden_recorded_and_says_house(
     )
     _check("finish", [*calls, [captions]])
     assert "Burning house captions" in out.getvalue()
-    thumb = next(s for s in result.steps if s.step == "thumbnail")
-    assert "free cover image" not in thumb.detail
-
-
-@needs_ffmpeg
-def test_a_legacy_finish_asks_for_the_paid_cover_in_its_old_words(
-    post_desk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from test_episode_thumbnail import _desk_with_take, _finish
-
-    _legacy(post_desk)
-    _desk_with_take(post_desk, monkeypatch)
-
-    result = _finish(post_desk)
-
-    thumb = next(s for s in result.steps if s.step == "thumbnail")
-    assert thumb.detail == (
-        "no cover on the desk yet. Drawing one on the server costs $0.30; "
-        "after the human's yes, finish again with --thumbnail"
-    )
+    assert any(s.step == "cover" for s in result.steps)
 
 
 # --- #143: system panels (a legacy desk never draws them) ------------------------------------------

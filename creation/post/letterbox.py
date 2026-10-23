@@ -480,11 +480,8 @@ def mark_and_title(
     title: TitleBlock | None,
     ass_path: Path | None = None,
     mark: Path = MARK,
-    cover: Path | None = None,
 ) -> tuple[Path, FittedTitle | None]:
     """Put the Sokii mark in the top band and the title block above the picture, in one pass (sound copied).
-
-    ``cover`` becomes the first frame in the same pass (:mod:`creation.post.cover_frame`).
 
     Parameters
     ----------
@@ -533,20 +530,7 @@ def mark_and_title(
         first = f"[0:v]ass='{_esc(burned)}':fontsdir='{_esc(FONTS_DIR)}'[t]"
     graph = f"{first};[1:v]format=rgba,colorchannelmixer=aa={MARK_ALPHA}[m];[t][m]overlay={x}:{y}[v]"
     inputs = ["-i", str(video), "-i", str(mark)]
-    picture = "[v]"
-    if cover is not None:
-        from creation.post.cover_frame import cover_frame_graph
-
-        inputs += ["-i", str(cover)]
-        graph += ";" + cover_frame_graph(
-            cover_input=2,
-            picture="[v]",
-            width=info.width,
-            height=info.height,
-            out="[vc]",
-        )
-        picture = "[vc]"
-    args = [*inputs, "-filter_complex", graph, "-map", picture]
+    args = [*inputs, "-filter_complex", graph, "-map", "[v]"]
     if info.has_audio:
         args += ["-map", "0:a", "-c:a", "copy"]
     try:

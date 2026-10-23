@@ -85,7 +85,7 @@ def _finish_voice_step(desk: Path, *, music: bool) -> Path:
     line = _line(desk / "ep01" / "voices" / "voice-ep01-aya-v1.wav")
     result = run_finish(
         desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
-        colour=False, thumbnail=False, voices=(Placed(line, LINE_AT),), stream=io.StringIO(),
+        colour=False, cover=False, voices=(Placed(line, LINE_AT),), stream=io.StringIO(),
     )  # fmt: skip
     step = next(s for s in result.steps if s.step == "voice")
     assert step.status == "ran" and step.output is not None, step.detail

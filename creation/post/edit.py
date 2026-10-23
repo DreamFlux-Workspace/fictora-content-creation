@@ -329,7 +329,7 @@ def cut_frames(take: Path, out: Path, *, begin: int, stop: int, fps: float) -> P
         else ["-an"]
     )  # fmt: skip
     out.parent.mkdir(parents=True, exist_ok=True)
-    # The attached cover (finish's thumbnail) is copied across as it was.
+    # An older file's attached cover (finish embedded one before 23 Oct 2026) is copied across as it was.
     run_ffmpeg(["-i", str(take), *video, *audio, *keep_cover_args(cover), str(out)])
     return out
 

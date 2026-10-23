@@ -23,7 +23,6 @@ from creation.post.review_command import (
     dispatch_review,
 )
 from creation.post.sfx import parse_adjustment
-from creation.post.thumbnail import THUMBNAIL_USD
 
 POST_COMMANDS = (
     frozenset(
@@ -670,18 +669,10 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         default=None,
         help="Mark top offset (never into the top 8%%).",
     )
-    cover = fin.add_mutually_exclusive_group()
-    cover.add_argument(
-        "--thumbnail",
+    fin.add_argument(
+        "--no-cover",
         action="store_true",
-        help="Draw the episode cover on the server when none is on the desk yet "
-        f"(${THUMBNAIL_USD:.2f}, after the human's yes; free when the server already drew this clip). "
-        "Without it, finish reuses a saved cover or spends nothing.",
-    )
-    cover.add_argument(
-        "--no-thumbnail",
-        action="store_true",
-        help="No cover on the deliverable (not even a saved one).",
+        help="Do not fetch the episode cover (free; the server makes it from the take).",
     )
     add_caption_style_arg(fin)
     add_caption_scale_arg(fin)
@@ -1013,8 +1004,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             clear_caption_labels=args.no_caption_labels,
             prop_texts=tuple(parse_prop_text(raw) for raw in args.prop_text),
             prop_boxes=tuple(args.prop_box),
-            thumbnail=not args.no_thumbnail,
-            draw_thumbnail=args.thumbnail,
+            cover=not args.no_cover,
             over_locked_voices=args.over_locked_voices,
             caption_style=args.caption_style,
             caption_scale=args.caption_scale,

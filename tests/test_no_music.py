@@ -147,7 +147,7 @@ def test_finish_lays_no_music_even_with_a_show_bed_pinned_from_before(
 
     result = run_finish(
         post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
-        thumbnail=False, stream=out,
+        cover=False, stream=out,
     )  # fmt: skip
 
     assert result.complete, out.getvalue()
@@ -184,7 +184,7 @@ def test_finish_never_asks_the_server_for_a_bed_and_a_no_music_answer_is_harmles
 
     result = run_finish(
         post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
-        thumbnail=False, stream=out,
+        cover=False, stream=out,
     )  # fmt: skip
 
     assert result.complete and not result.stopped, out.getvalue()
@@ -212,7 +212,7 @@ def test_finish_music_is_a_note_for_the_harness_and_nothing_is_made(
 
     result = run_finish(
         post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
-        music="softer piano, less drums", thumbnail=False, stream=out,
+        music="softer piano, less drums", cover=False, stream=out,
     )  # fmt: skip
 
     assert result.complete, out.getvalue()
@@ -233,7 +233,7 @@ def test_baked_in_music_with_a_stem_is_taken_out_on_every_show(
 
     result = run_finish(
         post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
-        stem_fetcher=_stem_fetch(calls), thumbnail=False, stream=out,
+        stem_fetcher=_stem_fetch(calls), cover=False, stream=out,
     )  # fmt: skip
 
     assert result.complete, out.getvalue()
@@ -265,7 +265,7 @@ def test_an_older_take_finished_with_music_keeps_it_and_is_never_stripped_automa
 
     result = run_finish(
         post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
-        stem_fetcher=_never, thumbnail=False, stream=out,
+        stem_fetcher=_never, cover=False, stream=out,
     )  # fmt: skip
 
     assert result.complete, out.getvalue()
@@ -295,7 +295,7 @@ def test_music_that_cannot_be_taken_out_is_named_and_the_take_still_finishes(
 
     result = run_finish(
         post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
-        stem_fetcher=_never, thumbnail=False, stream=out,
+        stem_fetcher=_never, cover=False, stream=out,
     )  # fmt: skip
 
     assert result.complete, out.getvalue()
@@ -315,7 +315,7 @@ def test_a_locked_take_with_server_ambience_needs_no_bed_and_no_room_tone(
 
     result = run_finish(
         post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
-        ambience_maker=_never, cut_meter=lambda _take: (3.9,), thumbnail=False, stream=out,
+        ambience_maker=_never, cut_meter=lambda _take: (3.9,), cover=False, stream=out,
     )  # fmt: skip
 
     assert result.complete and not result.stopped, out.getvalue()
@@ -480,7 +480,7 @@ def test_a_locked_take_never_gets_an_effect_the_server_already_laid(
 
     result = run_finish(
         post_desk, sfx_render=fake_sfx(rendered), facts_fetcher=lambda *a: None,
-        ambience_maker=_never, cut_meter=lambda _take: (3.9,), thumbnail=False, stream=out,
+        ambience_maker=_never, cut_meter=lambda _take: (3.9,), cover=False, stream=out,
     )  # fmt: skip
 
     assert rendered == [], (

@@ -92,14 +92,14 @@ def test_finish_lays_sfx_mix_captions_and_mark_as_new_versions_and_no_music(
         "mix",
         "captions",
         "watermark",
-        "thumbnail",
+        "cover",
     ]
     assert result.steps[-1].status == "skipped"
     assert (
         "no board frames" in result.steps[0].detail and result.steps[0].output is None
     )
     assert all(
-        s.status == "ran" for s in result.steps if s.step not in {"thumbnail", "impact"}
+        s.status == "ran" for s in result.steps if s.step not in {"cover", "impact"}
     ), out.getvalue()
     # The synthetic take has no motion spike, so the door slam is left alone (no impact file).
     impact = next(s for s in result.steps if s.step == "impact")
@@ -453,7 +453,7 @@ def test_finish_with_caption_style_none_burns_no_captions_and_is_still_done(
     )
     out = io.StringIO()
     result = run_finish(post_desk, sfx_render=fake_sfx([]),
-                        facts_fetcher=lambda *a: None, thumbnail=False,
+                        facts_fetcher=lambda *a: None, cover=False,
                         caption_style="none", stream=out)  # fmt: skip
     assert result.complete, out.getvalue()
     captions = next(s for s in result.steps if s.step == "captions")

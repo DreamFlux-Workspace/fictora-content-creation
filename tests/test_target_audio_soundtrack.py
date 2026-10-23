@@ -189,7 +189,7 @@ def test_finish_lays_room_tone_effects_on_measured_cuts_and_line_captions_and_no
     assert result.complete, log
     assert [s.step for s in result.steps] == [
         "deboard", "sfx", AMBIENCE_STEP, ROOM_TONE_STEP, "colour", "impact", "mix", "captions", "watermark",
-        "thumbnail",
+        "cover",
     ]  # fmt: skip
     # The fixture spine names no location: no ambience cue, room tone is the fallback (test_target_audio_ambience).
     assert next(s for s in result.steps if s.step == AMBIENCE_STEP).status == "skipped"
@@ -327,7 +327,7 @@ def test_native_and_older_server_takes_finish_exactly_as_before(
         "mix",
         "captions",
         "watermark",
-        "thumbnail",
+        "cover",
     ]
     assert (
         "no cut within 1 s, kept as planned: 2.50s" in steps["sfx"]

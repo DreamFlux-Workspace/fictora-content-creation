@@ -553,7 +553,7 @@ def test_soften_with_no_hard_cut_writes_nothing(
 
 
 # ================================================================================================
-# the attached cover (finish's episode thumbnail) survives every edit
+# an older finished file's attached cover survives every edit
 # ================================================================================================
 
 
@@ -567,13 +567,16 @@ def _streams(path: Path) -> list[dict]:
 
 
 def _covered_take(takes: Path) -> Path:
-    from creation.post.thumbnail import embed_attached_cover
-
+    # Finish attached a cover picture inside the MP4 before 23 Oct 2026; desks still hold those files.
     plain = _cut_take(takes / "take-ep01-t1-sokii-v1.mp4")
     cover = takes / "take-ep01-t1-thumb-v1.jpg"
     Image.new("RGB", (W, H), (200, 30, 30)).save(cover, format="JPEG")
     out = takes / "take-ep01-t1-sokii-cover-v1.mp4"
-    embed_attached_cover(video=plain, cover=cover, out=out)
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(plain), "-i", str(cover), "-map", "0", "-map", "1",
+         "-c", "copy", "-c:v:1", "mjpeg", "-disposition:v:1", "attached_pic", str(out)],
+        check=True,
+    )  # fmt: skip
     return out
 
 

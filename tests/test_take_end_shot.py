@@ -65,7 +65,7 @@ def _finish(post_desk: Path, cuts: tuple[float, ...]) -> str:
     out = io.StringIO()
     run_finish(
         post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
-        cut_meter=lambda _take: cuts, thumbnail=False, stream=out,
+        cut_meter=lambda _take: cuts, cover=False, stream=out,
     )  # fmt: skip
     return out.getvalue()
 

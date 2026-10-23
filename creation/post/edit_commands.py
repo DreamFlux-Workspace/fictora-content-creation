@@ -6,8 +6,8 @@ a run note, records the edit in ``epNN/takes/edit-chain.jsonl``
 (:mod:`creation.post.lineage`: ``finish`` reads it to know a ``freeze`` or
 ``soften`` output still has the raw take's sound timeline) and prints what it
 did. Free: ffmpeg and numpy on this laptop.
-A file with the episode cover attached (``finish``'s ``-sokii-cover-``
-deliverable) keeps the cover through the edit and is written
+An older file with the episode cover attached (``finish``'s ``-sokii-cover-``
+deliverable before 23 Oct 2026; the cover is now a separate JPEG the server makes) keeps the cover through the edit and is written
 ``take-epNN-tK-<step>-cover-vN.mp4``.
 
 When the file edited is one a finish record names (``trim`` / ``tempo`` on the

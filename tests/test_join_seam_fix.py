@@ -401,49 +401,6 @@ def test_a_legacy_desk_off_the_allow_list_and_no_seam_fix_measure_and_refuse_exa
     assert code == JOIN_NOT_DONE and "seam_fix" not in report
 
 
-def _rgb(video: Path, index: int) -> tuple[int, int, int]:
-    raw = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(video), "-vf", f"select=eq(n\\,{index}),scale=1:1",
-         "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
-        check=True, capture_output=True,
-    ).stdout  # fmt: skip
-    return raw[0], raw[1], raw[2]
-
-
-@needs_ffmpeg
-def test_a_seam_fixed_join_still_gets_its_cover_on_the_first_frame(
-    desk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    finished(desk, "t1", seconds=4.0, level=0.05)
-    finished(desk, "t2", seconds=4.0, level=0.05, silent_head=1.5, cut_at=1.5, seed=2)
-    monkeypatch.setattr(
-        seam_fix, "SEAM_BED_MAX_DB", -90.0
-    )  # the trim (a full re-join) does the work
-    covers = desk / "reels" / "ep01"
-    covers.mkdir(parents=True)
-    _run(["-f", "lavfi", "-i", "color=c=red:s=1080x1920", "-frames:v", "1",
-          str(covers / "reel-ep01-v1-cover-v1.jpg")])  # fmt: skip
-
-    result, printed = _join(desk)
-
-    assert (
-        result.seam_fix is not None
-        and result.seam_fix.fixed
-        and result.seam_fix.trimmed
-    ), printed
-    assert result.complete and result.marked is not None
-    red, _, blue = _rgb(result.marked, 0)
-    assert red > 200 and blue < 60, "the cover is the seam-fixed join's first frame"
-    red, green, blue = _rgb(result.marked, 1)
-    assert red < 120 and green < 120, "only frame 0 is the cover"
-    assert any(
-        "cover frame: reel-ep01-v1-cover-v1.jpg" in note for note in result.notes
-    ), result.notes
-    assert join_module.count_frames(result.marked) == join_module.count_frames(
-        result.master
-    )
-
-
 @needs_ffmpeg
 def test_a_continuing_desk_gets_the_steady_bed_but_never_a_trim(
     legacy_desk: Path,
