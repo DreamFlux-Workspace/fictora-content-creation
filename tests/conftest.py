@@ -410,3 +410,28 @@ def _offline_impact_plan(monkeypatch: pytest.MonkeyPatch) -> None:
     """
 
     monkeypatch.setattr("creation.post.finish.api_impact_planner", lambda *_a: None)
+
+
+@pytest.fixture
+def server_cover() -> None:
+    """Ask for finish's real cover step (see ``_no_server_cover_by_default``)."""
+
+
+@pytest.fixture(autouse=True)
+def _no_server_cover_by_default(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``finish`` and ``join`` never upload or ask the real server for a cover: no cover is saved.
+
+    A test of the cover asks for ``server_cover`` (tests/test_episode_cover.py) and fakes the API itself.
+    """
+
+    if "server_cover" in request.fixturenames:
+        return
+    from creation.post import episode_cover
+
+    def offline(*_a: object, **_k: object) -> episode_cover.SavedCover:
+        return episode_cover.SavedCover(None, "no cover in tests")
+
+    monkeypatch.setattr("creation.post.finish.fetch_episode_cover", offline)
+    monkeypatch.setattr(episode_cover, "fetch_episode_cover", offline)

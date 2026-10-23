@@ -66,13 +66,13 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    origin), is timed on speech spans. ``--line-start``/``--line-end`` set either end by
    hand. The report names what timed each line.
 6. ``watermark`` - the Sokii mark top left, under the covered top strip.
-7. ``thumbnail`` - the episode cover as the MP4 attached picture on the marked
-   file (platform cover art). A cover already on the desk for this clip
-   (``take-epNN-tK-thumb-vN.jpg``) is re-embedded, free. Drawing a new one
-   (``POST …/episodes/{n}/thumbnail`` from the take's stored clip URL) is a
-   paid still: only with ``--thumbnail`` after the human's yes; the price is
-   printed first and booked as ``thumbnail``. Without it, finish says what a
-   cover would cost and spends nothing.
+7. ``cover``     - on an episode of one take, the episode cover: the
+   finished file is uploaded (``POST /v1/uploads``), the server makes the
+   cover from it for free (``GET …/episodes/{n}/cover?video_url=``) and it is
+   saved as ``cover-epNN-vN.jpg`` beside the video and named in the finish
+   record. An episode of several takes gets its cover from ``join`` instead.
+   The kit draws nothing; the video is not changed. A cover that cannot be had
+   never stops the finish (``--no-cover`` skips it).
 
 A letterbox show's 4:3 take (spine ``delivery_format: letterbox``, a 4:3
 picture; founder decisions of 6 Oct 2026, :mod:`creation.post.letterbox`)
@@ -342,7 +342,7 @@ from creation.post.prop_text import (
 )
 from creation.post.prop_text import suggestion_lines as prop_suggestion_lines
 from creation.post.take_text import OcrRunner, TextCheck, desk_text_check
-from creation.post.thumbnail import THUMBNAIL_USD, attach_episode_thumbnail_to_finish
+from creation.post.episode_cover import fetch_episode_cover, other_takes
 from creation.post.watermark import watermark
 from creation.rules_epoch import legacy_rules, under_desk_rules
 
@@ -1258,8 +1258,7 @@ def run_finish(
     motion_meter: MotionMeter | None = None,
     tile_meter: Callable[[Path], tuple[tuple[float, float], ...]] | None = None,
     ambience_maker: AmbienceMaker | None = None,
-    thumbnail: bool = True,
-    draw_thumbnail: bool = False,
+    cover: bool = True,
     voice_audio: AudioService | None = None,
     text_ocr: OcrRunner | None = None,
     over_locked_voices: bool = False,
@@ -1355,13 +1354,10 @@ def run_finish(
         ``tile_meter`` its per-frame most-changed-tile difference, :func:`creation.post.impact_post.measure_tile_motion`;
         ``voice_audio`` makes the inner-voice dry lines, the Drama API by default;
         ``text_ocr`` reads frames for the drawn-text check, the ``tesseract`` command by default).
-    thumbnail
-        Put the episode cover on the deliverable (``--no-thumbnail`` turns it
-        off). A cover already on the desk for this clip is re-embedded, free.
-    draw_thumbnail
-        ``--thumbnail``: when no cover is on the desk, draw one on the server
-        (:data:`creation.post.thumbnail.THUMBNAIL_USD`, printed first). Off by
-        default: finish never spends on a cover without the opt-in.
+    cover
+        On an episode of one take, upload the finished file and save the
+        server's cover beside it (free; ``--no-cover`` turns it off). An
+        episode of several takes gets its cover from ``join``.
     stem_fetcher
         ``(url, dest) -> dest`` for a take's music-free stem (:func:`creation.music_lock.remix_onto_stem`);
         ``None`` downloads it.
@@ -1655,7 +1651,11 @@ def run_finish(
     # The inner-voice step's output (what the mix ducks under) and each laid thought: (cue, placed, seconds).
     thought_state: dict[str, Any] = {"path": None, "laid": []}
     # For the finish record `join` reads: what the mix read, and what the mark went on.
-    record_state: dict[str, Path | None] = {"pre_bed": None, "master": None}
+    record_state: dict[str, Path | None] = {
+        "pre_bed": None,
+        "master": None,
+        "cover": None,
+    }
     deboard_state: dict[str, float] = {"frames": 0, "fps": 24.0}
     print(
         f"Finishing {source.name}: board frames, sound effects, look, mix (no music), captions, mark (2-4 minutes)",
@@ -3355,76 +3355,30 @@ def run_finish(
             marked,
         )
 
-    def do_thumbnail(take: Path) -> StepReport:
-        if not thumbnail:
-            return StepReport("thumbnail", "skipped", "--no-thumbnail")
-        try:
-            final, answer = attach_episode_thumbnail_to_finish(
-                desk,
-                episode=episode,
-                take_id=take_id,
-                marked_video=take,
-                takes_dir=takes,
-                base_stem=base,
-                draw=draw_thumbnail,
-                stream=out,
-            )
-        except (MediaToolError, SystemExit, httpx.HTTPError, OSError) as exc:
-            detail = (
-                str(exc.code)
-                if isinstance(exc, SystemExit)
-                else f"{type(exc).__name__}: {exc}"
-            )
-            return StepReport("thumbnail", "failed", detail[:300])
-        if answer is None:
+    def do_cover(take: Path) -> StepReport:
+        if not cover:
+            return StepReport("cover", "skipped", "--no-cover")
+        others = other_takes(desk, episode, take_id)
+        if others:
             return StepReport(
-                "thumbnail",
+                "cover",
                 "skipped",
-                "no stored take URL or the server has no episode thumbnail route yet",
+                f"episode {episode} has {len(others) + 1} takes: its cover comes after `join`",
             )
-        if answer.get("skipped"):
-            detail = str(answer["skipped"])
-            append_run_note(run_dir, f"Finish · thumbnail: skipped, {detail}")
-            return StepReport("thumbnail", "skipped", detail)
-        if answer.get("needs_opt_in"):
-            ask = (
-                f"no cover on the desk yet. Drawing one on the server costs ${THUMBNAIL_USD:.2f}; "
-                f"after the human's yes, finish again with --thumbnail"
+        saved = fetch_episode_cover(desk, episode=episode, video=take)
+        append_run_note(run_dir, f"Finish · cover: {saved.note}")
+        if saved.path is None:
+            print(
+                f"[cover] {saved.note}; the finished video is unchanged",
+                file=out,
+                flush=True,
             )
-            append_run_note(run_dir, f"Finish · thumbnail: skipped, {ask}")
-            return StepReport("thumbnail", "skipped", ask)
-        if answer.get("reused"):
-            append_run_note(
-                run_dir,
-                f"Episode cover `{answer['reused']}` re-embedded on `{final.name}`, $0",
-            )
-            return StepReport(
-                "thumbnail",
-                "ran",
-                f"attached the saved cover `{answer['reused']}` (free); deliver `{final.name}`",
-                final,
-            )
-        cost = float(answer.get("cost_usd") or 0.0)
-        if cost:
-            book(
-                desk,
-                episode=episode,
-                usd=cost,
-                take_id=take_id,
-                stream=out,
-                unit="thumbnail",
-            )
-        cached = " (cached, free)" if answer.get("cached") else ""
-        append_run_note(
-            run_dir,
-            f"Episode thumbnail embedded on `{final.name}`{cached}, ${cost:.2f}",
-        )
+            return StepReport("cover", "skipped", saved.note)
+        record_state["cover"] = saved.path
         return StepReport(
-            "thumbnail",
+            "cover",
             "ran",
-            f"attached cover from server draw{cached}; deliver `{final.name}`",
-            final,
-            cost,
+            f"{saved.note}; for Instagram and TikTok, beside `{take.name}`",
         )
 
     step("deboard", "Replacing the board frames at the head of the take", do_deboard)
@@ -3515,9 +3469,9 @@ def run_finish(
         )
     if result.complete:
         step(
-            "thumbnail",
-            "Putting the episode cover on the deliverable",
-            do_thumbnail,
+            "cover",
+            "Saving the episode cover the server made (free)",
+            do_cover,
         )
 
     result.final = current
@@ -3554,6 +3508,7 @@ def run_finish(
             for cue, line, seconds in thought_state["laid"]
         ],
         letterbox={"letterbox": True, "caption_colour": colour_name} if letterbox else None,
+        cover=record_state["cover"],
     )  # fmt: skip
     handles_note = ""
     server_handles = None

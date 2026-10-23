@@ -437,7 +437,7 @@ def test_a_model_voice_take_finishes_with_no_music(post_desk: Path) -> None:
     _desk_take(post_desk, facts)
     result = run_finish(
         post_desk, sfx_render=fake_sfx([]),
-        facts_fetcher=lambda *a: None, thumbnail=False, stream=io.StringIO(),
+        facts_fetcher=lambda *a: None, cover=False, stream=io.StringIO(),
     )  # fmt: skip
 
     assert result.complete

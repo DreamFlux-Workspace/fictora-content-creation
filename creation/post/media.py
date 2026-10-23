@@ -126,7 +126,7 @@ def probe_video(path: Path) -> VideoInfo:
         )
     data = json.loads(result.stdout)
     streams = data.get("streams") or []
-    # An attached cover (finish's thumbnail) is a video stream too: never the picture.
+    # An attached cover (finish embedded one before 23 Oct 2026) is a video stream too: never the picture.
     video = next(
         (s for s in streams if s.get("codec_type") == "video" and not _is_cover(s)),
         None,
@@ -160,8 +160,8 @@ def video_streams(path: Path) -> tuple[int, int | None]:
     -------
     tuple[int, int | None]
         ``(picture, cover)``: indexes for ``0:v:N``. ``cover`` is ``None`` when
-        the file has no attached picture (``finish`` embeds one as the platform
-        cover art).
+        the file has no attached picture (``finish`` embedded one as the
+        platform cover art before 23 Oct 2026; older desks still hold those files).
 
     Raises
     ------

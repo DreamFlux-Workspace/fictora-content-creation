@@ -16,7 +16,6 @@ from creation.harness_rules import (
     staging_contradiction_lines,
     seam_fix_line,
     thought_short_of_cut,
-    thumbnail_answered_audio_error,
 )
 from creation.post.desk import find_cast
 
@@ -291,13 +290,6 @@ def test_a_name_with_a_reading_matches_either_part() -> None:
     assert find_cast(spine, "Koharu")["cast_id"] == "cast_koharu"
     assert find_cast(spine, "小春")["cast_id"] == "cast_koharu"
     assert find_cast(spine, "cast_koharu")["name"] == "Koharu (小春)"
-
-
-def test_a_thumbnail_audio_error_is_recognized() -> None:
-    assert thumbnail_answered_audio_error(
-        "HTTP 502 operator_audio_failed: The audio could not be made"
-    )
-    assert not thumbnail_answered_audio_error("HTTP 404 thumbnail route")
 
 
 def test_a_standing_face_touching_ban_is_not_a_hold_contradiction() -> None:

@@ -349,7 +349,7 @@ def test_finish_cuts_the_record_files_at_the_handles_after_laying_everything(
         return make_tone(target.with_suffix(".wav"), seconds=6.0, freq=220, volume=0.05)
 
     result = run_finish(post_desk, facts_fetcher=lambda *a: None, sfx_render=lambda c, t: t,
-                        colour=False, thumbnail=False, stream=out)  # fmt: skip
+                        colour=False, cover=False, stream=out)  # fmt: skip
 
     assert result.complete, out.getvalue()
     assert "-handles-" in result.final.name, out.getvalue()
@@ -393,7 +393,7 @@ def test_finish_cuts_nothing_when_the_handles_are_the_whole_take(
         return make_tone(target.with_suffix(".wav"), seconds=6.0, freq=220, volume=0.05)
 
     result = run_finish(post_desk, facts_fetcher=lambda *a: None, sfx_render=lambda c, t: t,
-                        colour=False, thumbnail=False, stream=out)  # fmt: skip
+                        colour=False, cover=False, stream=out)  # fmt: skip
 
     assert "handles" not in result.final.name
     assert "the whole take plays; nothing cut" in out.getvalue()
@@ -532,6 +532,6 @@ def test_finish_fades_a_cut_short_end_with_the_servers_fade_on_every_record_file
 
     out = io.StringIO()
     result = run_finish(post_desk, facts_fetcher=lambda *a: None, sfx_render=lambda c, t: t,
-                        colour=False, thumbnail=False, stream=out)  # fmt: skip
+                        colour=False, cover=False, stream=out)  # fmt: skip
     assert result.complete, out.getvalue()
     assert fades and all(fade == 0.07 for fade in fades), fades

@@ -70,7 +70,7 @@ def _finish(post_desk: Path, facts: dict, **kwargs):
     )
     out = io.StringIO()
     result = run_finish(post_desk, facts_fetcher=lambda *a: None, text_ocr=_fake_ocr, sfx_render=fake_sfx([]),
-                        thumbnail=False, colour=False, stream=out, **kwargs)  # fmt: skip
+                        cover=False, colour=False, stream=out, **kwargs)  # fmt: skip
     return result, out.getvalue()
 
 

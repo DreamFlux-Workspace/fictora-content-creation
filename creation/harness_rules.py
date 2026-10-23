@@ -1,7 +1,7 @@
 """General checks the harness runs before money moves or a join widens a seam.
 
-``edit``, ``film`` / ``step``, ``join``, ``cue``, ``tempo`` and
-``finish --thumbnail`` call this module. The caption check is the same kind of
+``edit``, ``film`` / ``step``, ``join``, ``cue`` and ``tempo`` call this
+module. The caption check is the same kind of
 rule in ``creation.post.safe_zones.caption_box``: yellow in the frame is not
 always the caption.
 
@@ -101,12 +101,6 @@ _OPENING_CUE_SECONDS = 0.05
 OPENING_SOUND_MARKER = "on the first frame"
 #: Every episode's first take carries an audible event inside this window (founder decision, 5 Oct 2026).
 OPENING_WINDOW_SECONDS = 0.5
-
-#: What ``finish`` prints when the cover route answers an audio error.
-THUMBNAIL_AUDIO_ERROR = (
-    "the cover route answered an audio error (operator_audio_failed). Nothing was charged. "
-    "Use a still from the take as the platform cover."
-)
 
 
 def _beat_label(beat: Mapping[str, Any]) -> str:
@@ -351,29 +345,6 @@ def gain_match_note(gains_db: Sequence[float]) -> str | None:
         f"Gain matching moved the takes ({shown}). "
         "Takes that finish already set near −18 LUFS should be joined with --no-gain-match: "
         "matching a quiet tail against a spoken open widens the seam."
-    )
-
-
-def thumbnail_answered_audio_error(message: str) -> bool:
-    """True when the episode-thumbnail route failed as an audio job.
-
-    The episode-thumbnail route can answer HTTP 502 ``operator_audio_failed``
-    from an image route. Nothing was charged. The cover is a still from the take.
-
-    Parameters
-    ----------
-    message
-        The API error text.
-
-    Returns
-    -------
-    bool
-        Whether finish should skip the cover and keep the marked take.
-    """
-
-    lowered = message.lower()
-    return (
-        "operator_audio_failed" in lowered or "the audio could not be made" in lowered
     )
 
 

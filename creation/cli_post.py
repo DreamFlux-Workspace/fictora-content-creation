@@ -23,7 +23,6 @@ from creation.post.review_command import (
     dispatch_review,
 )
 from creation.post.sfx import parse_adjustment
-from creation.post.thumbnail import THUMBNAIL_USD
 
 POST_COMMANDS = (
     frozenset(
@@ -670,18 +669,10 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         default=None,
         help="Mark top offset (never into the top 8%%).",
     )
-    cover = fin.add_mutually_exclusive_group()
-    cover.add_argument(
-        "--thumbnail",
+    fin.add_argument(
+        "--no-cover",
         action="store_true",
-        help="Draw the episode cover on the server when none is on the desk yet "
-        f"(${THUMBNAIL_USD:.2f}, after the human's yes; free when the server already drew this clip). "
-        "Without it, finish reuses a saved cover or spends nothing.",
-    )
-    cover.add_argument(
-        "--no-thumbnail",
-        action="store_true",
-        help="No cover on the deliverable (not even a saved one).",
+        help="Do not upload a one-take episode for its free cover from the server (a longer episode's cover comes from join).",
     )
     add_caption_style_arg(fin)
     add_caption_scale_arg(fin)
@@ -756,6 +747,11 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         default=None,
         metavar="NAME",
         help="Who accepted the seam (with --accept-seam).",
+    )
+    join.add_argument(
+        "--no-cover",
+        action="store_true",
+        help="Do not upload the joined episode for its free cover from the server.",
     )
     join.add_argument(
         "--no-seam-fix",
@@ -1013,8 +1009,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             clear_caption_labels=args.no_caption_labels,
             prop_texts=tuple(parse_prop_text(raw) for raw in args.prop_text),
             prop_boxes=tuple(args.prop_box),
-            thumbnail=not args.no_thumbnail,
-            draw_thumbnail=args.thumbnail,
+            cover=not args.no_cover,
             over_locked_voices=args.over_locked_voices,
             caption_style=args.caption_style,
             caption_scale=args.caption_scale,
@@ -1051,6 +1046,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             accept_seam=args.accept_seam,
             accepted_by=args.accepted_by,
             seam_fix=not args.no_seam_fix,
+            cover=not args.no_cover,
             ending=args.ending or "hard",
             hook_line=args.hook_line,
             no_hook_line=args.no_hook_line,

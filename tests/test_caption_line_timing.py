@@ -177,7 +177,7 @@ def test_finish_times_an_english_take_on_its_saved_transcript(post_desk: Path) -
 
     result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, transcriber=no_server_transcript,
-                        thumbnail=False, stream=io.StringIO())  # fmt: skip
+                        cover=False, stream=io.StringIO())  # fmt: skip
     detail = next(s.detail for s in result.steps if s.step == "captions")
     assert "'Wait for me here.' (words)" in detail and "1.20-" in detail, detail
     assert "3.20-" in detail and "'Not tonight.' (words)" in detail, detail
@@ -192,7 +192,7 @@ def test_finish_without_a_transcript_warns_about_extra_speech(post_desk: Path) -
         json.dumps(FACTS)
     )
     result = run_finish(post_desk, sfx_render=fake_sfx([]),
-                        facts_fetcher=lambda *a: None, thumbnail=False,
+                        facts_fetcher=lambda *a: None, cover=False,
                         stream=io.StringIO())  # fmt: skip
     detail = next(s.detail for s in result.steps if s.step == "captions")
     assert "EXTRA SPEECH" in detail, detail
@@ -214,7 +214,7 @@ def test_a_locked_voice_take_stays_on_its_soundtrack_lines_even_with_a_transcrip
     )
     result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, cut_meter=lambda _take: (2.5,),
-                        thumbnail=False, stream=io.StringIO())  # fmt: skip
+                        cover=False, stream=io.StringIO())  # fmt: skip
     detail = next(s.detail for s in result.steps if s.step == "captions")
     assert "1.00-" in detail and "3.20-" in detail and "(lines)" in detail, detail
     assert "(words)" not in detail
@@ -248,7 +248,7 @@ def test_finish_captions_from_the_current_spine_not_a_stale_desk_copy(
 
     result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, spine_fetcher=fetch,
-                        thumbnail=False, stream=io.StringIO())  # fmt: skip
+                        cover=False, stream=io.StringIO())  # fmt: skip
     detail = next(s.detail for s in result.steps if s.step == "captions")
     assert asked == [(post_desk, 1)]
     assert "Not tonight." not in detail, detail
@@ -270,7 +270,7 @@ def test_finish_says_so_when_the_current_spine_cannot_be_read(post_desk: Path) -
 
     result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, spine_fetcher=offline,
-                        thumbnail=False, stream=io.StringIO())  # fmt: skip
+                        cover=False, stream=io.StringIO())  # fmt: skip
     detail = next(s.detail for s in result.steps if s.step == "captions")
     assert "!! captions from the desk's copy `03_spine.json`" in detail, detail
     assert "no network" in detail
@@ -296,7 +296,7 @@ def test_finish_captions_narration_laid_with_voice_in_the_heard_not_seen_style(
     out = io.StringIO()
     result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, voices=(Placed(narration, 0.2),),
-                        thumbnail=False, stream=out)  # fmt: skip
+                        cover=False, stream=out)  # fmt: skip
     detail = next(s.detail for s in result.steps if s.step == "captions")
     assert "'The city never sleeps.' (laid)" in detail, detail
     assert "0.20-" in detail
@@ -323,7 +323,7 @@ def test_a_voice_line_that_is_a_script_line_is_captioned_once(post_desk: Path) -
     redo.with_suffix(".json").write_text(json.dumps({"line": "Not tonight!"}))
     result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, voices=(Placed(redo, 3.2),),
-                        thumbnail=False, stream=io.StringIO())  # fmt: skip
+                        cover=False, stream=io.StringIO())  # fmt: skip
     detail = next(s.detail for s in result.steps if s.step == "captions")
     assert detail.startswith("2 line(s)"), detail
     assert "(laid)" not in detail and "3.20-" in detail, detail
@@ -341,6 +341,6 @@ def test_a_voice_line_with_no_saved_words_is_named(post_desk: Path) -> None:
     bare = make_tone(post_desk / "ep01" / "voices" / "voice-ep01-x-v1.wav", seconds=0.5)
     result = run_finish(post_desk, sfx_render=fake_sfx([]),
                         facts_fetcher=lambda *a: None, voices=(Placed(bare, 0.2),),
-                        thumbnail=False, stream=io.StringIO())  # fmt: skip
+                        cover=False, stream=io.StringIO())  # fmt: skip
     detail = next(s.detail for s in result.steps if s.step == "captions")
     assert "!! --voice voice-ep01-x-v1.wav not captioned" in detail, detail

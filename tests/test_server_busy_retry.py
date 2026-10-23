@@ -236,8 +236,6 @@ def test_a_job_poll_rides_out_a_busy_server() -> None:
 
 
 def test_a_busy_stop_keeps_the_servers_words(tmp_path: Path) -> None:
-    from creation.harness_rules import thumbnail_answered_audio_error
-
     body = {
         "error": {
             "code": "operator_audio_failed",
@@ -248,12 +246,10 @@ def test_a_busy_stop_keeps_the_servers_words(tmp_path: Path) -> None:
 
     with pytest.raises(ServerBusy) as caught:
         _session(tmp_path, handler, []).post(
-            "/v1/spines/sp1/episodes/1/thumbnail",
+            "/v1/spines/sp1/episodes/1/inner-voice",
             {"video_url": "u"},
             idempotency_key="k",
         )
 
     assert len(seen) == 1
-    assert thumbnail_answered_audio_error(str(caught.value.code)), (
-        "finish still skips the cover on this answer"
-    )
+    assert "operator_audio_failed" in str(caught.value.code)

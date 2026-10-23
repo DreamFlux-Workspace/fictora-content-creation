@@ -82,7 +82,7 @@ def test_a_hand_cue_at_the_opening_completes_a_take_whose_other_effects_are_in_t
 
     result = run_finish(
         post_desk, sfx_render=silent_sfx([]), facts_fetcher=lambda *a: None,
-        cut_meter=lambda _take: (2.5,), cues=(Placed(cue, 0.0),), thumbnail=False, stream=out,
+        cut_meter=lambda _take: (2.5,), cues=(Placed(cue, 0.0),), cover=False, stream=out,
     )  # fmt: skip
 
     log = out.getvalue()
@@ -127,7 +127,7 @@ def test_an_effect_silent_after_its_re_make_is_left_out_with_a_warning_and_the_t
 
     result = run_finish(
         post_desk, sfx_render=silent_sfx(calls), facts_fetcher=lambda *a: None,
-        cut_meter=lambda _take: (2.5,), thumbnail=False, stream=out,
+        cut_meter=lambda _take: (2.5,), cover=False, stream=out,
     )  # fmt: skip
 
     log = out.getvalue()
@@ -168,7 +168,7 @@ def test_a_render_the_server_could_not_do_still_stops_the_take(post_desk: Path) 
 
     result = run_finish(
         post_desk, sfx_render=down, facts_fetcher=lambda *a: None,
-        cut_meter=lambda _take: (2.5,), thumbnail=False, stream=io.StringIO(),
+        cut_meter=lambda _take: (2.5,), cover=False, stream=io.StringIO(),
     )  # fmt: skip
 
     assert not result.complete

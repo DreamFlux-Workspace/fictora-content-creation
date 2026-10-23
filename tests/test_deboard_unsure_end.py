@@ -96,7 +96,7 @@ def test_finish_does_not_auto_hold_an_unsure_start_and_says_how_to(
     out = io.StringIO()
 
     result = run_finish(post_desk, facts_fetcher=lambda *a: None, sfx_render=lambda cue, t: t,
-                        colour=False, thumbnail=False, stream=out)  # fmt: skip
+                        colour=False, cover=False, stream=out)  # fmt: skip
 
     step = next(s for s in result.steps if s.step == "deboard")
     assert step.status == "skipped" and step.output is None

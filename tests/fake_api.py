@@ -135,7 +135,6 @@ def openapi_doc(
     *,
     episode_ordinal: bool = True,
     one_take_estimate: bool = True,
-    episode_thumbnail: bool = False,
 ) -> dict[str, Any]:
     """The slice of ``/openapi.json`` the kit reads: which request fields the deploy accepts."""
 
@@ -153,10 +152,6 @@ def openapi_doc(
             }
         }
     }
-    if episode_thumbnail:
-        doc["paths"] = {
-            "/v1/spines/{spine_id}/episodes/{ordinal}/thumbnail": {"post": {}},
-        }
     return doc
 
 

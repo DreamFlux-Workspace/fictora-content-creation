@@ -245,7 +245,7 @@ def test_finish_summary_carries_the_drawn_text_warning(post_desk: Path) -> None:
     out = io.StringIO()
 
     result = run_finish(post_desk, facts_fetcher=lambda *a: None, text_ocr=_fake_ocr, sfx_render=fake_sfx([]),
-                        thumbnail=False, stream=out)  # fmt: skip
+                        cover=False, stream=out)  # fmt: skip
 
     summary = "\n".join(result.summary_lines())
     assert "!! DRAWN TEXT in the raw take `take-ep01-t1-raw-v1.mp4`" in summary

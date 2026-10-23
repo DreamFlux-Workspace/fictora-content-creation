@@ -104,6 +104,7 @@ def write_finish_record(
     music_in_take: bool = False,
     letterbox: Mapping[str, Any] | None = None,
     missing: Sequence[str] = (),
+    cover: Path | None = None,
 ) -> Path:
     """Write ``takes/take-epNN-tK-finish-vN.json`` (a new version; never overwrites).
 
@@ -143,6 +144,9 @@ def write_finish_record(
         A letterbox take's ``{"letterbox": True, "caption_colour": ...}``,
         written into the record; ``None`` (every portrait take) writes the
         record exactly as before.
+    cover
+        The episode cover the server made, saved beside the video
+        (``cover-epNN-vN.jpg``); ``None`` writes no ``cover`` key.
 
     Returns
     -------
@@ -170,6 +174,7 @@ def write_finish_record(
         "inner_voice": [dict(cue) for cue in inner_voice],
         **(dict(letterbox) if letterbox else {}),
         **({"missing": list(missing)} if missing and not complete else {}),
+        **({"cover": _stored(desk, cover)} if cover is not None else {}),
     }
     path.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
     return path

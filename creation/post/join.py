@@ -258,6 +258,8 @@ class JoinResult:
     accepted: dict[str, Any] | None = None
     #: What ``join`` laid / trimmed on its loud seams (new desks; ``None`` when it tried nothing).
     seam_fix: SeamFixReport | None = None
+    #: The episode cover the server made from the marked file (``cover-epNN-vN.jpg``), when one was saved.
+    cover: Path | None = None
 
     @property
     def loud_seams(self) -> list[tuple[float, float]]:
@@ -317,6 +319,7 @@ class JoinResult:
         return {
             "master": str(self.master),
             "marked": str(self.marked) if self.marked else None,
+            "cover": str(self.cover) if self.cover else None,
             "complete": self.complete,
             "parts": [{"episode": p.episode, "take_id": p.take_id, "picture": str(p.picture),
                        "pre_bed": str(p.pre_bed)} for p in self.parts],
@@ -1430,32 +1433,6 @@ def _agreed(values: list[Any], default: Any) -> Any:
     return values[0] if len(distinct) == 1 else default
 
 
-def _join_cover(desk: Path, episodes: tuple[int, ...]) -> tuple[Path | None, str]:
-    """The cover for the joined file's first frame (the episode's newest saved cover image), and its note.
-
-    The first frame is the preview Discord, WhatsApp and the phones show
-    (:mod:`creation.post.cover_frame`). A series cut takes its first episode's cover.
-    """
-
-    from creation.post.cover_frame import episode_cover
-
-    if not episodes:
-        return (
-            None,
-            "cover frame: none (no episode named; the first frame is the picture's)",
-        )
-    cover = episode_cover(desk, episodes[0])
-    if cover is None:
-        return None, (
-            f"cover frame: none for episode {episodes[0]} (no saved cover image on the desk); "
-            "the first frame is the picture's"
-        )
-    return (
-        cover,
-        f"cover frame: {cover.name} is the first frame (the preview Discord and phones show)",
-    )
-
-
 def _part_sound(part: JoinPart, gain: float, seconds: float) -> np.ndarray:
     size = int(round(seconds * BED_RATE))
     sound = decode_stereo(part.pre_bed)[:size]
@@ -1556,6 +1533,7 @@ def run_join(
     accept_seam: str | None = None,
     accepted_by: str | None = None,
     seam_fix: bool = True,
+    cover: bool = True,
     ending: str = "hard",
     hook_line: str | None = None,
     no_hook_line: bool = False,
@@ -1583,6 +1561,11 @@ def run_join(
         ``False`` keeps each take's level (``--no-gain-match``).
     watermark_y
         Mark top offset override.
+    cover
+        Upload the marked file of a one-episode join and save the server's
+        free cover beside it (``cover-epNN-vN.jpg``; ``--no-cover`` turns it
+        off). A series cut gets none. A cover that cannot be had never stops
+        the join.
     accept_seam
         Why a human accepts every seam that steps over 5 dB (``--accept-seam``):
         the join is marked anyway, and who and why go in the run notes.
@@ -1885,32 +1868,15 @@ def run_join(
             if len(episode_set) == 1
             else next_versioned_path(folder, f"{stem}-sokii", ".mp4")
         )
-        cover, cover_note = _join_cover(desk, episodes)
 
         def mark(video: Path, out: Path) -> Path:
-            # The cover goes on the first frame in the mark's own encode. A cover that fails
-            # never stops the join: the mark is made again without it, with a ⚠ line.
-            nonlocal cover, cover_note
-            try:
-                return _mark(video, out, cover=cover)
-            except MediaToolError as exc:
-                if cover is None:
-                    raise
-                out.unlink(missing_ok=True)
-                cover_note = (
-                    f"⚠ cover frame skipped: {type(exc).__name__}: {str(exc)[-200:]}"
-                )
-                cover = None
-                return _mark(video, out, cover=None)
-
-        def _mark(video: Path, out: Path, *, cover: Path | None) -> Path:
             if not letterbox:
-                return watermark(video, out, y=watermark_y, cover=cover)
+                return watermark(video, out, y=watermark_y)
             from creation.post.letterbox import mark_and_title
 
             done, fitted = mark_and_title(
                 video, out, title=title,
-                ass_path=next_versioned_path(folder, f"{stem}-title", ".ass"), cover=cover,
+                ass_path=next_versioned_path(folder, f"{stem}-title", ".ass"),
             )  # fmt: skip
             result.notes.append(
                 "letterbox: Sokii mark in the top band; "
@@ -1933,7 +1899,17 @@ def run_join(
                 f"ending {ending}: the marked file holds its last frame, then cuts to black "
                 "(the master stays as joined)"
             )
-        result.notes.append(cover_note)
+        if cover and len(episode_set) == 1 and result.marked is not None:
+            from creation.post.episode_cover import fetch_episode_cover
+
+            saved = fetch_episode_cover(
+                desk, episode=episode_set[0], video=result.marked
+            )
+            result.cover = saved.path
+            result.notes.append(
+                f"cover: {saved.note}"
+                + ("" if saved.path else "; the joined episode is unchanged")
+            )
     summary = result.summary_lines()
     for run_dir in run_dirs:
         append_run_note(run_dir, "Join\n" + "\n".join(summary))
