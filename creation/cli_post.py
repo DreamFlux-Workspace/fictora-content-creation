@@ -672,7 +672,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     fin.add_argument(
         "--no-cover",
         action="store_true",
-        help="Do not fetch the episode cover (free; the server makes it from the take).",
+        help="Do not upload a one-take episode for its free cover from the server (a longer episode's cover comes from join).",
     )
     add_caption_style_arg(fin)
     add_caption_scale_arg(fin)
@@ -747,6 +747,11 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         default=None,
         metavar="NAME",
         help="Who accepted the seam (with --accept-seam).",
+    )
+    join.add_argument(
+        "--no-cover",
+        action="store_true",
+        help="Do not upload the joined episode for its free cover from the server.",
     )
     join.add_argument(
         "--no-seam-fix",
@@ -1041,6 +1046,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
             accept_seam=args.accept_seam,
             accepted_by=args.accepted_by,
             seam_fix=not args.no_seam_fix,
+            cover=not args.no_cover,
             ending=args.ending or "hard",
             hook_line=args.hook_line,
             no_hook_line=args.no_hook_line,

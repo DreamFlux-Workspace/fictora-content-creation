@@ -258,6 +258,8 @@ class JoinResult:
     accepted: dict[str, Any] | None = None
     #: What ``join`` laid / trimmed on its loud seams (new desks; ``None`` when it tried nothing).
     seam_fix: SeamFixReport | None = None
+    #: The episode cover the server made from the marked file (``cover-epNN-vN.jpg``), when one was saved.
+    cover: Path | None = None
 
     @property
     def loud_seams(self) -> list[tuple[float, float]]:
@@ -317,6 +319,7 @@ class JoinResult:
         return {
             "master": str(self.master),
             "marked": str(self.marked) if self.marked else None,
+            "cover": str(self.cover) if self.cover else None,
             "complete": self.complete,
             "parts": [{"episode": p.episode, "take_id": p.take_id, "picture": str(p.picture),
                        "pre_bed": str(p.pre_bed)} for p in self.parts],
@@ -1530,6 +1533,7 @@ def run_join(
     accept_seam: str | None = None,
     accepted_by: str | None = None,
     seam_fix: bool = True,
+    cover: bool = True,
     ending: str = "hard",
     hook_line: str | None = None,
     no_hook_line: bool = False,
@@ -1557,6 +1561,11 @@ def run_join(
         ``False`` keeps each take's level (``--no-gain-match``).
     watermark_y
         Mark top offset override.
+    cover
+        Upload the marked file of a one-episode join and save the server's
+        free cover beside it (``cover-epNN-vN.jpg``; ``--no-cover`` turns it
+        off). A series cut gets none. A cover that cannot be had never stops
+        the join.
     accept_seam
         Why a human accepts every seam that steps over 5 dB (``--accept-seam``):
         the join is marked anyway, and who and why go in the run notes.
@@ -1889,6 +1898,17 @@ def run_join(
             result.notes.append(
                 f"ending {ending}: the marked file holds its last frame, then cuts to black "
                 "(the master stays as joined)"
+            )
+        if cover and len(episode_set) == 1 and result.marked is not None:
+            from creation.post.episode_cover import fetch_episode_cover
+
+            saved = fetch_episode_cover(
+                desk, episode=episode_set[0], video=result.marked
+            )
+            result.cover = saved.path
+            result.notes.append(
+                f"cover: {saved.note}"
+                + ("" if saved.path else "; the joined episode is unchanged")
             )
     summary = result.summary_lines()
     for run_dir in run_dirs:

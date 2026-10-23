@@ -421,16 +421,17 @@ def server_cover() -> None:
 def _no_server_cover_by_default(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``finish``'s cover step never asks the real server: no cover is saved.
+    """``finish`` and ``join`` never upload or ask the real server for a cover: no cover is saved.
 
-    A test of the step asks for ``server_cover`` (tests/test_episode_cover.py) and fakes the API itself.
+    A test of the cover asks for ``server_cover`` (tests/test_episode_cover.py) and fakes the API itself.
     """
 
     if "server_cover" in request.fixturenames:
         return
-    from creation.post.episode_cover import SavedCover
+    from creation.post import episode_cover
 
-    monkeypatch.setattr(
-        "creation.post.finish.fetch_episode_cover",
-        lambda *_a, **_k: SavedCover(None, "no cover in tests"),
-    )
+    def offline(*_a: object, **_k: object) -> episode_cover.SavedCover:
+        return episode_cover.SavedCover(None, "no cover in tests")
+
+    monkeypatch.setattr("creation.post.finish.fetch_episode_cover", offline)
+    monkeypatch.setattr(episode_cover, "fetch_episode_cover", offline)

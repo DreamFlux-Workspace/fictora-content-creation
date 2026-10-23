@@ -66,11 +66,13 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
    origin), is timed on speech spans. ``--line-start``/``--line-end`` set either end by
    hand. The report names what timed each line.
 6. ``watermark`` - the Sokii mark top left, under the covered top strip.
-7. ``cover``     - the episode cover, made by the server for free from the
-   take's stored clip (``GET …/episodes/{n}/cover?video_url=``), saved as
-   ``cover-epNN-vN.jpg`` beside the finished video and named in the finish
-   record. The kit draws nothing; the video itself is not changed. A cover the
-   server cannot make never stops the finish (``--no-cover`` skips the ask).
+7. ``cover``     - on an episode of one take, the episode cover: the
+   finished file is uploaded (``POST /v1/uploads``), the server makes the
+   cover from it for free (``GET …/episodes/{n}/cover?video_url=``) and it is
+   saved as ``cover-epNN-vN.jpg`` beside the video and named in the finish
+   record. An episode of several takes gets its cover from ``join`` instead.
+   The kit draws nothing; the video is not changed. A cover that cannot be had
+   never stops the finish (``--no-cover`` skips it).
 
 A letterbox show's 4:3 take (spine ``delivery_format: letterbox``, a 4:3
 picture; founder decisions of 6 Oct 2026, :mod:`creation.post.letterbox`)
@@ -340,7 +342,7 @@ from creation.post.prop_text import (
 )
 from creation.post.prop_text import suggestion_lines as prop_suggestion_lines
 from creation.post.take_text import OcrRunner, TextCheck, desk_text_check
-from creation.post.episode_cover import fetch_episode_cover
+from creation.post.episode_cover import fetch_episode_cover, other_takes
 from creation.post.watermark import watermark
 from creation.rules_epoch import legacy_rules, under_desk_rules
 
@@ -1353,8 +1355,9 @@ def run_finish(
         ``voice_audio`` makes the inner-voice dry lines, the Drama API by default;
         ``text_ocr`` reads frames for the drawn-text check, the ``tesseract`` command by default).
     cover
-        Save the server's episode cover beside the finished video (free;
-        ``--no-cover`` turns the ask off).
+        On an episode of one take, upload the finished file and save the
+        server's cover beside it (free; ``--no-cover`` turns it off). An
+        episode of several takes gets its cover from ``join``.
     stem_fetcher
         ``(url, dest) -> dest`` for a take's music-free stem (:func:`creation.music_lock.remix_onto_stem`);
         ``None`` downloads it.
@@ -3355,23 +3358,21 @@ def run_finish(
     def do_cover(take: Path) -> StepReport:
         if not cover:
             return StepReport("cover", "skipped", "--no-cover")
-        try:
-            saved = fetch_episode_cover(
-                desk, episode=episode, take_id=take_id, takes_dir=takes
+        others = other_takes(desk, episode, take_id)
+        if others:
+            return StepReport(
+                "cover",
+                "skipped",
+                f"episode {episode} has {len(others) + 1} takes: its cover comes after `join`",
             )
-        except (SystemExit, httpx.HTTPError, OSError, ValueError) as exc:
-            detail = (
-                str(exc.code)
-                if isinstance(exc, SystemExit)
-                else f"{type(exc).__name__}: {exc}"
-            )
-            note = (
-                f"no cover this time ({detail[:200]}); the finished video is unchanged"
-            )
-            append_run_note(run_dir, f"Finish · cover: skipped, {note}")
-            return StepReport("cover", "skipped", note)
+        saved = fetch_episode_cover(desk, episode=episode, video=take)
         append_run_note(run_dir, f"Finish · cover: {saved.note}")
         if saved.path is None:
+            print(
+                f"[cover] {saved.note}; the finished video is unchanged",
+                file=out,
+                flush=True,
+            )
             return StepReport("cover", "skipped", saved.note)
         record_state["cover"] = saved.path
         return StepReport(
