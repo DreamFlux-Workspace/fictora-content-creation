@@ -36,6 +36,8 @@ from creation.story_objects import (
 from creation.new_cast import (
     cast_owing_pictures,
     cast_without_pictures,
+    pictures_waiting_for_yes,
+    server_pictures_owed,
     no_picture_message,
 )
 from creation.desk_media_urls import (
@@ -1960,6 +1962,11 @@ def run_step(
                     "Say yes (`fictora-produce approve --gate board`) or redraw one (`redraw-board --take tN --note 'what is wrong'`).",
                     tuple(paths),
                 )
+            # The server says who the boards would refuse for a picture
+            # (cast_pictures_owed): offer it now, never learn it from the 422.
+            held = boards_held_for_pictures(desk, state, spine_now, episode=ep)
+            if held is not None:
+                return held
             # Name check and hook-mouth check, before paying for the boards.
             stop = named_cast_stop(spine_now, episode=ep, desk=str(desk))
             if stop:
@@ -2824,6 +2831,63 @@ def locked_lines_pause(message: str, *, desk: Path | str = "<desk>") -> str | No
         f"`fictora-produce bind --desk {desk} --prompt <edited brief> ...` and `fictora-produce step` again: "
         "the edited brief is a new draft. `step` with the brief unchanged shows this pause again and drafts nothing."
     )
+
+
+def boards_held_for_pictures(
+    desk: Path, state: Any, spine: Mapping[str, Any], *, episode: int
+) -> StepResult | None:
+    """Stop before the boards when the server says a character's picture holds them.
+
+    Reads ``cast_pictures_owed`` (fictora-drama, 24 Oct 2026), the boards
+    gate's own check. A picture still to draw sends the desk back to the
+    plates step, which prices it and waits for the spend yes like episode 1's
+    Looks; a drawn one waiting for its yes asks for the plates yes. Nothing is
+    sent or spent. From an older server (no field) this says nothing.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    state
+        The desk's production state (phase set and saved on a stop).
+    spine
+        The story as the server returned it.
+    episode
+        The episode about to be boarded.
+
+    Returns
+    -------
+    StepResult | None
+        The stop, or ``None`` when no picture holds the boards.
+    """
+
+    to_draw = (
+        cast_owing_pictures(spine, episode=episode)
+        if server_pictures_owed(spine) is not None
+        else []
+    )
+    if to_draw:
+        state.phase = "ready_cast_enrol"
+        save_production(desk, state)
+        names = ", ".join(name for _, name in to_draw)
+        return StepResult(
+            state.phase,
+            f"Stopped before the boards; nothing was sent. The server says {names} need a picture first. "
+            f"`fictora-produce step` draws it (~${float(STILL_USD) * len(to_draw):.2f}, asks before spending), "
+            "then the human approves it with `fictora-produce approve --gate plates`.",
+            (),
+        )
+    waiting = pictures_waiting_for_yes(spine)
+    if waiting:
+        names = ", ".join(name for _, name in waiting)
+        return StepResult(
+            state.phase,
+            f"Stopped before the boards; nothing was sent. {names}'s picture is drawn and waits for the "
+            f"human's yes. After it: `fictora-produce approve --desk {desk} --gate plates --again` ($0, draws "
+            "nothing), then `fictora-produce step`.",
+            (),
+        )
+    return None
 
 
 def reapprove_plates_hint(desk: Path | str = "<desk>") -> str:
