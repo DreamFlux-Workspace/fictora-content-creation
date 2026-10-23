@@ -205,9 +205,18 @@ def test_finish_makes_the_dry_line_lays_it_at_the_cue_and_captions_it_in_georgia
         and call["text"] == THOUGHT
         and call["language"] == "en"
     )
+    # Named by its cue, so the server voices the thought it holds with its own acting direction
+    # (drama #1017); the kit sends no delivery of its own.
+    assert call["episode_id"] == "episode_01" and call["line_id"] == "iv_ep01_01"
+    assert "delivery" not in call
     assert call["key"] == handmade.voice_line_key(
-        episode=1, cast_id="cast_aya", text=THOUGHT, voice="Laura", language="en"
-    ), "the key voice-line and revoice send for the same line"
+        episode=1,
+        cast_id="cast_aya",
+        text=THOUGHT,
+        voice="Laura",
+        language="en",
+        line_id="iv_ep01_01",
+    ), "one key per thought, never a render made without its direction"
     # Laid at 4.3 s into the take's own audio: silent there before, loud after.
     before = measure_rms_windows(takes / "take-ep01-t1-raw-v1.mp4", window_seconds=0.1)
     after = measure_rms_windows(step.output, window_seconds=0.1)
@@ -299,7 +308,12 @@ def test_after_a_voice_pick_the_next_finish_speaks_the_thought_in_the_new_voice(
     }
     assert (
         handmade.voice_line_key(
-            episode=1, cast_id="cast_aya", text=THOUGHT, voice="Jessica", language="en"
+            episode=1,
+            cast_id="cast_aya",
+            text=THOUGHT,
+            voice="Jessica",
+            language="en",
+            line_id="iv_ep01_01",
         )
         in keys
     )
@@ -558,6 +572,22 @@ def test_a_thought_says_its_spoken_words_and_is_captioned_in_english_italic(
         sorted(takes.glob("take-ep01-t1-finish-v*.json"))[-1].read_text()
     )
     assert record["inner_voice"][0]["spoken_text"] == "振り返らない。"
+
+
+def test_the_servers_cue_says_its_spoken_words_with_nothing_on_the_desk() -> None:
+    # Drama #1017: the server's cue holds the words said (and the acting direction); the kit reads them
+    # from the cue and keeps nothing of its own.
+    from creation.inner_voice import take_cues
+
+    cue = {
+        **_cue("iv_ep01_01", 4.3, 4.9),
+        "spoken_text": "振り返らない。",
+        "acting_direction": "soft, breaking",
+    }
+    plan = take_cues([cue], take=1, lengths=[8.0], last_filmed=True)
+
+    (placed,) = plan.cues
+    assert placed.spoken_text == "振り返らない。" and placed.line == THOUGHT
 
 
 @needs_ffmpeg

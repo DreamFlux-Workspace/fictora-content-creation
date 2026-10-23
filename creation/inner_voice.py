@@ -23,14 +23,19 @@ take whose window holds its start. A cue that runs past its take's end
 that starts after the last filmed take ends belongs to no take and is named.
 
 Spoken words and caption, apart (a Japanese thought under an English caption).
-The contract's cue has one ``line`` and no other field, so the server holds the
-CAPTION (``--text``) and the words the voice says (``--spoken-text``) are kept
-on the desk, in ``epNN/inner-voice-spoken.json`` (:func:`save_spoken`), keyed by
-cue id and the caption they go with: ``finish`` sends them to the voice as
-``voice-line --text/--spoken-text`` does, and captions the ``line``. A cue whose
-caption changed (removed and added again) never picks up stale words
-(:func:`spoken_for`). Server gap: ``DramaInnerVoiceCue`` has no
-``spoken_text``; see ``docs/content-ops/backlog.md``.
+The server's cue holds both (drama #1017, 23 Oct 2026): ``line`` is the
+CAPTION (``--text``) and ``spoken_text`` the words the voice says
+(``--spoken-text``). The kit no longer keeps them on the desk. A desk made
+before keeps its ``epNN/inner-voice-spoken.json`` (:func:`load_spoken`), read
+only for a cue the server holds no ``spoken_text`` for, keyed by cue id and
+the caption they go with, so a cue whose caption changed never picks up stale
+words (:func:`spoken_for`).
+
+How a thought is acted (its ``acting_direction``, "soft, breaking") is the
+server's too: it carries the direction from the script line the thought came
+from, keeps it on every later PUT, and voices the thought with it when the kit
+names the cue (``voice-lines`` with ``episode_id`` and ``line_id``). The kit
+sends no delivery of its own (``finish``).
 """
 
 from __future__ import annotations
@@ -46,6 +51,11 @@ from creation.spine_view import episode_id_for
 #: A thought with no ``--until`` lasts about this long a word (and at least :data:`MIN_SECONDS`).
 SECONDS_PER_WORD = 0.4
 MIN_SECONDS = 1.2
+
+
+#: The cue's optional fields the server keeps (``DramaInnerVoiceCue``): the words said, their caption and
+#: how the thought is acted (drama #1017). Sent back as the server gave them; never invented by the kit.
+OPTIONAL_CUE_FIELDS = ("spoken_text", "subtitle_text", "acting_direction")
 
 
 class InnerVoiceError(ValueError):
@@ -65,7 +75,10 @@ def episode_cues(spine: Mapping[str, Any], *, episode: int) -> list[dict[str, An
     Returns
     -------
     list[dict[str, Any]]
-        ``DramaInnerVoiceCue`` objects (only their contract fields).
+        ``DramaInnerVoiceCue`` objects (only their contract fields). The
+        optional ones (:data:`OPTIONAL_CUE_FIELDS`) are kept when the server set
+        them, so a PUT of the whole list never drops a thought's spoken words or
+        its acting direction.
     """
 
     episode_id = episode_id_for(spine, episode)
@@ -73,14 +86,21 @@ def episode_cues(spine: Mapping[str, Any], *, episode: int) -> list[dict[str, An
         if isinstance(summary, Mapping) and summary.get("episode_id") == episode_id:
             cues = [
                 {
-                    key: cue.get(key)
-                    for key in (
-                        "cue_id",
-                        "start_ms",
-                        "end_ms",
-                        "speaker_cast_id",
-                        "line",
-                    )
+                    **{
+                        key: cue.get(key)
+                        for key in (
+                            "cue_id",
+                            "start_ms",
+                            "end_ms",
+                            "speaker_cast_id",
+                            "line",
+                        )
+                    },
+                    **{
+                        key: cue[key]
+                        for key in OPTIONAL_CUE_FIELDS
+                        if cue.get(key) is not None
+                    },
                 }
                 for cue in summary.get("inner_voice") or []
                 if isinstance(cue, Mapping)
@@ -99,7 +119,7 @@ def cue_listing(
 
     rows = []
     for number, cue in enumerate(cues, start=1):
-        said = spoken_for(
+        said = str(cue.get("spoken_text") or "") or spoken_for(
             spoken or {}, str(cue.get("cue_id")), str(cue.get("line") or "")
         )
         rows.append(
@@ -107,6 +127,11 @@ def cue_listing(
             f"{int(cue.get('end_ms') or 0) / 1000:.2f}s  "
             f"{names.get(str(cue.get('speaker_cast_id')), cue.get('speaker_cast_id'))} (thinks): {cue.get('line')}"
             + (f"  [says: {said}]" if said else "")
+            + (
+                f"  [acted: {cue.get('acting_direction')}]"
+                if cue.get("acting_direction")
+                else ""
+            )
             + (
                 f"  [{(levels or {})[str(cue.get('cue_id'))]:+g} dB]"
                 if (levels or {}).get(str(cue.get("cue_id")))
@@ -293,6 +318,7 @@ def add_cue(
     text: str,
     at: float,
     until: float | None,
+    spoken_text: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """The list with one new cue in it, in time order.
 
@@ -308,6 +334,9 @@ def add_cue(
         The thought.
     at, until
         Seconds on the episode as filmed; ``until`` left out is :func:`default_seconds` after ``at``.
+    spoken_text
+        The words the voice says when they differ from the caption (``--spoken-text``); kept on the
+        server's cue (``spoken_text``), never on the desk.
 
     Returns
     -------
@@ -332,6 +361,9 @@ def add_cue(
         "speaker_cast_id": speaker_cast_id,
         "line": words,
     }
+    said = " ".join((spoken_text or "").split())
+    if said:
+        cue["spoken_text"] = said
     merged = [dict(c) for c in cues] + [cue]
     return sorted(merged, key=lambda c: int(c.get("start_ms") or 0)), cue
 
@@ -510,6 +542,7 @@ def take_cues(
                 cue_id=cue_id,
                 speaker_cast_id=str(cue.get("speaker_cast_id") or ""),
                 line=" ".join(str(cue.get("line") or "").split()),
+                spoken_text=" ".join(str(cue.get("spoken_text") or "").split()),
                 start=round(start - known, 3),
                 end=round(end - known, 3),
                 episode_start=start,
@@ -538,7 +571,8 @@ def refusal_words(message: str) -> str:
     if code in {"400", "422"}:
         return (
             "the server refused the cues, nothing was saved. Read its reason above; a time, a speaker or an "
-            "empty line is the usual cause."
+            "empty line is the usual cause (and --spoken-text on a show performed in English: there the "
+            "thought is said as its --text)."
         )
     return "the server did not save the cues."
 
@@ -550,6 +584,7 @@ __all__ = [
     "add_cue",
     "LEVELS_FILE",
     "LEVEL_RANGE_DB",
+    "OPTIONAL_CUE_FIELDS",
     "check_level",
     "cue_id_for",
     "cue_listing",

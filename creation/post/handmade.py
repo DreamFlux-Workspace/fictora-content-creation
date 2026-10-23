@@ -220,12 +220,19 @@ def voice_line_key(
     voice: str,
     language: str,
     spoken_text: str | None = None,
+    line_id: str | None = None,
 ) -> str:
-    """The ``Idempotency-Key`` for one dry line: the same key ``revoice`` sends for the same line in the same voice."""
+    """The ``Idempotency-Key`` for one dry line: the same key ``revoice`` sends for the same line in the same voice.
+
+    A line named by its script line or thought (``line_id``) gets its own key: the server voices it with the
+    direction it keeps for it (drama #1017), so it is never answered by a render made without one.
+    """
 
     arguments: dict[str, Any] = {"text": text, "voice": voice, "language": language}
     if spoken_text:
         arguments["spoken"] = spoken_text
+    if line_id:
+        arguments["line_id"] = line_id
     return _key(f"voice-ep{episode:02d}-{cast_slug(cast_id)}", arguments)
 
 
@@ -267,6 +274,7 @@ def make_voice_line(
     reuse: bool = False,
     extra: dict[str, Any] | None = None,
     episode_id: str | None = None,
+    line_id: str | None = None,
 ) -> DryLine:
     """Render one dry line in the card's locked voice on the server, save it with its sidecar and book it.
 
@@ -299,6 +307,9 @@ def make_voice_line(
         The ``voice-line`` command's episode: the server voices only a heard-only
         line already in that episode's script (decision D4) and refuses anything
         else before spending.
+    line_id
+        With ``episode_id``: the script line or inner-voice cue to voice (``finish`` names each thought's
+        cue). The server voices a thought with its own acting direction (drama #1017).
 
     Returns
     -------
@@ -325,7 +336,7 @@ def make_voice_line(
     # The same key revoice sends for the same line in the same voice: a line made by either is never paid twice.
     key = voice_line_key(
         episode=episode, cast_id=cast_id, text=text, voice=voice, language=language,
-        spoken_text=spoken_text,
+        spoken_text=spoken_text, line_id=line_id,
     )  # fmt: skip
     if reuse:
         saved = saved_voice_line(voices_dir, key)
@@ -340,6 +351,7 @@ def make_voice_line(
         key=key,
         spoken_text=spoken_text,
         **({"episode_id": episode_id} if episode_id else {}),
+        **({"line_id": line_id} if episode_id and line_id else {}),
     )
     url = str(answer["audio_url"])
     dest = download(

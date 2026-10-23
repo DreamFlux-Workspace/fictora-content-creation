@@ -19,10 +19,6 @@ from typing import Any
 from creation.ops.state import episode_beat_pattern
 from creation.spine_view import beats_by_take, episode_id_for
 
-#: Words that make the server refuse the take: inner voice must not be written
-#: into the take as fixture lines.
-_INNER_VOICE_WORDS = re.compile(r"\binner voice\b", re.IGNORECASE)
-
 #: A thought that ends this many seconds before its take is clear of the cut.
 _THOUGHT_GAP_SECONDS = 0.5
 
@@ -169,38 +165,6 @@ def on_screen_speaker_stop(
     )
 
 
-def inner_voice_wording_stop(beat: Mapping[str, Any]) -> str | None:
-    """Refuse a beat that still says "inner voice" in the words the take compiles.
-
-    Parameters
-    ----------
-    beat
-        One beat, as spine JSON.
-
-    Returns
-    -------
-    str | None
-        The stop line, or ``None`` when those words are gone.
-    """
-
-    blobs: list[str] = []
-    _strings(beat.get("motion_intent"), blobs)
-    _strings(beat.get("motion_direction"), blobs)
-    _strings(beat.get("shot_plan"), blobs)
-    for line in beat.get("dialogue_lines") or []:
-        if isinstance(line, Mapping):
-            _strings(line.get("text"), blobs)
-            _strings(line.get("spoken_text"), blobs)
-    if not any(_INNER_VOICE_WORDS.search(text) for text in blobs):
-        return None
-    return (
-        f'{_beat_label(beat)}: the words "inner voice" are still in the beat. '
-        "Filming refuses a take that writes them as fixture lines. "
-        "Put the thought on the character with `fictora-produce inner-voice`, "
-        "then take those words out of the beat."
-    )
-
-
 def early_extra_shots_stop(
     spine: Mapping[str, Any],
     *,
@@ -290,7 +254,6 @@ def film_stops(spine: Mapping[str, Any], *, episode: int) -> list[str]:
     for beat in _episode_beats(spine, episode):
         for stop in (
             on_screen_speaker_stop(beat, names),
-            inner_voice_wording_stop(beat),
             early_extra_shots_stop(spine, episode=episode, beat=beat),
         ):
             if stop:

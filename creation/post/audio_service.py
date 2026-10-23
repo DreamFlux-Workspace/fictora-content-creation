@@ -166,6 +166,7 @@ class AudioService(Protocol):
         key: str,
         spoken_text: str | None = None,
         episode_id: str | None = None,
+        line_id: str | None = None,
     ) -> dict[str, Any]:
         """``{audio_url, seconds, provider_voice, reading: {checked, read_right, …}, cost_usd}``.
 
@@ -173,6 +174,8 @@ class AudioService(Protocol):
         script has one) is what the voice model is sent, so the server's reading re-check applies.
         ``episode_id`` (the ``voice-line`` command) asks the server to voice only a heard-only line
         already in that episode's script (decision D4); it refuses anything else before spending.
+        ``line_id`` names that line or inner-voice cue; a thought is voiced with the acting direction
+        the server keeps for it when no delivery is sent (drama #1017).
         """
         ...
 
@@ -290,6 +293,7 @@ class DramaApiAudio:
         key: str,
         spoken_text: str | None = None,
         episode_id: str | None = None,
+        line_id: str | None = None,
     ) -> dict[str, Any]:
         """POST ``…/voice-lines`` (with ``episode_id``: a heard-only script line only, D4)."""
 
@@ -298,6 +302,8 @@ class DramaApiAudio:
             body["spoken_text"] = spoken_text
         if episode_id:
             body["episode_id"] = episode_id
+            if line_id:
+                body["line_id"] = line_id
         return self._post(
             f"/v1/spines/{spine_id}/cast/{cast_id}/voice-lines", body, key
         )
