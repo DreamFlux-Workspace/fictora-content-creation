@@ -23,10 +23,6 @@ from conftest import make_take, needs_ffmpeg
 
 from creation import rules_epoch
 from creation.captions import (
-    Cue,
-    Span,
-    build_ass,
-    build_line_cues,
     resolve_caption_style,
     show_caption_style,
 )
@@ -37,7 +33,6 @@ from creation.post.reel_plan import (
     Segment,
     check_plan,
     genre_family,
-    post_text,
 )
 from creation.production_config import (
     ProductionConfig,
@@ -172,58 +167,6 @@ def test_the_command_runs_under_its_desks_rules(tmp_path: Path) -> None:
         assert not legacy_rules()
 
 
-# --- #137: no dashes (every desk since 9 Oct 2026; Group A) -----------------------------------------
-
-
-def test_a_legacy_desk_drops_its_dashes_like_a_new_desk(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from creation import rules_epoch
-    from creation.post.hook_overlay import HookOverlay, overlay_ass
-    from creation.post.letterbox import TitleBlock, title_ass
-
-    desk = _old_desk(tmp_path)
-    with desk_rules(desk):
-        (cues,) = build_line_cues(["Please— no no—"], [Span(0.0, 2.0)])
-        assert [c.text for c in cues] == ["Please…", "Please, no", "Please, no no…"]
-        assert "again" in (
-            ass := build_ass(
-                [Cue(0.0, 0.9, "She lied — again—")], width=1080, height=1920
-            )
-        )
-        assert "—" not in ass
-        assert "—" not in overlay_ass(
-            HookOverlay("hook", "She lied — again—", "top", 0.0, 3.0),
-            width=1080,
-            height=1920,
-        )
-        assert "—" not in title_ass(TitleBlock("POV: your roommate — texted", "x"))[0]
-    # Off the allow-list, the legacy branch still keeps every dash, byte for byte.
-    monkeypatch.setattr(
-        rules_epoch,
-        "CONTINUING_FIXES",
-        rules_epoch.CONTINUING_FIXES - {"caption_dashes"},
-    )
-    with desk_rules(desk):
-        (cues,) = build_line_cues(["Please— no no—"], [Span(0.0, 2.0)])
-        assert [c.text for c in cues] == ["Please—", "Please— no", "Please— no no—"]
-        assert (
-            "Dialogue: 0,0:00:00.00,0:00:00.90,House,,0,0,0,,She lied — again—"
-            in build_ass([Cue(0.0, 0.9, "She lied — again—")], width=1080, height=1920)
-        )
-        assert "She lied — again—" in overlay_ass(
-            HookOverlay("hook", "She lied — again—", "top", 0.0, 3.0),
-            width=1080,
-            height=1920,
-        )
-        assert (
-            "your roommate — texted"
-            in title_ass(TitleBlock("POV: your roommate — texted", "x"))[0]
-        )
-    (cues,) = build_line_cues(["Please— no no—"], [Span(0.0, 2.0)])
-    assert [c.text for c in cues] == ["Please…", "Please, no", "Please, no no…"]
-
-
 # --- #135: caption speech timing (legacy spreads the line as before) -------------------------------
 
 SOURCES_SPINE = {
@@ -342,25 +285,6 @@ def test_a_legacy_desk_keeps_house_captions_and_is_never_asked(tmp_path: Path) -
 # --- #133 ------------------------------------------------------------------------------------------
 
 
-def test_a_legacy_post_says_episode_and_a_new_post_says_part(tmp_path: Path) -> None:
-    desk = _old_desk(tmp_path)
-    kwargs = dict(
-        series="SCP-173 Blink",
-        episode=2,
-        title="Blinking",
-        question="Where will it be?",
-        genre="horror",
-    )
-    with desk_rules(desk):
-        legacy = post_text(**kwargs)  # type: ignore[arg-type]
-    assert legacy == (
-        "SCP-173 Blink · Episode 2: Blinking\n\nWhere will it be?\n"
-        "Episode 3 is next. Follow so you don't miss it.\n\n#horror #shortdrama\n"
-    )
-    assert post_text(**kwargs).startswith("SCP-173 Blink · Part 2: Blinking")  # type: ignore[arg-type]
-    assert "Follow for part 3." in post_text(**kwargs)  # type: ignore[arg-type]
-
-
 @pytest.mark.parametrize(
     ("genre", "old", "new"),
     [("system_regression", "default", "action"), ("isekai", "default", "action"),
@@ -455,10 +379,8 @@ def test_a_legacy_reel_is_flat_with_no_books_or_auto_reel_and_now_a_cover(
         "reel-plan-ep01-v1.json",
     ]  # fmt: skip
     post = result.post.read_text(encoding="utf-8")  # type: ignore[union-attr]
-    assert post == (
-        "The door was never locked.\nTiny Show · Episode 1: The Door\n\n"
-        "Episode 2 is next. Follow so you don't miss it.\n\n#mystery #shortdrama\n"
-    )
+    # The post caption is the server's on older desks too (decision D5, 21 Oct 2026); conftest stands in for it.
+    assert post == "Series · Part 1\nFollow for part 2.\n\n#shortdrama\n"
     said = out.getvalue()
     assert "metrics" not in said and "latest" not in said
     assert "is also the reel's first frame" in said
@@ -610,11 +532,11 @@ def test_a_legacy_reel_never_draws_system_panels(
 
 def test_the_allow_list_is_group_a_only() -> None:
     """The seam bed (#156), sound only (the silent-head trim cuts picture: new desks only), caption
-    dashes (#137, captions only) and the pitch card (#155, a reminder on a continuing desk), both moved
-    from Group B on 9 Oct 2026."""
+    dashes (#137, captions only), moved from Group B on 9 Oct 2026. The pitch card left the list on
+    21 Oct 2026: it is the server's card and hold now."""
 
     assert CONTINUING_FIXES == frozenset(
-        {"seam_bed", "caption_dashes", "pitch_card", "per_word_captions"}
+        {"seam_bed", "caption_dashes", "per_word_captions"}
     )
 
 

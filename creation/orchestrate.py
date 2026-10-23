@@ -82,9 +82,8 @@ from creation.ops.state import (
 )
 from creation.plan_prompt import (
     _without_kit_directive,
-    ensure_plan_prompt,
+    plan_prompt,
     narrator_warning,
-    server_cast_floor,
 )
 from creation.picture_checks import (
     board_picture_check_lines,
@@ -149,17 +148,11 @@ from creation.harness_rules import (
     hands_on_sound_lines,
     hook_mouth_stop,
     locked_camera_line,
-    sparkle_adult_line,
     staging_contradiction_lines,
-    young_creature_lines,
 )
 from creation import line_fit
 from creation.hook_line import gate_hook_line_lines
-from creation.pitch_card import (
-    pitch_gate_refusal,
-    restraint_beat_lines,
-    script_pitch_lines,
-)
+from creation.pitch_card import carry_before_paid_step
 from creation.stranded_voice import explain_film_refusal, stranded_preflight
 from creation.stylised_only import BriefNoticePause
 from creation.voice_gate import film_refusal as voices_film_refusal
@@ -492,22 +485,20 @@ def script_gate_text(desk: Path, spine: dict[str, Any], *, episode: int) -> str:
     if camera:
         text += "\n" + camera
     notes = [
-        *restraint_beat_lines(spine, episode=episode),
         *staging_contradiction_lines(spine, episode=episode),
         *adult_face_lines(spine),
         *hands_on_sound_lines(spine, episode=episode),
     ]
-    sparkle = sparkle_adult_line(spine, episode=episode)
-    if sparkle:
-        notes.append(sparkle)
     if notes:
         text += "\n" + "\n".join(notes)
     # The hook line's words and options, read with the script (founder, 7 Oct 2026, L-20261005-11).
     text += "\n" + "\n".join(gate_hook_line_lines(desk, spine, episode))
-    # The approved pitch (every desk that has one): read the lines against it.
-    pitch = script_pitch_lines(desk, spine, episode=episode)
-    if pitch:
-        text += "\n" + "\n".join(pitch)
+    # The pitch card is the server's card of this script (decision A, 21 Oct 2026).
+    text += (
+        f"\nPitch card: the server's card of this script. Show it (`fictora-produce pitch --desk {desk} "
+        f"--episode {episode}`) and, after the human's yes, `fictora-produce approve --desk {desk} --gate pitch "
+        f"--episode {episode}`: the server draws no boards for this episode until then."
+    )
     return text
 
 
@@ -886,7 +877,7 @@ def bind_desk(
     api_dir.mkdir(parents=True, exist_ok=True)
     state = ensure_production(
         desk,
-        prompt=ensure_plan_prompt(prompt),
+        prompt=plan_prompt(prompt),
         preset_id=pid,
         preset_version=version,
         video_lane=video_lane,
@@ -1502,9 +1493,10 @@ def run_step(
 ) -> StepResult:
     """Run the next automated API step for the current phase.
 
-    On a desk created on or after 6 Oct 2026 it first refuses a plate or board
-    drawing, with nothing sent, while the episode's pitch card has no yes
-    (:func:`creation.pitch_card.pitch_gate_refusal`).
+    The server holds a board drawing (and filming) while the episode's pitch
+    card has no yes (the kit sends ``pitch-card-1``); an old desk yes on the
+    episode in progress is carried to the server first
+    (:func:`creation.pitch_card.carry_before_paid_step`).
 
     Before a paid plate or board drawing it refuses, with nothing sent, when the
     desk drew a look frame the look yes does not cover (:func:`look_gate_refusal`).
@@ -1559,14 +1551,9 @@ def run_step(
     desk = desk.expanduser().resolve()
     state = load_production(desk)
     if state.phase in PAID_DRAWING_PHASES:
-        # The producer's yes to the idea comes before every other stop (new desks only).
-        pitch = pitch_gate_refusal(
-            desk,
-            episode=state.episode_ordinal,
-            stage="the plates" if state.phase == "ready_cast_enrol" else "the boards",
-        )
-        if pitch:
-            raise RuntimeError(pitch)
+        # The server holds paid drawing until the episode's card has its yes; an
+        # old desk yes on the episode in progress is carried there once.
+        carry_before_paid_step(desk, state.episode_ordinal)
         refusal = look_gate_refusal(desk)
         if refusal:
             raise RuntimeError(refusal)
@@ -1636,11 +1623,9 @@ def run_step(
                 on_screen=narrator_on_screen, ask=ask, rerun=rerun, out=sys.stderr,
             )  # fmt: skip
         if state.phase == "new":
-            # A server whose season bible holds one person (fictora-drama #582)
-            # is asked for exactly the people the story needs; an older one for two.
-            effective_prompt = ensure_plan_prompt(
-                state.prompt, cast_floor=server_cast_floor(run)
-            )
+            # The premise goes as the creator wrote it (decision D6, 21 Oct 2026): the server
+            # writes the cast to its own floor and rules; a directive an older run stored is taken off.
+            effective_prompt = plan_prompt(state.prompt)
             if effective_prompt != state.prompt:
                 state.prompt = effective_prompt
             narration = narrator_warning(effective_prompt, desk=desk)
@@ -1777,11 +1762,8 @@ def run_step(
             # brought in: only their pictures are new (the approved ones are
             # reused), and the enrol carries the episode's own tag.
             spine_now = run.spine(state.spine_id)
-            young = young_creature_lines(spine_now)
-            if young:
-                raise RuntimeError(
-                    "Stopped before the plates. Nothing was sent.\n" + "\n".join(young)
-                )
+            # A young creature's proportions and sparkle on adults are the
+            # server's own swaps now (fictora-drama #969, decisions C12).
             for line in [
                 *adult_face_lines(spine_now),
                 *one_sided_side_lines(spine_now),
@@ -1914,15 +1896,8 @@ def run_step(
                 "wait_spend": "spend",
             }[state.phase]
             if state.phase == "wait_spend" and confirm_spend:
-                # Filming is paid too: a pitch rewritten after the boards holds it until its new yes.
-                pitch = pitch_gate_refusal(
-                    desk,
-                    episode=ep,
-                    stage="filming",
-                    rerun="`step --confirm-spend` again",
-                )
-                if pitch:
-                    raise RuntimeError(pitch)
+                # Filming is paid too: the server holds it while the card needs a yes.
+                carry_before_paid_step(desk, ep)
                 # The voices gate: nothing films until every speaking voice has the human's yes.
                 refused = voices_film_refusal(
                     desk, run.spine(state.spine_id or ""), episode=ep, run=run
@@ -1938,15 +1913,11 @@ def run_step(
                     no_single_frame_start=no_single_frame_start,
                     _spend_yes=True,
                 )
-            voices = ""
-            if state.phase == "wait_script" and state.spine_id:
-                voices = voices_gate_text(
-                    desk, run.spine(state.spine_id), episode=ep, run=run
-                )
+            # One step at a time (founder phone test, 22 Oct 2026): the voices
+            # come after the script's yes, never beside the script.
             return StepResult(
                 state.phase,
-                f"Waiting on human gate `{gate}` (episode {ep}). Use fictora-produce approve."
-                + (f"\n{voices}" if voices else ""),
+                f"Waiting on human gate `{gate}` (episode {ep}). Use fictora-produce approve.",
                 (),
             )
 
@@ -2000,16 +1971,10 @@ def run_step(
                     "Stopped before the boards. " + mouth + " Nothing was sent."
                 )
             conflicts = staging_contradiction_lines(spine_now, episode=ep)
-            sparkle = sparkle_adult_line(spine_now, episode=ep)
-            if conflicts or sparkle:
+            if conflicts:
                 raise RuntimeError(
                     "Stopped before the boards. Nothing was sent.\n"
-                    + "\n".join(
-                        [
-                            *conflicts,
-                            *([sparkle] if sparkle else []),
-                        ]
-                    )
+                    + "\n".join(conflicts)
                 )
             if not is_legacy(desk):
                 voices_first = voices_first_refusal(
@@ -3129,16 +3094,16 @@ def approve_gate(
             traits = f"\n{traits}" if traits else ""
             # A character a later episode brought in is approved after that
             # episode's script yes: go on to its boards.
-            # The voices gate comes after the plates: the human hears each voice before any filming.
-            voices = voices_gate_text(
-                desk, run.spine(state.spine_id or ""), episode=ep, run=run
-            )
-            voices = f"\n{voices}" if voices else ""
             if (
                 ep >= 2
                 and episode_by_ordinal(load_series(desk), ep).script.status
                 == "approved"
             ):
+                # The script already has its yes: the voices come now, before the boards.
+                voices = voices_gate_text(
+                    desk, run.spine(state.spine_id or ""), episode=ep, run=run
+                )
+                voices = f"\n{voices}" if voices else ""
                 state.phase = "ready_boards_enrol"
                 save_production(desk, state)
                 return StepResult(
@@ -3161,7 +3126,7 @@ def approve_gate(
             )
             return StepResult(
                 state.phase,
-                f"Plates approved ({record.status}). Human: approve script lines.{traits}{voices}{captions}",
+                f"Plates approved ({record.status}). Human: approve script lines.{traits}{captions}",
                 (),
             )
 
@@ -3218,6 +3183,17 @@ def approve_gate(
             camera = locked_camera_line(spine, episode=ep)
             if camera:
                 warning += "\n" + camera
+            # One step at a time (founder phone test, 22 Oct 2026): Script, then
+            # Voices, then Storyboard. The voices are heard and kept now, before
+            # the boards; filming still waits for every yes.
+            voices = voices_gate_text(desk, spine, episode=ep, run=run)
+            if voices:
+                return StepResult(
+                    state.phase,
+                    f"Episode {ep} script approved on the API. Next: the voices (below), then "
+                    f"fictora-produce step (boards).{warning}\n{voices}",
+                    (),
+                )
             return StepResult(
                 state.phase,
                 f"Episode {ep} script approved on the API. Next: fictora-produce step (boards).{warning}",

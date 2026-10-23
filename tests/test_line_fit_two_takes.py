@@ -56,7 +56,7 @@ def two_takes_proposal(pid: str = "lf_1", **changes: Any) -> dict[str, Any]:
 # --- the card and the choice -----------------------------------------------------------------------
 
 
-def test_the_card_prints_the_two_takes_choice_word_for_word_and_the_take_it_adds(
+def test_the_card_prints_the_two_takes_choice_word_for_word_and_nothing_of_its_own(
     desk: Path, api: FakeApi
 ) -> None:
     _serve(api, two_takes_proposal())
@@ -64,11 +64,26 @@ def test_the_card_prints_the_two_takes_choice_word_for_word_and_the_take_it_adds
     text = _run(desk, proposal_id="lf_1")
 
     assert f"{LABEL}: {TEXT}" in text
-    assert "Adds a take after take 2 (3 beats)." in text
+    # The server's words only: no kit sentence about the take it adds.
+    assert "Adds a take" not in text and "beats)" not in text
     assert (
         f"fictora-produce line-fit --desk {desk} --proposal lf_1 --choose two-takes"
         in text
     )
+
+
+def test_the_card_prints_where_the_new_take_plays_in_the_servers_words(
+    desk: Path, api: FakeApi
+) -> None:
+    said = "This adds one take to film, right after take 2."
+    served = two_takes_proposal()
+    served["choices"][1]["text"] = said
+    _serve(api, served)
+
+    text = _run(desk, proposal_id="lf_1")
+
+    assert f"{LABEL}: {said}" in text
+    assert text.count("after take 2") == 1
 
 
 def test_choose_two_takes_sends_two_takes_and_follows_the_redraft(

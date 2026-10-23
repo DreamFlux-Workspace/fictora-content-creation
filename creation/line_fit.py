@@ -185,14 +185,11 @@ def proposal_card(proposal: Mapping[str, Any], *, desk: Path | str = "<desk>") -
     rows.append("  Choices:")
     for offer in proposal.get("choices") or []:
         choice = CHOICE_ACTIONS.get(str(offer.get("action")))
+        # The server's own words, including where "No, give it two takes"
+        # puts the new take ("This adds one take to film, right after take
+        # 2."). The kit adds no sentence of its own; an older server's shorter
+        # line is printed as it is.
         rows.append(f"    {offer.get('label')}: {offer.get('text')}")
-        extra = proposal.get("extra_take")
-        if choice == "two_takes" and isinstance(extra, Mapping):
-            # The take the choice adds, as the server sent it (fictora-drama #967).
-            rows.append(
-                f"      Adds a take after take {extra.get('after_take')} "
-                f"({extra.get('beats')} beats)."
-            )
         if choice:
             rows.append(f"      {command(desk, pid, choice)}")
     return "\n".join(rows)

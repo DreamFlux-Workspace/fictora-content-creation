@@ -456,7 +456,9 @@ def _commands(desk: Path, pending: list[CastVoice]) -> list[str]:
     if not is_legacy(desk):
         return _listen_first_commands(desk, pending)
     lines = [
-        "Play each voice to the human (the sample, or an audition), then for each character:",
+        # Keep all voices leads, as the app's filled button does (founder, 22 Oct 2026).
+        f"Keep all voices: fictora-produce voice --desk {desk} --keep-all",
+        "Or hear the voices: play each one to the human (the sample, or an audition), then for each character:",
     ]
     for voice in pending:
         lines.append(
@@ -467,9 +469,6 @@ def _commands(desk: Path, pending: list[CastVoice]) -> list[str]:
             f"fictora-produce voice --desk {desk} --cast {voice.cast_id} --audition, "
             f"then fictora-produce voice --desk {desk} --cast {voice.cast_id} --pick N"
         )
-    lines.append(
-        f"Or keep every voice as it is: fictora-produce voice --desk {desk} --keep-all"
-    )
     return lines
 
 
@@ -503,8 +502,38 @@ def render_gate(
     return "\n".join([head, *rows, *_commands(desk, pending), *tail])
 
 
+def server_step_line(
+    run: Any, spine_id: str, *, episode: int | None, moment: str = "after_script"
+) -> str | None:
+    """Sokii's line for the Voices step, from the server (fictora-drama #990), or ``None``.
+
+    One Create step at a time (founder phone test, 22 Oct 2026): Script, then
+    Voices, then Storyboard. The server says when the step is due and its
+    words; the kit prints them. ``None`` when the server is older (no route),
+    cannot be reached, or says the step is not due.
+    """
+
+    read = getattr(run, "get_optional", None)
+    if read is None or not spine_id:
+        return None
+    path = f"/v1/spines/{spine_id}/voices-step?episode_ordinal={episode or 1}&moment={moment}"
+    try:
+        status, body = read(path)
+    except Exception:  # noqa: BLE001 - an unreachable server leaves the kit's own words
+        return None
+    if status != 200 or not isinstance(body, dict) or not body.get("due"):
+        return None
+    text = str(body.get("text") or "").strip()
+    return text or None
+
+
 def gate_text(
-    desk: Path, spine: Mapping[str, Any], *, episode: int | None = None, run: _Api
+    desk: Path,
+    spine: Mapping[str, Any],
+    *,
+    episode: int | None = None,
+    run: _Api,
+    moment: str = "after_script",
 ) -> str:
     """The Voices gate as ``step`` prints it after the plates: whose voices, each voice, and what to run.
 
@@ -524,7 +553,12 @@ def gate_text(
         return "\n".join([voices.line(), MODEL_GATE_SKIPPED])
     body, approvals = sync_approvals(desk, run, spine)
     text = render_gate(desk, body, approvals, episode=episode)
-    return "\n".join([voices.line(), text]) if text else ""
+    if not text:
+        return ""
+    said = server_step_line(
+        run, str(spine.get("spine_id") or ""), episode=episode, moment=moment
+    )
+    return "\n".join([voices.line(), *([f"Sokii: {said}"] if said else []), text])
 
 
 def _listen_first_commands(desk: Path, pending: list[CastVoice]) -> list[str]:
@@ -536,7 +570,10 @@ def _listen_first_commands(desk: Path, pending: list[CastVoice]) -> list[str]:
     """
 
     lines = [
-        "Hear each voice with the human first (founder rule: never keep a voice nobody heard):"
+        # Keep all voices leads, as the app's filled button does (founder, 22 Oct 2026);
+        # on a new desk it still needs the human to have heard each one.
+        f"Keep all voices, once the human heard every one: fictora-produce voice --desk {desk} --keep-all --heard",
+        "Or hear the voices with the human first (founder rule: never keep a voice nobody heard):",
     ]
     for voice in pending:
         audition = (
@@ -555,9 +592,6 @@ def _listen_first_commands(desk: Path, pending: list[CastVoice]) -> list[str]:
             f"  {voice.name}: keep it once the human heard it: "
             f"fictora-produce voice --desk {desk} --cast {voice.cast_id} --keep --heard"
         )
-    lines.append(
-        f"Or, once the human heard every one: fictora-produce voice --desk {desk} --keep-all --heard"
-    )
     return lines
 
 

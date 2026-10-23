@@ -148,7 +148,7 @@ Then watch the file in `takes/`. A take that will be re-filmed gets no `finish`,
 - [ ] No post overlay covers the key reveal (test frames of the key shots looked at)
 - [ ] Previews, rough cuts and "just combine" files carry the house captions too
 - [ ] Join: no music under it, 24 fps, seam steps under 5 dB
-- [ ] At posting: a trending sound added inside Instagram or TikTok that fits the account (eerie for horror, soft for BL and food, playful-spooky for horror-comedy); captions on; the "with score" version only when the reel truly needs it and was asked for
+- [ ] At posting: a trending sound added inside Instagram or TikTok in the mood the server's post text names; captions on; the "with score" version only when the reel truly needs it and was asked for
 - [ ] Un-marked master kept (`…-cap-vN.mp4`); the marked `…-sokii-vN.mp4` is the delivered copy
 - [ ] Job ids are in `run-notes.md`; no compiled prompt was fetched or saved
 - [ ] The delivered file copied (not moved) into `<Series> - finished episodes`; the desk folder not moved or renamed

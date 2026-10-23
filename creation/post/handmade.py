@@ -266,6 +266,7 @@ def make_voice_line(
     take_id: str | None = None,
     reuse: bool = False,
     extra: dict[str, Any] | None = None,
+    episode_id: str | None = None,
 ) -> DryLine:
     """Render one dry line in the card's locked voice on the server, save it with its sidecar and book it.
 
@@ -294,6 +295,10 @@ def make_voice_line(
         language) without a call or a booking (``finish``'s inner-voice lines).
     extra
         More fields for the sidecar (``cue_id``).
+    episode_id
+        The ``voice-line`` command's episode: the server voices only a heard-only
+        line already in that episode's script (decision D4) and refuses anything
+        else before spending.
 
     Returns
     -------
@@ -334,6 +339,7 @@ def make_voice_line(
         language=language,
         key=key,
         spoken_text=spoken_text,
+        **({"episode_id": episode_id} if episode_id else {}),
     )
     url = str(answer["audio_url"])
     dest = download(
@@ -353,6 +359,13 @@ def make_voice_line(
         encoding="utf-8",
     )  # fmt: skip
     return DryLine(dest, cost, False, dict(reading))
+
+
+#: What an older server means for ``voice-line``, in plain words.
+VOICE_LINE_OLDER_SERVER = (
+    "this Drama API cannot check a voice line against the script yet (an older deploy). Nothing was sent "
+    "or spent: update the server, then run voice-line again"
+)
 
 
 def run_voice_line(
@@ -393,6 +406,11 @@ def run_voice_line(
     ------
     ValueError
         An empty line, or a character with no locked voice.
+    RuntimeError
+        An older server (nothing is sent or spent).
+    AudioServiceError
+        The server refused the line: said on screen (re-film the take instead) or
+        not in the script (add it as an off-screen line or a thought first). Nothing spent.
     """
 
     out = out or sys.stdout
@@ -401,9 +419,16 @@ def run_voice_line(
     if not line:
         raise ValueError("--text is empty")
     spoken = (spoken_text or "").strip() or None
+    from creation.on_screen_text import server_owns_text
+    from creation.spine_view import episode_id_for
+
     run = open_api(desk, episode)
     try:
         spine = refresh_spine(run, desk, episode)
+        # Decision D4 (21 Oct 2026): a dry line is an off-screen line or a thought already in the
+        # script, which the server checks before it spends; an older server cannot, so nothing is sent.
+        if not server_owns_text(run):
+            raise RuntimeError(VOICE_LINE_OLDER_SERVER)
     finally:
         run.client.close()
     card = find_cast(spine, cast)
@@ -419,7 +444,7 @@ def run_voice_line(
     )
     made = make_voice_line(
         desk, spine=spine, card=card, text=line, episode=episode, spoken_text=spoken,
-        audio=service, out=out,
+        audio=service, out=out, episode_id=episode_id_for(spine, episode),
     )  # fmt: skip
     dest, cost = made.path, made.cost_usd
     print(dest, file=out)

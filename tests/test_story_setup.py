@@ -19,10 +19,10 @@ from conftest import set_phase
 from creation import episode_commands as ec
 from creation import orchestrate
 from creation.plan_prompt import (
-    ensure_plan_prompt,
+    _CAST_FLOOR_SUFFIX,
     narrator_lines,
     narrator_warning,
-    server_cast_floor,
+    plan_prompt,
     strip_narration,
 )
 from creation.production_config import load_production_config
@@ -71,10 +71,6 @@ def test_strip_narration_keeps_everything_else_as_written() -> None:
     assert "| 1 | 1 | Mika | Is anyone there? |" in stripped
     assert "There is no narrator on screen." in stripped
     assert "\n\n\n" not in stripped
-    # The kit's own cast directive talks about narrators but is not a narrator line.
-    for floor in (1, 2):
-        directed = ensure_plan_prompt(NARRATED, cast_floor=floor)
-        assert strip_narration(directed).endswith(directed.rsplit("\n\n", 1)[1])
 
 
 def test_the_warning_names_the_lines_and_the_command() -> None:
@@ -104,49 +100,24 @@ def test_step_warns_before_the_draft(
     assert api.posted(DRAFTS)
 
 
-# --- One-person shows ---------------------------------------------------------------------------
+# --- The premise goes as written (decision D6, 21 Oct 2026) -------------------------------------
 
 
-def test_a_one_person_server_gets_the_one_person_directive_in_place_of_the_two_member_one() -> (
-    None
-):
-    two = ensure_plan_prompt("A lighthouse keeper alone in the fog.")
+def test_the_premise_goes_as_written_and_a_stored_kit_directive_is_taken_off() -> None:
+    raw = "A lighthouse keeper alone in the fog."
 
-    one = ensure_plan_prompt(two, cast_floor=1)
-
-    assert "[fictora:season-bible-cast-min=2]" not in one
-    assert one.count("[fictora:season-bible-cast-min=1]") == 1
-    assert "one person is a whole cast" in one
-    assert "never invent a narrator" in one.casefold()
-    assert "at least two" not in one
-    assert ensure_plan_prompt(one, cast_floor=1) == one
-    # Back on an older server, the two-member directive comes back once.
-    assert ensure_plan_prompt(one).count("[fictora:season-bible-cast-min=2]") == 1
-
-
-class _Capabilities:
-    def __init__(self, status: int, body: Any) -> None:
-        self.answer = (status, body)
-
-    def get_optional(self, path: str) -> tuple[int, Any]:
-        assert path == "/v1/capabilities"
-        return self.answer
-
-
-def test_the_cast_floor_is_read_from_the_server_and_two_when_it_does_not_say() -> None:
-    assert (
-        server_cast_floor(_Capabilities(200, {"reaction_kinds": [], "cast_floor": 1}))
-        == 1
+    assert plan_prompt(raw) == raw
+    assert plan_prompt(raw + _CAST_FLOOR_SUFFIX) == raw
+    assert plan_prompt("Premise. [fictora:season-bible-cast-min=2] mid-text.") == (
+        "Premise. [fictora:season-bible-cast-min=2] mid-text."
     )
-    assert server_cast_floor(_Capabilities(200, {"reaction_kinds": []})) == 2
-    assert server_cast_floor(_Capabilities(404, {"detail": "Not Found"})) == 2
 
 
-def test_the_draft_asks_a_one_person_server_for_exactly_the_people_the_story_needs(
-    desk: Path, api: FakeApi
-) -> None:
+def test_the_draft_sends_the_creators_words_only(desk: Path, api: FakeApi) -> None:
     set_phase(desk, "new", spine_id=None)
-    api.routes[("GET", "/v1/capabilities")] = {"reaction_kinds": [], "cast_floor": 1}
+    state = load_production(desk)
+    state.prompt = "A lighthouse keeper alone in the fog." + _CAST_FLOOR_SUFFIX
+    save_production(desk, state)
     api.routes[("POST", DRAFTS)] = {"plan_job_id": "job_plan", "spine_id": "sp1"}
     api.jobs["job_plan"] = {"status": "completed"}
 
@@ -154,20 +125,8 @@ def test_the_draft_asks_a_one_person_server_for_exactly_the_people_the_story_nee
 
     sent = api.posted(DRAFTS)[0]
     assert sent is not None
-    assert "[fictora:season-bible-cast-min=1]" in sent["prompt"]
-    assert "[fictora:season-bible-cast-min=2]" not in sent["prompt"]
-
-
-def test_the_draft_keeps_two_on_an_older_server(desk: Path, api: FakeApi) -> None:
-    set_phase(desk, "new", spine_id=None)
-    api.routes[("POST", DRAFTS)] = {"plan_job_id": "job_plan", "spine_id": "sp1"}
-    api.jobs["job_plan"] = {"status": "completed"}
-
-    orchestrate.run_step(desk)
-
-    sent = api.posted(DRAFTS)[0]
-    assert sent is not None
-    assert "[fictora:season-bible-cast-min=2]" in sent["prompt"]
+    assert "fictora:season-bible-cast-min" not in sent["prompt"]
+    assert sent["prompt"].startswith("A lighthouse keeper alone in the fog.")
 
 
 # --- language -----------------------------------------------------------------------------------
