@@ -56,6 +56,24 @@ def _server_draws_on_screen_text(request: pytest.FixtureRequest) -> Any:
         yield
 
 
+@pytest.fixture(autouse=True)
+def _caption_server_is_older_by_default(request: pytest.FixtureRequest) -> Any:
+    """Tests stay offline: the caption layout and check routes answer as an older server (404).
+
+    ``finish``/``caption`` then lay captions out with the kit's own fallback and
+    the take check reads the caption file itself, as before fictora-drama #1029.
+    Mark a test ``real_caption_server`` to leave the routes to the test.
+    """
+
+    if request.node.get_closest_marker("real_caption_server") is not None:
+        yield
+        return
+    from creation.caption_server import server_override
+
+    with server_override(lambda path, body: (404, {"detail": "Not Found"})):
+        yield
+
+
 @pytest.fixture
 def desk(tmp_path: Path) -> Path:
     """A 15s desk with episode 1 drafted (spine ``sp1``), ready for later stages."""
