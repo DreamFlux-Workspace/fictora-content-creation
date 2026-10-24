@@ -28,7 +28,9 @@ from creation.post.letterbox import TitleBlock, mark_and_title, pad_to_canvas
 
 TOLERANCE = 4
 #: The reference's ink, (first, last) row or column.
-MARK_X, MARK_Y = (39, 96), (179, 227)
+# The mark's row is Not Home's; its column is 12% in since 24 Oct 2026 (Not Home's x 39-96 + 98 px), so the
+# app's full-bleed feed on a 20:9 phone never clips it (fictora-drama #1039).
+MARK_X, MARK_Y = (137, 194), (179, 227)
 TITLE_1, TITLE_2 = (333, 384), (396, 435)
 CAPTION_DESCENDER, CAPTION_PLAIN = (1417, 1468), (1417, 1457)
 #: fictora-drama #614's measured renders of two captions' ink columns: one centred on the frame, one

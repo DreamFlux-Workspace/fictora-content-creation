@@ -30,9 +30,11 @@ CANVAS_HEIGHT = 1920
 CANVAS_COLOUR = "black"
 #: A letterbox take is filmed 4:3: scaled to 1080x810 and centred, y 555-1365.
 MASTER_RATIO = (4, 3)
-#: The Sokii mark image (``assets/sokii-line-72.png``, 72x63, its ink 6 px in) placed at (32, 173), the
-#: portrait mark's own spot (3% / 9%): its ink lands at x 38-97, y 179-228, the reference's x 39-96, y 179-227.
-MARK_X = 32
+#: The Sokii mark image (``assets/sokii-line-72.png``, 72x63, its ink 6 px in) placed at (130, 173): the
+#: reference's row (ink y 179-228), 12% in since 24 Oct 2026 (was 32, the reference's x) so the app's full-bleed
+#: feed on a 20:9 phone never clips it. The server decides it (``POST /v1/mark/placement``, fictora-drama
+#: #1039); these numbers are the fallback for an older or unreachable server.
+MARK_X = 130
 MARK_Y = 173
 #: The mark image's height; the title's ink never rises above it plus this gap.
 MARK_HEIGHT = 63
@@ -283,7 +285,7 @@ def layout(width: int = CANVAS_WIDTH, height: int = CANVAS_HEIGHT) -> LetterboxL
     -------
     LetterboxLayout
         Picture 1080x810 at y 555-1365; last title baseline y 435; caption box from y 1407 (ink top 1417),
-        x 60-950, above y 1536; mark placed at (32, 173), on 1080x1920.
+        x 60-950, above y 1536; mark placed at (130, 173), on 1080x1920.
     """
 
     def y(value: float) -> int:
