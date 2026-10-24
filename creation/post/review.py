@@ -43,9 +43,10 @@ command exits 0 whatever it finds.
    for one person drawn twice (no face detector: a human counts). ``–`` always;
    one line says so when the server sent no head counts.
 7. **Safe zones** (finished files only) - the caption safe-zone check
-   (:func:`creation.post.safe_zones.run_review`, unchanged): the caption box on
-   sampled frames against the covered zones and the caption band, with the zone
-   sheet and its JSON written beside the take for the face check by eye.
+   (:func:`creation.post.safe_zones.run_review`): the server checks every cue of
+   the burned caption file against the covered zones and the caption band (no
+   caption is found by colour, 24 Oct 2026), with the zone sheet and its JSON
+   written beside the take for the face check by eye.
 8. **Opening** (take 1 of every episode, and every reel) - the first second
    (:mod:`creation.post.opening`): a dark frame 0 (and first 0.5 s), a static
    head (no meaningful motion in the first second), and no face on frame 0
@@ -1445,24 +1446,25 @@ def words_belong_note(words: Path, raw: Path | None, *, made: bool = False) -> s
 def safe_zones_section(take: Path) -> Section:
     """The caption safe-zone check (:func:`creation.post.safe_zones.run_review`, unchanged) as a section.
 
-    It samples frames, finds the house caption box by colour, checks it against the covered
-    zones and the caption band, and writes the zone sheet and its JSON beside the take.
+    The server checks the burned caption file against the covered zones and the caption band
+    (``POST /v1/captions/safe-area-check``; the kit's own reader on an older server); frames are
+    sampled for the zone sheet and its JSON beside the take. No caption is found by colour.
     """
 
     from creation.captions import CAPTION_BAND
-    from creation.post.safe_zones import SAMPLE_FRAMES, run_review
+    from creation.post.safe_zones import run_review
 
     report = run_review(None, take_file=take, out=StringIO())
     low, high = CAPTION_BAND
     threshold = (
         f"caption box clear of the top 8%, bottom 20% and right rail, inside {low:.0%}-{high:.0%} of the height, "
-        f"on {SAMPLE_FRAMES} sampled frames and every cue of the burned caption file; faces by eye on the "
+        "for every cue of the burned caption file (the server's check); faces by eye on the "
         "zone sheet (no face detector)"
     )
     found = [
         w
         for w in report.warnings
-        if w.startswith("!!") or w.startswith("no house caption")
+        if w.startswith("!!") or w.startswith("no burned caption file")
     ]
     notes = [w for w in report.warnings if w not in found]
     captioned = sum(1 for frame in report.frames if frame.caption is not None)

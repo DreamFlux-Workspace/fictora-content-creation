@@ -2141,6 +2141,69 @@ def build_ass(
     return header + events
 
 
+def portrait_caption_ass(
+    cues: Sequence[Cue],
+    *,
+    width: int,
+    height: int,
+    style: str,
+    whole_lines: bool,
+    size_scale: float = 1.0,
+    desk: Path | None = None,
+    episode: int = 1,
+) -> str:
+    """A portrait take's caption file, laid out by the server (24 Oct 2026, fictora-drama #1029).
+
+    The kit times the words; the server places them (``POST /v1/captions/layout``:
+    side margins clear of the right-hand rail, the 55-70% band, Bold's bottom
+    at 70%, wrap before shrink) and the file it returns is burned as is. The
+    kit's own :func:`build_ass` is the fallback, with a printed ``NOTE``, on an
+    older server, with no connection, or for ``--caption-scale`` other than 1
+    (the server lays out the house size only).
+
+    Parameters
+    ----------
+    cues
+        The take's timed cues.
+    width, height
+        The take's frame.
+    style
+        ``bold``, ``house`` or ``plain``.
+    whole_lines
+        Each cue is a whole line.
+    size_scale
+        ``--caption-scale``.
+    desk, episode
+        The desk whose API session asks the server.
+
+    Returns
+    -------
+    str
+        The ASS file text.
+    """
+
+    from creation.caption_server import note, server_caption_ass
+
+    style = canonical_caption_style(style)
+    if size_scale != 1.0:
+        note(
+            f"--caption-scale {size_scale:g}: the server lays out the house size only, "
+            "so the kit laid these captions out itself"
+        )
+    else:
+        text, findings = server_caption_ass(
+            cues, width=width, height=height, style=style, whole_lines=whole_lines,
+            desk=desk, episode=episode,
+        )  # fmt: skip
+        if text is not None:
+            for finding in findings:
+                print(f"WARNING server caption check: {finding}", file=sys.stderr)
+            return text
+    return build_ass(
+        cues, width=width, height=height, style=style, size_scale=size_scale
+    )
+
+
 def find_ffmpeg() -> tuple[str, str]:
     """Return ``(ffmpeg, ffprobe)`` paths where ffmpeg can burn ASS (libass).
 
@@ -3188,9 +3251,10 @@ def caption_take(
             else None,
         )  # fmt: skip
     else:
-        text = build_ass(
-            cues, width=width, height=height, style=style, size_scale=caption_scale
-        )
+        text = portrait_caption_ass(
+            cues, width=width, height=height, style=style, whole_lines=whole_lines,
+            size_scale=caption_scale, desk=desk, episode=episode_ordinal,
+        )  # fmt: skip
     ass.write_text(text, encoding="utf-8")
     video = next_versioned_path(takes, stem or f"{base}-captioned", ".mp4")
     font_warning = "; ".join(

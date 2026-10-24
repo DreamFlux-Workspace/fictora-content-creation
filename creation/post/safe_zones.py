@@ -5,17 +5,19 @@ TikTok, Reels and Shorts draw their own interface over the video: the top 8%
 right 12% of the lower two thirds (like, comment, share). The board gate reads
 the written placements only; this reads the filmed pixels.
 
-What is measured, on frames sampled across the take:
+What is measured:
 
-- **captions**: the house caption is yellow (``#FFE500``), so its box is found
-  by colour on each frame and checked against the covered zones and against
-  the house caption band (55-70% of the frame height).
-- **caption layout**: when the burned caption file the kit wrote is beside the
-  take (``take-epNN-tK-cap-vN.ass``), every cue's box is laid out from it
-  (frame size, style font size, alignment and margins, ``\\pos``/``\\an``,
-  the cue's lines at the font's measured width) and checked the same way, with
-  the cue's times. That covers each cue, not only the sampled frames, and a
-  white ``plain`` caption the colour search cannot see.
+- **captions** (24 Oct 2026, fictora-drama #1029): the burned caption file the
+  kit wrote beside the take (``take-epNN-tK-cap-vN.ass``) is sent to the
+  server's ``POST /v1/captions/safe-area-check``, which lays out every cue as
+  libass draws it and names each cue in a covered zone or (portrait) outside
+  the 55-70% caption band, with its words and times. Captions are no longer
+  looked for by yellow pixels: that boxed a yellow raincoat and a brass lamp
+  as captions on the Pawn Ticket paid test (23 Oct 2026). On an older server
+  (no route) or with no connection, the kit reads the file itself
+  (:func:`caption_layout`: frame size, style font size, alignment and margins,
+  ``\\pos``/``\\an``, each line at the font's measured width) and says so.
+  A take with no burned caption file beside it is not checked for captions.
 - **faces**: this kit carries no face detector (its dependencies are numpy
   and Pillow only), so faces are not measured. ``review`` writes a contact
   sheet of the sampled frames with the covered zones shaded, for the human to
@@ -23,9 +25,9 @@ What is measured, on frames sampled across the take:
   written placements are no longer flagged: only a measured box is a finding.
 
 A letterbox show's 9:16 file (its finish record says ``letterbox``) is
-checked against its own band: captions sit under the picture, between the
-picture's bottom edge and the platform chrome (y 1385-1536, 72-80% on 1920), and the
-yellow hook line above the picture is the title, not a caption.
+checked for the covered zones only by the server (its captions sit under the
+picture, in their own band); the kit's own reader, the fallback, also checks
+that band (y 1385-1536, 72-80% on 1920).
 
 Everything is a warning: ``review`` always exits 0 and changes no take.
 """
@@ -41,7 +43,6 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, TextIO
 
-import numpy as np
 from PIL import Image, ImageDraw
 
 from creation.captions import CAPTION_BAND, text_width
@@ -60,10 +61,8 @@ ZONE_WHAT = {
     "right rail": "the right 12% of the lower two thirds (like, comment, share)",
 }
 SAMPLE_FRAMES = 8
-#: A row belongs to a caption when at least this share of its pixels are caption yellow.
-CAPTION_ROW_SHARE = 0.01
-#: A caption box narrower than this share of the frame is not a caption (a prop, a light).
-CAPTION_MIN_WIDTH = 0.06
+#: Two cues of the same words this close (seconds) are reported as one span.
+_JOIN_SECONDS = 0.02
 FACE_CHECK = (
     "faces: not measured (no face detector in this kit: numpy and Pillow only). Look at {sheet}: the covered "
     "zones are shaded red; check no face, eyes, mouth or key prop sits in them."
@@ -83,8 +82,8 @@ class FrameCheck:
     caption: Box | None
     zones: list[str] = field(default_factory=list)
     outside_band: bool = False
-    #: ``pixels`` (found by colour) or ``layout`` (the burned caption file's cue at this time).
-    measured_by: str = "pixels"
+    #: ``server`` (the server's check of the burned caption file) or ``layout`` (the kit's own reader).
+    measured_by: str = "server"
 
 
 @dataclass(frozen=True)
@@ -95,6 +94,8 @@ class LayoutCue:
     end: float
     text: str
     box: Box
+    #: The server's answer: whether the cue sits in the portrait caption band (``None``: the kit's reader).
+    in_band: bool | None = None
 
     @property
     def zones(self) -> list[str]:
@@ -113,6 +114,8 @@ class SafeZoneReport:
     warnings: list[str]
     layout: Path | None = None
     cues: list[LayoutCue] = field(default_factory=list)
+    #: ``server`` or ``kit`` (the fallback reader); ``None`` without a caption file.
+    checked_by: str | None = None
 
     def as_json(self) -> dict[str, Any]:
         """JSON-ready report."""
@@ -125,83 +128,9 @@ class SafeZoneReport:
             "warnings": self.warnings,
             "caption_layout": str(self.layout) if self.layout else None,
             "cues": [asdict(cue) | {"zones": cue.zones} for cue in self.cues],
+            "captions_checked_by": self.checked_by,
             "faces_measured": False,
         }
-
-
-def caption_mask(pixels: np.ndarray) -> np.ndarray:
-    """Pixels in the house caption yellow (``#FFE500`` after compression), as a boolean mask."""
-
-    r, g, b = (pixels[..., i].astype(int) for i in range(3))
-    return (r >= 200) & (g >= 170) & (b <= 120) & (r - b >= 120)
-
-
-def _caption_box_in_rows(mask: np.ndarray, row_lo: int, row_hi: int) -> Box | None:
-    """The densest run of caption-yellow rows inside ``[row_lo, row_hi)``.
-
-    A ceiling lamp and pale hair are yellow too. Joining every yellow row into
-    one box stretches the zone from the lamp down to the real caption. One
-    contiguous run is the caption.
-    """
-
-    height, width = mask.shape
-    if row_hi <= row_lo:
-        return None
-    threshold = max(2, CAPTION_ROW_SHARE * width)
-    yellow = np.flatnonzero(mask[row_lo:row_hi].sum(axis=1) >= threshold) + row_lo
-    if yellow.size == 0:
-        return None
-    runs: list[tuple[int, int]] = []
-    start = previous = int(yellow[0])
-    for raw in yellow[1:]:
-        row = int(raw)
-        if row > previous + 1:
-            runs.append((start, previous))
-            start = row
-        previous = row
-    runs.append((start, previous))
-    best_score = -1
-    best: tuple[int, int] | None = None
-    for run_start, run_end in runs:
-        score = int(mask[run_start : run_end + 1].sum())
-        if score > best_score:
-            best_score = score
-            best = (run_start, run_end)
-    assert best is not None
-    run_start, run_end = best
-    cols = np.flatnonzero(mask[run_start : run_end + 1].any(axis=0))
-    if cols.size == 0:
-        return None
-    left, right = cols.min() / width, (cols.max() + 1) / width
-    if right - left < CAPTION_MIN_WIDTH:
-        return None
-    return (
-        round(float(left), 4),
-        round(run_start / height, 4),
-        round(float(right), 4),
-        round((run_end + 1) / height, 4),
-    )
-
-
-def caption_box(image: Image.Image, *, below: float | None = None) -> Box | None:
-    """The caption's box as ``(left, top, right, bottom)`` fractions, or ``None`` when no caption shows.
-
-    The house band (about 50–78% of the height) is searched first. A yellow
-    lamp or highlight outside that band does not stretch the box. A caption
-    that sits in the covered bottom band is still found, on the whole frame,
-    so the warning still fires.
-    """
-
-    pixels = np.asarray(image.convert("RGB"))
-    height = pixels.shape[0]
-    mask = caption_mask(pixels)
-    if below is not None:
-        # A letterbox file: its captions are under the picture; the yellow above it is the title.
-        return _caption_box_in_rows(mask, int(below * height), height)
-    band = _caption_box_in_rows(mask, int(0.50 * height), int(0.78 * height))
-    if band is not None:
-        return band
-    return _caption_box_in_rows(mask, 0, height)
 
 
 def zones_entered(box: Box) -> list[str]:
@@ -447,6 +376,48 @@ def letterbox_file(video: Path, *, desk: Path | None = None) -> bool:
     return False
 
 
+def _desk_of(video: Path) -> Path | None:
+    """The series desk above ``video`` (the nearest folder with a ``series.json``)."""
+
+    return next(
+        (
+            p
+            for p in video.expanduser().resolve().parents
+            if (p / "series.json").is_file()
+        ),
+        None,
+    )
+
+
+def _spans(hits: Sequence[tuple[float, float, str]]) -> str:
+    """Cues as ``start-end 'words'``, a run of the same words (a Bold line building up) as one span."""
+
+    merged: list[list[Any]] = []
+    for start, end, text in sorted(hits):
+        last = merged[-1] if merged else None
+        if last is not None and last[2] == text and start <= last[1] + _JOIN_SECONDS:
+            last[1] = max(last[1], end)
+        else:
+            merged.append([start, end, text])
+    return "; ".join(f"{a:.2f}-{b:.2f}s {t[:40]!r}" for a, b, t in merged)
+
+
+def _server_cues(answer: dict[str, Any]) -> list[LayoutCue]:
+    cues: list[LayoutCue] = []
+    for cue in answer.get("cues") or []:
+        box = cue.get("box") or (0.0, 0.0, 0.0, 0.0)
+        cues.append(
+            LayoutCue(
+                round(int(cue.get("start_ms") or 0) / 1000, 3),
+                round(int(cue.get("end_ms") or 0) / 1000, 3),
+                str(cue.get("text") or ""),
+                (float(box[0]), float(box[1]), float(box[2]), float(box[3])),
+                bool(cue.get("in_band", True)),
+            )
+        )
+    return cues
+
+
 def check_safe_zones(
     video: Path,
     *,
@@ -454,8 +425,9 @@ def check_safe_zones(
     count: int = SAMPLE_FRAMES,
     layout: Path | None = None,
     letterbox: bool | None = None,
+    desk: Path | None = None,
 ) -> SafeZoneReport:
-    """Measure captions against the covered zones on sampled frames; write the zone sheet.
+    """Check the burned captions against the covered zones (the server's check); write the zone sheet.
 
     Parameters
     ----------
@@ -464,90 +436,122 @@ def check_safe_zones(
     sheet_dir
         Where the contact sheet goes; default next to ``video``.
     count
-        Frames sampled.
+        Frames sampled for the sheet.
     layout
         The burned caption file (:func:`burned_caption_file` finds it by default).
     letterbox
-        A letterbox show's 9:16 file (default: :func:`letterbox_file`): its
-        captions are checked in the band under the picture.
+        A letterbox show's 9:16 file (default: :func:`letterbox_file`).
+    desk
+        The series desk whose API session asks the server (default: the
+        nearest folder above ``video`` with a ``series.json``).
 
     Returns
     -------
     SafeZoneReport
-        Per-frame caption boxes, the zones they enter and the warnings.
+        Per-frame caption boxes (the cue showing then), the zones they enter and the warnings.
     """
+
+    from creation.caption_server import server_safe_area_check
+    from creation.post.episode_name import episode_number
 
     info = probe_video(video)
     layout = layout or burned_caption_file(video)
-    cues = (
-        caption_layout(layout, width=info.width, height=info.height)
-        if layout is not None
-        else []
-    )
-    grabbed: list[tuple[float, Image.Image, Box | None]] = []
-    checks: list[FrameCheck] = []
+    is_letterbox = letterbox if letterbox is not None else letterbox_file(video)
     low, high = CAPTION_BAND
-    below: float | None = None
-    band_name = "the house band"
-    if letterbox if letterbox is not None else letterbox_file(video):
+    band_name = "the caption band"
+    if is_letterbox:
         from creation.post.delivery_geometry import layout as letterbox_layout
 
         place = letterbox_layout(info.width, info.height)
-        below = place.picture.bottom / info.height
         low = place.caption_highest_top / info.height
         high = place.caption.bottom / info.height
         band_name = "the letterbox band under the picture"
+    cues: list[LayoutCue] = []
+    checked_by: str | None = None
+    warnings: list[str] = []
+    answer: dict[str, Any] | None = None
+    if layout is not None:
+        answer = server_safe_area_check(
+            layout.read_text(encoding="utf-8"),
+            letterbox=is_letterbox,
+            desk=desk or _desk_of(video),
+            episode=episode_number(video.name) or 1,
+        )
+        if answer is not None:
+            checked_by, cues = "server", _server_cues(answer)
+            by_kind: dict[tuple[str, str | None], list[tuple[float, float, str]]] = {}
+            for finding in answer.get("findings") or []:
+                key = (str(finding.get("kind")), finding.get("zone"))
+                by_kind.setdefault(key, []).append(
+                    (int(finding.get("start_ms") or 0) / 1000, int(finding.get("end_ms") or 0) / 1000,
+                     str(finding.get("text") or ""))
+                )  # fmt: skip
+            for (kind, zone), hits in by_kind.items():
+                where = (
+                    f"in {ZONE_WHAT.get(str(zone), str(zone))}: the platform covers it"
+                    if kind == "zone"
+                    else "outside the caption band (55%-70% of the height)"
+                )
+                warnings.append(
+                    f"!! caption {where} (server check of `{layout.name}`): {_spans(hits)}"
+                )
+        else:
+            checked_by = "kit"
+            cues = caption_layout(layout, width=info.width, height=info.height)
+            for name in ZONES:
+                hits = [(c.start, c.end, c.text) for c in cues if name in c.zones]
+                if hits:
+                    warnings.append(
+                        f"!! caption in {ZONE_WHAT[name]}: the platform covers it "
+                        f"(the kit's reading of `{layout.name}`): {_spans(hits)}"
+                    )
+            off = [
+                (c.start, c.end, c.text)
+                for c in cues
+                if not (low - 0.01 <= c.box[1] and c.box[3] <= high + 0.01)
+            ]
+            if off:
+                warnings.append(
+                    f"!! caption outside {band_name} ({low:.0%}-{high:.0%} of the height) "
+                    f"(the kit's reading of `{layout.name}`): {_spans(off)}"
+                )
+    grabbed: list[tuple[float, Image.Image, Box | None]] = []
+    checks: list[FrameCheck] = []
     for seconds in sample_times(info.duration_seconds, count):
         image = grab_frame(video, seconds)
-        box = (
-            caption_box(image, below=below) if below is not None else caption_box(image)
-        )
-        measured_by = "pixels"
-        if box is None:
-            # A white plain caption has no house yellow: take the burned layout's cue at this time.
-            showing = next((c for c in cues if c.start <= seconds < c.end), None)
-            if showing is not None:
-                box, measured_by = showing.box, "layout"
+        showing = next((c for c in cues if c.start <= seconds < c.end), None)
+        box = showing.box if showing is not None else None
+        if showing is None:
+            outside = False
+        elif showing.in_band is not None:
+            outside = not is_letterbox and not showing.in_band
+        else:
+            outside = not (
+                low - 0.01 <= showing.box[1] and showing.box[3] <= high + 0.01
+            )
         grabbed.append((seconds, image, box))
         checks.append(
             FrameCheck(
                 seconds,
                 box,
                 zones_entered(box) if box else [],
-                bool(box) and not (low - 0.01 <= box[1] and box[3] <= high + 0.01),
-                measured_by,
+                outside,
+                "layout" if checked_by == "kit" else "server",
             )
         )
     folder = sheet_dir or video.parent
     sheet = zone_sheet(
         grabbed, next_versioned_path(folder, f"{video.stem}-zones", ".png")
     )
-    warnings: list[str] = []
-    for name in ZONES:
-        hits = [c.seconds for c in checks if name in c.zones]
-        if hits:
-            warnings.append(
-                f"!! caption in {ZONE_WHAT[name]} at {', '.join(f'{s:.1f}s' for s in hits)}: the platform covers it"
-            )
-    for name in ZONES:
-        hits = [cue for cue in cues if name in cue.zones]
-        if hits and layout is not None:
-            warnings.append(
-                f"!! caption cue(s) laid out in {ZONE_WHAT[name]} (measured on `{layout.name}`): "
-                + "; ".join(f"{c.start:.2f}-{c.end:.2f}s {c.text[:40]!r}" for c in hits)
-            )
-    off_band = [c.seconds for c in checks if c.outside_band]
-    if off_band:
+    if layout is None:
         warnings.append(
-            f"!! caption outside {band_name} ({low:.0%}-{high:.0%} of the height) at "
-            f"{', '.join(f'{s:.1f}s' for s in off_band)}"
+            "no burned caption file beside the take: captions not checked "
+            "(a take before captions, or one captioned outside the kit)"
         )
-    if not any(c.caption for c in checks):
-        warnings.append(
-            "no house caption seen on the sampled frames (a take before captions, or a silent take)"
-        )
+    elif not cues:
+        warnings.append(f"no caption cues in `{layout.name}` (a silent take)")
     warnings.append(FACE_CHECK.format(sheet=sheet.name))
-    return SafeZoneReport(video, checks, sheet, warnings, layout, cues)
+    return SafeZoneReport(video, checks, sheet, warnings, layout, cues, checked_by)
 
 
 def newest_finished_take(desk: Path, episode: int, take_id: str) -> Path:
@@ -603,8 +607,13 @@ def run_review(
     report = check_safe_zones(source)
     path = report.sheet.with_suffix(".json")
     path.write_text(json.dumps(report.as_json(), indent=2) + "\n", encoding="utf-8")
+    how = {
+        "server": f"captions checked by the server on {report.layout.name if report.layout else ''}",
+        "kit": f"captions read by the kit from {report.layout.name if report.layout else ''} (older server)",
+    }.get(report.checked_by or "", "no caption file")
     print(
-        f"Safe zones on {source.name} ({len(report.frames)} frames sampled):", file=out
+        f"Safe zones on {source.name} ({len(report.frames)} frames sampled; {how}):",
+        file=out,
     )
     for check in report.frames:
         where = ", ".join(check.zones) if check.zones else "clear"
@@ -613,8 +622,7 @@ def run_review(
             if check.caption is None
             else f"caption {check.caption[1]:.0%}-{check.caption[3]:.0%} high: {where}"
         )
-        how = " (from the caption file)" if check.measured_by == "layout" else ""
-        print(f"  {check.seconds:6.2f}s  {box}{how}", file=out)
+        print(f"  {check.seconds:6.2f}s  {box}", file=out)
     for line in report.warnings:
         print(line, file=out)
     print(f"zone sheet: {report.sheet}", file=out)
@@ -626,7 +634,6 @@ __all__ = [
     "LayoutCue",
     "SafeZoneReport",
     "burned_caption_file",
-    "caption_box",
     "caption_layout",
     "check_safe_zones",
     "newest_finished_take",

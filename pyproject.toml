@@ -34,6 +34,7 @@ faulthandler_timeout = 120
 markers = [
     "both_openings: a plain reel run makes both openings (the default since 13 Oct 2026)",
     "real_on_screen_text: ask the (fake) server route for on-screen words instead of the stand-in drawer",
+    "real_caption_server: leave the caption layout and safe-area check routes to the test (no 404 stand-in)",
 ]
 
 [tool.ruff.lint]

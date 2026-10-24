@@ -1,8 +1,8 @@
 """``review`` measures the caption box from the burned caption file, with times (Hanakaze #9, Blink #54).
 
 The board's safe-zone lines read written placements only and raised three false alarms.
-A finding now needs a measured box: the house caption by colour on sampled frames, and
-every cue of the burned ``.ass`` laid out on the frame (a white ``plain`` caption too).
+A finding now needs a measured box: every cue of the burned ``.ass`` laid out on the frame
+(the server's check since 24 Oct 2026; these tests use the kit's own reader, the fallback).
 Faces are not measured (no face detector in the kit) and the report says so.
 """
 
@@ -92,12 +92,14 @@ def test_review_reports_a_white_caption_in_a_covered_zone_with_its_times(
 
     report = check_safe_zones(take, count=4)
 
-    found = [w for w in report.warnings if w.startswith("!! caption cue(s)")]
+    found = [w for w in report.warnings if w.startswith("!! caption in")]
     assert any("bottom 20%" in w and "0.20-0.90s 'Blinking!'" in w for w in found), (
         found
     )
     assert any("top 8%" in w and "1.00-1.80s 'Not tonight.'" in w for w in found), found
-    first = report.frames[0]  # 0.25 s: no yellow, the layout's cue is showing
+    first = report.frames[
+        0
+    ]  # 0.25 s: the caption file's cue showing then (the kit's reader: an older server)
     assert first.measured_by == "layout" and first.zones == ["bottom band"]
     assert report.as_json()["caption_layout"].endswith(".ass")
     assert any(

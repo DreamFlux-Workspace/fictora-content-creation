@@ -662,11 +662,30 @@ def _captioned(path: Path, *, top: float | None) -> Path:
     return write_frames(path, frames)
 
 
+def _burned_caption(take: Path, *, bottom: float) -> None:
+    """The take's burned caption file (same stem): one cue whose bottom edge sits at ``bottom``."""
+
+    take.with_suffix(".ass").write_text(
+        "[Script Info]\nPlayResX: 1080\nPlayResY: 1920\n\n[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, "
+        "Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
+        "MarginL, MarginR, MarginV, Encoding\n"
+        f"Style: House,Arial,64,&H0000E5FF,&H0000E5FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,5,2,2,"
+        f"146,146,{round(1920 * (1 - bottom))},1\n\n[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Dialogue: 0,0:00:00.00,0:00:09.00,House,,0,0,0,,Not for sale.\n",
+        encoding="utf-8",
+    )
+
+
 def test_safe_zones_is_a_section_on_a_finished_take_only(desk: Path) -> None:
     takes = _desk_ready(desk)
     raw = _captioned(takes / "take-ep01-t1-raw-v1.mp4", top=0.02)
-    covered = _captioned(takes / "take-ep01-t1-sokii-v1.mp4", top=0.02)
-    in_band = _captioned(takes / "take-ep01-t1-sokii-v2.mp4", top=0.60)
+    # Yellow pixels are scenery now (24 Oct 2026): the burned caption file decides.
+    covered = _captioned(takes / "take-ep01-t1-sokii-v1.mp4", top=0.60)
+    _burned_caption(covered, bottom=0.07)
+    in_band = _captioned(takes / "take-ep01-t1-sokii-v2.mp4", top=0.02)
+    _burned_caption(in_band, bottom=0.66)
 
     assert "Safe zones" not in [
         s.name for s in review_take(desk, take_file=raw).sections
