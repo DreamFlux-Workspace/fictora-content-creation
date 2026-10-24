@@ -383,10 +383,11 @@ def test_production_json_loads_and_carries_the_old_desk(tmp_path: Path) -> None:
     }
     assert state.prompt.startswith("A sweet shop at closing time.")
     config = load_production_config(desk)
-    assert (config.cut_tempo, config.spoken_language, config.locale) == (
-        "punchy",
-        "ja-JP",
-        "en-US",
+    assert (config.spoken_language, config.locale) == ("ja-JP", "en-US")
+    # The old desk's cut tempo is not adopted: the server decides camera and pace (24 Oct 2026).
+    assert not hasattr(config, "cut_tempo")
+    assert "cut_tempo" not in (desk / "production.config.json").read_text(
+        encoding="utf-8"
     )
 
 

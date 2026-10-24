@@ -35,25 +35,20 @@ The band is season-locked on the spine. Choose 15s or 30s and hold it.
 | 30s | 2 | 2, 3 | Two-hander: setup take + payoff take. |
 | 60s | 4 | 2, 3, 2, 3 | A full scene with a making/wordless take inside it. |
 
-**Take length defaults to 15 seconds.** `clip_duration_seconds` accepts 4–15. Send 12 for a shorter take. 16 is a rejection. The harness body takes the length you pass. Use `cut_tempo=one_shot` for one unbroken camera move.
+**Take length defaults to 15 seconds.** `clip_duration_seconds` accepts 4–15. Send 12 for a shorter take. 16 is a rejection. The harness body takes the length you pass.
 
 Fixed properties of a take:
 
-- A declared shot plan (below). A continuous shot is boarded as the beginning and end of each phase of one camera move; the camera is a little closer in each cell.
+- A shot plan the server decides (below).
 - How many lines it holds is the server's (pacing and line fit). A line that cannot fit comes back with a fitted version and a choice; a silent beat is free.
 - A hand-off frame. Spoken successors paste the prior last frame into cell 1a. A making (wordless) take pastes the next take's opening into its last cell. The server ends a take and opens the next on the same close-up of the lead (see the board gate's seams).
 - 9:16. Portrait. 768P on the H3 lane.
 
 ### Shot plan per take
 
-Choose the plan from what the scene is. One default for every show is how a romance comes out as three near-identical shots and a horror take as one slow push-in (reviewer notes, 2026-09-25). Set it on the draft (`fictora-produce start --cut-tempo T`), never only on the take, so the board and the take agree.
+The server decides camera and pace (founder, 24 Oct 2026): there is no cut tempo (punchy, slow burn, one shot) or pace choice, and the `--cut-tempo` flag is gone. An older show's stored choice is ignored. The kit sends nothing about it.
 
-| Plan | `--cut-tempo` | Use for |
-| --- | --- | --- |
-| One continuous shot | `one_shot` | Inner monologue, a making or process take, a walk |
-| Coverage: 3–4 shots, one per board row | `punchy` | Romance, horror, comedy, any two-hander where a reaction lands |
-
-The H3 row board holds four rows at most, so four shots is the most one take can carry. Never a shot per beat in either plan.
+The H3 row board holds four rows at most, so four shots is the most one take can carry. Never a shot per beat.
 
 Coverage rules. Check them on the board before the board gate; a board that breaks them is fixed at the frame (`edit --frame … --set …`) and redrawn, never re-filmed:
 
@@ -64,7 +59,6 @@ Coverage rules. Check them on the board before the board gate; a board that brea
 - Horror: never a whole take on one held shot, and never a fixed wide. The scare gets an insert or a point of view; the threat comes toward the camera; the monster's defining behaviour is on screen (SCP-173 moves only when unseen: cut away and back, and it is closer).
 - One spoken line per beat, nothing else happening during it (a beat that also carried a drawing and a reaction lost its line).
 - When the human names a beat's shots, set them on the beat: `edit --desk D --episode N --beat B --shot "size|subject|camera|angle"` (repeat, 1–4; shot 1 is the beat's first row), then `redraw-board` if the board is already drawn. Write the camera move with direction and size there too.
-- `one_shot` means no cuts. Each board row still keeps its own camera: one phase of the move per row, not a new shot per row.
 
 Sound and captions are built after the take comes back, never asked of the model:
 
@@ -297,7 +291,7 @@ Repurposing an episode (a new idea on an episode already authored): update its t
 - Never use a broadcast loudness pass on action. Per-take gain and one limiter.
 - Effects are compressed under the voice, not simply turned down.
 - Check that a generated sound effect actually contains a sound.
-- No music goes on any new video we deliver (founder decision, 20 Oct 2026): see "No music in the videos we deliver" above. A music blend or a re-score still runs when the human asks for it, but the default is no music: the usual way to get music on a post is the free "with score" version (a copy with music). Older episodes keep their music; nothing is stripped automatically. If the human wants the music off an older episode, send the note "no music" for that episode (`fictora-produce music-note --desk D --episode N "no music"`, then `--yes` after reading the plan). It costs nothing: the server re-mixes each take onto its own voices and room sound. Some older clips had their music made by the video model itself; those cannot be cleaned without filming them again, and the server lists them as skipped. Say that plainly to the human. Never pin a music file, write a music brief, or name a composer or studio.
+- No music goes on any new video we deliver (founder decision, 20 Oct 2026): see "No music in the videos we deliver" above. A re-score still runs when the human asks for it (there is no music blend choice any more: the server uses the genre's default blend), but the default is no music: the usual way to get music on a post is the free "with score" version (a copy with music). Older episodes keep their music; nothing is stripped automatically. If the human wants the music off an older episode, send the note "no music" for that episode (`fictora-produce music-note --desk D --episode N "no music"`, then `--yes` after reading the plan). It costs nothing: the server re-mixes each take onto its own voices and room sound. Some older clips had their music made by the video model itself; those cannot be cleaned without filming them again, and the server lists them as skipped. Say that plainly to the human. Never pin a music file, write a music brief, or name a composer or studio.
 - A take that still carries music the kit cannot take out (the video model made it) is finished with a `!!` line saying so. Tell the human; only filming that take again removes it.
 
 ### Hosted post is off
@@ -327,7 +321,7 @@ Measure first, then watch. `fictora-produce review --desk D --episode N --take t
 | Check | What good looks like | If it's wrong |
 | --- | --- | --- |
 | Transcript | Every line heard, exactly as written, with timing | A missing line is the one real re-film. A stray mumble or wrong words: drop the take audio and rebuild it (Dialogue), never mute a range. |
-| Cut count | Matches the declared shot plan (0 for `one_shot`, one per planned shot change for coverage) | Forced cuts at line boundaries are expected. Soften in post. |
+| Cut count | Matches the declared shot plan (one per planned shot change) | Forced cuts at line boundaries are expected. Soften in post. |
 | Loudness | About −15 to −20 for a dialogue take | Below −30 is effectively silent. Build cues. |
 | Brightness | Roughly in the band the board was in | Dim sections get lifted afterwards. |
 | Beat-by-beat vs board | Every beat present, in order | Missing beats are a direction fault. Write the cause before spending again. |
@@ -374,7 +368,7 @@ Extra cost:            <$ and minutes>
 
 Always warn for: a finished episode longer than its 15, 30, or 60s band; editing product code or settings (never acceptable — propose it to engineering).
 
-Do not warn for: a finished cut shorter than its 15 / 30 / 60 s band after trimming (e.g. 14.2 s; takes still film at the normal clip length); `clip_duration_seconds` in 4–15; `cut_tempo=one_shot`; `caption_style=house`; product hand-off paste; 2×N row boards when every frame sets `board_row`; `PUT .../inner-voice`; voice auditions and pick; `POST .../audio-bed`; product sidechain ducking; `arc`, `brief`, `author`, `memory`, `edit`, `look-frame`, `look`, `look-note`, `redraw-board`, `check-lines`. Those are aligned.
+Do not warn for: a finished cut shorter than its 15 / 30 / 60 s band after trimming (e.g. 14.2 s; takes still film at the normal clip length); `clip_duration_seconds` in 4–15; `caption_style=house`; product hand-off paste; 2×N row boards when every frame sets `board_row`; `PUT .../inner-voice`; voice auditions and pick; `POST .../audio-bed`; product sidechain ducking; `arc`, `brief`, `author`, `memory`, `edit`, `look-frame`, `look`, `look-note`, `redraw-board`, `check-lines`. Those are aligned.
 
 Money warnings:
 

@@ -21,10 +21,6 @@ class ProductionConfig:
     #: always sends ``episode_count: 1`` and later episodes are written with ``author --episode N``.
     draft_episode_count: int = 1
     clip_duration_seconds: int = 15
-    #: Shot plan set on the DRAFT so board and take agree: ``punchy`` (coverage, one shot per row;
-    #: romance, horror, comedy, two-handers), ``slow_burn``, or ``one_shot`` (monologue, making, a walk).
-    #: ``None`` sends nothing and the server's default (punchy) applies.
-    cut_tempo: str | None = None
     #: Local caption style ``finish``, ``caption`` and ``reel`` burn: ``bold`` (one short white line at
     #: a time, one yellow word), ``subtle`` (yellow Arial Bold word flicker; ``house`` is its older name),
     #: ``plain`` (white whole lines) or ``none``; ``--caption-style`` on each command overrides it.
@@ -130,6 +126,9 @@ def load_production_config(desk: Path) -> ProductionConfig:
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(f"{CONFIG_FILENAME} must be a JSON object")
+    # Unknown keys are dropped, so an old desk's retired settings load and are never written
+    # back: ``cut_tempo`` (the server decides camera and pace since 24 Oct 2026) and any
+    # stored music blend (the server always uses the genre's default blend).
     allowed = {f.name for f in fields(ProductionConfig)}
     kwargs = {key: raw[key] for key in raw if key in allowed}
     return ProductionConfig(**kwargs)

@@ -1,7 +1,6 @@
 {
   "draft_episode_count": 1,
   "clip_duration_seconds": 15,
-  "cut_tempo": "one_shot",
   "caption_style": "house",
   "api_captions": true,
   "locale": "en-US",

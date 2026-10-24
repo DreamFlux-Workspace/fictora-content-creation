@@ -224,9 +224,6 @@ class FakeApi:
         if "/voices-step" in path:
             self.calls.append(("GET", path, None, None))
             return 200, self._answer("GET", path.split("?", 1)[0], None)
-        if path.endswith("/music-blend") and ("GET", path) not in self.routes:
-            # A deploy whose music-blend route the test did not set: read as an older server (the genre's).
-            return 404, {"detail": "Not Found"}
         if path.endswith("/look-options") and ("GET", path) not in self.routes:
             # A deploy whose look-options route the test did not set: read as an older server (no offer).
             return 404, {"detail": "Not Found"}

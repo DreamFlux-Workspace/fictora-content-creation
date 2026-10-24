@@ -5,7 +5,7 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 ## Before the draft is sent
 
 - [ ] A new desk, never an existing one overwritten: if the date and slug already exist, the human chose (continue it, or a new name)
-- [ ] `fictora-produce start` carries `--cut-tempo` chosen from the scene (shot plan) and the nearest `--preset-id`; a look frame to pin, or look notes planned for the preset's world
+- [ ] `fictora-produce start` carries the nearest `--preset-id` (no cut tempo: the server decides camera and pace); a look frame to pin, or look notes planned for the preset's world
 - [ ] No arc asked for and no later episode outlined (episode 1 alone)
 - [ ] Hook: frame 0 already moving (the strongest image on the server's spectacle-first genres, a face on every other genre), first line by ~0.5 s (or a silent open the picture carries), what the episode is about clear by ~3 s
 - [ ] Real ages written; nobody under 18 in any romance; voice-only characters marked in the cast table

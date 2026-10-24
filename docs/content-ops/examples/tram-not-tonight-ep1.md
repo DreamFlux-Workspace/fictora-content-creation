@@ -13,7 +13,6 @@ uv run fictora-produce start \
   --video-lane minimax-h3 \
   --draft-episodes 4 \
   --clip-seconds 15 \
-  --cut-tempo one_shot \
   --caption-style house
 ```
 

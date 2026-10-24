@@ -22,7 +22,6 @@ def reuse_generation_body(
     episode_count: int = 1,
     duration_band: str | None = None,
     clip_duration_seconds: int = 15,
-    cut_tempo: str | None = None,
     caption_style: str | None = None,
     api_captions: bool = False,
     video_lane: str | None = None,
@@ -46,8 +45,6 @@ def reuse_generation_body(
         Duration band; defaults to spine value or ``15s``.
     clip_duration_seconds
         Per-take length. Default 15. The API accepts 4 to 15.
-    cut_tempo
-        Optional cut tempo override (``punchy``, ``slow_burn``, ``one_shot``).
     caption_style
         Optional burn-in preset. Sets ``captions_enabled`` when provided.
     video_lane
@@ -79,8 +76,6 @@ def reuse_generation_body(
         body["spoken_language"] = str(spine["spoken_language"])
     if preset_version:
         body["art_style_preset_version"] = preset_version
-    if cut_tempo:
-        body["cut_tempo"] = cut_tempo
     if api_captions and caption_style:
         body["captions_enabled"] = True
         body["caption_style"] = caption_style
@@ -98,7 +93,6 @@ def run_cast_look(
     prompt: str,
     preset_id: str,
     preset_version: str | None,
-    cut_tempo: str | None = None,
     video_lane: str | None = None,
     tag: str = "ep1",
 ) -> dict[str, Any]:
@@ -116,8 +110,6 @@ def run_cast_look(
         Art style preset id.
     preset_version
         Optional preset version pin.
-    cut_tempo
-        Optional cut tempo.
     video_lane
         Optional video lane override.
     tag
@@ -136,7 +128,6 @@ def run_cast_look(
             spine=spine,
             preset_id=preset_id,
             preset_version=preset_version,
-            cut_tempo=cut_tempo,
             video_lane=video_lane,
         ),
         idempotency_key=f"{run.prefix}-{tag}-cast",
@@ -195,7 +186,6 @@ def run_boards(
     prompt: str,
     preset_id: str,
     preset_version: str | None,
-    cut_tempo: str | None = None,
     video_lane: str | None = None,
     tag: str = "ep1",
 ) -> dict[str, Any]:
@@ -213,8 +203,6 @@ def run_boards(
         Art style preset id.
     preset_version
         Optional preset version.
-    cut_tempo
-        Optional cut tempo.
     video_lane
         Optional video lane.
     tag
@@ -233,7 +221,6 @@ def run_boards(
             spine=spine,
             preset_id=preset_id,
             preset_version=preset_version,
-            cut_tempo=cut_tempo,
             video_lane=video_lane,
         ),
         idempotency_key=f"{run.prefix}-{tag}-boards",
@@ -433,7 +420,6 @@ def run_video_and_write_story(
     preset_id: str,
     preset_version: str | None,
     meta_lines: list[str],
-    cut_tempo: str | None = None,
     clip_duration_seconds: int = 15,
     caption_style: str | None = None,
     video_lane: str | None = None,
@@ -456,8 +442,6 @@ def run_video_and_write_story(
         Optional preset version.
     meta_lines
         STORY.md header lines after the title.
-    cut_tempo
-        Optional cut tempo.
     clip_duration_seconds
         Per-take length. Default 15. The API accepts 4 to 15.
     caption_style
@@ -481,7 +465,6 @@ def run_video_and_write_story(
         preset_id=preset_id,
         preset_version=preset_version,
         clip_duration_seconds=clip_duration_seconds,
-        cut_tempo=cut_tempo,
         caption_style=caption_style,
         video_lane=video_lane,
         extra=video_extra,

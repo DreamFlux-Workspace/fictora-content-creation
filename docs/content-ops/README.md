@@ -86,8 +86,8 @@ Every `CONFIRM` line in the plan (a gate the old desk never recorded, an unfinis
 
 | Internal kit (`content_ops_run.py …`) | This kit |
 | --- | --- |
-| `init-series --series S --band B --episodes N` | `O init-series` (same flags), or `P start --series S --prompt @brief.md --band B --preset-id ID --cut-tempo T` (opens the desk and binds the premise) |
-| `draft --brief FILE --preset ID --tempo T [--language ja]` | `P start … --prompt @FILE --preset-id ID --cut-tempo T [--language ja]`, then `P step --desk D` |
+| `init-series --series S --band B --episodes N` | `O init-series` (same flags), or `P start --series S --prompt @brief.md --band B --preset-id ID` (opens the desk and binds the premise) |
+| `draft --brief FILE --preset ID --tempo T [--language ja]` | `P start … --prompt @FILE --preset-id ID [--language ja]` (no tempo: the server decides camera and pace), then `P step --desk D` |
 | `look-frame --prompt DESC.txt` | `P look-frame --desk D --description @DESC.txt` |
 | `look --image FRAME.png` | `P approve --desk D --gate look` (pins the newest look frame and records the yes; `--url` for a frame the human picked) |
 | `look-note --add/--remove` | `P look-note --desk D --add/--remove` (same) |

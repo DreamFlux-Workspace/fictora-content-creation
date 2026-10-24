@@ -48,7 +48,6 @@ def _desk(tmp_path: Path) -> Path:
         desk,
         ProductionConfig(
             clip_duration_seconds=10,
-            cut_tempo="slow_burn",
             caption_style="plain",
             spoken_language="ko",
             delivery_format="letterbox",
@@ -92,16 +91,15 @@ def test_a_flag_given_to_bind_replaces_only_that_setting(
                 "A new brief.",
                 "--language",
                 "ja",
-                "--cut-tempo",
-                "punchy",
+                "--voice-mode",
+                "locked",
             ]
         )
         == 0
     )
 
     after = load_production_config(desk)
-    assert (after.spoken_language, after.cut_tempo) == ("ja", "punchy")
-    assert after.voice_mode == "model"
+    assert (after.spoken_language, after.voice_mode) == ("ja", "locked")
     assert after.caption_style == "plain"
     assert after.delivery_format == "letterbox"
     assert after.clip_duration_seconds == 10

@@ -129,7 +129,7 @@ Default: **no `--api-captions`** — filming stops at the **raw** clip; yellow s
 
 ### Starting a new series (paste to Cursor)
 
-Use the full template in [Content-Operator-Guide.md](content-ops/Content-Operator-Guide.md) (includes `--draft-episodes 4`, `--cut-tempo one_shot`, local captions). Short form:
+Use the full template in [Content-Operator-Guide.md](content-ops/Content-Operator-Guide.md) (includes `--draft-episodes 4`, local captions; the server decides camera and pace). Short form:
 
 > Read episode-production SKILL.md. `fictora-produce start` for “[Series Name]”, 15s, modern-dark-fantasy, minimax-h3, premise: [your prompt]. One step per turn; wait for my aligned / yes at gates.
 

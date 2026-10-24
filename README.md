@@ -47,9 +47,10 @@ uv run fictora-produce start \
   --preset-id modern-dark-fantasy \
   --video-lane minimax-h3 \
   --clip-seconds 15 \
-  --cut-tempo punchy \
   --caption-style house
 ```
+
+There is no cut tempo, pace or music blend choice: the server decides camera and pace, and uses the genre's default music blend (founder, 24 Oct 2026).
 
 This creates a folder under `~/Downloads/documents/…`, writes `production.json` + `production.config.json`, and sets phase `new`. The printed path is your **desk**.
 

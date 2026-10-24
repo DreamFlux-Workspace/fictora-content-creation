@@ -58,7 +58,7 @@ Story (ep1 only — no series arc yet):
 
 Desk:
 - `uv run fictora-produce start` with series "…" and your premise.
-- Use `--clip-seconds 15`, `--cut-tempo punchy` (or `one_shot` for a monologue or a walk), `--caption-style house`. Episode 1 is drafted alone.
+- Use `--clip-seconds 15`, `--caption-style house`. Episode 1 is drafted alone.
 - Server captions are on by default (`api_captions: true`). Use `--no-api-captions` only if you want raw-only enrol (captions on the laptop only).
 
 Workflow:
@@ -132,7 +132,6 @@ uv run fictora-produce start \
   --preset-id modern-dark-fantasy \
   --video-lane minimax-h3 \
   --clip-seconds 15 \
-  --cut-tempo punchy \
   --caption-style house
 
 # One automated API block per invocation
@@ -185,7 +184,7 @@ A character's voice feels off? Never regenerate: `voice --audition`, you pick, `
 ```
 2026-09-22-my-series/
   production.json          ← phase, spine_id, session (agent)
-  production.config.json   ← 15s, one_shot, house, api_captions true (default)
+  production.config.json   ← 15s, house, api_captions true (default)
   QUEUE.md                 ← what episode is waiting on
   ep01/
     plates/                ← gate 1

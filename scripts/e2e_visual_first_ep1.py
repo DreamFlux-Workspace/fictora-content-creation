@@ -153,7 +153,6 @@ def main() -> int:
             caption_style="house",
             video_lane="minimax-h3",
             clip_duration_seconds=15,
-            cut_tempo=None,
         )
         url = _video_url(delivery)
         summary = {
