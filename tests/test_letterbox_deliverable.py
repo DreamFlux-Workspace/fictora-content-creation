@@ -431,7 +431,7 @@ def test_finish_builds_the_9_16_letterbox_file_with_mark_title_and_band_captions
     assert _yellow(frame[260:500]).sum() > 200, "the yellow hook line above the picture"
     white = (frame[260:500].min(axis=-1) > 220).sum()
     assert white > 200, "the white setup line"
-    assert frame[179:228, 136:196].mean() > frame[179:228, 200:260].mean() + 20, (
+    assert frame[179:228, 136:196].mean() > frame[179:228, 260:320].mean() + 20, (
         "the mark in the top band"
     )
 

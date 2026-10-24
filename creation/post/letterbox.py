@@ -58,6 +58,7 @@ from creation.post.delivery_geometry import (
     CANVAS_WIDTH,
     CAPTION_COLOURS,
     DEFAULT_CAPTION_COLOUR,
+    MARK_WIDTH_FRACTION,
     TITLE_HOOK_COLOUR,
     TITLE_SETUP_COLOUR,
     LetterboxLayout,
@@ -544,7 +545,11 @@ def mark_and_title(
         # One named face (the bundled twin when Arial is missing); the copy is removed below.
         burned, scratch = burnable_ass(ass)
         first = f"[0:v]ass='{_esc(burned)}':fontsdir='{_esc(FONTS_DIR)}'[t]"
-    graph = f"{first};[1:v]format=rgba,colorchannelmixer=aa={MARK_ALPHA}[m];[t][m]overlay={x}:{y}[v]"
+    mark_w = round(info.width * MARK_WIDTH_FRACTION)
+    graph = (
+        f"{first};[1:v]scale={mark_w}:-1:flags=lanczos,format=rgba,colorchannelmixer=aa={MARK_ALPHA}[m];"
+        f"[t][m]overlay={x}:{y}[v]"
+    )
     inputs = ["-i", str(video), "-i", str(mark)]
     args = [*inputs, "-filter_complex", graph, "-map", "[v]"]
     if info.has_audio:
