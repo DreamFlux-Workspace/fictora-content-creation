@@ -97,7 +97,10 @@ def server_pictures_owed(
 
 
 def pictures_waiting_for_yes(spine: Mapping[str, Any]) -> list[tuple[str, str]]:
-    """Characters the server says are drawn and only wait for the plates yes before boards.
+    """Characters and story objects the server says are drawn and only wait for the plates yes before boards.
+
+    Objects come from ``object_pictures_owed`` (fictora-drama, 24 Oct 2026):
+    the plates yes (``cast/approve``) approves their pictures too.
 
     Parameters
     ----------
@@ -107,14 +110,23 @@ def pictures_waiting_for_yes(spine: Mapping[str, Any]) -> list[tuple[str, str]]:
     Returns
     -------
     list[tuple[str, str]]
-        ``(cast_id, name)``; empty from an older server or when none waits.
+        ``(cast_id or prop_id, name)``, characters first; empty from an older
+        server or when none waits.
     """
 
-    return [
+    waiting = [
         (str(item["cast_id"]), str(item.get("name") or item["cast_id"]))
         for item in server_pictures_owed(spine) or []
         if item.get("reason") not in _TO_DRAW
     ]
+    objects = spine.get("object_pictures_owed")
+    if isinstance(objects, list):
+        waiting.extend(
+            (str(item["prop_id"]), str(item.get("name") or item["prop_id"]))
+            for item in objects
+            if isinstance(item, Mapping) and item.get("prop_id")
+        )
+    return waiting
 
 
 def cast_owing_pictures(

@@ -2882,7 +2882,7 @@ def boards_held_for_pictures(
         names = ", ".join(name for _, name in waiting)
         return StepResult(
             state.phase,
-            f"Stopped before the boards; nothing was sent. {names}'s picture is drawn and waits for the "
+            f"Stopped before the boards; nothing was sent. The picture of {names} is drawn and waits for the "
             f"human's yes. After it: `fictora-produce approve --desk {desk} --gate plates --again` ($0, draws "
             "nothing), then `fictora-produce step`.",
             (),
