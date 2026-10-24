@@ -73,6 +73,8 @@ from creation.voice_gate import (
     CastVoice,
     keep_on_server,
     keep_unheard_refusal,
+    server_first_line_samples,
+    with_samples,
     local_approvals,
     record_voice,
     render_gate,
@@ -646,7 +648,14 @@ def run_voice_gate(
                 desk, UNREACHABLE_NOTE.format(error=type(exc).__name__)
             )
             print(approvals.note, file=sys.stderr)
-        voices = speaking_voices(spine, episode=None if keep else episode)
+        # The server's first-line samples, made side by side ahead of time (fictora-drama
+        # voices-card): a ready one is a voice the human can hear, like a free sample.
+        samples = server_first_line_samples(
+            run, str(spine.get("spine_id") or ""), episode=None if keep else episode
+        )
+        voices = with_samples(
+            speaking_voices(spine, episode=None if keep else episode), samples
+        )
         if cast is not None:
             card = find_cast(spine, cast)
             voices = [v for v in voices if v.cast_id == str(card["cast_id"])]
@@ -662,7 +671,7 @@ def run_voice_gate(
                 print(voices_now.line(), file=out)
                 print(MODEL_GATE_SKIPPED, file=out)
                 return []
-            text = render_gate(desk, spine, approvals, episode=episode)
+            text = render_gate(desk, spine, approvals, episode=episode, samples=samples)
             print(
                 text or "Nobody speaks a line on the spine: no voice to approve.",
                 file=out,
