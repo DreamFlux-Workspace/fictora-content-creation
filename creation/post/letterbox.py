@@ -480,6 +480,8 @@ def mark_and_title(
     title: TitleBlock | None,
     ass_path: Path | None = None,
     mark: Path = MARK,
+    desk: Path | None = None,
+    episode: int = 1,
 ) -> tuple[Path, FittedTitle | None]:
     """Put the Sokii mark in the top band and the title block above the picture, in one pass (sound copied).
 
@@ -495,6 +497,9 @@ def mark_and_title(
         Where the title's ASS is written (beside ``out`` when ``None``).
     mark
         The mark image.
+    desk, episode
+        Reach the server for the mark's place (``POST /v1/mark/placement``);
+        without them, or on an older server, the layout's own place.
 
     Returns
     -------
@@ -515,7 +520,14 @@ def mark_and_title(
         raise FileExistsError(f"{out} exists; local post never overwrites")
     info = probe_video(video)
     place = layout(info.width, info.height)
-    x, y = place.mark
+    from creation.post.watermark import server_mark_position
+
+    x, y = (
+        server_mark_position(
+            info.width, info.height, letterbox=True, desk=desk, episode=episode
+        )
+        or place.mark
+    )
     fitted: FittedTitle | None = None
     first = "[0:v]null[t]"
     scratch: Path | None = None

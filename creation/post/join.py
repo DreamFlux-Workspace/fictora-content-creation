@@ -1964,12 +1964,15 @@ def run_join(
 
         def mark(video: Path, out: Path) -> Path:
             if not letterbox:
-                return watermark(video, out, y=watermark_y)
+                return watermark(
+                    video, out, y=watermark_y, desk=desk, episode=episode_set[0]
+                )
             from creation.post.letterbox import mark_and_title
 
             done, fitted = mark_and_title(
                 video, out, title=title,
                 ass_path=next_versioned_path(folder, f"{stem}-title", ".ass"),
+                desk=desk, episode=episode_set[0],
             )  # fmt: skip
             result.notes.append(
                 "letterbox: Sokii mark in the top band; "

@@ -3505,6 +3505,7 @@ def run_finish(
             marked, fitted = lb.mark_and_title(
                 take, next_versioned_path(takes, f"{base}-sokii", ".mp4"), title=title,
                 ass_path=next_versioned_path(takes, f"{base}-title", ".ass"),
+                desk=desk, episode=episode,
             )  # fmt: skip
             record_state["master"] = take
             words = (
@@ -3520,8 +3521,9 @@ def run_finish(
             )
             return StepReport("watermark", "ran", detail, marked)
         marked = watermark(
-            take, next_versioned_path(takes, f"{base}-sokii", ".mp4"), y=watermark_y
-        )
+            take, next_versioned_path(takes, f"{base}-sokii", ".mp4"), y=watermark_y,
+            desk=desk, episode=episode,
+        )  # fmt: skip
         record_state["master"] = take
         append_run_note(
             run_dir, f"Watermarked -> `{marked.name}` (un-marked master `{take.name}`)"
