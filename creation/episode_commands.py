@@ -82,7 +82,7 @@ from creation.narrator_cast import (
 )
 from creation.narrator_cast import question as narrator_question
 from creation.cli_text import TextArgError, text_or_file
-from creation.new_cast import new_cast_notice, newcomers
+from creation.new_cast import new_cast_notice, newcomers_owing_pictures
 
 from creation.story_objects import new_objects, new_objects_notice, suggested_objects
 from creation.desk_media_urls import drawn_cast_rows
@@ -1313,7 +1313,9 @@ def _show_authored(
     if summary.get("summary"):
         print(f"  {summary['summary']}", file=out)
     print(script_gate_text(desk, spine, episode=episode), file=out)
-    arrived = new_cast_notice(newcomers(before, spine)) + new_objects_notice(
+    arrived = new_cast_notice(
+        newcomers_owing_pictures(before, spine, episode=episode)
+    ) + new_objects_notice(
         new_objects(before, spine),
         suggested={prop_id for prop_id, _ in suggested_objects(spine)},
         desk=str(desk),
