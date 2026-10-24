@@ -814,6 +814,7 @@ def take_inner_voice(
     plan = thoughts.take_cues(
         cues, take=thoughts.take_number(take_id), lengths=lengths, last_filmed=last
     )
+    # The server's cue holds the spoken words (drama #1017); a desk made before keeps its own file.
     spoken = thoughts.load_spoken(desk, episode)
     levels = thoughts.load_levels(desk, episode)
     if not spoken and not levels:
@@ -823,7 +824,8 @@ def take_inner_voice(
         cues=tuple(
             replace(
                 cue,
-                spoken_text=thoughts.spoken_for(spoken, cue.cue_id, cue.line),
+                spoken_text=cue.spoken_text
+                or thoughts.spoken_for(spoken, cue.cue_id, cue.line),
                 db=levels.get(cue.cue_id, 0.0),
             )
             for cue in plan.cues
@@ -1964,6 +1966,7 @@ def run_finish(
 
     def do_inner_voice(take: Path) -> StepReport:
         from creation.post.handmade import make_voice_line
+        from creation.spine_view import episode_id_for
 
         # The voice the desk holds now, not the one the episode's snapshot was saved with (L-20261006-29).
         cards = current_cast_cards(desk, spine, found_spine[1] if found_spine else None)
@@ -1989,10 +1992,13 @@ def run_finish(
                     '`inner-voice --text "<English caption>" --spoken-text "<the words said>"`'
                 )
             try:
+                # The server voices the thought it holds: named by its cue, with the acting direction the
+                # server keeps for it (drama #1017). The kit sends no delivery of its own.
                 made = make_voice_line(
                     desk, spine=spine or {}, card=card, text=cue.line, episode=episode,
                     spoken_text=cue.spoken_text or None, audio=service, out=out, take_id=take_id,
                     reuse=True, extra={"cue_id": cue.cue_id, "inner_voice": True},
+                    episode_id=episode_id_for(spine or {}, episode), line_id=cue.cue_id,
                 )  # fmt: skip
             except (
                 ValueError,

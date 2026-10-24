@@ -344,21 +344,25 @@ def test_the_last_beat_of_the_take_can_hold_two_shots(desk: Path, api: FakeApi) 
     ]
 
 
-def test_inner_voice_words_in_a_beat_are_refused_before_any_call(
+def test_inner_voice_words_in_a_beat_are_the_servers_to_judge(
     desk: Path, api: FakeApi
 ) -> None:
+    # Drama #1017 moved the "inner voice" wording rule to the server (its writer and normalize never
+    # write the words; its take compile still refuses an inner voice spoken on camera before any spend),
+    # so the kit no longer stops the edit itself.
     api.spine_doc = spine_fixture(approved=False)
+    _server_keeps_plans(api)
 
-    with pytest.raises(ec.CommandStopped, match="inner voice"):
-        ec.run_edit(
-            desk,
-            episode=1,
-            beat="1",
-            intent="Hana (inner voice) counts the cabins",
-            out=io.StringIO(),
-        )
+    ec.run_edit(
+        desk,
+        episode=1,
+        beat="1",
+        intent="Hana (inner voice) counts the cabins",
+        out=io.StringIO(),
+    )
 
-    assert _patches(api) == []
+    (patch,) = _patches(api)
+    assert patch["beats"][0]["motion_intent"] == "Hana (inner voice) counts the cabins"
 
 
 def test_a_speaker_who_is_not_the_motion_subject_is_refused_before_any_call(

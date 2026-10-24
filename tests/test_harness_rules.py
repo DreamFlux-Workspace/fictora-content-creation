@@ -70,7 +70,7 @@ def test_a_clean_episode_can_be_filmed() -> None:
     assert film_stops(_spine(), episode=1) == []
 
 
-def test_inner_voice_words_and_a_split_speaker_and_an_early_extra_shot_stop_the_film() -> (
+def test_a_split_speaker_and_an_early_extra_shot_stop_the_film_and_inner_voice_words_do_not() -> (
     None
 ):
     spine = _spine()
@@ -83,7 +83,8 @@ def test_inner_voice_words_and_a_split_speaker_and_an_early_extra_shot_stop_the_
 
     stops = film_stops(spine, episode=1)
 
-    assert any("inner voice" in line and "beat 1" in line for line in stops)
+    # The "inner voice" wording rule is the server's since drama #1017: the kit no longer stops on it.
+    assert not any("inner voice" in line for line in stops)
     assert any(
         "motion subject must match" in line and "beat 2" in line for line in stops
     )

@@ -224,7 +224,6 @@ from creation.harness_rules import (
     early_extra_shots_stop,
     film_stop_message,
     hook_mouth_edit_stop,
-    inner_voice_wording_stop,
     on_screen_speaker_stop,
 )
 from creation.shot_plan import (
@@ -2241,7 +2240,6 @@ def _refuse_compiled_beat(spine: Mapping[str, Any], beat: Mapping[str, Any]) -> 
     names = _cast_names(spine)
     for stop in (
         on_screen_speaker_stop(beat, names),
-        inner_voice_wording_stop(beat),
         hook_mouth_edit_stop(spine, beat),
     ):
         if stop:
@@ -5058,8 +5056,8 @@ def run_inner_voice(
         Seconds on the episode as filmed (take 1 starts at 0); ``until`` defaults from the word count.
     spoken_text
         With ``text``: the words the voice says when they differ from the caption
-        (a Japanese thought under an English caption). Kept on the desk
-        (:func:`creation.inner_voice.save_spoken`): the server's cue has no field for it.
+        (a Japanese thought under an English caption). Kept on the server's cue
+        (``spoken_text``, drama #1017), never on the desk.
     db
         The thought's level in dB against a dialogue line (``-3``: a little quieter), with a new
         thought or with ``cue``. Kept on the desk (:func:`creation.inner_voice.save_level`): the
@@ -5160,6 +5158,7 @@ def run_inner_voice(
                     text=str(text),
                     at=float(at or 0),
                     until=until,
+                    spoken_text=spoken,
                 )
             except inner_voice.InnerVoiceError as exc:
                 raise CommandStopped(str(exc)) from None
@@ -5223,16 +5222,8 @@ def run_inner_voice(
             file=out,
         )
     if added is not None and spoken:
-        saved_at = inner_voice.save_spoken(
-            desk,
-            episode,
-            cue_id=str(added["cue_id"]),
-            line=str(added["line"]),
-            spoken_text=spoken,
-        )
         print(
-            f"  spoken words kept on the desk (`{saved_at.relative_to(desk)}`): the voice says them, "
-            "the caption is --text",
+            "  spoken words kept on the server's cue: the voice says them, the caption is --text",
             file=out,
         )
     fresh_names = _cast_names(fresh)

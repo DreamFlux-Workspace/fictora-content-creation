@@ -481,7 +481,7 @@ def test_the_cli_takes_inner_voice(desk: Path, api: FakeApi) -> None:
 def test_a_thought_can_say_japanese_under_an_english_caption(
     desk: Path, api: FakeApi
 ) -> None:
-    """The cue holds one ``line``: the caption goes to the server, the words said stay on the desk."""
+    """The server's cue holds both (drama #1017): the caption is ``line``, the words said ``spoken_text``."""
 
     from creation.inner_voice import load_spoken, spoken_path
 
@@ -501,11 +501,11 @@ def test_a_thought_can_say_japanese_under_an_english_caption(
     (body,) = _sent(api, "PUT")
     assert body["cues"] == [
         {"cue_id": "iv_ep01_01", "start_ms": 3200, "end_ms": 4800, "speaker_cast_id": "cast_hana",
-         "line": "Don't look at him."}
-    ], "the contract cue is unchanged: the caption, no other field"  # fmt: skip
-    assert load_spoken(desk, 1) == {
-        "iv_ep01_01": {"line": "Don't look at him.", "spoken_text": "見ないで。"}
-    }
+         "line": "Don't look at him.", "spoken_text": "見ないで。"}
+    ], "the words said go on the server's cue"  # fmt: skip
+    assert load_spoken(desk, 1) == {} and not spoken_path(desk, 1).exists(), (
+        "nothing about the thought is kept on the desk"
+    )
     text = out.getvalue()
     assert "Hana (thinks): Don't look at him.  [says: 見ないで。]" in text
     assert "NOT ENGLISH" not in text
@@ -514,9 +514,12 @@ def test_a_thought_can_say_japanese_under_an_english_caption(
     run_inner_voice(desk, episode=1, out=listing)
     assert "[says: 見ないで。]" in listing.getvalue()
 
-    run_inner_voice(desk, episode=1, remove="iv_ep01_01", out=io.StringIO())
-    assert load_spoken(desk, 1) == {}, "a removed cue's words go with it"
-    assert spoken_path(desk, 1).is_file()
+    # Every later PUT sends the server's optional fields back as it gave them.
+    run_inner_voice(
+        desk, episode=1, cast="hana", text="Breathe.", at=6.0, out=io.StringIO()
+    )
+    second = _sent(api, "PUT")[1]["cues"]
+    assert second[0]["spoken_text"] == "見ないで。"
 
 
 def test_spoken_text_needs_a_new_thought_and_a_japanese_caption_is_named(
