@@ -653,3 +653,85 @@ def test_seven_voices_are_kept_four_then_three_and_every_one_is_kept(
     assert [b["cast_ids"] for b in voiced.posted(KEEP)] == [wanted[:4], wanted[4:]]
     # Each call carries the story version the call before it left (no conflict, no retry).
     assert {r["cast_id"] for r in voiced.spine_doc["voice_approvals"]} == set(wanted)
+
+
+# --- First-line samples made on the server, side by side (founder phone test, 24 Oct 2026) ---------
+
+CARD_SAMPLES = "/v1/spines/sp1/voices-card/samples"
+
+
+def _card(hana: dict[str, Any], ren: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": "fictora.drama-voices-card.v1",
+        "rows": [{"cast_id": "cast_hana", **hana}, {"cast_id": "cast_ren", **ren}],
+    }
+
+
+def _no_reference_samples(api: FakeApi) -> None:
+    for card in api.spine_doc["cast"]:
+        card["voice_brief"].pop("reference_audio_url", None)
+
+
+def test_the_script_yes_prints_the_servers_first_line_samples_and_one_still_being_made(
+    desk: Path, voiced: FakeApi
+) -> None:
+    """The kit asked for no sample before: with none on the card, every voice needed a paid audition."""
+
+    _no_reference_samples(voiced)
+    set_phase(desk, "wait_script")
+    voiced.routes[("POST", "/v1/spines/sp1/approve")] = {"spine_version": "v6"}
+    voiced.routes[("POST", CARD_SAMPLES)] = _card(
+        {
+            "sample_state": "preparing",
+            "sample_note": "Getting the voice ready…",
+        },
+        {
+            "sample_state": "ready",
+            "sample_url": "https://media.test/ren-first-line.mp3",
+        },
+    )
+
+    text = orchestrate.approve_gate(desk, gate="script").message
+
+    assert "sample: https://media.test/ren-first-line.mp3" in text
+    assert "Ren: play the sample above" in text
+    assert "first line: getting the voice ready" in text
+    assert "Hana: no free sample, so audition first" in text
+    asked = [
+        path
+        for (verb, path, _b, _k) in voiced.calls
+        if verb == "POST" and path.startswith(CARD_SAMPLES)
+    ]
+    assert asked == [f"{CARD_SAMPLES}?episode_ordinal=1"]
+
+
+def test_a_voice_heard_from_its_server_sample_can_be_kept(
+    desk: Path, voiced: FakeApi
+) -> None:
+    _no_reference_samples(voiced)
+    voiced.routes[("POST", CARD_SAMPLES)] = _card(
+        {
+            "sample_state": "ready",
+            "sample_url": "https://media.test/hana-first-line.mp3",
+        },
+        {
+            "sample_state": "ready",
+            "sample_url": "https://media.test/ren-first-line.mp3",
+        },
+    )
+
+    assert _keep(desk, "--keep-all") == 0
+
+    assert voiced.posted(KEEP)
+
+
+def test_an_older_server_without_the_card_leaves_the_gate_as_it_was(
+    desk: Path, voiced: FakeApi
+) -> None:
+    set_phase(desk, "wait_script")
+    voiced.routes[("POST", "/v1/spines/sp1/approve")] = {"spine_version": "v6"}
+
+    text = orchestrate.approve_gate(desk, gate="script").message
+
+    assert "sample: https://media.test/hana-ref.mp3" in text
+    assert "getting the voice ready" not in text

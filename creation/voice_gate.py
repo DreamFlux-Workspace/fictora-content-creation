@@ -39,7 +39,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -170,6 +170,76 @@ def speaking_voices(
             )
         )
     return rows
+
+
+@dataclass(frozen=True)
+class FirstLineSample:
+    """One character's first-line sample as the server's Voices card says (fictora-drama voices-card).
+
+    ``state`` is ``ready`` (``url`` set), ``preparing`` / ``waiting`` (being made),
+    ``failed`` or ``none``; ``note`` is the server's words for a clip not ready.
+    """
+
+    state: str
+    url: str | None = None
+    note: str | None = None
+
+
+#: What the gate says under a voice whose first-line sample is still being made.
+SAMPLE_PREPARING = (
+    "first line: getting the voice ready… (run voice --list again in a few seconds)"
+)
+
+
+def server_first_line_samples(
+    run: Any, spine_id: str, *, episode: int | None
+) -> dict[str, FirstLineSample]:
+    """Each speaking character's first-line sample, made on the server side by side.
+
+    Founder phone test, 24 Oct 2026 ("it takes a while ... why"): every sample
+    was its own voice render, one after another. The server now starts every
+    character's first line together right after the script's yes and keeps
+    them; ``POST /v1/spines/{id}/voices-card/samples`` starts any still missing
+    (a kept one costs nothing) and answers at once. The kit only prints what
+    comes back. ``{}`` on an older server (no route) or when it cannot be reached.
+    """
+
+    post = getattr(run, "post_optional", None)
+    if post is None or not spine_id:
+        return {}
+    query = f"?episode_ordinal={episode}" if episode else ""
+    try:
+        status, body = post(f"/v1/spines/{spine_id}/voices-card/samples{query}", {})
+    except Exception:  # noqa: BLE001 - an unreachable server leaves the gate as it was
+        return {}
+    if status not in (200, 202) or not isinstance(body, dict):
+        return {}
+    samples: dict[str, FirstLineSample] = {}
+    for row in body.get("rows") or []:
+        if not isinstance(row, Mapping) or not row.get("cast_id"):
+            continue
+        samples[str(row["cast_id"])] = FirstLineSample(
+            state=str(row.get("sample_state") or "none"),
+            url=str(row.get("sample_url") or "").strip() or None,
+            note=str(row.get("sample_note") or "").strip() or None,
+        )
+    return samples
+
+
+def with_samples(
+    voices: Sequence[CastVoice], samples: Mapping[str, FirstLineSample] | None
+) -> list[CastVoice]:
+    """The voices, each with the server's first-line sample as its sample when it is ready."""
+
+    if not samples:
+        return list(voices)
+    out: list[CastVoice] = []
+    for voice in voices:
+        sample = samples.get(voice.cast_id)
+        if sample is not None and sample.state == "ready" and sample.url:
+            voice = replace(voice, sample_url=sample.url)
+        out.append(voice)
+    return out
 
 
 def desk_has_filmed(desk: Path) -> bool:
@@ -431,12 +501,20 @@ def _voice_words(voice: CastVoice) -> str:
 
 
 def voice_rows(
-    spine: Mapping[str, Any], approvals: Approvals, *, episode: int | None = None
+    spine: Mapping[str, Any],
+    approvals: Approvals,
+    *,
+    episode: int | None = None,
+    samples: Mapping[str, FirstLineSample] | None = None,
 ) -> list[str]:
-    """One printed row per speaking character: name, voice, its words, approved or not."""
+    """One printed row per speaking character: name, voice, its words, approved or not.
+
+    With the server's first-line samples (:func:`server_first_line_samples`), a
+    ready one is the row's sample and one still being made says so.
+    """
 
     rows: list[str] = []
-    for voice in speaking_voices(spine, episode=episode):
+    for voice in with_samples(speaking_voices(spine, episode=episode), samples):
         mark = (
             f"approved ({approvals.voices[voice.cast_id].get('how', 'kept')})"
             if approvals.approved(voice)
@@ -445,8 +523,11 @@ def voice_rows(
         rows.append(
             f"  - {voice.name} ({voice.cast_id}): {_voice_words(voice)} [{mark}]"
         )
+        sample = (samples or {}).get(voice.cast_id)
         if voice.sample_url:
             rows.append(f"      sample: {voice.sample_url}")
+        elif sample is not None and sample.state in ("preparing", "waiting"):
+            rows.append(f"      {SAMPLE_PREPARING}")
     return rows
 
 
@@ -478,11 +559,12 @@ def render_gate(
     approvals: Approvals,
     *,
     episode: int | None = None,
+    samples: Mapping[str, FirstLineSample] | None = None,
 ) -> str:
     """The Voices gate text for these yeses (``""`` when nobody speaks)."""
 
     desk = desk.expanduser().resolve()
-    rows = voice_rows(spine, approvals, episode=episode)
+    rows = voice_rows(spine, approvals, episode=episode, samples=samples)
     if not rows:
         return ""
     head = "Voices gate (before filming): the voices the takes will speak in."
@@ -499,7 +581,9 @@ def render_gate(
     pending = pending_voices(spine, approvals, episode=episode)
     if not pending:
         return "\n".join([head, *rows, "Every voice has the human's yes.", *tail])
-    return "\n".join([head, *rows, *_commands(desk, pending), *tail])
+    return "\n".join(
+        [head, *rows, *_commands(desk, with_samples(pending, samples)), *tail]
+    )
 
 
 def server_step_line(
@@ -552,7 +636,10 @@ def gate_text(
     if not voices.locked:
         return "\n".join([voices.line(), MODEL_GATE_SKIPPED])
     body, approvals = sync_approvals(desk, run, spine)
-    text = render_gate(desk, body, approvals, episode=episode)
+    samples = server_first_line_samples(
+        run, str(spine.get("spine_id") or ""), episode=episode
+    )
+    text = render_gate(desk, body, approvals, episode=episode, samples=samples)
     if not text:
         return ""
     said = server_step_line(
