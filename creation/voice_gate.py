@@ -197,10 +197,10 @@ def server_first_line_samples(
     """Each speaking character's first-line sample, made on the server side by side.
 
     Founder phone test, 24 Oct 2026 ("it takes a while ... why"): every sample
-    was its own voice render, one after another. The server now starts every
-    character's first line together right after the script's yes and keeps
-    them; ``POST /v1/spines/{id}/voices-card/samples`` starts any still missing
-    (a kept one costs nothing) and answers at once. The kit only prints what
+    was its own voice render, one after another. ``POST
+    /v1/spines/{id}/voices-card/samples`` starts every one still missing
+    together on the server, keeps them (a kept one costs nothing) and answers
+    at once. The kit only prints what
     comes back. ``{}`` on an older server (no route) or when it cannot be reached.
     """
 
