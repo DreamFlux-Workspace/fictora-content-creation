@@ -134,11 +134,12 @@ Inner voice (a character's own thoughts, ``episode_summaries[].inner_voice`` on
 the saved spine, saved with ``inner-voice``) runs as the ``inner-voice`` step
 right after the hand voice step, on every take that has a cue:
 
-- **Which take.** Cue times count from the start of the episode as filmed. Take
-  ``tN`` starts at the sum of the raw lengths of ``t1`` .. ``tN-1`` (ffprobe on
-  each newest raw take); a cue belongs to the take its start falls in
-  (:func:`creation.inner_voice.take_cues`). One that runs past the seam stays on
-  the take where it starts and is flagged ``!!``.
+- **Which take, from the server.** The kit sends the real length of ``t1`` ..
+  ``tN`` (ffprobe on each newest raw take) to the server's free thoughts route
+  (:mod:`creation.post.thought_grey`), which places every cue the way its own
+  join does: on the take its start falls in, at its time less where that take
+  starts. One that runs past the seam stays on the take where it starts and is
+  flagged ``!!``. The kit does no placement of its own.
 - **The dry line** is made on the server in the thinker's locked voice
   (``voice-lines``, the route ``voice-line`` uses; same key, same ledger unit).
   A line already on the desk for the same words and voice is reused: a re-run
@@ -147,6 +148,16 @@ right after the hand voice step, on every take that has a cue:
   levelled to -18 LUFS; the SFX and hand cues duck
   under it like speech. Script captions stay timed on the take without it.
 - **Captioned** in italic (the house face slanted: heard, not seen) where it plays.
+
+Black and white (the ``thought-grey`` step, after ``impact`` and before the mix
+and captions): the spans the server greys on this take (its inner-voice cues
+and its thought lines) play in black and white with the server's own ffmpeg
+filter; the kit measures the take's shot cuts and sends them, so an edge near a
+cut switches on it as the server's does. The sound is untouched and captions
+stay in colour. The finish record keeps what was greyed (``thought_grey``). An
+older server (no thoughts route: HTTP 404), no credentials or no network: no
+grey and a printed ``!!`` note, never an error; the cues are then named as not
+laid.
 
 A cue that cannot go on (no locked voice, a refusal from the route, a line that
 runs past the take, an earlier take not on the desk, a start after the last
@@ -167,6 +178,7 @@ from typing import Any, TextIO
 import httpx
 
 from creation import inner_voice as thoughts
+from creation.post import thought_grey as grey_route
 from creation.captions import (
     CaptionLine,
     Span,
@@ -348,6 +360,8 @@ from creation.rules_epoch import legacy_rules, under_desk_rules
 
 #: The finish step that lays and captions the episode's inner-voice cues on this take.
 INNER_VOICE_STEP = "inner-voice"
+#: The step that plays a thought in black and white (the server's spans and filter, ``thought_grey``).
+THOUGHT_GREY_STEP = "thought-grey"
 
 #: The finish step that lays room tone under a locked-voice take (soundtrack ``target_audio``).
 ROOM_TONE_STEP = "room-tone"
@@ -793,6 +807,21 @@ def take_lengths(
     return lengths, False
 
 
+@dataclass(frozen=True)
+class TakeThoughtPlan:
+    """This take's thoughts, as the server placed them: the cues to lay, and the spans to grey.
+
+    ``server`` is the server's entry for this take (``None`` when it was not asked or did not
+    answer); ``note`` is why it did not answer, printed by the ``thought-grey`` step.
+    """
+
+    cues: thoughts.TakeCuePlan = field(default_factory=thoughts.TakeCuePlan)
+    server: grey_route.TakeThoughts | None = None
+    note: str = ""
+    #: Every take's real length sent to the server, ``t1`` .. this take.
+    lengths: tuple[float, ...] = ()
+
+
 def take_inner_voice(
     spine: dict[str, Any] | None,
     desk: Path,
@@ -800,37 +829,107 @@ def take_inner_voice(
     episode: int,
     take_id: str,
     source: Path,
-) -> thoughts.TakeCuePlan:
-    """The episode's inner-voice cues that fall in this take (:func:`creation.inner_voice.take_cues`).
+    fetcher: grey_route.ThoughtsFetcher | None = None,
+) -> TakeThoughtPlan:
+    """The episode's thoughts that fall in this take, placed by the server (``thought_grey``).
 
-    Each carries the words its voice says when they were kept apart from the
-    caption (``inner-voice --spoken-text``, :func:`creation.inner_voice.spoken_for`).
+    The kit sends the real length of ``t1`` .. this take (ffprobe on each newest
+    raw take) and the server answers where each inner-voice cue and each thought
+    line plays on this take, and what it greys (fictora-drama ``thought_windows``:
+    the placement its own join uses). The kit does no placement of its own. Each
+    cue carries the words its voice says when they were kept apart from the
+    caption (the server's ``spoken_text``, else an older desk's file).
     """
 
-    cues = thoughts.episode_cues(spine, episode=episode) if spine else []
-    if not cues:
-        return thoughts.TakeCuePlan()
+    if not spine:
+        return TakeThoughtPlan()
+    cues = thoughts.episode_cues(spine, episode=episode)
+    if not cues and not grey_route.episode_has_thought_lines(spine, episode):
+        return TakeThoughtPlan()
+    number = thoughts.take_number(take_id)
     lengths, last = take_lengths(desk, episode, take_id, source=source)
-    plan = thoughts.take_cues(
-        cues, take=thoughts.take_number(take_id), lengths=lengths, last_filmed=last
+    missing = [
+        f"t{i}" for i, length in enumerate(lengths[:-1], start=1) if length is None
+    ]
+    if missing:
+        # Where this take starts is unknown: the server cannot place anything on it.
+        known = sum(float(length) for length in lengths if length is not None) - float(
+            lengths[-1] or 0.0
+        )
+        problems = tuple(
+            f"{cue.get('cue_id')} at {int(cue.get('start_ms') or 0) / 1000:.2f}s on the episode: "
+            f"{', '.join(missing)} has no raw take on the desk, so where t{number} starts is unknown; not laid"
+            for cue in cues
+            if int(cue.get("start_ms") or 0) / 1000 >= known
+        )
+        return TakeThoughtPlan(
+            thoughts.TakeCuePlan(problems=problems),
+            note=f"{', '.join(missing)} has no raw take on the desk, so the server cannot place this take's thoughts",
+        )
+    known_lengths = tuple(float(length) for length in lengths if length is not None)
+    post = (fetcher or grey_route.api_thoughts_fetcher)(desk, episode)
+    try:
+        answer = grey_route.fetch_thoughts(
+            post, grey_route.request_body(desk, episode, known_lengths)
+        )
+    except grey_route.ThoughtsUnavailable as exc:
+        return TakeThoughtPlan(
+            thoughts.TakeCuePlan(
+                problems=tuple(f"{cue.get('cue_id')}: {exc}" for cue in cues)
+            ),
+            note=str(exc),
+            lengths=known_lengths,
+        )
+    here = answer.take(number)
+    offset = round(sum(known_lengths[:-1]), 3)
+    take_end = offset + known_lengths[-1]
+    placed = tuple(
+        thoughts.TakeCue(
+            cue_id=window.id,
+            speaker_cast_id=window.speaker_cast_id,
+            line=window.text,
+            spoken_text=window.spoken_text,
+            start=window.start,
+            end=window.end,
+            episode_start=(
+                window.episode_start
+                if window.episode_start is not None
+                else offset + window.start
+            ),
+            seam=(
+                f"{window.id} runs {window.episode_start or 0:.2f}-{window.episode_end or 0:.2f}s on the "
+                f"episode, past the seam at {take_end:.2f}s where t{number} ends; laid on t{number}, where it starts"
+                if window.runs_past_take_end
+                else ""
+            ),
+        )
+        for window in (here.windows if here else ())
+        if window.source == "cue"
     )
+    problems = tuple(
+        f"{cue_id} at {start:.2f}s starts after the last filmed take (t{number}) ends at {take_end:.2f}s on "
+        "the episode; not laid (move it with `inner-voice --remove` and --at)"
+        for cue_id, start, _why in answer.unplaced
+        if last
+    )
+    plan = thoughts.TakeCuePlan(placed, problems, offset)
     # The server's cue holds the spoken words (drama #1017); a desk made before keeps its own file.
     spoken = thoughts.load_spoken(desk, episode)
     levels = thoughts.load_levels(desk, episode)
-    if not spoken and not levels:
-        return plan
-    return replace(
-        plan,
-        cues=tuple(
-            replace(
-                cue,
-                spoken_text=cue.spoken_text
-                or thoughts.spoken_for(spoken, cue.cue_id, cue.line),
-                db=levels.get(cue.cue_id, 0.0),
-            )
-            for cue in plan.cues
-        ),
-    )
+    if spoken or levels:
+        plan = replace(
+            plan,
+            cues=tuple(
+                replace(
+                    cue,
+                    spoken_text=cue.spoken_text
+                    or thoughts.spoken_for(spoken, cue.cue_id, cue.line),
+                    db=levels.get(cue.cue_id, 0.0),
+                )
+                for cue in plan.cues
+            ),
+        )
+    return TakeThoughtPlan(plan, here, lengths=known_lengths)
 
 
 def _opening_lines(
@@ -1279,6 +1378,7 @@ def run_finish(
     impact: bool = True,
     impact_at: tuple[ImpactHit, ...] = (),
     impact_planner: ImpactPlannerFactory | None = None,
+    thoughts_fetcher: grey_route.ThoughtsFetcher | None = None,
 ) -> FinishResult:
     """Run the whole local post chain on one accepted take.
 
@@ -1608,9 +1708,12 @@ def run_finish(
     board = approved_board(desk, episode, take_id)
     audio = DramaApiAudio(desk, episode=episode)
     sfx_render = sfx_render or service_renderer(audio, spine_id(desk))
-    thought_plan = take_inner_voice(
-        spine, desk, episode=episode, take_id=take_id, source=source
-    )
+    # Where this take's thoughts play and what greys, from the server (thought_grey): no kit placement.
+    thought_full = take_inner_voice(
+        spine, desk, episode=episode, take_id=take_id, source=source,
+        fetcher=thoughts_fetcher,
+    )  # fmt: skip
+    thought_plan = thought_full.cues
     hand_steps = (
         (("voice",) if hand.mutes or hand.voices else ())
         + ((INNER_VOICE_STEP,) if thought_plan.any else ())
@@ -2881,6 +2984,75 @@ def run_finish(
         append_run_note(run_dir, f"Impact -> `{done.output.name}`: {done.one_line()}")
         return StepReport("impact", "ran", done.one_line(), done.output)
 
+    # The thoughts this take played in black and white (the finish record says so, for `join`).
+    grey_state: dict[str, Any] = {"record": None}
+
+    def do_thought_grey(take: Path) -> StepReport:
+        """Play each thought in black and white with the server's filter, before the mix and captions.
+
+        The server placed the spans and built the filter (its join's own code); the kit measures the
+        shot cuts on its raw take, so a grey edge near a cut switches on it as the server's does, and
+        applies the filter as sent. Captions are burned later, so they stay in colour.
+        """
+
+        server = thought_full.server
+        if server is None or not server.grey_spans or not server.grey_filter:
+            return StepReport(
+                THOUGHT_GREY_STEP, "skipped", "no thought to grey on this take"
+            )
+        grey_filter = server.grey_filter
+        cut_note = "edges ramp (no cuts sent)"
+        lineage = raw_take_behind(desk, source)
+        measured = (
+            lineage.raw if lineage.raw is not None and lineage.keeps_timeline else take
+        )
+        try:
+            cuts = tuple((cut_meter or measure_cuts)(measured))
+        except (RuntimeError, OSError, MediaToolError) as exc:
+            cuts = ()
+            cut_note = f"edges ramp (cuts not measured: {str(exc)[:120]})"
+        if cuts:
+            number = thoughts.take_number(take_id)
+            try:
+                again = grey_route.fetch_thoughts(
+                    (thoughts_fetcher or grey_route.api_thoughts_fetcher)(
+                        desk, episode
+                    ),
+                    grey_route.request_body(
+                        desk, episode, thought_full.lengths, cuts={number: cuts}
+                    ),
+                )
+            except grey_route.ThoughtsUnavailable as exc:
+                cut_note = (
+                    f"edges ramp (the server did not snap them to the cuts: {exc})"
+                )
+            else:
+                snapped = again.take(number)
+                if snapped is not None and snapped.grey_filter:
+                    grey_filter, cut_note = (
+                        snapped.grey_filter,
+                        f"edges snapped to the cuts measured on `{measured.name}`",
+                    )
+        greyed = grey_route.grey_take(
+            take,
+            grey_filter,
+            next_versioned_path(takes, f"{base}-thought-grey", ".mp4"),
+        )
+        spans = ", ".join(f"{a:.2f}-{b:.2f}s" for a, b in server.grey_spans)
+        grey_state["record"] = {
+            "spans": [list(span) for span in server.grey_spans],
+            "filter": grey_filter,
+        }
+        append_run_note(
+            run_dir, f"Finish · thought grey -> `{greyed.name}`: {spans}; {cut_note}"
+        )
+        return StepReport(
+            THOUGHT_GREY_STEP,
+            "ran",
+            f"{len(server.grey_spans)} thought(s) in black and white: {spans}; {cut_note}",
+            greyed,
+        )
+
     def do_mix(take: Path) -> StepReport:
         record_state["pre_bed"] = take
         mixed = mix_take(
@@ -3424,6 +3596,23 @@ def run_finish(
     else:
         step("colour", "Matching the look to the approved board", do_colour)
         step("impact", "Punching up the big impact beats", do_impact)
+        if thought_full.server is not None and thought_full.server.grey_spans:
+            step(
+                THOUGHT_GREY_STEP,
+                "Playing the thoughts in black and white (the server's look)",
+                do_thought_grey,
+            )
+        elif thought_full.note:
+            # An older server, no credentials or no network: no grey, said, never an error.
+            print(
+                f"[{THOUGHT_GREY_STEP}] !! no black and white: {thought_full.note}",
+                file=out,
+                flush=True,
+            )
+            append_run_note(
+                run_dir,
+                f"Finish · {THOUGHT_GREY_STEP}: no black and white: {thought_full.note}",
+            )
         step(
             "mix", "Mixing the take's own sound at a measured level (no music)", do_mix
         )
@@ -3515,6 +3704,7 @@ def run_finish(
         ],
         letterbox={"letterbox": True, "caption_colour": colour_name} if letterbox else None,
         cover=record_state["cover"],
+        thought_grey=grey_state["record"] if result._ran(THOUGHT_GREY_STEP) else None,
     )  # fmt: skip
     handles_note = ""
     server_handles = None

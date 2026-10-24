@@ -17,7 +17,6 @@ import pytest
 from conftest import SPINE, make_take, make_tone, needs_ffmpeg
 
 from creation.desk_media_urls import drawn_cast_rows
-from creation.inner_voice import take_cues
 from creation.ops.state import load_series
 from creation.post import handmade
 from creation.post.audio_service import AudioServiceError
@@ -38,75 +37,160 @@ def _cue(
             "speaker_cast_id": who, "line": line}  # fmt: skip
 
 
-# --- which take a cue falls in, and where on it -----------------------------------------------------
+# --- which take a cue falls in, and where on it: the server's answer ------------------------------
 
 
-def test_a_one_take_episode_lays_its_cues_where_they_are_and_names_one_past_the_end() -> (
-    None
+class ServerStandIn:
+    """The server's thoughts route, for tests (fictora-drama ``thought_windows``).
+
+    It places each cue as the server does (on the take its start falls in, cut at that take's
+    end) so the kit can be tested end to end; the kit itself keeps no such rule.
+    """
+
+    def __init__(self, cues: list[dict[str, Any]], *, status: int = 200) -> None:
+        self.cues = cues
+        self.status = status
+        self.bodies: list[dict[str, Any]] = []
+
+    def __call__(self, desk: Path, episode: int):
+        def post(body: dict[str, Any]) -> tuple[int, Any]:
+            self.bodies.append(body)
+            if self.status != 200:
+                return self.status, {"detail": "Not Found"}
+            return 200, self.answer([t["take_seconds"] for t in body["takes"]])
+
+        return post
+
+    def answer(self, lengths: list[float]) -> dict[str, Any]:
+        offsets = [sum(lengths[:i]) for i in range(len(lengths))]
+        takes = [{"take": i + 1, "take_seconds": n, "windows": [], "grey_spans": [], "grey_filter": None}
+                 for i, n in enumerate(lengths)]  # fmt: skip
+        unplaced = []
+        for cue in self.cues:
+            start, end = cue["start_ms"] / 1000, cue["end_ms"] / 1000
+            for index, (offset, length) in enumerate(zip(offsets, lengths)):
+                if offset <= start < offset + length:
+                    window = {
+                        "source": "cue", "id": cue["cue_id"], "speaker_cast_id": cue["speaker_cast_id"],
+                        "text": cue["line"], "spoken_text": cue.get("spoken_text"),
+                        "acting_direction": cue.get("acting_direction"),
+                        "start_s": round(start - offset, 3), "end_s": round(min(end, offset + length) - offset, 3),
+                        "episode_start_s": start, "episode_end_s": end,
+                        "runs_past_take_end": end > offset + length, "grey": True,
+                    }  # fmt: skip
+                    takes[index]["windows"].append(window)
+                    takes[index]["grey_spans"].append(
+                        [window["start_s"], window["end_s"]]
+                    )
+                    break
+            else:
+                unplaced.append(
+                    {
+                        "cue_id": cue["cue_id"],
+                        "episode_start_s": start,
+                        "reason": "after the last take",
+                    }
+                )
+        for take in takes:
+            if take["grey_spans"]:
+                inside = "+".join(
+                    f"gte(t\\,{a:.3f})*lt(t\\,{b:.3f})" for a, b in take["grey_spans"]
+                )
+                take["grey_filter"] = f"hue=s='1-({inside})'"
+        return {"takes": takes, "unplaced": unplaced, "grey_on": True}
+
+
+def _plan(
+    post_desk: Path,
+    cues: list[dict[str, Any]],
+    *,
+    take_id: str = "t1",
+    status: int = 200,
 ):
-    plan = take_cues(
-        [_cue("iv_ep01_01", 4.3, 4.9), _cue("iv_ep01_02", 5.4, 6.0)],
-        take=1,
-        lengths=[5.0],
-        last_filmed=True,
-    )
+    from creation.post.finish import take_inner_voice
 
-    assert [(c.cue_id, c.start, c.end) for c in plan.cues] == [("iv_ep01_01", 4.3, 4.9)]
-    assert plan.offset == 0.0
-    (problem,) = plan.problems
-    assert problem.startswith(
-        "iv_ep01_02 at 5.40s starts after the last filmed take (t1) ends at 5.00s"
-    )
+    _desk_with_cues(post_desk, cues)
+    spine = json.loads((post_desk / "ep01" / "api" / "03_spine.json").read_text())
+    takes = post_desk / "ep01" / "takes"
+    server = ServerStandIn(cues, status=status)
+    plan = take_inner_voice(spine, post_desk, episode=1, take_id=take_id,
+                            source=takes / f"take-ep01-{take_id}-raw-v1.mp4", fetcher=server)  # fmt: skip
+    return plan, server
 
 
-def test_on_a_two_take_episode_take_2_starts_where_take_1_ends() -> None:
+@needs_ffmpeg
+def test_the_kit_sends_its_real_take_lengths_and_lays_what_the_server_placed(
+    post_desk: Path,
+) -> None:
+    takes = post_desk / "ep01" / "takes"
+    make_take(takes / "take-ep01-t1-raw-v1.mp4", seconds=4.0)
+    make_take(takes / "take-ep01-t2-raw-v1.mp4", seconds=5.0)
     cues = [
-        _cue("iv_ep01_01", 1.0, 2.0),
-        _cue("iv_ep01_02", 4.5, 6.0),  # straddles the seam at 5.0 s
-        _cue("iv_ep01_03", 6.2, 7.0),
-        _cue("iv_ep01_04", 11.0, 12.0),  # after t2 ends at 10.0 s
+        _cue("iv_ep01_01", 3.6, 4.4),
+        _cue("iv_ep01_02", 8.3, 8.9),
+        _cue("iv_ep01_03", 12.0, 12.5),
     ]
 
-    first = take_cues(cues, take=1, lengths=[5.0], last_filmed=False)
-    second = take_cues(cues, take=2, lengths=[5.0, 5.0], last_filmed=True)
+    plan, server = _plan(post_desk, cues, take_id="t2")
 
-    assert [c.cue_id for c in first.cues] == ["iv_ep01_01", "iv_ep01_02"]
-    assert first.problems == (), (
-        "a later take is filmed: a cue past t1 is not t1's problem"
-    )
-    seam = first.cues[1]
-    assert (seam.start, seam.end) == (4.5, 6.0)
+    ((first, second),) = [body["takes"] for body in server.bodies]
     assert (
-        "past the seam at 5.00s" in seam.seam
-        and "laid on t1, where it starts" in seam.seam
+        abs(first["take_seconds"] - 4.0) < 0.05
+        and abs(second["take_seconds"] - 5.0) < 0.05
     )
-    assert first.cues[0].seam == ""
-    assert [(c.cue_id, c.start, c.end, c.episode_start) for c in second.cues] == [
-        ("iv_ep01_03", 1.2, 2.0, 6.2)
-    ], "the straddling cue is laid once, on t1; t2 counts from 5.0 s"
-    assert second.offset == 5.0
-    assert [p.split(" ")[0] for p in second.problems] == ["iv_ep01_04"]
+    assert [(c.cue_id, c.start) for c in plan.cues.cues] == [("iv_ep01_02", 4.3)]
+    assert plan.cues.offset == pytest.approx(4.0, abs=0.05)
+    # t2 is the last filmed take: a cue the server could not place on it is named.
+    (problem,) = plan.cues.problems
+    assert problem.startswith(
+        "iv_ep01_03 at 12.00s starts after the last filmed take (t2)"
+    )
+    assert plan.server is not None and plan.server.grey_spans == ((4.3, 4.9),)
 
 
-def test_take_2_uses_take_1s_measured_length_not_the_clip_length() -> None:
-    plan = take_cues(
-        [_cue("iv_ep01_01", 4.5, 5.0)], take=2, lengths=[4.2, 5.0], last_filmed=True
+@needs_ffmpeg
+def test_a_cue_past_the_seam_is_flagged_and_a_later_takes_cue_is_not_this_takes_problem(
+    post_desk: Path,
+) -> None:
+    takes = post_desk / "ep01" / "takes"
+    make_take(takes / "take-ep01-t1-raw-v1.mp4", seconds=5.0)
+    make_take(takes / "take-ep01-t2-raw-v1.mp4", seconds=5.0)
+
+    plan, _server = _plan(
+        post_desk, [_cue("iv_ep01_01", 4.5, 6.0), _cue("iv_ep01_02", 6.2, 7.0)]
     )
 
-    assert [(c.cue_id, c.start) for c in plan.cues] == [("iv_ep01_01", 0.3)]
-
-
-def test_an_earlier_take_missing_from_the_desk_names_every_cue_that_may_be_this_takes() -> (
-    None
-):
-    plan = take_cues(
-        [_cue("iv_ep01_01", 6.2, 7.0)], take=2, lengths=[None, 5.0], last_filmed=True
+    (seam,) = plan.cues.cues
+    assert seam.cue_id == "iv_ep01_01" and "laid on t1, where it starts" in seam.seam
+    assert plan.cues.problems == (), (
+        "a later take is filmed: its cue is not t1's problem"
     )
 
-    assert plan.cues == ()
-    (problem,) = plan.problems
+
+@needs_ffmpeg
+def test_an_earlier_take_missing_from_the_desk_asks_the_server_nothing(
+    post_desk: Path,
+) -> None:
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t2-raw-v1.mp4", seconds=5.0)
+
+    plan, server = _plan(post_desk, [_cue("iv_ep01_01", 6.2, 7.0)], take_id="t2")
+
+    assert server.bodies == [] and plan.cues.cues == ()
+    (problem,) = plan.cues.problems
     assert "t1 has no raw take on the desk, so where t2 starts is unknown" in problem
-    assert plan.offset is None
+
+
+@needs_ffmpeg
+def test_an_older_server_with_no_thoughts_route_is_a_note_never_an_error(
+    post_desk: Path,
+) -> None:
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", seconds=5.0)
+
+    plan, _server = _plan(post_desk, [_cue("iv_ep01_01", 1.0, 2.0)], status=404)
+
+    assert plan.server is None and "no thoughts route yet" in plan.note
+    (problem,) = plan.cues.problems
+    assert problem.startswith("iv_ep01_01: the server has no thoughts route yet")
 
 
 # --- finish on a real take ----------------------------------------------------------------------------
@@ -172,6 +256,11 @@ def _desk_with_cues(
 
 def _finish(post_desk: Path, audio: FakeAudio, **kwargs: Any):
     out = io.StringIO()
+    spine = json.loads((post_desk / "ep01" / "api" / "03_spine.json").read_text())
+    kwargs.setdefault(
+        "thoughts_fetcher",
+        ServerStandIn(spine["episode_summaries"][0].get("inner_voice") or []),
+    )
     result = run_finish(post_desk, sfx_render=_sfx, facts_fetcher=lambda *a: None,
                         voice_audio=audio, stream=out, **kwargs)  # fmt: skip
     return result, out.getvalue()
@@ -574,19 +663,21 @@ def test_a_thought_says_its_spoken_words_and_is_captioned_in_english_italic(
     assert record["inner_voice"][0]["spoken_text"] == "振り返らない。"
 
 
-def test_the_servers_cue_says_its_spoken_words_with_nothing_on_the_desk() -> None:
+@needs_ffmpeg
+def test_the_servers_cue_says_its_spoken_words_with_nothing_on_the_desk(
+    post_desk: Path,
+) -> None:
     # Drama #1017: the server's cue holds the words said (and the acting direction); the kit reads them
-    # from the cue and keeps nothing of its own.
-    from creation.inner_voice import take_cues
-
+    # from the server's answer and keeps nothing of its own.
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", seconds=8.0)
     cue = {
         **_cue("iv_ep01_01", 4.3, 4.9),
         "spoken_text": "振り返らない。",
         "acting_direction": "soft, breaking",
     }
-    plan = take_cues([cue], take=1, lengths=[8.0], last_filmed=True)
+    plan, _server = _plan(post_desk, [cue])
 
-    (placed,) = plan.cues
+    (placed,) = plan.cues.cues
     assert placed.spoken_text == "振り返らない。" and placed.line == THOUGHT
 
 
@@ -603,3 +694,78 @@ def test_a_thought_written_in_japanese_with_no_caption_is_named(
         "!! iv_ep01_01: the thought is not English, so it plays uncaptioned"
         in _step(result, INNER_VOICE_STEP).detail
     )
+
+
+# --- the thought plays in black and white, with the server's filter ----------------------------------
+
+
+def _saturation(video: Path, at: float) -> float:
+    """Mean colourfulness (max - min of R, G, B; 0-255) of one frame."""
+
+    import subprocess
+
+    from creation.post.media import ffmpeg_bin
+
+    raw = subprocess.run(
+        [ffmpeg_bin(), "-v", "error", "-ss", f"{at}", "-i", str(video), "-frames:v", "1",
+         "-vf", "scale=8:8", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"],
+        capture_output=True, check=True,
+    ).stdout  # fmt: skip
+    pixels = [raw[i : i + 3] for i in range(0, len(raw) - 2, 3)]
+    return sum(max(px) - min(px) for px in pixels) / max(1, len(pixels))
+
+
+@needs_ffmpeg
+def test_finish_greys_the_thought_with_the_servers_filter_and_records_it(
+    post_desk: Path, downloads: list[str]
+) -> None:
+    takes = post_desk / "ep01" / "takes"
+    make_take(takes / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES, colour="red")
+    _desk_with_cues(post_desk, [_cue("iv_ep01_01", 4.3, 4.9)])
+
+    result, text = _finish(post_desk, FakeAudio())
+
+    assert result.complete, text
+    names = [s.step for s in result.steps]
+    assert (
+        names.index("impact")
+        < names.index("thought-grey")
+        < names.index("mix")
+        < names.index("captions")
+    )
+    step = _step(result, "thought-grey")
+    assert step.status == "ran" and "4.30-4.90s" in step.detail
+    assert _saturation(step.output, 4.6) < 10, "black and white inside the thought"
+    assert _saturation(step.output, 2.5) > 100, "in colour outside it"
+    record = json.loads(
+        sorted(takes.glob("take-ep01-t1-finish-v*.json"))[-1].read_text()
+    )
+    assert record["thought_grey"]["spans"] == [[4.3, 4.9]]
+    assert record["thought_grey"]["filter"].startswith("hue=s=")
+
+
+@needs_ffmpeg
+def test_finish_on_an_older_server_greys_nothing_and_says_so(
+    post_desk: Path, downloads: list[str]
+) -> None:
+    takes = post_desk / "ep01" / "takes"
+    make_take(takes / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
+    cues = [_cue("iv_ep01_01", 4.3, 4.9)]
+    _desk_with_cues(post_desk, cues)
+
+    result, text = _finish(
+        post_desk, FakeAudio(), thoughts_fetcher=ServerStandIn(cues, status=404)
+    )
+
+    assert "thought-grey" not in [s.step for s in result.steps]
+    assert (
+        "[thought-grey] !! no black and white: the server has no thoughts route yet"
+        in text
+    )
+    assert _step(result, "watermark").status == "ran", (
+        "never an error: the take still finishes"
+    )
+    record = json.loads(
+        sorted(takes.glob("take-ep01-t1-finish-v*.json"))[-1].read_text()
+    )
+    assert "thought_grey" not in record

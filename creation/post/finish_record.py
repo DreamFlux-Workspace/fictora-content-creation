@@ -64,6 +64,10 @@ class FinishRecord:
     missing: tuple[str, ...] = ()
     #: The letterbox captions' colour (``yellow`` / ``white``); ``None`` on a portrait take.
     caption_colour: str | None = None
+    #: The thoughts ``finish`` played in black and white on this take, from the server's thoughts route
+    #: (``{"spans": [[start, end], ...], "filter": "hue=s='...'"}``, on the take as filmed); ``None``
+    #: when none was greyed, and on every record from before 24 Oct 2026.
+    thought_grey: dict[str, Any] | None = None
 
     def resolve(self, desk: Path, name: str) -> Path | None:
         """Absolute path of one stored file (``pre_bed``, ``master``, ``final``, ``bed``)."""
@@ -105,6 +109,7 @@ def write_finish_record(
     letterbox: Mapping[str, Any] | None = None,
     missing: Sequence[str] = (),
     cover: Path | None = None,
+    thought_grey: Mapping[str, Any] | None = None,
 ) -> Path:
     """Write ``takes/take-epNN-tK-finish-vN.json`` (a new version; never overwrites).
 
@@ -147,6 +152,9 @@ def write_finish_record(
     cover
         The episode cover the server made, saved beside the video
         (``cover-epNN-vN.jpg``); ``None`` writes no ``cover`` key.
+    thought_grey
+        The thoughts greyed on this take (``{"spans", "filter"}``, the server's); ``None`` writes no
+        ``thought_grey`` key, so a take with no thought writes its record exactly as before.
 
     Returns
     -------
@@ -175,6 +183,7 @@ def write_finish_record(
         **(dict(letterbox) if letterbox else {}),
         **({"missing": list(missing)} if missing and not complete else {}),
         **({"cover": _stored(desk, cover)} if cover is not None else {}),
+        **({"thought_grey": dict(thought_grey)} if thought_grey else {}),
     }
     path.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
     return path
@@ -193,7 +202,15 @@ def _load(path: Path) -> FinishRecord | None:
         f.name: raw.get(f.name)
         for f in fields(FinishRecord)
         if f.name
-        not in ("path", "edits", "hand_voices", "music_in_take", "letterbox", "missing")
+        not in (
+            "path",
+            "edits",
+            "hand_voices",
+            "music_in_take",
+            "letterbox",
+            "missing",
+            "thought_grey",
+        )
     }
     edits = tuple(e for e in raw.get("edits") or () if isinstance(e, dict))
     voices = tuple(v for v in raw.get("hand_voices") or () if isinstance(v, dict))
@@ -205,6 +222,9 @@ def _load(path: Path) -> FinishRecord | None:
         music_in_take=raw.get("music_in_take") is True,
         letterbox=raw.get("letterbox") is True,
         missing=tuple(str(m) for m in raw.get("missing") or () if m),
+        thought_grey=raw.get("thought_grey")
+        if isinstance(raw.get("thought_grey"), dict)
+        else None,
     )
 
 
@@ -303,4 +323,6 @@ def carry_finish_record(
             if record.letterbox
             else None
         ),
+        # The edit is made on the greyed files: the take still plays its thoughts grey.
+        thought_grey=record.thought_grey,
     )
