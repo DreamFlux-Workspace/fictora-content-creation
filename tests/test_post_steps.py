@@ -295,7 +295,9 @@ def test_mark_is_drawn_where_the_position_says(tmp_path: Path) -> None:
     ).stdout  # fmt: skip
     image = np.frombuffer(frame, dtype=np.uint8).reshape(1344, 768)
     assert image[121:184, 92:164].max() > 60, "the mark is in its box"
-    assert image[:, :77].max() < 30, "nothing a 20:9 phone's full-bleed feed crops off (10% of 768)"
+    assert image[:, :77].max() < 30, (
+        "nothing a 20:9 phone's full-bleed feed crops off (10% of 768)"
+    )
     assert image[: math.floor(1344 * 0.08)].max() < 30, "nothing in the top strip"
     assert image[121:184, 700:].max() < 30, "nothing top right"
 
