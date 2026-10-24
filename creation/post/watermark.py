@@ -19,6 +19,7 @@ from __future__ import annotations
 import math
 import sys
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -76,6 +77,77 @@ def server_mark_position(
         return None
     try:
         return int(answer["x"]), int(answer["y"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+@dataclass(frozen=True)
+class LetterboxPlace:
+    """Where the server puts the mark and the title block on a letterbox canvas (fictora-drama #1049).
+
+    ``title_bottom`` is the title block's bottom anchor (the server's ASS ``\\pos`` y: 448 on 1920,
+    512 under the mark for a show stamped ``letterbox_part_titles``); ``title_four_line_size`` caps a
+    four-line block's size under the mark. Both are ``None`` on an older server.
+    """
+
+    x: int
+    y: int
+    title_bottom: int | None = None
+    title_four_line_size: int | None = None
+
+
+def server_letterbox_place(
+    width: int,
+    height: int,
+    *,
+    desk: Path | None = None,
+    episode: int = 1,
+    spine_id: str | None = None,
+) -> LetterboxPlace | None:
+    """The server's mark and title places on a letterbox canvas, or ``None`` (no desk, older server, no connection).
+
+    The server decides the title's place from the show's stamp (server-heavy rule, 15 Oct 2026), so
+    the kit's bands match the app's. Tests answer it with ``creation.caption_server.server_override``.
+    """
+
+    from creation.caption_server import _OVERRIDE, _post
+
+    if desk is None and _OVERRIDE.get() is None:
+        return None
+    body: dict[str, object] = {"width": width, "height": height, "letterbox": True}
+    if spine_id:
+        body["spine_id"] = spine_id
+    try:
+        status, answer = _post(desk, episode, MARK_PLACEMENT_ROUTE, body)
+    except (OSError, httpx.HTTPError, SystemExit) as exc:
+        print(
+            f"NOTE: the server could not be asked where the mark and title go ({exc}); the kit placed them",
+            file=sys.stderr,
+        )
+        return None
+    if not 200 <= status < 300 or not isinstance(answer, Mapping):
+        if status not in (404, 405):
+            print(
+                f"NOTE: the server did not place the mark (HTTP {status}); the kit placed it",
+                file=sys.stderr,
+            )
+        return None
+
+    def number(key: str) -> int | None:
+        value = answer.get(key)
+        return (
+            int(value)
+            if isinstance(value, int | float) and not isinstance(value, bool)
+            else None
+        )
+
+    try:
+        return LetterboxPlace(
+            int(answer["x"]),
+            int(answer["y"]),
+            number("title_bottom"),
+            number("title_four_line_size"),
+        )
     except (KeyError, TypeError, ValueError):
         return None
 

@@ -351,7 +351,27 @@ def _block_height(place: LetterboxLayout, size: int, lines: int) -> float:
     return (lines - 1) * place.title_pitch(size) + cap
 
 
-def fit_title(block: TitleBlock, place: LetterboxLayout) -> FittedTitle:
+#: The server's title anchor before 24 Oct 2026 on a 1920-high canvas (its ASS ``\\pos`` y, bottom aligned).
+SERVER_TITLE_BOTTOM = 448
+
+
+def under_server_anchor(
+    place: LetterboxLayout, title_bottom: int | None, height: int
+) -> LetterboxLayout:
+    """The layout with its title box moved down to the server's anchor (``None``: unchanged)."""
+
+    if title_bottom is None:
+        return place
+    delta = title_bottom - round(SERVER_TITLE_BOTTOM * height / CANVAS_HEIGHT)
+    if delta == 0:
+        return place
+    box = place.title
+    return replace(place, title=replace(box, height=max(0, box.height + delta)))
+
+
+def fit_title(
+    block: TitleBlock, place: LetterboxLayout, *, four_line_size: int | None = None
+) -> FittedTitle:
     """The largest title size (ASS 62, down 2 at a time to 52) at which both parts fit two lines each.
 
     Each part may take two lines inside the title box's width (972 px); the
@@ -366,6 +386,13 @@ def fit_title(block: TitleBlock, place: LetterboxLayout) -> FittedTitle:
         setup = _two_lines(block.setup, size, box.width)
         hook = _two_lines(block.hook, size, box.width)
         if setup is None or hook is None:
+            continue
+        if (
+            four_line_size is not None
+            and len(setup) + len(hook) >= 4
+            and size > four_line_size
+        ):
+            # The server's rule under the mark: four lines at this size or smaller (fictora-drama #1049).
             continue
         if _block_height(place, size, len(setup) + len(hook)) <= box.height:
             return FittedTitle(size, tuple(setup), tuple(hook))
@@ -395,7 +422,7 @@ def fit_title(block: TitleBlock, place: LetterboxLayout) -> FittedTitle:
 
 def title_ass(
     block: TitleBlock, *, width: int = CANVAS_WIDTH, height: int = CANVAS_HEIGHT,
-    duration: float | None = None,
+    duration: float | None = None, title_bottom: int | None = None, four_line_size: int | None = None,
 ) -> tuple[str, FittedTitle]:  # fmt: skip
     """The ASS that draws the title block on the canvas for the whole video, and how it was fitted.
 
@@ -403,13 +430,17 @@ def title_ass(
     line, each on its own baseline: the last line's baseline at y 435, the
     lines above it one pitch (63 px at 62) apart, so the block grows upward.
     The setup line white, the hook line house yellow.
+
+    ``title_bottom`` is the server's anchor for the block (``POST /v1/mark/placement``; 512 under the
+    mark for a show stamped ``letterbox_part_titles``): the block moves down by its distance from the
+    old anchor (448 on 1920). ``four_line_size`` caps a four-line block's size. ``None``: as before.
     """
 
-    place = layout(width, height)
+    place = under_server_anchor(layout(width, height), title_bottom, height)
     # The words as the server draws them, no em or en dash (creation.on_screen_text).
     setup, hook = drawn_texts([block.setup, block.hook], kind="title")
     block = replace(block, setup=setup, hook=hook)
-    fitted = fit_title(block, place)
+    fitted = fit_title(block, place, four_line_size=four_line_size)
     end = _ass_time(duration if duration else 24 * 3600 - 1)
     lines = [(TITLE_SETUP_COLOUR, line) for line in fitted.setup] + [
         (TITLE_HOOK_COLOUR, line) for line in fitted.hook
@@ -478,6 +509,19 @@ def pad_to_canvas(take: Path, out: Path) -> Path:
     return out
 
 
+def _desk_spine_id(desk: Path | None) -> str | None:
+    """The desk's spine id, or ``None`` (no desk, or not made yet)."""
+
+    if desk is None:
+        return None
+    from creation.post.desk import spine_id
+
+    try:
+        return spine_id(desk)
+    except (SystemExit, OSError, ValueError):
+        return None
+
+
 def mark_and_title(
     video: Path,
     out: Path,
@@ -525,21 +569,25 @@ def mark_and_title(
         raise FileExistsError(f"{out} exists; local post never overwrites")
     info = probe_video(video)
     place = layout(info.width, info.height)
-    from creation.post.watermark import server_mark_position
+    from creation.post.watermark import server_letterbox_place
 
-    x, y = (
-        server_mark_position(
-            info.width, info.height, letterbox=True, desk=desk, episode=episode
-        )
-        or place.mark
+    server = server_letterbox_place(
+        info.width,
+        info.height,
+        desk=desk,
+        episode=episode,
+        spine_id=_desk_spine_id(desk),
     )
+    x, y = (server.x, server.y) if server is not None else place.mark
     fitted: FittedTitle | None = None
     first = "[0:v]null[t]"
     scratch: Path | None = None
     if title is not None:
         text, fitted = title_ass(
-            title, width=info.width, height=info.height, duration=info.duration_seconds
-        )
+            title, width=info.width, height=info.height, duration=info.duration_seconds,
+            title_bottom=server.title_bottom if server is not None else None,
+            four_line_size=server.title_four_line_size if server is not None else None,
+        )  # fmt: skip
         ass = ass_path or out.with_name(f"{out.stem}-title.ass")
         ass.write_text(text, encoding="utf-8")
         # One named face (the bundled twin when Arial is missing); the copy is removed below.
