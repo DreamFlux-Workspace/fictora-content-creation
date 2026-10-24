@@ -34,6 +34,17 @@ the same route (``title_line: {kind: custom, text}``) and
 ``--default-setup-line`` clears it (``{kind: default}``: the series title).
 It goes as its own send, after any hook-line choice. A server without the
 field stops the command; the kit no longer keeps the line on the desk.
+
+**Title card** (fictora-drama, founder 24 Oct 2026; the app's LB10 v2 card):
+``--titles`` prints the server's letterbox title card for the episode
+(``GET /v1/spines/{spine_id}/episodes/{episode_id}/title-card``): the titles
+the server suggested from the story, the series title and "No title",
+numbered, the picked one marked, and the yellow line. The words are the
+server's, the same the app shows; the kit keeps no list of its own.
+``--title K`` picks preview K from that card (a title is sent as
+``{kind: custom, text}``, "No title" as ``{kind: off}``), and ``--no-title``
+sends ``{kind: off}`` directly. After the video, the server re-finishes it
+with the new title for free.
 """
 
 from __future__ import annotations
@@ -57,6 +68,8 @@ from creation.post.letterbox import (
 
 #: The server's opening route (the app's opening picker uses it too).
 OPENING_ROUTE = "/v1/spines/{spine_id}/episodes/{episode_id}/opening"
+#: The server's letterbox title card (the app's title previews read it too).
+TITLE_CARD_ROUTE = "/v1/spines/{spine_id}/episodes/{episode_id}/title-card"
 #: 404 codes the route answers on purpose; any other 404 means the server predates it.
 KNOWN_NOT_FOUND = frozenset(
     {
@@ -83,6 +96,81 @@ class _Api(Protocol):
     def patch_optional(self, path: str, body: dict[str, Any]) -> tuple[int, Any]: ...
 
     def spine(self, spine_id: str) -> dict[str, Any]: ...
+
+    def get_optional(self, path: str) -> tuple[int, Any]: ...
+
+
+def read_title_card(
+    run: _Api, spine: Mapping[str, Any], episode: int
+) -> dict[str, Any]:
+    """The server's letterbox title card for one episode (free; the first read may write its suggestions).
+
+    Raises
+    ------
+    RuntimeError
+        A server without the card, or a refusal.
+    """
+
+    from creation.spine_view import episode_id_for
+
+    body = spine_body(spine)
+    path = TITLE_CARD_ROUTE.format(
+        spine_id=str(body.get("spine_id") or ""),
+        episode_id=episode_id_for(body, episode),
+    )
+    status, answer = run.get_optional(path)
+    if 200 <= status < 300 and isinstance(answer, Mapping) and "options" in answer:
+        return dict(answer)
+    if status in (404, 405) and _error_code(answer) not in KNOWN_NOT_FOUND:
+        raise RuntimeError(
+            "this Drama API has no letterbox title card yet (an older deploy): update the server, then run this again"
+        )
+    raise RuntimeError(
+        f"the server refused the title card (HTTP {status}): {api_error_text(answer)}"
+    )
+
+
+def title_card_lines(card: Mapping[str, Any]) -> list[str]:
+    """What ``--titles`` prints: the server's lead, each preview numbered, the pick marked, the yellow line."""
+
+    if not card.get("due"):
+        return [
+            "This episode has no title card: the show is vertical, or the episode is not written yet."
+        ]
+    rows = [str(card.get("lead") or "")]
+    picked = card.get("picked_index")
+    for index, option in enumerate(card.get("options") or []):
+        if not isinstance(option, Mapping):
+            continue
+        text = option.get("text")
+        shown = repr(text) if text else str(option.get("label") or "No title")
+        mark = "  <- picked" if index == picked else ""
+        rows.append(f"  {index + 1}. {shown}{mark}")
+    hook = card.get("hook_line")
+    rows.append(
+        f"  {card.get('hook_label') or 'Yellow line'}: {hook!r}"
+        if hook
+        else "  No yellow line."
+    )
+    rows.append(f"  {card.get('note') or ''}")
+    rows.append(
+        'Pick with `hook-line --title K`, your own with `--setup-line "..."`, none with `--no-title`.'
+    )
+    return [row for row in rows if row.strip()]
+
+
+def title_choice_from_card(card: Mapping[str, Any], k: int) -> dict[str, Any]:
+    """The opening route's ``title_line`` for preview K (1-based) of the server's card."""
+
+    options = [o for o in card.get("options") or [] if isinstance(o, Mapping)]
+    if not 1 <= k <= len(options):
+        raise ValueError(
+            f"the title card has {len(options)} preview(s); there is no {k} (`hook-line --titles` lists them)"
+        )
+    option = options[k - 1]
+    if option.get("kind") == "none" or not option.get("text"):
+        return {"kind": "off"}
+    return {"kind": "custom", "text": str(option["text"])}
 
 
 def hook_line_options(
@@ -500,6 +588,9 @@ def run_hook_line(
     off: bool = False,
     setup_line: str | None = None,
     default_setup_line: bool = False,
+    titles: bool = False,
+    title: int | None = None,
+    no_title: bool = False,
     out: TextIO | None = None,
     api: _Api | None = None,
 ) -> int:
@@ -518,6 +609,16 @@ def run_hook_line(
 
     stream: TextIO = out if out is not None else sys.stdout
     desk = desk.expanduser().resolve()
+    if titles or title is not None or no_title:
+        return _run_title_card(
+            desk,
+            episode=episode,
+            titles=titles,
+            title=title,
+            no_title=no_title,
+            out=stream,
+            api=api,
+        )
     asked = [list_only, pick is not None, text is not None, off]
     if setup_line is not None and default_setup_line:
         raise ValueError("--setup-line or --default-setup-line, not both")
@@ -646,3 +747,60 @@ __all__ = [
     "run_hook_line",
     "save_burned_hook_line",
 ]
+
+
+def _run_title_card(
+    desk: Path,
+    *,
+    episode: int,
+    titles: bool,
+    title: int | None,
+    no_title: bool,
+    out: TextIO,
+    api: _Api | None,
+) -> int:
+    """``hook-line --titles | --title K | --no-title``: the server's letterbox title card (free)."""
+
+    from creation.post.desk import open_api
+
+    if sum([titles, title is not None, no_title]) > 1:
+        raise ValueError("--titles, --title K or --no-title, one at a time")
+    session = open_api(desk, episode) if api is None else None
+    run: _Api = api if api is not None else session  # type: ignore[assignment]
+    try:
+        spine = _read_spine(run, desk, episode)
+        card = read_title_card(run, spine, episode)
+        if titles:
+            for row in title_card_lines(card):
+                print(row, file=out)
+            return 0
+        choice = (
+            {"kind": "off"}
+            if no_title
+            else title_choice_from_card(card, int(title or 0))
+        )
+        answer = choose_setup_line(
+            desk, run, spine, episode=episode, choice=choice, out=out
+        )
+        _read_spine(run, desk, episode)
+        shown = (answer or {}).get("title_line")
+        off = (answer or {}).get("title_line_off") is True
+        print(
+            f"Title for episode {episode}: "
+            + (
+                "none (no white line)"
+                if off
+                else repr(shown)
+                if shown
+                else "the series title"
+            ),
+            file=out,
+        )
+        line = (answer or {}).get("line")
+        if line:
+            print(str(line), file=out)
+        return 0
+    finally:
+        close = getattr(session, "close", None)
+        if callable(close):
+            close()

@@ -277,6 +277,25 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         action="store_true",
         help="Clear the episode's own setup line (the series title shows).",
     )
+    hook_setup.add_argument(
+        "--titles",
+        action="store_true",
+        help="Print the server's letterbox title card (free): its suggested titles, the series title and "
+        "No title, the pick marked, and the yellow line. The same card the app shows.",
+    )
+    hook_setup.add_argument(
+        "--title",
+        type=int,
+        default=None,
+        metavar="K",
+        help="Pick preview K of the server's title card (No title included). After the video the server "
+        "re-finishes it with the new title, free.",
+    )
+    hook_setup.add_argument(
+        "--no-title",
+        action="store_true",
+        help="No white title line on this letterbox episode (the yellow line stays).",
+    )
 
     voice_mode = sub.add_parser(
         "voice-mode",
@@ -884,7 +903,8 @@ def dispatch_post(args: argparse.Namespace) -> int:
         return run_hook_line(
             args.desk, episode=args.episode, list_only=args.list, pick=args.pick,
             text=args.text, off=args.off, setup_line=args.setup_line,
-            default_setup_line=args.default_setup_line,
+            default_setup_line=args.default_setup_line, titles=args.titles,
+            title=args.title, no_title=args.no_title,
         )  # fmt: skip
     if args.command == "voice-mode":
         from creation.voice_mode import run_voice_mode
