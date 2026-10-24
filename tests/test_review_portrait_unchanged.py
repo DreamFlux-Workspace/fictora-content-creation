@@ -6,6 +6,11 @@ captions. A portrait take must run exactly the ffmpeg
 commands it ran before. The golden file is recorded on origin/main (8faeaaa)
 before any of that code. Regenerate only on purpose:
 ``UPDATE_GOLDEN=1 uv run pytest tests/test_review_portrait_unchanged.py``.
+
+Re-recorded 25 Oct 2026 (kit #294) for the mark only. Board now reads a warning because the
+mark is drawn at the approved reels' size: on this test's tiny synthetic take, the smaller mark
+leaves the frames closer to the synthetic board. With the old size, Board passes again; no other
+check changed.
 """
 
 from __future__ import annotations

@@ -22,6 +22,10 @@ the date pinned in the test); its commands are unchanged. Numbers measured from
 the test media may differ by a few milliseconds between ffmpeg builds
 (:data:`NUMBER_TOLERANCE`); everything else must match exactly. Regenerate only on purpose:
 ``UPDATE_GOLDEN=1 uv run pytest tests/test_letterbox_portrait_unchanged.py``.
+
+Re-recorded 25 Oct 2026 (kit #294) for the mark only: 3% in and the approved reels' size
+(72/768 of the width), so the test frame's overlay reads ``scale=18:16`` and ``overlay=6:30``
+(was ``overlay=23:30``, 12% in at the PNG's own size). Nothing else changed.
 """
 
 from __future__ import annotations
