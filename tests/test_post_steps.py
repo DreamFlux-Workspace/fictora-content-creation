@@ -277,10 +277,11 @@ def test_duck_expression_is_exact_depth_and_empty_without_windows() -> None:
 
 
 def test_mark_sits_top_left_under_the_covered_strip() -> None:
-    # 12% in since 24 Oct 2026 (fictora-drama #1039): inside a 20:9 phone's full-bleed feed crop.
-    assert mark_position(768, 1344) == (92, 121)
-    assert mark_position(720, 1280) == (86, 115)
-    assert mark_position(768, 1344, y=0) == (92, math.ceil(1344 * 0.08))
+    # 3% in, as on the founder's approved Instagram reels (fictora-drama #1047; 12% for a day was only for the
+    # app's full-bleed feed, which no longer shows a mark).
+    assert mark_position(768, 1344) == (23, 121)
+    assert mark_position(720, 1280) == (22, 115)
+    assert mark_position(768, 1344, y=0) == (23, math.ceil(1344 * 0.08))
 
 
 @needs_ffmpeg
@@ -294,9 +295,9 @@ def test_mark_is_drawn_where_the_position_says(tmp_path: Path) -> None:
         capture_output=True, check=True,
     ).stdout  # fmt: skip
     image = np.frombuffer(frame, dtype=np.uint8).reshape(1344, 768)
-    assert image[121:184, 92:164].max() > 60, "the mark is in its box"
-    assert image[:, :77].max() < 30, (
-        "nothing a 20:9 phone's full-bleed feed crops off (10% of 768)"
+    assert image[121:184, 23:95].max() > 60, "the mark is in its box"
+    assert image[:, :20].max() < 30, (
+        "nothing in the frame's first 2.6% (the mark starts at 3%)"
     )
     assert image[: math.floor(1344 * 0.08)].max() < 30, "nothing in the top strip"
     assert image[121:184, 700:].max() < 30, "nothing top right"

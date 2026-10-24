@@ -59,8 +59,8 @@ def test_the_layout_matches_not_home_on_1080x1920() -> None:
     assert (place.caption_size, place.caption_min_size) == (62, 52), (
         "ASS 62 draws Not Home's 56 px"
     )
-    assert place.mark == (130, 173), (
-        "Not Home's row (ink y 179-228), 12% in so a 20:9 phone's full-bleed feed never clips it"
+    assert place.mark == (32, 173), (
+        "Not Home's row, 3% in: the same corner as a portrait saved copy and the approved Instagram reels"
     )
     assert place.title.y >= place.mark[1] + 63, "the title never runs into the mark"
     assert title_sizes() == (62, 60, 58, 56, 54, 52)
@@ -431,7 +431,7 @@ def test_finish_builds_the_9_16_letterbox_file_with_mark_title_and_band_captions
     assert _yellow(frame[260:500]).sum() > 200, "the yellow hook line above the picture"
     white = (frame[260:500].min(axis=-1) > 220).sum()
     assert white > 200, "the white setup line"
-    assert frame[179:228, 136:196].mean() > frame[179:228, 260:320].mean() + 20, (
+    assert frame[179:260, 36:130].mean() > frame[179:228, 260:320].mean() + 20, (
         "the mark in the top band"
     )
 
@@ -492,7 +492,7 @@ def test_join_marks_and_titles_the_joined_letterbox_file_once(tmp_path: Path) ->
     )
     frame = _frame(result.marked, 3.0)
     assert _yellow(frame[260:500]).sum() > 100, "the hook line on the joined file"
-    assert frame[179:228, 136:196].max() > 100, "the mark in the top band"
+    assert frame[179:260, 36:130].max() > 100, "the mark in the top band"
     master = _frame(result.master, 3.0)
     assert master[179:228, 38:98].max() < 30, "the master carries no mark"
     assert any("letterbox: Sokii mark in the top band" in n for n in result.notes)
