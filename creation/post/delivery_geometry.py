@@ -38,6 +38,10 @@ MARK_X = 130
 MARK_Y = 173
 #: The mark image's height; the title's ink never rises above it plus this gap.
 MARK_HEIGHT = 63
+#: The mark is drawn at the portrait copy's share of the width (72 px on a 768-wide take, 9.4%):
+#: 101 px on the 1080 letterbox canvas, as the server draws it (fictora-drama #1047; founder,
+#: 24 Oct 2026: the bare 72 px PNG read "way too inside" on letterbox).
+MARK_WIDTH_FRACTION = 72 / 768
 MARK_TITLE_GAP = 20
 #: Title block: ASS size 62 (Not Home's 56 px Arial Bold), stepping down 2 at a time to a 52 floor (then
 #: fewer words); each part (setup line white, hook line yellow) on at most two lines; centred; the last
