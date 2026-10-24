@@ -191,7 +191,6 @@ def test_a_record_for_another_brief_is_not_adoptable_even_under_the_same_prefix(
         {"spoken_language": "ja"},
         {"band": "30s"},
         {"preset_version": "3"},
-        {"cut_tempo": "slow_burn"},
         {"video_lane": "other-lane"},
     ],
 )

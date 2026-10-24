@@ -93,9 +93,7 @@ def test_the_flag_is_kept_in_the_desk_config_and_a_rebind_without_it_keeps_it(
     save_production_config(tmp_path, config)
     assert load_production_config(tmp_path).opening_action == KICK
     assert config_from_args(_parser().parse_args([])).opening_action is None
-    kept = merge_config_from_args(
-        config, _parser().parse_args(["--cut-tempo", "punchy"])
-    )
+    kept = merge_config_from_args(config, _parser().parse_args(["--language", "ja"]))
     assert kept.opening_action == KICK
     replaced = merge_config_from_args(
         config, _parser().parse_args(["--opening-action", "He runs"])

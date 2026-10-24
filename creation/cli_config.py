@@ -27,12 +27,6 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
         "take length: 10 s at 30s/60s, 7 s at 15s (two takes, a 14 s episode).",
     )
     parser.add_argument(
-        "--cut-tempo",
-        default=None,
-        choices=("punchy", "slow_burn", "one_shot"),
-        help="Shot plan, set on the draft: punchy (coverage) or one_shot/slow_burn. Default: server's (punchy).",
-    )
-    parser.add_argument(
         "--language",
         default=None,
         help="Spoken language when not English: ja or ko (captions stay English).",
@@ -121,7 +115,6 @@ def config_from_args(args: argparse.Namespace) -> ProductionConfig:
     return ProductionConfig(
         draft_episode_count=int(args.draft_episodes),
         clip_duration_seconds=default_clip_seconds(args),
-        cut_tempo=str(args.cut_tempo) if args.cut_tempo else None,
         spoken_language=str(args.language) if getattr(args, "language", None) else None,
         delivery_format=(
             str(args.delivery_format)
@@ -149,7 +142,7 @@ def merge_config_from_args(
 
     ``bind`` used to rebuild ``production.config.json`` from its own flags, so a
     re-bind with just ``--prompt`` silently dropped the desk's language, voice
-    mode, caption style, tempo and format (Back from the Sea L-20261008-2: the
+    mode, caption style and format (Back from the Sea L-20261008-2: the
     show was drafted in English). A flag left unset now keeps the saved value;
     a flag given replaces it. Rules epoch, Group B marker, posting fields and
     poll deadlines are never touched by flags, so they always survive.
@@ -157,8 +150,6 @@ def merge_config_from_args(
 
     fresh = config_from_args(args)  # validates --caption-style / --api-captions
     merged = ProductionConfig(**asdict(saved))
-    if getattr(args, "cut_tempo", None):
-        merged.cut_tempo = fresh.cut_tempo
     if getattr(args, "language", None):
         merged.spoken_language = fresh.spoken_language
     if getattr(args, "voice_mode", None):

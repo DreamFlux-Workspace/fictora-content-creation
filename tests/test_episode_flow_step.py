@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -30,18 +31,20 @@ def _add_episode_two(desk: Path, api: FakeApi) -> None:
 # --- Draft ---------------------------------------------------------------------------------------
 
 
-def test_the_draft_writes_episode_one_alone_with_the_shot_plan_and_language() -> None:
+def test_the_draft_writes_episode_one_alone_with_the_language_and_no_shot_plan() -> (
+    None
+):
     body = draft_request_body(
         prompt="p",
         preset_id="x",
         preset_version="1",
-        cut_tempo="punchy",
         spoken_language="ja",
         band="30s",
     )
     assert body["outline_mode"] == "arc_at_episode_two"
     assert body["episode_count"] == 1
-    assert body["cut_tempo"] == "punchy"
+    # The server decides camera and pace (founder, 24 Oct 2026): the kit never sends a cut tempo.
+    assert "cut_tempo" not in body and "pace" not in body
     assert body["spoken_language"] == "ja-JP"
     assert body["model_overrides"] == {"video": "minimax-h3"}
     assert body["duration_band"] == "30s"
@@ -59,7 +62,11 @@ def test_an_unsupported_language_is_refused_before_the_request() -> None:
 def test_step_new_drafts_alone_syncs_lines_and_prints_the_script_gate(
     desk: Path, api: FakeApi
 ) -> None:
-    save_production_config(desk, ProductionConfig(cut_tempo="punchy"))
+    # An old desk whose config still holds a cut tempo: it loads, and nothing of it is sent.
+    (desk / "production.config.json").write_text(
+        json.dumps({**asdict(ProductionConfig()), "cut_tempo": "punchy"}),
+        encoding="utf-8",
+    )
     api.spine_doc = {
         **api.spine_doc,
         "episode_summaries": api.spine_doc["episode_summaries"][:1],
@@ -75,7 +82,7 @@ def test_step_new_drafts_alone_syncs_lines_and_prints_the_script_gate(
 
     body = api.posted("/v1/prompt-video-authoring-drafts")[0]
     assert body["outline_mode"] == "arc_at_episode_two" and body["episode_count"] == 1
-    assert body["cut_tempo"] == "punchy"
+    assert "cut_tempo" not in body
     take = episode_by_ordinal(load_series(desk), 1).takes[0]
     assert [line.original for line in take.lines] == ["We're closed.", "Not for me."]
     assert "shot 1: Hana wipes the counter" in result.message

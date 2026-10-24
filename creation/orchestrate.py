@@ -159,7 +159,6 @@ from creation.stranded_voice import explain_film_refusal, stranded_preflight
 from creation.stylised_only import BriefNoticePause
 from creation.voice_gate import film_refusal as voices_film_refusal
 from creation.voice_mode import next_take_voices_line
-from creation.music_blend import music_blend_line
 from creation.harness.http_util import ConnectionDropped
 from creation.rules_epoch import is_legacy
 from creation.voice_gate import gate_text as voices_gate_text
@@ -954,7 +953,7 @@ def unbound_desk_recovery(
     return (
         f"{why}: {desk}\n"
         f"Finish it with: {command}\n"
-        "(add any production flags you gave start, such as --cut-tempo or --language)\n"
+        "(add any production flags you gave start, such as --language or --delivery-format)\n"
         "Or delete that folder and run start again."
     )
 
@@ -1651,7 +1650,6 @@ def run_step(
                     preset_version=state.preset_version,
                     band=state.band,
                     video_lane=state.video_lane,
-                    cut_tempo=cfg.cut_tempo,
                     spoken_language=cfg.spoken_language,
                     locale=cfg.locale,
                     delivery_format=cfg.delivery_format,
@@ -2006,7 +2004,6 @@ def run_step(
                 preset_id=state.preset_id,
                 preset_version=state.preset_version,
                 video_lane=state.video_lane,
-                cut_tempo=cfg.cut_tempo,
                 tag=f"ep{ep}",
                 episode=ep,
                 deadline_seconds=cfg.poll_boards_deadline_seconds,
@@ -2065,9 +2062,6 @@ def run_step(
                 *warnings,
             ]
             voices_line = next_take_voices_line(desk, run, spine)
-            # One line, never a gate: the music families the show's score may play.
-            # Frozen for desks created before 2026-10-06 (rules epoch): no line.
-            blend_line = None if is_legacy(desk) else music_blend_line(run, spine)
             unvoiced = voices_pending_for_film(desk, spine, episode=ep, run=run)
             if unvoiced:
                 who = ", ".join(v.name for v in unvoiced)
@@ -2096,7 +2090,6 @@ def run_step(
                 state.phase,
                 "".join(f"{line}\n" for line in warnings)
                 + f"{voices_line}\n"
-                + (f"{blend_line}\n" if blend_line else "")
                 + f"Estimate ${state.estimate_usd:.2f} for {scope} ({source}).\n{budget}\n"
                 "Human yes, then `fictora-produce step --confirm-spend`.",
                 (),
@@ -2608,7 +2601,6 @@ def _film(
                 api_captions=server_style is not None,
                 video_lane=state.video_lane,
                 clip_duration_seconds=cfg.clip_duration_seconds,
-                cut_tempo=cfg.cut_tempo,
                 video_idempotency_suffix=state.video_idempotency_suffix,
                 poll_deadline_seconds=cfg.poll_video_deadline_seconds,
                 episode=ep,

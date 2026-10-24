@@ -526,13 +526,6 @@ def _derive_config(
     spine: Mapping[str, Any],
 ) -> ProductionConfig:
     config = ProductionConfig()
-    tempo, source = _first(
-        ("series.json api.cut_tempo", api_block.get("cut_tempo")),
-        ("api/draft-request.json", draft.get("cut_tempo")),
-        ("api/spine.json", spine.get("cut_tempo")),
-    )
-    config.cut_tempo = tempo
-    plan.inferred.append(("config.cut_tempo", str(tempo), source))
     language, source = _first(
         ("series.json api.spoken_language", api_block.get("spoken_language")),
         ("api/draft-request.json", draft.get("spoken_language")),
@@ -910,7 +903,6 @@ def _note_not_carried(
         "idempotency_prefix",
         "preset_id",
         "preset_version",
-        "cut_tempo",
         "video_lane",
         "spoken_language",
         "pending",

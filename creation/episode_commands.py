@@ -6126,7 +6126,6 @@ def run_redraw_board(
             preset_id=state.preset_id,
             preset_version=state.preset_version,
             video_lane=state.video_lane,
-            cut_tempo=cfg.cut_tempo,
             extra=extra,
         )
         regenerate_path = f"/v1/spines/{state.spine_id}/episodes/{episode}/boards/{set_index}/regenerate"
@@ -6170,7 +6169,6 @@ def run_redraw_board(
                 preset_id=state.preset_id,
                 preset_version=state.preset_version,
                 video_lane=state.video_lane,
-                cut_tempo=cfg.cut_tempo,
                 extra=extra,
             )
             terminal = run_unit(
@@ -7424,7 +7422,6 @@ def _run_film(
         api_captions=server_style is not None,
         video_lane=state.video_lane,
         clip_duration_seconds=cfg.clip_duration_seconds,
-        cut_tempo=cfg.cut_tempo,
         episode=episode,
         reroll_take_index=take_index,
         seed_attempt=seed,

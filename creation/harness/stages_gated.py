@@ -82,7 +82,6 @@ def draft_request_body(
     preset_version: str | None,
     band: str = "15s",
     video_lane: str | None = "minimax-h3",
-    cut_tempo: str | None = None,
     spoken_language: str | None = None,
     locale: str = "en-US",
     delivery_format: str | None = None,
@@ -100,9 +99,6 @@ def draft_request_body(
         Season duration band.
     video_lane
         ``model_overrides.video``; pinned on the draft because row boards are decided at admission.
-    cut_tempo
-        Shot plan (``punchy``, ``slow_burn``, ``one_shot``), set on the draft so the board and the take agree.
-        ``None`` leaves the server default (punchy coverage).
     spoken_language
         Language the cast speaks when not English (``ja``, ``ko`` or the contract tag).
     locale
@@ -131,8 +127,6 @@ def draft_request_body(
     }
     if video_lane:
         body["model_overrides"] = {"video": video_lane}
-    if cut_tempo:
-        body["cut_tempo"] = cut_tempo
     if spoken_language:
         body["spoken_language"] = spoken_language_tag(spoken_language)
     if delivery_format == "letterbox":
@@ -151,7 +145,6 @@ def start_draft(
     preset_version: str,
     band: str = "15s",
     video_lane: str = "minimax-h3",
-    cut_tempo: str | None = None,
     spoken_language: str | None = None,
     locale: str = "en-US",
     delivery_format: str | None = None,
@@ -185,7 +178,7 @@ def start_draft(
     ----------
     run
         Session (its session id owns the new spine).
-    prompt, preset_id, preset_version, band, video_lane, cut_tempo, spoken_language, locale, delivery_format
+    prompt, preset_id, preset_version, band, video_lane, spoken_language, locale, delivery_format
         As :func:`draft_request_body`.
     opening_action
         As :func:`draft_request_body`. Checked against the deploy's ``/openapi.json`` first: a
@@ -242,7 +235,6 @@ def start_draft(
         preset_version=preset_version,
         band=band,
         video_lane=video_lane,
-        cut_tempo=cut_tempo,
         spoken_language=spoken_language,
         locale=locale,
         delivery_format=delivery_format,
@@ -667,7 +659,6 @@ def enrol_boards(
     preset_id: str,
     preset_version: str | None,
     video_lane: str | None = "minimax-h3",
-    cut_tempo: str | None = None,
     tag: str = "ep1",
     episode: int = 1,
     max_attempts: int = 3,
@@ -698,7 +689,6 @@ def enrol_boards(
                     preset_id=preset_id,
                     preset_version=preset_version,
                     video_lane=video_lane,
-                    cut_tempo=cut_tempo,
                     extra={"episode_count": episode},
                 ),
                 idempotency_key=f"{run.prefix}-{tag}-boards-enrol{suffix}",
@@ -1141,7 +1131,6 @@ def video_request_body(
     api_captions: bool = False,
     video_lane: str | None = "minimax-h3",
     clip_duration_seconds: int = 15,
-    cut_tempo: str | None = None,
     episode: int = 1,
     reroll_take_index: int | None = None,
     seed_attempt: int | None = None,
@@ -1161,7 +1150,7 @@ def video_request_body(
         Session (reads ``/openapi.json`` once to refuse an older deploy; spends nothing).
     spine
         Spine JSON.
-    prompt, preset_id, preset_version, caption_style, api_captions, video_lane, clip_duration_seconds, cut_tempo
+    prompt, preset_id, preset_version, caption_style, api_captions, video_lane, clip_duration_seconds
         Reuse-body fields.
     episode
         Episode being filmed.
@@ -1213,7 +1202,6 @@ def video_request_body(
         preset_id=preset_id,
         preset_version=preset_version,
         clip_duration_seconds=clip_duration_seconds,
-        cut_tempo=cut_tempo,
         caption_style=caption_style if api_captions else None,
         api_captions=api_captions,
         video_lane=video_lane,
@@ -1232,7 +1220,6 @@ def enrol_video(
     api_captions: bool = False,
     video_lane: str | None = "minimax-h3",
     clip_duration_seconds: int = 15,
-    cut_tempo: str | None = None,
     video_idempotency_suffix: str = "",
     poll_deadline_seconds: float = 7200.0,
     episode: int = 1,
@@ -1248,7 +1235,7 @@ def enrol_video(
         Session that owns the spine.
     spine_id
         Story spine.
-    prompt, preset_id, preset_version, caption_style, api_captions, video_lane, clip_duration_seconds, cut_tempo
+    prompt, preset_id, preset_version, caption_style, api_captions, video_lane, clip_duration_seconds
         As :func:`video_request_body`.
     video_idempotency_suffix
         Set once by ``retry-video --new-paid-take``.
@@ -1287,7 +1274,6 @@ def enrol_video(
         api_captions=api_captions,
         video_lane=video_lane,
         clip_duration_seconds=clip_duration_seconds,
-        cut_tempo=cut_tempo,
         episode=episode,
         seed_attempt=seed_attempt,
         single_frame_start=single_frame_start,
