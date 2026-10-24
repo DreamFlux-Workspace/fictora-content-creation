@@ -258,7 +258,8 @@ def title_block(
     """The title block for one episode's letterbox file, or ``None`` and why.
 
     Line 1 (white) is the episode's own setup line: the desk's (``hook-line
-    --setup-line`` on a server without the field), else the spine's
+    --setup-line`` on a server without the field), else nothing when the server
+    holds "No title" (``title_line_off``), else the spine's
     ``episode_summaries[].title_line`` (fictora-drama #628), else the series
     ``title`` (the server's fallback when no run title is given).
     Line 2 (yellow) is ``override`` (``--hook-line``), else the desk's pick
@@ -286,6 +287,9 @@ def title_block(
                 kept["text"],
                 "the desk's setup line (hook-line --setup-line)",
             )
+    elif episode_summary(body, episode).get("title_line_off") is True:
+        # "No title" on the server (fictora-drama, founder 24 Oct 2026): no white line.
+        setup, setup_source = "", "no title (the server's title card)"
     elif own:
         setup, setup_source = own, "the episode's setup line"
     hook, source = "", "spine"
