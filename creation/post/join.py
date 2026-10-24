@@ -1521,6 +1521,91 @@ def _fix_seams(
     return kept, report
 
 
+def thought_grey_lines(
+    desk: Path,
+    parts: Sequence[JoinPart],
+    *,
+    fetcher: Any = None,
+) -> list[str]:
+    """Ask the server where each part's thoughts play, and say whether each greyed part is grey.
+
+    ``join`` sends each episode's real take lengths (ffprobe on the newest raw
+    takes) to the server's thoughts route (:mod:`creation.post.thought_grey`).
+    A part whose thoughts ``finish`` greyed (its record's ``thought_grey``) joins
+    as it is: the grey is in its picture, under its captions. A part finished
+    before thoughts played grey is named with the free fix (finish it again);
+    ``join`` never greys a captioned picture itself, so its burned captions keep
+    their colour. An older server (404), no credentials or no network: a note,
+    never an error.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    parts
+        The join's parts.
+    fetcher
+        :data:`creation.post.thought_grey.ThoughtsFetcher` (tests pass a stand-in for the server).
+
+    Returns
+    -------
+    list[str]
+        Lines to print (empty when no part has a thought).
+    """
+
+    from creation.post import thought_grey as grey_route
+    from creation.post.desk import saved_spine
+
+    lines: list[str] = []
+    for episode in sorted({part.episode for part in parts}):
+        found = saved_spine(desk, episode)
+        if not grey_route.episode_has_thoughts(found[0] if found else None, episode):
+            continue
+        mine = [part for part in parts if part.episode == episode]
+        try:
+            numbers = [int(part.take_id.lower().removeprefix("t")) for part in mine]
+        except ValueError:
+            continue
+        lengths = grey_route.desk_take_lengths(desk, episode, max(numbers))
+        if any(length is None for length in lengths):
+            gaps = ", ".join(
+                f"t{i}" for i, length in enumerate(lengths, start=1) if length is None
+            )
+            lines.append(
+                f"thoughts: ep{episode:02d} {gaps} has no raw take on the desk, so the server cannot say where "
+                "its thoughts play; not checked"
+            )
+            continue
+        post = (fetcher or grey_route.api_thoughts_fetcher)(desk, episode)
+        try:
+            answer = grey_route.fetch_thoughts(
+                post,
+                grey_route.request_body(
+                    desk, episode, [float(x) for x in lengths if x is not None]
+                ),
+            )
+        except grey_route.ThoughtsUnavailable as exc:
+            lines.append(
+                f"thoughts: !! no black and white checked for ep{episode:02d}: {exc}"
+            )
+            continue
+        for part, number in zip(mine, numbers, strict=True):
+            take = answer.take(number)
+            if take is None or not take.grey_spans:
+                continue
+            spans = ", ".join(f"{a:.2f}-{b:.2f}s" for a, b in take.grey_spans)
+            if part.record.thought_grey:
+                lines.append(
+                    f"thoughts: {part.label} plays its thought(s) in black and white ({spans}, from finish)"
+                )
+            else:
+                lines.append(
+                    f"!! {part.label} has a thought at {spans} that plays in colour: it was finished before thoughts "
+                    f"played grey. Run finish on {part.take_id} again (free: its dry lines are reused), then join again"
+                )
+    return lines
+
+
 def run_join(
     desk: Path,
     *,
@@ -1539,6 +1624,7 @@ def run_join(
     no_hook_line: bool = False,
     caption_colour: str | None = None,
     stream: TextIO | None = None,
+    thoughts_fetcher: Any = None,
 ) -> JoinResult:
     """Join finished takes (no music under them), and mark the joined file once.
 
@@ -1591,6 +1677,8 @@ def run_join(
         what to run instead (``finish --caption-colour`` on each take).
     stream
         Progress output (stderr by default).
+    thoughts_fetcher
+        Asks the server's thoughts route (:func:`thought_grey_lines`); ``None`` is the API.
 
     Returns
     -------
@@ -1683,6 +1771,10 @@ def run_join(
     )
     if music_note:
         print(music_note, file=out, flush=True)
+    # Every thought plays in black and white (the server's spans; finish greyed them before captions).
+    thought_lines = thought_grey_lines(desk, parts, fetcher=thoughts_fetcher)
+    for line in thought_lines:
+        print(line, file=out, flush=True)
     skip_note = None
     if gain_match is None:
         gain_match, why = gain_match_needed(finished_levels(desk, parts))
@@ -1839,6 +1931,7 @@ def run_join(
     )  # fmt: skip
     if music_note:
         result.notes.append(music_note)
+    result.notes.extend(line for line in thought_lines if line.startswith("!!"))
     result.notes += [f"SUBSTITUTED: {p.stands_in}" for p in parts if p.stands_in]
     result.notes += speech_notes
     if result.loud_seams and accept_seam:

@@ -12,15 +12,13 @@ Contract, as the deployed ``/openapi.json`` lists it (read 2026-09-30):
 
 A cue is spoken by someone already in the cast (the character we watch), costs
 no cast place, and is never compiled into the take prompt: the server says post
-lays it dry on the timeline. The kit's ``finish`` does that per take
-(:func:`take_cues`).
+lays it dry on the timeline. The kit's ``finish`` does that per take.
 
 Cue times count from the start of the episode as filmed; the contract names no
-take. Take ``tN`` starts at the sum of the raw lengths of ``t1`` .. ``tN-1``
-(each measured with ffprobe on its newest raw take), so a cue belongs to the
-take whose window holds its start. A cue that runs past its take's end
-(straddles a seam) stays on the take where it starts and is flagged. A cue
-that starts after the last filmed take ends belongs to no take and is named.
+take. Which take a cue plays on, and where, is the server's answer (24 Oct
+2026, :mod:`creation.post.thought_grey`): the kit sends each take's real length
+and the server places the cue the way its own join does. The kit keeps no
+placement rule of its own.
 
 Spoken words and caption, apart (a Japanese thought under an English caption).
 The server's cue holds both (drama #1017, 23 Oct 2026): ``line`` is the
@@ -461,97 +459,6 @@ def take_number(take_id: str) -> int:
     return int(digits)
 
 
-def take_cues(
-    cues: Sequence[Mapping[str, Any]],
-    *,
-    take: int,
-    lengths: Sequence[float | None],
-    last_filmed: bool,
-) -> TakeCuePlan:
-    """The episode's cues that fall in take ``take``, in seconds on that take.
-
-    Take N starts at the sum of the lengths of takes 1 .. N-1 (the episode as
-    filmed). A cue belongs to the take whose window holds its start; one that
-    runs past the take's end stays here and is flagged (``seam``). When an
-    earlier take's length is unknown, a cue that may start in this take is named
-    as not placed (the sum of the known lengths is only a lower bound).
-
-    Parameters
-    ----------
-    cues
-        :func:`episode_cues` (times in ms on the episode).
-    take
-        Take number (``t2`` is 2).
-    lengths
-        Seconds of takes 1 .. ``take`` in order (``None`` for a take with no
-        raw file on the desk); the last entry is this take and must be known.
-    last_filmed
-        No later take is filmed: a cue starting after this take ends belongs to
-        no take and is named.
-
-    Returns
-    -------
-    TakeCuePlan
-
-    Raises
-    ------
-    ValueError
-        When ``lengths`` does not cover takes 1 .. ``take`` or this take's length is unknown.
-    """
-
-    if len(lengths) != take or lengths[-1] is None:
-        raise ValueError(
-            f"take_cues needs the length of takes 1..{take}, this take's known"
-        )
-    here = f"t{take}"
-    this_length = float(lengths[-1])
-    earlier = list(lengths[:-1])
-    missing = [f"t{i}" for i, length in enumerate(earlier, start=1) if length is None]
-    known = round(sum(float(length) for length in earlier if length is not None), 3)
-    placed: list[TakeCue] = []
-    problems: list[str] = []
-    for cue in cues:
-        cue_id = str(cue.get("cue_id"))
-        start = int(cue.get("start_ms") or 0) / 1000
-        end = int(cue.get("end_ms") or 0) / 1000
-        if missing:
-            if start >= known:
-                problems.append(
-                    f"{cue_id} at {start:.2f}s on the episode: {', '.join(missing)} has no raw take on the desk, "
-                    f"so where {here} starts is unknown; not laid"
-                )
-            continue
-        take_end = known + this_length
-        if start < known:
-            continue
-        if start >= take_end:
-            if last_filmed:
-                problems.append(
-                    f"{cue_id} at {start:.2f}s starts after the last filmed take ({here}) ends at "
-                    f"{take_end:.2f}s on the episode; not laid (move it with `inner-voice --remove` and --at)"
-                )
-            continue
-        seam = (
-            f"{cue_id} runs {start:.2f}-{end:.2f}s on the episode, past the seam at {take_end:.2f}s where "
-            f"{here} ends; laid on {here}, where it starts"
-            if end > take_end + 1e-3
-            else ""
-        )
-        placed.append(
-            TakeCue(
-                cue_id=cue_id,
-                speaker_cast_id=str(cue.get("speaker_cast_id") or ""),
-                line=" ".join(str(cue.get("line") or "").split()),
-                spoken_text=" ".join(str(cue.get("spoken_text") or "").split()),
-                start=round(start - known, 3),
-                end=round(end - known, 3),
-                episode_start=start,
-                seam=seam,
-            )
-        )
-    return TakeCuePlan(tuple(placed), tuple(problems), None if missing else known)
-
-
 def refusal_words(message: str) -> str:
     """Plain words for the server's answer to the inner-voice PUT (the message stays as the server said it)."""
 
@@ -604,6 +511,5 @@ __all__ = [
     "save_spoken",
     "spoken_for",
     "spoken_path",
-    "take_cues",
     "take_number",
 ]
