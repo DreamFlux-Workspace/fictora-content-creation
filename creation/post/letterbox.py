@@ -58,6 +58,7 @@ from creation.post.delivery_geometry import (
     CANVAS_WIDTH,
     CAPTION_COLOURS,
     DEFAULT_CAPTION_COLOUR,
+    MARK_WIDTH_FRACTION,
     TITLE_HOOK_COLOUR,
     TITLE_SETUP_COLOUR,
     LetterboxLayout,
@@ -258,7 +259,8 @@ def title_block(
     """The title block for one episode's letterbox file, or ``None`` and why.
 
     Line 1 (white) is the episode's own setup line: the desk's (``hook-line
-    --setup-line`` on a server without the field), else the spine's
+    --setup-line`` on a server without the field), else nothing when the server
+    holds "No title" (``title_line_off``), else the spine's
     ``episode_summaries[].title_line`` (fictora-drama #628), else the series
     ``title`` (the server's fallback when no run title is given).
     Line 2 (yellow) is ``override`` (``--hook-line``), else the desk's pick
@@ -286,6 +288,9 @@ def title_block(
                 kept["text"],
                 "the desk's setup line (hook-line --setup-line)",
             )
+    elif episode_summary(body, episode).get("title_line_off") is True:
+        # "No title" on the server (fictora-drama, founder 24 Oct 2026): no white line.
+        setup, setup_source = "", "no title (the server's title card)"
     elif own:
         setup, setup_source = own, "the episode's setup line"
     hook, source = "", "spine"
@@ -540,7 +545,11 @@ def mark_and_title(
         # One named face (the bundled twin when Arial is missing); the copy is removed below.
         burned, scratch = burnable_ass(ass)
         first = f"[0:v]ass='{_esc(burned)}':fontsdir='{_esc(FONTS_DIR)}'[t]"
-    graph = f"{first};[1:v]format=rgba,colorchannelmixer=aa={MARK_ALPHA}[m];[t][m]overlay={x}:{y}[v]"
+    mark_w = round(info.width * MARK_WIDTH_FRACTION)
+    graph = (
+        f"{first};[1:v]scale={mark_w}:-1:flags=lanczos,format=rgba,colorchannelmixer=aa={MARK_ALPHA}[m];"
+        f"[t][m]overlay={x}:{y}[v]"
+    )
     inputs = ["-i", str(video), "-i", str(mark)]
     args = [*inputs, "-filter_complex", graph, "-map", "[v]"]
     if info.has_audio:

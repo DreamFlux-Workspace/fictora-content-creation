@@ -6,6 +6,10 @@ portrait show, every ffmpeg command finish runs (filter graphs, captions,
 timing) must equal the ones recorded on origin/main before the overlay existed
 (``tests/golden/portrait-unchanged.json``). Regenerate only on purpose:
 ``UPDATE_GOLDEN=1 uv run --group test pytest tests/test_hook_overlay_portrait_unchanged.py``.
+
+Re-recorded 25 Oct 2026 (kit #294) for the mark only: 3% in and the approved reels' size
+(72/768 of the width), so the test frame's overlay reads ``scale=18:16`` and ``overlay=6:30``
+(was ``overlay=23:30``, 12% in at the PNG's own size). Nothing else changed.
 """
 
 from __future__ import annotations

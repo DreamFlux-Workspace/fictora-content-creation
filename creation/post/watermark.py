@@ -1,15 +1,17 @@
-"""The Sokii mark, top left, where the server says (fictora-drama #1039, 24 Oct 2026).
+"""The Sokii mark, top left, where the server says (fictora-drama #1039; position 24 Oct 2026).
 
 The server owns the mark's place (server-heavy rule, 15 Oct 2026): top left,
-just under the strip TikTok / Reels / Shorts cover, and 12% in from the left so
-the app's full-bleed Watch feed on a 19.5:9 or 20:9 phone (which hides up to
-10% of each side) never clips it. :func:`mark_position` asks
-``POST /v1/mark/placement`` for each frame. An older server without the route
-(404/405), or one that cannot be reached, is never an error: the kit uses the
-same numbers itself (``x = round(W * 0.12)``, ``y = round(H * 0.09)``, 92:121 on
-768x1344) and prints a ``NOTE``. Native size, 0.6 opacity. A ``y`` override is
-never allowed into the top 8% of the frame: it is raised to that strip's lower
-edge.
+just under the strip TikTok / Reels / Shorts cover, 3% in from the left, as on
+the Instagram reels the founder approved (``Final series/Instagram Reels``;
+fictora-drama #1047: the 12% the server used for a day was only for the app's
+full-bleed Watch feed, which no longer shows a mark). :func:`mark_position`
+asks ``POST /v1/mark/placement`` for each frame. An older server without the
+route (404/405), or one that cannot be reached, is never an error: the kit uses
+the same numbers itself (``x = round(W * 0.03)``, ``y = round(H * 0.09)``,
+23:121 on 768x1344) and prints a ``NOTE``. Drawn at 9.4% of the frame's width
+(the 72 px PNG as it is on 768; 101 px on 1080), 0.6 opacity. A ``y`` override
+is never allowed into the top 8% of the frame: it is raised to that strip's
+lower edge.
 """
 
 from __future__ import annotations
@@ -27,8 +29,10 @@ MARK = Path(__file__).resolve().parents[2] / "assets" / "sokii-line-72.png"
 #: The server's route (fictora-drama #1039).
 MARK_PLACEMENT_ROUTE = "/v1/mark/placement"
 #: Fallback only (an older or unreachable server): the server's
-#: ``social_safe_zones.MARK_LEFT_FRACTION`` (12%; 3% before 24 Oct 2026).
-MARK_X_FRACTION = 0.12
+#: ``social_safe_zones.SAVED_COPY_MARK_LEFT_FRACTION`` (3%, the approved reels').
+MARK_X_FRACTION = 0.03
+#: The mark's width as a share of the frame's (the server's ``MARK_WIDTH_FRACTION``).
+MARK_WIDTH_FRACTION = 72 / 768
 MARK_Y_FRACTION = 0.09
 SAFE_TOP_FRACTION = 0.08
 MARK_ALPHA = 0.6
@@ -100,6 +104,15 @@ def mark_position(
     return round(width * MARK_X_FRACTION), top
 
 
+def mark_scale_filter(width: int) -> str:
+    """The ffmpeg filter that draws the 72x63 mark at 9.4% of ``width`` (empty when that is its own size)."""
+
+    drawn = round(width * MARK_WIDTH_FRACTION)
+    return (
+        "" if drawn == 72 else f"scale={drawn}:{round(63 * drawn / 72)}:flags=lanczos,"
+    )
+
+
 def watermark(
     video: Path,
     out: Path,
@@ -127,7 +140,7 @@ def watermark(
         raise FileExistsError(f"{out} exists; local post never overwrites")
     info = probe_video(video)
     x, top = mark_position(info.width, info.height, y=y, desk=desk, episode=episode)
-    graph = f"[1:v]format=rgba,colorchannelmixer=aa={MARK_ALPHA}[m];[0:v][m]overlay={x}:{top}[v]"
+    graph = f"[1:v]{mark_scale_filter(info.width)}format=rgba,colorchannelmixer=aa={MARK_ALPHA}[m];[0:v][m]overlay={x}:{top}[v]"
     inputs = ["-i", str(video), "-i", str(mark)]
     args = [*inputs, "-filter_complex", graph, "-map", "[v]"]
     if info.has_audio:

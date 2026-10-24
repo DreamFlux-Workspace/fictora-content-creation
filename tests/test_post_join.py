@@ -28,7 +28,8 @@ from creation.post.watermark import mark_position, watermark
 SIZE = (192, 336)
 #: The stand-in for a burned caption: a white box across the caption band.
 BOX = (20, 200, 152, 30)
-MARK_BOX = (*mark_position(*SIZE), 72, 63)
+# The mark as drawn: 9.4% of the frame's width (fictora-drama #1047).
+MARK_BOX = (*mark_position(*SIZE), round(SIZE[0] * 72 / 768), round(SIZE[0] * 63 / 768))
 
 
 def _run(args: list[str]) -> None:
