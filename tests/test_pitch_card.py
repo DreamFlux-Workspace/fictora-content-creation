@@ -73,6 +73,8 @@ class _FakeApi:
         self.posts: list[tuple[str, dict[str, Any]]] = []
 
     def get_optional(self, path: str) -> tuple[int, Any]:
+        if "/card-lines" in path or path == f"/v1/spines/{_SPINE}":
+            return 404, {"error": {"code": "not_found", "message": "older server"}}
         assert path == f"/v1/spines/{_SPINE}/episodes/1/pitch"
         return 200, dict(self.card)
 
