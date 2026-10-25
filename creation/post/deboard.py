@@ -145,9 +145,32 @@ class DeboardResult:
         )
 
 
-def _psnr(frame: npt.NDArray[np.float64], reference: npt.NDArray[np.float64]) -> float:
-    mse = float(((frame - reference) ** 2).mean())
+def _psnr(
+    frame: npt.NDArray[np.float64],
+    reference: npt.NDArray[np.float64],
+    keep: npt.NDArray[np.bool_] | None = None,
+) -> float:
+    squared = (frame - reference) ** 2
+    mse = float(squared.mean() if keep is None else squared[keep].mean())
     return 99.0 if mse <= 1e-9 else 10.0 * math.log10(255.0**2 / mse)
+
+
+#: A box of the compared frame as fractions ``(left, top, right, bottom)``.
+FractionBox = tuple[float, float, float, float]
+
+
+def keep_mask(
+    width: int, height: int, box: FractionBox | None
+) -> npt.NDArray[np.bool_] | None:
+    """The pixels compared with the board: all but ``box`` (the Sokii mark), at ``width`` x ``height``."""
+
+    if box is None:
+        return None
+    keep = np.ones((height, width), dtype=bool)
+    left, top = math.floor(box[0] * width), math.floor(box[1] * height)
+    right, bottom = math.ceil(box[2] * width), math.ceil(box[3] * height)
+    keep[max(0, top) : min(height, bottom), max(0, left) : min(width, right)] = False
+    return keep
 
 
 def measure_board_leak(
@@ -157,6 +180,7 @@ def measure_board_leak(
     max_frames: int = BOARD_LEAK_MAX_FRAMES,
     margin_db: float = BOARD_LEAK_MARGIN_DB,
     crop: tuple[int, int, int, int] | None = None,
+    mask_box: FractionBox | None = None,
 ) -> BoardLeak:
     """Count the opening frames that are the storyboard, by PSNR against the board.
 
@@ -173,6 +197,9 @@ def measure_board_leak(
     crop
         ``(x, y, width, height)`` of the frame compared with the board (a
         letterbox file's picture); ``None`` compares the whole frame.
+    mask_box
+        A part of the compared frame left out of the comparison (the Sokii
+        mark on a marked file, which the board never has); ``None``: none.
 
     Returns
     -------
@@ -201,8 +228,9 @@ def measure_board_leak(
             opened.convert("RGB").resize((width, height), Image.Resampling.BILINEAR),
             dtype=np.float64,
         )
-    scores = [_psnr(frame, reference) for frame in head]
-    baseline = statistics.median(_psnr(frame, reference) for frame in later)
+    keep = keep_mask(width, height, mask_box)
+    scores = [_psnr(frame, reference, keep) for frame in head]
+    baseline = statistics.median(_psnr(frame, reference, keep) for frame in later)
     count = 0
     for value in scores[: min(max_frames, len(scores))]:
         if value < baseline + margin_db:
