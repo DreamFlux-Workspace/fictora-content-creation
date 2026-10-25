@@ -36,6 +36,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol, TextIO
 
+from creation.card_lines import idea_text, read_card_lines, shot_line
+
 #: The server code a held paid step answers with.
 PITCH_NOT_APPROVED = "pitch_not_approved"
 #: The desk files the kit used to keep (read once to carry a yes, never written).
@@ -149,6 +151,28 @@ def card_text(card: Mapping[str, Any]) -> str:
         for shot in take.get("shots") or []:
             marks = " [opens]" if shot.get("opens") else ""
             marks += " [ends on]" if shot.get("ends_on") else ""
+            light = shot_line(shot)
+            if light is not None:
+                # The server's lighter script card (lighter cards v3): the
+                # moment's action line, the spoken line, then the shot line.
+                action = shot.get("action_short")
+                out.append(
+                    f"    {shot.get('shot')}.{marks} {action}"
+                    if action
+                    else f"    {shot.get('shot')}.{marks}"
+                )
+                line = shot.get("line")
+                if isinstance(line, Mapping):
+                    out.append(f'       {line.get("speaker")}: "{line.get("text")}"')
+                out.append(f"       [shot] {light}")
+                detail = f"{shot.get('camera')}" + (
+                    f" · {shot['camera_move']}" if shot.get("camera_move") else ""
+                )
+                face = f"; face: {shot['expression']}" if shot.get("expression") else ""
+                out.append(
+                    f"       (operator detail: {detail}; we see: {shot.get('scene')}{face})"
+                )
+                continue
             camera = str(shot.get("camera") or "")
             if shot.get("camera_move"):
                 camera += f" · {shot['camera_move']}"
@@ -454,6 +478,18 @@ def run_pitch(
                 f"Change recorded on episode {episode}'s card (draft {answer.get('from_draft')}). Make it with "
                 "`line`, `edit` or `rewrite`; once the shots change the card is the next draft and needs its "
                 "own yes.",
+                file=stream,
+            )
+        # The idea card and the episode's people, in the server's words (lighter cards v3).
+        lines = read_card_lines(run, sid, episode)
+        if lines is not None:
+            status, spine = run.get_optional(f"/v1/spines/{sid}")
+            print(
+                idea_text(
+                    lines,
+                    spine if status == 200 and isinstance(spine, Mapping) else None,
+                    episode,
+                ),
                 file=stream,
             )
         card = read_card(run, sid, episode)
