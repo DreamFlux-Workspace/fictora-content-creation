@@ -88,6 +88,56 @@ def _print_warning(message: str) -> None:
     print(f"WARNING: {message}", file=sys.stderr, flush=True)
 
 
+def _print_steps(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
+
+
+#: How each step state prints (fictora-drama ``making_steps``; the app draws the same states).
+_STEP_MARKS = {"done": "✓", "running": "⠋", "upcoming": "○", "failed": "✕"}
+
+
+def format_wait_steps(payload: dict[str, Any]) -> str | None:
+    """The server's steps for a long wait, one line each, or ``None`` when it sent none.
+
+    The server owns the steps, their words and their states (fictora-drama
+    ``making_steps``, founder design 25 Oct 2026); the kit prints them as they
+    come, e.g. ``✓ Filming your scenes 3 of 3`` then ``⠋ Editing it together``.
+    A step's pictures (the cast step) print indented under it. Once the run
+    ended, the server's one failure sentence or its folded line follows.
+
+    Parameters
+    ----------
+    payload
+        A ``/v1/video-generations/{id}`` or ``/v1/jobs/{id}`` body.
+
+    Returns
+    -------
+    str | None
+        The lines to print, or ``None`` for an older server (no ``steps``).
+    """
+
+    steps = payload.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return None
+    lines: list[str] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        mark = _STEP_MARKS.get(str(step.get("state")), "·")
+        detail = f" {step['detail']}" if step.get("detail") else ""
+        lines.append(f"{mark} {step.get('label', '')}{detail}")
+        for item in step.get("items") or []:
+            if isinstance(item, dict):
+                lines.append(
+                    f"    {_STEP_MARKS.get(str(item.get('state')), '·')} {item.get('label', '')}"
+                )
+    if payload.get("failed_message"):
+        lines.append(str(payload["failed_message"]))
+    elif payload.get("done_summary"):
+        lines.append(str(payload["done_summary"]))
+    return "\n".join(lines)
+
+
 #: The request header a client announces what it can show in (fictora-drama ``drama_pitch_gate``).
 CLIENT_CAPABILITIES_HEADER = "X-Drama-Client-Capabilities"
 #: What the kit announces: it shows the server's pitch card.
@@ -770,6 +820,7 @@ def poll_until_terminal(
     warn: Callable[[str], None] | None = _print_warning,
     clock: PollClock = time,
     utc_now: Callable[[], datetime] = _utc_now,
+    say_steps: Callable[[str], None] | None = _print_steps,
 ) -> dict[str, Any]:
     """Poll a drama job URL until it reaches a terminal status or times out.
 
@@ -807,6 +858,8 @@ def poll_until_terminal(
         Monotonic clock and sleep (``time``; a fake in tests).
     utc_now
         Wall clock for the "last update" time when the job has no ``updated_at``.
+    say_steps
+        Where the server's steps print each time they change (stderr); ``None`` stays quiet.
 
     Returns
     -------
@@ -827,6 +880,7 @@ def poll_until_terminal(
     changed_at = clock.monotonic()
     changed_utc = utc_now()
     next_warning = changed_at + stale_after_seconds
+    printed_steps: str | None = None
 
     while clock.monotonic() < deadline:
         payload = _get_json_with_transport_retries(
@@ -846,6 +900,11 @@ def poll_until_terminal(
             if "job_id" in payload:
                 emit_args["job_id"] = payload["job_id"]
             emit(label, **emit_args)
+
+        steps_text = format_wait_steps(payload) if say_steps is not None else None
+        if steps_text is not None and steps_text != printed_steps:
+            printed_steps = steps_text
+            say_steps(steps_text)  # type: ignore[misc]
 
         if status in _TERMINAL:
             return payload
