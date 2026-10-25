@@ -90,6 +90,7 @@ from PIL import Image
 
 from creation.post.take_timeline import facts_shift_s, server_board_frames
 from creation.post.deboard import (
+    keep_mask,
     BOARD_LEAK_MARGIN_DB,
     LEAK_ANALYSIS_SIZE,
     _psnr,
@@ -852,6 +853,7 @@ def scan_board(
     *,
     margin_db: float = BOARD_LEAK_MARGIN_DB,
     crop: tuple[int, int, int, int] | None = None,
+    mask_box: tuple[float, float, float, float] | None = None,
 ) -> BoardScan:
     """Find board frames anywhere in ``take``: the head as ``deboard`` counts it, then every later frame.
 
@@ -863,7 +865,9 @@ def scan_board(
         When the take is too short to measure a baseline.
     """
 
-    leak = measure_board_leak(take, board, margin_db=margin_db, crop=crop)
+    leak = measure_board_leak(
+        take, board, margin_db=margin_db, crop=crop, mask_box=mask_box
+    )
     width, height = LEAK_ANALYSIS_SIZE
     with Image.open(board) as opened:
         reference = np.asarray(
@@ -871,14 +875,41 @@ def scan_board(
             dtype=np.float64,
         )
     floor = leak.baseline_db + margin_db
+    keep = keep_mask(width, height, mask_box)
     later: list[tuple[int, float]] = []
     for index, frame in enumerate(_iter_frames(take, width, height, crop=crop)):
         if index < leak.frames:
             continue
-        value = _psnr(frame, reference)
+        value = _psnr(frame, reference, keep)
         if value >= floor:
             later.append((index, round(value, 2)))
     return BoardScan(head=leak.frames, later=tuple(later), baseline_db=leak.baseline_db)
+
+
+#: Pixels added around the mark's box on each side before it is left out (scaling softens its edge).
+MARK_MASK_PAD = 4
+
+
+def mark_mask_box(width: int, height: int) -> tuple[float, float, float, float]:
+    """Where the Sokii mark sits on a ``width`` x ``height`` portrait frame, as fractions, padded.
+
+    The place is the mark's own (``watermark.mark_position``: the server's numbers kept in the
+    kit, 3% in and 9% down) and its size the approved reels' (72/768 of the width). A raw take
+    has no mark there; leaving that small box out changes nothing it measures.
+    """
+
+    from creation.post.watermark import MARK_WIDTH_FRACTION, mark_position
+
+    x, y = mark_position(width, height)
+    drawn_w = round(width * MARK_WIDTH_FRACTION)
+    drawn_h = round(63 * drawn_w / 72)
+    pad = MARK_MASK_PAD
+    return (
+        max(0.0, (x - pad) / width),
+        max(0.0, (y - pad) / height),
+        min(1.0, (x + drawn_w + pad) / width),
+        min(1.0, (y + drawn_h + pad) / height),
+    )
 
 
 def board_section(
@@ -888,10 +919,12 @@ def board_section(
     fps: float,
     deboarded: bool,
     crop: tuple[int, int, int, int] | None = None,
+    mask_box: tuple[float, float, float, float] | None = None,
 ) -> tuple[Section, int]:
     """Board frames anywhere in the take; returns the section and the head count (for the cut trace).
 
     ``crop``: compare only that part of the frame with the board (a letterbox file's 4:3 picture).
+    ``mask_box``: leave the Sokii mark's box out of the comparison (:func:`mark_mask_box`).
     """
 
     threshold = f"PSNR vs the board ≥ baseline + {BOARD_LEAK_MARGIN_DB:g} dB, every frame at 192x336"
@@ -903,7 +936,7 @@ def board_section(
             threshold,
         ), 0
     try:
-        scan = scan_board(take, board, crop=crop)
+        scan = scan_board(take, board, crop=crop, mask_box=mask_box)
     except ValueError as exc:
         return Section("Board", NONE, f"not measured: {exc}", threshold), 0
     data = {"board": str(board), "head_frames": scan.head, "baseline_db": scan.baseline_db,
@@ -1995,6 +2028,8 @@ def review_take(
     board_sec, head = board_section(
         take, board_path, fps=fps, deboarded=bool(steps & set(DEBOARDED_STEPS)),
         crop=crop,
+        # A portrait file may carry the Sokii mark, which no board has; a letterbox file's mark is in the band.
+        mask_box=mark_mask_box(info.width, info.height) if crop is None else None,
     )  # fmt: skip
     held = server_board_frames(facts)
     if held is not None:
