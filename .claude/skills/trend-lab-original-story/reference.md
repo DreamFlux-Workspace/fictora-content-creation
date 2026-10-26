@@ -15,13 +15,31 @@ Rejections are schema errors in `story-init`; fix the file before resubmitting.
 
 ## Hosted run lifecycle
 
+**Story file**
+
 ```text
 remake --film  →  POST /runs (bearer)  →  Restate TrendRemake
   →  agent: read_story → draw → film (Sume webhook) → time_captions → finish
   →  finish: upload takes → POST /v1/operator/episode-finish (Modal) → R2 final
 ```
 
-CLI **waits** on the HTTP response until the workflow completes or fails.
+**Hosted reference (`remake-reference`)**
+
+```text
+PUT /uploads/reference/{run_id}  →  POST /runs (from_reference: true)
+  →  ingest → analyze → scaffold (optional OpenAI) → init-story → same agent path
+```
+
+CLI **waits** on the HTTP response until the workflow completes or fails. A **502** on submit does not always mean the run failed—check worker logs and R2 for that `run_id`.
+
+## Sume resolution
+
+| Artifact | Typical resolution |
+| --- | --- |
+| Sume take `out/part_*_v1.mp4` | **480p** tier for Seedance (letterbox 4:3 ≈ 752×560 class) |
+| Final `out/final_v1.mp4` after Modal finish | Often **1080×1920** letterbox delivery |
+
+Override on the worker only: `TREND_LAB_SUME_RESOLUTION=720p` when debugging cost/quality.
 
 ## Environment matrix
 
