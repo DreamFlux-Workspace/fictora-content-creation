@@ -18,26 +18,38 @@ env:
   RUFF_VERSION: "0.15.12"
 
 jobs:
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      run_tests: ${{ steps.filter.outputs.run_tests }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            run_tests:
+              - 'creation/**'
+              - 'tests/**'
+              - 'scripts/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'Makefile'
+
   tests:
     name: tests
+    needs: changes
+    if: needs.changes.outputs.run_tests == 'true'
     runs-on: ubuntu-latest
-    # The job's budget is the sum of the step budgets below plus a margin. Each
-    # step has its own limit so a slow Ubuntu mirror can no longer eat the time
-    # the tests need: on 7 Oct the ffmpeg install took 7.5-8 min three times
-    # (stalled package fetches) and the 15-min job was cancelled mid-suite with
-    # no failing test (runs 37662784945, 37664514275, 37692214292).
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Install ffmpeg (post tests build real media)
-        timeout-minutes: 10
-        # A stalled mirror fetch gives up after 20 s and is retried, instead of
-        # sitting on the default timeout for each of ffmpeg's ~70 packages.
-        run: |
-          APT_OPTS="-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
-          sudo apt-get $APT_OPTS update -q
-          sudo apt-get $APT_OPTS install -y -q --no-install-recommends ffmpeg
-          ffmpeg -hide_banner -version | head -1
+      - uses: FedericoCarboni/setup-ffmpeg@v3
+        with:
+          ffmpeg-version: release
+          cache: true
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           version: ${{ env.UV_VERSION }}
@@ -46,13 +58,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --group test
       - name: Run tests
-        # The suite runs in 10-15 min here (9 Oct: 582-906 s on main and PR runs, 2,290 tests);
-        # 15 min cut a fully passing run at 906 s (run 37950093846). 25 min still bounds a
-        # test that truly hangs, inside the job's 30.
         timeout-minutes: 25
-        # The suite talks to a fake Drama API and needs no secrets or network.
-        # -rs prints the reason for any skipped test so a missing ffmpeg can't hide;
-        # --durations=15 lists the slowest tests, so a test drifting toward the limit is seen early.
         run: uv run --frozen --group test pytest tests -q -rs --durations=15
 
   lint:
@@ -78,27 +84,34 @@ jobs:
       - name: Skill copies are identical (.claude vs .cursor)
         run: |
           status=0
-          for f in SKILL.md reference.md; do
-            a=".claude/skills/episode-production/$f"
-            b=".cursor/skills/episode-production/$f"
-            if ! diff -u "$a" "$b"; then
-              echo "::error file=$b::$b differs from $a; the two skill copies must stay identical"
-              status=1
-            fi
+          for skill in episode-production trend-lab-original-story; do
+            for f in SKILL.md reference.md; do
+              a=".claude/skills/$skill/$f"
+              b=".cursor/skills/$skill/$f"
+              if [ ! -f "$a" ] || [ ! -f "$b" ]; then
+                echo "::error file=$b::missing $skill/$f in one of .claude or .cursor"
+                status=1
+                continue
+              fi
+              if ! diff -u "$a" "$b"; then
+                echo "::error file=$b::$b differs from $a; the two skill copies must stay identical"
+                status=1
+              fi
+            done
           done
           exit $status
 
   all-checks:
     name: All checks passed
     if: always()
-    needs: [tests, lint, skill-copies]
+    needs: [changes, tests, lint, skill-copies]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - name: Check job results
         run: |
           echo '${{ toJSON(needs) }}'
-          if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}" = "true" ]; then
+          if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = "true" ]; then
             echo "::error::One or more checks did not pass"
             exit 1
           fi
