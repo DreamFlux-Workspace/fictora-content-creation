@@ -53,6 +53,7 @@ from creation.captions import (
     OUTLINE_COLOUR,
     PHRASE_BREATH_SECONDS,
     PLAIN_COLOUR,
+    FLICKER_MAX_CHUNK_SECONDS,
     PRIMARY_COLOUR,
     Cue,
     _ass_escape,
@@ -60,6 +61,7 @@ from creation.captions import (
     cjk_font_name,
     has_cjk,
     italic_size,
+    sentence_starts,
     side_margin,
     text_width,
     wrap_caption,
@@ -268,7 +270,8 @@ def bold_groups(words: Sequence[Cue]) -> list[list[int]]:
     A chunk ends at a sentence or clause mark (a dash too) or a breath (a
     pause of :data:`creation.captions.PHRASE_BREATH_SECONDS`); a longer run is
     cut by :func:`_split_run` into chunks of at most :data:`BOLD_MAX_WORDS`
-    words and :data:`BOLD_MAX_CHARS` characters.
+    words and :data:`BOLD_MAX_CHARS` characters. A word left alone then joins a
+    neighbour in its sentence (:func:`_no_lone_word`, the server's rule).
     """
 
     runs: list[list[int]] = []
@@ -290,7 +293,88 @@ def bold_groups(words: Sequence[Cue]) -> list[list[int]]:
         for size in _split_run([words[i].text for i in run]):
             groups.append(run[at : at + size])
             at += size
-    return groups
+    return _no_lone_word(groups, words)
+
+
+def _bold_fits(group: Sequence[int], words: Sequence[Cue]) -> bool:
+    """Whether a regrouped chunk keeps Bold's caps: at most three words, on screen at most 4 s."""
+
+    return (
+        len(group) <= BOLD_MAX_WORDS
+        and words[group[-1]].end - words[group[0]].start <= FLICKER_MAX_CHUNK_SECONDS
+    )
+
+
+def _no_lone_word(groups: list[list[int]], words: Sequence[Cue]) -> list[list[int]]:
+    """Regroup one line's Bold chunks so no word sits alone (temporary copy of the server's rule).
+
+    TEMPORARY COPY of fictora-drama ``caption_compile._no_lone_bold_word``
+    (drama #1094 and #1096, ``bold_no_lone_word``): the server's caption layout
+    route only lays out ready-made chunks, so the kit groups words itself until
+    that route chunks raw timed words (docs/content-ops/backlog.md).
+
+    A one-word chunk inside a longer sentence joins the chunk before it in that
+    sentence ("Your turn," + "Seth."), else the chunk after it ("I'm" + "not
+    blinking."); when neither has room, a full three-word neighbour gives it one
+    word ("I like you" + "back." is "I like" / "you back."). A chunk never spans
+    a sentence end this way. A one-word sentence ("Stop.") stands alone when it
+    is the whole line; otherwise it joins a neighbouring chunk that is a whole
+    short sentence ("Wait. Stop."), the one before first. Every chunk keeps
+    Bold's three-word and 4 s caps.
+    """
+
+    out = [list(group) for group in groups]
+    total = sum(len(group) for group in out)
+    starts_at = sentence_starts([w.text for w in words])
+    index = 0
+    while index < len(out):
+        group = out[index]
+        if len(group) != 1:
+            index += 1
+            continue
+        firsts = [part[0] for part in out]
+        word_at = group[0]
+        after_at = word_at + 1
+        has_before = index > 0
+        has_after = index + 1 < len(out)
+        joins_before = has_before and word_at not in starts_at
+        joins_after = has_after and after_at not in starts_at
+        if joins_before or joins_after:
+            before = out[index - 1] if joins_before else []
+            after = out[index + 1] if joins_after else []
+            if joins_before and _bold_fits([*before, *group], words):
+                out[index - 1] = [*before, *group]
+                del out[index]
+                continue
+            if joins_after and _bold_fits([*group, *after], words):
+                out[index] = [*group, *after]
+                del out[index + 1]
+                index += 1
+                continue
+            if (
+                joins_before
+                and len(before) > 2
+                and _bold_fits([before[-1], *group], words)
+            ):
+                out[index - 1], out[index] = before[:-1], [before[-1], *group]
+            elif (
+                joins_after and len(after) > 2 and _bold_fits([*group, after[0]], words)
+            ):
+                out[index], out[index + 1] = [*group, after[0]], after[1:]
+            index += 1
+            continue
+        before_whole = has_before and (index == 1 or firsts[index - 1] in starts_at)
+        after_end = after_at + len(out[index + 1]) if has_after else 0
+        after_whole = has_after and (after_end == total or after_end in starts_at)
+        if before_whole and _bold_fits([*out[index - 1], *group], words):
+            out[index - 1] = [*out[index - 1], *group]
+            del out[index]
+            continue
+        if after_whole and _bold_fits([*group, *out[index + 1]], words):
+            out[index] = [*group, *out[index + 1]]
+            del out[index + 1]
+        index += 1
+    return out
 
 
 def _shown_words(words: Sequence[str]) -> list[str]:

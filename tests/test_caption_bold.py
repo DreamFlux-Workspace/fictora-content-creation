@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from creation.caption_bold import (
+    bold_groups,
     BOLD_MAX_CHARS,
     BOLD_MAX_WORDS,
     bold_font_size,
@@ -33,6 +34,7 @@ from creation.captions import (
     resolve_caption_style,
     side_margin,
     text_width,
+    time_words,
 )
 from creation.production_config import (
     ProductionConfig,
@@ -136,7 +138,9 @@ def test_every_chunk_is_one_short_line_of_two_or_three_words() -> None:
         "do not break",
         "eye contact.",
     ]
-    assert "open the door!" in chunks
+    # "Please," alone joins its sentence and takes a word from the full chunk after it
+    # (the server's bold_no_lone_word rule, drama #1094).
+    assert "Please, open" in chunks and "the door!" in chunks
     # A clause mark ends a chunk; one word is never left alone when it can join.
     assert sum(len(c.split()) == 1 for c in chunks[5:]) == 0
     ass = build_ass(cues, width=768, height=1344, style="bold")
@@ -242,7 +246,9 @@ def test_bold_draws_no_em_or_en_dash() -> None:
         "\u2014" not in body and "\u2013" not in body
     )  # the server's drawn words are burned
     assert "D-9341" in body  # a hyphen inside a word stays
-    assert "Please…" in body
+    # "Please—" no longer sits alone: it joins "open", and a dash between words is a comma.
+    assert "Please, " in body
+    assert "door…" in body
 
 
 #: Today's house ASS for this fixture, written by origin/main before Bold (8faeaaa).
@@ -529,3 +535,19 @@ def test_caption_take_burns_bold_on_a_new_show(tmp_path: Path) -> None:
     ass = result.ass.read_text()
     assert style == "bold" and "Style: Bold,Arial," in ass and YELLOW in ass
     assert result.video.is_file()
+
+
+def _bold_texts(text: str) -> list[list[str]]:
+    words = time_words(text, Span(0.0, 2.0))
+    return [[words[i].text for i in group] for group in bold_groups(words)]
+
+
+def test_bold_never_leaves_one_word_alone_in_a_sentence() -> None:
+    # The server's rule (drama #1094 / #1096, bold_no_lone_word).
+    assert _bold_texts("Your turn, Seth.") == [["Your", "turn,", "Seth."]]
+    assert _bold_texts("I like you back.") == [["I", "like"], ["you", "back."]]
+
+
+def test_bold_one_word_sentence_joins_a_short_sentence_or_stands_alone() -> None:
+    assert _bold_texts("Wait. Stop.") == [["Wait.", "Stop."]]
+    assert _bold_texts("Stop.") == [["Stop."]]

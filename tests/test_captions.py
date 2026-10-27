@@ -23,6 +23,7 @@ from creation.captions import (
     episode_caption_lines,
     episode_lines,
     flicker_cues,
+    flicker_groups,
     is_english,
     italic_size,
     parse_silencedetect,
@@ -129,6 +130,42 @@ def test_flicker_builds_three_words_then_resets() -> None:
     words = time_words("It's not coming. Mine's two", Span(0.0, 5.0))
     texts = [c.text for c in flicker_cues(words)]
     assert texts == ["It's", "It's not", "It's not coming.", "Mine's", "Mine's two"]
+
+
+def _flicker_texts(text: str, seconds: float = 3.0) -> list[list[str]]:
+    words = time_words(text, Span(0.0, seconds))
+    return [[words[i].text for i in group] for group in flicker_groups(words)]
+
+
+def test_flicker_never_leaves_one_word_alone_after_full_chunks() -> None:
+    # The server's rule (drama #1087): a 4-word run is 2 + 2, never 3 + 1.
+    assert _flicker_texts("Why is it warm?") == [["Why", "is"], ["it", "warm?"]]
+    groups = _flicker_texts("This ward has been closed since last March and nobody")
+    assert [len(g) for g in groups] == [3, 3, 2, 2]
+
+
+def test_flicker_chunk_never_crosses_a_sentence_end() -> None:
+    groups = _flicker_texts("It's closed since March. Why is it warm?")
+    assert groups == [
+        ["It's", "closed"],
+        ["since", "March."],
+        ["Why", "is"],
+        ["it", "warm?"],
+    ]
+    assert _flicker_texts("Mr. Kim is here.") == [["Mr.", "Kim"], ["is", "here."]]
+
+
+def test_flicker_chunk_breaks_at_a_real_pause() -> None:
+    words = [
+        Cue(0.0, 0.2, "Wait"),
+        Cue(0.3, 0.5, "for"),
+        Cue(1.5, 1.7, "it"),
+        Cue(1.8, 2.0, "now."),
+    ]
+    assert [[words[i].text for i in g] for g in flicker_groups(words)] == [
+        ["Wait", "for"],
+        ["it", "now."],
+    ]
 
 
 def test_flicker_events_touch_and_last_word_holds_until_next_line() -> None:
