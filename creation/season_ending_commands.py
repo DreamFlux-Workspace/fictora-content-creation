@@ -8,9 +8,14 @@ here anyway, or keep going. The kit decides nothing: ``ending --episode N``
 prints the server's line and options word for word, and ``ending
 --last-episode M`` sends the pick. A thin call, like ``cast-exit``.
 
+Founder, 27 Oct 2026: the kit never raises an ending on its own (only when
+the human asks), and a series that ended can always be picked back up:
+``resume`` asks the server to reopen it, and writing continues as normal.
+
 Routes (fictora-drama early-ending PR): ``GET /v1/spines/{id}/season/ending-check?end_at=N``
 and ``POST /v1/spines/{id}/season/end`` with ``last_episode`` and
-``expected_spine_version``.
+``expected_spine_version``; ``POST /v1/spines/{id}/season/resume`` with
+``expected_spine_version`` reopens an ended series.
 """
 
 from __future__ import annotations
@@ -128,4 +133,53 @@ def run_ending(
             f"done: episode {last_episode} is the series' last episode, written as its finale.",
             file=out,
         )
+    return dict(answer)
+
+
+def run_resume(desk: Path, *, out: Any = None) -> dict[str, Any]:
+    """Pick an ended series back up: the server reopens it so more episodes can be written. Spends nothing.
+
+    Parameters
+    ----------
+    desk
+        Series desk with a story.
+    out
+        Text stream.
+
+    Returns
+    -------
+    dict[str, Any]
+        The server's answer, as sent.
+
+    Raises
+    ------
+    CommandStopped
+        A server refusal, or an older server without the route. Nothing changed.
+    """
+
+    out = out or sys.stdout
+    desk = desk.expanduser().resolve()
+    _, state, run = ec._desk_session(desk)
+    spine_path = f"/v1/spines/{quote(state.spine_id or '', safe='')}/season"
+    refreshed: dict[str, Any] | None = None
+    try:
+        spine = run.spine(state.spine_id or "")
+        status, answer = run.post_optional(
+            f"{spine_path}/resume",
+            {"expected_spine_version": spine["spine_version"]},
+        )
+        refreshed = run.spine(state.spine_id or "") if status < 400 else None
+    finally:
+        run.client.close()
+    refused = _refusal(status, answer)
+    if refused is not None:
+        raise refused
+    ec._save_desk_json(desk, "spine", refreshed)
+    line = answer.get("line") if isinstance(answer, Mapping) else None
+    if line:
+        print(f"sokii: {line}", file=out)
+    print(
+        "done: the series is open again; write the next episode as normal (`brief`).",
+        file=out,
+    )
     return dict(answer)

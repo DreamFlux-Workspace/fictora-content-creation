@@ -7821,6 +7821,7 @@ EPISODE_COMMANDS = frozenset(
         "cast",
         "cast-exit",
         "ending",
+        "resume",
         "outfit",
         "emotion",
         "look-frame",
@@ -8420,6 +8421,13 @@ def add_episode_parsers(
         help="The human's pick: this episode becomes the last one, written as the finale.",
     )
 
+    resume = sub.add_parser(
+        "resume",
+        help="Pick an ended series back up when the human wants more: the server reopens it, then "
+        "write the next episode as normal. Spends nothing.",
+    )
+    resume.add_argument("--desk", type=Path, required=True)
+
     frame = sub.add_parser(
         "look-frame",
         help=(
@@ -8964,6 +8972,11 @@ def dispatch_episode(args: argparse.Namespace) -> int:
             from creation.season_ending_commands import run_ending
 
             run_ending(args.desk, episode=args.episode, last_episode=args.last_episode)
+            return 0
+        if args.command == "resume":
+            from creation.season_ending_commands import run_resume
+
+            run_resume(args.desk)
             return 0
         if args.command == "look-frame":
             run_look_frame(args.desk, description=args.description, size=args.size)

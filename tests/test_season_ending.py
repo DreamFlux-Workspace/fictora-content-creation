@@ -22,10 +22,21 @@ from creation.cli_produce import main as produce_main
 from fake_api import FakeApi
 
 LINE = "Two things are still open: who sent the logbook, and what is in drawer seven. They land by episode 6."
+# The check's real shape (fictora-drama #1107): "Keep going" carries no episode.
 OPTIONS = [
-    {"label": "End in episode 6"},
-    {"label": "End it here anyway"},
-    {"label": "Keep going"},
+    {
+        "label": "End in episode 6",
+        "choice": "end_at",
+        "last_episode": 6,
+        "suggested": True,
+    },
+    {
+        "label": "End it here anyway",
+        "choice": "end_at",
+        "last_episode": 3,
+        "suggested": False,
+    },
+    {"label": "Keep going", "choice": "keep_going"},
 ]
 
 
@@ -37,6 +48,7 @@ def test_the_check_prints_the_servers_line_and_options_word_for_word(
         "can_end_here": False,
         "line": LINE,
         "suggested_last_episode": 6,
+        "open_questions": ["Who sent the logbook?", "What is in drawer seven?"],
         "options": OPTIONS,
     }
     out = io.StringIO()
@@ -152,3 +164,59 @@ def test_brief_prints_the_servers_finale_line_only_when_sent(
 
     assert (f"sokii: {FINALE}" in out.getvalue()) is (line is not None)
     assert "planned for" not in out.getvalue()
+
+
+# Founder, 27 Oct 2026: a series that ended can always be picked back up.
+def test_resume_reopens_the_series_with_the_story_version(
+    desk: Path, api: FakeApi
+) -> None:
+    api.spine_doc = _story(approved=True)
+    sent: list[dict[str, Any]] = []
+
+    def resume(_m: str, _path: str, body: dict[str, Any] | None) -> Any:
+        sent.append(dict(body or {}))
+        return {"line": "The series is open again. What happens next?"}
+
+    api.routes[("POST", "/v1/spines/sp1/season/resume")] = resume
+    out = io.StringIO()
+
+    se.run_resume(desk, out=out)
+
+    assert sent == [{"expected_spine_version": api.spine_doc["spine_version"]}]
+    assert "sokii: The series is open again. What happens next?" in out.getvalue()
+    assert "the series is open again" in out.getvalue()
+    assert list((desk / "api").glob("spine*.json"))
+
+
+def test_resume_refusal_and_older_server(desk: Path, api: FakeApi) -> None:
+    api.spine_doc = _story(approved=True)
+    api.routes[("POST", "/v1/spines/sp1/season/resume")] = lambda *_: (
+        422,
+        {
+            "error": {
+                "code": "season_not_ended",
+                "message": "This series has not ended.",
+            }
+        },
+    )
+    with pytest.raises(ec.CommandStopped) as stopped:
+        se.run_resume(desk, out=io.StringIO())
+    assert str(stopped.value) == "Refused: This series has not ended."
+
+    api.routes[("POST", "/v1/spines/sp1/season/resume")] = lambda *_: (
+        404,
+        {"detail": "Not Found"},
+    )
+    with pytest.raises(ec.CommandStopped) as stopped:
+        se.run_resume(desk, out=io.StringIO())
+    assert "no season ending route yet" in str(stopped.value)
+
+
+def test_resume_from_the_command_line(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    api.spine_doc = _story(approved=True)
+    api.routes[("POST", "/v1/spines/sp1/season/resume")] = lambda *_: {}
+
+    assert produce_main(["resume", "--desk", str(desk)]) == 0
+    assert "the series is open again" in capsys.readouterr().out
