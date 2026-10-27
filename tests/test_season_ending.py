@@ -38,6 +38,24 @@ OPTIONS = [
     },
     {"label": "Keep going", "choice": "keep_going"},
 ]
+# The server's own question when she ends the series (fictora-drama #1116), word for word.
+QUESTION = {
+    "line": "How should the last episode land?",
+    "options": [
+        {"label": "Give it a proper ending", "ending_style": "closed"},
+        {"label": "End on a cliffhanger", "ending_style": "open"},
+    ],
+}
+
+
+def _older_check(api: FakeApi) -> None:
+    """A server from before #1116: the check carries no ending question."""
+
+    api.routes[("GET", "/v1/spines/sp1/season/ending-check")] = lambda *_: {
+        "can_end_here": True,
+        "line": "Everything set up so far can be resolved in this episode.",
+        "options": OPTIONS,
+    }
 
 
 def test_the_check_prints_the_servers_line_and_options_word_for_word(
@@ -66,6 +84,7 @@ def test_the_check_prints_the_servers_line_and_options_word_for_word(
 
 def test_the_pick_is_sent_with_the_story_version(desk: Path, api: FakeApi) -> None:
     api.spine_doc = _story(approved=True)
+    _older_check(api)
     sent: list[dict[str, Any]] = []
 
     def end(_m: str, _path: str, body: dict[str, Any] | None) -> Any:
@@ -85,6 +104,7 @@ def test_the_pick_is_sent_with_the_story_version(desk: Path, api: FakeApi) -> No
 
 def test_the_servers_refusal_is_printed_as_it_is(desk: Path, api: FakeApi) -> None:
     api.spine_doc = _story(approved=True)
+    _older_check(api)
     api.routes[("POST", "/v1/spines/sp1/season/end")] = lambda *_: (
         409,
         {
@@ -103,6 +123,10 @@ def test_the_servers_refusal_is_printed_as_it_is(desk: Path, api: FakeApi) -> No
 
 def test_an_older_server_without_the_route_is_named(desk: Path, api: FakeApi) -> None:
     api.spine_doc = _story(approved=True)
+    api.routes[("GET", "/v1/spines/sp1/season/ending-check")] = lambda *_: (
+        404,
+        {"detail": "Not Found"},
+    )
     api.routes[("POST", "/v1/spines/sp1/season/end")] = lambda *_: (
         404,
         {"detail": "Not Found"},
@@ -112,6 +136,100 @@ def test_an_older_server_without_the_route_is_named(desk: Path, api: FakeApi) ->
         se.run_ending(desk, last_episode=6, out=io.StringIO())
 
     assert "no season ending route yet" in str(stopped.value)
+
+
+def test_the_check_prints_the_servers_ending_question_after_the_options(
+    desk: Path, api: FakeApi
+) -> None:
+    api.spine_doc = _story(approved=True)
+    api.routes[("GET", "/v1/spines/sp1/season/ending-check")] = lambda *_: {
+        "can_end_here": False,
+        "line": LINE,
+        "options": OPTIONS,
+        "ending_question": QUESTION,
+    }
+    out = io.StringIO()
+
+    se.run_ending(desk, episode=3, out=out)
+
+    text = out.getvalue()
+    assert text.index("3. Keep going") < text.index(
+        "sokii: How should the last episode land?"
+    )
+    assert (
+        "  --style closed: Give it a proper ending\n  --style open: End on a cliffhanger"
+        in text
+    )
+    assert "`ending --last-episode M --style closed|open`" in text
+
+
+def test_ending_without_a_style_prints_the_question_and_sends_nothing(
+    desk: Path, api: FakeApi
+) -> None:
+    api.spine_doc = _story(approved=True)
+    api.routes[("GET", "/v1/spines/sp1/season/ending-check")] = lambda *_: {
+        "can_end_here": True,
+        "line": LINE,
+        "options": OPTIONS,
+        "ending_question": QUESTION,
+    }
+    out = io.StringIO()
+
+    se.run_ending(desk, last_episode=6, out=out)
+
+    text = out.getvalue()
+    assert "sokii: How should the last episode land?" in text
+    assert "--style open: End on a cliffhanger" in text
+    assert "nothing sent" in text
+    assert not [c for c in api.calls if c[0] == "POST"]
+
+
+@pytest.mark.parametrize("style", ["closed", "open"])
+def test_her_answer_is_sent_as_the_ending_style(
+    desk: Path, api: FakeApi, style: str
+) -> None:
+    api.spine_doc = _story(approved=True)
+    sent: list[dict[str, Any]] = []
+
+    def end(_m: str, _path: str, body: dict[str, Any] | None) -> Any:
+        sent.append(dict(body or {}))
+        return {"last_episode": 6}
+
+    api.routes[("POST", "/v1/spines/sp1/season/end")] = end
+    out = io.StringIO()
+
+    se.run_ending(desk, last_episode=6, style=style, out=out)
+
+    assert sent == [
+        {
+            "last_episode": 6,
+            "expected_spine_version": api.spine_doc["spine_version"],
+            "ending_style": style,
+        }
+    ]
+    # Answered already: the question is not asked again.
+    assert not [c for c in api.calls if "ending-check" in c[1]]
+    assert f"(ending_style: {style})" in out.getvalue()
+
+
+def test_style_goes_only_with_last_episode(desk: Path, api: FakeApi) -> None:
+    api.spine_doc = _story(approved=True)
+    with pytest.raises(ec.CommandStopped):
+        se.run_ending(desk, episode=3, style="open", out=io.StringIO())
+    with pytest.raises(ec.CommandStopped):
+        se.run_ending(desk, last_episode=6, style="cliffhanger", out=io.StringIO())
+
+
+def test_style_from_the_command_line(desk: Path, api: FakeApi) -> None:
+    api.spine_doc = _story(approved=True)
+    sent: list[dict[str, Any]] = []
+    api.routes[("POST", "/v1/spines/sp1/season/end")] = lambda _m, _p, body: (
+        sent.append(dict(body or {})) or {"last_episode": 6}
+    )
+
+    argv = ["ending", "--desk", str(desk), "--last-episode", "6", "--style", "open"]
+    assert produce_main(argv) == 0
+    assert sent[0]["ending_style"] == "open"
 
 
 def test_exactly_one_of_episode_or_last_episode(desk: Path, api: FakeApi) -> None:
