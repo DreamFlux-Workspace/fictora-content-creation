@@ -6564,6 +6564,125 @@ def fresh_not_here(where: str) -> str:
     )
 
 
+def run_plate_note(
+    desk: Path, *, cast: str, remove: str | None = None, out: Any = None
+) -> list[str]:
+    """List one character's notes, or remove one. Spends nothing; nothing is drawn.
+
+    A note stays on the card even when the redraw it was sent with fails
+    (Don't Look, Hana ep 12, 27 Oct 2026: Emily's good portrait read as out of
+    date because her card held a note it was never drawn with). The server
+    judges a portrait by the card it was drawn from, so removing that note
+    (``DELETE /v1/spines/{id}/cast/{cast_id}/notes/{note_id}``) makes the
+    portrait current again at no cost.
+
+    Parameters
+    ----------
+    desk
+        Series desk with a story.
+    cast
+        ``cast_id`` or the character's name.
+    remove
+        A note id, or its 1-based number; ``None`` only lists.
+    out
+        Text stream.
+
+    Returns
+    -------
+    list[str]
+        The character's notes after the change.
+
+    Raises
+    ------
+    CommandStopped
+        Unknown character or note.
+    """
+
+    out = out or sys.stdout
+    desk, state, run = _desk_session(desk)
+    try:
+        spine = run.spine(state.spine_id or "")
+        everyone = [
+            card
+            for card in spine.get("cast") or []
+            if isinstance(card, Mapping) and card.get("cast_id")
+        ]
+        card = next(
+            (
+                c
+                for c in everyone
+                if name_matches(
+                    str(c["cast_id"]), str(c.get("name") or ""), cast.strip()
+                )
+            ),
+            None,
+        )
+        if card is None:
+            names = ", ".join(f"{c.get('name')} ({c['cast_id']})" for c in everyone)
+            raise CommandStopped(
+                f"no character {cast!r} on the story; the cast is: {names}"
+            )
+        cast_id = str(card["cast_id"])
+        if remove is not None:
+            ids = [
+                str(n.get("note_id"))
+                for n in card.get("creator_notes") or []
+                if isinstance(n, Mapping)
+            ]
+            wanted = str(remove)
+            note_id = (
+                ids[int(wanted) - 1]
+                if wanted.isdigit() and 1 <= int(wanted) <= len(ids)
+                else wanted
+            )
+            if note_id not in ids:
+                raise CommandStopped(
+                    f"no note {wanted!r} on {card.get('name') or cast_id}; "
+                    f"the notes are: {', '.join(ids) or 'none'}"
+                )
+            run.delete(
+                f"/v1/spines/{state.spine_id}/cast/{quote(cast_id, safe='')}/notes/{quote(note_id, safe='')}",
+                {"spine_version": spine["spine_version"]},
+            )
+            spine = run.spine(state.spine_id or "")
+            card = next(
+                (c for c in spine.get("cast") or [] if isinstance(c, Mapping) and c.get("cast_id") == cast_id),
+                card,
+            )  # fmt: skip
+    finally:
+        run.client.close()
+    save_spine_snapshot(desk, state.episode_ordinal, spine)
+    name = str(card.get("name") or cast_id)
+    notes = [n for n in card.get("creator_notes") or [] if isinstance(n, Mapping)]
+    for number, n in enumerate(notes, start=1):
+        print(f"{number}. {n.get('note_id')}  {n.get('text')}", file=out)
+    if not notes:
+        print(f"{name} has no notes.", file=out)
+    portrait = next(
+        (a for a in spine.get("media_assets") or []
+         if isinstance(a, Mapping) and a.get("relation_type") == "cast_card" and a.get("relation_id") == cast_id
+         and a.get("url")),
+        None,
+    )  # fmt: skip
+    if portrait is None:
+        print(f"{name} has no portrait yet.", file=out)
+    elif portrait.get("stale"):
+        print(
+            f"{name}'s portrait is out of date: it was drawn before the card as it is now. "
+            f'Remove the newer note, or redraw: redraw-plate --cast {cast_id} --note "..."',
+            file=out,
+        )
+    else:
+        print(f"{name}'s portrait is current.", file=out)
+    if remove is not None:
+        _note(
+            desk,
+            state.episode_ordinal,
+            f"plate-note removed {remove} from {name} ($0).",
+        )
+    return [str(n.get("text")) for n in notes]
+
+
 def run_redraw_plate_with_note(
     desk: Path, *, cast: str, note: str, out: Any = None, fresh: bool = False
 ) -> Path:
@@ -7834,6 +7953,7 @@ EPISODE_COMMANDS = frozenset(
         "spine",
         "redraw-board",
         "plates",
+        "plate-note",
         "redraw-plate",
         "props",
         "keep-prop",
@@ -8656,6 +8776,17 @@ def add_episode_parsers(
     plates.add_argument("--desk", type=Path, help="Ignored; named in the pointer.")
     plates.add_argument("--cast", help="Ignored; named in the pointer.")
     plates.add_argument("--cause", help="Ignored: use `redraw-plate --note`.")
+    plate_note = sub.add_parser(
+        "plate-note",
+        help=(
+            "List one character's notes, or --remove one. Spends nothing. A note left behind by a redraw that "
+            "failed makes a good portrait read as out of date; removing it makes the portrait current again."
+        ),
+    )
+    plate_note.add_argument("--desk", type=Path, required=True)
+    plate_note.add_argument("--cast", required=True, help="cast_id or name.")
+    plate_note.add_argument("--remove", default=None, metavar="ID|N")
+
     plate = sub.add_parser(
         "redraw-plate",
         help="Correct ONE character (--note, their words) and redraw only their plate. $0.30; nobody else is paid.",
@@ -9055,6 +9186,9 @@ def dispatch_episode(args: argparse.Namespace) -> int:
         if args.command == "plates":
             print(plates_cast_retired(args.desk, args.cast), file=sys.stderr)
             return 2
+        if args.command == "plate-note":
+            run_plate_note(args.desk, cast=args.cast, remove=args.remove)
+            return 0
         if args.command == "redraw-plate":
             run_redraw_plate_with_note(
                 args.desk, cast=args.cast, note=args.note, fresh=args.fresh
@@ -9202,6 +9336,7 @@ __all__ = [
     "redraw_needs_an_edit",
     "run_redraw_board",
     "plates_cast_retired",
+    "run_plate_note",
     "run_redraw_plate_with_note",
     "run_spine_refresh",
     "run_unit",
