@@ -184,7 +184,11 @@ def mark_scale_filter(width: int) -> str:
 
     drawn = round(width * MARK_WIDTH_FRACTION)
     png_w, png_h = MARK_PNG_SIZE
-    return "" if drawn == png_w else f"scale={drawn}:{round(png_h * drawn / png_w)}:flags=lanczos,"
+    return (
+        ""
+        if drawn == png_w
+        else f"scale={drawn}:{round(png_h * drawn / png_w)}:flags=lanczos,"
+    )
 
 
 def watermark(

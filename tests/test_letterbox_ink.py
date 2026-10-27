@@ -28,9 +28,10 @@ from creation.post.letterbox import TitleBlock, mark_and_title, pad_to_canvas
 
 TOLERANCE = 4
 #: The reference's ink, (first, last) row or column.
-# The mark's row is Not Home's; 3% in and 101 px wide, the same corner and size as a portrait saved copy and the
-# founder's approved Instagram reels (fictora-drama #1047).
-MARK_X, MARK_Y = (42, 122), (182, 249)
+# The mark's row is Not Home's; 3% in, the same corner as a portrait saved copy and the founder's approved
+# Instagram reels (fictora-drama #1047). Since 27 Oct 2026 the mark carries the word "sokii" (230x88 on 1080,
+# fictora-drama #1103): its cat and word ink run x 56-233, y 187-244 (the cat alone was x 42-122, y 182-249).
+MARK_X, MARK_Y = (56, 233), (187, 244)
 TITLE_1, TITLE_2 = (333, 384), (396, 435)
 CAPTION_DESCENDER, CAPTION_PLAIN = (1417, 1468), (1417, 1457)
 #: fictora-drama #614's measured renders of two captions' ink columns: one centred on the frame, one
@@ -113,7 +114,7 @@ def test_the_mark_title_and_captions_land_on_not_homes_ink(tmp_path: Path) -> No
     assert fitted is not None and len(fitted.setup) == 1 and len(fitted.hook) == 1
 
     first = _gray(marked, 0.5)
-    mark = first[150:260, 0:200] > 150
+    mark = first[150:260, 0:300] > 150
     xs, ys = np.flatnonzero(mark.any(0)), np.flatnonzero(mark.any(1))
     assert _near((int(xs[0]), int(xs[-1])), MARK_X), (xs[0], xs[-1])
     assert _near((150 + int(ys[0]), 150 + int(ys[-1])), MARK_Y), (ys[0], ys[-1])

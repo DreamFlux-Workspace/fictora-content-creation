@@ -898,7 +898,11 @@ def mark_mask_box(width: int, height: int) -> tuple[float, float, float, float]:
     has no mark there; leaving that small box out changes nothing it measures.
     """
 
-    from creation.post.watermark import MARK_PNG_SIZE, MARK_WIDTH_FRACTION, mark_position
+    from creation.post.watermark import (
+        MARK_PNG_SIZE,
+        MARK_WIDTH_FRACTION,
+        mark_position,
+    )
 
     x, y = mark_position(width, height)
     drawn_w = round(width * MARK_WIDTH_FRACTION)
