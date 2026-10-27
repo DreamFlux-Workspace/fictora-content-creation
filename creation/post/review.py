@@ -894,15 +894,15 @@ def mark_mask_box(width: int, height: int) -> tuple[float, float, float, float]:
     """Where the Sokii mark sits on a ``width`` x ``height`` portrait frame, as fractions, padded.
 
     The place is the mark's own (``watermark.mark_position``: the server's numbers kept in the
-    kit, 3% in and 9% down) and its size the approved reels' (72/768 of the width). A raw take
+    kit, 3% in and 9% down) and its size the server's (230/1080 of the width since 27 Oct 2026). A raw take
     has no mark there; leaving that small box out changes nothing it measures.
     """
 
-    from creation.post.watermark import MARK_WIDTH_FRACTION, mark_position
+    from creation.post.watermark import MARK_PNG_SIZE, MARK_WIDTH_FRACTION, mark_position
 
     x, y = mark_position(width, height)
     drawn_w = round(width * MARK_WIDTH_FRACTION)
-    drawn_h = round(63 * drawn_w / 72)
+    drawn_h = round(MARK_PNG_SIZE[1] * drawn_w / MARK_PNG_SIZE[0])
     pad = MARK_MASK_PAD
     return (
         max(0.0, (x - pad) / width),
