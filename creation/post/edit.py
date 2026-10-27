@@ -632,7 +632,9 @@ def freeze_frame(take: Path, out: Path, *, at: float, hold: float) -> FreezeResu
     args = ["-i", str(take), "-filter_complex", ";".join(parts), "-map", "[v]"]
     if info.has_audio:
         args += ["-map", "0:a", "-c:a", "copy"]
-    args += ["-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p"]
+    # The take's own rate, said out loud: ffmpeg 7.0 leaves the concat output's rate unset and
+    # writes 25 fps (72 frames came out 75), which ``join`` then refuses as "not 24 fps".
+    args += ["-r", rate, "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p"]
     args += [*keep_cover_args(cover), "-t", f"{total:.3f}", str(out)]
     out.parent.mkdir(parents=True, exist_ok=True)
     run_ffmpeg(args)
