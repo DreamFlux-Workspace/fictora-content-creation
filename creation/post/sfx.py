@@ -34,6 +34,11 @@ from typing import Any
 
 from creation.harness_rules import is_opening_cue
 from creation.post.audio_service import AudioService, download
+from creation.post.sound_words import (
+    HIT_THEN_TAIL_WORDS,
+    THEN,
+    names_intermittent_sound,
+)
 from creation.rules_epoch import legacy_rules
 from creation.post.media import (
     LIMITER,
@@ -625,6 +630,7 @@ def shape_problem(
     *,
     window_seconds: float = 0.5,
     legacy: bool | None = None,
+    sound: str = "",
 ) -> str | None:
     """What is wrong with a rendered cue's shape, or ``None``: an event must hit in its first second,
     a sustained sound must not collapse after the first half second.
@@ -647,6 +653,13 @@ def shape_problem(
         The windows' length.
     legacy
         Force the legacy (``True``) or new (``False``) rule.
+    sound
+        The cue's words. A sound that comes and goes by nature (dripping water, a clock ticking:
+        :func:`creation.post.sound_words.names_intermittent_sound`) is checked as heard at all, never as
+        held near its loudest nor within :data:`SUSTAINED_HOLD_DB` of its median: as the server's
+        ``sfx_layer.sfx_shape_problem`` (fictora-drama #1118), so a drip the server passed is not refused
+        here ("dripping water and the fluorescent buzz", Every Use Costs a Finger ep 1, 26-27 Oct 2026).
+        Empty checks by ``kind`` alone, as before.
     """
 
     if not levels:
@@ -668,10 +681,15 @@ def shape_problem(
     tail = levels[1:]
     if not tail:
         return None
-    held = sum(1 for level in tail if level >= peak - 18.0 and level > SILENCE_DB)
+    intermittent = names_intermittent_sound(sound)
+    if intermittent:
+        # Drips come in bursts with the room between them: the cue holds while it is heard at all.
+        held = sum(1 for level in tail if level > SILENCE_DB)
+    else:
+        held = sum(1 for level in tail if level >= peak - 18.0 and level > SILENCE_DB)
     if held / len(tail) < 0.5:
         return "sustained sound collapses"
-    if legacy_rules() if legacy is None else legacy:
+    if intermittent or (legacy_rules() if legacy is None else legacy):
         return None
     seconds = _second_levels(levels, window_seconds)
     if len(seconds) < 2:
@@ -688,17 +706,6 @@ def shape_problem(
 
 #: The shape of a sustained cue whose words describe a hit followed by a bed (L-20261007-1).
 HIT_THEN_TAIL = "hit_then_tail"
-_HIT_WORDS = re.compile(
-    r"\b(slam|slams|slammed|bang|bangs|crash|crashes|thud|thuds|clang|clangs|knock|knocks|"
-    r"smash|smashes|shut|shuts|snap|snaps|hit|hits|crack|cracks|pop|pops|click|clicks|clinks?|"
-    r"explosion|explosions|explodes|exploded|boom|booms|blast|blasts|gunshot|gunshots|impact|impacts|"
-    r"shatter|shatters|detonation|detonates|kaboom)\b",
-    re.IGNORECASE,
-)
-_THEN = re.compile(
-    r"\b(then|followed by|before|into|and then|giving way to)\b|,\s*then\b",
-    re.IGNORECASE,
-)
 
 
 def checked_shape(cue: "SfxCue") -> str:
@@ -712,8 +719,8 @@ def checked_shape(cue: "SfxCue") -> str:
     if cue.kind != "sustained":
         return cue.kind
     words = cue.sound
-    then = _THEN.search(words)
-    if then and _HIT_WORDS.search(words[: then.start()]):
+    then = THEN.search(words)
+    if then and HIT_THEN_TAIL_WORDS.search(words[: then.start()]):
         return HIT_THEN_TAIL
     return cue.kind
 
@@ -1081,7 +1088,10 @@ def lay_sfx(
         cue = replace(cue, seconds=round(min(cue.seconds, room), 3))
         cached = cache_dir / f"{cue.cache_key}.mp3"
         if cached.is_file():
-            if shape_problem(checked_shape(cue), measure(cached)) is None:
+            if (
+                shape_problem(checked_shape(cue), measure(cached), sound=cue.sound)
+                is None
+            ):
                 kept.append((cue, cached))
                 continue
             # A cached render that is silent (or the wrong shape) is never laid again: re-made below.
@@ -1107,7 +1117,9 @@ def lay_sfx(
                 continue
             rendered += 1
             cost += max(SFX_MIN_SECONDS, cue.seconds) * SFX_USD_PER_SECOND
-            problem = shape_problem(checked_shape(cue), measure(path)) or ""
+            problem = (
+                shape_problem(checked_shape(cue), measure(path), sound=cue.sound) or ""
+            )
             if not problem:
                 good = path
                 break
