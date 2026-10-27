@@ -735,3 +735,154 @@ def test_an_older_server_without_the_card_leaves_the_gate_as_it_was(
 
     assert "sample: https://media.test/hana-ref.mp3" in text
     assert "getting the voice ready" not in text
+
+
+# --- The server's voices hold (fictora-drama #1131; Don't Look, Hana ep 12, 27 Oct 2026) -----------
+
+HOLD_SENTENCE = (
+    "Filming is waiting: Emily and Rebecca need your yes on their voices. "
+    "Keep them, or hear them and pick others. Filming starts once you do."
+)
+
+
+def _hold_body() -> dict[str, Any]:
+    return {
+        "error": {
+            "code": "voices_not_approved",
+            "message": HOLD_SENTENCE,
+            "details": {
+                "nothing_sent": True,
+                "pending_cast_ids": ["cast_emily", "cast_rebecca"],
+                "names": ["Emily", "Rebecca"],
+                "episode_ordinals": [1],
+            },
+        },
+        "request_id": "req-1",
+    }
+
+
+def _server_holds_the_film(api: FakeApi) -> None:
+    """``POST /v1/video-generations`` answers 409 voices_not_approved, as the deployed API does."""
+
+    from creation.harness.http_util import ApiRefused, http_error_message
+
+    class _Response:
+        status_code = 409
+        request = None
+
+    body = _hold_body()
+    api.routes[("POST", VIDEO)] = lambda _m, _p, _b: ApiRefused(
+        http_error_message(_Response(), body),  # type: ignore[arg-type]
+        status=409,
+        body=body,
+    )
+
+
+def _says_the_wait(text: str, desk: Path) -> None:
+    lines = text.splitlines()
+    assert lines[0] == HOLD_SENTENCE
+    assert "Nothing was filmed or charged." in lines
+    assert lines.index("  - Emily") < lines.index("  - Rebecca")
+    assert f"fictora-produce voice --desk {desk} --keep-all --heard" in text
+    assert f'fictora-produce voice --desk {desk} --cast "Emily" --audition' in text
+    assert "Then film again." in lines
+    assert "Traceback" not in text and "details {" not in text
+
+
+def test_a_film_the_server_holds_for_voices_says_the_wait_names_who_and_what_to_do(
+    desk: Path, voiced: FakeApi
+) -> None:
+    _board_yes(desk)
+    set_phase(desk, "complete", film_estimates={"ep01": 1.2})
+    _ready_to_film(voiced)
+    assert (
+        _keep(desk, "--keep-all") == 0
+    )  # the kit's own list passes; the server still holds
+    _server_holds_the_film(voiced)
+
+    with pytest.raises(CommandStopped) as stopped:
+        run_film(desk, episode=1, confirm_spend=True)
+
+    _says_the_wait(str(stopped.value), desk)
+    assert (
+        len(voiced.posted(VIDEO)) == 1
+    )  # asked once; refused before anything was reserved
+
+
+def test_the_film_hold_exits_non_zero_from_the_cli_with_no_stack_trace(
+    desk: Path, voiced: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _board_yes(desk)
+    set_phase(desk, "complete", film_estimates={"ep01": 1.2})
+    _ready_to_film(voiced)
+    assert _keep(desk, "--keep-all") == 0
+    _server_holds_the_film(voiced)
+    capsys.readouterr()
+
+    code = produce_main(
+        ["film", "--desk", str(desk), "--episode", "1", "--confirm-spend"]
+    )
+
+    assert code != 0
+    _says_the_wait(capsys.readouterr().err.split("Stopped: ", 1)[-1].strip(), desk)
+
+
+def test_a_step_the_server_holds_for_voices_goes_back_to_the_spend_yes(
+    desk: Path, voiced: FakeApi
+) -> None:
+    set_phase(desk, "wait_spend", estimate_usd=1.2)
+    _ready_to_film(voiced)
+    assert _keep(desk, "--keep-all") == 0
+    _server_holds_the_film(voiced)
+
+    with pytest.raises(RuntimeError) as stopped:
+        orchestrate.run_step(desk, confirm_spend=True)
+
+    _says_the_wait(str(stopped.value), desk)
+    state = load_production(desk)
+    assert (
+        state.phase == "wait_spend"
+    )  # not failed: nothing was sent, film again after the yes
+    assert state.video_enrolled_suffix is None
+
+
+def test_a_failed_job_with_the_hold_reads_the_same_without_a_desk() -> None:
+    from creation.harness.http_util import api_error_text
+
+    text = api_error_text(_hold_body())
+
+    assert text.splitlines()[0] == HOLD_SENTENCE
+    assert "fictora-produce voice --desk <desk> --keep-all --heard" in text
+    assert text.endswith("(server code: voices_not_approved)")
+
+
+def test_keep_all_keeps_everyone_the_server_holds_for_an_inner_voice_only_character_too(
+    desk: Path, voiced: FakeApi
+) -> None:
+    # Mio is heard only in thought (an inner-voice cue, no spoken line): the
+    # line speakers alone missed her, and the server still held the film.
+    voiced.spine_doc["cast"].append(
+        {
+            "cast_id": "cast_mio",
+            "name": "Mio",
+            "voice_brief": {
+                "provider_voice": "Sora",
+                "reference_audio_url": "https://media.test/mio-ref.mp3",
+            },
+        }
+    )
+    voiced.routes[("GET", "/v1/spines/sp1/voices-step")] = {
+        "due": True,
+        "pending_cast_ids": ["cast_ren", "cast_mio"],
+        "text": "Filming is waiting: Ren and Mio need your yes on their voices.",
+    }
+
+    kept = voice_mod.run_voice_gate(desk, keep=True, heard=True)
+
+    sent = [cast_id for body in voiced.posted(KEEP) for cast_id in body["cast_ids"]]  # type: ignore[index]
+    assert {"cast_ren", "cast_mio"} <= set(sent)
+    assert "cast_mio" in kept
+    asked = [
+        p for (verb, p, _b, _k) in voiced.calls if verb == "GET" and "/voices-step" in p
+    ]
+    assert any(p.endswith("moment=before_filming") for p in asked)

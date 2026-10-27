@@ -159,7 +159,7 @@ from creation.stranded_voice import explain_film_refusal, stranded_preflight
 from creation.stylised_only import BriefNoticePause
 from creation.voice_gate import film_refusal as voices_film_refusal
 from creation.voice_mode import next_take_voices_line
-from creation.harness.http_util import ConnectionDropped
+from creation.harness.http_util import ConnectionDropped, voices_hold_text
 from creation.rules_epoch import is_legacy
 from creation.voice_gate import gate_text as voices_gate_text
 from creation.voice_gate import pending_for_film as voices_pending_for_film
@@ -2625,6 +2625,23 @@ def _film(
                 "Filming refused, nothing charged: opening choice not available.",
             )
             raise RuntimeError(str(exc.code)) from None
+        except SystemExit as exc:
+            hold = voices_hold_text(getattr(exc, "body", None), desk=desk)
+            if hold is None:
+                raise
+            # fictora-drama #1131: the server holds the film until the human keeps
+            # or picks the named voices. Nothing was admitted or charged: back to
+            # the spend yes, as above, so `step --confirm-spend` films once the
+            # yes is on the server. The kit keeps no list of its own: the server
+            # names who it waits on, every time.
+            state.video_enrolled_suffix = None
+            state.phase = "wait_spend"
+            save_production(desk, state)
+            _note(
+                _episode_dir(desk, ep),
+                "Filming waiting on voices, nothing charged.",
+            )
+            raise RuntimeError(hold) from None
         raw = result["raw_scenes"]
         delivery = result.get("delivery")
     elif cfg.api_captions:

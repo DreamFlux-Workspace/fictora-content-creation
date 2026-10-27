@@ -663,6 +663,22 @@ def run_voice_gate(
                 raise ValueError(
                     f"{card.get('name') or card['cast_id']} speaks no line on the spine; nothing to approve"
                 )
+        if keep and cast is None:
+            # Keep all voices keeps everyone the server holds filming for too
+            # (its `pending_cast_ids`, fictora-drama #1131), a character heard
+            # only as an inner voice included: the line speakers alone missed them.
+            from creation.voice_gate import server_held_cast_ids, voices_for_cast_ids
+
+            held = server_held_cast_ids(
+                run, str(spine.get("spine_id") or ""), episode=episode or gate_episode
+            )
+            listed = {voice.cast_id for voice in voices}
+            extra = [
+                voice
+                for voice in voices_for_cast_ids(spine, held or [])
+                if voice.cast_id not in listed
+            ]
+            voices = voices + with_samples(extra, samples)
         if not keep:
             from creation.voice_mode import MODEL_GATE_SKIPPED, show_voices
 

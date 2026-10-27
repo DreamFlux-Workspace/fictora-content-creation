@@ -260,6 +260,9 @@ def http_error_message(response: httpx.Response, detail: Any) -> str:
     url = str(response.request.url) if response.request is not None else ""
     if hosted_post_off(response.status_code, detail, url):
         return f"HTTP {response.status_code}: {HOSTED_POST_OFF_HINT}"
+    hold = voices_hold_text(detail)
+    if hold is not None:
+        return hold
     return f"HTTP {response.status_code}: {api_error_text(detail)}"
 
 
@@ -271,6 +274,74 @@ SHOT_CLIPS_BOARD_FIX = (
     "(`fictora-produce redraw-board --desk <desk> --episode N --take tK`), approve it, then film again. "
     "Nothing was filmed or charged."
 )
+
+
+#: The server's hold on a film while a character's voice waits for the human's yes (fictora-drama #1131).
+VOICES_NOT_APPROVED_CODE = "voices_not_approved"
+
+
+def voices_hold(body: Any) -> dict[str, Any] | None:
+    """The ``error`` of a ``409 voices_not_approved`` answer (or failed job), or ``None`` for anything else."""
+
+    if not isinstance(body, Mapping):
+        return None
+    error = body.get("error") if isinstance(body.get("error"), Mapping) else body
+    if not isinstance(error, Mapping) or error.get("code") != VOICES_NOT_APPROVED_CODE:
+        return None
+    return dict(error)
+
+
+def voices_hold_text(body: Any, *, desk: str | Path | None = None) -> str | None:
+    """The operator's words for the server's voices hold: the wait, who, and what to do. ``None`` otherwise.
+
+    Founder, 27 Oct 2026: "call it out in app and kit, that waiting to proceed
+    clear". The server's own sentence comes first (it opens "Filming is
+    waiting: ..."), then each waiting character by name, then the commands
+    that record the human's yes on the server. The kit keeps nothing of its
+    own for this: the server holds the film and lists who it waits on.
+
+    Parameters
+    ----------
+    body
+        The parsed answer (``{"error": {...}}``) or the bare ``error``.
+    desk
+        The desk for the commands; ``<desk>`` when the caller has none.
+
+    Returns
+    -------
+    str | None
+        Plain lines, no JSON, no stack trace.
+    """
+
+    error = voices_hold(body)
+    if error is None:
+        return None
+    details = error.get("details") if isinstance(error.get("details"), Mapping) else {}
+    names = [str(name) for name in details.get("names") or [] if str(name).strip()]
+    if not names:
+        names = [
+            str(cid)
+            for cid in details.get("pending_cast_ids") or []
+            if str(cid).strip()
+        ]
+    said = str(error.get("message") or "").strip() or (
+        "Filming is waiting: these characters need the human's yes on their voices."
+    )
+    where = str(desk) if desk is not None else "<desk>"
+    first = names[0] if names else "NAME"
+    lines = [
+        said,
+        "Nothing was filmed or charged.",
+        "Waiting on:" if names else "Waiting on the characters the Voices step lists.",
+        *(f"  - {name}" for name in names),
+        "What to do (play each voice to the human first):",
+        f"  Keep them as they are: fictora-produce voice --desk {where} --keep-all --heard",
+        f'  Or keep one: fictora-produce voice --desk {where} --cast "{first}" --keep --heard',
+        f'  Or hear others and pick: fictora-produce voice --desk {where} --cast "{first}" --audition, then --pick N',
+        "Then film again.",
+        f"(server code: {VOICES_NOT_APPROVED_CODE})",
+    ]
+    return "\n".join(lines)
 
 
 def api_error_text(body: Any) -> str:
@@ -294,6 +365,10 @@ def api_error_text(body: Any) -> str:
     """
     if not isinstance(body, dict):
         return str(body)[:2000]
+    hold = voices_hold_text(body)
+    if hold is not None:
+        # fictora-drama #1131: a voices hold reads as a plain wait, not a refusal dump.
+        return hold
     error = body.get("error") if isinstance(body.get("error"), dict) else body
     code = error.get("code")
     message = error.get("message")

@@ -89,7 +89,11 @@ from creation.desk_media_urls import drawn_cast_rows
 from creation.post.desk import name_matches
 from creation.harness import stages_gated as stages
 from creation import line_fit
-from creation.harness.http_util import api_error_text, describe_job_error
+from creation.harness.http_util import (
+    api_error_text,
+    describe_job_error,
+    voices_hold_text,
+)
 from creation.harness.minor_scene_refusal import (
     MINOR_IN_INTIMATE_SCENE,
     minor_scene_fix,
@@ -7599,6 +7603,13 @@ def _run_film(
             )
             raise CommandStopped(str(exc.code)) from None
         except SystemExit as exc:
+            # fictora-drama #1131: the server holds the film while a character's
+            # voice waits for the human's yes. Nothing was admitted or charged;
+            # the same key films once the yes is in (the server never kept it).
+            hold = voices_hold_text(getattr(exc, "body", None), desk=desk)
+            if hold is not None:
+                _note(desk, episode, f"film {what} waiting on voices, nothing charged")
+                raise CommandStopped(hold) from None
             message = (
                 exc.code if isinstance(exc.code, str) else api_error_text(exc.code)
             )
