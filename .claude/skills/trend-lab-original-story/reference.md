@@ -1,106 +1,97 @@
-# Trend-lab original story — reference
+# Trend-lab hosted episode — reference
 
-## Story JSON (minimal shape)
+Detail behind [SKILL.md](SKILL.md). Implementation and pipeline order: sibling repo **fictora-trend-lab** `docs/PIPELINE.md`.
+
+## Credentials
+
+| Variable | Where | Purpose |
+| --- | --- | --- |
+| `TREND_LAB_SERVE_URL` | Operator / bot | Worker origin (https) |
+| `TREND_LAB_RUN_TOKEN` | Operator / bot | Bearer on upload and run start |
+
+Worker-only (Railway **trend-lab**, not each user): `OPENAI_API_KEY`, `SUME_*`, `FICTORA_DRAMA_GENERATION_*`, `R2_*`, etc.
+
+## Hosted API (produce one episode)
+
+**From a story file**
+
+```http
+POST {TREND_LAB_SERVE_URL}/runs
+Authorization: Bearer {TREND_LAB_RUN_TOKEN}
+Content-Type: application/json
+
+{
+  "run_id": "<12-char id>",
+  "story_json": "<StoryFile JSON string>",
+  "film": true
+}
+```
+
+**From a reference clip (structure → scaffold → same agent path)**
+
+```http
+PUT {TREND_LAB_SERVE_URL}/uploads/reference/{run_id}
+Authorization: Bearer {TREND_LAB_RUN_TOKEN}
+Content-Type: application/octet-stream
+
+<reference MP4 bytes>
+```
+
+```http
+POST {TREND_LAB_SERVE_URL}/runs
+Authorization: Bearer {TREND_LAB_RUN_TOKEN}
+Content-Type: application/json
+
+{
+  "run_id": "<same id>",
+  "from_reference": true,
+  "film": true,
+  "scaffold_generate": true,
+  "reference_caption": "optional hook hint"
+}
+```
+
+Optional: `"reference_url": "https://…"` instead of PUT when the worker has **yt-dlp** (no local upload).
+
+Successful completion returns a body whose workflow result includes **`output_path`** like  
+`r2://fictora-trend-lab-runs/runs/<run_id>/out/final_v1.mp4`.
+
+## Story JSON (minimal)
 
 | Field | Purpose |
 | --- | --- |
-| `style_line`, `setting_line` | Look and place for every draw/film step |
+| `style_line`, `setting_line` | Look and place |
 | `characters[]` | `id`, `description`, `look_hint`, `voice` |
 | `frames[]` | Storyboard stills: `cast`, `action` |
 | `parts[]` | One Sume take each: `frames`, `duration_sec` (4–30), `shots` with `{spoken lines}` |
 | `title_lines[]`, `delivery_format` | Letterbox or portrait finish |
-| `captions[]` | Optional; empty → timed after film |
+| `video_model`, `resolution` | Default **seedance-2.5**, **480p** on the worker |
 
-Rejections are schema errors in `story-init`; fix the file before resubmitting.
+Example starters: **fictora-trend-lab** `examples/original_story.example.json`, `examples/e2e_smoke_minimal.json`.
 
-## Hosted run lifecycle
+## Pull the final MP4
 
-**Story file**
+When the operator has **R2** read credentials (or asks ops), object key:
 
-```text
-remake --film  →  POST /runs (bearer)  →  Restate TrendRemake
-  →  agent: read_story → draw → film (Sume webhook) → time_captions → finish
-  →  finish: upload takes → POST /v1/operator/episode-finish (Modal) → R2 final
-```
+`runs/<run_id>/out/final_v1.mp4`
 
-**Hosted reference (`remake-reference`)**
+See **fictora-trend-lab** `docs/SECRETS.md` for presign/pull patterns. Do not embed secrets in chat.
 
-```text
-PUT /uploads/reference/{run_id}  →  POST /runs (from_reference: true)
-  →  ingest → analyze → scaffold (optional OpenAI) → init-story → same agent path
-```
+## CLI shortcut (optional)
 
-CLI **waits** on the HTTP response until the workflow completes or fails. A **502** on submit does not always mean the run failed—check worker logs and R2 for that `run_id`.
-
-## Sume resolution
-
-| Artifact | Typical resolution |
-| --- | --- |
-| Sume take `out/part_*_v1.mp4` | **480p** tier for Seedance (letterbox 4:3 ≈ 752×560 class) |
-| Final `out/final_v1.mp4` after Modal finish | Often **1080×1920** letterbox delivery |
-
-Override on the worker only: `TREND_LAB_SUME_RESOLUTION=720p` when debugging cost/quality.
-
-## Environment matrix
-
-| Variable | Laptop submit | Railway trend-lab |
-| --- | --- | --- |
-| `TREND_LAB_SERVE_URL` | Required | — |
-| `TREND_LAB_RUN_TOKEN` | Required | Required (same bearer) |
-| `SUME_*`, `FAL_KEY` | Required for `--film` | Required |
-| `FICTORA_DRAMA_GENERATION_*` | Optional (worker has prod) | Required for drama captions/finish |
-| `FICTORA_DRAMA_EPISODE_FINISH` | — | `modal` for hosted Modal finish |
-| `OPENAI_API_KEY` | Only if running steps locally | Required for agent |
-| `MODAL_TOKEN_*` | — | On **fictora-drama-generation**, not only Restate |
-| `TREND_LAB_STORY_MODEL` | Optional override | e.g. `gpt-6.1-sol` |
-
-## Pull and open the final MP4
-
-When `R2_*` is in local `.env`:
+If the human runs **fictora-trend-lab** locally with the same env vars, these call the same hosted API:
 
 ```bash
-cd fictora-trend-lab
-mkdir -p "runs/<run_id>/out"
-uv run python -c "
-from pathlib import Path
-from trend_lab.r2_store import _client, r2_config
-cfg = r2_config()
-key = 'runs/<run_id>/out/final_v1.mp4'
-dest = Path('runs/<run_id>/out/final_v1.mp4')
-_client(cfg).download_file(cfg.bucket, key, str(dest))
-print(dest.resolve())
-"
-open "runs/<run_id>/out/final_v1.mp4"
+uv run trend-lab remake --story-file story.json --film
+uv run trend-lab remake-reference --reference-file ref.mp4 --film --scaffold-generate
 ```
 
-## Smoke after deploy
-
-From `fictora-trend-lab/docs/SECRETS.md` (no secrets in commands):
-
-```bash
-export TREND_LAB_ORIGIN="https://trend-lab-prod-drama.up.railway.app"
-export DRAMA_ORIGIN="https://fictora-drama-generation-prod-drama.up.railway.app"
-curl -fsS "$TREND_LAB_ORIGIN/hooks/sume/health"
-curl -sS -o /dev/null -w "%{http_code}\n" -X POST "$DRAMA_ORIGIN/v1/operator/episode-finish" \
-  -H "Content-Type: application/json" -d '{}'
-```
-
-Expect **422** on episode-finish (validation), not **404**.
-
-## Finish-only verify (no Sume)
-
-Useful when debugging drama Modal without filming:
-
-1. `story-init` + copy a short MP4 to `runs/<id>/out/part_01_v1.mp4`
-2. Invoke agent finish path (same as workflow `finish` tool), not CLI `story-finish` alone.
-
-See `fictora-trend-lab/docs/SECRETS.md` § Production smoke.
+The skill's default path is **hosted HTTP**, not local ingest/analyze, unless the human asked to edit a scaffold on disk before filming.
 
 ## Vs episode-production
 
-| | Desk (`fictora-produce`) | Trend-lab (`remake --film`) |
+| | Desk (`fictora-produce`) | Hosted trend-lab (this skill) |
 | --- | --- | --- |
-| Identity | Spine, series, gates | Single story JSON |
-| Human gates | Required per stage | Agent-driven; human submits once |
-| Finish | Local `finish` + reel desk | Drama Modal on worker |
-| This repo's role | Primary | Orchestration docs + this skill only |
+| Goal | Series episodes with gates | One finished MP4 per run |
+| Input | Spine, brief, gates | `story.json` or reference → scaffold |
+| Finish | Local + server paths | Worker agent → drama Modal finish |

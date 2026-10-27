@@ -53,7 +53,7 @@ tell the Fictora team.
 
 Read `.cursor/skills/episode-production/SKILL.md` before desk production work.
 
-For **original-story** episodes on the hosted **fictora-trend-lab** worker (story JSON, `remake --film`, `remake-reference`, no spine), read `.cursor/skills/trend-lab-original-story/SKILL.md` and run commands in the sibling **fictora-trend-lab** repo.
+For **one hosted episode** (finished MP4 on Railway **trend-lab**, not a desk show), read `.cursor/skills/trend-lab-original-story/SKILL.md` and drive the worker API from this kit — same pattern as episode-production, different lane.
 
 ## Quality
 
