@@ -1,124 +1,61 @@
 ---
 name: trend-lab-original-story
 description: >-
-  Ships short original-story episodes via the hosted fictora-trend-lab worker
-  (TrendRemake, story JSON, Sume film, drama transcripts and Modal finish).
-  Use when the human wants trend-lab, original story mode, remake --film,
-  remake-reference, hosted reference upload, hybrid scaffold, or a spine-free
-  one-off reel—not fictora-produce desk production.
+  Produces one finished short episode on the hosted fictora-trend-lab worker
+  (story or reference structure → draw → Sume film → drama finish). Use for
+  trend-lab hosted episodes only—not fictora-produce desks or Fal reel clones.
 ---
 
-# Trend-lab original story (hosted)
+# Trend-lab episode production (hosted)
 
-**Repo to run:** sibling **`fictora-trend-lab`** (clone next to this kit). **Not** `fictora-content-creation` CLI. **Not** spine / `fictora-produce` desks unless the human explicitly switches lanes.
+You are the agent. The human supplies a **story** or a **reference clip**. The **hosted worker** produces one **finished episode MP4**.
 
-**Product split**
+**Orchestration:** this skill in **fictora-content-creation**. **Execution:** authenticated HTTP to Railway **trend-lab** only. **Not** `fictora-produce`, desks, spine, or pitch gates — that is [episode-production](../episode-production/SKILL.md).
 
-| Lane | Where | Input |
-| --- | --- | --- |
-| **Desk episodic** | This kit + Drama API | Series, spine, gates → [episode-production](../episode-production/SKILL.md) |
-| **Original story** | **fictora-trend-lab** on Railway | One **`story.json`** (or **hosted reference** → scaffold), agent tools, no Postgres |
+Read when you need detail, not on the first turn:
 
-Trend-lab talks to **fictora-drama-generation** over HTTP only (`/v1/transcripts`, `/v1/operator/episode-finish`). It never imports `fictora-drama` source.
+- Hosted API, story JSON, credentials, pull the final: [reference.md](reference.md)
 
-## When to use this skill
+## Two rules
 
-- One-off or experiment episodes from a **story file** (characters, frames, parts, dialogue in `{braces}`).
-- **Hybrid:** reference video for **hook/beat timing only**, then **original** cast and script → **`remake --film`**.
-- **Fully hosted hybrid:** reference MP4 lives on the worker (`remake-reference`); no local ingest/analyze required.
-- **Hosted** production: laptop submits, **prod worker** spends (OpenAI draw, Sume, drama finish).
-- Validating the trend-lab + drama Modal path after deploy or env changes.
+1. **One episode, one run.** Submit a single hosted run (`run_id`), wait until `output_path` is set or the workflow fails. Do not start a second run for the same episode unless the human asked to retry with a new id.
+2. **Original story only.** A reference clip supplies **timing and hook shape**, never dialogue, faces, or on-screen copy from the source. The filmed episode uses **drawn** frames and **new** lines.
 
-Stay on **episode-production** for ongoing series, pitch cards, plate/board gates, and `fictora-ops` desks.
+## Credentials (operator setup)
 
-## Hybrid lanes (pick one)
+The human must configure these where **you** call the worker (bot env or local `.env`). You never print them.
 
-### A — Hosted reference (preferred on prod)
-
-Reference is uploaded to **`trend-lab`**; the worker ingests, analyzes, scaffolds, then runs the story agent.
-
-```bash
-cd fictora-trend-lab
-# .env: TREND_LAB_SERVE_URL, TREND_LAB_RUN_TOKEN, SUME_* for --film
-uv run trend-lab remake-reference \
-  --reference-file reference.mp4 \
-  --film \
-  --scaffold-generate
-```
-
-Optional: `--reference-url` (worker downloads with **yt-dlp**), `--caption "hook hint"`, `--run-id`, `--label`.
-
-Flow: `PUT /uploads/reference/{run_id}` → `POST /runs` with `from_reference: true` → ingest → analyze → scaffold → `init-story` → agent.
-
-### B — Laptop analyze, prod film
-
-Use when you want to edit the scaffold before filming.
-
-```bash
-uv run trend-lab new-run --label hybrid
-export RUN=<run_id>
-uv run trend-lab ingest --run-id $RUN --file reference.mp4
-uv run trend-lab analyze --run-id $RUN
-uv run trend-lab story-scaffold --run-id $RUN   # optional: --generate
-# Edit runs/$RUN/story.scaffold.json — original copy only, never reference dialogue.
-uv run trend-lab remake --story-file runs/$RUN/story.scaffold.json --film
-```
-
-Reference pixels are **not** traced into the take; beats drive **frame count and duration** only.
-
-## Ship from a laptop (story file only)
-
-1. **Clone / open** `fictora-trend-lab`, `uv sync --extra agent --extra vlm --extra render`.
-2. **`.env`** (gitignored) at minimum for submit + Sume spend:
-   - `TREND_LAB_SERVE_URL` — public `https` origin of Railway **`trend-lab`**
-   - `TREND_LAB_RUN_TOKEN` — bearer for `POST /runs` and `PUT /uploads/reference/{run_id}`
-   - `SUME_API_KEY`, `SUME_WEBHOOK_BASE_URL`, `SUME_WEBHOOK_SECRET`, `FAL_KEY`
-3. **Story file** — start from `examples/original_story.example.json` or `examples/e2e_smoke_minimal.json`.
-4. **Run** (blocks until Restate finishes; ~5 min for a one-part story is normal):
-
-```bash
-cd fictora-trend-lab
-uv run trend-lab remake --story-file my_story.json --film
-```
-
-5. **Success** — JSON includes `output_path` like `r2://fictora-trend-lab-runs/runs/<run_id>/out/final_vN.mp4`. Pull with R2 creds (see [reference.md](reference.md)).
-
-Optional flags: `--trim-stray` (extra-word cuts; Modal finish may not apply trim—see reference). **`--mark` is not uploaded** to the worker.
-
-## Sume / Seedance resolution
-
-- Original-story **Sume takes** use **`seedance-2.5` at 480p** by default (`story.json` field + code enforces 480p for Seedance unless `TREND_LAB_SUME_RESOLUTION` overrides on the worker).
-- **Final MP4** after drama Modal finish is often **1080×1920 letterbox** (delivery upscale); the raw take on disk/R2 under `out/part_*_v1.mp4` reflects the Sume tier (e.g. ~480p-class for letterbox 4:3).
-
-## Prod topology (Railway `prod-drama`)
-
-| Service | Role |
+| Variable | Purpose |
 | --- | --- |
-| **trend-lab** | Public HTTPS, Sume webhooks, `POST /runs`, `PUT /uploads/reference/{run_id}`, story agent |
-| **trend-lab-restate** | Private Restate journal |
-| **fictora-drama-generation** | Operator audio + Modal **`/v1/operator/episode-finish`** when `FICTORA_DRAMA_MEDIA_FINISH=modal` |
+| `TREND_LAB_SERVE_URL` | Public https origin of **trend-lab** (e.g. prod Railway URL) |
+| `TREND_LAB_RUN_TOKEN` | Bearer token for `POST /runs` and `PUT /uploads/reference/{run_id}` |
 
-Worker env (not usually on the laptop): `FICTORA_DRAMA_GENERATION_*`, `FICTORA_DRAMA_EPISODE_FINISH=modal`, `OPENAI_API_KEY`, `R2_*`, `TREND_LAB_STORY_MODEL` (default **`gpt-6.1-sol`** in code).
+OpenAI, Sume, drama finish, and R2 live on the **worker** — not on the operator laptop unless they run trend-lab CLI locally.
 
-## Agent rules
+## Stage order
 
-- Read trend-lab **`docs/PIPELINE.md`** before changing workflow order or CLI semantics; **`AGENTS.md`** in that repo for boundaries.
-- Do **not** add `fictora` imports to trend-lab. Cross-repo fixes go in **fictora-drama** for generation routes and **trend-lab** for the HTTP client.
-- Never commit `.env`, tokens, or `runs/`. Never print `FICTORA_DRAMA_GENERATION_SERVICE_TOKEN` in chat or tickets.
-- **`trend-lab story-finish`** CLI uses local ffmpeg; **hosted `remake --film`** uses drama Modal via the agent **`finish`** tool. Do not claim desk `fictora-produce finish` and trend-lab finish are the same step.
+```
+1 Story (or reference) → 2 Submit hosted run → 3 Wait → 4 Deliver final MP4
+```
 
-## If something breaks
+| Stage | You do | Human |
+| --- | --- | --- |
+| **Story ready** | **A)** They give `story.json` (characters, frames, parts, `{dialogue}`), or **B)** they attach a **reference MP4** for structure-only scaffold | Confirms cast, setting, and lines are **original** (edit scaffold if needed before film) |
+| **Submit** | **Story:** `POST /runs` with `story_json`, `film: true`. **Reference:** `PUT /uploads/reference/{run_id}` then `POST /runs` with `from_reference: true`, `film: true` (optional `scaffold_generate`, `reference_caption`) | Has configured URL + run token |
+| **Wait** | Poll status or wait on the submit response until phase **done** or a terminal error | Several minutes for a one-part episode is normal |
+| **Deliver** | Report `run_id` and `output_path` (`r2://…/runs/<id>/out/final_vN.mp4`); pull or presign for the human to watch ([reference.md](reference.md)) | Watches the final file; sound and captions should match a normal episode finish |
 
-Quick checks (details: [reference.md](reference.md)):
+**Filming:** Sume **Seedance** on the worker defaults to **480p** takes; the **delivered** letterbox file may be upscaled after drama finish.
 
-- Worker: `GET {trend-lab-origin}/hooks/sume/health` → `{"status":"ok"}`
-- Drama: `POST …/v1/operator/episode-finish` with `{}` → **422**, not **404**
-- **401 OpenAI** on worker during `remake` → rotate **`OPENAI_API_KEY`** on **`trend-lab`** (match a working key from **`fictora-drama-generation`** in the same Railway project)
-- **500 Modal auth** on episode finish → **`MODAL_TOKEN_ID`** / **`MODAL_TOKEN_SECRET`** on **`fictora-drama-generation`** (same as **fictora-drama-restate**)
-- **`502` on `POST /runs`** after submit — run may still have started; confirm logs/R2 for `run_id` before retrying the same id.
+## Never
 
-## More detail
+- Use **episode-production** / `fictora-produce` for this lane unless the human explicitly switches to a desk show.
+- Trace or Fal-clone the reference video into the take.
+- Copy reference dialogue or on-screen text into the story.
+- Print or commit `TREND_LAB_RUN_TOKEN`, drama service tokens, or `.env`.
+- Treat **`502` on submit** as proof the run failed — check logs/R2 for that `run_id` before reusing the same id.
+- Claim **`trend-lab story-finish`** (local ffmpeg CLI) is the same step as the hosted agent **finish** (drama Modal on the worker).
 
-- Trend-lab docs index: `fictora-trend-lab/docs/README.md`
-- Secrets + prod smoke curls: `fictora-trend-lab/docs/SECRETS.md`
-- Operator comparison and troubleshooting: [reference.md](reference.md)
+## After each run
+
+Report **run id**, **output path**, and whether the episode **finished** or **held** (e.g. `film: false`). Stop. Do not chain a second episode unless the human asks.
