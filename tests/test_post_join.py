@@ -28,11 +28,11 @@ from creation.post.watermark import mark_position, watermark
 SIZE = (192, 336)
 #: The stand-in for a burned caption: a white box across the caption band.
 BOX = (20, 200, 152, 30)
-# The mark as drawn: 230/1080 of the frame's width, 88/230 as tall (the mark with the word, 27 Oct 2026).
+# The mark as drawn: 230/1080 of the frame's width, 148/460 as tall (the header-logo mark, 27 Oct 2026).
 MARK_BOX = (
     *mark_position(*SIZE),
     round(SIZE[0] * 230 / 1080),
-    round(SIZE[0] * 230 / 1080 * 176 / 460),
+    round(SIZE[0] * 230 / 1080 * 148 / 460),
 )
 
 
@@ -169,7 +169,7 @@ def test_an_episode_joins_with_no_music_captions_and_one_mark(
     take_mark = region(frame_at(one["final"], 1.0), MARK_BOX)
     assert abs(joined_mark - take_mark) < 3, (joined_mark, take_mark)
     assert abs(region(frame_at(result.master, 1.0), MARK_BOX) - 70) < 4
-    # The mark with the word darkens its pill and lights its cat and word, so its mean barely moves:
+    # The mark darkens its shadow and lights its cat and word, so its mean barely moves:
     # the mark shows as spread (a flat grey frame has none).
     x, y, w, h = MARK_BOX
     assert float(frame_at(result.marked, 1.0)[y : y + h, x : x + w].std()) > 10, (

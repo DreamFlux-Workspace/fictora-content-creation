@@ -30,8 +30,8 @@ CANVAS_HEIGHT = 1920
 CANVAS_COLOUR = "black"
 #: A letterbox take is filmed 4:3: scaled to 1080x810 and centred, y 555-1365.
 MASTER_RATIO = (4, 3)
-#: The Sokii mark image (``assets/sokii-mark-word.png``, the cat and "sokii", 27 Oct 2026) placed at (32, 173),
-#: 230 px wide and 88 tall (as tall as the cat-only mark it replaced): the same corner
+#: The Sokii mark image (``assets/sokii-mark-word.png``, the cat and "sokii" as the app's header logo, 27 Oct
+#: 2026) placed at (32, 173), 230 px wide and 74 tall (shorter than the cat-only mark it replaced): the same corner
 #: and size as a portrait saved copy and the founder's approved Instagram reels (3% in, 9% down; fictora-drama
 #: #1047). The server decides it (``POST /v1/mark/placement``); these numbers are the fallback for an older or
 #: unreachable server.
