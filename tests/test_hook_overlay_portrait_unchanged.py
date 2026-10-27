@@ -13,6 +13,7 @@ Re-recorded 25 Oct 2026 (kit #294) for the mark only: 3% in and the approved ree
 
 Re-recorded 27 Oct 2026 for the mark only: the mark with the word ("E2", ``sokii-mark-word.png``),
 230/1080 of the width at full strength, so the overlay reads ``scale=41:16`` and ``aa=1.0``.
+The same day it became the app's header logo (no pill, 460x148), so it reads ``scale=41:13``.
 """
 
 from __future__ import annotations

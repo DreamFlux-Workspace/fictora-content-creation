@@ -9,8 +9,8 @@ asks ``POST /v1/mark/placement`` for each frame. An older server without the
 route (404/405), or one that cannot be reached, is never an error: the kit uses
 the same numbers itself (``x = round(W * 0.03)``, ``y = round(H * 0.09)``,
 23:121 on 768x1344) and prints a ``NOTE``. Drawn at 9.4% of the frame's width
-(the mark with the word "sokii" on a light dark pill since 27 Oct 2026, founder pick "E2":
-230x88 on 1080), at full strength (the pill's see-through fill is in the PNG). A ``y`` override
+(the cat and the word "sokii" as the app's header logo, no pill, since 27 Oct 2026, founder pick "C":
+230x74 on 1080), at full strength (its soft shadow is in the PNG). A ``y`` override
 is never allowed into the top 8% of the frame: it is raised to that strip's
 lower edge.
 """
@@ -28,8 +28,8 @@ import httpx
 from creation.post.media import probe_video, run_ffmpeg
 
 MARK = Path(__file__).resolve().parents[2] / "assets" / "sokii-mark-word.png"
-#: The PNG's own size (twice its 230x88 size on a 1080-wide frame), the server's ``MARK_PNG_SIZE``.
-MARK_PNG_SIZE = (460, 176)
+#: The PNG's own size (twice its 230x74 size on a 1080-wide frame), the server's ``MARK_PNG_SIZE``.
+MARK_PNG_SIZE = (460, 148)
 #: The server's route (fictora-drama #1039).
 MARK_PLACEMENT_ROUTE = "/v1/mark/placement"
 #: Fallback only (an older or unreachable server): the server's

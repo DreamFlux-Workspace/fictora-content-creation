@@ -29,9 +29,10 @@ from creation.post.letterbox import TitleBlock, mark_and_title, pad_to_canvas
 TOLERANCE = 4
 #: The reference's ink, (first, last) row or column.
 # The mark's row is Not Home's; 3% in, the same corner as a portrait saved copy and the founder's approved
-# Instagram reels (fictora-drama #1047). Since 27 Oct 2026 the mark carries the word "sokii" (230x88 on 1080,
-# fictora-drama #1103): its cat and word ink run x 56-233, y 187-244 (the cat alone was x 42-122, y 182-249).
-MARK_X, MARK_Y = (56, 233), (187, 244)
+# Instagram reels (fictora-drama #1047). Since 27 Oct 2026 the mark is the app's header logo, cat and "sokii" (230x74 on 1080,
+# fictora-drama #1103 then the header logo): its ink runs x 39-254, y 183-233 (the pill "E2" was x 56-233, y 187-244;
+# the cat alone x 42-122, y 182-249).
+MARK_X, MARK_Y = (39, 254), (183, 233)
 TITLE_1, TITLE_2 = (333, 384), (396, 435)
 CAPTION_DESCENDER, CAPTION_PLAIN = (1417, 1468), (1417, 1457)
 #: fictora-drama #614's measured renders of two captions' ink columns: one centred on the frame, one
