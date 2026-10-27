@@ -10,6 +10,9 @@ timing) must equal the ones recorded on origin/main before the overlay existed
 Re-recorded 25 Oct 2026 (kit #294) for the mark only: 3% in and the approved reels' size
 (72/768 of the width), so the test frame's overlay reads ``scale=18:16`` and ``overlay=6:30``
 (was ``overlay=23:30``, 12% in at the PNG's own size). Nothing else changed.
+
+Re-recorded 27 Oct 2026 for the mark only: the mark with the word ("E2", ``sokii-mark-word.png``),
+230/1080 of the width at full strength, so the overlay reads ``scale=41:16`` and ``aa=1.0``.
 """
 
 from __future__ import annotations

@@ -9,7 +9,8 @@ asks ``POST /v1/mark/placement`` for each frame. An older server without the
 route (404/405), or one that cannot be reached, is never an error: the kit uses
 the same numbers itself (``x = round(W * 0.03)``, ``y = round(H * 0.09)``,
 23:121 on 768x1344) and prints a ``NOTE``. Drawn at 9.4% of the frame's width
-(the 72 px PNG as it is on 768; 101 px on 1080), 0.6 opacity. A ``y`` override
+(the mark with the word "sokii" on a light dark pill since 27 Oct 2026, founder pick "E2":
+230x88 on 1080), at full strength (the pill's see-through fill is in the PNG). A ``y`` override
 is never allowed into the top 8% of the frame: it is raised to that strip's
 lower edge.
 """
@@ -26,17 +27,19 @@ import httpx
 
 from creation.post.media import probe_video, run_ffmpeg
 
-MARK = Path(__file__).resolve().parents[2] / "assets" / "sokii-line-72.png"
+MARK = Path(__file__).resolve().parents[2] / "assets" / "sokii-mark-word.png"
+#: The PNG's own size (twice its 230x88 size on a 1080-wide frame), the server's ``MARK_PNG_SIZE``.
+MARK_PNG_SIZE = (460, 176)
 #: The server's route (fictora-drama #1039).
 MARK_PLACEMENT_ROUTE = "/v1/mark/placement"
 #: Fallback only (an older or unreachable server): the server's
 #: ``social_safe_zones.SAVED_COPY_MARK_LEFT_FRACTION`` (3%, the approved reels').
 MARK_X_FRACTION = 0.03
 #: The mark's width as a share of the frame's (the server's ``MARK_WIDTH_FRACTION``).
-MARK_WIDTH_FRACTION = 72 / 768
+MARK_WIDTH_FRACTION = 230 / 1080
 MARK_Y_FRACTION = 0.09
 SAFE_TOP_FRACTION = 0.08
-MARK_ALPHA = 0.6
+MARK_ALPHA = 1.0
 
 
 def server_mark_position(
@@ -177,11 +180,14 @@ def mark_position(
 
 
 def mark_scale_filter(width: int) -> str:
-    """The ffmpeg filter that draws the 72x63 mark at 9.4% of ``width`` (empty when that is its own size)."""
+    """The ffmpeg filter that draws the mark at :data:`MARK_WIDTH_FRACTION` of ``width`` (empty at its own size)."""
 
     drawn = round(width * MARK_WIDTH_FRACTION)
+    png_w, png_h = MARK_PNG_SIZE
     return (
-        "" if drawn == 72 else f"scale={drawn}:{round(63 * drawn / 72)}:flags=lanczos,"
+        ""
+        if drawn == png_w
+        else f"scale={drawn}:{round(png_h * drawn / png_w)}:flags=lanczos,"
     )
 
 

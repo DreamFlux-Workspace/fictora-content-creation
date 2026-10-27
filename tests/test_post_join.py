@@ -28,8 +28,12 @@ from creation.post.watermark import mark_position, watermark
 SIZE = (192, 336)
 #: The stand-in for a burned caption: a white box across the caption band.
 BOX = (20, 200, 152, 30)
-# The mark as drawn: 9.4% of the frame's width (fictora-drama #1047).
-MARK_BOX = (*mark_position(*SIZE), round(SIZE[0] * 72 / 768), round(SIZE[0] * 63 / 768))
+# The mark as drawn: 230/1080 of the frame's width, 88/230 as tall (the mark with the word, 27 Oct 2026).
+MARK_BOX = (
+    *mark_position(*SIZE),
+    round(SIZE[0] * 230 / 1080),
+    round(SIZE[0] * 230 / 1080 * 176 / 460),
+)
 
 
 def _run(args: list[str]) -> None:
@@ -165,7 +169,12 @@ def test_an_episode_joins_with_no_music_captions_and_one_mark(
     take_mark = region(frame_at(one["final"], 1.0), MARK_BOX)
     assert abs(joined_mark - take_mark) < 3, (joined_mark, take_mark)
     assert abs(region(frame_at(result.master, 1.0), MARK_BOX) - 70) < 4
-    assert abs(joined_mark - 70) > 5, "the marked file has a mark"
+    # The mark with the word darkens its pill and lights its cat and word, so its mean barely moves:
+    # the mark shows as spread (a flat grey frame has none).
+    x, y, w, h = MARK_BOX
+    assert float(frame_at(result.marked, 1.0)[y : y + h, x : x + w].std()) > 10, (
+        "the marked file has a mark"
+    )
     assert "Join" in (join_desk / "ep01" / "run-notes.md").read_text()
 
     # Nothing is overwritten: a second join is v2 and v1 is untouched.
