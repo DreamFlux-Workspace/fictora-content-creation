@@ -69,10 +69,11 @@ def test_house_flicker_cues_become_one_chunk_per_build_up() -> None:
     chunks = caption_chunks(cues, whole_lines=False)
 
     assert [[w["text"] for w in c["words"]] for c in chunks] == [
-        ["How", "much", "for"],
-        ["this?"],
+        ["How", "much"],
+        ["for", "this?"],
     ]
-    assert [w["start_ms"] for w in chunks[0]["words"]] == [900, 1200, 1500]
+    assert [w["start_ms"] for w in chunks[0]["words"]] == [900, 1200]
+    assert [w["start_ms"] for w in chunks[1]["words"]] == [1500, 1800]
     assert "emphasis_index" not in chunks[0]
 
 

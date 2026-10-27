@@ -1452,29 +1452,137 @@ def time_words(text: str, span: Span) -> list[Cue]:
     return cues
 
 
+#: TEMPORARY COPY of fictora-drama's flicker caption rules (``caption_compile._segment_flicker`` and
+#: ``_balance_flicker_groups``, drama #1087, 26 Oct 2026). The server's ``POST /v1/captions/layout`` only
+#: lays out chunks the client already made, so the kit still groups the words itself; delete this copy
+#: once that route chunks raw timed words (docs/content-ops/backlog.md). Keep these numbers equal to the
+#: server's ``LINE_CAPTION_MAX_GAP_MS`` and ``LINE_CAPTION_MAX_CHUNK_DURATION_MS``.
+FLICKER_MAX_GAP_SECONDS = 0.8
+FLICKER_MAX_CHUNK_SECONDS = 4.0
+#: Closing marks a sentence end may sit inside: a quoted "warm?" still ends a sentence.
+_SENTENCE_CLOSERS = "\"')]}”’」』）"
+_SENTENCE_END_MARKS = (".", "?", "!", "。", "？", "！", "…")
+#: A full stop after one of these is not a sentence end ("Mr. Kim").
+_ABBREVIATIONS = frozenset(
+    {"mr", "mrs", "ms", "dr", "st", "jr", "sr", "vs", "mt", "prof"}
+)
+
+
+def ends_sentence(word: str) -> bool:
+    """Whether ``word`` closes a sentence (``.``, ``?``, ``!``, ``…`` or CJK), as the server decides it.
+
+    True for ``"March."`` and ``"warm?"``; False for ``"Mr."``, ``"turn,"`` and a bare word.
+    """
+
+    stripped = word.strip().rstrip(_SENTENCE_CLOSERS)
+    if not stripped.endswith(_SENTENCE_END_MARKS):
+        return False
+    bare = stripped.rstrip("".join(_SENTENCE_END_MARKS)).casefold()
+    return bare not in _ABBREVIATIONS
+
+
+def sentence_starts(texts: Sequence[str]) -> frozenset[int]:
+    """Word indices (after the first) at which a new sentence begins."""
+
+    return frozenset(i for i in range(1, len(texts)) if ends_sentence(texts[i - 1]))
+
+
+def flicker_groups(words: Sequence[Cue]) -> list[list[int]]:
+    """Group one line's timed words into house flicker chunks, the server's way (temporary copy).
+
+    Up to :data:`MAX_WORDS_ON_SCREEN` words per chunk; a chunk never crosses a
+    sentence end, a pause longer than :data:`FLICKER_MAX_GAP_SECONDS`, or runs
+    past :data:`FLICKER_MAX_CHUNK_SECONDS`. A run of chunks the word cap cut is
+    then dealt out evenly, largest first (10 words are 3 + 3 + 2 + 2, 4 are
+    2 + 2), so no word is left alone on screen after full chunks, unless the
+    even split would hold a chunk past the duration cap.
+
+    Parameters
+    ----------
+    words
+        One line's words, timed.
+
+    Returns
+    -------
+    list[list[int]]
+        Word indices per chunk, in order.
+    """
+
+    breaks = sentence_starts([w.text for w in words])
+    groups: list[list[int]] = []
+    buffer: list[int] = []
+    for i, word in enumerate(words):
+        if buffer and (
+            i in breaks
+            or word.start - words[buffer[-1]].end > FLICKER_MAX_GAP_SECONDS
+            or word.end - words[buffer[0]].start > FLICKER_MAX_CHUNK_SECONDS
+            or len(buffer) >= MAX_WORDS_ON_SCREEN
+        ):
+            groups.append(buffer)
+            buffer = []
+        buffer.append(i)
+    if buffer:
+        groups.append(buffer)
+
+    runs: list[list[list[int]]] = []
+    for group in groups:
+        previous = runs[-1][-1] if runs else None
+        if (
+            previous is not None
+            and len(previous) == MAX_WORDS_ON_SCREEN
+            and group[0] not in breaks
+            and words[group[0]].start - words[previous[-1]].end
+            <= FLICKER_MAX_GAP_SECONDS
+            and words[group[0]].end - words[previous[0]].start
+            <= FLICKER_MAX_CHUNK_SECONDS
+        ):
+            runs[-1].append(group)
+        else:
+            runs.append([group])
+    balanced: list[list[int]] = []
+    for run in runs:
+        flat = [i for group in run for i in group]
+        base, extra = divmod(len(flat), len(run))
+        sizes = [base + 1] * extra + [base] * (len(run) - extra)
+        regrouped: list[list[int]] = []
+        at = 0
+        for size in sizes:
+            regrouped.append(flat[at : at + size])
+            at += size
+        if any(
+            words[part[-1]].end - words[part[0]].start > FLICKER_MAX_CHUNK_SECONDS
+            for part in regrouped
+        ):
+            balanced.extend(run)
+        else:
+            balanced.extend(regrouped)
+    return balanced
+
+
 def flicker_cues(
     words: Sequence[Cue],
     *,
     hold_until: float | None = None,
     hold: float = LAST_WORD_HOLD_SECONDS,
 ) -> list[Cue]:
-    """Build up to three words at a time, then reset (house flicker).
+    """Build each chunk up word by word (:func:`flicker_groups`, at most three words), then reset (house flicker).
 
     Each event lasts until the next word starts; the last word holds ``hold``
     seconds, never past ``hold_until`` (the next line's start).
     """
 
     cues: list[Cue] = []
-    for i, word in enumerate(words):
-        chunk_start = i - (i % MAX_WORDS_ON_SCREEN)
-        text = " ".join(w.text for w in words[chunk_start : i + 1])
-        if i + 1 < len(words):
-            end = words[i + 1].start
-        else:
-            end = word.end + hold
-            if hold_until is not None:
-                end = min(end, hold_until)
-        cues.append(Cue(word.start, max(end, word.start + 0.05), text))
+    for group in flicker_groups(words):
+        for position, i in enumerate(group):
+            word = words[i]
+            text = " ".join(words[j].text for j in group[: position + 1])
+            if i + 1 < len(words):
+                end = words[i + 1].start
+            else:
+                end = word.end + hold
+                if hold_until is not None:
+                    end = min(end, hold_until)
+            cues.append(Cue(word.start, max(end, word.start + 0.05), text))
     return cues
 
 
