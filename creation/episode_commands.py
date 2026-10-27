@@ -8540,6 +8540,13 @@ def add_episode_parsers(
         metavar="M",
         help="The human's pick: this episode becomes the last one, written as the finale.",
     )
+    ending.add_argument(
+        "--style",
+        choices=("closed", "open"),
+        help="With --last-episode: the human's answer to the server's 'How should the last episode land?' "
+        "(closed = a proper ending, open = a cliffhanger). Omitted: the server's question is printed and "
+        "nothing is sent.",
+    )
 
     resume = sub.add_parser(
         "resume",
@@ -9102,7 +9109,12 @@ def dispatch_episode(args: argparse.Namespace) -> int:
         if args.command == "ending":
             from creation.season_ending_commands import run_ending
 
-            run_ending(args.desk, episode=args.episode, last_episode=args.last_episode)
+            run_ending(
+                args.desk,
+                episode=args.episode,
+                last_episode=args.last_episode,
+                style=args.style,
+            )
             return 0
         if args.command == "resume":
             from creation.season_ending_commands import run_resume

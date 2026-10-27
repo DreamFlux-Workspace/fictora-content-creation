@@ -12,6 +12,12 @@ Founder, 27 Oct 2026: the kit never raises an ending on its own (only when
 the human asks), and a series that ended can always be picked back up:
 ``resume`` asks the server to reopen it, and writing continues as normal.
 
+Founder, 27 Oct 2026 (fictora-drama #1116): when the human ends the series, the server asks once how the
+last episode should land ("How should the last episode land?": a proper ending, or a cliffhanger). The
+check carries that question as ``ending_question``; ``ending --episode N`` prints it after the options, and
+``ending --last-episode M --style closed|open`` sends the answer as ``ending_style``. Without ``--style``
+the kit prints the server's question and sends nothing. An older server without the question ends as before.
+
 Routes (fictora-drama early-ending PR): ``GET /v1/spines/{id}/season/ending-check?end_at=N``
 and ``POST /v1/spines/{id}/season/end`` with ``last_episode`` and
 ``expected_spine_version``; ``POST /v1/spines/{id}/season/resume`` with
@@ -46,6 +52,25 @@ def _refusal(status: int, answer: Any) -> ec.CommandStopped | None:
     return None
 
 
+#: The answers ``--style`` takes, as the server names them (``ending_style``).
+ENDING_STYLES = ("closed", "open")
+
+
+def _print_ending_question(question: Any, out: Any) -> bool:
+    """Print the server's "How should the last episode land?" and its answers; ``False`` when there is none."""
+
+    if not isinstance(question, Mapping) or not question.get("line"):
+        return False
+    print(f"sokii: {question['line']}", file=out)
+    for option in question.get("options") or []:
+        if isinstance(option, Mapping):
+            print(
+                f"  --style {option.get('ending_style')}: {_option_label(option)}",
+                file=out,
+            )
+    return True
+
+
 def _option_label(option: Any) -> str:
     if isinstance(option, Mapping):
         return str(option.get("label") or option.get("text") or "")
@@ -57,6 +82,7 @@ def run_ending(
     *,
     episode: int | None = None,
     last_episode: int | None = None,
+    style: str | None = None,
     out: Any = None,
 ) -> dict[str, Any]:
     """Ask whether the series can end at an episode, or end it at the human's pick. Spends nothing.
@@ -69,6 +95,10 @@ def run_ending(
         The episode the human wants to end on: prints the server's answer.
     last_episode
         The episode the human picked as the last one: the server makes it the finale.
+    style
+        The human's answer to the server's "How should the last episode land?" (``closed`` or ``open``),
+        sent as ``ending_style`` with ``last_episode``. Omitted: the kit prints the server's question and sends
+        nothing, unless the server asks none (an older deploy), when it ends as before.
     out
         Text stream.
 
@@ -91,6 +121,8 @@ def run_ending(
     chosen = episode if episode is not None else last_episode
     if chosen is None or chosen < 1:
         raise ec.CommandStopped("the episode is a number: 1 or more")
+    if style is not None and (episode is not None or style not in ENDING_STYLES):
+        raise ec.CommandStopped("--style is closed or open, sent with --last-episode M")
     out = out or sys.stdout
     desk = desk.expanduser().resolve()
     _, state, run = ec._desk_session(desk)
@@ -102,12 +134,26 @@ def run_ending(
                 f"{spine_path}/ending-check?end_at={episode}"
             )
         else:
+            if style is None:
+                # The server's own question first (free); nothing is sent until the human answers it.
+                check_status, check = run.get_optional(
+                    f"{spine_path}/ending-check?end_at={last_episode}"
+                )
+                if check_status < 400 and isinstance(check, Mapping):
+                    if _print_ending_question(check.get("ending_question"), out):
+                        print(
+                            f"(nothing sent: paste this to the human; their answer goes to "
+                            f"`ending --last-episode {last_episode} --style closed|open`)",
+                            file=out,
+                        )
+                        return dict(check)
             spine = run.spine(state.spine_id or "")
             status, answer = run.post_optional(
                 f"{spine_path}/end",
                 {
                     "last_episode": last_episode,
                     "expected_spine_version": spine["spine_version"],
+                    **({"ending_style": style} if style is not None else {}),
                 },
             )
             # The story as the server now holds it, whatever the answer carries.
@@ -123,14 +169,21 @@ def run_ending(
             print(f"sokii: {answer['line']}", file=out)
         for number, option in enumerate(answer.get("options") or [], start=1):
             print(f"{number}. {_option_label(option)}", file=out)
+        asks = _print_ending_question(answer.get("ending_question"), out)
+        pick = (
+            "`ending --last-episode M --style closed|open`"
+            if asks
+            else "`ending --last-episode M`"
+        )
         print(
-            "(paste this to the human as printed; their pick goes to `ending --last-episode M`)",
+            f"(paste this to the human as printed; their pick goes to {pick})",
             file=out,
         )
     else:
         ec._save_desk_json(desk, "spine", refreshed)
+        landing = f" (ending_style: {style})" if style is not None else ""
         print(
-            f"done: episode {last_episode} is the series' last episode, written as its finale.",
+            f"done: episode {last_episode} is the series' last episode, written as its finale{landing}.",
             file=out,
         )
     return dict(answer)
