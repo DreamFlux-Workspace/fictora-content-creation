@@ -49,57 +49,18 @@ import numpy as np
 from creation.harness_rules import is_opening_cue
 from creation.post.media import MediaToolError, ffmpeg_bin, ffprobe_bin
 from creation.post.sfx_motion import Trace, action_moment
+from creation.post.sound_words import BLAST_STEMS, HARD_HIT_STEMS, forms
 
 ImpactStyle = Literal["blast", "hit"]
 
-# The two word lists mirror ``creation/post/ambience.py`` (kit PR #219; the server's ``impact_words``, #767)
-# exactly, so the sound and the picture agree on what is an explosion and what is a hit; this moves to an
-# import from ``ambience`` once #219 lands.
-#: Things that go off (a gunshot too): the bigger punch-in and the harder shake. A "bang" is never one.
-BLAST_STEMS = frozenset(
-    {
-        "explosion",
-        "explode",
-        "blast",
-        "boom",
-        "gunshot",
-        "detonation",
-        "detonate",
-        "kaboom",
-    }
-)
-#: A body or an object striking hard: the punch-in and a small shake. A knock, thud, crack or clatter is not one.
-HIT_STEMS = frozenset(
-    {
-        "slam",
-        "bang",
-        "crash",
-        "smash",
-        "shatter",
-        "punch",
-        "kick",
-        "slap",
-        "smack",
-        "whack",
-        "thwack",
-    }
-)
-
-
-def _forms(stems: frozenset[str]) -> re.Pattern[str]:
-    """Every stem with its endings (as ``ambience._forms``): explode/explodes/exploded, slam/slammed."""
-
-    parts = [
-        f"{stem[:-1]}(?:e|es|ed|ing)"
-        if stem.endswith("e")
-        else f"{stem}(?:s|es|ed|ing|med|ming)?"
-        for stem in sorted(stems)
-    ]
-    return re.compile(r"\b(?:" + "|".join(parts) + r")\b", re.IGNORECASE)
-
-
-_EXPLOSION = _forms(BLAST_STEMS)
-_HARD_HIT = _forms(HIT_STEMS)
+# What is an explosion and what is a hit: the kit's one copy of the server's ``impact_words``
+# (:mod:`creation.post.sound_words`, the same words the sound step reads), so the sound and the
+# picture agree. Read only offline (no ``impact-plan`` answer) or on saved facts older than ``impact``.
+# ``BLAST_STEMS``: things that go off (a gunshot too), the bigger punch-in and the harder shake; a "bang" is
+# never one. ``HIT_STEMS``: a body or an object striking hard, the punch-in and a small shake.
+HIT_STEMS = HARD_HIT_STEMS
+_EXPLOSION = forms(BLAST_STEMS)
+_HARD_HIT = forms(HIT_STEMS)
 #: "A blast of cold air", "music blasts": a blast that is wind, air, water or sound is not an explosion.
 _NOT_AN_EXPLOSION = re.compile(
     r"\bblast(?:s|ing)?\s+of\s+(?:cold|hot|warm|icy|fresh)?\s*(?:air|wind|water|steam|music|noise|sound|horn|light)\b"

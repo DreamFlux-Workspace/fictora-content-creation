@@ -421,7 +421,7 @@ def fight_strike_peaks(
 def _big_hit(cue: object) -> bool:
     """A one-moment big impact (the server's ``impact`` call, else the words)."""
 
-    from creation.post.ambience import impact_weight
+    from creation.post.sound_words import impact_weight
 
     sound = str(getattr(cue, "sound", ""))
     return (

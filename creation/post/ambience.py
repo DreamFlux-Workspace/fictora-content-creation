@@ -71,6 +71,14 @@ import numpy as np
 from creation.post.audio_service import AudioService, download
 from creation.post.media import probe_video, run_ffmpeg
 
+# Re-exported: the pinned lists' tests and older callers import them from here.
+from creation.post.sound_words import (
+    BLAST_STEMS,
+    HARD_HIT_STEMS,
+    impact_weight,
+    sound_kind,
+)
+
 #: RMS (dBFS) the ambience sits at between the lines once the mix's take gain is on it.
 AMBIENCE_GAP_DB = -28.0
 #: How far the ambience drops inside each line window.
@@ -160,97 +168,6 @@ _CLAUSE_BREAK = re.compile(r"\s*(?:[;,:]|\s[-\u2013\u2014]\s|\u2014|\bthen\b)\s*
 _PLACEHOLDER = re.compile(r"\{[^}]*\}")
 #: Where a location stops naming the place and starts staging it (the server's ``_STAGING_BREAK``).
 _STAGING_BREAK = re.compile(r"[;,(]|\s[-\u2013\u2014]\s")
-#: Sounds that go on rather than happen (the server's ``sfx_layer._SUSTAINED`` / ``sfx_kind``).
-_GOES_ON = re.compile(
-    r"\b(?:wind|winds|breeze|rain|raining|drizzle|downpour|storm|thunder|hum|humming|hums|drone|droning|"
-    r"groan|groans|groaning|rumble|rumbling|ambience|ambient|murmur|murmuring|buzz|buzzing|"
-    r"static|waves|surf|purr|purrs|purring|whir|whirring|crackle|crackling|sizzle|sizzling|simmer|simmering|"
-    r"ticking|steady|constant|continuous|throughout|ongoing|all the while|keeps going|carries on)\b",
-    re.IGNORECASE,
-)
-_SOURCE_ONLY = re.compile(r"\b(?:crowd|crowds|traffic)\b", re.IGNORECASE)
-_ONE_OFF = re.compile(
-    r"\b(?:gasp|gasps|gasped|sigh|sighs|sighed|bite|bites|crunch|crunches|breath|exhale|exhales|inhale|gulp|"
-    r"cough|coughs|clap|claps|clink|clinks|snap|snaps|pop|pops|slam|slams|thud|thuds|bang|bangs|knock|knocks|"
-    r"crack|cracks|click|shout|shouts|yelp|yelps|laugh|laughs|burst|horn|honk|honks|screech|screeches|"
-    r"explosion|explosions|explodes|exploded|boom|booms|blast|blasts|gunshot|gunshots|crash|crashes|"
-    r"impact|impacts|smash|smashes|shatter|shatters|detonation|detonates|kaboom)\b",
-    re.IGNORECASE,
-)
-#: One meaning of "explosion" and "hit" (the server's ``impact_words``; pinned in both repos' tests).
-#: Things that go off.
-BLAST_STEMS = frozenset(
-    {
-        "explosion",
-        "explode",
-        "blast",
-        "boom",
-        "gunshot",
-        "detonation",
-        "detonate",
-        "kaboom",
-    }
-)
-#: A body or an object striking hard; a door that bangs shut is a hit, never an explosion.
-HARD_HIT_STEMS = frozenset(
-    {
-        "slam",
-        "bang",
-        "crash",
-        "smash",
-        "shatter",
-        "punch",
-        "kick",
-        "slap",
-        "smack",
-        "whack",
-        "thwack",
-    }
-)
-
-
-def _forms(stems: frozenset[str]) -> re.Pattern[str]:
-    parts = [
-        f"{stem[:-1]}(?:e|es|ed|ing)"
-        if stem.endswith("e")
-        else f"{stem}(?:s|es|ed|ing|med|ming)?"
-        for stem in sorted(stems)
-    ]
-    return re.compile(r"\b(?:" + "|".join(parts) + r")\b", re.IGNORECASE)
-
-
-_BLAST = _forms(BLAST_STEMS)
-_HARD_HIT = _forms(HARD_HIT_STEMS)
-_SOFT_IMPACT = re.compile(
-    r"\b(?:thud|thuds|clang|clangs|impact|impacts|shot rings out)\b", re.IGNORECASE
-)
-
-
-def impact_weight(words: str) -> str | None:
-    """``blast`` (something goes off), ``hit`` (a hard hit) or ``None``: the server's ``impact_words.impact_weight``."""
-
-    if _BLAST.search(words):
-        return "blast"
-    if _HARD_HIT.search(words):
-        return "hit"
-    return None
-
-
-def _names_an_impact(sound: str) -> bool:
-    return impact_weight(sound) is not None or bool(_SOFT_IMPACT.search(sound))
-
-
-#: Words that say a sound goes on whatever it is ("distant explosions throughout"): it stays sustained.
-_GOES_ON_ON_PURPOSE = re.compile(
-    r"\b(?:throughout|all the while|the whole time|keeps going|carries on|continues|continuous|constant|"
-    r"steady|ongoing|under everything)\b",
-    re.IGNORECASE,
-)
-#: What puts a following sound after a hit ("an explosion, then a low rumble"; the server's ``sfx_layer._THEN``).
-_THEN = re.compile(
-    r"\b(then|followed by|before|into|and then|giving way to)\b|,\s*then\b",
-    re.IGNORECASE,
-)
 
 
 def scrub_hush_words(text: str) -> str:
@@ -265,18 +182,14 @@ def scrub_hush_words(text: str) -> str:
 def goes_on(sound: str) -> bool:
     """Whether a sound line names a sound that goes on (a simmer, rain, a crowd), not one that happens once.
 
-    The server's ``sfx_layer.sfx_kind``: an impact (a blast, a hard hit, a thud) beats the sustained
-    words ("an explosion with a rumbling boom" happens once, L-20261009-9) unless the words say it
-    goes on ("explosions throughout") or put a bed after the hit ("a door slams, then the engine idles").
+    Only for a beat's ``sound_cue`` (the server classes the take facts' cues itself, ``sfx_cues[].kind``):
+    the server's ``sfx_layer.sfx_kind`` through the kit's one copy (:func:`creation.post.sound_words.sound_kind`).
+    An impact beats the sustained words ("an explosion with a rumbling boom" happens once, L-20261009-9)
+    unless the words say it goes on or put a bed after the hit, and a one-off that only names the room
+    after it ("the glove slapping into shallow water, the drain hum under it") is never looped (#1118).
     """
 
-    if _names_an_impact(sound) and not _GOES_ON_ON_PURPOSE.search(sound):
-        then = _THEN.search(sound)
-        if not (then and _GOES_ON.search(sound[then.end() :])):
-            return False
-    if _GOES_ON.search(sound):
-        return True
-    return bool(_SOURCE_ONLY.search(sound)) and not _ONE_OFF.search(sound)
+    return sound_kind(sound) == "sustained"
 
 
 def room_sound_phrase(line: str) -> str:
@@ -833,6 +746,8 @@ def episode_offset(lengths: Sequence[float | None]) -> float | None:
 __all__ = [
     "AMBIENCE_DUCK_DB",
     "AMBIENCE_GAP_DB",
+    "BLAST_STEMS",
+    "HARD_HIT_STEMS",
     "AmbienceBrief",
     "EpisodeAmbience",
     "LaidAmbience",
@@ -844,6 +759,8 @@ __all__ = [
     "duck_envelope",
     "episode_ambience",
     "episode_offset",
+    "goes_on",
+    "impact_weight",
     "lay_ambience",
     "record_path",
     "saved_ambience",
