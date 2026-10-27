@@ -172,6 +172,71 @@ def speaking_voices(
     return rows
 
 
+def voices_for_cast_ids(
+    spine: Mapping[str, Any], cast_ids: Sequence[str]
+) -> list[CastVoice]:
+    """One row per character in ``cast_ids`` (order kept), heard only as an inner voice or not.
+
+    :func:`speaking_voices` counts spoken lines only; the server also holds a
+    film for a character heard only in thought (an inner-voice cue), so a keep
+    of the server's list needs a row for them too.
+    """
+
+    body = spine_body(spine)
+    speaking = {voice.cast_id: voice for voice in speaking_voices(body)}
+    cards = {
+        str(card.get("cast_id") or ""): card
+        for card in body.get("cast") or []
+        if isinstance(card, Mapping)
+    }
+    rows: list[CastVoice] = []
+    for cast_id in dict.fromkeys(str(cid) for cid in cast_ids if cid):
+        if cast_id in speaking:
+            rows.append(speaking[cast_id])
+            continue
+        card = cards.get(cast_id) or {}
+        brief = card.get("voice_brief") or {}
+        brief = brief if isinstance(brief, Mapping) else {}
+        rows.append(
+            CastVoice(
+                cast_id=cast_id,
+                name=str(card.get("name") or cast_id),
+                provider_voice=voice_name(brief.get("provider_voice")),
+                description=str(brief.get("seedance_vocal_signature") or "").strip()
+                or None,
+                sample_url=str(brief.get("reference_audio_url") or "").strip() or None,
+            )
+        )
+    return rows
+
+
+def server_held_cast_ids(
+    run: Any, spine_id: str, *, episode: int | None
+) -> list[str] | None:
+    """Who the server holds filming ``episode`` for: the Voices step's ``pending_cast_ids`` before filming.
+
+    The same list film admission refuses on (``409 voices_not_approved``,
+    fictora-drama #1131), read fresh from the server each time; the kit keeps
+    no copy. ``None`` when the server is older (no route), cannot be reached,
+    or answers without the list.
+    """
+
+    read = getattr(run, "get_optional", None)
+    if read is None or not spine_id:
+        return None
+    path = f"/v1/spines/{spine_id}/voices-step?episode_ordinal={episode or 1}&moment=before_filming"
+    try:
+        status, body = read(path)
+    except Exception:  # noqa: BLE001 - an unreachable server leaves the kit's own list
+        return None
+    if status != 200 or not isinstance(body, dict):
+        return None
+    held = body.get("pending_cast_ids")
+    if not isinstance(held, list):
+        return None
+    return [str(cast_id) for cast_id in held if cast_id]
+
+
 @dataclass(frozen=True)
 class FirstLineSample:
     """One character's first-line sample as the server's Voices card says (fictora-drama voices-card).
