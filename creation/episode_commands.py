@@ -942,6 +942,11 @@ def run_brief(
     directions = list(brief.get("directions") or [])
     _print_previously(brief, out)
     _print_choices(directions, "direction_id", _choice_who(brief), out)
+    # The planned finale's line, word for word (fictora-drama #1105): never a
+    # count or the plan, and only when the server sends it. The kit adds nothing.
+    finale_line = (brief.get("facts") or {}).get("season_finale_line")
+    if finale_line:
+        print(f"sokii: {finale_line}", file=out)
     print(f"(saved {saved.name})", file=out)
     return directions
 
@@ -7815,6 +7820,7 @@ EPISODE_COMMANDS = frozenset(
         "line",
         "cast",
         "cast-exit",
+        "ending",
         "outfit",
         "emotion",
         "look-frame",
@@ -8394,6 +8400,26 @@ def add_episode_parsers(
         help="Bring them back: writers see them in full again.",
     )
 
+    ending = sub.add_parser(
+        "ending",
+        help="Ending the series early: --episode N asks the server whether it can end there (its line and "
+        "options, word for word); --last-episode M sends the human's pick. Spends nothing.",
+    )
+    ending.add_argument("--desk", type=Path, required=True)
+    ending_pick = ending.add_mutually_exclusive_group(required=True)
+    ending_pick.add_argument(
+        "--episode",
+        type=int,
+        metavar="N",
+        help="The episode the human wants to end on.",
+    )
+    ending_pick.add_argument(
+        "--last-episode",
+        type=int,
+        metavar="M",
+        help="The human's pick: this episode becomes the last one, written as the finale.",
+    )
+
     frame = sub.add_parser(
         "look-frame",
         help=(
@@ -8933,6 +8959,11 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 after_episode=args.after_episode,
                 clear=args.clear,
             )
+            return 0
+        if args.command == "ending":
+            from creation.season_ending_commands import run_ending
+
+            run_ending(args.desk, episode=args.episode, last_episode=args.last_episode)
             return 0
         if args.command == "look-frame":
             run_look_frame(args.desk, description=args.description, size=args.size)

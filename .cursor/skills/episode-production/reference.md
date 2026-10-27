@@ -350,6 +350,8 @@ Then `finish --desk D --episode N --take tK --take-file <revoice file>`. On a re
 
 ## Episode 2 on
 
+Ending the series early (founder, 27 Oct 2026): `ending --desk D --episode N` reads `GET /v1/spines/{id}/season/ending-check?end_at=N` and prints the server's `line` and `options` word for word (saved as `api/ending-check-epNN.json`); `ending --desk D --last-episode M` sends the human's pick (`POST /v1/spines/{id}/season/end` with `last_episode` and `expected_spine_version`), and the server makes episode M the finale. The kit decides nothing. An older server without the routes is named and nothing is sent. `brief` prints `facts.season_finale_line` as `sokii: …` when the server sends it (fictora-drama #1105), never a count of its own.
+
 Episode 1 is made on its own; the arc is chosen at episode 2, after episode 1 is approved. Ask the human how many episodes the run should be, then:
 
 - Offer arcs sized to that run. For a long run prefer an engine (a situation that repeats with a new problem) plus a slow question; refuse an arc that closes within a few episodes.
