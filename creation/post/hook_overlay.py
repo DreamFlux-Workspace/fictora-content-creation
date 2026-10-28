@@ -6,9 +6,10 @@ Founder decisions of 5 Oct 2026 (fictora-drama ``episode_openings``):
   (``episode_summaries[].hook_line_selected.text``; nothing when ``kind`` is
   ``off``) is burned in large white bold type with a heavy outline over the
   first ~3 s of the finished episode (its first take, at ``finish``).
-  It sits in the upper safe band just below the Sokii mark (which itself sits
-  under the top 8% UI strip; founder screenshot, 28 Oct 2026: it was drawn on
-  the mark), kept out of the right-hand rail, on at most two lines. When a face sits in
+  It sits in the upper safe band just below the Sokii mark, where the server
+  says (``hook_top`` from ``POST /v1/mark/placement``, fictora-drama #1133;
+  founder screenshot, 28 Oct 2026: it was drawn on the mark), kept out of the
+  right-hand rail, on at most two lines. When a face sits in
   the upper band it moves to just above the caption band, unless a caption is
   on screen while it is up: then it stays at the top, so it never sits on the
   first caption (founder, 7 Oct 2026, L-20261005-11; captions are never held
@@ -54,7 +55,7 @@ from creation.captions import (
     _ass_time,
     text_width,
 )
-from creation.post.watermark import mark_bottom
+from creation.post.watermark import fallback_mark_place, mark_place
 
 #: Seconds the hook line aims to stay on screen.
 HOOK_SECONDS = 3.0
@@ -68,18 +69,10 @@ RIGHT_RAIL_X = 0.88
 #: Gap under the top strip, and above the caption band, as a fraction of frame height.
 BAND_GAP = 0.015
 
-
-def hook_top(width: int, height: int) -> int:
-    """The top of a "top" hook line: one :data:`BAND_GAP` under the Sokii mark (276 on 1080x1920).
-
-    Computed from :mod:`creation.post.watermark`, so it follows any change to the mark.
-    """
-
-    return mark_bottom(width, height) + round(BAND_GAP * height)
-
-
-#: The same place as a share of the 1080x1920 house canvas (the face check's band top).
-HOOK_TOP = hook_top(1080, HOUSE_CANVAS_HEIGHT) / HOUSE_CANVAS_HEIGHT
+#: The face check's band top, as a share of the frame: where a top line starts by the kit's fallback
+#: numbers (288 on 1080x1920, :func:`creation.post.watermark.fallback_mark_place`). The line itself
+#: starts at the server's ``hook_top`` (:func:`burn`); this band is only where to look for a face.
+HOOK_TOP = fallback_mark_place(1080, HOUSE_CANVAS_HEIGHT).hook_top / HOUSE_CANVAS_HEIGHT
 #: Hook line size on the 1920-high canvas (the house caption is 64): large, bold.
 HOOK_FONT_SIZE = 88
 HOOK_OUTLINE = 7
@@ -444,14 +437,28 @@ def _fit(text: str, size: int, room: float, floor: int) -> tuple[list[str], int]
 
 
 def overlay_ass(
-    overlay: HookOverlay, *, width: int, height: int, duration: float | None = None
+    overlay: HookOverlay,
+    *,
+    width: int,
+    height: int,
+    duration: float | None = None,
+    hook_top: int | None = None,
 ) -> str:
     """The ASS that draws ``overlay`` on a ``width`` x ``height`` video.
 
     The text block is centred between the left margin and the right-hand rail
     (``RIGHT_RAIL_X``), never under the top strip. Hook mode: white bold, heavy
     black outline and shadow. Title bar: a solid dark band with white text.
+    A top line (and the title bar) starts at ``hook_top``, the server's place
+    under the Sokii mark (:func:`burn` asks it); ``None`` is the kit's fallback
+    (:func:`creation.post.watermark.fallback_mark_place`).
     """
+
+    line_top = (
+        hook_top
+        if hook_top is not None
+        else fallback_mark_place(width, height).hook_top
+    )
 
     # The words as the server draws them, no em or en dash (creation.on_screen_text).
     text, title = drawn_texts([overlay.text, overlay.title], kind="title")
@@ -482,7 +489,7 @@ def overlay_ass(
     if overlay.mode == "title_bar":
         end = _ass_time(duration if duration else 24 * 3600 - 1)
         # Under the Sokii mark (it was on the bar's corner and ran into a long title, 28 Oct 2026).
-        top = mark_bottom(width, height) + round(BAND_GAP / 2 * height)
+        top = line_top
         band = round(BAR_HEIGHT * height)
         title_size = _scaled(BAR_TITLE_SIZE, height)
         title_lines, title_size = _fit(
@@ -519,7 +526,7 @@ def overlay_ass(
             f"\\an2\\pos({centre_x},{round((CAPTION_BAND[0] - BAND_GAP) * height)})"
         )
     else:
-        anchor = f"\\an8\\pos({centre_x},{hook_top(width, height)})"
+        anchor = f"\\an8\\pos({centre_x},{line_top})"
     sized = f"\\fs{size}" if size != _scaled(HOOK_FONT_SIZE, height) else ""
     body = "\\N".join(_ass_escape(line) for line in lines)
     return header + (
@@ -535,8 +542,16 @@ def burn(
     out: Path,
     *,
     duration: float | None = None,
+    desk: Path | None = None,
+    episode: int = 1,
+    mark_y: int | None = None,
 ) -> Path:
-    """Write the overlay's ASS to ``ass_path`` and burn it onto ``video`` as ``out`` (house fonts, libass)."""
+    """Write the overlay's ASS to ``ass_path`` and burn it onto ``video`` as ``out`` (house fonts, libass).
+
+    ``desk`` / ``episode`` reach the server for where a top line starts (its ``hook_top`` under the
+    mark, :func:`creation.post.watermark.mark_place`); ``mark_y`` is the operator's mark override
+    (``--watermark-y``), so the line follows the mark.
+    """
 
     from creation.captions import burn_ass, find_ffmpeg
     from creation.post.media import probe_video
@@ -548,6 +563,9 @@ def burn(
             width=info.width,
             height=info.height,
             duration=duration or info.duration_seconds,
+            hook_top=mark_place(
+                info.width, info.height, y=mark_y, desk=desk, episode=episode
+            ).hook_top,
         ),
         encoding="utf-8",
     )
@@ -572,7 +590,6 @@ __all__ = [
     "delivery_format",
     "first_spoken_line",
     "hook_end",
-    "hook_top",
     "is_four_three",
     "overlay_ass",
     "same_words",

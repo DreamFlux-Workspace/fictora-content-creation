@@ -59,10 +59,17 @@ def test_the_layout_matches_not_home_on_1080x1920() -> None:
     assert (place.caption_size, place.caption_min_size) == (62, 52), (
         "ASS 62 draws Not Home's 56 px"
     )
-    assert place.mark == (32, 173), (
-        "Not Home's row, 3% in: the same corner as a portrait saved copy and the approved Instagram reels"
+    from creation.post import delivery_geometry as dg
+
+    # Since fictora-drama #1133 the mark sits inside the picture, top left; the title box stays put.
+    assert place.mark == (
+        round(1080 * dg.MARK_X_FRACTION),
+        picture.y + dg.MARK_PICTURE_INSET,
+    ), "inside the 4:3 picture, top left (the server's place; this is the fallback)"
+    assert place.title.y == dg.MARK_Y + dg.MARK_HEIGHT + dg.MARK_TITLE_GAP == 256, (
+        "the title box does not move"
     )
-    assert place.title.y >= place.mark[1] + 63, "the title never runs into the mark"
+    assert place.title.bottom < place.mark[1], "the title never runs into the mark"
     assert title_sizes() == (62, 60, 58, 56, 54, 52)
 
 
@@ -360,6 +367,18 @@ def _letterbox_desk(desk: Path, *, locked: bool = False) -> None:
     (api / "take-facts-ep01-t1-v1.json").write_text(json.dumps(facts))
 
 
+def _mark_on_picture(frame: np.ndarray) -> bool:
+    """The mark's near-white ink in its box on the picture, more than the same box further right."""
+
+    from creation.post.watermark import mark_size
+
+    x, y = layout().mark
+    w, h = mark_size(1080)
+    box = frame[y : y + h, x : x + w].min(axis=-1) > 230
+    beside = frame[y : y + h, 600 : 600 + w].min(axis=-1) > 230
+    return int(box.sum()) > int(beside.sum()) + 200
+
+
 def _frame(video: Path, at: float) -> np.ndarray:
     frames = decode_frames(video, width=1080, height=1920, fps=24)
     return frames[min(len(frames) - 1, int(round(at * 24)))]
@@ -431,8 +450,9 @@ def test_finish_builds_the_9_16_letterbox_file_with_mark_title_and_band_captions
     assert _yellow(frame[260:500]).sum() > 200, "the yellow hook line above the picture"
     white = (frame[260:500].min(axis=-1) > 220).sum()
     assert white > 200, "the white setup line"
-    assert frame[179:260, 36:130].mean() > frame[179:228, 260:320].mean() + 20, (
-        "the mark in the top band"
+    assert _mark_on_picture(frame), "the mark top left on the picture"
+    assert frame[150:250, 0:300].max() < 30, (
+        "nothing left in the band where the mark was"
     )
 
 
@@ -492,9 +512,11 @@ def test_join_marks_and_titles_the_joined_letterbox_file_once(tmp_path: Path) ->
     )
     frame = _frame(result.marked, 3.0)
     assert _yellow(frame[260:500]).sum() > 100, "the hook line on the joined file"
-    assert frame[179:260, 36:130].max() > 100, "the mark in the top band"
+    assert _mark_on_picture(frame), "the mark top left on the picture"
     master = _frame(result.master, 3.0)
-    assert master[179:228, 38:98].max() < 30, "the master carries no mark"
-    assert any("letterbox: Sokii mark in the top band" in n for n in result.notes)
+    assert not _mark_on_picture(master), "the master carries no mark"
+    assert any(
+        "letterbox: Sokii mark top left on the picture" in n for n in result.notes
+    )
     with pytest.raises(ValueError, match="burned in yellow"):
         run_join(desk, episodes=(1,), caption_colour="white", stream=io.StringIO())

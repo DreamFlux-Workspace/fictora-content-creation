@@ -81,7 +81,7 @@ finishes into the 9:16 file itself: after the mix the picture goes on the
 takes stay on the desk), the captions are burned in the band under the picture
 (phrases of up to five words, yellow or ``--caption-colour white``, ending with
 the voice on a locked-voice take, upright for a speaker the take draws), and
-the mark step puts the Sokii mark in the top band and the title block above the
+the mark step puts the Sokii mark top left on the picture (where the server says) and the title block above the
 picture (setup line white, hook line yellow). The master ``join`` reads is the
 captioned canvas without mark or title. A portrait show finishes exactly as
 before.
@@ -3491,8 +3491,9 @@ def run_finish(
         # Burned from its own -overlay file: the .ass beside the video keeps the captions too (L-20261006-8).
         ass = next_versioned_path(takes, f"{base}-hook-overlay", ".ass")
         drawn = burn(
-            overlay, take, ass, next_versioned_path(takes, f"{base}-hook", ".mp4")
-        )
+            overlay, take, ass, next_versioned_path(takes, f"{base}-hook", ".mp4"),
+            desk=desk, episode=episode, mark_y=watermark_y,
+        )  # fmt: skip
         keep_captions_beside(drawn, ass)
         append_run_note(
             run_dir,
@@ -3514,7 +3515,7 @@ def run_finish(
                 if title and fitted
                 else "no title block"
             )
-            detail = f"Sokii mark in the top band; {words}"
+            detail = f"Sokii mark top left on the picture; {words}"
             append_run_note(
                 run_dir,
                 f"Mark and title -> `{marked.name}` (un-marked master `{take.name}`): {detail}",
@@ -3659,7 +3660,7 @@ def run_finish(
             print(f"[hook-line] {hook.line()}", file=out, flush=True)
         step(
             "watermark",
-            "Putting the Sokii mark in the top band and the title block on"
+            "Putting the Sokii mark on the picture and the title block above it"
             if letterbox
             else "Putting the Sokii mark on",
             do_watermark,

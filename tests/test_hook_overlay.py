@@ -74,7 +74,9 @@ def test_the_selected_hook_line_is_drawn_top_below_the_ui_strip_and_out_of_the_r
     anchor, x, y = _pos(ass)
 
     assert anchor == "8" and y >= hk.TOP_STRIP * H
-    assert y == hk.hook_top(W, H), "just under the Sokii mark (founder, 28 Oct 2026)"
+    assert y == hk.fallback_mark_place(W, H).hook_top, (
+        "just under the Sokii mark (founder, 28 Oct 2026)"
+    )
     widest = max(
         text_width(line, 88) for line in ass.rsplit("}", 1)[1].strip().split("\\N")
     )

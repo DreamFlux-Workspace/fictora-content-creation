@@ -23,10 +23,13 @@ from creation.post.watermark import watermark
 
 
 def test_the_mask_box_covers_the_mark_where_it_is_drawn() -> None:
+    from creation.post.watermark import fallback_mark_place
+
     left, top, right, bottom = mark_mask_box(1080, 1920)
-    # The mark on a 1080x1920 copy: (32, 173), 230x74 (the header-logo mark, 27 Oct 2026).
-    assert left * 1080 <= 32 and top * 1920 <= 173
-    assert right * 1080 >= 32 + 230 and bottom * 1920 >= 173 + 74
+    # The mark on a 1080x1920 copy, where and as big as the kit draws it (the server's numbers).
+    mark = fallback_mark_place(1080, 1920)
+    assert left * 1080 <= mark.x and top * 1920 <= mark.y
+    assert right * 1080 >= mark.x + mark.width and bottom * 1920 >= mark.y + mark.height
     # And no more than a small corner of the frame.
     assert (right - left) * (bottom - top) < 0.015
 

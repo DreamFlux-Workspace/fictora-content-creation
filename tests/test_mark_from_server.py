@@ -15,6 +15,8 @@ from creation.caption_server import server_override
 from creation.post.delivery_geometry import layout
 from creation.post.watermark import (
     MARK_PLACEMENT_ROUTE,
+    MARK_X_FRACTION,
+    MARK_Y_FRACTION,
     mark_position,
     server_mark_position,
 )
@@ -40,8 +42,10 @@ def test_the_kit_uses_the_servers_place() -> None:
 
 def test_an_older_server_falls_back_to_the_same_numbers() -> None:
     with server_override(lambda _path, _body: (404, {"detail": "Not Found"})):
-        assert mark_position(768, 1344, desk=Path("/desk")) == (23, 121)
-    # The fallback is the approved reels' 3% (Instagram and TikTok show the whole frame; the app has no mark).
+        assert mark_position(768, 1344, desk=Path("/desk")) == (
+            round(768 * MARK_X_FRACTION),
+            round(1344 * MARK_Y_FRACTION),
+        )
+    # One fallback x for portrait and letterbox (the server's, fictora-drama #1133).
     x, _ = mark_position(1080, 1920)
-    assert x == round(1080 * 0.03)
-    assert layout().mark[0] == 32
+    assert x == round(1080 * MARK_X_FRACTION) == layout().mark[0]

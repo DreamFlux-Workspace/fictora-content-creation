@@ -28,11 +28,10 @@ from creation.post.letterbox import TitleBlock, mark_and_title, pad_to_canvas
 
 TOLERANCE = 4
 #: The reference's ink, (first, last) row or column.
-# The mark's row is Not Home's; 3% in, the same corner as a portrait saved copy and the founder's approved
-# Instagram reels (fictora-drama #1047). Since 27 Oct 2026 the mark is the app's header logo, cat and "sokii" (230x74 on 1080,
-# fictora-drama #1103 then the header logo): its ink runs x 39-254, y 183-233 (the pill "E2" was x 56-233, y 187-244;
-# the cat alone x 42-122, y 182-249).
-MARK_X, MARK_Y = (39, 254), (183, 233)
+# The mark (the header-logo "C", 27 Oct 2026) sits inside the picture, top left, since fictora-drama
+# #1133 (28 Oct 2026): its ink is this share of its drawn box (x 7-222 of 230, y 10-60 of 74, as measured
+# on the 230x74 mark), so the expectation follows the mark's place and size, not a pinned number.
+MARK_INK_X, MARK_INK_Y = (7 / 230, 222 / 230), (10 / 74, 60 / 74)
 TITLE_1, TITLE_2 = (333, 384), (396, 435)
 CAPTION_DESCENDER, CAPTION_PLAIN = (1417, 1468), (1417, 1457)
 #: fictora-drama #614's measured renders of two captions' ink columns: one centred on the frame, one
@@ -115,10 +114,19 @@ def test_the_mark_title_and_captions_land_on_not_homes_ink(tmp_path: Path) -> No
     assert fitted is not None and len(fitted.setup) == 1 and len(fitted.hook) == 1
 
     first = _gray(marked, 0.5)
-    mark = first[150:260, 0:300] > 150
+    from creation.post.watermark import mark_size
+
+    mx, my = place.mark
+    mw, mh = mark_size(1080)
+    want_x = (mx + round(mw * MARK_INK_X[0]), mx + round(mw * MARK_INK_X[1]))
+    want_y = (my + round(mh * MARK_INK_Y[0]), my + round(mh * MARK_INK_Y[1]))
+    mark = first[my - 20 : my + mh + 20, 0 : mx + mw + 40] > 150
     xs, ys = np.flatnonzero(mark.any(0)), np.flatnonzero(mark.any(1))
-    assert _near((int(xs[0]), int(xs[-1])), MARK_X), (xs[0], xs[-1])
-    assert _near((150 + int(ys[0]), 150 + int(ys[-1])), MARK_Y), (ys[0], ys[-1])
+    assert _near((int(xs[0]), int(xs[-1])), want_x), (xs[0], xs[-1])
+    assert _near((my - 20 + int(ys[0]), my - 20 + int(ys[-1])), want_y), (ys[0], ys[-1])
+    assert (first[150:260, 0:300] > 150).sum() == 0, (
+        "nothing in the band where the mark was"
+    )
 
     title = _runs((first[260:555] > 150).any(1), 260)
     assert len(title) == 2, title
