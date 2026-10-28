@@ -802,6 +802,9 @@ def _print_choices(
 
     for number, choice in enumerate(choices, start=1):
         print(f"{number}. {choice.get('title')} — {choice.get('line')}", file=out)
+        inspired = " ".join(str(choice.get("inspired_by") or "").split())
+        if inspired:
+            print(f"   inspired by: {inspired}", file=out)
         driver = who.get(str(choice.get(id_key) or ""))
         if driver:
             print(f"   who: {driver}", file=out)

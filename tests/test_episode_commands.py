@@ -43,6 +43,7 @@ DIRECTIONS = {
             "direction_id": "dir_1",
             "title": "Opening day",
             "line": "Ren's shop opens with a queue.",
+            "inspired_by": "Inspired by a rival shop opening day",
         },
         {
             "direction_id": "dir_2",
@@ -88,7 +89,9 @@ def test_arc_list_then_pick_keeps_the_arc_and_saves_episode_twos_directions(
     ]
     state = load_production(desk)
     assert state.series_arc is not None and state.series_arc["rewritten"] is True
-    assert "2. The old recipe" in out.getvalue() and "1. Opening day" in out.getvalue()
+    text = out.getvalue()
+    assert "2. The old recipe" in text and "1. Opening day" in text
+    assert "inspired by: Inspired by a rival shop opening day" in text
     assert (desk / "api" / "brief-ep02-v1.json").is_file()
 
 

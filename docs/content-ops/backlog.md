@@ -2,6 +2,8 @@
 
 Gaps the Episode Production Runbook named. Each production appends one line when it touches a gap. Do not close a line here by writing a scratch tool. Close it in the product, then mark the row Aligned in [api-map.md](api-map.md).
 
+Closed 2026-10-28 in the kit (Research Search v1): `brief` and `arc --pick` print `inspired by:` under a direction when the server's `POST …/director/brief` includes `inspired_by` on that direction (episode 2+ directions; same field as the app's direction cards).
+
 Closed in product (2026-09-21): `cut_tempo=one_shot`; `clip_duration_seconds` 4–15; `caption_style=house`; successor hand-off paste that fails loud; look-register Image 1 (`POST .../look-register`); location/prop look plates (`POST .../look-plates/draw`); 2×N `board_row` authoring; board exposure gate (`GET .../boards/exposure`, `422 boards_dim`); inner-voice (`PUT .../inner-voice`); voice auditions and pick; series audio-bed pin (`POST .../audio-bed`); sidechain ducking. Come Again (2026-09-18 → product 2026-09-21): frame-diff intra-take cuts + soften; canary `duration_seconds` 4–15; bed coverage assert; making-take forward lock; line-per-cell lint; speech-verify mute/diff; caption onset snap. See [api-map.md](api-map.md) and [research/2026-09-18-come-again-production.md](../research/2026-09-18-come-again-production.md).
 
 Closed 2026-09-28: adding or removing a line and adding an off-screen voice after the draft (fictora-drama #466, `fictora-produce line --add/--remove/--new-voice`; SCP-173 Blink learnings #12/#15).
