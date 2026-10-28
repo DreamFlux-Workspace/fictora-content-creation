@@ -116,10 +116,11 @@ def test_the_letterbox_mark_is_drawn_at_the_servers_place_and_size(
         return ran[-1][ran[-1].index("-filter_complex") + 1]
 
     monkeypatch.setattr(
-        wm, "server_letterbox_place", lambda *a, **k: LetterboxPlace(41, 590, None, None, 199, 64)
+        wm, "server_letterbox_place", lambda *a, **k: LetterboxPlace(41, 590, None, None, 199, 64, 0.4)
     )  # fmt: skip
     lb.mark_and_title(tmp_path / "in.mp4", tmp_path / "a.mp4", title=None)
     assert "scale=199:64:flags=lanczos" in graph() and "overlay=41:590" in graph()
+    assert "colorchannelmixer=aa=0.4[m]" in graph(), "the server's opacity"
     # An older server (no size): its place, the kit's size.
     monkeypatch.setattr(
         wm, "server_letterbox_place", lambda *a, **k: LetterboxPlace(32, 173)
@@ -132,6 +133,7 @@ def test_the_letterbox_mark_is_drawn_at_the_servers_place_and_size(
     lb.mark_and_title(tmp_path / "in.mp4", tmp_path / "c.mp4", title=None)
     x, y = layout().mark
     assert f"overlay={x}:{y}" in graph() and y > layout().picture.y
+    assert f"colorchannelmixer=aa={wm.MARK_ALPHA}[m]" in graph()
 
 
 def _libass_ffmpeg() -> str | None:

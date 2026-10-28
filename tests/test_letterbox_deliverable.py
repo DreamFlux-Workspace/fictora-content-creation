@@ -367,16 +367,18 @@ def _letterbox_desk(desk: Path, *, locked: bool = False) -> None:
     (api / "take-facts-ep01-t1-v1.json").write_text(json.dumps(facts))
 
 
-def _mark_on_picture(frame: np.ndarray) -> bool:
-    """The mark's near-white ink in its box on the picture, more than the same box further right."""
+def _mark_on_picture(marked: np.ndarray, unmarked: np.ndarray) -> bool:
+    """The mark changed its box on the picture (it is drawn at the server's opacity, 0.65 by default),
+    and nothing else in the frame's top-left quarter of the picture."""
 
     from creation.post.watermark import mark_size
 
     x, y = layout().mark
     w, h = mark_size(1080)
-    box = frame[y : y + h, x : x + w].min(axis=-1) > 230
-    beside = frame[y : y + h, 600 : 600 + w].min(axis=-1) > 230
-    return int(box.sum()) > int(beside.sum()) + 200
+    diff = np.abs(marked.astype(int) - unmarked.astype(int)).max(axis=-1)
+    inside = int((diff[y : y + h, x : x + w] > 40).sum())
+    outside = diff[y : y + h, x + w + 10 : x + w + 10 + w]
+    return inside > 200 and int((outside > 40).sum()) < 20
 
 
 def _frame(video: Path, at: float) -> np.ndarray:
@@ -450,7 +452,9 @@ def test_finish_builds_the_9_16_letterbox_file_with_mark_title_and_band_captions
     assert _yellow(frame[260:500]).sum() > 200, "the yellow hook line above the picture"
     white = (frame[260:500].min(axis=-1) > 220).sum()
     assert white > 200, "the white setup line"
-    assert _mark_on_picture(frame), "the mark top left on the picture"
+    assert _mark_on_picture(frame, _frame(master, 1.6)), (
+        "the mark top left on the picture"
+    )
     assert frame[150:250, 0:300].max() < 30, (
         "nothing left in the band where the mark was"
     )
@@ -512,9 +516,9 @@ def test_join_marks_and_titles_the_joined_letterbox_file_once(tmp_path: Path) ->
     )
     frame = _frame(result.marked, 3.0)
     assert _yellow(frame[260:500]).sum() > 100, "the hook line on the joined file"
-    assert _mark_on_picture(frame), "the mark top left on the picture"
     master = _frame(result.master, 3.0)
-    assert not _mark_on_picture(master), "the master carries no mark"
+    assert _mark_on_picture(frame, master), "the mark top left on the picture"
+    assert not _mark_on_picture(master, master), "the master carries no mark"
     assert any(
         "letterbox: Sokii mark top left on the picture" in n for n in result.notes
     )

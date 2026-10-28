@@ -599,7 +599,7 @@ def mark_and_title(
     else:
         mark_size = f"{round(info.width * MARK_WIDTH_FRACTION)}:-1"
     graph = (
-        f"{first};[1:v]scale={mark_size}:flags=lanczos,format=rgba,colorchannelmixer=aa={MARK_ALPHA}[m];"
+        f"{first};[1:v]scale={mark_size}:flags=lanczos,format=rgba,colorchannelmixer=aa={server.opacity if server is not None else MARK_ALPHA}[m];"
         f"[t][m]overlay={x}:{y}[v]"
     )
     inputs = ["-i", str(video), "-i", str(mark)]

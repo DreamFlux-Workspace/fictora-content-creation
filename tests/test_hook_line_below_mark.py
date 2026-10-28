@@ -56,7 +56,7 @@ def _answer(extra: dict[str, Any] | None = None, *, drop: tuple[str, ...] = ()):
     def poster(_path: str, body: dict[str, Any]) -> tuple[int, Any]:
         answer = {
             **SERVER[(body["width"], body["height"])],
-            "opacity": 1.0,
+            "opacity": wm.MARK_ALPHA,
             **(extra or {}),
         }
         return 200, {k: v for k, v in answer.items() if k not in drop}
@@ -96,10 +96,17 @@ def test_the_kit_takes_the_servers_mark_place_size_and_hook_top(
 
 
 def test_the_server_alone_decides_even_numbers_the_kit_would_never_pick() -> None:
-    odd = {"x": 90, "y": 400, "mark_width": 300, "mark_height": 97, "hook_top": 555}
+    odd = {
+        "x": 90,
+        "y": 400,
+        "mark_width": 300,
+        "mark_height": 97,
+        "hook_top": 555,
+        "opacity": 0.4,
+    }
     with server_override(_answer(odd)):
         place = mark_place(1080, 1920, desk=Path("/desk"))
-    assert place == MarkPlace(90, 400, 300, 97, 555)
+    assert place == MarkPlace(90, 400, 300, 97, 555, 0.4)
     assert wm.mark_scale_filter((place.width, place.height)) == (
         "scale=300:97:flags=lanczos,"
     )
@@ -142,12 +149,22 @@ def test_the_watermark_step_draws_the_servers_size_at_the_servers_place(
         lambda _v: SimpleNamespace(width=1080, height=1920, has_audio=False),
     )
     monkeypatch.setattr(wm, "run_ffmpeg", lambda args: ran.append(args))
-    odd = {"x": 90, "y": 400, "mark_width": 300, "mark_height": 97}
+    odd = {"x": 90, "y": 400, "mark_width": 300, "mark_height": 97, "opacity": 0.4}
     with server_override(_answer(odd)):
         wm.watermark(tmp_path / "in.mp4", tmp_path / "out.mp4", desk=Path("/desk"))
 
     graph = ran[0][ran[0].index("-filter_complex") + 1]
     assert "scale=300:97:flags=lanczos," in graph and "overlay=90:400" in graph
+    assert "colorchannelmixer=aa=0.4[m]" in graph, "the server's opacity"
+    # No opacity in the answer (an older server), or no server: the kit's own.
+    with server_override(_answer(drop=("opacity",))):
+        wm.watermark(tmp_path / "in.mp4", tmp_path / "out2.mp4", desk=Path("/desk"))
+    wm.watermark(tmp_path / "in.mp4", tmp_path / "out3.mp4")
+    for args in ran[1:]:
+        assert (
+            f"colorchannelmixer=aa={wm.MARK_ALPHA}[m]"
+            in args[args.index("-filter_complex") + 1]
+        )
 
 
 # --- an older server, or none ----------------------------------------------------------------------

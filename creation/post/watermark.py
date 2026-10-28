@@ -1,18 +1,17 @@
 """The Sokii mark, top left, where the server says (fictora-drama #1039, #1133).
 
 The server owns the mark's place and size (server-heavy rule, 15 Oct 2026):
-since fictora-drama #1133 (founder, 28 Oct 2026) 12% in from the left and 14.5%
-down on a portrait frame, clear of what Instagram on a tall iPhone crops (about
-9% off each side) and its back-arrow row (about 8.6-11.5% down); on a letterbox
-canvas, inside the 4:3 picture, top left. :func:`mark_place`
+since fictora-drama #1133 (founder's final numbers, 28 Oct 2026) 3% in from the
+left and 16% down on a portrait frame, at 0.65 opacity; on a letterbox canvas,
+inside the 4:3 picture, top left. :func:`mark_place`
 asks ``POST /v1/mark/placement`` for each frame: the mark's top-left corner, its
 drawn size (``mark_width`` x ``mark_height``, 207x67 on 1080x1920 since
 fictora-drama #1133, 28 Oct 2026) and, on a portrait frame, where a top hook
 line starts (``hook_top``, under the mark). The kit only draws what it is told.
 An older server (404/405, or an answer without the new fields), or one that
 cannot be reached, is never an error: the kit uses the same numbers itself
-(12% in, 14.5% down, 207/1080 of the width, the hook line 2.5% under the mark:
-130:278, 207x67, hook at 393 on 1080x1920; named constants below, each naming
+(3% in, 16% down, 207/1080 of the width, 0.65 opacity, the hook line 2.5% under
+the mark: 32:307, 207x67, hook at 422 on 1080x1920; named constants below, each naming
 the server constant it mirrors) and prints a ``NOTE`` when the server could not
 be asked. The mark is drawn at full strength (its soft shadow
 is in the PNG). A ``y`` override is never allowed into the top 8% of the frame:
@@ -38,20 +37,21 @@ MARK_PNG_SIZE = (460, 148)
 MARK_PLACEMENT_ROUTE = "/v1/mark/placement"
 #: Fallback only (an older or unreachable server): the server's
 #: ``social_safe_zones.SAVED_COPY_MARK_LEFT_FRACTION``, the mark's left edge on portrait and letterbox:
-#: 12% in since fictora-drama #1133 (founder, 28 Oct 2026: Instagram on a tall iPhone crops about 9% off
-#: each side; 3% before).
-MARK_X_FRACTION = 0.12
+#: 3% in (founder's final numbers, fictora-drama #1133, 28 Oct 2026).
+MARK_X_FRACTION = 0.03
 #: Fallback only: the server's ``social_safe_zones.MARK_WIDTH_FRACTION``, the mark's drawn width as a share
 #: of the frame's (207x67 on 1080 since fictora-drama #1133, 28 Oct 2026: 10% smaller than 230x74).
 MARK_WIDTH_FRACTION = 207 / 1080
 #: Fallback only: the server's ``social_safe_zones.MARK_TOP_FRACTION``, the portrait mark's top edge:
-#: 14.5% down since fictora-drama #1133 (under Instagram's back-arrow row, about 8.6-11.5%; 9% before).
-MARK_Y_FRACTION = 0.145
+#: 16% down since fictora-drama #1133 (307 on 1920; under Instagram's back-arrow row; 9% before).
+MARK_Y_FRACTION = 0.16
 #: Fallback only: the server's gap from the mark's bottom to a portrait top hook line's top
-#: (``hook_top``, fictora-drama #1133), as a share of the frame's height: 393 on 1080x1920.
+#: (``hook_top``, fictora-drama #1133), as a share of the frame's height: 422 on 1080x1920.
 HOOK_GAP_FRACTION = 0.025
 SAFE_TOP_FRACTION = 0.08
-MARK_ALPHA = 1.0
+#: Fallback only: the server's ``hosted_post.SOKII_MARK_OPACITY`` (the route's ``opacity``): 0.65 since
+#: fictora-drama #1133 (full strength before).
+MARK_ALPHA = 0.65
 
 
 @dataclass(frozen=True)
@@ -67,6 +67,8 @@ class MarkPlace:
     width: int
     height: int
     hook_top: int
+    #: The mark's opacity (ffmpeg ``colorchannelmixer=aa=``): the server's, else :data:`MARK_ALPHA`.
+    opacity: float = MARK_ALPHA
 
 
 def _number(answer: Mapping[str, object], key: str) -> int | None:
@@ -78,8 +80,21 @@ def _number(answer: Mapping[str, object], key: str) -> int | None:
     )
 
 
+def _opacity(answer: Mapping[str, object]) -> float:
+    """The route's ``opacity`` (0-1), else :data:`MARK_ALPHA`."""
+
+    value = answer.get("opacity")
+    if (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and 0 < value <= 1
+    ):
+        return float(value)
+    return MARK_ALPHA
+
+
 def fallback_mark_place(width: int, height: int, *, y: int | None = None) -> MarkPlace:
-    """The kit's own copy of the server's place (older or unreachable server): 130:278, 207x67, hook at 393 on 1080x1920."""
+    """The kit's own copy of the server's place (older or unreachable server): 32:307, 207x67, hook at 422 on 1080x1920."""
 
     top = (
         round(height * MARK_Y_FRACTION)
@@ -143,7 +158,7 @@ def server_mark_place(
     hook_top = _number(answer, "hook_top")
     if hook_top is None:
         hook_top = top + drawn_h + round(height * HOOK_GAP_FRACTION)
-    return MarkPlace(x, top, drawn_w, drawn_h, hook_top)
+    return MarkPlace(x, top, drawn_w, drawn_h, hook_top, _opacity(answer))
 
 
 def server_mark_position(
@@ -179,6 +194,8 @@ class LetterboxPlace:
     #: The mark's drawn size (fictora-drama #1133); ``None`` on an older server (the kit's size).
     mark_width: int | None = None
     mark_height: int | None = None
+    #: The mark's opacity: the route's, else :data:`MARK_ALPHA`.
+    opacity: float = MARK_ALPHA
 
 
 def server_letterbox_place(
@@ -225,7 +242,7 @@ def server_letterbox_place(
     sized = bool(served_w and served_h and served_w > 0 and served_h > 0)
     return LetterboxPlace(
         x, top, _number(answer, "title_bottom"), _number(answer, "title_four_line_size"),
-        served_w if sized else None, served_h if sized else None,
+        served_w if sized else None, served_h if sized else None, _opacity(answer),
     )  # fmt: skip
 
 
@@ -304,7 +321,7 @@ def watermark(
     info = probe_video(video)
     place = mark_place(info.width, info.height, y=y, desk=desk, episode=episode)
     scale = mark_scale_filter((place.width, place.height))
-    graph = f"[1:v]{scale}format=rgba,colorchannelmixer=aa={MARK_ALPHA}[m];[0:v][m]overlay={place.x}:{place.y}[v]"
+    graph = f"[1:v]{scale}format=rgba,colorchannelmixer=aa={place.opacity}[m];[0:v][m]overlay={place.x}:{place.y}[v]"
     inputs = ["-i", str(video), "-i", str(mark)]
     args = [*inputs, "-filter_complex", graph, "-map", "[v]"]
     if info.has_audio:
