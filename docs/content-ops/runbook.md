@@ -244,6 +244,7 @@ Repurposing an episode (a new idea on an episode already authored): update its t
 - Give every named character a clearly different outfit and silhouette, so no two read alike at a glance. Avoid stock names the writers reach for ("Mara Voss"); pick a name of your own.
 - Extreme close-ups: the server guards every board against a photo-real look. Check by eye; if a close-up of eyes or skin still drifts, the redraw note names the show's style ("flat anime, clean ink lines, no photographic texture").
 - Redraw notes (`redraw-plate --note`, `look-note`, a frame edit) describe shapes, never judgements: "short, round and fat, two clumsy pleats", not "crooked".
+- A redraw note that changes what a character wears ("she wears her funeral hanbok") makes the story ask first: just this episode, or from now on? The question and the two answers are the server's words; show them to the creator as printed and run the line for their pick (`redraw-plate ... --outfit this-episode` or `--outfit from-now-on`). Nothing is drawn or charged until they answer. "From now on" changes the character's card for every later picture; "this episode" keeps the card and dresses only that episode.
 - Faces come from crops of references, never from the reference wholesale, and never from a real person's likeness.
 - Describe the artwork once. The look is settled for the series. A near-copy of the reference is a fault. Look drift between episodes is a fault.
 - Consistency is inherited from plates and accepted frames, not from repeating the style paragraph.

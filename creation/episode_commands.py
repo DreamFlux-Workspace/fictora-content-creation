@@ -89,6 +89,7 @@ from creation.desk_media_urls import drawn_cast_rows
 from creation.post.desk import name_matches
 from creation.harness import stages_gated as stages
 from creation import line_fit
+from creation import note_outfit
 from creation.harness.http_util import (
     api_error_text,
     describe_job_error,
@@ -6687,8 +6688,109 @@ def run_plate_note(
     return [str(n.get("text")) for n in notes]
 
 
+def _post_cast_note(
+    run: Any, state: ProductionState, spine: Mapping[str, Any], cast_id: str, note: str
+) -> None:
+    """``POST .../cast/{cast_id}/notes`` with the desk's episode (#1156); an older server gets the note alone.
+
+    The episode lets the server's outfit question name the episode the creator
+    is on. A server without #1156 refuses the extra field (nothing is saved),
+    so the note is sent once more without it, exactly as before.
+    """
+
+    path = f"/v1/spines/{state.spine_id}/cast/{cast_id}/notes"
+    body: dict[str, Any] = {"spine_version": spine["spine_version"], "text": note}
+    episode = state.episode_ordinal
+    if not isinstance(episode, int) or episode < 1:
+        run.post(path, body)
+        return
+    try:
+        run.post(path, {**body, note_outfit.EPISODE_FIELD: episode})
+    except SystemExit as exc:
+        if not note_outfit.episode_field_refused(
+            str(exc.code), getattr(exc, "body", None)
+        ):
+            raise
+        run.post(path, body)
+
+
+def _cast_card(spine: Mapping[str, Any], cast_id: str) -> Mapping[str, Any]:
+    return next(
+        (c for c in spine.get("cast") or [] if isinstance(c, Mapping) and c.get("cast_id") == cast_id),
+        {},
+    )  # fmt: skip
+
+
+def _settle_note_outfit(
+    run: Any,
+    state: ProductionState,
+    spine: dict[str, Any],
+    *,
+    cast_id: str,
+    name: str,
+    note: str,
+    outfit: str | None,
+    rerun: str,
+    out: Any,
+) -> dict[str, Any]:
+    """Before any draw: an outfit note's open question stops the command, or ``outfit`` answers it (free).
+
+    The server (#1156) reads the note; while its ``outfit_change.status`` is
+    ``asked`` the kit prints the server's question and option labels and stops
+    (nothing drawn or charged). With ``outfit`` it sends the answer to
+    ``POST .../notes/{note_id}/outfit`` and reads the story again. Once the
+    server has applied it, one plain line says what changed. A note without
+    ``outfit_change`` (most notes, or a server without #1156) changes nothing.
+    """
+
+    entry = note_outfit.note_on_card(_cast_card(spine, cast_id), note)
+    change = note_outfit.outfit_change(entry)
+    if change is not None and change.get("status") == "asked" and outfit is not None:
+        note_id = str((entry or {}).get("note_id") or "")
+        try:
+            run.post(
+                f"/v1/spines/{state.spine_id}/cast/{quote(cast_id, safe='')}"
+                f"/notes/{quote(note_id, safe='')}/outfit",
+                {
+                    "spine_version": spine["spine_version"],
+                    "answer": note_outfit.OUTFIT_ANSWERS[outfit],
+                },
+            )
+        except SystemExit as exc:
+            # Answered meanwhile (the app, another window): the server's answer stands; carry on.
+            if (
+                note_outfit.QUESTION_NOT_OPEN
+                not in f"{exc.code} {getattr(exc, 'body', '')!r}"
+            ):
+                raise
+        spine = run.spine(state.spine_id or "")
+        change = note_outfit.outfit_change(
+            note_outfit.note_on_card(_cast_card(spine, cast_id), note)
+        )
+    elif outfit is not None:
+        print(
+            f"[plate] {name}'s note has no open outfit question; "
+            f"--outfit {outfit} was not needed (nothing sent for it).",
+            file=sys.stderr,
+        )
+    if change is None:
+        return spine
+    if change.get("status") == "asked":
+        raise CommandStopped(note_outfit.question_text(name, change, rerun=rerun))
+    line = note_outfit.changed_line(name, change)
+    if line:
+        print(line, file=out)
+    return spine
+
+
 def run_redraw_plate_with_note(
-    desk: Path, *, cast: str, note: str, out: Any = None, fresh: bool = False
+    desk: Path,
+    *,
+    cast: str,
+    note: str,
+    out: Any = None,
+    fresh: bool = False,
+    outfit: str | None = None,
 ) -> Path:
     """Correct ONE character and redraw only their plate. Spends one still; nobody else is drawn or paid.
 
@@ -6722,6 +6824,10 @@ def run_redraw_plate_with_note(
         ``/openapi.json`` lists the regenerate body without ``fresh`` is
         refused before anything is sent; a 4xx naming ``fresh`` stops with the
         same plain words (nothing drawn or charged).
+    outfit
+        ``this-episode`` or ``from-now-on``: the answer to the server's outfit
+        question on this note (fictora-drama #1156). Without it, a note the
+        server asks about stops before any draw with the server's question.
 
     Returns
     -------
@@ -6746,6 +6852,10 @@ def run_redraw_plate_with_note(
         check_note_length(note, limit=CAST_NOTE_MAX, command="redraw-plate")
     except ValueError as exc:
         raise CommandStopped(str(exc)) from None
+    if outfit is not None and outfit not in note_outfit.OUTFIT_ANSWERS:
+        raise CommandStopped(
+            f"--outfit must be one of: {', '.join(note_outfit.OUTFIT_ANSWERS)}"
+        )
     _hold_for_pitch(desk, "redraw-plate")
     _hold_for_look(desk, "redraw-plate")
     desk, state, run = _desk_session(desk)
@@ -6800,11 +6910,22 @@ def run_redraw_plate_with_note(
                 file=sys.stderr,
             )
         else:
-            run.post(
-                f"/v1/spines/{state.spine_id}/cast/{cast_id}/notes",
-                {"spine_version": spine["spine_version"], "text": note},
-            )
+            _post_cast_note(run, state, spine, cast_id, note)
             spine = run.spine(state.spine_id or "")
+        spine = _settle_note_outfit(
+            run,
+            state,
+            spine,
+            cast_id=cast_id,
+            name=name,
+            note=note,
+            outfit=outfit,
+            rerun=(
+                f'fictora-produce redraw-plate --desk {desk} --cast "{name}" --note "{note}"'
+                + (" --fresh" if fresh else "")
+            ),
+            out=out,
+        )
         digest = hashlib.sha256(_note_key(note).encode()).hexdigest()[:10]
         if fresh:
             print(
@@ -8825,6 +8946,16 @@ def add_episode_parsers(
             "of it). Same price; a server without it says so and nothing is sent or charged."
         ),
     )
+    plate.add_argument(
+        "--outfit",
+        choices=sorted(note_outfit.OUTFIT_ANSWERS),
+        default=None,
+        help=(
+            "Answer the story's question when the note changes what the character wears: this-episode "
+            "(just that episode) or from-now-on (their card changes). Free; without it such a note "
+            "stops before any drawing and prints the question."
+        ),
+    )
 
     props = sub.add_parser(
         "props",
@@ -9214,7 +9345,11 @@ def dispatch_episode(args: argparse.Namespace) -> int:
             return 0
         if args.command == "redraw-plate":
             run_redraw_plate_with_note(
-                args.desk, cast=args.cast, note=args.note, fresh=args.fresh
+                args.desk,
+                cast=args.cast,
+                note=args.note,
+                fresh=args.fresh,
+                outfit=args.outfit,
             )
             return 0
         if args.command == "outfit":
