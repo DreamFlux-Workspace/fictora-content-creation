@@ -23,7 +23,8 @@ What ``finish`` and ``join`` make for such a show (positions in
   the voice does on a locked-voice take (:func:`voice_end_spans`), and an
   on-screen speaker's line is upright (:func:`italic_overrides`).
 * **Mark and title** go on last, with the mark (:func:`mark_and_title`): the
-  Sokii mark in the top band (ink x 38-97, y 179-228), never on the picture; the title
+  Sokii mark top left inside the picture (the server's place and size, fictora-drama #1133:
+  207x67 at 32:583 on 1080x1920); the title
   block just above the picture: the setup line in white (the episode's
   own ``title_line`` from ``hook-line --setup-line``, else the series title) and the hook line in house yellow
   (``--hook-line``, else the desk's pick from ``hook-line``, else the spine's
@@ -58,7 +59,6 @@ from creation.post.delivery_geometry import (
     CANVAS_WIDTH,
     CAPTION_COLOURS,
     DEFAULT_CAPTION_COLOUR,
-    MARK_WIDTH_FRACTION,
     TITLE_HOOK_COLOUR,
     TITLE_SETUP_COLOUR,
     LetterboxLayout,
@@ -66,7 +66,7 @@ from creation.post.delivery_geometry import (
 )
 from creation.post.hook_overlay import delivery_format, is_four_three
 from creation.post.media import probe_video, run_ffmpeg
-from creation.post.watermark import MARK, MARK_ALPHA
+from creation.post.watermark import MARK, MARK_ALPHA, MARK_WIDTH_FRACTION
 
 #: Where an operator's hook-line pick is kept when the server cannot store it (an older server).
 HOOK_LINE_FILE = Path("shared") / "hook-line.json"
@@ -532,7 +532,7 @@ def mark_and_title(
     desk: Path | None = None,
     episode: int = 1,
 ) -> tuple[Path, FittedTitle | None]:
-    """Put the Sokii mark in the top band and the title block above the picture, in one pass (sound copied).
+    """Put the Sokii mark on the picture and the title block above it, in one pass (sound copied).
 
     Parameters
     ----------
@@ -593,9 +593,13 @@ def mark_and_title(
         # One named face (the bundled twin when Arial is missing); the copy is removed below.
         burned, scratch = burnable_ass(ass)
         first = f"[0:v]ass='{_esc(burned)}':fontsdir='{_esc(FONTS_DIR)}'[t]"
-    mark_w = round(info.width * MARK_WIDTH_FRACTION)
+    # The server's drawn size (fictora-drama #1133), else the kit's share of the width.
+    if server is not None and server.mark_width and server.mark_height:
+        mark_size = f"{server.mark_width}:{server.mark_height}"
+    else:
+        mark_size = f"{round(info.width * MARK_WIDTH_FRACTION)}:-1"
     graph = (
-        f"{first};[1:v]scale={mark_w}:-1:flags=lanczos,format=rgba,colorchannelmixer=aa={MARK_ALPHA}[m];"
+        f"{first};[1:v]scale={mark_size}:flags=lanczos,format=rgba,colorchannelmixer=aa={server.opacity if server is not None else MARK_ALPHA}[m];"
         f"[t][m]overlay={x}:{y}[v]"
     )
     inputs = ["-i", str(video), "-i", str(mark)]

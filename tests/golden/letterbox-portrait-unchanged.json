@@ -191,7 +191,7 @@
    "-b:a",
    "192k",
    "-t",
-   "5.000",
+   "5.013",
    "<root0>/ep01/takes/take-ep01-t1-mix-v1.mp4"
   ],
   [
@@ -255,7 +255,7 @@
    "-i",
    "<root1>/assets/sokii-mark-word.png",
    "-filter_complex",
-   "[1:v]scale=41:13:flags=lanczos,format=rgba,colorchannelmixer=aa=1.0[m];[0:v][m]overlay=6:30[v]",
+   "[1:v]scale=37:12:flags=lanczos,format=rgba,colorchannelmixer=aa=0.65[m];[0:v][m]overlay=6:54[v]",
    "-map",
    "[v]",
    "-map",
@@ -442,7 +442,7 @@
    "-i",
    "<root0>/ep01/takes/take-ep01-t1-sfx-v1.mp4",
    "-filter_complex",
-   "anoisesrc=color=brown:amplitude=0.02:seed=204:sample_rate=48000:duration=5.000,highpass=f=60,lowpass=f=1500,volume=<dB>[air];[0:a]aresample=48000[take];[take][air]amix=inputs=2:duration=first:normalize=0[a]",
+   "anoisesrc=color=brown:amplitude=0.02:seed=204:sample_rate=48000:duration=5.013,highpass=f=60,lowpass=f=1500,volume=<dB>[air];[0:a]aresample=48000[take];[take][air]amix=inputs=2:duration=first:normalize=0[a]",
    "-map",
    "0:v",
    "-map",
@@ -549,7 +549,7 @@
    "-b:a",
    "192k",
    "-t",
-   "5.000",
+   "5.013",
    "<root0>/ep01/takes/take-ep01-t1-mix-v1.mp4"
   ],
   [
@@ -612,7 +612,7 @@
    "-i",
    "<root1>/assets/sokii-mark-word.png",
    "-filter_complex",
-   "[1:v]scale=41:13:flags=lanczos,format=rgba,colorchannelmixer=aa=1.0[m];[0:v][m]overlay=6:30[v]",
+   "[1:v]scale=37:12:flags=lanczos,format=rgba,colorchannelmixer=aa=0.65[m];[0:v][m]overlay=6:54[v]",
    "-map",
    "[v]",
    "-map",
@@ -910,7 +910,7 @@
    "-i",
    "<root1>/assets/sokii-mark-word.png",
    "-filter_complex",
-   "[1:v]scale=41:13:flags=lanczos,format=rgba,colorchannelmixer=aa=1.0[m];[0:v][m]overlay=6:30[v]",
+   "[1:v]scale=37:12:flags=lanczos,format=rgba,colorchannelmixer=aa=0.65[m];[0:v][m]overlay=6:54[v]",
    "-map",
    "[v]",
    "-map",

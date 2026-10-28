@@ -53,7 +53,7 @@ What ``join`` does, in order:
 
 A letterbox show (every part's finish record says ``letterbox``: its master
 is the 9:16 canvas, captioned in the band under the picture) is joined the
-same way, and step 7 puts the Sokii mark in the top band and the title block
+same way, and step 7 puts the Sokii mark top left on the picture and the title block
 above the picture (:func:`creation.post.letterbox.mark_and_title`: the setup
 line white, the hook line yellow; ``--hook-line`` / ``--no-hook-line``) on the
 joined file once. The opening and tail checks read the picture only. The
@@ -1975,7 +1975,7 @@ def run_join(
                 desk=desk, episode=episode_set[0],
             )  # fmt: skip
             result.notes.append(
-                "letterbox: Sokii mark in the top band; "
+                "letterbox: Sokii mark top left on the picture; "
                 + (
                     f"{title.describe()} at {fitted.size} px"
                     + (f"; {fitted.note}" if fitted.note else "")

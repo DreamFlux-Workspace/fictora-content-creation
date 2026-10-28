@@ -37,7 +37,13 @@ from creation.post.sfx import (
     plan_from_take_facts,
     shape_problem,
 )
-from creation.post.watermark import mark_position, watermark
+from creation.post.watermark import (
+    MARK_X_FRACTION,
+    MARK_Y_FRACTION,
+    fallback_mark_place,
+    mark_position,
+    watermark,
+)
 
 # --- SFX -------------------------------------------------------------------------------------
 
@@ -277,11 +283,16 @@ def test_duck_expression_is_exact_depth_and_empty_without_windows() -> None:
 
 
 def test_mark_sits_top_left_under_the_covered_strip() -> None:
-    # 3% in, as on the founder's approved Instagram reels (fictora-drama #1047; 12% for a day was only for the
-    # app's full-bleed feed, which no longer shows a mark).
-    assert mark_position(768, 1344) == (23, 121)
-    assert mark_position(720, 1280) == (22, 115)
-    assert mark_position(768, 1344, y=0) == (23, math.ceil(1344 * 0.08))
+    # The kit's fallback copy of the server's place (fictora-drama #1133): one named constant each.
+    for w, h in ((768, 1344), (720, 1280)):
+        assert mark_position(w, h) == (
+            round(w * MARK_X_FRACTION),
+            round(h * MARK_Y_FRACTION),
+        )
+    assert mark_position(768, 1344, y=0) == (
+        round(768 * MARK_X_FRACTION),
+        math.ceil(1344 * 0.08),
+    )
 
 
 @needs_ffmpeg
@@ -295,12 +306,14 @@ def test_mark_is_drawn_where_the_position_says(tmp_path: Path) -> None:
         capture_output=True, check=True,
     ).stdout  # fmt: skip
     image = np.frombuffer(frame, dtype=np.uint8).reshape(1344, 768)
-    assert image[121:184, 23:95].max() > 60, "the mark is in its box"
-    assert image[:, :20].max() < 30, (
-        "nothing in the frame's first 2.6% (the mark starts at 3%)"
+    place = fallback_mark_place(768, 1344)
+    rows = slice(place.y, place.y + place.height)
+    assert image[rows, place.x : place.x + place.width].max() > 60, (
+        "the mark is in its box"
     )
+    assert image[:, : place.x - 3].max() < 30, "nothing left of the mark"
     assert image[: math.floor(1344 * 0.08)].max() < 30, "nothing in the top strip"
-    assert image[121:184, 700:].max() < 30, "nothing top right"
+    assert image[rows, 700:].max() < 30, "nothing top right"
 
 
 @pytest.mark.parametrize(("width", "height"), [(768, 1344), (1080, 1920)])

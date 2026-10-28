@@ -23,6 +23,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# The mark's fallback x (one copy, the server's number, kept in watermark).
+from creation.post.watermark import MARK_X_FRACTION
+
 # --- the letterbox layout: matches "Not Home" (user decision 2026-10-06) --------------------------
 #: The deliverable: 1080x1920, pure black.
 CANVAS_WIDTH = 1080
@@ -31,17 +34,17 @@ CANVAS_COLOUR = "black"
 #: A letterbox take is filmed 4:3: scaled to 1080x810 and centred, y 555-1365.
 MASTER_RATIO = (4, 3)
 #: The Sokii mark image (``assets/sokii-mark-word.png``, the cat and "sokii" as the app's header logo, 27 Oct
-#: 2026) placed at (32, 173), 230 px wide and 74 tall (shorter than the cat-only mark it replaced): the same corner
-#: and size as a portrait saved copy and the founder's approved Instagram reels (3% in, 9% down; fictora-drama
-#: #1047). The server decides it (``POST /v1/mark/placement``); these numbers are the fallback for an older or
-#: unreachable server.
-MARK_X = 32
+#: 2026), as far in from the left as on a portrait copy (``watermark.MARK_X_FRACTION``, 3% in, since
+#: fictora-drama #1133: 32 on 1080). The server decides its place and size (``POST /v1/mark/placement``);
+#: these numbers are the fallback for an older or unreachable server.
+#: Since fictora-drama #1133 (28 Oct 2026) the mark sits inside the 4:3 picture, top left: this far
+#: under the picture's top edge (583 on 1920). Fallback only: the server's letterbox ``x``/``y`` win.
+MARK_PICTURE_INSET = 28
+#: The band's old mark row and height: they now only set the title box's top (y 256), which stays
+#: where it was (founder, 28 Oct 2026: the title band does not move).
 MARK_Y = 173
 #: The mark image's height; the title's ink never rises above it plus this gap.
 MARK_HEIGHT = 63
-#: The mark is drawn at the portrait copy's share of the width, as the server draws it: 230 px on the
-#: 1080 letterbox canvas since 27 Oct 2026 (the cat alone was 101 px, fictora-drama #1047).
-MARK_WIDTH_FRACTION = 230 / 1080
 MARK_TITLE_GAP = 20
 #: Title block: ASS size 62 (Not Home's 56 px Arial Bold), stepping down 2 at a time to a 52 floor (then
 #: fewer words); each part (setup line white, hook line yellow) on at most two lines; centred; the last
@@ -289,7 +292,7 @@ def layout(width: int = CANVAS_WIDTH, height: int = CANVAS_HEIGHT) -> LetterboxL
     -------
     LetterboxLayout
         Picture 1080x810 at y 555-1365; last title baseline y 435; caption box from y 1407 (ink top 1417),
-        x 60-950, above y 1536; mark placed at (130, 173), on 1080x1920.
+        x 60-950, above y 1536; mark placed at (32, 583), inside the picture, on 1080x1920.
     """
 
     def y(value: float) -> int:
@@ -304,8 +307,8 @@ def layout(width: int = CANVAS_WIDTH, height: int = CANVAS_HEIGHT) -> LetterboxL
     picture = Box(
         (width - picture_w) // 2, (height - picture_h) // 2, picture_w, picture_h
     )
-    mark = (x(MARK_X), y(MARK_Y))
-    title_top = mark[1] + y(MARK_HEIGHT + MARK_TITLE_GAP)
+    mark = (round(width * MARK_X_FRACTION), picture.y + y(MARK_PICTURE_INSET))
+    title_top = y(MARK_Y) + y(MARK_HEIGHT + MARK_TITLE_GAP)
     title_w = x(TITLE_WIDTH)
     title = Box(
         (width - title_w) // 2, title_top, title_w,

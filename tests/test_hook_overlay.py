@@ -74,6 +74,9 @@ def test_the_selected_hook_line_is_drawn_top_below_the_ui_strip_and_out_of_the_r
     anchor, x, y = _pos(ass)
 
     assert anchor == "8" and y >= hk.TOP_STRIP * H
+    assert y == hk.fallback_mark_place(W, H).hook_top, (
+        "just under the Sokii mark (founder, 28 Oct 2026)"
+    )
     widest = max(
         text_width(line, 88) for line in ass.rsplit("}", 1)[1].strip().split("\\N")
     )
@@ -298,7 +301,7 @@ def test_the_default_face_check_asks_the_faces_module_for_the_upper_band(
     monkeypatch.setattr(faces, "upper_band_face", fake)
 
     assert hook_overlay.default_face_in_upper_band(Path("x.mp4"), 0.0, 3.0) is True
-    assert asked == [(0.0, 3.0, hook_overlay.TOP_STRIP, hook_overlay.CAPTION_BAND[0])]
+    assert asked == [(0.0, 3.0, hook_overlay.HOOK_TOP, hook_overlay.CAPTION_BAND[0])]
     monkeypatch.setattr(faces, "upper_band_face", lambda *a, **k: None)
     assert hook_overlay.default_face_in_upper_band(Path("x.mp4"), 0.0, 3.0) is None
 

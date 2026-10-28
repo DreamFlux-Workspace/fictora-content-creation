@@ -501,7 +501,7 @@ def upper_band_face(
     """Whether a face's box overlaps the band ``top``-``bottom`` (frame fractions, 0 at the top), and the boxes.
 
     The hook-line overlay asks this before it draws over the upper frame
-    (``upper_band_face(video, start, end, top=TOP_STRIP, bottom=CAPTION_BAND[0])``).
+    (``upper_band_face(video, start, end, top=HOOK_TOP, bottom=CAPTION_BAND[0])``).
 
     Parameters
     ----------
