@@ -179,16 +179,30 @@ def mark_position(
     return round(width * MARK_X_FRACTION), top
 
 
-def mark_scale_filter(width: int) -> str:
-    """The ffmpeg filter that draws the mark at :data:`MARK_WIDTH_FRACTION` of ``width`` (empty at its own size)."""
+def mark_size(width: int) -> tuple[int, int]:
+    """The mark's drawn ``(width, height)`` on a ``width``-wide frame (230x74 on 1080)."""
 
     drawn = round(width * MARK_WIDTH_FRACTION)
     png_w, png_h = MARK_PNG_SIZE
-    return (
-        ""
-        if drawn == png_w
-        else f"scale={drawn}:{round(png_h * drawn / png_w)}:flags=lanczos,"
-    )
+    return drawn, round(png_h * drawn / png_w)
+
+
+def mark_bottom(width: int, height: int) -> int:
+    """The row just under the mark at its own place (247 on 1080x1920).
+
+    Other overlays that share the top of a portrait frame (the hook line,
+    :mod:`creation.post.hook_overlay`) start below this, so they follow any
+    change to the mark's place or size here.
+    """
+
+    return round(height * MARK_Y_FRACTION) + mark_size(width)[1]
+
+
+def mark_scale_filter(width: int) -> str:
+    """The ffmpeg filter that draws the mark at :data:`MARK_WIDTH_FRACTION` of ``width`` (empty at its own size)."""
+
+    drawn, tall = mark_size(width)
+    return "" if drawn == MARK_PNG_SIZE[0] else f"scale={drawn}:{tall}:flags=lanczos,"
 
 
 def watermark(

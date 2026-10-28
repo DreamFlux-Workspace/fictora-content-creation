@@ -6,8 +6,9 @@ Founder decisions of 5 Oct 2026 (fictora-drama ``episode_openings``):
   (``episode_summaries[].hook_line_selected.text``; nothing when ``kind`` is
   ``off``) is burned in large white bold type with a heavy outline over the
   first ~3 s of the finished episode (its first take, at ``finish``).
-  It sits in the upper safe band just below the top 8% UI strip,
-  kept out of the right-hand rail, on at most two lines. When a face sits in
+  It sits in the upper safe band just below the Sokii mark (which itself sits
+  under the top 8% UI strip; founder screenshot, 28 Oct 2026: it was drawn on
+  the mark), kept out of the right-hand rail, on at most two lines. When a face sits in
   the upper band it moves to just above the caption band, unless a caption is
   on screen while it is up: then it stays at the top, so it never sits on the
   first caption (founder, 7 Oct 2026, L-20261005-11; captions are never held
@@ -16,7 +17,7 @@ Founder decisions of 5 Oct 2026 (fictora-drama ``episode_openings``):
   when it says the same words as the episode's first spoken line.
 * **title_bar** (only when the show's ``delivery_format`` is ``letterbox``).
   While 4:3 takes are not available yet, a solid band runs across the top,
-  just below the UI strip, for the whole video on the full portrait picture,
+  just below the Sokii mark, for the whole video on the full portrait picture,
   with the series title and the hook line (or a creator-set ``title_line``).
   Captions are untouched. A take that really is 4:3 gets nothing here: the
   server's letterbox delivery already puts the title in its band.
@@ -53,6 +54,7 @@ from creation.captions import (
     _ass_time,
     text_width,
 )
+from creation.post.watermark import mark_bottom
 
 #: Seconds the hook line aims to stay on screen.
 HOOK_SECONDS = 3.0
@@ -65,6 +67,19 @@ TOP_STRIP = 0.08
 RIGHT_RAIL_X = 0.88
 #: Gap under the top strip, and above the caption band, as a fraction of frame height.
 BAND_GAP = 0.015
+
+
+def hook_top(width: int, height: int) -> int:
+    """The top of a "top" hook line: one :data:`BAND_GAP` under the Sokii mark (276 on 1080x1920).
+
+    Computed from :mod:`creation.post.watermark`, so it follows any change to the mark.
+    """
+
+    return mark_bottom(width, height) + round(BAND_GAP * height)
+
+
+#: The same place as a share of the 1080x1920 house canvas (the face check's band top).
+HOOK_TOP = hook_top(1080, HOUSE_CANVAS_HEIGHT) / HOUSE_CANVAS_HEIGHT
 #: Hook line size on the 1920-high canvas (the house caption is 64): large, bold.
 HOOK_FONT_SIZE = 88
 HOOK_OUTLINE = 7
@@ -242,7 +257,7 @@ def default_face_in_upper_band(
 ) -> bool | None:
     """Ask :func:`creation.post.faces.upper_band_face` whether a face sits where the line goes.
 
-    The band runs from under the top UI strip down to the caption band. None
+    The band runs from where a top line starts (under the Sokii mark) down to the caption band. None
     when no detector can run (the line stays at the top, and the plan says why).
     """
 
@@ -250,7 +265,7 @@ def default_face_in_upper_band(
 
     try:
         answer = upper_band_face(
-            video, start_s, end_s, top=TOP_STRIP, bottom=CAPTION_BAND[0]
+            video, start_s, end_s, top=HOOK_TOP, bottom=CAPTION_BAND[0]
         )
     except (OSError, ValueError, RuntimeError) as exc:
         print(
@@ -466,7 +481,8 @@ def overlay_ass(
     )
     if overlay.mode == "title_bar":
         end = _ass_time(duration if duration else 24 * 3600 - 1)
-        top = round((TOP_STRIP + BAND_GAP / 2) * height)
+        # Under the Sokii mark (it was on the bar's corner and ran into a long title, 28 Oct 2026).
+        top = mark_bottom(width, height) + round(BAND_GAP / 2 * height)
         band = round(BAR_HEIGHT * height)
         title_size = _scaled(BAR_TITLE_SIZE, height)
         title_lines, title_size = _fit(
@@ -503,7 +519,7 @@ def overlay_ass(
             f"\\an2\\pos({centre_x},{round((CAPTION_BAND[0] - BAND_GAP) * height)})"
         )
     else:
-        anchor = f"\\an8\\pos({centre_x},{round((TOP_STRIP + BAND_GAP) * height)})"
+        anchor = f"\\an8\\pos({centre_x},{hook_top(width, height)})"
     sized = f"\\fs{size}" if size != _scaled(HOOK_FONT_SIZE, height) else ""
     body = "\\N".join(_ass_escape(line) for line in lines)
     return header + (
@@ -541,6 +557,7 @@ def burn(
 
 __all__ = [
     "HOOK_CUT_WINDOW",
+    "HOOK_TOP",
     "HOOK_SECONDS",
     "RIGHT_RAIL_X",
     "TOP_STRIP",
@@ -555,6 +572,7 @@ __all__ = [
     "delivery_format",
     "first_spoken_line",
     "hook_end",
+    "hook_top",
     "is_four_three",
     "overlay_ass",
     "same_words",
