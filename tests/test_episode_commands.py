@@ -544,8 +544,12 @@ def test_redraw_plate_notes_one_character_and_redraws_only_them(
     )
 
     assert api.posted("/v1/spines/sp1/cast/cast_ren/notes") == [
-        {"spine_version": "v5", "text": "Older, a scar over the left brow"}
-    ]
+        {
+            "spine_version": "v5",
+            "text": "Older, a scar over the left brow",
+            "episode_ordinal": 1,
+        }
+    ], "the desk's episode rides with the note (fictora-drama #1156)"
     [(method, path, body, key)] = [c for c in api.calls if c[1].endswith("/regenerate")]
     assert key and body and "notes" not in body, (
         "a recorded key; the notes ride on the card, not the body"

@@ -39,6 +39,7 @@ Copy the relevant block into chat when you stop. Do not continue until every box
 - [ ] A voice-only (off-screen) cast member got no plate (every line off screen, in no frame)
 - [ ] The preset's world did not leak in (settings, props; expected only in plates drawn before a look frame was pinned); look notes set if it did
 - [ ] One wrong character: `redraw-plate --cast NAME --note "…"`, the note describing shapes, not judgements
+- [ ] A note that changes the outfit stopped with the story's question: the creator's pick sent with `--outfit this-episode` or `--outfit from-now-on` (never picked for them)
 - [ ] A plate refused by image moderation (more often with a child) reported to the human with its job id, not retried blind
 - [ ] Human has opened the contact sheet and said yes
 
