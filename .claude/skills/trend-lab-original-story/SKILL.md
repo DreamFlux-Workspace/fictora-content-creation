@@ -16,7 +16,7 @@ You are the agent. The human supplies a **story** or a **reference clip**. The *
 
 The request body is already in [reference.md](reference.md). Send it to the hosted worker. There is no local tool in this lane.
 
-When the human gives a reference MP4, `PUT` the bytes, then `POST /runs` with `from_reference: true`, `film: true`, and `scaffold_generate: true`. When they give a story, `POST /runs` with `story_json` and `film: true`. Do that on the same turn. Do not ask them to paste `docs/PIPELINE.md`, do not ask them to confirm the cost, and do not wait for a second yes. `film: true` is the spend.
+When the human gives a reference MP4, `PUT` the bytes, then `POST /runs` with `from_reference: true`, `film: true`, and `scaffold_generate: true`. When they give a story, `POST /runs` with `story_json` and `film: true`. Do that on the same turn, then poll `GET /runs/{run_id}` until `finished`. Do not ask them to paste `docs/PIPELINE.md`, do not ask them to confirm the cost, and do not wait for a second yes. `film: true` is the spend.
 
 Read [reference.md](reference.md) for the exact JSON, credentials, and how to pull the final.
 
