@@ -1,6 +1,6 @@
 # Trend-lab hosted episode — reference
 
-Detail behind [SKILL.md](SKILL.md). Implementation and pipeline order: sibling repo **fictora-trend-lab** `docs/PIPELINE.md`.
+Detail behind [SKILL.md](SKILL.md). Send these requests to the hosted worker. That is the whole run.
 
 ## Credentials
 
@@ -26,6 +26,15 @@ Content-Type: application/json
   "film": true
 }
 ```
+
+The worker answers **202** immediately with `{ "run_id", "status": "accepted", "poll": "/runs/<id>" }`. It does not hold the HTTP connection until filming finishes. Poll until `finished` is true:
+
+```http
+GET {TREND_LAB_SERVE_URL}/runs/{run_id}
+Authorization: Bearer {TREND_LAB_RUN_TOKEN}
+```
+
+When `output_path` is set, pull that object. When `failed` is true, read `error`. A **502** on the initial POST usually means the edge timed out while the worker was still starting the run; poll anyway before starting a new id.
 
 **From a reference clip (structure → scaffold → same agent path)**
 
@@ -53,8 +62,11 @@ Content-Type: application/json
 
 Optional: `"reference_url": "https://…"` instead of PUT when the worker has **yt-dlp** (no local upload).
 
-Successful completion returns a body whose workflow result includes **`output_path`** like  
-`r2://fictora-trend-lab-runs/runs/<run_id>/out/final_v1.mp4`.
+Poll until **`finished`** is true. Success is **`output_path`**:
+
+`r2://fictora-trend-lab-runs/runs/<run_id>/out/final_vN.mp4`
+
+No `output_path` after `finished` means the run held or failed (`failed` / `error`). Do not pull takes in its place. A `run_id` whose workflow has already ended cannot be submitted again; use a new id.
 
 ## Story JSON (minimal)
 
@@ -67,26 +79,9 @@ Successful completion returns a body whose workflow result includes **`output_pa
 | `title_lines[]`, `delivery_format` | Letterbox or portrait finish |
 | `video_model`, `resolution` | Default **seedance-2.5**, **480p** on the worker |
 
-Example starters: **fictora-trend-lab** `examples/original_story.example.json`, `examples/e2e_smoke_minimal.json`.
-
 ## Pull the final MP4
 
-When the operator has **R2** read credentials (or asks ops), object key:
-
-`runs/<run_id>/out/final_v1.mp4`
-
-See **fictora-trend-lab** `docs/SECRETS.md` for presign/pull patterns. Do not embed secrets in chat.
-
-## CLI shortcut (optional)
-
-If the human runs **fictora-trend-lab** locally with the same env vars, these call the same hosted API:
-
-```bash
-uv run trend-lab remake --story-file story.json --film
-uv run trend-lab remake-reference --reference-file ref.mp4 --film --scaffold-generate
-```
-
-The skill's default path is **hosted HTTP**, not local ingest/analyze, unless the human asked to edit a scaffold on disk before filming.
+Pull the object named by `output_path`. The key is `runs/<run_id>/out/final_vN.mp4` in bucket `fictora-trend-lab-runs` (`final_v1.mp4` on the first finish). Use the operator's R2 credentials. Do not embed secrets in chat.
 
 ## Vs episode-production
 

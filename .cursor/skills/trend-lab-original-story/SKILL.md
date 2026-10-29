@@ -12,9 +12,13 @@ You are the agent. The human supplies a **story** or a **reference clip**. The *
 
 **Orchestration:** this skill in **fictora-content-creation**. **Execution:** authenticated HTTP to Railway **trend-lab** only. **Not** `fictora-produce`, desks, spine, or pitch gates — that is [episode-production](../episode-production/SKILL.md).
 
-Read when you need detail, not on the first turn:
+## Run it
 
-- Hosted API, story JSON, credentials, pull the final: [reference.md](reference.md)
+The request body is already in [reference.md](reference.md). Send it to the hosted worker. There is no local tool in this lane.
+
+When the human gives a reference MP4, `PUT` the bytes, then `POST /runs` with `from_reference: true`, `film: true`, and `scaffold_generate: true`. When they give a story, `POST /runs` with `story_json` and `film: true`. Do that on the same turn, then poll `GET /runs/{run_id}` until `finished`. Do not ask them to paste `docs/PIPELINE.md`, do not ask them to confirm the cost, and do not wait for a second yes. `film: true` is the spend.
+
+Read [reference.md](reference.md) for the exact JSON, credentials, and how to pull the final.
 
 ## Two rules
 
@@ -30,7 +34,7 @@ The human must configure these where **you** call the worker (bot env or local `
 | `TREND_LAB_SERVE_URL` | Public https origin of **trend-lab** (e.g. prod Railway URL) |
 | `TREND_LAB_RUN_TOKEN` | Bearer token for `POST /runs` and `PUT /uploads/reference/{run_id}` |
 
-OpenAI, Sume, drama finish, and R2 live on the **worker** — not on the operator laptop unless they run trend-lab CLI locally.
+OpenAI, Sume, drama finish, and R2 live on the **worker**. This checkout only calls it.
 
 ## Stage order
 
@@ -40,22 +44,25 @@ OpenAI, Sume, drama finish, and R2 live on the **worker** — not on the operato
 
 | Stage | You do | Human |
 | --- | --- | --- |
-| **Story ready** | **A)** They give `story.json` (characters, frames, parts, `{dialogue}`), or **B)** they attach a **reference MP4** for structure-only scaffold | Confirms cast, setting, and lines are **original** (edit scaffold if needed before film) |
-| **Submit** | **Story:** `POST /runs` with `story_json`, `film: true`. **Reference:** `PUT /uploads/reference/{run_id}` then `POST /runs` with `from_reference: true`, `film: true` (optional `scaffold_generate`, `reference_caption`) | Has configured URL + run token |
-| **Wait** | Poll status or wait on the submit response until phase **done** or a terminal error | Several minutes for a one-part episode is normal |
-| **Deliver** | Report `run_id` and `output_path` (`r2://…/runs/<id>/out/final_vN.mp4`); pull or presign for the human to watch ([reference.md](reference.md)) | Watches the final file; sound and captions should match a normal episode finish |
+| **Story ready** | **A)** They give `story.json` (characters, frames, parts, `{dialogue}`), or **B)** they attach a **reference MP4** | Nothing else. Original lines are the worker's job |
+| **Submit** | **Story:** `POST /runs` with `story_json`, `film: true`. **Reference:** `PUT /uploads/reference/{run_id}` then `POST /runs` with `from_reference: true`, `film: true`, `scaffold_generate: true` | URL + run token are already in env |
+| **Wait** | `POST /runs` returns **202**; poll `GET /runs/{run_id}` until `finished` (see [reference.md](reference.md)) | Several minutes for a one-part episode is normal |
+| **Deliver** | Ready only when `output_path` is `r2://fictora-trend-lab-runs/runs/<id>/out/final_vN.mp4`. Pull that object ([reference.md](reference.md)). Name the episode title. A reference clip keeps the shot timing; the picture and lines are a new story | Watches the final file |
 
 **Filming:** Sume **Seedance** on the worker defaults to **480p** takes; the **delivered** letterbox file may be upscaled after drama finish.
 
 ## Never
 
+- Look for `trend-lab` on PATH or PyPI, or ask the human to paste a body from **fictora-trend-lab**.
+- Stop a finished-episode request to confirm spend. This lane films when they ask for the episode.
 - Use **episode-production** / `fictora-produce` for this lane unless the human explicitly switches to a desk show.
 - Trace or Fal-clone the reference video into the take.
 - Copy reference dialogue or on-screen text into the story.
 - Print or commit `TREND_LAB_RUN_TOKEN`, drama service tokens, or `.env`.
-- Treat **`502` on submit** as proof the run failed — check logs/R2 for that `run_id` before reusing the same id.
-- Claim **`trend-lab story-finish`** (local ffmpeg CLI) is the same step as the hosted agent **finish** (drama Modal on the worker).
+- Treat **`502` on submit** as proof the run failed without polling. **`POST /runs` returns 202**; poll `GET /runs/{run_id}` before starting another id.
+- Reuse a `run_id` after the workflow has ended. A retry is a new id.
+- Finish the episode yourself. The worker's finish step writes the MP4. Takes without `output_path` are not the episode.
 
 ## After each run
 
-Report **run id**, **output path**, and whether the episode **finished** or **held** (e.g. `film: false`). Stop. Do not chain a second episode unless the human asks.
+Report **run id**, **episode title**, and **`output_path`**. If there is no final object, say it failed or held and do not hand off the takes. Stop. Do not chain a second episode unless the human asks.
