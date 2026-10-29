@@ -62,9 +62,11 @@ Content-Type: application/json
 
 Optional: `"reference_url": "https://…"` instead of PUT when the worker has **yt-dlp** (no local upload).
 
-Poll until **`finished`** is true. Success is **`output_path`**:
+Poll until **`finished`** is true. Success includes **`output_path`** and a presigned **`download_url`** (HTTPS GET, ~24h):
 
 `r2://fictora-trend-lab-runs/runs/<run_id>/out/final_vN.mp4`
+
+Deliver the episode by downloading **`download_url`**. Callers do not need R2 credentials. If `download_url` is missing but `output_path` is set, R2 may be misconfigured on the worker.
 
 No `output_path` after `finished` means the run held or failed (`failed` / `error`). Do not pull takes in its place. A `run_id` whose workflow has already ended cannot be submitted again; use a new id.
 
@@ -81,7 +83,7 @@ No `output_path` after `finished` means the run held or failed (`failed` / `erro
 
 ## Pull the final MP4
 
-Pull the object named by `output_path`. The key is `runs/<run_id>/out/final_vN.mp4` in bucket `fictora-trend-lab-runs` (`final_v1.mp4` on the first finish). Use the operator's R2 credentials. Do not embed secrets in chat.
+Use **`download_url`** from the last poll. Do not ask for R2 keys or a manual link unless `download_url` is absent after a successful finish.
 
 ## Vs episode-production
 

@@ -47,7 +47,7 @@ OpenAI, Sume, drama finish, and R2 live on the **worker**. This checkout only ca
 | **Story ready** | **A)** They give `story.json` (characters, frames, parts, `{dialogue}`), or **B)** they attach a **reference MP4** | Nothing else. Original lines are the worker's job |
 | **Submit** | **Story:** `POST /runs` with `story_json`, `film: true`. **Reference:** `PUT /uploads/reference/{run_id}` then `POST /runs` with `from_reference: true`, `film: true`, `scaffold_generate: true` | URL + run token are already in env |
 | **Wait** | `POST /runs` returns **202**; poll `GET /runs/{run_id}` until `finished` (see [reference.md](reference.md)) | Several minutes for a one-part episode is normal |
-| **Deliver** | Ready only when `output_path` is `r2://fictora-trend-lab-runs/runs/<id>/out/final_vN.mp4`. Pull that object ([reference.md](reference.md)). Name the episode title. A reference clip keeps the shot timing; the picture and lines are a new story | Watches the final file |
+| **Deliver** | Ready when poll sets `finished` and **`download_url`**. Download that presigned HTTPS link ([reference.md](reference.md)). Name the episode from `story.json` / `title_lines` if the poll has no title. A reference clip keeps the shot timing; the picture and lines are a new story | Watches the final file |
 
 **Filming:** Sume **Seedance** on the worker defaults to **480p** takes; the **delivered** letterbox file may be upscaled after drama finish.
 
