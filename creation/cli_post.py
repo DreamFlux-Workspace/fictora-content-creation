@@ -635,7 +635,8 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         dest="take_id",
         default=None,
         help="Not needed to finish (the server finishes the whole episode in one go); names the take "
-        "for --caption-label, --no-caption-labels and the take edits (--mute, --voice, --cue, --impact-at).",
+        "for --caption-label, --no-caption-labels and the take edits (--mute, --voice, --cue, --impact-at). "
+        "Each take edit is added to the take's earlier edits on the server; name only the new one.",
     )
     fin.add_argument(
         "--mute", action="append", default=[], metavar="A-B",

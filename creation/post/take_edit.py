@@ -24,9 +24,12 @@ Setting                            Server field
 Routes: ``POST /v1/video-generations/{job}/takes/{n}/post-edit`` (the edit),
 ``.../post-edit/quote`` and ``.../revoice`` with ``dry_run`` (``finish --preview``:
 the tokens, nothing changed). Times are seconds on the take as the server
-delivered it. A take's edit replaces its earlier one on the server, so every
-edit the take should keep is named each time; a re-voice keeps the take's
-other edits.
+delivered it. Every edit is sent with ``add_to_current_edit`` (fictora-drama
+#1193): the server adds it to the take's current edit, so an operator's
+earlier edits on the take are kept and only the new paid work is charged. A
+server older than that refuses the field (422); the kit then sends the edit
+once more without it and says plainly that the take's earlier edits were
+replaced. A re-voice keeps the take's other edits either way.
 """
 
 from __future__ import annotations
@@ -46,6 +49,8 @@ from creation.harness.http_util import api_error_text
 POST_EDIT_ROUTE = "/v1/video-generations/{job_id}/takes/{take_index}/post-edit"
 QUOTE_ROUTE = POST_EDIT_ROUTE + "/quote"
 REVOICE_ROUTE = "/v1/video-generations/{job_id}/takes/{take_index}/revoice"
+#: Sent on every edit: the server adds the edit to the take's current one instead of replacing it.
+ADD_TO_CURRENT_FIELD = "add_to_current_edit"
 #: The edit answers once its lines and sounds are made (the episode is rebuilt after, in the background).
 EDIT_TIMEOUT_SECONDS = 300.0
 #: Said after every edit the server took: the new cut is put together in the background.
@@ -83,7 +88,10 @@ class TakeEditRequest:
             )
             if value
         }
-        return body or None
+        if not body:
+            return None
+        body[ADD_TO_CURRENT_FIELD] = True
+        return body
 
     def empty(self) -> bool:
         """Whether no edit setting was given."""
@@ -290,6 +298,59 @@ def refusal_line(status: int, body: Any, *, take_id: str) -> str:
     return f"The server refused the edit (HTTP {status}): {said or api_error_text(body)[:300]}"
 
 
+def refuses_add_to_current(status: int, body: Any) -> bool:
+    """Whether an older server refused ``add_to_current_edit`` as a field it does not know (422).
+
+    Parameters
+    ----------
+    status
+        The HTTP status.
+    body
+        The answer's JSON (or text).
+
+    Returns
+    -------
+    bool
+        True for a 422 naming the field as not allowed; any other refusal is the server's real answer.
+    """
+
+    if status != 422 or not isinstance(body, dict):
+        return False
+    error = body.get("error") if isinstance(body.get("error"), dict) else {}
+    details = error.get("details") if isinstance(error.get("details"), dict) else {}
+    rows = details.get("validation_errors") or body.get("detail") or []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        loc = [str(part) for part in row.get("loc") or []]
+        if (
+            loc
+            and loc[-1] == ADD_TO_CURRENT_FIELD
+            and (
+                row.get("type") == "extra_forbidden"
+                or "not permitted" in str(row.get("msg", ""))
+            )
+        ):
+            return True
+    message = str(error.get("message") or "")
+    return ADD_TO_CURRENT_FIELD in message and "not permitted" in message
+
+
+def replaced_warning(take_id: str, *, preview: bool) -> str:
+    """The plain warning when an older server replaced (or would replace) the take's earlier edits."""
+
+    if preview:
+        return (
+            f"Warning: this server is older and does not keep earlier edits. Sending this would replace "
+            f"every earlier edit on {take_id} (mutes, laid lines, sounds, hits) with only this one."
+        )
+    return (
+        f"Warning: this server is older and does not keep earlier edits, so every earlier edit on {take_id} "
+        "(mutes, laid lines, sounds, hits) was replaced by this one. To get them back, run finish once with "
+        "all of them together."
+    )
+
+
 def _post(
     client: httpx.Client,
     url: str,
@@ -367,20 +428,25 @@ def send_take_edit(
     edit = request.edit_body()
     with httpx.Client(transport=transport, timeout=EDIT_TIMEOUT_SECONDS) as client:
         if edit is not None:
-            where = POST_EDIT_ROUTE.format(job_id=job_id, take_index=take_index)
-            if preview:
-                status, answer = _post(client, base + QUOTE_ROUTE.format(job_id=job_id, take_index=take_index),
-                                       headers, edit, key=None)  # fmt: skip
-            else:
-                status, answer = _post(
-                    client,
-                    base + where,
-                    headers,
-                    edit,
-                    key=f"kit-take-edit-{take_id}-{run}",
-                )
+            route = QUOTE_ROUTE if preview else POST_EDIT_ROUTE
+            url = base + route.format(job_id=job_id, take_index=take_index)
+            key = None if preview else f"kit-take-edit-{take_id}-{run}"
+            status, answer = _post(client, url, headers, edit, key=key)
+            replaced = False
+            if refuses_add_to_current(status, answer):
+                # An older server: the edit replaces the take's earlier one. Sent once more without the field.
+                edit = {
+                    name: value
+                    for name, value in edit.items()
+                    if name != ADD_TO_CURRENT_FIELD
+                }
+                retry_key = None if key is None else f"{key}-replace"
+                status, answer = _post(client, url, headers, edit, key=retry_key)
+                replaced = True
             if not 200 <= status < 300 or not isinstance(answer, dict):
                 raise TakeEditStop(refusal_line(status, answer, take_id=take_id))
+            if replaced:
+                lines.append(replaced_warning(take_id, preview=preview))
             if preview:
                 lines.append(
                     f"{take_id} edit ({_counts(edit)}) would cost {_tokens(answer.get('tokens'))}. "
@@ -478,6 +544,7 @@ def run_take_edit(
 
 
 __all__ = [
+    "ADD_TO_CURRENT_FIELD",
     "NEXT_STEP",
     "TakeEditRequest",
     "TakeEditStop",
@@ -486,6 +553,8 @@ __all__ = [
     "parse_mute",
     "parse_voice",
     "refusal_line",
+    "refuses_add_to_current",
+    "replaced_warning",
     "run_take_edit",
     "send_take_edit",
 ]

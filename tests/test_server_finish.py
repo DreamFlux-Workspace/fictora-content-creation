@@ -1076,7 +1076,8 @@ def test_mute_goes_to_the_servers_post_edit_and_prints_its_answer(
     assert code == 0 and finished == []
     assert server.sent() == [
         (POST_EDIT_PATH, {"mutes": [{"start_seconds": 1.2, "end_seconds": 2.0},
-                                    {"start_seconds": 4.0, "end_seconds": 4.5}]}),
+                                    {"start_seconds": 4.0, "end_seconds": 4.5}],
+                          "add_to_current_edit": True}),
     ]  # fmt: skip
     request = server.requests[0]
     assert request.headers["Idempotency-Key"].startswith("kit-take-edit-t2-")
@@ -1108,7 +1109,8 @@ def test_a_voice_line_file_is_laid_as_the_servers_copy(
     assert code == 0
     assert server.sent() == [
         (POST_EDIT_PATH, {"dub_lines": [{"text": "Not tonight.", "audio_url": "https://media.example/lines/aya-1.mp3",
-                                         "start_seconds": 3.5, "gain_db": -2.0}]}),
+                                         "start_seconds": 3.5, "gain_db": -2.0}],
+                          "add_to_current_edit": True}),
     ]  # fmt: skip
 
 
@@ -1196,6 +1198,7 @@ def test_cue_and_impact_at_map_to_their_fields(
                      {"sound": "a descending gaan sting", "start_seconds": 4.0, "duration_seconds": 1.2,
                       "gain_db": -9.0}],
             "impact_hits": [{"at_seconds": 1.25, "style": "hit"}, {"at_seconds": 3.0, "style": "blast"}],
+            "add_to_current_edit": True,
         }),
     ]  # fmt: skip
 
@@ -1215,7 +1218,10 @@ def test_preview_asks_the_quote_and_the_dry_run_and_changes_nothing(
     assert server.sent() == [
         (
             POST_EDIT_PATH + "/quote",
-            {"cues": [{"sound": "door slam", "start_seconds": 1.0}]},
+            {
+                "cues": [{"sound": "door slam", "start_seconds": 1.0}],
+                "add_to_current_edit": True,
+            },
         ),
         (REVOICE_PATH, {"cast_id": "cast_aya", "dry_run": True}),
     ]
@@ -1223,6 +1229,87 @@ def test_preview_asks_the_quote_and_the_dry_run_and_changes_nothing(
     out = capsys.readouterr().out
     assert "would cost 2 tokens" in out and "would cost 3 tokens" in out
     assert "run finish again" not in out
+
+
+#: What a server without ``add_to_current_edit`` (before fictora-drama #1193) answers to the field.
+OLD_SERVER_EXTRA_FIELD = (422, {
+    "error": {"code": "invalid_request", "message": "add_to_current_edit: Extra inputs are not permitted",
+              "details": {"validation_errors": [{"loc": ["body", "add_to_current_edit"],
+                                                 "msg": "Extra inputs are not permitted",
+                                                 "type": "extra_forbidden"}]}},
+    "request_id": "req_1",
+})  # fmt: skip
+
+
+def test_every_take_edit_asks_the_server_to_keep_the_takes_earlier_edits(
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, _ = edit_server
+
+    assert _finish(post_desk, "--take", "t2", "--impact-at", "2") == 0
+
+    ((path, body),) = server.sent()
+    assert path == POST_EDIT_PATH and body["add_to_current_edit"] is True
+    assert body["impact_hits"] == [{"at_seconds": 2.0, "style": "hit"}]
+    assert "Warning" not in capsys.readouterr().out
+
+
+def test_an_older_server_gets_the_edit_once_more_without_the_field_and_a_plain_warning(
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, _ = edit_server
+    server.answers.append(OLD_SERVER_EXTRA_FIELD)
+
+    assert _finish(post_desk, "--take", "t2", "--mute", "1-2") == 0
+
+    sent = server.sent()
+    assert [path for path, _ in sent] == [POST_EDIT_PATH, POST_EDIT_PATH]
+    assert sent[0][1]["add_to_current_edit"] is True
+    assert sent[1][1] == {"mutes": [{"start_seconds": 1.0, "end_seconds": 2.0}]}
+    first, second = (r.headers["Idempotency-Key"] for r in server.requests)
+    assert second == first + "-replace"
+    out = capsys.readouterr().out
+    assert "every earlier edit on t2" in out and "was replaced by this one" in out
+    assert "t2 edited on the server (1 muted stretch)" in out
+
+
+def test_an_older_server_preview_warns_the_edit_would_replace(
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, _ = edit_server
+    server.answers.append(OLD_SERVER_EXTRA_FIELD)
+
+    assert _finish(post_desk, "--take", "t2", "--cue", "door slam@1", "--preview") == 0
+
+    assert [path for path, _ in server.sent()] == [POST_EDIT_PATH + "/quote"] * 2
+    assert "add_to_current_edit" not in server.sent()[1][1]
+    out = capsys.readouterr().out
+    assert (
+        "would replace every earlier edit on t2" in out and "would cost 2 tokens" in out
+    )
+
+
+def test_any_other_422_is_the_servers_answer_and_is_not_sent_again(
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    clash = (422, {"error": {"code": "take_post_edit_does_not_fit",
+                             "message": "That edit clashes with an edit already on this take."}})  # fmt: skip
+    server, _ = edit_server
+    server.answers.append(clash)
+
+    assert _finish(post_desk, "--take", "t2", "--mute", "1-2") == 2
+
+    assert len(server.requests) == 1
+    err = capsys.readouterr().err
+    assert "clashes with an edit already on this take" in err and "Warning" not in err
 
 
 def test_preview_without_an_edit_is_refused(
