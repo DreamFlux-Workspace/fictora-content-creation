@@ -1,12 +1,12 @@
 """``rescore-music``: the harness re-scores made episodes with today's music rules; the kit rebuilds its file.
 
 - Without ``--yes`` only a plan (``dry_run``) goes out: which takes change, which are skipped and why, the cost.
-- ``--yes`` applies (``confirm``) under a key saved on the desk, then rebuilds each changed episode's file on
-  this laptop: the new take saved as the next raw version, finish run again on it, join run for the episode,
-  which writes the next readable ``<slug>_epNN_draft_vN`` file. Old files are never touched.
+- ``--yes`` applies (``confirm``) under a key saved on the desk, then gets each changed episode's new file
+  from the server (the server finish, item 01 phase 4): the next readable ``<slug>_epNN_draft_vN`` file.
+  Nothing is downloaded raw or finished on the laptop. Old files are never touched.
 - ``--all`` runs the whole show; episodes are rebuilt in episode order.
 - ``--revert`` calls the harness's revert and rebuilds the same way.
-- A take the kit cannot finish again by itself keeps the episode's old file (said, exit 5).
+- A server that cannot give the episode, or has not written the new cut yet, keeps the old file (said).
 """
 
 from __future__ import annotations
@@ -19,11 +19,11 @@ import pytest
 from fake_api import FakeApi
 
 from creation.cli_produce import main
-from creation.ops.folder import next_versioned_path
 from creation.ops.state import load_series
 from creation.post import music_rescore
 from creation.post.episode_name import episode_files, next_episode_path
 from creation.post.finish_record import write_finish_record
+from creation.post.server_finish import ServerFinish
 
 ROUTE = "/v1/spines/sp1/music-rescore"
 OLD_FILE = "closing-time_ep{ep:02d}_draft_v1_2026-10-01.mp4"
@@ -112,33 +112,18 @@ def _made_episode(
 
 @pytest.fixture
 def kit(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
-    """Fake the laptop work (download, finish, join); record what ran."""
+    """Fake the server finish (ask, wait, download); record what ran."""
 
-    calls: dict[str, list[Any]] = {"download": [], "finish": [], "join": []}
+    calls: dict[str, list[Any]] = {"finish": []}
 
-    def download(url: str, directory: Path, stem: str) -> Path:
-        directory.mkdir(parents=True, exist_ok=True)
-        path = next_versioned_path(directory, stem, ".mp4")
-        path.write_bytes(url.encode())
-        calls["download"].append((url, path.name))
-        return path
-
-    def finish(
-        desk: Path, episode: int, take_id: str, take_file: Path, colour: Any, out: Any
-    ) -> tuple[bool, str]:
-        calls["finish"].append((episode, take_id, take_file.name))
-        return True, ""
-
-    def join(desk: Path, episode: int, out: Any) -> tuple[Path | None, str]:
+    def finish(desk: Path, episode: int, out: Any) -> ServerFinish:
         folder = desk / f"ep{episode:02d}" / "takes"
         path = next_episode_path(folder, desk, episode, "draft")
         path.write_bytes(b"new episode")
-        calls["join"].append((episode, path.name))
-        return path, ""
+        calls["finish"].append((episode, path.name))
+        return ServerFinish(episode, video=path)
 
-    monkeypatch.setattr(music_rescore, "_download", download)
     monkeypatch.setattr(music_rescore, "_finish", finish)
-    monkeypatch.setattr(music_rescore, "_join", join)
     return calls
 
 
@@ -173,7 +158,7 @@ def test_without_yes_only_the_plan_goes_out(
     assert "Cost: $0.20 for 1 new cue version(s)" in text
     assert "Not applied: nothing was changed or spent. Applying costs $0.20" in text
     assert "rescore-music --desk" in text and "--episode 1 --yes" in text
-    assert kit == {"download": [], "finish": [], "join": []}
+    assert kit == {"finish": []}
     assert load_series(desk).spend_usd == 0
 
 
@@ -201,11 +186,8 @@ def test_yes_applies_then_rebuilds_a_new_episode_file_and_keeps_the_old(
         and entry["id"] in entry["idempotency_key"]
     )
     assert entry["status"] == "applied" and entry["rescore_id"] == "rs1"
-    # Only the changed take: saved as the next raw version, finished on it, the episode joined.
-    assert kit["download"] == [
-        ("https://media.test/job_take_e1t1-new.mp4", "take-ep01-t1-raw-v2.mp4")
-    ]
-    assert kit["finish"] == [(1, "t1", "take-ep01-t1-raw-v2.mp4")]
+    # The server finishes the episode with its new music; the kit only downloads it (no raw take).
+    assert [ep for ep, _ in kit["finish"]] == [1]
     takes = desk / "ep01" / "takes"
     names = [p.name for p in episode_files(takes, 1)]
     assert names[0] == OLD_FILE.format(ep=1) and len(names) == 2
@@ -230,8 +212,7 @@ def test_whole_show_goes_in_episode_order(
     assert _rescore(desk, "--all", "--yes") == 0
 
     assert [body for body, _ in _posts(api)] == [{"dry_run": True}, {"confirm": True}]
-    assert [ep for ep, *_ in kit["finish"]] == [1, 2]
-    assert [ep for ep, _ in kit["join"]] == [1, 2]
+    assert [ep for ep, _ in kit["finish"]] == [1, 2]
 
 
 def test_revert_calls_the_harness_and_rebuilds_the_same_way(
@@ -252,50 +233,54 @@ def test_revert_calls_the_harness_and_rebuilds_the_same_way(
         {"dry_run": True, "episode_ordinal": 1, "revert": True, "rescore_id": "rs1"},
         {"confirm": True, "episode_ordinal": 1, "revert": True, "rescore_id": "rs1"},
     ]
-    assert kit["download"] == [
-        ("https://media.test/job_take_e1t1-old.mp4", "take-ep01-t1-raw-v2.mp4")
-    ]
-    assert len(kit["join"]) == 1
+    assert len(kit["finish"]) == 1
     text = capsys.readouterr().out
     assert "the music it played before the re-score is put back, free" in text
     assert "Cost: free" in text
 
 
-def test_a_take_finished_with_hand_sound_keeps_the_old_file(
+def test_a_cut_not_written_yet_keeps_the_old_file_and_says_run_finish_again(
     desk: Path,
     api: FakeApi,
     kit: dict[str, list[Any]],
+    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _made_episode(desk, 1)
-    (desk / "ep01" / "takes" / "take-ep01-t1-voice-v1.mp4").write_bytes(b"hand voice")
     _route(api, [_row(1, 1)])
+    old = desk / "ep01" / "takes" / OLD_FILE.format(ep=1)
+    monkeypatch.setattr(
+        music_rescore,
+        "_finish",
+        lambda d, e, o: ServerFinish(e, video=old, reused=True),
+    )
 
     assert _rescore(desk, "--episode", "1", "--yes") == music_rescore.REBUILD_NOT_DONE
 
-    assert kit["finish"] == [] and kit["join"] == []
-    # The new take is still saved, so the next finish by hand reads the new music.
-    assert [name for _, name in kit["download"]] == ["take-ep01-t1-raw-v2.mp4"]
     assert [p.name for p in episode_files(desk / "ep01" / "takes", 1)] == [
         OLD_FILE.format(ep=1)
     ]
     text = capsys.readouterr().out
     assert "ep01: !! NOT rebuilt, the old file stays" in text
-    assert "hand-placed sound or words (voice)" in text
+    assert "still putting the episode together with the new music" in text
+    assert "fictora-produce finish --desk" in text
 
 
-def test_a_failed_refinish_keeps_the_old_file(
+def test_a_failed_server_finish_keeps_the_old_file(
     desk: Path, api: FakeApi, kit: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _made_episode(desk, 1)
     _route(api, [_row(1, 1)])
     monkeypatch.setattr(
-        music_rescore, "_finish", lambda *a: (False, "finish NOT DONE (no SFX)")
+        music_rescore,
+        "_finish",
+        lambda d, e, o: ServerFinish(
+            e, error="The server is busy or restarting (HTTP 503)."
+        ),
     )
 
     assert _rescore(desk, "--episode", "1", "--yes") == music_rescore.REBUILD_NOT_DONE
 
-    assert kit["join"] == []
     assert [p.name for p in episode_files(desk / "ep01" / "takes", 1)] == [
         OLD_FILE.format(ep=1)
     ]
@@ -312,7 +297,7 @@ def test_an_episode_never_joined_here_has_nothing_to_rebuild(
 
     assert _rescore(desk, "--episode", "1", "--yes") == 0
 
-    assert kit["finish"] == [] and kit["join"] == []
+    assert kit["finish"] == []
     assert "ep01: nothing to rebuild" in capsys.readouterr().out
 
 

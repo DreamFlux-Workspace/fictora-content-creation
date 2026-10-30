@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import functools
 import hashlib
 import io
 import json
@@ -14,14 +13,13 @@ import numpy as np
 import pytest
 from conftest import make_take, needs_ffmpeg
 
-from creation import cli_post
 from creation.cli_produce import main
 from creation.ops.floor import init_series_desk
 from creation.post import join as join_module
 from creation.post.episode_name import today
 from creation.post.finish import run_finish
 from creation.post.finish_record import write_finish_record
-from creation.post.join import JOIN_NOT_DONE, assert_house_fps, run_join
+from creation.post.join import assert_house_fps, run_join
 from creation.post.media import MediaToolError, decode_frames, measure_rms_windows
 from creation.post.watermark import mark_position, watermark
 
@@ -215,47 +213,6 @@ def test_a_series_cut_dissolves_between_episodes_and_captions_land_on_the_joined
 
 
 @needs_ffmpeg
-def test_a_seam_step_over_5_db_stops_the_join_unmarked_and_gain_matching_fixes_it(
-    join_desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    finished_take(join_desk, 1, "t1", tone=0.01)
-    finished_take(join_desk, 1, "t2", tone=0.5)
-    monkeypatch.setattr(
-        cli_post, "run_join", functools.partial(run_join, stream=io.StringIO())
-    )
-
-    code = main(
-        [
-            "join",
-            "--desk",
-            str(join_desk),
-            "--episode",
-            "1",
-            "--no-gain-match",
-            "--no-seam-fix",  # a new desk would lay a bed first (tests/test_join_seam_fix.py)
-            "--json",
-        ]
-    )
-
-    report = json.loads(capsys.readouterr().out)
-    assert code == JOIN_NOT_DONE
-    assert report["complete"] is False and report["marked"] is None
-    assert abs(report["seams"][0]["step_db"]) > 5
-    takes = join_desk / "ep01" / "takes"
-    assert (takes / "episode-ep01-join-v1.mp4").is_file(), (
-        "the un-marked master stays to listen to"
-    )
-    assert not list(takes.glob("*_ep01_*.mp4")), "nothing is marked"
-    assert "STOPPED: seam at 2.50s" in (join_desk / "ep01" / "run-notes.md").read_text()
-
-    matched = run_join(join_desk, episodes=(1,), stream=io.StringIO())
-    assert matched.complete and abs(matched.seam_steps_db[0]) < 5, matched.seam_steps_db
-    assert matched.gains_db[0] - matched.gains_db[1] > 30, (
-        "each take gained to the median: quiet up, loud down"
-    )
-
-
-@needs_ffmpeg
 @pytest.mark.parametrize(
     ("second", "wanted"),
     [({"fps": 25}, "not 24 fps: ep01 t2"), ({"size": (208, 336)}, "mixed resolutions")],
@@ -297,51 +254,6 @@ def test_the_joined_file_is_measured_at_24_fps(join_desk: Path, monkeypatch: pyt
     monkeypatch.setattr(join_module, "assert_house_fps", spy)
     run_join(join_desk, episodes=(1,), stream=io.StringIO())
     assert checked == ["episode-ep01-join-v1.mp4"]
-
-
-@needs_ffmpeg
-def test_take_files_in_the_order_given_and_unfinished_files_are_refused(
-    join_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    one = finished_take(join_desk, 1, "t1", grey=70)
-    two = finished_take(join_desk, 1, "t2", grey=90)
-    trimmed = clip(
-        join_desk / "ep01" / "takes" / "take-ep01-t2-trim-v1.mp4", seconds=2.0, grey=90
-    )
-
-    assert (
-        main(
-            [
-                "join",
-                "--desk",
-                str(join_desk),
-                "--take-file",
-                str(trimmed),
-                "--take-file",
-                str(one["final"]),
-            ]
-        )
-        == 2
-    )
-    assert "no finish record names this file" in capsys.readouterr().err
-
-    code = main(
-        [
-            "join",
-            "--desk",
-            str(join_desk),
-            "--take-file",
-            str(two["final"]),
-            "--take-file",
-            str(one["final"]),
-        ]
-    )
-    assert code == 0
-    marked = Path(capsys.readouterr().out.strip().splitlines()[-1])
-    assert marked.name == f"join-test_ep01_draft_v1_{today().isoformat()}.mp4"
-    assert abs(region(frame_at(marked, 1.0), (0, 100, 192, 60)) - 90) < 6, (
-        "t2 comes first, as named"
-    )
 
 
 @needs_ffmpeg
@@ -686,42 +598,6 @@ def test_part_speech_follows_the_words_through_a_trim_and_a_tempo_after_finish(
     assert windows == [(0.0, 0.1), (1.6, 1.9), (4.5, 5.0)], (
         "handles first (minus 0.5 s), then the trim on that file"
     )
-
-
-@needs_ffmpeg
-def test_accept_seam_marks_the_join_and_records_who_and_why(
-    join_desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    finished_take(join_desk, 1, "t1", tone=0.01)
-    finished_take(join_desk, 1, "t2", tone=0.5)
-    monkeypatch.setattr(
-        cli_post, "run_join", functools.partial(run_join, stream=io.StringIO())
-    )
-    base = ["join", "--desk", str(join_desk), "--episode", "1", "--no-gain-match"]
-
-    assert main([*base, "--accept-seam", "the line starts on the cut"]) == 2
-    assert "--accept-seam needs --accepted-by NAME" in capsys.readouterr().err
-    code = main(
-        [
-            *base,
-            "--accept-seam",
-            "the line starts on the cut",
-            "--accepted-by",
-            "Tejas",
-            "--json",
-        ]
-    )
-
-    report = json.loads(capsys.readouterr().out)
-    assert code == 0 and report["complete"] is True and report["marked"]
-    assert report["accepted"]["by"] == "Tejas"
-    assert abs(report["accepted"]["seams"][0]["step_db"]) > 5
-    seam = report["seams"][0]
-    assert {"before_db", "after_db"} <= set(seam), "both sides' levels are reported"
-    notes = (join_desk / "ep01" / "run-notes.md").read_text()
-    assert "Seam accepted by Tejas: the line starts on the cut" in notes
-    assert "ACCEPTED: seam at 2.50s" in notes
-    assert "before " in notes and "after " in notes
 
 
 def test_gain_matching_is_skipped_when_every_part_finished_at_minus_18() -> None:

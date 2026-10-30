@@ -7,7 +7,6 @@ step between a steady room on one side and a near-silent take on the other.
 
 from __future__ import annotations
 
-import functools
 import io
 import json
 import subprocess
@@ -18,15 +17,12 @@ import numpy as np
 import pytest
 from conftest import needs_ffmpeg
 
-from creation import cli_post
-from creation.cli_produce import main
 from creation.ops.floor import init_series_desk
 from creation.post import join as join_module
 from creation.post import seam_fix
 from creation.post.finish_record import write_finish_record
-from creation.post.join import JOIN_NOT_DONE, decode_stereo, run_join
+from creation.post.join import decode_stereo, run_join
 from creation.post.watermark import watermark
-from creation import rules_epoch
 from creation.rules_epoch import is_legacy, run_rules_epoch
 
 SIZE = (192, 336)
@@ -300,105 +296,6 @@ def test_a_silent_head_is_trimmed_on_a_filmed_cut_and_the_seam_passes(
         "1.5 s of silent head is gone"
     )
     assert result.seams == [4.0]
-
-
-@needs_ffmpeg
-def test_a_seam_that_cannot_be_fixed_still_refuses_and_lists_what_was_tried(
-    desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    finished(desk, "t1", seconds=4.0, level=0.05)
-    finished(
-        desk, "t2", seconds=4.0, level=0.05, silent_head=1.5, seed=2
-    )  # no filmed cut to trim on
-    monkeypatch.setattr(seam_fix, "SEAM_BED_MAX_DB", -90.0)
-    monkeypatch.setattr(
-        cli_post, "run_join", functools.partial(run_join, stream=io.StringIO())
-    )
-
-    code = main(
-        ["join", "--desk", str(desk), "--episode", "1", "--no-gain-match", "--json"]
-    )
-
-    report = json.loads(capsys.readouterr().out)
-    assert (
-        code == JOIN_NOT_DONE
-        and report["complete"] is False
-        and report["marked"] is None
-    )
-    fix = report["seam_fix"]
-    assert fix["fixed"] is False and not fix["laid"] and not fix["trimmed"]
-    tried = " | ".join(fix["tried"])
-    assert "no filmed cut inside it" in tried, tried
-    assert "room tone" in tried or "laid" in tried or "not laid" in tried, tried
-    assert abs(report["seams"][0]["step_db"]) > 5, "the master as first joined is kept"
-    notes = (desk / "ep01" / "run-notes.md").read_text()
-    assert "SEAM FIX TRIED" in notes and "STOPPED: seam at 4.00s" in notes
-    assert not list((desk / "ep01" / "takes").glob("*_ep01_*.mp4"))
-
-
-@needs_ffmpeg
-def test_a_legacy_desk_off_the_allow_list_and_no_seam_fix_measure_and_refuse_exactly_as_before(
-    desk: Path,
-    legacy_desk: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    # Since 7 Oct 2026 a legacy desk gets the seam bed (continuing_fix); with
-    # "seam_bed" off the allow-list it measures and refuses as it always did.
-    monkeypatch.setattr(rules_epoch, "CONTINUING_FIXES", frozenset())
-    for each in (desk, legacy_desk):
-        finished(each, "t1", seconds=4.0, level=0.05)
-        finished(each, "t2", seconds=4.0, level=0.001, seed=2)
-        ambience(each)
-    called: list[str] = []
-
-    def no_fix(*args: object, **kwargs: object) -> None:
-        called.append("fix")
-        raise AssertionError(
-            "no seam fix on a legacy desk or with --no-seam-fix / --accept-seam"
-        )
-
-    monkeypatch.setattr(join_module, "_fix_seams", no_fix)
-    monkeypatch.setattr(
-        cli_post, "run_join", functools.partial(run_join, stream=io.StringIO())
-    )
-
-    old, _ = _join(legacy_desk)
-    off, _ = _join(desk, seam_fix=False)
-    accepted, _ = _join(
-        desk, accept_seam="the room changes on purpose", accepted_by="T"
-    )
-    code = main(
-        [
-            "join",
-            "--desk",
-            str(desk),
-            "--episode",
-            "1",
-            "--no-gain-match",
-            "--no-seam-fix",
-            "--json",
-        ]
-    )
-    report = json.loads(capsys.readouterr().out)
-
-    assert called == []
-    for result in (old, off):
-        assert not result.complete and result.marked is None and result.seam_fix is None
-        assert abs(result.seam_steps_db[0]) > 10
-        assert "seam_fix" not in result.as_json()
-        assert not any("SEAM FIX" in line for line in result.summary_lines())
-    assert old.seam_steps_db == off.seam_steps_db
-    a, b = decode_stereo(old.master), decode_stereo(off.master)
-    assert a.shape == b.shape and np.array_equal(a, b), (
-        "the legacy join is the join as it always was"
-    )
-    assert (
-        accepted.complete
-        and accepted.accepted is not None
-        and accepted.seam_fix is None
-    )
-    assert code == JOIN_NOT_DONE and "seam_fix" not in report
 
 
 @needs_ffmpeg

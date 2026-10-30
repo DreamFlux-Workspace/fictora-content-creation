@@ -18,30 +18,23 @@ filmed today would get (``POST /v1/spines/{spine_id}/music-rescore``):
 - **revert.** ``--revert`` puts back what the latest re-score replaced
   (``--rescore-id`` names one re-score), free.
 
-After the harness applies (or reverts), the kit's own delivered episode file
-(captions, colour, mark... put on by ``finish`` and ``join`` on this laptop)
-still has the old music. For each changed episode, in episode order, the kit:
-
-1. saves each changed take as a new raw take version
-   (``take-epNN-tK-raw-vN.mp4``) and its facts as new take facts;
-2. runs ``finish`` again on each changed take (the desk's settings, the same
-   caption colour), when the take was finished cleanly before;
-3. runs ``join`` for the episode, which writes the next readable file
-   (``<slug>_epNN_draft_vN_<date>.mp4``). Nothing is overwritten.
-
-When a take cannot be finished again by itself (finished with hand-placed
-sound or words, edited after finish, a NOT DONE finish, a take the desk does
-not know), the episode is not rebuilt: the kit says why and the old file stays.
+After the harness applies (or reverts), it puts each changed episode together
+again on the server with the new music. For each changed episode, in episode
+order, the kit then asks the server for the finished episode and downloads it
+under the next readable name (``<slug>_epNN_draft_vN_<date>.mp4``), exactly as
+``finish`` does (:mod:`creation.post.server_finish`; since 30 Oct 2026 nothing is
+finished on this laptop and no take is downloaded raw). Nothing is overwritten.
+When the server's new cut is not written yet, the old file stays and the kit
+says to run ``finish`` again in a few minutes.
 """
 
 from __future__ import annotations
 
 import json
-import re
 import shlex
 import sys
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -50,7 +43,6 @@ from typing import Any, TextIO
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
 from creation.post.episode_name import episode_files
-from creation.post.take_handles import HANDLES_OP
 from creation.production_state import paid_key_prefix
 
 #: Every re-score (and revert) the kit applied, one JSON line each.
@@ -61,12 +53,6 @@ RESCORE_ANSWERS = Path("shared") / "music-rescores"
 NOT_APPLIED = 2
 #: Exit code when the harness applied it but an episode file on this laptop was not rebuilt.
 REBUILD_NOT_DONE = 5
-#: Finish steps whose inputs were given by hand (``--voice``/``--mute``, ``--cue``, ``--sign-overlay``,
-#: ``--prop-text``) or a treated voice (``revoice``): a re-finish cannot repeat them by itself.
-HAND_STEPS = ("voice", "cues", "sign", "prop", "revoice")
-
-#: ``(url, directory, stem) -> path``: save one take file as the next ``stem-vN``.
-Download = Callable[[str, Path, str], Path]
 
 
 def _route(spine_id: str) -> str:
@@ -353,76 +339,6 @@ class EpisodeRebuild:
     lines: list[str] = field(default_factory=list)
 
 
-def _download_take(url: str, directory: Path, stem: str) -> Path:
-    """Save a take file the harness made as the next ``stem-vN.mp4`` (never over an older one)."""
-
-    import httpx
-
-    from creation.media_fetch import download_to_versioned
-
-    directory.mkdir(parents=True, exist_ok=True)
-    with httpx.Client(timeout=300.0) as client:
-        return download_to_versioned(
-            client, url, directory, stem, default_suffix=".mp4"
-        )
-
-
-def _finish_take(
-    desk: Path,
-    episode: int,
-    take_id: str,
-    take_file: Path,
-    caption_colour: str | None,
-    out: TextIO,
-) -> tuple[bool, str]:
-    """Run ``finish`` on the re-scored raw take with the desk's settings; ``(complete, why not)``."""
-
-    from creation.post.finish import run_finish
-
-    result = run_finish(
-        desk,
-        episode=episode,
-        take_id=take_id,
-        take_file=take_file,
-        caption_colour=caption_colour,
-        stream=out,
-    )
-    if result.complete:
-        return True, ""
-    return False, "finish NOT DONE (no " + ", ".join(
-        result.sound_missing or ["mix"]
-    ) + ")"
-
-
-def _join_episode(desk: Path, episode: int, out: TextIO) -> tuple[Path | None, str]:
-    """Run ``join`` for the episode; ``(the new marked file, why not)``."""
-
-    from creation.post.join import run_join
-
-    joined = run_join(desk, episodes=(episode,), stream=out)
-    if joined.complete and joined.marked is not None:
-        return joined.marked, ""
-    stops = [note for note in joined.notes if note.startswith("STOPPED")]
-    return None, "join NOT DONE" + (f": {stops[0]}" if stops else "")
-
-
-def _hand_made(desk: Path, episode: int, take_id: str) -> list[str]:
-    """The hand steps an earlier finish (or edit) ran on this take, by the files they left."""
-
-    takes = desk / f"ep{episode:02d}" / "takes"
-    pattern = re.compile(
-        rf"^take-ep{episode:02d}-{re.escape(take_id)}-({'|'.join(HAND_STEPS)})-.*\.mp4$"
-    )
-    found = sorted(
-        {
-            m.group(1)
-            for p in takes.glob(f"take-ep{episode:02d}-{take_id}-*.mp4")
-            if (m := pattern.match(p.name))
-        }
-    )
-    return found
-
-
 def _refresh_facts(
     run: Any, desk: Path, episode: int, take_id: str, job_id: str, spine_id: str
 ) -> None:
@@ -445,6 +361,14 @@ def _refresh_facts(
     )
 
 
+def _server_finish(desk: Path, episode: int, out: TextIO) -> Any:
+    """Ask the server for the episode, finished, and download it (:mod:`creation.post.server_finish`)."""
+
+    from creation.post.server_finish import run_server_finish
+
+    return run_server_finish(desk, episode=episode, stream=out)
+
+
 def rebuild_episode(
     desk: Path,
     episode: int,
@@ -454,7 +378,13 @@ def rebuild_episode(
     spine_id: str,
     out: TextIO,
 ) -> EpisodeRebuild:
-    """Rebuild one changed episode's file on this laptop from the harness's re-scored takes.
+    """Get one changed episode's new file from the server (item 01, phase 4; 30 Oct 2026).
+
+    The harness puts the episode together again with the new music on the server; the kit
+    asks the server for the finished episode and downloads it (:func:`_server_finish`).
+    Nothing is downloaded raw or finished on this laptop. When the server still hands back
+    the cut already on the laptop, its new cut is not written yet: the old file stays and
+    the line says to run ``finish`` again in a few minutes.
 
     Parameters
     ----------
@@ -463,7 +393,7 @@ def rebuild_episode(
     episode
         Episode ordinal.
     takes
-        The episode's changed takes from the apply answer (``changed`` with a ``video_url``).
+        The episode's changed takes from the apply answer.
     run
         Harness session (for the takes' new facts).
     spine_id
@@ -475,120 +405,49 @@ def rebuild_episode(
     -------
     EpisodeRebuild
         ``rebuilt`` with the new file, ``not_rebuilt`` with why (the old file stays), or
-        ``nothing_to_rebuild`` (no joined episode file on this laptop).
+        ``nothing_to_rebuild`` (no episode file on this laptop yet).
     """
-
-    from creation.post.desk import take_job_id
-    from creation.post.finish_record import latest_finish_record
 
     report = EpisodeRebuild(episode=episode, state="not_rebuilt")
     folder = desk / f"ep{episode:02d}" / "takes"
-    before = {p.name for p in episode_files(folder, episode)}
-    placed: list[tuple[str, Mapping[str, Any]]] = []
     for take in takes:
         number = take.get("take")
-        if number is None:
-            report.lines.append(
-                f"the harness did not say which take job {take.get('take_job_id')} is in the episode"
-            )
-            return report
-        take_id = f"t{int(number)}"
-        known = take_job_id(desk, episode, take_id)
-        if known != take.get("take_job_id"):
-            report.lines.append(
-                f"{take_id}: this desk's {take_id} is "
-                + (
-                    f"another filming (job {known})"
-                    if known
-                    else "not a take it collected"
-                )
-                + f", not the take the harness changed (job {take.get('take_job_id')})"
-            )
-            return report
-        placed.append((take_id, take))
-    # Save the new takes first: whatever happens next, the next finish here reads the new music.
-    new_raw: dict[str, Path] = {}
-    for take_id, take in placed:
-        new_raw[take_id] = _download(
-            str(take["video_url"]), folder, f"take-ep{episode:02d}-{take_id}-raw"
-        )
+        if number is None or not take.get("take_job_id"):
+            continue
         try:
             _refresh_facts(
-                run, desk, episode, take_id, str(take["take_job_id"]), spine_id
-            )
-        except SystemExit as exc:
-            report.lines.append(
-                f"{take_id}: its new facts were not read ({exc.code}); finish reads the saved ones"
-            )
-        report.lines.append(f"{take_id}: new take saved: {new_raw[take_id].name}")
-    if not before:
-        report.state = "nothing_to_rebuild"
-        report.lines.append(
-            "no joined episode file on this laptop yet: nothing to rebuild; the next finish and join use the new takes"
-        )
-        return report
-    # A take the kit cannot finish again by itself keeps the whole episode as it is.
-    records = {}
-    for take_id, _take in placed:
-        record = latest_finish_record(desk, episode, take_id)
-        why = None
-        if record is None:
-            why = "it was never finished on this laptop"
-        elif not record.complete:
-            why = "its last finish was NOT DONE"
-        elif hand_edits := [
-            str(e.get("op") or "edit")
-            for e in record.edits
-            if e.get("op") != HANDLES_OP
-        ]:
-            why = f"it was edited after finish ({', '.join(hand_edits)}); the kit cannot repeat the edit by itself"
-        elif record.hand_voices or (hand := _hand_made(desk, episode, take_id)):
-            steps = "voice" if record.hand_voices else ", ".join(hand)
-            why = f"it was finished with hand-placed sound or words ({steps}); the kit cannot repeat them by itself"
-        if why:
-            report.lines.append(f"{take_id}: not finished again: {why}")
-            report.lines.append(
-                f"the old file stays. Finish {take_id} again by hand with the flags you used "
-                f"(`fictora-produce finish --desk {desk} --episode {episode} --take {take_id} …`, it reads the new "
-                f"take), then `fictora-produce join --desk {desk} --episode {episode}`"
-            )
-            return report
-        records[take_id] = record
-    for take_id, _take in placed:
-        try:
-            complete, why = _finish(
+                run,
                 desk,
                 episode,
-                take_id,
-                new_raw[take_id],
-                records[take_id].caption_colour,
-                out,
+                f"t{int(number)}",
+                str(take["take_job_id"]),
+                spine_id,
             )
-        except (Exception, SystemExit) as exc:  # noqa: BLE001 - any failure leaves the old file
-            complete, why = (
-                False,
-                f"finish failed ({type(exc).__name__}: {str(exc)[:200]})",
-            )
-        if not complete:
-            report.lines.append(f"{take_id}: {why}; the old file stays")
-            return report
-        report.lines.append(f"{take_id}: finished again on the new take")
-    try:
-        made, why = _join(desk, episode, out)
-    except (Exception, SystemExit) as exc:  # noqa: BLE001 - any failure leaves the old file
-        made, why = None, f"join failed ({type(exc).__name__}: {str(exc)[:200]})"
-    if made is None or made.name in before:
-        report.lines.append(f"{why or 'join made no new file'}; the old file stays")
+        except SystemExit:
+            pass  # the take facts on the desk are for reading only; the server finishes
+    if not episode_files(folder, episode):
+        report.state = "nothing_to_rebuild"
+        report.lines.append(
+            "no episode file on this laptop yet: nothing to rebuild; `finish` downloads the new cut"
+        )
         return report
-    report.state, report.file = "rebuilt", made
-    report.lines.append(f"new episode file: {made.name} (the old ones are kept)")
+    done = _finish(desk, episode, out)
+    if not done.complete:
+        report.lines.append(f"{done.error} The old file stays.")
+        return report
+    if done.reused:
+        report.lines.append(
+            "the server is still putting the episode together with the new music; the old file stays. "
+            f"Run `fictora-produce finish --desk {desk} --episode {episode}` again in a few minutes."
+        )
+        return report
+    report.state, report.file = "rebuilt", done.video
+    report.lines.append(f"new episode file: {done.video.name} (the old ones are kept)")
     return report
 
 
-#: Seams tests replace (the real ones download, finish and join on this laptop).
-_download: Download = _download_take
-_finish = _finish_take
-_join = _join_episode
+#: The seam tests replace (the real one asks the server and downloads).
+_finish = _server_finish
 
 
 # --- the command ---------------------------------------------------------------------------------
@@ -825,7 +684,6 @@ def run_rescore_music(
 
 __all__: Sequence[str] = (
     "EpisodeRebuild",
-    "HAND_STEPS",
     "NOT_APPLIED",
     "REBUILD_NOT_DONE",
     "RESCORES_FILE",

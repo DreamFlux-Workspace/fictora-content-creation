@@ -171,6 +171,7 @@ def test_every_take_filmed_and_the_job_idle_ten_minutes_is_collected_and_marked_
     downloads = [payload["url"] for phase, payload in api.events if phase == "download"]
     # Item 01 phase 4: no raw take is downloaded; the server finishes the episode.
     assert downloads == []
+    assert not list(desk.glob("ep*/takes/take-ep*-raw-v*.mp4"))
     state = load_production(desk)
     assert (
         state.phase == "complete"

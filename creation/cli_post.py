@@ -133,6 +133,7 @@ LAPTOP_ONLY_FLAGS: tuple[str, ...] = (
 #: Where a laptop-only setting lives now, when it has a home.
 _LAPTOP_FLAG_HOMES = {
     "--music": "a music change goes through `music-note`",
+    "--accept-line-mismatch": "keeping a take whose line came out wrong is --keep-line-findings tK",
     "--caption-style": "the show's caption look is the server's house captions",
     "--episodes": "a cut across several episodes is not made by the kit any more",
 }
@@ -176,6 +177,14 @@ def _add_server_finish_args(parser: argparse.ArgumentParser) -> None:
         "--no-hook-line",
         action="store_true",
         help="Turn the episode's hook line off on the server, then finish.",
+    )
+    parser.add_argument(
+        "--keep-line-findings",
+        action="append",
+        default=[],
+        metavar="TAKE",
+        help="The human listened to a take whose line came out wrong and keeps it as it is (tK, or all): "
+        "recorded on the server, then the episode is finished.",
     )
     parser.add_argument(
         "--json", action="store_true", help="Print the result as JSON on stdout."
@@ -846,6 +855,7 @@ def _server_finish_command(args: argparse.Namespace) -> int:
         desk,
         episode=args.episode,
         wait_seconds=DEFAULT_WAIT_SECONDS if args.wait is None else args.wait,
+        keep_line_findings=tuple(args.keep_line_findings),
     )
     if args.json:
         print(json.dumps(done.as_json(), indent=2))

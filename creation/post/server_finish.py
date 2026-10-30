@@ -28,6 +28,7 @@ made on the laptop. ``fictora-ops approve --gate post`` still makes the
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import sys
@@ -69,6 +70,74 @@ Say = Callable[[str], None]
 
 class ServerFinishError(RuntimeError):
     """The server did not give the finished episode; the message is one plain line with what to do."""
+
+
+#: The server's stop when a take of the episode said a line wrong and the human has not chosen yet.
+LINE_FINDINGS_OPEN = "take_line_findings_open"
+#: The existing take decision route: Keep it is ``use`` with ``accept_line_findings``.
+TAKE_DECISION_ROUTE = "/v1/video-generations/{job_id}/takes/{take_index}/decision"
+
+
+class LineFindingsOpen(ServerFinishError):
+    """The server will not hand over the episode while a take's line findings wait on the human.
+
+    ``takes`` is the server's list: each take's run, index, number, listen link and findings.
+    """
+
+    def __init__(self, takes: list[dict[str, Any]], *, episode: int) -> None:
+        self.takes = takes
+        self.episode = episode
+        super().__init__(line_findings_text(takes, episode=episode))
+
+
+def _take_label(take: Mapping[str, Any]) -> str:
+    number = take.get("take_number") or take.get("take_index")
+    return f"t{number}" if number else "a take"
+
+
+def line_findings_text(takes: list[dict[str, Any]], *, episode: int) -> str:
+    """The plain stop for open line findings: each line that came out wrong, and the two ways on."""
+
+    rows: list[str] = [
+        f"Episode {episode} has lines that came out wrong. Listen, then keep the take or film it again; "
+        "nothing is posted until the human chooses."
+    ]
+    for take in takes:
+        label = _take_label(take)
+        if take.get("listen_url"):
+            rows.append(f"  {label}: listen: {take['listen_url']}")
+        for finding in take.get("findings") or []:
+            if not isinstance(finding, Mapping):
+                continue
+            words = str(finding.get("message") or "").strip() or (
+                f'{finding.get("kind", "line")}: script "{finding.get("line", "")}", heard "{finding.get("heard", "")}"'
+            )
+            window = ""
+            if finding.get("listen_start_seconds") is not None:
+                window = f" (at {float(finding['listen_start_seconds']):.1f} s)"
+            rows.append(f"  {label}: {words}{window}")
+    labels = sorted({_take_label(take) for take in takes})
+    rows.append(
+        f"To keep it as it is: run finish again with --keep-line-findings {labels[0] if len(labels) == 1 else 'all'}. "
+        f'To film it again: `fictora-produce film --desk D --episode {episode} --take {labels[0]} --cause "…"` '
+        "(priced first)."
+    )
+    return "\n".join(rows)
+
+
+def _open_takes(body: Any) -> list[dict[str, Any]] | None:
+    """The takes in a ``take_line_findings_open`` refusal, else ``None``."""
+
+    if _error_code(body) != LINE_FINDINGS_OPEN:
+        return None
+    error = body.get("error") if isinstance(body, dict) else None
+    details = error.get("details") if isinstance(error, dict) else None
+    takes = details.get("takes") if isinstance(details, dict) else None
+    return (
+        [dict(t) for t in takes if isinstance(t, Mapping)]
+        if isinstance(takes, list)
+        else []
+    )
 
 
 @dataclass(frozen=True)
@@ -374,6 +443,9 @@ def ask_posting_copy(
             ) from None
     body = _body(response)
     if not response.is_success:
+        takes = _open_takes(body)
+        if takes is not None:
+            raise LineFindingsOpen(takes, episode=episode)
         raise ServerFinishError(
             refusal_line(response.status_code, body, episode=episode)
         )
@@ -391,22 +463,61 @@ def _https_only(url: str) -> None:
         )
 
 
+#: ``os.link`` errors that mean "this folder cannot hard-link" (exFAT, network or synced drives).
+_NO_HARD_LINKS = frozenset(
+    code
+    for code in (
+        errno.EXDEV,
+        errno.EPERM,
+        errno.EMLINK,
+        errno.ENOSYS,
+        getattr(errno, "ENOTSUP", None),
+        getattr(errno, "EOPNOTSUPP", None),
+    )
+    if code is not None
+)
+
+
+def _place(part: Path, dest: Path) -> None:
+    """Move the finished download into place, never over an existing file.
+
+    A hard link is atomic and refuses an existing name; a folder that cannot hard-link
+    (exFAT, network or synced drives) gets a checked rename instead.
+    """
+
+    try:
+        os.link(part, dest)
+        return
+    except FileExistsError:
+        raise
+    except OSError as exc:
+        if exc.errno not in _NO_HARD_LINKS:
+            raise
+    if dest.exists():
+        raise FileExistsError(errno.EEXIST, "file exists", str(dest))
+    os.replace(part, dest)
+
+
 def download_file(
     url: str,
     dest: Path,
     *,
     transport: httpx.BaseTransport | None = None,
     kind: str,
+    meta: Mapping[str, Any] | None = None,
 ) -> Path:
     """Download one file the server saved into ``dest``: whole or not at all, never over an existing file.
 
     One try: the server saved the file before it answered, so a failure is
     reported plainly instead of being asked again.
 
+    ``meta`` is written beside the file (``<name>.json``) before the file is put in
+    place, so a file on the desk always carries the server link it came from.
+
     Raises
     ------
     ServerFinishError
-        When the download failed.
+        When the download failed or the file could not be saved on this laptop.
     """
 
     _https_only(url)
@@ -436,10 +547,22 @@ def download_file(
             raise ServerFinishError(
                 f"The {kind} came back empty. Run finish again to download it."
             )
-        os.link(part, dest)  # atomic, and refuses an existing file
+        if meta is not None:
+            _write_sidecar(dest, meta)
+        _place(part, dest)
     except httpx.HTTPError as exc:
         raise ServerFinishError(
             f"The {kind} download stopped ({type(exc).__name__}). The server keeps it: run finish again."
+        ) from None
+    except FileExistsError:
+        raise ServerFinishError(
+            f"Another file named {dest.name} appeared while the {kind} downloaded (two finishes at once?). "
+            "Nothing was overwritten: run finish again."
+        ) from None
+    except OSError as exc:
+        raise ServerFinishError(
+            f"The {kind} could not be saved on this laptop ({exc.strerror or type(exc).__name__}: {dest.parent}). "
+            "Check the disk has space and the folder can be written, then run finish again. The server keeps it."
         ) from None
     finally:
         part.unlink(missing_ok=True)
@@ -496,6 +619,57 @@ def _api(desk: Path) -> tuple[str, dict[str, str]]:
     return base, api_headers(token, state.session_id)
 
 
+def _kept_all(takes: list[dict[str, Any]], keep: tuple[str, ...]) -> bool:
+    """Whether the human's ``--keep-line-findings`` covers every take the server stopped on."""
+
+    wanted = {k.strip().lower() for k in keep}
+    if not wanted or not takes:
+        return False
+    return "all" in wanted or all(_take_label(t) in wanted for t in takes)
+
+
+def keep_take(
+    base_url: str,
+    headers: Mapping[str, str],
+    take: Mapping[str, Any],
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> None:
+    """Record Keep it on one take whose lines came out wrong (the existing take decision; free).
+
+    Raises
+    ------
+    ServerFinishError
+        When the server refused the decision.
+    """
+
+    job = str(take.get("generation_job_id") or "")
+    index = take.get("take_index")
+    if not job or not index:
+        raise ServerFinishError(
+            "The server did not say which take to keep. Tell the core team; nothing was posted."
+        )
+    url = base_url.rstrip("/") + TAKE_DECISION_ROUTE.format(
+        job_id=job, take_index=int(index)
+    )
+    try:
+        with httpx.Client(timeout=60.0, transport=transport) as client:
+            response = client.post(
+                url,
+                headers=dict(headers),
+                json={"action": "use", "accept_line_findings": True},
+            )
+    except httpx.HTTPError as exc:
+        raise ServerFinishError(
+            f"Could not record the keep ({type(exc).__name__}). Run finish again."
+        ) from None
+    if not response.is_success:
+        raise ServerFinishError(
+            f"The server would not record the keep for {_take_label(take)} "
+            f"(HTTP {response.status_code}: {api_error_text(_body(response))[:200]})."
+        )
+
+
 def run_server_finish(
     desk: Path,
     *,
@@ -507,6 +681,7 @@ def run_server_finish(
     progress_every: float = PROGRESS_EVERY_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
+    keep_line_findings: tuple[str, ...] = (),
 ) -> ServerFinish:
     """Ask the server for the finished episode and download it and its cover under today's names.
 
@@ -531,6 +706,10 @@ def run_server_finish(
         Seconds between progress lines.
     sleep, clock
         Injected for tests.
+    keep_line_findings
+        Takes (``tK`` or ``all``) the human chose to keep although a line came out wrong: when the
+        server stops on them, Keep it is recorded on the server (the existing take decision) and
+        the episode is asked for again.
 
     Returns
     -------
@@ -560,19 +739,31 @@ def run_server_finish(
             f"Asking the server for episode {episode}, finished and ready to post "
             "(captions, sound, hook title, Sokii mark, cover)…"
         )
-        body = ask_posting_copy(
-            base_url=base,
-            headers=headers,
-            spine_id=spine,
-            episode_id=episode_id,
-            episode=episode,
-            wait_seconds=wait_seconds,
-            transport=transport,
-            say=say,
-            progress_every=progress_every,
-            sleep=sleep,
-            clock=clock,
-        )
+
+        def ask() -> dict[str, Any]:
+            return ask_posting_copy(
+                base_url=base,
+                headers=headers,
+                spine_id=spine,
+                episode_id=episode_id,
+                episode=episode,
+                wait_seconds=wait_seconds,
+                transport=transport,
+                say=say,
+                progress_every=progress_every,
+                sleep=sleep,
+                clock=clock,
+            )
+
+        try:
+            body = ask()
+        except LineFindingsOpen as stop:
+            if not _kept_all(stop.takes, keep_line_findings):
+                raise
+            for take in stop.takes:
+                keep_take(base, headers, take, transport=transport)
+                say(f"Kept {_take_label(take)} as it is (recorded on the server).")
+            body = ask()
     except ServerFinishError as exc:
         return ServerFinish(episode, error=str(exc), seconds=clock() - started)
     except (ValueError, FileNotFoundError) as exc:
@@ -593,10 +784,7 @@ def run_server_finish(
                 next_episode_path(folder, desk, episode, "draft"),
                 transport=transport,
                 kind="video",
-            )
-            _write_sidecar(
-                video,
-                {
+                meta={
                     "episode": episode,
                     "video_url": video_url,
                     "server_file_name": body.get("file_name"),
@@ -618,25 +806,17 @@ def run_server_finish(
                     next_versioned_path(folder, f"cover-ep{episode:02d}", ".jpg"),
                     transport=transport,
                     kind="cover",
+                    meta={
+                        "cover_url": cover_url,
+                        "episode": episode,
+                        "video": video.name,
+                        "video_url": video_url,
+                        "cover_hook": body.get("cover_hook"),
+                    },
                 )
             except ServerFinishError as exc:
                 notes.append(f"No cover this time: {exc}")
                 cover = None
-            else:
-                (folder / f"{cover.stem}.json").write_text(
-                    json.dumps(
-                        {
-                            "cover_url": cover_url,
-                            "episode": episode,
-                            "video": video.name,
-                            "video_url": video_url,
-                            "cover_hook": body.get("cover_hook"),
-                        },
-                        indent=2,
-                    )
-                    + "\n",
-                    encoding="utf-8",
-                )
     else:
         notes.append(
             "No cover this time: the server could not draw one (the video is ready to post)."
@@ -653,16 +833,19 @@ def run_server_finish(
         notes=tuple(notes),
     )
     if (run_dir / "run-notes.md").is_file():
-        append_run_note(
-            run_dir,
-            "Finished on the server, $0\n"
-            + f"Video -> {video.name}"
-            + (f"; cover -> {cover.name}" if cover else "; no cover")
-            + (" (already on this laptop)" if reused else "")
-            + (
-                f". Server run `{result.generation_job_id}`."
-                if result.generation_job_id
-                else "."
-            ),
-        )
+        try:
+            append_run_note(
+                run_dir,
+                "Finished on the server, $0\n"
+                + f"Video -> {video.name}"
+                + (f"; cover -> {cover.name}" if cover else "; no cover")
+                + (" (already on this laptop)" if reused else "")
+                + (
+                    f". Server run `{result.generation_job_id}`."
+                    if result.generation_job_id
+                    else "."
+                ),
+            )
+        except OSError:
+            pass  # the run note is a convenience; the files are saved
     return result

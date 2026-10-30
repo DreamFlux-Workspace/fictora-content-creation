@@ -7,6 +7,7 @@ nothing is finished on the laptop.
 
 from __future__ import annotations
 
+import errno
 import json
 import time
 from datetime import date
@@ -293,7 +294,7 @@ def test_finish_and_join_are_the_server_call(
 
     asked: list[tuple[Path, int]] = []
 
-    def fake(desk: Path, *, episode: int, wait_seconds: float) -> Any:
+    def fake(desk: Path, *, episode: int, wait_seconds: float, **_kw: Any) -> Any:
         asked.append((desk, episode))
         return server_finish.ServerFinish(
             episode, video=desk / "ep01" / "takes" / "x.mp4", seconds=42.0
@@ -353,10 +354,123 @@ def test_old_laptop_settings_are_refused_by_name_and_the_server_is_not_called(
     assert "not used any more" in err and extra[0] in err
 
 
-def test_the_film_step_no_longer_downloads_raw_takes() -> None:
-    import inspect
+# --- saving on this laptop ------------------------------------------------------------------------
 
-    from creation import orchestrate
 
-    source = inspect.getsource(orchestrate.collect_takes)
-    assert "download_to_versioned" not in source
+def test_a_folder_without_hard_links_still_saves_by_rename(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_links(*_a: Any) -> None:
+        raise OSError(errno.EXDEV, "cross-device link")
+
+    monkeypatch.setattr(server_finish.os, "link", no_links)
+
+    done = finish(post_desk, StandIn())
+
+    assert done.complete and done.video is not None
+    assert done.video.read_bytes() == VIDEO_BYTES
+    assert not list((post_desk / "ep01" / "takes").glob(".*.part"))
+
+
+def test_a_full_disk_is_a_plain_line_not_a_traceback(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def full(*_a: Any) -> None:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(server_finish.os, "link", full)
+
+    done = finish(post_desk, StandIn())
+
+    assert not done.complete
+    assert "could not be saved on this laptop (No space left on device" in (
+        done.error or ""
+    )
+    assert not list((post_desk / "ep01" / "takes").glob("*.mp4"))
+
+
+def test_the_link_note_is_written_before_the_video_so_a_repeat_never_downloads_twice(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_note(*_a: Any) -> None:
+        raise OSError(errno.EACCES, "Permission denied")
+
+    monkeypatch.setattr(server_finish, "_write_sidecar", no_note)
+
+    done = finish(post_desk, StandIn())
+
+    # No video without its note: a later finish cannot mistake it for another cut and save v2.
+    assert not done.complete
+    assert not list((post_desk / "ep01" / "takes").glob("*.mp4"))
+
+
+# --- lines that came out wrong (the server's take line findings) ----------------------------------
+
+OPEN = (
+    409,
+    {
+        "error": {
+            "code": "take_line_findings_open",
+            "message": "Episode 1 has lines that came out wrong",
+            "details": {
+                "takes": [
+                    {
+                        "generation_job_id": "job_video_1",
+                        "take_index": 2,
+                        "take_number": 2,
+                        "listen_url": "https://media.example/t2.mp4",
+                        "findings": [
+                            {
+                                "kind": "missing",
+                                "line": "You kept it?",
+                                "heard": "",
+                                "listen_start_seconds": 3.5,
+                                "message": "MISSING: line 2 'You kept it?' was not heard",
+                            }
+                        ],
+                    }
+                ]
+            },
+        }
+    },
+)
+
+
+def test_an_open_line_finding_stops_with_each_line_and_the_two_ways_on(
+    post_desk: Path,
+) -> None:
+    server = StandIn(OPEN)
+
+    done = finish(post_desk, server)
+
+    assert not done.complete
+    error = done.error or ""
+    assert "MISSING: line 2 'You kept it?' was not heard (at 3.5 s)" in error
+    assert "t2: listen: https://media.example/t2.mp4" in error
+    assert "--keep-line-findings t2" in error and "--take t2" in error
+    assert len(server.posts) == 1  # no keep is sent without the human's word
+    assert takes(post_desk) == []
+
+
+def test_keep_line_findings_records_keep_it_then_finishes(post_desk: Path) -> None:
+    server = StandIn(OPEN, (200, answer()), (200, answer()))
+
+    done = finish(post_desk, server, keep_line_findings=("t2",))
+
+    assert done.complete, done.error
+    paths = [r.url.path for r in server.posts]
+    assert paths[1] == "/v1/video-generations/job_video_1/takes/2/decision"
+    assert json.loads(server.posts[1].content) == {
+        "action": "use",
+        "accept_line_findings": True,
+    }
+    assert paths[0] == paths[2] and paths[0].endswith("/posting-copy")
+
+
+def test_keeping_another_take_does_not_keep_this_one(post_desk: Path) -> None:
+    server = StandIn(OPEN)
+
+    done = finish(post_desk, server, keep_line_findings=("t1",))
+
+    assert not done.complete
+    assert len(server.posts) == 1
