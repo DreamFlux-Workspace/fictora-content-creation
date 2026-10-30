@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import functools
 import io
 import json
 from pathlib import Path
@@ -11,11 +10,9 @@ import pytest
 from conftest import make_take, make_tone, needs_ffmpeg
 from PIL import Image
 
-from creation import cli_post
-from creation.cli_produce import main
 from creation.ops.floor import approve_board
 from creation.ops.state import load_series
-from creation.post.finish import FINISH_INCOMPLETE, run_finish
+from creation.post.finish import run_finish
 from creation.post.sfx import SfxCue
 
 #: Kenji at 1-2 s, Aya at 3.2-4 s (the spine's two lines).
@@ -138,24 +135,6 @@ def test_finish_lays_sfx_mix_captions_and_mark_as_new_versions_and_no_music(
     assert again.final.name == "take-ep01-t1-sokii-v2.mp4"
     assert calls == ["a door slams"], (
         "the cue is cached: a second finish renders nothing"
-    )
-
-
-@needs_ffmpeg
-def test_finish_without_sfx_says_not_done_and_the_cli_exits_5(post_desk: Path, monkeypatch: pytest.MonkeyPatch,
-                                                                capsys: pytest.CaptureFixture[str]) -> None:  # fmt: skip
-    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", tones=TWO_LINES)
-    stubbed = functools.partial(run_finish, facts_fetcher=lambda *a: None)
-    monkeypatch.setattr(cli_post, "run_finish", stubbed)
-
-    code = main(["finish", "--desk", str(post_desk)])
-
-    assert code == FINISH_INCOMPLETE
-    err = capsys.readouterr().err
-    assert "Sound: no music ✓ · SFX ✗ · mix ✓ · captions ✓" in err
-    assert "NOT DONE: this take has no SFX" in err
-    assert (
-        "Finish NOT DONE: no SFX" in (post_desk / "ep01" / "run-notes.md").read_text()
     )
 
 

@@ -270,17 +270,9 @@ def test_caption_scale_outside_its_range_stops_before_anything_is_burned() -> No
 def test_finish_and_caption_take_the_flag(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from creation import cli_post, cli_produce
+    from creation import cli_produce
 
-    seen: dict[str, object] = {}
-
-    def fake_finish(desk: Path, **kwargs: object) -> object:
-        seen["finish"] = kwargs["caption_scale"]
-        raise RuntimeError("stop here")
-
-    monkeypatch.setattr(cli_post, "run_finish", fake_finish)
-    cli_produce.main(["finish", "--desk", str(tmp_path), "--caption-scale", "1.3"])
-    assert seen["finish"] == 1.3
+    # finish no longer captions on the laptop (item 01 phase 4); caption keeps the flag.
     with pytest.raises(SystemExit):
         cli_produce.main(["caption", "--help"])
     assert "--caption-scale" in capsys.readouterr().out

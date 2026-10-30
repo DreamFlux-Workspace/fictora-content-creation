@@ -321,23 +321,6 @@ def test_review_reads_the_opening_of_any_episodes_first_take(post_desk: Path) ->
     assert not any(s.name == "Opening" for s in later.sections)
 
 
-def test_the_ending_flag_is_on_join() -> None:
-    import argparse
-
-    from creation.cli_post import add_post_parsers
-
-    parser = argparse.ArgumentParser()
-    add_post_parsers(parser.add_subparsers(dest="command"))
-    held = parser.parse_args(
-        ["join", "--desk", "d", "--episode", "4", "--ending", "freeze-black"]
-    )
-    assert held.ending == "freeze-black"
-    joined = parser.parse_args(["join", "--desk", "d", "--episode", "4"])
-    assert joined.ending is None
-    with pytest.raises(SystemExit):
-        parser.parse_args(["join", "--desk", "d", "--episode", "4", "--ending", "fade"])
-
-
 def test_the_local_detector_finds_no_face_on_a_flat_frame() -> None:
     from creation.post.faces import ANIME_CASCADE, _cascade, local_detector
 

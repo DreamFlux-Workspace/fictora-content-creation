@@ -249,7 +249,8 @@ def test_film_take_k_sends_the_episode_the_take_and_a_fresh_seed_and_books_only_
     downloads = [
         payload["url"] for phase, payload in api30.events if phase == "download"
     ]
-    assert downloads == ["https://r2.example/ep2-t2.mp4"]
+    # Item 01 phase 4: no raw take is downloaded; the server finishes the episode.
+    assert downloads == []
     slot = episode_by_ordinal(load_series(desk30), 2)
     t1, t2 = slot.takes
     assert (t1.filmed_count, t2.filmed_count) == (1, 2)

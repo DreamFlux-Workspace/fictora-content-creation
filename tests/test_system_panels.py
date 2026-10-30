@@ -183,18 +183,6 @@ def test_a_named_refusal_is_not_an_older_server(tmp_path: Path) -> None:
     )
 
 
-def test_finish_takes_no_panels() -> None:
-    import argparse
-
-    from creation.cli_post import add_post_parsers
-
-    parser = argparse.ArgumentParser()
-    add_post_parsers(parser.add_subparsers(dest="command"))
-    assert parser.parse_args(
-        ["finish", "--desk", "d", "--episode", "1", "--take", "t1", "--no-panels"]
-    ).no_panels
-
-
 def _make_box_take(path: Path) -> None:
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=360x640:d=2:r=24",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", str(path)], check=True)  # fmt: skip

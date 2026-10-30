@@ -10,19 +10,18 @@ from pathlib import Path
 
 from creation.cli_text import HELP_SUFFIX, text_or_file
 from creation.post.edit_commands import EDIT_COMMANDS, add_edit_parsers, dispatch_edit
-from creation.post.finish import FINISH_INCOMPLETE, run_finish
-from creation.post.edit import parse_box
-from creation.post.hand import parse_caption_label, parse_placed, parse_range
-from creation.post.prop_text import parse_prop_text
-from creation.post.join import JOIN_NOT_DONE, run_join
 from creation.post.handmade import CUE_DEFAULT_SECONDS
-from creation.post.impact_post import MAX_EDITOR_HITS, parse_impact_at
+from creation.post.impact_post import MAX_EDITOR_HITS
 from creation.post.review_command import (
     REVIEW_COMMANDS,
     add_review_parser,
     dispatch_review,
 )
-from creation.post.sfx import parse_adjustment
+from creation.post.server_finish import (
+    DEFAULT_WAIT_SECONDS,
+    SERVER_FINISH_NOT_DONE,
+    run_server_finish,
+)
 
 POST_COMMANDS = (
     frozenset(
@@ -60,45 +59,6 @@ def _impact_hits(values: list[Any]) -> tuple[Any, ...]:
     return hits
 
 
-def add_hook_line_args(parser: argparse.ArgumentParser) -> None:
-    """``--hook-line`` / ``--no-hook-line`` / ``--hook-line-position`` on ``finish``."""
-
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--hook-line",
-        default=None,
-        metavar="TEXT",
-        help="Your own on-screen hook line: saved on the server first as the episode's hook line (the app "
-        "and join show it too), checked there, and the server's line is burned over the first ~3 s.",
-    )
-    group.add_argument(
-        "--no-hook-line",
-        action="store_true",
-        help="Turn the episode's hook line off on the server (no letterbox title bar either), then burn none.",
-    )
-    parser.add_argument(
-        "--thought-db",
-        type=float,
-        default=0.0,
-        metavar="N",
-        help="Every inner-voice thought N dB against a dialogue line (-3 a little quieter), on top of each "
-        "thought's own `inner-voice --db`. Default 0: a line's level.",
-    )
-    parser.add_argument(
-        "--no-panels",
-        action="store_true",
-        help="Draw none of the writer's system panels (status windows, level ups, quest notices: system "
-        "and game genres only).",
-    )
-    parser.add_argument(
-        "--hook-line-position",
-        choices=("top", "lower"),
-        default=None,
-        help="top: just under the top UI strip (the default); lower: just above the captions "
-        "(the default when a face sits in the upper band).",
-    )
-
-
 def add_caption_style_arg(parser: argparse.ArgumentParser) -> None:
     """``--caption-style bold|subtle|house|plain|none`` on ``finish`` and ``caption`` (default: the show's)."""
 
@@ -129,29 +89,156 @@ def add_caption_scale_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def add_caption_colour_arg(parser: argparse.ArgumentParser) -> None:
-    """``--caption-colour yellow|white`` on ``finish`` and ``join`` (a letterbox show's 4:3 takes only)."""
+#: Waiting on the server's take edits (fictora-drama #1189 / #1190, not live yet).
+_TAKE_EDITS_SOON = (
+    "hand edits on one take (mute a stretch, lay a line, add a sound, place a hit) move to the "
+    "server's take edits, which are not live yet; until then film the take again"
+)
+#: Settings ``finish`` and ``join`` took when they ran on this laptop (before 30 Oct 2026), and what
+#: happens to each now. The server finishes the episode; these are refused by name, never silently
+#: dropped. ``--caption-label``, ``--no-caption-labels`` and ``--episodes`` are not here: they go to
+#: the server's own routes.
+_LAPTOP_FLAG_HOMES: dict[str, str] = {
+    # Has a home today.
+    "--music": "a music change goes through `music-note`",
+    "--accept-line-mismatch": "keeping a take whose line came out wrong is --keep-line-findings tK",
+    # Waiting on the server's take edits.
+    "--mute": _TAKE_EDITS_SOON,
+    "--voice": _TAKE_EDITS_SOON,
+    "--over-locked-voices": _TAKE_EDITS_SOON,
+    "--impact-at": _TAKE_EDITS_SOON,
+    "--cue": _TAKE_EDITS_SOON
+    + '; a sound to add can be written now as a sound note: `sound-note --desk D --take tK "add ..."`',
+    "--sfx-adjust": 'a sound\'s level is a sound note on the story (`sound-note --desk D "quieter door"`, '
+    "every take); a level for one take only waits for the server's take edits",
+    # Gone for good: what the server does instead.
+    "--sign-overlay": "the server writes a sign's words into the picture when it films; nothing is drawn on top",
+    "--prop-text": "the server keeps notes and letters unreadable when it films; nothing is drawn on top",
+    "--prop-box": "the server keeps notes and letters unreadable when it films; nothing is drawn on top",
+    "--ending": "episodes end on a hard cut; a freeze-to-black ending is not made",
+    "--caption-style": "captions are the server's; the show's caption style and size are kept on the server, "
+    "not on the desk",
+    "--caption-scale": "captions are the server's; the show's caption style and size are kept on the server, "
+    "not on the desk",
+    "--caption-colour": "captions are the server's; the show's caption style and size are kept on the server, "
+    "not on the desk",
+    "--no-colour-match": "the server films close to the approved board; colour match is off",
+    "--colour-strength": "the server films close to the approved board; colour match is off",
+    "--no-deboard": "the server always cuts storyboard frames off the start of a take",
+    "--no-impact": "the server places the impact punch-ins itself",
+    "--no-panels": "the server draws a system or game show's panels itself",
+    "--thought-db": "the server sets how loud inner-voice lines are",
+    "--line-start": "the server times each caption from the line's own sound",
+    "--line-end": "the server times each caption from the line's own sound",
+    "--watermark-y": "the server owns where the Sokii mark and the hook title sit",
+    "--hook-line-position": "the server owns where the Sokii mark and the hook title sit",
+    "--no-cover": "the server always draws the cover; leave it out when posting if it is not wanted",
+    "--take-file": "the server joins the takes and evens their loudness itself",
+    "--from-record": "the server joins the takes and evens their loudness itself",
+    "--dissolve": "the server joins the takes and evens their loudness itself",
+    "--gain-match": "the server joins the takes and evens their loudness itself",
+    "--no-gain-match": "the server joins the takes and evens their loudness itself",
+    "--accept-seam": "the server joins the takes and evens their loudness itself",
+    "--accepted-by": "the server joins the takes and evens their loudness itself",
+    "--no-seam-fix": "the server joins the takes and evens their loudness itself",
+}
+LAPTOP_ONLY_FLAGS: tuple[str, ...] = tuple(_LAPTOP_FLAG_HOMES)
+#: On ``join`` only: caption labels belong to one take, so they go with ``finish --take tK``.
+_JOIN_REFUSED_HOMES: dict[str, str] = {
+    "--caption-label": "caption labels belong to one take: `finish --desk D --episode N --take tK "
+    '--caption-label "TEXT@A-B"`',
+    "--no-caption-labels": "caption labels belong to one take: `finish --desk D --episode N --take tK "
+    "--no-caption-labels`",
+}
+
+
+class _LaptopOnly(argparse.Action):
+    """Remember a laptop-only setting by name so the command can refuse it plainly."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: Any,
+        option_string: str | None = None,
+    ) -> None:
+        seen = list(getattr(namespace, self.dest, None) or [])
+        if option_string and option_string not in seen:
+            seen.append(option_string)
+        setattr(namespace, self.dest, seen)
+
+
+def _add_server_finish_args(parser: argparse.ArgumentParser) -> None:
+    """``--wait``, ``--json``, the hook line, and the old laptop settings (refused) on ``finish`` and ``join``."""
 
     parser.add_argument(
-        "--caption-colour",
-        choices=("yellow", "white"),
+        "--wait",
+        type=float,
         default=None,
-        help="Letterbox shows only: the colour of the captions under the picture. Default: "
-        "letterbox_caption_colour in the desk's production.config.json, else the show's setting, else yellow.",
+        metavar="SECONDS",
+        help=f"Longest wait for the server (default {DEFAULT_WAIT_SECONDS / 60:g} minutes).",
     )
-
-
-def add_ending_arg(parser: argparse.ArgumentParser) -> None:
-    """``--ending`` on ``join`` (hard|freeze-black)."""
-
-    from creation.post.ending import BLACK_SECONDS, ENDING_STYLES, FREEZE_SECONDS
-
-    parser.add_argument(
-        "--ending",
-        choices=ENDING_STYLES,
+    title = parser.add_mutually_exclusive_group()
+    title.add_argument(
+        "--hook-line",
         default=None,
-        help=f"hard (the default): end on the last frame, no hold, no fade. freeze-black: hold the last frame "
-        f"{FREEZE_SECONDS:g} s (the sound stops on it), then {BLACK_SECONDS:g} s of black. A style, any genre.",
+        metavar="TEXT",
+        help="Your own hook line: saved on the server first as the episode's hook line, then the server "
+        "finishes the episode with it.",
+    )
+    title.add_argument(
+        "--no-hook-line",
+        action="store_true",
+        help="Turn the episode's hook line off on the server, then finish.",
+    )
+    parser.add_argument(
+        "--keep-line-findings",
+        action="append",
+        default=[],
+        metavar="TAKE",
+        help="The human listened to a take whose line came out wrong and keeps it as it is (tK, or all): "
+        "recorded on the server, then the episode is finished.",
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Print the result as JSON on stdout."
+    )
+    parser.add_argument(
+        "--episodes",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Show the show's series cut instead (the server makes it from every finished episode; "
+        "nothing is joined on this laptop).",
+    )
+    for flag in LAPTOP_ONLY_FLAGS:
+        parser.add_argument(
+            flag,
+            dest="laptop_only",
+            action=_LaptopOnly,
+            nargs="*",
+            default=None,
+            help=argparse.SUPPRESS,
+        )
+
+
+def laptop_only_refusal(command: str, flags: list[str]) -> str:
+    """The plain stop for old laptop settings on ``finish`` / ``join``."""
+
+    grouped: dict[str, list[str]] = {}
+    for flag in flags:
+        home = _LAPTOP_FLAG_HOMES.get(flag) or _JOIN_REFUSED_HOMES.get(flag, "")
+        grouped.setdefault(home, []).append(flag)
+    rows = [
+        f"  {', '.join(names)}: {home}." if home else f"  {', '.join(names)}."
+        for home, names in grouped.items()
+    ]
+    return "\n".join(
+        [
+            f"Stopped: {command} now gets the episode finished on the server, made the same way as an app "
+            f"episode. These were laptop settings and are not used any more: {', '.join(flags)}.",
+            *rows,
+            f"Run {command} again without them. Nothing was made or charged.",
+        ]
     )
 
 
@@ -538,241 +625,52 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     fin = sub.add_parser(
         "finish",
-        help="Finish an accepted take on this laptop: board frames out, SFX, colour match to the board, mix, captions, "
-        "Sokii mark. No music: voice, effects and room sound only (a trending sound is added in Instagram or "
-        f"TikTok at posting). Exits {FINISH_INCOMPLETE} (NOT DONE) when SFX or the mix did not go on.",
+        help="Get the episode finished on the server and download it (free): one mix at -14 loudness, captions, "
+        "the hook title, the Sokii mark and the cover, the same as an app episode. Saved as "
+        "epNN/takes/<show>_epNN_draft_vN_<date>.mp4 and cover-epNN-vN.jpg. Nothing is finished on this laptop. "
+        f"Exits {SERVER_FINISH_NOT_DONE} (NOT DONE) when the server did not give the episode.",
     )
     fin.add_argument("--desk", type=Path, required=True)
-    fin.add_argument("--episode", type=int, default=1)
-    fin.add_argument("--take", dest="take_id", default="t1")
     fin.add_argument(
-        "--accept-line-mismatch",
-        action="append",
-        default=[],
-        metavar="TAKE",
-        help="Deliver this take (tK, or all) even though its line check found a fault: on a model-voice take a "
-        "missing, wrong, repeated, extra or wrong-shot line; on either voice mode a line played over a shot "
-        "that shows other people and not its speaker (SPEAKER NOT ON SCREEN). Without it finish STOPS before "
-        "making anything and prints the re-film command; with it the faults are logged in the run notes.",
+        "--episode", type=int, default=None, help="Default: the desk's current episode."
     )
     fin.add_argument(
-        "--take-file",
-        type=Path,
+        "--take",
+        dest="take_id",
         default=None,
-        help="Default: the newest raw take (or a revoice file).",
+        help="Not needed to finish (the server finishes the whole episode in one go); names the take "
+        "for --caption-label and --no-caption-labels.",
     )
-    fin.add_argument(
-        "--no-deboard",
-        action="store_true",
-        help="Keep the take's opening frames even when they are the board.",
-    )
-    fin.add_argument(
-        "--no-colour-match", action="store_true", help="Keep the take's own look."
-    )
-    fin.add_argument(
-        "--no-impact",
-        action="store_true",
-        help="Keep the big impact beats as filmed (no automatic punch-in or shake).",
-    )
-    fin.add_argument(
-        "--impact-at",
-        action="append",
-        type=parse_impact_at,
-        default=[],
-        metavar="SECONDS[:blast]",
-        help="A frame you know is a hit (seconds into the take as filmed, comma-separated or repeated; "
-        "':blast' for the bigger punch-in). Sent to the server's impact plan, which punches each in exactly "
-        "there and drops a planned one it overlaps. At most 8 per take.",
-    )
-    fin.add_argument(
-        "--colour-strength", type=float, default=1.0, help="0..1 toward the board."
-    )
-    fin.add_argument(
-        "--music",
-        default=None,
-        help='A music change note for the harness ("calmer"): saved like `music-note`, never used to make or '
-        f"pick music here. {HELP_SUFFIX}",
-    )
-    fin.add_argument(
-        "--sfx-adjust",
-        action="append",
-        default=[],
-        help='This take only, on top of the sound notes the take facts carry: "door=-6", "hum=drop", "shot:3=+4".',
-    )
-    fin.add_argument(
-        "--line-start",
-        type=float,
-        action="append",
-        default=None,
-        help="Caption line start, per line.",
-    )
-    fin.add_argument(
-        "--line-end",
-        type=float,
-        action="append",
-        default=None,
-        help="Caption line end (the caption goes off exactly here), once per line in order.",
-    )
-    fin.add_argument(
-        "--mute", action="append", default=[],
-        help="Silence stray speech in the take's own audio: A-B seconds on the take as filmed (repeat).",
-    )  # fmt: skip
-    fin.add_argument(
-        "--voice", action="append", default=[],
-        help="Lay a dry line (voice-line): PATH@SECONDS[@DB] on the take as filmed; levelled unless @DB (repeat).",
-    )  # fmt: skip
-    fin.add_argument(
-        "--sign-overlay",
-        action="store_true",
-        help="Where the text check finds possible garbled lettering in a shot whose take facts carry a story "
-        "sign, draw the sign's exact words in the house font over it for that shot (instead of a blur). "
-        "Without it, finish prints the suggestion.",
-    )
-    fin.add_argument(
-        "--prop-text", action="append", default=[], metavar='"TEXT"[@SHOT]',
-        help="Write a prop's real words on it (a note, a letter, a phone the video drew letters on): "
-        "\"@3\" takes the story's words for shot 3 from the take facts (prop_text), in a handwriting face "
-        "in their own script, on --prop-box for that shot's window only. Words the story does not give are "
-        "refused: put them in the story first. With none, blur the prop (blur --box) (repeat, one --prop-box each).",
-    )  # fmt: skip
-    fin.add_argument(
-        "--prop-box", action="append", default=[], type=parse_box, metavar="X,Y,W,H",
-        help="The prop's box for the matching --prop-text, in pixels of the take (as blur --box) (repeat).",
-    )  # fmt: skip
     fin.add_argument(
         "--caption-label", action="append", default=[], metavar="TEXT@A-B",
-        help="A caption with no spoken line under it (a short line the take never says clearly): "
-        "TEXT@A-B seconds on the take as filmed (repeat). Saved on the server first as the take's labels "
-        "(checked there; its notes print), and every finish of the take burns the server's labels.",
+        help="A caption with no spoken line under it: TEXT@A-B seconds on the --take as filmed (repeat). "
+        "Saved on the server as the take's labels (its notes print), then the episode is finished.",
     )  # fmt: skip
     fin.add_argument(
         "--no-caption-labels", action="store_true",
-        help="Clear this take's caption labels on the server; none are burned.",
+        help="Clear the --take's caption labels on the server, then finish.",
     )  # fmt: skip
-    fin.add_argument(
-        "--cue", action="append", default=[],
-        help="Lay a hand cue (cue): PATH@SECONDS[@DB] on the take as filmed; -8 dB unless @DB, clamped (repeat).",
-    )  # fmt: skip
-    fin.add_argument(
-        "--over-locked-voices",
-        action="store_true",
-        help="Allow --mute, --voice or a revoice file on a take whose sound is already the locked voices "
-        "(take facts soundtrack target_audio). Refused without it.",
-    )
-    fin.add_argument(
-        "--watermark-y",
-        type=int,
-        default=None,
-        help="Mark top offset (never into the top 8%%).",
-    )
-    fin.add_argument(
-        "--no-cover",
-        action="store_true",
-        help="Do not upload a one-take episode for its free cover from the server (a longer episode's cover comes from join).",
-    )
-    add_caption_style_arg(fin)
-    add_caption_scale_arg(fin)
-    add_caption_colour_arg(fin)
-    add_hook_line_args(fin)
-    fin.add_argument(
-        "--json", action="store_true", help="Print the report as JSON on stdout."
-    )
+    _add_server_finish_args(fin)
 
     join = sub.add_parser(
         "join",
-        help="Join finished takes into one file (free): no music (voice, effects and room only), a cut between takes and a "
-        f"0.25 s dissolve between episodes, 24 fps asserted, seam steps under 5 dB, marked once. Exits "
-        f"{JOIN_NOT_DONE} (NOT DONE, nothing marked) when a seam steps more than 5 dB.",
+        help="The same as finish: get the whole episode finished on the server and download it (free). "
+        "The server puts the takes together; nothing is joined on this laptop.",
     )
     join.add_argument("--desk", type=Path, required=True)
-    which = join.add_mutually_exclusive_group(required=True)
-    which.add_argument(
-        "--episode",
-        type=int,
-        default=None,
-        help="Every take of this episode, newest finish, in order.",
-    )
-    which.add_argument(
-        "--episodes",
-        type=int,
-        nargs="+",
-        default=None,
-        help="A series cut: these episodes in order.",
-    )
-    which.add_argument(
-        "--take-file", type=Path, action="append", default=None,
-        help="A finished take (the -sokii final or its -cap file), in order (repeat).",
-    )  # fmt: skip
     join.add_argument(
-        "--from-record", type=Path, action="append", default=None, metavar="RECORDED_FILE",
-        help="A --take-file no finish record names (a re-captioned copy) joins as the recorded file it was "
-        "made from: same size, frames and sound are checked, and the stand-in goes in the run notes. "
-        "The Nth --from-record goes with the Nth such --take-file. Use the un-marked -cap master, not the final.",
-    )  # fmt: skip
-    join.add_argument(
-        "--dissolve",
-        type=float,
-        default=None,
-        help="Seconds at every seam (0 = straight cut).",
+        "--episode", type=int, default=None, help="Default: the desk's current episode."
     )
-    gain = join.add_mutually_exclusive_group()
-    gain.add_argument(
-        "--no-gain-match", action="store_true", help="Keep each take's own level."
-    )
-    gain.add_argument(
-        "--gain-match",
-        action="store_true",
-        help="Gain every take to the takes' median loudness even when every take finished within "
-        "±0.5 LU of -18 LUFS (default: matched only when they did not).",
-    )
-    join.add_argument(
-        "--watermark-y",
-        type=int,
-        default=None,
-        help="Mark top offset (never into the top 8%%).",
-    )
-    join.add_argument(
-        "--accept-seam",
-        default=None,
-        metavar="WHY",
-        help="A human listened through the master and accepts every seam over 5 dB (say why); the join "
-        "is marked anyway and who and why go in the run notes. Needs --accepted-by.",
-    )
-    join.add_argument(
-        "--accepted-by",
-        default=None,
-        metavar="NAME",
-        help="Who accepted the seam (with --accept-seam).",
-    )
-    join.add_argument(
-        "--no-cover",
-        action="store_true",
-        help="Do not upload the joined episode for its free cover from the server.",
-    )
-    join.add_argument(
-        "--no-seam-fix",
-        action="store_true",
-        help="Desks created on or after 6 Oct 2026: do not let join fix a seam over 5 dB itself "
-        "(a steady bed on the quiet side, a silent-head trim on a filmed cut); measure and refuse as before.",
-    )
-    add_ending_arg(join)
-    add_caption_colour_arg(join)
-    title = join.add_mutually_exclusive_group()
-    title.add_argument(
-        "--hook-line",
-        default=None,
-        metavar="TEXT",
-        help="Letterbox shows only: your own hook line, saved on the server first as the episode's hook "
-        "line and burned as the server answers it in the title block's yellow line.",
-    )
-    title.add_argument(
-        "--no-hook-line",
-        action="store_true",
-        help="Letterbox shows only: turn the episode's hook line off on the server; no title block.",
-    )
-    join.add_argument(
-        "--json", action="store_true", help="Print the report as JSON on stdout."
-    )
+    for flag in _JOIN_REFUSED_HOMES:
+        join.add_argument(
+            flag,
+            dest="laptop_only",
+            action=_LaptopOnly,
+            nargs="*",
+            default=None,
+            help=argparse.SUPPRESS,
+        )
+    _add_server_finish_args(join)
 
     add_edit_parsers(sub)
     add_review_parser(sub)
@@ -829,10 +727,6 @@ def dispatch_post(args: argparse.Namespace) -> int:
         return dispatch_edit(args)
     if args.command in REVIEW_COMMANDS:
         return dispatch_review(args)
-    if args.command in ("finish", "join") and (
-        getattr(args, "hook_line", None) or getattr(args, "no_hook_line", False)
-    ):
-        _save_hook_line_first(args)
 
     from creation.post.bed import NO_MUSIC_RULE
     from creation.post.handmade import run_cue, run_voice_line
@@ -978,75 +872,103 @@ def dispatch_post(args: argparse.Namespace) -> int:
             rescore_id=args.rescore_id,
             yes=args.yes,
         )
-    if args.command == "finish":
-        result = run_finish(
-            args.desk,
-            episode=args.episode,
-            take_id=args.take_id,
-            take_file=args.take_file,
-            deboard=not args.no_deboard,
-            colour=not args.no_colour_match,
-            colour_strength=args.colour_strength,
-            music=text_or_file(args.music, flag="--music") if args.music else None,
-            sfx_adjust=tuple(parse_adjustment(raw) for raw in args.sfx_adjust),
-            line_starts=tuple(args.line_start) if args.line_start else None,
-            line_ends=tuple(args.line_end) if args.line_end else None,
-            watermark_y=args.watermark_y,
-            mutes=tuple(parse_range(raw) for raw in args.mute),
-            voices=tuple(parse_placed(raw, flag="--voice") for raw in args.voice),
-            cues=tuple(parse_placed(raw, flag="--cue") for raw in args.cue),
-            caption_labels=tuple(
-                parse_caption_label(raw) for raw in args.caption_label
-            ),
-            clear_caption_labels=args.no_caption_labels,
-            prop_texts=tuple(parse_prop_text(raw) for raw in args.prop_text),
-            prop_boxes=tuple(args.prop_box),
-            cover=not args.no_cover,
-            over_locked_voices=args.over_locked_voices,
-            caption_style=args.caption_style,
-            caption_scale=args.caption_scale,
-            hook_line=args.hook_line,
-            no_hook_line=args.no_hook_line,
-            hook_line_position=args.hook_line_position,
-            caption_colour=args.caption_colour,
-            no_panels=args.no_panels,
-            thought_db=args.thought_db,
-            accept_line_mismatch=tuple(args.accept_line_mismatch),
-            impact=not args.no_impact,
-            impact_at=_impact_hits(args.impact_at),
-        )
-        if args.json:
-            print(json.dumps(result.as_json(), indent=2))
-        else:
-            print(result.final)
-        return 0 if result.complete else FINISH_INCOMPLETE
-    if args.command == "join":
-        joined = run_join(
-            args.desk,
-            episodes=tuple(
-                args.episodes or ([args.episode] if args.episode is not None else [])
-            ),
-            take_files=tuple(args.take_file or ()),
-            from_records=tuple(args.from_record or ()),
-            dissolve=args.dissolve,
-            gain_match=False
-            if args.no_gain_match
-            else True
-            if args.gain_match
-            else None,
-            watermark_y=args.watermark_y,
-            accept_seam=args.accept_seam,
-            accepted_by=args.accepted_by,
-            seam_fix=not args.no_seam_fix,
-            cover=not args.no_cover,
-            ending=args.ending or "hard",
-            hook_line=args.hook_line,
-            no_hook_line=args.no_hook_line,
-            caption_colour=args.caption_colour,
-        )
-        if args.json:
-            print(json.dumps(joined.as_json(), indent=2))
-        else:
-            print(joined.marked or joined.master)
-        return 0 if joined.complete else JOIN_NOT_DONE
+    if args.command in ("finish", "join"):
+        return _server_finish_command(args)
     raise ValueError(f"unknown command {args.command}")
+
+
+def _send_caption_labels(
+    desk: Path, args: argparse.Namespace, raw: list[str], *, clear: bool
+) -> str | None:
+    """``--caption-label`` / ``--no-caption-labels``: saved on the server's caption-labels route.
+
+    The server keeps and burns them; the kit keeps no copy. Returns the stop line, or ``None``.
+    """
+
+    from creation.post.caption_labels import save_take_labels
+    from creation.post.hand import parse_caption_label
+    from creation.post.take_facts import take_number
+
+    if not getattr(args, "take_id", None):
+        return "Stopped: caption labels belong to one take; add --take tK. Nothing was made or charged."
+    if clear and raw:
+        return "Stopped: pass --caption-label or --no-caption-labels, not both. Nothing was made or charged."
+    try:
+        take = take_number(args.take_id)
+        labels = () if clear else tuple(parse_caption_label(spec) for spec in raw)
+        save_take_labels(desk, args.episode, take, labels, out=sys.stderr)
+    except (ValueError, RuntimeError) as exc:
+        return f"Stopped: {exc}. Nothing was made or charged."
+    return None
+
+
+def _show_series_cut(desk: Path, args: argparse.Namespace) -> int:
+    """``--episodes``: print the series cut the server keeps for the show (no laptop join)."""
+
+    from creation.post.server_finish import series_cut_lines
+
+    ready, lines = series_cut_lines(desk, episodes=tuple(args.episodes))
+    if args.json:
+        print(json.dumps({"ready": ready, "lines": lines}, indent=2))
+    else:
+        print("\n".join(lines))
+    return 0 if ready else SERVER_FINISH_NOT_DONE
+
+
+def _server_finish_command(args: argparse.Namespace) -> int:
+    """``finish`` / ``join``: the server finishes the episode; the kit downloads it (item 01, phase 4)."""
+
+    from creation.production_state import load_production
+
+    laptop = list(getattr(args, "laptop_only", None) or [])
+    if laptop:
+        print(laptop_only_refusal(args.command, laptop), file=sys.stderr)
+        return 2
+    desk = args.desk.expanduser().resolve()
+    if args.episodes:
+        mixed = [
+            flag
+            for flag, given in (
+                ("--take", getattr(args, "take_id", None)),
+                ("--caption-label", getattr(args, "caption_label", None)),
+                ("--no-caption-labels", getattr(args, "no_caption_labels", False)),
+            )
+            if given
+        ]
+        if mixed:
+            print(
+                f"Stopped: --episodes shows the show's series cut and finishes nothing, so it does not go "
+                f"with {', '.join(mixed)}. Run them as two commands. Nothing was made or charged.",
+                file=sys.stderr,
+            )
+            return 2
+        return _show_series_cut(desk, args)
+    if args.episode is None:
+        args.episode = load_production(desk).episode_ordinal
+    labels = list(getattr(args, "caption_label", None) or [])
+    clear = bool(getattr(args, "no_caption_labels", False))
+    if labels or clear:
+        stop = _send_caption_labels(desk, args, labels, clear=clear)
+        if stop is not None:
+            print(stop, file=sys.stderr)
+            return 2
+    elif getattr(args, "take_id", None):
+        print(
+            f"Note: --take is not needed any more; the server finishes all of episode {args.episode} at once.",
+            file=sys.stderr,
+        )
+    if args.hook_line or args.no_hook_line:
+        _save_hook_line_first(args)
+    done = run_server_finish(
+        desk,
+        episode=args.episode,
+        wait_seconds=DEFAULT_WAIT_SECONDS if args.wait is None else args.wait,
+        keep_line_findings=tuple(args.keep_line_findings),
+    )
+    if args.json:
+        print(json.dumps(done.as_json(), indent=2))
+    else:
+        print("\n".join(done.summary_lines()))
+    if not done.complete and args.json:
+        print(done.summary_lines()[0], file=sys.stderr)
+    return 0 if done.complete else SERVER_FINISH_NOT_DONE

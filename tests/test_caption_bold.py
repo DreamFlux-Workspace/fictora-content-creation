@@ -346,19 +346,6 @@ def test_the_flag_overrides_the_show(tmp_path: Path) -> None:
     assert resolve_caption_style(tmp_path, "bold") == ("bold", "")
 
 
-@pytest.mark.parametrize("command", ["finish"])
-def test_finish_takes_bold_and_subtle(command: str) -> None:
-    from creation.cli_post import add_post_parsers
-
-    parser = argparse.ArgumentParser()
-    add_post_parsers(parser.add_subparsers(dest="command"))
-    for style in ("bold", "subtle", "house"):
-        args = parser.parse_args(
-            [command, "--desk", "/d", "--episode", "1", "--caption-style", style]
-        )
-        assert args.caption_style == style
-
-
 def test_caption_takes_subtle_and_none_burns_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -352,27 +352,6 @@ def test_a_hand_step_that_fails_makes_the_take_not_done(
     assert "NOT DONE" in out.getvalue()
 
 
-@needs_ffmpeg
-def test_finish_cli_takes_the_hand_flags_and_refuses_a_bad_one(
-    post_desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from creation import cli_post
-
-    seen: dict[str, Any] = {}
-    monkeypatch.setattr(
-        cli_post, "run_finish", lambda desk, **kwargs: seen.update(kwargs) or _Done()
-    )
-    code = main(["finish", "--desk", str(post_desk), "--mute", "6.9-8.3", "--mute", "1-2",
-                 "--voice", "a.mp3@5.2", "--cue", "b.mp3@4.2@-12"])  # fmt: skip
-    assert code == 0
-    assert seen["mutes"] == ((6.9, 8.3), (1.0, 2.0))
-    assert seen["voices"] == (Placed(Path("a.mp3"), 5.2),)
-    assert seen["cues"] == (Placed(Path("b.mp3"), 4.2, -12.0),)
-
-    assert main(["finish", "--desk", str(post_desk), "--mute", "8-6"]) == 2
-    assert "A-B" in capsys.readouterr().err
-
-
 class _Done:
     complete = True
     final = Path("final.mp4")
@@ -709,25 +688,6 @@ def test_a_caption_label_parses_and_a_bad_one_says_the_form() -> None:
     for bad in ("Blinking!", "@1-2", "Blinking!@2-1", "Blinking!@x"):
         with pytest.raises(ValueError, match="TEXT@A-B"):
             parse_caption_label(bad)
-
-
-def test_finish_cli_passes_caption_labels(
-    post_desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from creation import cli_post
-
-    seen: dict[str, Any] = {}
-    monkeypatch.setattr(
-        cli_post, "run_finish", lambda desk, **kwargs: seen.update(kwargs) or _Done()
-    )
-    code = main(
-        ["finish", "--desk", str(post_desk), "--caption-label", "Blinking!@2.5-3.1"]
-    )
-    assert code == 0 and seen["caption_labels"] == (("Blinking!", 2.5, 3.1),)
-    assert (
-        main(["finish", "--desk", str(post_desk), "--caption-label", "Blinking!"]) == 2
-    )
-    assert "TEXT@A-B" in capsys.readouterr().err
 
 
 @needs_ffmpeg
