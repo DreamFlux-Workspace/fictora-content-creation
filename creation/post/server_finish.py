@@ -76,6 +76,10 @@ class ServerFinishError(RuntimeError):
 LINE_FINDINGS_OPEN = "take_line_findings_open"
 #: The existing take decision route: Keep it is ``use`` with ``accept_line_findings``.
 TAKE_DECISION_ROUTE = "/v1/video-generations/{job_id}/takes/{take_index}/decision"
+#: The run's status, read once after the download for the server's note on the episode's opening.
+JOB_STATUS_ROUTE = "/v1/video-generations/{job_id}"
+#: The show's series cut as the server keeps it (made by the server from every finished episode).
+SERIES_CUT_ROUTE = "/v1/spines/{spine_id}/series-cut"
 
 
 class LineFindingsOpen(ServerFinishError):
@@ -634,6 +638,116 @@ def _api(desk: Path) -> tuple[str, dict[str, str]]:
     return base, api_headers(token, state.session_id)
 
 
+def opening_notes(
+    base_url: str,
+    headers: Mapping[str, str],
+    job_id: str,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> list[str]:
+    """The server's note on how the episode opens (dark, still or no face in its first second).
+
+    Read from the run's take cards (``output.take_reviews[].opening_note.message``, fictora-drama
+    #1186). A warning only: it never stops the finish, so a failed read gives no lines.
+    """
+
+    url = base_url.rstrip("/") + JOB_STATUS_ROUTE.format(job_id=job_id)
+    try:
+        with httpx.Client(timeout=30.0, transport=transport) as client:
+            response = client.get(url, headers=dict(headers))
+    except httpx.HTTPError:
+        return []
+    body = _body(response)
+    if not response.is_success or not isinstance(body, dict):
+        return []
+    output = body.get("output")
+    cards = output.get("take_reviews") if isinstance(output, dict) else None
+    lines: list[str] = []
+    for card in cards if isinstance(cards, list) else []:
+        note = card.get("opening_note") if isinstance(card, dict) else None
+        message = (
+            str(note.get("message") or "").strip() if isinstance(note, dict) else ""
+        )
+        if message and message not in lines:
+            lines.append(message)
+    return [
+        f"Note on the opening (a warning only; the episode is ready): {m}"
+        for m in lines
+    ]
+
+
+def series_cut_lines(
+    desk: Path,
+    *,
+    episodes: tuple[int, ...] = (),
+    api: tuple[str, Mapping[str, str]] | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> tuple[bool, list[str]]:
+    """The show's series cut as the server keeps it: ``(ready, lines to print)``.
+
+    The kit no longer joins episodes on the laptop. The server makes the show's
+    compilation and its Instagram and TikTok parts by itself from every finished
+    episode (``GET /v1/spines/{spine_id}/series-cut``); the kit only shows the links.
+    """
+
+    from creation.post.desk import spine_id as desk_spine_id
+
+    try:
+        spine = desk_spine_id(desk.expanduser().resolve())
+        base, headers = api if api is not None else _api(desk)
+    except (ValueError, FileNotFoundError) as exc:
+        return False, [f"NOT DONE: no series cut. {exc}"]
+    except SystemExit as exc:  # no kit token
+        return False, [f"NOT DONE: no series cut. {exc.code}"]
+    url = base.rstrip("/") + SERIES_CUT_ROUTE.format(spine_id=spine)
+    try:
+        with httpx.Client(timeout=60.0, transport=transport) as client:
+            response = client.get(url, headers=dict(headers))
+    except httpx.HTTPError as exc:
+        return False, [
+            f"NOT DONE: could not reach the server ({type(exc).__name__}). Check the internet "
+            "connection, then run join --episodes again."
+        ]
+    body = _body(response)
+    if not response.is_success or not isinstance(body, dict):
+        return False, [
+            f"NOT DONE: the server did not give the series cut (HTTP {response.status_code}: "
+            f"{api_error_text(body)[:200]})."
+        ]
+    cut = body.get("series_cut") if isinstance(body.get("series_cut"), dict) else None
+    lines = [
+        "The server makes the show's series cut by itself from every finished episode; "
+        "the kit no longer joins episodes on this laptop."
+    ]
+    if not body.get("ready"):
+        reason = str(body.get("reason") or "not enough finished story yet")
+        lines.append(f"NOT DONE: no series cut yet ({reason}).")
+        return False, lines
+    if cut is None:
+        lines.append(
+            "NOT DONE: the server is still making the first cut. Run join --episodes again in a few minutes."
+        )
+        return False, lines
+    played = [int(n) for n in cut.get("episodes") or [] if isinstance(n, int)]
+    if episodes and played and list(episodes) != played:
+        lines.append(
+            f"It plays episodes {', '.join(map(str, played))}, not only the ones named "
+            f"({', '.join(map(str, episodes))})."
+        )
+    lines.append(f"Whole show: {cut.get('compilation_url')}")
+    for part in cut.get("parts") or []:
+        if not isinstance(part, dict):
+            continue
+        lines.append(
+            f"Part {part.get('part')} for Instagram and TikTok: {part.get('video_url')}"
+        )
+        if part.get("cover_url"):
+            lines.append(f"  Cover: {part['cover_url']}")
+        if part.get("caption"):
+            lines.append(f"  Post caption: {part['caption']}")
+    return True, lines
+
+
 def _kept_all(takes: list[dict[str, Any]], keep: tuple[str, ...]) -> bool:
     """Whether the human's ``--keep-line-findings`` covers every take the server stopped on."""
 
@@ -835,6 +949,10 @@ def run_server_finish(
     else:
         notes.append(
             "No cover this time: the server could not draw one (the video is ready to post)."
+        )
+    if body.get("generation_job_id"):
+        notes += opening_notes(
+            base, headers, str(body["generation_job_id"]), transport=transport
         )
     result = ServerFinish(
         episode,

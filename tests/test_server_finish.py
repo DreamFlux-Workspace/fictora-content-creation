@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 import pytest
 
+from creation.cli_post import LAPTOP_ONLY_FLAGS
 from creation.cli_produce import main
 from creation.post import episode_name, server_finish
 from creation.post.desk import saved_spine
@@ -61,9 +62,15 @@ class StandIn:
     """The stand-in server: answers the route and the downloads, and keeps what it was asked."""
 
     def __init__(
-        self, *answers: tuple[int, Any], delay: float = 0.0, timeout: bool = False
+        self,
+        *answers: tuple[int, Any],
+        delay: float = 0.0,
+        timeout: bool = False,
+        status: dict[str, Any] | None = None,
     ) -> None:
         self.answers = list(answers) or [(200, answer())]
+        self.status = status
+        self.reads: list[str] = []
         self.posts: list[httpx.Request] = []
         self.gets: list[str] = []
         self.delay = delay
@@ -80,6 +87,11 @@ class StandIn:
             if isinstance(body, str):
                 return httpx.Response(status, text=body)
             return httpx.Response(status, json=body)
+        if str(request.url).startswith(BASE):
+            self.reads.append(request.url.path)
+            if self.status is None:
+                return httpx.Response(404, json={"detail": "Not Found"})
+            return httpx.Response(200, json=self.status)
         self.gets.append(str(request.url))
         if str(request.url) == VIDEO_URL:
             return httpx.Response(200, content=VIDEO_BYTES)
@@ -332,7 +344,6 @@ def test_not_done_exits_with_the_not_done_code(
         ["--music", "calmer"],
         ["--no-cover"],
         ["--impact-at", "1.2", "--sfx-adjust", "door=-6"],
-        ["--episodes", "1", "2"],
     ],
 )
 def test_old_laptop_settings_are_refused_by_name_and_the_server_is_not_called(
@@ -502,3 +513,300 @@ def test_a_finding_not_about_the_words_prints_the_servers_message() -> None:
         and 'heard ""' not in text.split("missing")[0]
     )
     assert 't1: missing: script "You kept it?", heard ""' in text
+
+
+# --- WS-6: old settings routed to the server, or refused with what the server does instead ----------
+
+
+@pytest.mark.parametrize("flag", LAPTOP_ONLY_FLAGS)
+def test_every_old_setting_is_refused_with_its_own_plain_line(
+    flag: str,
+    post_desk: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from creation import cli_post
+
+    called: list[Any] = []
+    monkeypatch.setattr(cli_post, "run_server_finish", lambda *a, **k: called.append(a))
+
+    code = main(["finish", "--desk", str(post_desk), "--episode", "1", flag])
+
+    assert code == 2 and called == []
+    err = capsys.readouterr().err
+    assert f"  {flag}: {cli_post._LAPTOP_FLAG_HOMES[flag]}." in err
+
+
+@pytest.mark.parametrize(
+    ("flag", "says"),
+    [
+        ("--no-colour-match", "colour match is off"),
+        ("--colour-strength", "colour match is off"),
+        ("--sign-overlay", "writes a sign's words into the picture"),
+        ("--prop-text", "keeps notes and letters unreadable"),
+        ("--ending", "freeze-to-black ending is not made"),
+        ("--caption-style", "caption style and size are kept on the server"),
+        ("--caption-scale", "caption style and size are kept on the server"),
+        ("--mute", "not live yet"),
+        ("--voice", "not live yet"),
+        ("--impact-at", "not live yet"),
+        ("--cue", "sound-note --desk D --take tK"),
+        ("--sfx-adjust", "sound-note --desk D"),
+    ],
+)
+def test_retired_and_waiting_settings_say_what_the_server_does_instead(
+    flag: str, says: str
+) -> None:
+    from creation.cli_post import laptop_only_refusal
+
+    assert says in laptop_only_refusal("finish", [flag])
+
+
+def test_routed_settings_are_not_refused() -> None:
+    from creation.cli_post import LAPTOP_ONLY_FLAGS
+
+    assert not {"--caption-label", "--no-caption-labels", "--episodes"} & set(
+        LAPTOP_ONLY_FLAGS
+    )
+
+
+def test_caption_labels_go_to_the_server_then_the_episode_is_finished(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from creation import cli_post
+    from creation.post import caption_labels
+
+    events: list[Any] = []
+    monkeypatch.setattr(
+        caption_labels,
+        "save_take_labels",
+        lambda desk, episode, take, labels, **_k: (
+            events.append(("labels", episode, take, labels)) or (labels, {})
+        ),
+    )
+    monkeypatch.setattr(
+        cli_post,
+        "run_server_finish",
+        lambda desk, *, episode, **_k: (
+            events.append(("finish", episode))
+            or server_finish.ServerFinish(episode, video=desk / "x.mp4")
+        ),
+    )
+
+    code = main(
+        [
+            "finish", "--desk", str(post_desk), "--episode", "1",
+            "--take", "t2", "--caption-label", "Blinking!@6.9-7.6",
+        ]
+    )  # fmt: skip
+
+    assert code == 0
+    assert events == [("labels", 1, 2, (("Blinking!", 6.9, 7.6),)), ("finish", 1)]
+
+
+def test_clearing_caption_labels_sends_none(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from creation import cli_post
+    from creation.post import caption_labels
+
+    sent: list[Any] = []
+    monkeypatch.setattr(
+        caption_labels,
+        "save_take_labels",
+        lambda desk, episode, take, labels, **_k: sent.append(labels) or ((), {}),
+    )
+    monkeypatch.setattr(
+        cli_post,
+        "run_server_finish",
+        lambda desk, *, episode, **_k: server_finish.ServerFinish(
+            episode, video=desk / "x.mp4"
+        ),
+    )
+
+    code = main(
+        [
+            "finish",
+            "--desk",
+            str(post_desk),
+            "--episode",
+            "1",
+            "--take",
+            "t1",
+            "--no-caption-labels",
+        ]
+    )
+
+    assert code == 0 and sent == [()]
+
+
+def test_caption_labels_without_a_take_stop_before_anything_is_sent(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from creation import cli_post
+    from creation.post import caption_labels
+
+    called: list[Any] = []
+    monkeypatch.setattr(
+        caption_labels, "save_take_labels", lambda *a, **k: called.append(a)
+    )
+    monkeypatch.setattr(cli_post, "run_server_finish", lambda *a, **k: called.append(a))
+
+    code = main(
+        [
+            "finish",
+            "--desk",
+            str(post_desk),
+            "--episode",
+            "1",
+            "--caption-label",
+            "Hi@1-2",
+        ]
+    )
+
+    assert code == 2 and called == []
+    assert "add --take tK" in capsys.readouterr().err
+
+
+def test_a_refused_caption_label_stops_the_finish(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from creation import cli_post
+    from creation.post import caption_labels
+
+    def refuse(*_a: Any, **_k: Any) -> Any:
+        raise RuntimeError("the server refused the caption labels (HTTP 422): too long")
+
+    called: list[Any] = []
+    monkeypatch.setattr(caption_labels, "save_take_labels", refuse)
+    monkeypatch.setattr(cli_post, "run_server_finish", lambda *a, **k: called.append(a))
+
+    code = main(
+        [
+            "finish",
+            "--desk",
+            str(post_desk),
+            "--episode",
+            "1",
+            "--take",
+            "t1",
+            "--caption-label",
+            "Hi@1-2",
+        ]
+    )
+
+    assert code == 2 and called == []
+    assert "too long" in capsys.readouterr().err
+
+
+SERIES_VIEW = {
+    "schema_version": "fictora.drama-series-cut-view.v1",
+    "spine_id": "spine_test",
+    "ready": True,
+    "series_cut": {
+        "episodes": [1, 2, 3, 4],
+        "compilation_url": "https://media.example/series/all.mp4",
+        "parts": [
+            {
+                "part": 1,
+                "video_url": "https://media.example/series/p1.mp4",
+                "cover_url": "https://media.example/series/p1.jpg",
+                "caption": "She kept the key.",
+            }
+        ],
+    },
+}
+
+
+def _series_transport(status: int, body: Any, seen: list[str]) -> httpx.MockTransport:
+    def answer_(request: httpx.Request) -> httpx.Response:
+        seen.append(f"{request.method} {request.url.path}")
+        return httpx.Response(status, json=body)
+
+    return httpx.MockTransport(answer_)
+
+
+def test_episodes_shows_the_servers_series_cut(post_desk: Path) -> None:
+    seen: list[str] = []
+
+    ready, lines = server_finish.series_cut_lines(
+        post_desk, episodes=(1, 2), api=(BASE, HEADERS),
+        transport=_series_transport(200, SERIES_VIEW, seen),
+    )  # fmt: skip
+
+    assert ready
+    assert seen == ["GET /v1/spines/spine_test/series-cut"]
+    text = "\n".join(lines)
+    assert "Whole show: https://media.example/series/all.mp4" in text
+    assert (
+        "Part 1 for Instagram and TikTok: https://media.example/series/p1.mp4" in text
+    )
+    assert "It plays episodes 1, 2, 3, 4, not only the ones named (1, 2)" in text
+
+
+def test_a_show_without_enough_story_says_why(post_desk: Path) -> None:
+    ready, lines = server_finish.series_cut_lines(
+        post_desk, api=(BASE, HEADERS),
+        transport=_series_transport(
+            200, {"spine_id": "spine_test", "ready": False, "reason": "needs 4 episodes and 40 seconds"}, []
+        ),
+    )  # fmt: skip
+
+    assert not ready
+    assert "NOT DONE: no series cut yet (needs 4 episodes and 40 seconds)." in lines
+
+
+@pytest.mark.parametrize("command", ["finish", "join"])
+def test_episodes_never_finishes_or_joins_on_the_laptop(
+    command: str, post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from creation import cli_post
+
+    called: list[Any] = []
+    monkeypatch.setattr(cli_post, "run_server_finish", lambda *a, **k: called.append(a))
+    monkeypatch.setattr(
+        server_finish,
+        "series_cut_lines",
+        lambda desk, *, episodes: (False, ["NOT DONE: x"]),
+    )
+
+    code = main([command, "--desk", str(post_desk), "--episodes", "1", "2"])
+
+    assert code == SERVER_FINISH_NOT_DONE and called == []
+
+
+OPENING_STATUS = {
+    "output": {
+        "take_reviews": [
+            {
+                "take_index": 1,
+                "opening_note": {
+                    "codes": ["dark"],
+                    "message": "The first second is dark; a brighter first shot holds viewers better.",
+                },
+            },
+            {"take_index": 2},
+        ]
+    }
+}
+
+
+def test_the_servers_opening_note_is_shown_after_the_download(post_desk: Path) -> None:
+    server = StandIn(status=OPENING_STATUS)
+
+    done = finish(post_desk, server)
+
+    assert done.complete
+    assert server.reads == ["/v1/video-generations/job_video_1"]
+    text = "\n".join(done.summary_lines())
+    assert (
+        "Note on the opening (a warning only; the episode is ready): The first second is dark"
+        in text
+    )
+
+
+def test_no_opening_note_when_the_run_cannot_be_read(post_desk: Path) -> None:
+    done = finish(post_desk, StandIn())  # the stand-in answers 404 for the run
+
+    assert done.complete
+    assert not any("opening" in note for note in done.notes)

@@ -89,54 +89,60 @@ def add_caption_scale_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
-#: Settings ``finish`` and ``join`` took when they ran on this laptop (before 30 Oct 2026). The server
-#: finishes the episode now; these are refused by name, never silently dropped.
-LAPTOP_ONLY_FLAGS: tuple[str, ...] = (
-    "--accept-line-mismatch",
-    "--take-file",
-    "--no-deboard",
-    "--no-colour-match",
-    "--no-impact",
-    "--impact-at",
-    "--colour-strength",
-    "--music",
-    "--sfx-adjust",
-    "--line-start",
-    "--line-end",
-    "--mute",
-    "--voice",
-    "--sign-overlay",
-    "--prop-text",
-    "--prop-box",
-    "--caption-label",
-    "--no-caption-labels",
-    "--cue",
-    "--over-locked-voices",
-    "--watermark-y",
-    "--no-cover",
-    "--caption-style",
-    "--caption-scale",
-    "--caption-colour",
-    "--thought-db",
-    "--no-panels",
-    "--hook-line-position",
-    "--episodes",
-    "--from-record",
-    "--dissolve",
-    "--no-gain-match",
-    "--gain-match",
-    "--accept-seam",
-    "--accepted-by",
-    "--no-seam-fix",
-    "--ending",
+#: Waiting on the server's take edits (fictora-drama #1189 / #1190, not live yet).
+_TAKE_EDITS_SOON = (
+    "hand edits on one take (mute a stretch, lay a line, add a sound, place a hit) move to the "
+    "server's take edits, which are not live yet; until then film the take again"
 )
-#: Where a laptop-only setting lives now, when it has a home.
-_LAPTOP_FLAG_HOMES = {
+#: Settings ``finish`` and ``join`` took when they ran on this laptop (before 30 Oct 2026), and what
+#: happens to each now. The server finishes the episode; these are refused by name, never silently
+#: dropped. ``--caption-label``, ``--no-caption-labels`` and ``--episodes`` are not here: they go to
+#: the server's own routes.
+_LAPTOP_FLAG_HOMES: dict[str, str] = {
+    # Has a home today.
     "--music": "a music change goes through `music-note`",
     "--accept-line-mismatch": "keeping a take whose line came out wrong is --keep-line-findings tK",
-    "--caption-style": "the show's caption look is the server's house captions",
-    "--episodes": "a cut across several episodes is not made by the kit any more",
+    # Waiting on the server's take edits.
+    "--mute": _TAKE_EDITS_SOON,
+    "--voice": _TAKE_EDITS_SOON,
+    "--over-locked-voices": _TAKE_EDITS_SOON,
+    "--impact-at": _TAKE_EDITS_SOON,
+    "--cue": _TAKE_EDITS_SOON
+    + '; a sound to add can be written now as a sound note: `sound-note --desk D --take tK "add ..."`',
+    "--sfx-adjust": 'a sound\'s level is a sound note on the story (`sound-note --desk D "quieter door"`, '
+    "every take); a level for one take only waits for the server's take edits",
+    # Gone for good: what the server does instead.
+    "--sign-overlay": "the server writes a sign's words into the picture when it films; nothing is drawn on top",
+    "--prop-text": "the server keeps notes and letters unreadable when it films; nothing is drawn on top",
+    "--prop-box": "the server keeps notes and letters unreadable when it films; nothing is drawn on top",
+    "--ending": "episodes end on a hard cut; a freeze-to-black ending is not made",
+    "--caption-style": "captions are the server's; the show's caption style and size are kept on the server, "
+    "not on the desk",
+    "--caption-scale": "captions are the server's; the show's caption style and size are kept on the server, "
+    "not on the desk",
+    "--caption-colour": "captions are the server's; the show's caption style and size are kept on the server, "
+    "not on the desk",
+    "--no-colour-match": "the server films close to the approved board; colour match is off",
+    "--colour-strength": "the server films close to the approved board; colour match is off",
+    "--no-deboard": "the server always cuts storyboard frames off the start of a take",
+    "--no-impact": "the server places the impact punch-ins itself",
+    "--no-panels": "the server draws a system or game show's panels itself",
+    "--thought-db": "the server sets how loud inner-voice lines are",
+    "--line-start": "the server times each caption from the line's own sound",
+    "--line-end": "the server times each caption from the line's own sound",
+    "--watermark-y": "the server owns where the Sokii mark and the hook title sit",
+    "--hook-line-position": "the server owns where the Sokii mark and the hook title sit",
+    "--no-cover": "the server always draws the cover; leave it out when posting if it is not wanted",
+    "--take-file": "the server joins the takes and evens their loudness itself",
+    "--from-record": "the server joins the takes and evens their loudness itself",
+    "--dissolve": "the server joins the takes and evens their loudness itself",
+    "--gain-match": "the server joins the takes and evens their loudness itself",
+    "--no-gain-match": "the server joins the takes and evens their loudness itself",
+    "--accept-seam": "the server joins the takes and evens their loudness itself",
+    "--accepted-by": "the server joins the takes and evens their loudness itself",
+    "--no-seam-fix": "the server joins the takes and evens their loudness itself",
 }
+LAPTOP_ONLY_FLAGS: tuple[str, ...] = tuple(_LAPTOP_FLAG_HOMES)
 
 
 class _LaptopOnly(argparse.Action):
@@ -189,6 +195,14 @@ def _add_server_finish_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--json", action="store_true", help="Print the result as JSON on stdout."
     )
+    parser.add_argument(
+        "--episodes",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Show the show's series cut instead (the server makes it from every finished episode; "
+        "nothing is joined on this laptop).",
+    )
     for flag in LAPTOP_ONLY_FLAGS:
         parser.add_argument(
             flag,
@@ -203,16 +217,20 @@ def _add_server_finish_args(parser: argparse.ArgumentParser) -> None:
 def laptop_only_refusal(command: str, flags: list[str]) -> str:
     """The plain stop for old laptop settings on ``finish`` / ``join``."""
 
-    homes = [
-        f"{flag}: {_LAPTOP_FLAG_HOMES[flag]}"
-        for flag in flags
-        if flag in _LAPTOP_FLAG_HOMES
+    grouped: dict[str, list[str]] = {}
+    for flag in flags:
+        grouped.setdefault(_LAPTOP_FLAG_HOMES.get(flag, ""), []).append(flag)
+    rows = [
+        f"  {', '.join(names)}: {home}." if home else f"  {', '.join(names)}."
+        for home, names in grouped.items()
     ]
-    return (
-        f"Stopped: {command} now gets the episode finished on the server, made the same way as an app "
-        f"episode. These were laptop settings and are not used any more: {', '.join(flags)}. "
-        + (" ".join(f"({home}.)" for home in homes) + " " if homes else "")
-        + f"Run {command} again with just --desk and --episode. Nothing was made or charged."
+    return "\n".join(
+        [
+            f"Stopped: {command} now gets the episode finished on the server, made the same way as an app "
+            f"episode. These were laptop settings and are not used any more: {', '.join(flags)}.",
+            *rows,
+            f"Run {command} again without them. Nothing was made or charged.",
+        ]
     )
 
 
@@ -612,8 +630,18 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--take",
         dest="take_id",
         default=None,
-        help="Not needed any more: the server finishes the whole episode in one go.",
+        help="Not needed to finish (the server finishes the whole episode in one go); names the take "
+        "for --caption-label and --no-caption-labels.",
     )
+    fin.add_argument(
+        "--caption-label", action="append", default=[], metavar="TEXT@A-B",
+        help="A caption with no spoken line under it: TEXT@A-B seconds on the --take as filmed (repeat). "
+        "Saved on the server as the take's labels (its notes print), then the episode is finished.",
+    )  # fmt: skip
+    fin.add_argument(
+        "--no-caption-labels", action="store_true",
+        help="Clear the --take's caption labels on the server, then finish.",
+    )  # fmt: skip
     _add_server_finish_args(fin)
 
     join = sub.add_parser(
@@ -832,6 +860,49 @@ def dispatch_post(args: argparse.Namespace) -> int:
     raise ValueError(f"unknown command {args.command}")
 
 
+def _send_caption_labels(
+    desk: Path, args: argparse.Namespace, raw: list[str], *, clear: bool
+) -> str | None:
+    """``--caption-label`` / ``--no-caption-labels``: saved on the server's caption-labels route.
+
+    The server keeps and burns them; the kit keeps no copy. Returns the stop line, or ``None``.
+    """
+
+    from creation.post.caption_labels import save_take_labels
+    from creation.post.hand import parse_caption_label
+    from creation.post.take_facts import take_number
+
+    if not getattr(args, "take_id", None):
+        return "Stopped: caption labels belong to one take; add --take tK. Nothing was made or charged."
+    if clear and raw:
+        return "Stopped: pass --caption-label or --no-caption-labels, not both. Nothing was made or charged."
+    try:
+        take = take_number(args.take_id)
+        labels = () if clear else tuple(parse_caption_label(spec) for spec in raw)
+        save_take_labels(desk, args.episode, take, labels, out=sys.stderr)
+    except (ValueError, RuntimeError) as exc:
+        return f"Stopped: {exc}. Nothing was made or charged."
+    print(
+        "The server keeps the caption labels and burns them into the finished episode. If this draft does "
+        "not show them yet, the server's label step is not live yet; the labels stay saved.",
+        file=sys.stderr,
+    )
+    return None
+
+
+def _show_series_cut(desk: Path, args: argparse.Namespace) -> int:
+    """``--episodes``: print the series cut the server keeps for the show (no laptop join)."""
+
+    from creation.post.server_finish import series_cut_lines
+
+    ready, lines = series_cut_lines(desk, episodes=tuple(args.episodes))
+    if args.json:
+        print(json.dumps({"ready": ready, "lines": lines}, indent=2))
+    else:
+        print("\n".join(lines))
+    return 0 if ready else SERVER_FINISH_NOT_DONE
+
+
 def _server_finish_command(args: argparse.Namespace) -> int:
     """``finish`` / ``join``: the server finishes the episode; the kit downloads it (item 01, phase 4)."""
 
@@ -842,9 +913,18 @@ def _server_finish_command(args: argparse.Namespace) -> int:
         print(laptop_only_refusal(args.command, laptop), file=sys.stderr)
         return 2
     desk = args.desk.expanduser().resolve()
+    if args.episodes:
+        return _show_series_cut(desk, args)
     if args.episode is None:
         args.episode = load_production(desk).episode_ordinal
-    if getattr(args, "take_id", None):
+    labels = list(getattr(args, "caption_label", None) or [])
+    clear = bool(getattr(args, "no_caption_labels", False))
+    if labels or clear:
+        stop = _send_caption_labels(desk, args, labels, clear=clear)
+        if stop is not None:
+            print(stop, file=sys.stderr)
+            return 2
+    elif getattr(args, "take_id", None):
         print(
             f"Note: --take is not needed any more; the server finishes all of episode {args.episode} at once.",
             file=sys.stderr,
