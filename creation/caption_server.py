@@ -260,6 +260,17 @@ def _read_look(desk: Path | None, episode: int) -> tuple[int, Any]:
         run.client.close()
 
 
+def _desk_spine_id(desk: Path | None) -> str | None:
+    if desk is None:
+        return None
+    from creation.post.desk import spine_id
+
+    try:
+        return spine_id(desk) or None
+    except (OSError, ValueError):
+        return None
+
+
 def show_caption_size(desk: Path | None, episode: int) -> float | None:
     """The show's caption size from the server (``caption_size``, fictora-drama #1191), passed through.
 
@@ -344,8 +355,19 @@ def server_caption_ass(
     size = show_caption_size(desk, episode)
     if size is not None:
         body["size"] = size
+    # Name the show (fictora-drama #1191): the server then lays the captions out in the
+    # show's chat-set style and size, and the file it returns is burned as given.
+    show = _desk_spine_id(desk)
     try:
-        status, answer = _post(desk, episode, CAPTION_LAYOUT_ROUTE, body)
+        if show is not None:
+            status, answer = _post(
+                desk, episode, CAPTION_LAYOUT_ROUTE, {**body, "spine_id": show}
+            )
+            if _older(status):
+                # An unknown show or an older server: ask exactly as before.
+                status, answer = _post(desk, episode, CAPTION_LAYOUT_ROUTE, body)
+        else:
+            status, answer = _post(desk, episode, CAPTION_LAYOUT_ROUTE, body)
     except (OSError, httpx.HTTPError, SystemExit) as exc:
         note(
             f"the server could not be reached for the caption layout ({exc}); the kit laid them out"

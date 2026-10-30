@@ -294,3 +294,72 @@ def test_an_unreachable_caption_look_sends_no_size() -> None:
             desk=None, episode=1,
         )  # fmt: skip
     assert "size" not in sent[0]
+
+
+def _ask_with_show(
+    monkeypatch: pytest.MonkeyPatch, show: str | None, answers: list[tuple[int, Any]]
+) -> tuple[list[dict[str, Any]], str | None]:
+    import creation.caption_server as cs
+
+    monkeypatch.setattr(cs, "_desk_spine_id", lambda desk: show)
+    sent: list[dict[str, Any]] = []
+    replies = iter(answers)
+    with server_override(lambda path, body: (sent.append(body), next(replies))[1]):
+        text, _ = server_caption_ass(
+            [Cue(0.0, 1.0, "Wait.")], width=192, height=336, style="house", whole_lines=False,
+            desk=None, episode=1,
+        )  # fmt: skip
+    return sent, text
+
+
+@pytest.mark.real_caption_server
+def test_the_layout_names_the_show_and_burns_the_servers_styled_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bold = SERVER_ASS.replace("House", "Bold")
+    sent, text = _ask_with_show(
+        monkeypatch, "sp_1", [(200, {"ass": bold, "style": "bold"})]
+    )
+    assert len(sent) == 1 and sent[0]["spine_id"] == "sp_1"
+    assert sent[0]["style"] == "house"  # the kit's own word; the server chose bold
+    assert text == bold
+
+
+@pytest.mark.real_caption_server
+@pytest.mark.parametrize("status", [404, 405])
+def test_an_unknown_show_or_older_server_asks_exactly_as_before(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    sent, text = _ask_with_show(
+        monkeypatch,
+        "sp_1",
+        [(status, {"detail": "Not Found"}), (200, {"ass": SERVER_ASS})],
+    )
+    plain, _ = _ask_with_show(monkeypatch, None, [(200, {"ass": SERVER_ASS})])
+    assert len(sent) == 2 and sent[1] == plain[0]
+    assert text == SERVER_ASS
+
+
+@pytest.mark.real_caption_server
+def test_a_desk_with_no_show_sends_todays_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent, _ = _ask_with_show(monkeypatch, None, [(200, {"ass": SERVER_ASS})])
+    assert len(sent) == 1 and "spine_id" not in sent[0]
+
+
+def test_the_desks_show_is_read_from_its_production_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import creation.caption_server as cs
+    import creation.post.desk as desk_mod
+
+    monkeypatch.setattr(desk_mod, "spine_id", lambda desk: "sp_9")
+    assert cs._desk_spine_id(tmp_path) == "sp_9"
+
+    def none(desk: Path) -> str:
+        raise ValueError("no spine")
+
+    monkeypatch.setattr(desk_mod, "spine_id", none)
+    assert cs._desk_spine_id(tmp_path) is None
+    assert cs._desk_spine_id(None) is None
