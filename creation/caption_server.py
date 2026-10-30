@@ -28,6 +28,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -36,6 +37,8 @@ from creation.captions import Cue
 #: The server's routes (fictora-drama #1029).
 CAPTION_LAYOUT_ROUTE = "/v1/captions/layout"
 SAFE_AREA_CHECK_ROUTE = "/v1/captions/safe-area-check"
+#: The show's caption look (fictora-drama #1191 adds its ``caption_size``, x0.5-x2).
+CAPTION_LOOK_ROUTE = "/v1/spines/{spine_id}/caption-look"
 #: Most chunks one layout request carries (the server's ``CAPTION_LAYOUT_MAX_CHUNKS``).
 MAX_CHUNKS = 2000
 #: Most words one chunk carries (the server's ``CAPTION_LAYOUT_MAX_WORDS``).
@@ -49,6 +52,25 @@ Poster = Callable[[str, dict[str, Any]], tuple[int, Any]]
 _OVERRIDE: ContextVar[Poster | None] = ContextVar(
     "fictora_caption_server_poster", default=None
 )
+
+
+#: ``() -> (status, answer)``: how the show's caption look is read (tests replace it).
+LookGetter = Callable[[], tuple[int, Any]]
+
+_LOOK_OVERRIDE: ContextVar[LookGetter | None] = ContextVar(
+    "fictora_caption_look_getter", default=None
+)
+
+
+@contextmanager
+def caption_look_override(getter: LookGetter) -> Iterator[None]:
+    """Answer the show's caption-look read with ``getter`` inside the block (tests)."""
+
+    token = _LOOK_OVERRIDE.set(getter)
+    try:
+        yield
+    finally:
+        _LOOK_OVERRIDE.reset(token)
 
 
 @contextmanager
@@ -215,6 +237,59 @@ def _post(
         run.client.close()
 
 
+def _read_look(desk: Path | None, episode: int) -> tuple[int, Any]:
+    getter = _LOOK_OVERRIDE.get()
+    if getter is not None:
+        return getter()
+    if _OVERRIDE.get() is not None or desk is None:
+        # A test answering the layout route only, or no desk: no look to read.
+        return 404, None
+    from creation.post.desk import open_api, spine_id
+
+    try:
+        sid = spine_id(desk)
+    except ValueError:
+        return 404, None
+    run = open_api(desk, episode)
+    try:
+        status, answer = run.get_optional(
+            CAPTION_LOOK_ROUTE.format(spine_id=quote(sid, safe=""))
+        )
+        return int(status), answer
+    finally:
+        run.client.close()
+
+
+def _desk_spine_id(desk: Path | None) -> str | None:
+    if desk is None:
+        return None
+    from creation.post.desk import spine_id
+
+    try:
+        return spine_id(desk) or None
+    except (OSError, ValueError):
+        return None
+
+
+def show_caption_size(desk: Path | None, episode: int) -> float | None:
+    """The show's caption size from the server (``caption_size``, fictora-drama #1191), passed through.
+
+    ``None`` when the server sends none (an older server, size unset, no
+    connection): the layout request is then exactly as before.
+    """
+
+    try:
+        status, answer = _read_look(desk, episode)
+    except (OSError, httpx.HTTPError, SystemExit):
+        return None
+    if not 200 <= status < 300 or not isinstance(answer, Mapping):
+        return None
+    size = answer.get("caption_size")
+    if isinstance(size, bool) or not isinstance(size, (int, float)):
+        return None
+    return float(size)
+
+
 def _older(status: int) -> bool:
     return status in (404, 405)
 
@@ -277,8 +352,22 @@ def server_caption_ass(
         "caption_accent": caption_accent,
         "chunks": chunks,
     }
+    size = show_caption_size(desk, episode)
+    if size is not None:
+        body["size"] = size
+    # Name the show (fictora-drama #1191): the server then lays the captions out in the
+    # show's chat-set style and size, and the file it returns is burned as given.
+    show = _desk_spine_id(desk)
     try:
-        status, answer = _post(desk, episode, CAPTION_LAYOUT_ROUTE, body)
+        if show is not None:
+            status, answer = _post(
+                desk, episode, CAPTION_LAYOUT_ROUTE, {**body, "spine_id": show}
+            )
+            if _older(status):
+                # An unknown show or an older server: ask exactly as before.
+                status, answer = _post(desk, episode, CAPTION_LAYOUT_ROUTE, body)
+        else:
+            status, answer = _post(desk, episode, CAPTION_LAYOUT_ROUTE, body)
     except (OSError, httpx.HTTPError, SystemExit) as exc:
         note(
             f"the server could not be reached for the caption layout ({exc}); the kit laid them out"
@@ -358,9 +447,12 @@ __all__ = [
     "CAPTION_LAYOUT_ROUTE",
     "MAX_CHUNKS",
     "SAFE_AREA_CHECK_ROUTE",
+    "CAPTION_LOOK_ROUTE",
     "caption_chunks",
+    "caption_look_override",
     "note",
     "server_caption_ass",
     "server_override",
     "server_safe_area_check",
+    "show_caption_size",
 ]
