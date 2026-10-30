@@ -30,6 +30,11 @@ from creation.harness.http_util import (
 #: tokens). This kit never asks for it; the take's facts come from ``take-facts``.
 PROVIDER_SPEC_SEGMENT = "/provider-spec"
 
+#: Seconds between two reads of a running job (generation speed plan item 04, 30 Oct 2026).
+#: Was 15 s: a finished step sat unseen for 7.5 s on average, up to 15 s, before the kit
+#: moved on. 3 s is still slower than the app, which reads the same job routes every 2 s.
+JOB_POLL_SECONDS = 3.0
+
 
 class DramaApiRunSession:
     """One production drama API walk with JSON artefacts and JSONL run log."""
@@ -42,7 +47,7 @@ class DramaApiRunSession:
         out_dir: Path,
         session_id: str | None = None,
         idempotency_prefix: str | None = None,
-        poll_interval_seconds: float = 15.0,
+        poll_interval_seconds: float = JOB_POLL_SECONDS,
         client_timeout: float = 180.0,
         log_name: str = "run.log",
         sleep: Callable[[float], None] = time.sleep,
@@ -62,7 +67,7 @@ class DramaApiRunSession:
         idempotency_prefix
             Prefix for ``Idempotency-Key`` values; generated when omitted.
         poll_interval_seconds
-            Sleep between job poll requests.
+            Sleep between job poll requests (:data:`JOB_POLL_SECONDS`).
         client_timeout
             HTTP client timeout in seconds.
         log_name
