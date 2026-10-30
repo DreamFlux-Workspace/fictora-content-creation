@@ -474,3 +474,31 @@ def test_keeping_another_take_does_not_keep_this_one(post_desk: Path) -> None:
 
     assert not done.complete
     assert len(server.posts) == 1
+
+
+def test_a_finding_not_about_the_words_prints_the_servers_message() -> None:
+    takes = [
+        {
+            "take_number": 1,
+            "findings": [
+                {
+                    "kind": "speaker_not_on_screen",
+                    "line": "Get out.",
+                    "heard": "",
+                    "message": "SPEAKER NOT ON SCREEN: line 1 (Walt) plays over shot 2, which shows Ines but not Walt",
+                },
+                {"kind": "speaker_not_on_screen", "line": "Get out.", "heard": ""},
+                {"kind": "missing", "line": "You kept it?", "heard": ""},
+            ],
+        }
+    ]
+
+    text = server_finish.line_findings_text(takes, episode=1)
+
+    assert "t1: SPEAKER NOT ON SCREEN: line 1 (Walt) plays over shot 2" in text
+    assert 't1: speaker_not_on_screen: line "Get out."' in text
+    assert (
+        "speaker_not_on_screen: script" not in text
+        and 'heard ""' not in text.split("missing")[0]
+    )
+    assert 't1: missing: script "You kept it?", heard ""' in text
