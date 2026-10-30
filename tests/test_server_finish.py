@@ -767,7 +767,7 @@ def test_episodes_never_finishes_or_joins_on_the_laptop(
     monkeypatch.setattr(
         server_finish,
         "series_cut_lines",
-        lambda desk, *, episodes: (False, ["NOT DONE: x"]),
+        lambda desk, **_k: (False, ["NOT DONE: x"]),
     )
 
     code = main([command, "--desk", str(post_desk), "--episodes", "1", "2"])
@@ -810,3 +810,168 @@ def test_no_opening_note_when_the_run_cannot_be_read(post_desk: Path) -> None:
 
     assert done.complete
     assert not any("opening" in note for note in done.notes)
+
+
+# --- review round: edge cases ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("error", [httpx.ConnectError, RuntimeError])
+def test_a_dropped_connection_on_the_opening_read_still_delivers(
+    error: type[Exception], post_desk: Path
+) -> None:
+    server = StandIn()
+
+    def answers(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and str(request.url).startswith(BASE):
+            raise error("dropped")
+        return server(request)
+
+    done = run_server_finish(
+        post_desk, episode=1, api=(BASE, HEADERS),
+        transport=httpx.MockTransport(answers), sleep=lambda _s: None,
+    )  # fmt: skip
+
+    assert done.complete, done.error
+    assert not any("opening" in note for note in done.notes)
+
+
+@pytest.mark.parametrize("spec", ["Hi@2-1", "noat"])
+def test_a_malformed_caption_label_stops_before_anything_is_sent(
+    spec: str,
+    post_desk: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from creation import cli_post
+    from creation.post import caption_labels
+
+    called: list[Any] = []
+    monkeypatch.setattr(
+        caption_labels, "save_take_labels", lambda *a, **k: called.append(a)
+    )
+    monkeypatch.setattr(cli_post, "run_server_finish", lambda *a, **k: called.append(a))
+
+    code = main(
+        [
+            "finish",
+            "--desk",
+            str(post_desk),
+            "--episode",
+            "1",
+            "--take",
+            "t1",
+            "--caption-label",
+            spec,
+        ]
+    )
+
+    assert code == 2 and called == []
+    assert "Nothing was made or charged" in capsys.readouterr().err
+
+
+def test_a_label_and_no_labels_together_stop(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from creation import cli_post
+    from creation.post import caption_labels
+
+    called: list[Any] = []
+    monkeypatch.setattr(
+        caption_labels, "save_take_labels", lambda *a, **k: called.append(a)
+    )
+    monkeypatch.setattr(cli_post, "run_server_finish", lambda *a, **k: called.append(a))
+
+    code = main(
+        [
+            "finish", "--desk", str(post_desk), "--episode", "1", "--take", "t1",
+            "--caption-label", "Hi@1-2", "--no-caption-labels",
+        ]
+    )  # fmt: skip
+
+    assert code == 2 and called == []
+    assert "not both" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "extra", [["--caption-label", "Hi@1-2"], ["--no-caption-labels"]]
+)
+def test_join_with_label_flags_is_a_plain_stop_pointing_at_finish(
+    extra: list[str],
+    post_desk: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from creation import cli_post
+
+    called: list[Any] = []
+    monkeypatch.setattr(cli_post, "run_server_finish", lambda *a, **k: called.append(a))
+
+    code = main(["join", "--desk", str(post_desk), "--episode", "1", *extra])
+
+    assert code == 2 and called == []
+    err = capsys.readouterr().err
+    assert "finish --desk D --episode N --take tK" in err and extra[0] in err
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--take", "t1"],
+        ["--take", "t1", "--caption-label", "Hi@1-2"],
+        ["--take", "t1", "--no-caption-labels"],
+    ],
+)
+def test_episodes_with_take_or_labels_is_refused(
+    extra: list[str],
+    post_desk: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from creation import cli_post
+
+    called: list[Any] = []
+    monkeypatch.setattr(cli_post, "run_server_finish", lambda *a, **k: called.append(a))
+    monkeypatch.setattr(
+        server_finish, "series_cut_lines", lambda *a, **k: called.append(a)
+    )
+
+    code = main(["finish", "--desk", str(post_desk), "--episodes", "1", "2", *extra])
+
+    assert code == 2 and called == []
+    assert "does not go with --take" in capsys.readouterr().err
+
+
+def test_episodes_with_an_old_setting_is_still_refused(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from creation import cli_post
+
+    called: list[Any] = []
+    monkeypatch.setattr(cli_post, "run_server_finish", lambda *a, **k: called.append(a))
+    monkeypatch.setattr(
+        server_finish, "series_cut_lines", lambda *a, **k: called.append(a)
+    )
+
+    code = main(
+        ["join", "--desk", str(post_desk), "--episodes", "1", "2", "--dissolve"]
+    )
+
+    assert code == 2 and called == []
+    assert "--dissolve" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "says"),
+    [
+        (404, {"detail": "Not Found"}, "the server does not make series cuts yet"),
+        (503, {"error": {"code": "x"}}, "Run join --episodes again in a few minutes"),
+    ],
+)
+def test_series_cut_errors_are_plain(
+    status: int, body: Any, says: str, post_desk: Path
+) -> None:
+    ready, lines = server_finish.series_cut_lines(
+        post_desk, api=(BASE, HEADERS), transport=_series_transport(status, body, [])
+    )
+
+    assert not ready and says in lines[0]

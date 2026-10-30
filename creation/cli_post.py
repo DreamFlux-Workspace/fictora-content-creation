@@ -143,6 +143,13 @@ _LAPTOP_FLAG_HOMES: dict[str, str] = {
     "--no-seam-fix": "the server joins the takes and evens their loudness itself",
 }
 LAPTOP_ONLY_FLAGS: tuple[str, ...] = tuple(_LAPTOP_FLAG_HOMES)
+#: On ``join`` only: caption labels belong to one take, so they go with ``finish --take tK``.
+_JOIN_REFUSED_HOMES: dict[str, str] = {
+    "--caption-label": "caption labels belong to one take: `finish --desk D --episode N --take tK "
+    '--caption-label "TEXT@A-B"`',
+    "--no-caption-labels": "caption labels belong to one take: `finish --desk D --episode N --take tK "
+    "--no-caption-labels`",
+}
 
 
 class _LaptopOnly(argparse.Action):
@@ -219,7 +226,8 @@ def laptop_only_refusal(command: str, flags: list[str]) -> str:
 
     grouped: dict[str, list[str]] = {}
     for flag in flags:
-        grouped.setdefault(_LAPTOP_FLAG_HOMES.get(flag, ""), []).append(flag)
+        home = _LAPTOP_FLAG_HOMES.get(flag) or _JOIN_REFUSED_HOMES.get(flag, "")
+        grouped.setdefault(home, []).append(flag)
     rows = [
         f"  {', '.join(names)}: {home}." if home else f"  {', '.join(names)}."
         for home, names in grouped.items()
@@ -653,6 +661,15 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     join.add_argument(
         "--episode", type=int, default=None, help="Default: the desk's current episode."
     )
+    for flag in _JOIN_REFUSED_HOMES:
+        join.add_argument(
+            flag,
+            dest="laptop_only",
+            action=_LaptopOnly,
+            nargs="*",
+            default=None,
+            help=argparse.SUPPRESS,
+        )
     _add_server_finish_args(join)
 
     add_edit_parsers(sub)
@@ -882,11 +899,6 @@ def _send_caption_labels(
         save_take_labels(desk, args.episode, take, labels, out=sys.stderr)
     except (ValueError, RuntimeError) as exc:
         return f"Stopped: {exc}. Nothing was made or charged."
-    print(
-        "The server keeps the caption labels and burns them into the finished episode. If this draft does "
-        "not show them yet, the server's label step is not live yet; the labels stay saved.",
-        file=sys.stderr,
-    )
     return None
 
 
@@ -914,6 +926,22 @@ def _server_finish_command(args: argparse.Namespace) -> int:
         return 2
     desk = args.desk.expanduser().resolve()
     if args.episodes:
+        mixed = [
+            flag
+            for flag, given in (
+                ("--take", getattr(args, "take_id", None)),
+                ("--caption-label", getattr(args, "caption_label", None)),
+                ("--no-caption-labels", getattr(args, "no_caption_labels", False)),
+            )
+            if given
+        ]
+        if mixed:
+            print(
+                f"Stopped: --episodes shows the show's series cut and finishes nothing, so it does not go "
+                f"with {', '.join(mixed)}. Run them as two commands. Nothing was made or charged.",
+                file=sys.stderr,
+            )
+            return 2
         return _show_series_cut(desk, args)
     if args.episode is None:
         args.episode = load_production(desk).episode_ordinal

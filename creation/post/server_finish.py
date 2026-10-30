@@ -78,6 +78,8 @@ LINE_FINDINGS_OPEN = "take_line_findings_open"
 TAKE_DECISION_ROUTE = "/v1/video-generations/{job_id}/takes/{take_index}/decision"
 #: The run's status, read once after the download for the server's note on the episode's opening.
 JOB_STATUS_ROUTE = "/v1/video-generations/{job_id}"
+#: Seconds the opening-note read may take (a warning only; the episode is already downloaded).
+OPENING_NOTE_TIMEOUT_SECONDS = 5.0
 #: The show's series cut as the server keeps it (made by the server from every finished episode).
 SERIES_CUT_ROUTE = "/v1/spines/{spine_id}/series-cut"
 
@@ -653,11 +655,13 @@ def opening_notes(
 
     url = base_url.rstrip("/") + JOB_STATUS_ROUTE.format(job_id=job_id)
     try:
-        with httpx.Client(timeout=30.0, transport=transport) as client:
+        with httpx.Client(
+            timeout=OPENING_NOTE_TIMEOUT_SECONDS, transport=transport
+        ) as client:
             response = client.get(url, headers=dict(headers))
-    except httpx.HTTPError:
+        body = _body(response)
+    except Exception:  # a warning only: never let reading it cost the finished episode
         return []
-    body = _body(response)
     if not response.is_success or not isinstance(body, dict):
         return []
     output = body.get("output")
@@ -709,6 +713,15 @@ def series_cut_lines(
             "connection, then run join --episodes again."
         ]
     body = _body(response)
+    if response.status_code == 404 and _route_missing(body):
+        return False, [
+            "NOT DONE: the server does not make series cuts yet. Tell the core team; nothing was made."
+        ]
+    if response.status_code in BUSY_STATUSES:
+        return False, [
+            f"NOT DONE: the server is busy or restarting (HTTP {response.status_code}). "
+            "Run join --episodes again in a few minutes."
+        ]
     if not response.is_success or not isinstance(body, dict):
         return False, [
             f"NOT DONE: the server did not give the series cut (HTTP {response.status_code}: "
