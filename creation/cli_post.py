@@ -89,26 +89,18 @@ def add_caption_scale_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
-#: Waiting on the server's take edits (fictora-drama #1189 / #1190, not live yet).
-_TAKE_EDITS_SOON = (
-    "hand edits on one take (mute a stretch, lay a line, add a sound, place a hit) move to the "
-    "server's take edits, which are not live yet; until then film the take again"
-)
 #: Settings ``finish`` and ``join`` took when they ran on this laptop (before 30 Oct 2026), and what
 #: happens to each now. The server finishes the episode; these are refused by name, never silently
-#: dropped. ``--caption-label``, ``--no-caption-labels`` and ``--episodes`` are not here: they go to
-#: the server's own routes.
+#: dropped. ``--caption-label``, ``--no-caption-labels``, ``--episodes`` and the take edits (``--mute``,
+#: ``--voice``, ``--cue``, ``--impact-at`` with ``--take tK``, fictora-drama #1189 / #1190) are not
+#: here: they go to the server's own routes.
 _LAPTOP_FLAG_HOMES: dict[str, str] = {
     # Has a home today.
     "--music": "a music change goes through `music-note`",
     "--accept-line-mismatch": "keeping a take whose line came out wrong is --keep-line-findings tK",
-    # Waiting on the server's take edits.
-    "--mute": _TAKE_EDITS_SOON,
-    "--voice": _TAKE_EDITS_SOON,
-    "--over-locked-voices": _TAKE_EDITS_SOON,
-    "--impact-at": _TAKE_EDITS_SOON,
-    "--cue": _TAKE_EDITS_SOON
-    + '; a sound to add can be written now as a sound note: `sound-note --desk D --take tK "add ..."`',
+    "--over-locked-voices": "not needed any more: the server decides whether a take's voices can be muted "
+    "or re-voiced, and says so when they cannot",
+    # No server field for it.
     "--sfx-adjust": 'a sound\'s level is a sound note on the story (`sound-note --desk D "quieter door"`, '
     "every take); a level for one take only waits for the server's take edits",
     # Gone for good: what the server does instead.
@@ -149,6 +141,10 @@ _JOIN_REFUSED_HOMES: dict[str, str] = {
     '--caption-label "TEXT@A-B"`',
     "--no-caption-labels": "caption labels belong to one take: `finish --desk D --episode N --take tK "
     "--no-caption-labels`",
+    **{
+        flag: f"an edit belongs to one take: `finish --desk D --episode N --take tK {flag} ...`"
+        for flag in ("--mute", "--voice", "--cue", "--impact-at")
+    },
 }
 
 
@@ -488,7 +484,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="One dry line in a character's locked voice, made on the server ($0.10 per 1,000 characters, "
         "Whisper-checked): only an off-screen line or a thought already in the episode's script (add it "
         "first with `line --add ... --off-screen` or `inner-voice`); an on-screen line is refused before any "
-        "spend (re-film the take instead). Saved to epNN/voices/; lay it with finish --voice PATH@SECONDS.",
+        "spend (re-film the take instead). Saved to epNN/voices/; lay it with finish --take tK --voice PATH@SECONDS (a take edit on the server).",
     )
     line.add_argument("--desk", type=Path, required=True)
     line.add_argument("--cast", required=True, help="cast_id or name.")
@@ -639,8 +635,33 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         dest="take_id",
         default=None,
         help="Not needed to finish (the server finishes the whole episode in one go); names the take "
-        "for --caption-label and --no-caption-labels.",
+        "for --caption-label, --no-caption-labels and the take edits (--mute, --voice, --cue, --impact-at).",
     )
+    fin.add_argument(
+        "--mute", action="append", default=[], metavar="A-B",
+        help="Take edit (with --take tK, free): silence the take's own sound over A-B seconds on the take "
+        "as delivered (repeat). Sent to the server; the episode is rebuilt there.",
+    )  # fmt: skip
+    fin.add_argument(
+        "--voice", action="append", default=[], metavar="FILE@SECONDS[@DB] | CHARACTER",
+        help="Take edit (with --take tK): lay a voice-line file at SECONDS (free; levelled unless @DB), or "
+        "name a character to re-voice all their lines on the take in their locked voice (paid in tokens; "
+        "the server says when a take cannot be re-voiced). Repeat.",
+    )  # fmt: skip
+    fin.add_argument(
+        "--cue", action="append", default=[], metavar="SOUND@SECONDS[@DB]",
+        help='Take edit (with --take tK, paid in tokens): add a sound the server makes, like "low rumble@2.5", '
+        "or a saved cue file's sound (repeat).",
+    )  # fmt: skip
+    fin.add_argument(
+        "--impact-at", action="append", default=[], metavar="SECONDS[:blast]",
+        help="Take edit (with --take tK, free): a frame that is a hit, punched in with a shake there "
+        "(comma-separated or repeated; ':blast' for the bigger one).",
+    )  # fmt: skip
+    fin.add_argument(
+        "--preview", action="store_true",
+        help="With take edits: ask the server what they would cost in tokens; nothing is changed or charged.",
+    )  # fmt: skip
     fin.add_argument(
         "--caption-label", action="append", default=[], metavar="TEXT@A-B",
         help="A caption with no spoken line under it: TEXT@A-B seconds on the --take as filmed (repeat). "
@@ -915,6 +936,91 @@ def _show_series_cut(desk: Path, args: argparse.Namespace) -> int:
     return 0 if ready else SERVER_FINISH_NOT_DONE
 
 
+#: ``finish`` settings that edit one take on the server (fictora-drama #1189 / #1190).
+_TAKE_EDIT_FLAGS = (
+    ("--mute", "mute"),
+    ("--voice", "voice"),
+    ("--cue", "cue"),
+    ("--impact-at", "impact_at"),
+)
+
+
+def _take_edit_settings(args: argparse.Namespace) -> dict[str, list[str]]:
+    """The take-edit settings given on ``finish`` (none on ``join``)."""
+
+    return {
+        dest: list(getattr(args, dest, None) or [])
+        for _flag, dest in _TAKE_EDIT_FLAGS
+        if getattr(args, dest, None)
+    }
+
+
+def _send_take_edits(
+    desk: Path, args: argparse.Namespace, edits: dict[str, list[str]]
+) -> int:
+    """``finish --take tK --mute/--voice/--cue/--impact-at``: the server edits the take; nothing is downloaded.
+
+    The edit answers at once and the server puts the episode back together in the background,
+    so this run stops after the server's answer; a later ``finish`` downloads the new cut.
+    """
+
+    from creation.post.take_edit import TakeEditStop, build_request, run_take_edit
+
+    named = [flag for flag, dest in _TAKE_EDIT_FLAGS if dest in edits]
+    take_id = getattr(args, "take_id", None)
+    if not take_id:
+        print(
+            f"Stopped: {', '.join(named)} edit one take; add --take tK. Nothing was changed or charged.",
+            file=sys.stderr,
+        )
+        return 2
+    mixed = [
+        flag
+        for flag, given in (
+            ("--caption-label", getattr(args, "caption_label", None)),
+            ("--no-caption-labels", getattr(args, "no_caption_labels", False)),
+            ("--hook-line", getattr(args, "hook_line", None)),
+            ("--no-hook-line", getattr(args, "no_hook_line", False)),
+            ("--keep-line-findings", getattr(args, "keep_line_findings", None)),
+        )
+        if given
+    ]
+    if mixed:
+        print(
+            f"Stopped: a take edit ({', '.join(named)}) runs on its own; {', '.join(mixed)} goes with a plain "
+            "finish. Run them as two commands. Nothing was changed or charged.",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        request = build_request(
+            desk=desk,
+            episode=args.episode,
+            mutes=edits.get("mute", ()),
+            voices=edits.get("voice", ()),
+            cues=edits.get("cue", ()),
+            impact_at=edits.get("impact_at", ()),
+        )
+        lines = run_take_edit(
+            desk,
+            episode=args.episode,
+            take_id=take_id,
+            request=request,
+            preview=bool(getattr(args, "preview", False)),
+        )
+    except TakeEditStop as exc:
+        print(f"Stopped: {exc}", file=sys.stderr)
+        return 2
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"Stopped: {exc}. Nothing was changed or charged.", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps({"take": take_id, "lines": lines}, indent=2))
+    else:
+        print("\n".join(lines))
+    return 0
+
+
 def _server_finish_command(args: argparse.Namespace) -> int:
     """``finish`` / ``join``: the server finishes the episode; the kit downloads it (item 01, phase 4)."""
 
@@ -945,6 +1051,16 @@ def _server_finish_command(args: argparse.Namespace) -> int:
         return _show_series_cut(desk, args)
     if args.episode is None:
         args.episode = load_production(desk).episode_ordinal
+    edits = _take_edit_settings(args)
+    if edits:
+        return _send_take_edits(desk, args, edits)
+    if getattr(args, "preview", False):
+        print(
+            "Stopped: --preview prices take edits (--mute, --voice, --cue, --impact-at with --take tK); "
+            "a plain finish is free. Nothing was changed or charged.",
+            file=sys.stderr,
+        )
+        return 2
     labels = list(getattr(args, "caption_label", None) or [])
     clear = bool(getattr(args, "no_caption_labels", False))
     if labels or clear:

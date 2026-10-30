@@ -343,7 +343,7 @@ def test_not_done_exits_with_the_not_done_code(
     [
         ["--music", "calmer"],
         ["--no-cover"],
-        ["--impact-at", "1.2", "--sfx-adjust", "door=-6"],
+        ["--sfx-adjust", "door=-6", "--take", "t1", "--impact-at", "1.2"],
     ],
 )
 def test_old_laptop_settings_are_refused_by_name_and_the_server_is_not_called(
@@ -547,10 +547,10 @@ def test_every_old_setting_is_refused_with_its_own_plain_line(
         ("--ending", "freeze-to-black ending is not made"),
         ("--caption-style", "caption style and size are kept on the server"),
         ("--caption-scale", "caption style and size are kept on the server"),
-        ("--mute", "not live yet"),
-        ("--voice", "not live yet"),
-        ("--impact-at", "not live yet"),
-        ("--cue", "sound-note --desk D --take tK"),
+        (
+            "--over-locked-voices",
+            "the server decides whether a take's voices can be muted",
+        ),
         ("--sfx-adjust", "sound-note --desk D"),
     ],
 )
@@ -975,3 +975,421 @@ def test_series_cut_errors_are_plain(
     )
 
     assert not ready and says in lines[0]
+
+
+# --- take edits on the server (fictora-drama #1189 / #1190) ------------------------------------------
+
+EDIT_JOB = "job_video_1"
+
+
+class EditServer:
+    """The stand-in take-edit routes: keeps every request, answers from a queue (default: taken)."""
+
+    def __init__(self, *answers: tuple[int, Any], drop: bool = False) -> None:
+        self.answers = list(answers)
+        self.requests: list[httpx.Request] = []
+        self.drop = drop
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if self.drop:
+            raise httpx.ConnectError("no route to host", request=request)
+        if self.answers:
+            status, body = self.answers.pop(0)
+            return httpx.Response(status, json=body)
+        path = request.url.path
+        if path.endswith("/quote"):
+            return httpx.Response(
+                200,
+                json={
+                    "tokens": 2,
+                    "voiced_lines": 0,
+                    "voiced_characters": 0,
+                    "new_sounds": 1,
+                },
+            )
+        if path.endswith("/revoice"):
+            dry = json.loads(request.content)["dry_run"]
+            return httpx.Response(200, json={
+                "job_id": EDIT_JOB, "take_index": 2, "cast_id": "cast_aya", "edit": {},
+                "quote": {"tokens": 3}, "applied": None if dry else {
+                    "tokens": 3, "episode_not_redelivered": "The edit is saved. The episode is being put "
+                    "back together with it and plays the new cut soon."}})  # fmt: skip
+        return httpx.Response(200, json={
+            "job_id": EDIT_JOB, "take_index": 2, "tokens": 0, "rendered_cue_count": 0,
+            "synthesized_line_count": 0, "cost_usd": 0.0, "episode": None,
+            "episode_not_redelivered": "The edit is saved. The episode is being put back together with it "
+            "and plays the new cut soon."})  # fmt: skip
+
+    def sent(self) -> list[tuple[str, dict[str, Any]]]:
+        return [(r.url.path, json.loads(r.content)) for r in self.requests]
+
+
+@pytest.fixture
+def edit_server(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[EditServer, list[Any]]:
+    """The CLI wired to :class:`EditServer`: the take is take 2 of ``job_video_1``; finish is never run."""
+
+    from creation import cli_post
+    from creation.post import take_edit, take_handles
+
+    server = EditServer()
+    finished: list[Any] = []
+    monkeypatch.setattr(server_finish, "_api", lambda desk: (BASE, dict(HEADERS)))
+    monkeypatch.setattr(
+        take_handles,
+        "take_coordinate",
+        lambda desk, episode, take_id: take_handles.TakeCoordinate(
+            EDIT_JOB, 2, "job_take_2"
+        ),
+    )
+    real = take_edit.send_take_edit
+    monkeypatch.setattr(
+        take_edit,
+        "send_take_edit",
+        lambda **kw: real(**{**kw, "transport": httpx.MockTransport(server)}),
+    )
+    monkeypatch.setattr(
+        cli_post, "run_server_finish", lambda *a, **k: finished.append(a)
+    )
+    return server, finished
+
+
+def _finish(desk: Path, *extra: str) -> int:
+    return main(["finish", "--desk", str(desk), "--episode", "1", *extra])
+
+
+POST_EDIT_PATH = f"/v1/video-generations/{EDIT_JOB}/takes/2/post-edit"
+REVOICE_PATH = f"/v1/video-generations/{EDIT_JOB}/takes/2/revoice"
+
+
+def test_mute_goes_to_the_servers_post_edit_and_prints_its_answer(
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, finished = edit_server
+
+    code = _finish(post_desk, "--take", "t2", "--mute", "1.2-2.0", "--mute", "4-4.5")
+
+    assert code == 0 and finished == []
+    assert server.sent() == [
+        (POST_EDIT_PATH, {"mutes": [{"start_seconds": 1.2, "end_seconds": 2.0},
+                                    {"start_seconds": 4.0, "end_seconds": 4.5}]}),
+    ]  # fmt: skip
+    request = server.requests[0]
+    assert request.headers["Idempotency-Key"].startswith("kit-take-edit-t2-")
+    assert request.headers["X-Drama-Session-Id"] == "content-ops-test"
+    out = capsys.readouterr().out
+    assert "t2 edited on the server (2 muted stretches): free (0 tokens)." in out
+    assert "put back together with it" in out
+    assert "run finish again" in out
+
+
+def test_a_voice_line_file_is_laid_as_the_servers_copy(
+    post_desk: Path, edit_server: tuple[EditServer, list[Any]]
+) -> None:
+    server, _ = edit_server
+    voices = post_desk / "ep01" / "voices"
+    voices.mkdir(parents=True, exist_ok=True)
+    (voices / "voice-ep01-aya-v1.mp3").write_bytes(b"mp3")
+    (voices / "voice-ep01-aya-v1.json").write_text(
+        json.dumps(
+            {"line": "Not tonight.", "url": "https://media.example/lines/aya-1.mp3"}
+        ),
+        encoding="utf-8",
+    )
+
+    code = _finish(
+        post_desk, "--take", "t2", "--voice", "ep01/voices/voice-ep01-aya-v1.mp3@3.5@-2"
+    )
+
+    assert code == 0
+    assert server.sent() == [
+        (POST_EDIT_PATH, {"dub_lines": [{"text": "Not tonight.", "audio_url": "https://media.example/lines/aya-1.mp3",
+                                         "start_seconds": 3.5, "gain_db": -2.0}]}),
+    ]  # fmt: skip
+
+
+def test_a_voice_file_without_its_saved_note_is_refused_before_sending(
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, _ = edit_server
+    (post_desk / "line.mp3").write_bytes(b"mp3")
+
+    code = _finish(post_desk, "--take", "t2", "--voice", "line.mp3@1")
+
+    assert code == 2 and server.requests == []
+    err = capsys.readouterr().err
+    assert (
+        "only a line made with voice-line can be laid" in err and "Traceback" not in err
+    )
+
+
+def test_a_characters_name_re_voices_them_on_the_take(
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, _ = edit_server
+
+    code = _finish(post_desk, "--take", "t2", "--voice", "Aya")
+
+    assert code == 0
+    assert server.sent() == [(REVOICE_PATH, {"cast_id": "cast_aya", "dry_run": False})]
+    assert (
+        server.requests[0]
+        .headers["Idempotency-Key"]
+        .startswith("kit-take-revoice-t2-cast_aya-")
+    )
+    out = capsys.readouterr().out
+    assert "cast_aya's lines on t2 re-voiced on the server: 3 tokens." in out
+
+
+def test_an_unknown_character_is_refused_with_the_cast(
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, _ = edit_server
+
+    assert _finish(post_desk, "--take", "t2", "--voice", "Nobody") == 2
+    assert server.requests == []
+    assert "cast_kenji (Kenji)" in capsys.readouterr().err
+
+
+def test_mute_and_re_voice_send_the_edit_first_then_the_re_voice(
+    post_desk: Path, edit_server: tuple[EditServer, list[Any]]
+) -> None:
+    server, _ = edit_server
+
+    assert _finish(post_desk, "--take", "t2", "--mute", "0-1", "--voice", "Kenji") == 0
+    assert [path for path, _ in server.sent()] == [POST_EDIT_PATH, REVOICE_PATH]
+    assert server.sent()[1][1]["cast_id"] == "cast_kenji"
+
+
+def test_cue_and_impact_at_map_to_their_fields(
+    post_desk: Path, edit_server: tuple[EditServer, list[Any]]
+) -> None:
+    server, _ = edit_server
+    sfx = post_desk / "ep01" / "sfx"
+    sfx.mkdir(parents=True, exist_ok=True)
+    (sfx / "cue-gaan-sting-v1.mp3").write_bytes(b"mp3")
+    (sfx / "cue-gaan-sting-v1.json").write_text(
+        json.dumps({"description": "a descending gaan sting", "seconds": 1.2}),
+        encoding="utf-8",
+    )
+
+    code = _finish(
+        post_desk, "--take", "t2",
+        "--cue", "low rumble@2.5", "--cue", "ep01/sfx/cue-gaan-sting-v1.mp3@4@-9",
+        "--impact-at", "1.25, 3:blast",
+    )  # fmt: skip
+
+    assert code == 0
+    assert server.sent() == [
+        (POST_EDIT_PATH, {
+            "cues": [{"sound": "low rumble", "start_seconds": 2.5},
+                     {"sound": "a descending gaan sting", "start_seconds": 4.0, "duration_seconds": 1.2,
+                      "gain_db": -9.0}],
+            "impact_hits": [{"at_seconds": 1.25, "style": "hit"}, {"at_seconds": 3.0, "style": "blast"}],
+        }),
+    ]  # fmt: skip
+
+
+def test_preview_asks_the_quote_and_the_dry_run_and_changes_nothing(
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, _ = edit_server
+
+    code = _finish(
+        post_desk, "--take", "t2", "--cue", "door slam@1", "--voice", "Aya", "--preview"
+    )
+
+    assert code == 0
+    assert server.sent() == [
+        (
+            POST_EDIT_PATH + "/quote",
+            {"cues": [{"sound": "door slam", "start_seconds": 1.0}]},
+        ),
+        (REVOICE_PATH, {"cast_id": "cast_aya", "dry_run": True}),
+    ]
+    assert "Idempotency-Key" not in server.requests[0].headers
+    out = capsys.readouterr().out
+    assert "would cost 2 tokens" in out and "would cost 3 tokens" in out
+    assert "run finish again" not in out
+
+
+def test_preview_without_an_edit_is_refused(
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, finished = edit_server
+
+    assert _finish(post_desk, "--preview") == 2
+    assert server.requests == [] and finished == []
+    assert "--preview prices take edits" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--mute", "1-2"],
+        ["--voice", "Aya"],
+        ["--cue", "thud@1"],
+        ["--impact-at", "1"],
+    ],
+)
+def test_a_take_edit_without_a_take_is_a_plain_stop(
+    extra: list[str],
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, finished = edit_server
+
+    assert _finish(post_desk, *extra) == 2
+    assert server.requests == [] and finished == []
+    assert (
+        f"Stopped: {extra[0]} edit one take; add --take tK" in capsys.readouterr().err
+    )
+
+
+def test_a_take_edit_with_a_plain_finish_setting_is_two_commands(
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, finished = edit_server
+
+    assert (
+        _finish(post_desk, "--take", "t2", "--mute", "1-2", "--caption-label", "Hi@1-2")
+        == 2
+    )
+    assert server.requests == [] and finished == []
+    assert "Run them as two commands" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("value", "says"),
+    [
+        (["--mute", "1.2"], "write A-B seconds"),
+        (["--cue", "thud"], "SOUND@SECONDS"),
+        (["--impact-at", "soon"], "write SECONDS or SECONDS:blast"),
+        (["--voice", "line.mp3@later"], "FILE@SECONDS"),
+    ],
+)
+def test_a_malformed_setting_stops_before_anything_is_sent(
+    value: list[str],
+    says: str,
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, _ = edit_server
+
+    assert _finish(post_desk, "--take", "t2", *value) == 2
+    assert server.requests == []
+    err = capsys.readouterr().err
+    assert says in err and "Traceback" not in err
+
+
+@pytest.mark.parametrize("flag", ["--mute", "--voice", "--cue", "--impact-at"])
+def test_join_points_a_take_edit_at_finish(
+    flag: str,
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, finished = edit_server
+
+    assert main(["join", "--desk", str(post_desk), "--episode", "1", flag, "1"]) == 2
+    assert server.requests == [] and finished == []
+    assert f"--take tK {flag}" in capsys.readouterr().err
+
+
+def test_a_take_the_desk_never_filmed_is_a_plain_stop(
+    post_desk: Path, edit_server: tuple[EditServer, list[Any]], monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:  # fmt: skip
+    from creation.post import take_handles
+
+    server, _ = edit_server
+    monkeypatch.setattr(take_handles, "take_coordinate", lambda *a: None)
+
+    assert _finish(post_desk, "--take", "t9", "--mute", "1-2") == 2
+    assert server.requests == []
+    assert "no filmed clip of t9" in capsys.readouterr().err
+
+
+def _envelope(code: str, message: str) -> dict[str, Any]:
+    return {"error": {"code": code, "message": message}}
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "says"),
+    [
+        (409, _envelope("take_post_edit_in_progress", "running"), "still running on the server"),
+        (409, _envelope("take_post_edit_unavailable", "Editing a take isn't available right now."),
+         "Editing a take isn't available right now. Nothing was changed or charged."),
+        (422, _envelope("take_not_ready", "Take 2 has not been delivered yet."), "t2 has not been delivered yet"),
+        (422, _envelope("take_revoice_unavailable", "Aya has no line in this take."),
+         "Aya has no line in this take. Film the take again"),
+        (422, _envelope("validation_error", "a mute must last at least one frame"),
+         "would not take this edit: a mute must last at least one frame. Change the setting"),
+        (404, {"detail": "Not Found"}, "cannot edit a take yet"),
+        (404, _envelope("take_not_found", "Take 2 is not on this video generation."), "does not have t2"),
+        (401, _envelope("unauthorized", "bad"), "refused the kit's key"),
+        (429, _envelope("budget_exceeded", "over"), "spending limit"),
+        (502, _envelope("take_post_edit_failed", "The take could not be edited right now, so nothing changed."),
+         "so nothing changed. Run the same command again"),
+        (503, _envelope("take_post_edit_rejoin_unready", "The episode cannot be put back together right now."),
+         "put back together right now. Run the same command again"),
+        (500, "Internal Server Error", "busy or restarting (HTTP 500)"),
+    ],
+)  # fmt: skip
+def test_server_refusals_are_plain_next_steps_never_tracebacks(
+    status: int,
+    body: Any,
+    says: str,
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, _ = edit_server
+    server.answers.append((status, body))
+
+    code = _finish(post_desk, "--take", "t2", "--mute", "1-2")
+
+    assert code == 2
+    err = capsys.readouterr().err
+    assert says in err and "Traceback" not in err
+
+
+def test_a_refused_edit_does_not_send_the_re_voice(
+    post_desk: Path, edit_server: tuple[EditServer, list[Any]]
+) -> None:
+    server, _ = edit_server
+    server.answers.append((409, _envelope("take_post_edit_unavailable", "Not here.")))
+
+    assert _finish(post_desk, "--take", "t2", "--mute", "1-2", "--voice", "Aya") == 2
+    assert [path for path, _ in server.sent()] == [POST_EDIT_PATH]
+
+
+def test_an_unreachable_server_is_a_plain_line(
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, _ = edit_server
+    server.drop = True
+
+    assert _finish(post_desk, "--take", "t2", "--mute", "1-2") == 2
+    err = capsys.readouterr().err
+    assert "Could not reach the server (ConnectError)" in err and "Traceback" not in err
