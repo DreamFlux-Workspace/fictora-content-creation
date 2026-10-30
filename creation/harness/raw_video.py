@@ -34,6 +34,11 @@ from creation.harness.session import DramaApiRunSession
 _SET_SUFFIX = re.compile(r"_set(\d+)$")
 _FAILED = frozenset({"failed", "cancelled"})
 
+#: Seconds between two reads of a running film (generation speed plan item 04, 30 Oct 2026).
+#: Was 15 s. Each read asks for the film job, its video route and every take job, so a film
+#: is read every 5 s rather than the 3 s of a single job (the app reads them every 2 s).
+FILM_POLL_SECONDS = 5.0
+
 
 class VideoJobFailed(SystemExit):
     """The coordinator or a take job ended ``failed`` / ``cancelled``: that job is over.
@@ -301,7 +306,7 @@ def wait_for_raw_scene_clips(
     coordinator_job_id: str,
     *,
     deadline_seconds: float = 7200.0,
-    interval_seconds: float = 15.0,
+    interval_seconds: float = FILM_POLL_SECONDS,
     save_as: str = STEP_RAW_CLIPS,
     expected_clips: int | None = None,
     stale_after_seconds: float = STALE_JOB_SECONDS,
