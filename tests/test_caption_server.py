@@ -21,6 +21,7 @@ from creation.caption_bold import bold_cues
 from creation.caption_server import (
     CAPTION_LAYOUT_ROUTE,
     caption_chunks,
+    caption_look_override,
     server_caption_ass,
     server_override,
 )
@@ -234,3 +235,62 @@ def test_caption_take_writes_and_burns_the_servers_file(tmp_path: Path) -> None:
     assert result.video.stat().st_size > 0
     words = [w["text"] for chunk in sent[0]["chunks"] for w in chunk["words"]]
     assert words == ["I'm", "coming", "for", "you."]
+
+
+def _layout_body(look: tuple[int, Any]) -> dict[str, Any]:
+    sent: list[dict[str, Any]] = []
+    with (
+        caption_look_override(lambda: look),
+        server_override(
+            lambda path, body: (sent.append(body), (200, {"ass": SERVER_ASS}))[1]
+        ),
+    ):
+        server_caption_ass(
+            [Cue(0.0, 1.0, "Wait.")], width=192, height=336, style="house", whole_lines=False,
+            desk=None, episode=1,
+        )  # fmt: skip
+    return sent[0]
+
+
+@pytest.mark.real_caption_server
+def test_the_shows_caption_size_from_the_server_is_passed_through() -> None:
+    body = _layout_body((200, {"caption_look": "bold", "caption_size": 1.5}))
+    assert body["size"] == 1.5
+
+
+@pytest.mark.real_caption_server
+@pytest.mark.parametrize(
+    "look",
+    [
+        (200, {"caption_look": "bold"}),
+        (200, {"caption_look": "bold", "caption_size": None}),
+        (200, {"caption_look": "bold", "caption_size": True}),
+        (404, {"caption_size": 1.5}),
+        (200, ["not", "a", "look"]),
+    ],
+)
+def test_no_size_from_the_server_sends_the_request_exactly_as_before(
+    look: tuple[int, Any],
+) -> None:
+    body = _layout_body(look)
+    assert body == _layout_body((404, None))
+    assert "size" not in body
+
+
+@pytest.mark.real_caption_server
+def test_an_unreachable_caption_look_sends_no_size() -> None:
+    def down() -> tuple[int, Any]:
+        raise OSError("connection refused")
+
+    sent: list[dict[str, Any]] = []
+    with (
+        caption_look_override(down),
+        server_override(
+            lambda path, body: (sent.append(body), (200, {"ass": SERVER_ASS}))[1]
+        ),
+    ):
+        server_caption_ass(
+            [Cue(0.0, 1.0, "Wait.")], width=192, height=336, style="house", whole_lines=False,
+            desk=None, episode=1,
+        )  # fmt: skip
+    assert "size" not in sent[0]
