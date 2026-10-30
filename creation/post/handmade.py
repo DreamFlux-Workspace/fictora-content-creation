@@ -469,7 +469,7 @@ def run_voice_line(
     )
     print(
         f"Next: listen to it. To use it: fictora-produce finish --desk {desk} --episode {episode} "
-        f"[--mute A-B] --voice {dest}@START[@DB]",
+        f"--take tK [--mute A-B] --voice {dest}@START[@DB]",
         file=out,
     )
     return dest
