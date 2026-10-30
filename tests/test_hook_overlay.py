@@ -8,7 +8,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-import pytest
 from conftest import make_take, needs_ffmpeg
 from test_post_finish import FACTS, TWO_LINES, _board, fake_sfx
 
@@ -265,26 +264,6 @@ def test_finish_keeps_a_lowered_hook_line_off_the_captions_it_burned(
     # The hook card's own burn file (the .ass beside the hook video also holds the captions, L-20261006-8).
     drawn = sorted((post_desk / "ep01" / "takes").glob("*-hook-overlay-v*.ass"))[-1]
     assert _pos(drawn.read_text(encoding="utf-8"))[0] == "8"
-
-
-def test_the_cli_takes_the_hook_line_flags() -> None:
-    import argparse
-
-    from creation.cli_post import add_post_parsers
-
-    parser = argparse.ArgumentParser()
-    add_post_parsers(parser.add_subparsers(dest="command"))
-    args = parser.parse_args(["finish", "--desk", "d", "--episode", "2", "--hook-line", "She lies",
-                              "--hook-line-position", "lower"])  # fmt: skip
-    assert (args.hook_line, args.no_hook_line, args.hook_line_position) == (
-        "She lies",
-        False,
-        "lower",
-    )
-    with pytest.raises(SystemExit):
-        parser.parse_args(
-            ["finish", "--desk", "d", "--hook-line", "x", "--no-hook-line"]
-        )
 
 
 def test_the_default_face_check_asks_the_faces_module_for_the_upper_band(

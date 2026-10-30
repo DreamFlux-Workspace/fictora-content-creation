@@ -2267,7 +2267,7 @@ def collect_takes(
     spine: dict[str, Any],
     asked: list[str] | None = None,
 ) -> CollectedTakes:
-    """Download one episode's filmed takes raw, save their take facts, book spend, mark them filmed.
+    """Save one episode's filmed take facts, book spend, mark them filmed (no raw take is downloaded).
 
     Every take of the episode the job filmed is collected and booked (it was paid for),
     so a one-take re-film collects the one take the server filmed.
@@ -2311,89 +2311,77 @@ def collect_takes(
     take_ids = [take.take_id for take in slot.takes]
     (ep_dir / "takes").mkdir(parents=True, exist_ok=True)
     today = fal_billing_day()
-    fetch = httpx.Client(timeout=300.0)
     booked = 0.0
     jobs: list[str] = []
     paths: list[str] = []
     on_screen: list[str] = []
     unplaced: list[str] = []
     cast_names = cast_names_from(spine)
-    try:
-        for position, clip in enumerate(clips, start=1):
-            take_id, why = take_for_clip(
-                clip, position, desk_takes=take_ids, asked=list(asked or take_ids), clips=clips,
-                foreign=bool(foreign),
-            )  # fmt: skip
-            if take_id is None:
-                run.emit(
-                    "take_without_desk_slot",
-                    job_id=clip.get("job_id"),
-                    index=clip.get("set_index"),
-                    reason=why,
-                )
-                unplaced.append(
-                    f"take job `{clip.get('job_id')}` ({clip.get('url')}): {why}"
-                )
-                continue
-            path = download_to_versioned(
-                fetch,
-                str(clip["url"]),
-                ep_dir / "takes",
-                f"take-ep{episode:02d}-{take_id}-raw",
-                default_suffix=".mp4",
+    for position, clip in enumerate(clips, start=1):
+        take_id, why = take_for_clip(
+            clip, position, desk_takes=take_ids, asked=list(asked or take_ids), clips=clips,
+            foreign=bool(foreign),
+        )  # fmt: skip
+        if take_id is None:
+            run.emit(
+                "take_without_desk_slot",
+                job_id=clip.get("job_id"),
+                index=clip.get("set_index"),
+                reason=why,
             )
-            paths.append(str(path))
-            if clip.get("job_id") and take_job_booked(desk, str(clip["job_id"])):
-                # A run cut off mid-collect already booked and counted this take.
-                jobs.append(
-                    f"{take_id}: take job `{clip['job_id']}` (already booked; not booked again)"
-                )
-                continue
-            facts = fetch_take_facts(run, str(clip["job_id"]), spine_id=state.spine_id)
-            priced: tuple[float, str] | None = None
-            if facts is not None:
-                save_take_facts(
-                    desk, episode=episode, take_id=take_id, facts=facts, spine=spine
-                )
-                priced = take_facts_usd(facts, on=today)
-                on_screen += on_screen_lines(take_id, facts, cast_names)
-                on_screen += take_soundtrack_lines(take_id, facts)
-                # The server's picture check of the take's stills (warnings only).
-                on_screen += take_picture_check_lines(facts, take_id=take_id)
-                state.remember_server_lane(
-                    server_lane(facts)
-                )  # the caller saves the state
-            if priced is None:
-                estimate = lane_take_usd(
-                    state.video_lane, clip_seconds, on=today, server=state.server_lane()
-                )
-                priced = (
-                    (estimate, "estimate from the price table")
-                    if estimate is not None
-                    else None
-                )
-            if priced is not None:
-                record_spend(
-                    desk,
-                    episode=episode,
-                    usd=priced[0],
-                    take_id=take_id,
-                    # The seconds the take filmed (the server sizes each take), not the run's ceiling.
-                    unit=f"take {_filmed_seconds(facts, clip_seconds)}s",
-                    job_id=str(clip.get("job_id") or "") or None,
-                )
-                booked += priced[0]
-            record_filmed(desk, episode=episode, take_id=take_id)
+            unplaced.append(
+                f"take job `{clip.get('job_id')}` ({clip.get('url')}): {why}"
+            )
+            continue
+        # Item 01 phase 4 (30 Oct 2026): the raw take is not downloaded. The server finishes
+        # the episode from its own copy; `finish` downloads the finished episode.
+        if clip.get("job_id") and take_job_booked(desk, str(clip["job_id"])):
+            # A run cut off mid-collect already booked and counted this take.
             jobs.append(
-                f"{take_id}: take job `{clip['job_id']}`"
-                + (
-                    f" ({priced[1]}, ${priced[0]:.2f})"
-                    if priced
-                    else " (not priced; book by hand)"
-                )
+                f"{take_id}: take job `{clip['job_id']}` (already booked; not booked again)"
             )
-    finally:
-        fetch.close()
+            continue
+        facts = fetch_take_facts(run, str(clip["job_id"]), spine_id=state.spine_id)
+        priced: tuple[float, str] | None = None
+        if facts is not None:
+            save_take_facts(
+                desk, episode=episode, take_id=take_id, facts=facts, spine=spine
+            )
+            priced = take_facts_usd(facts, on=today)
+            on_screen += on_screen_lines(take_id, facts, cast_names)
+            on_screen += take_soundtrack_lines(take_id, facts)
+            # The server's picture check of the take's stills (warnings only).
+            on_screen += take_picture_check_lines(facts, take_id=take_id)
+            state.remember_server_lane(server_lane(facts))  # the caller saves the state
+        if priced is None:
+            estimate = lane_take_usd(
+                state.video_lane, clip_seconds, on=today, server=state.server_lane()
+            )
+            priced = (
+                (estimate, "estimate from the price table")
+                if estimate is not None
+                else None
+            )
+        if priced is not None:
+            record_spend(
+                desk,
+                episode=episode,
+                usd=priced[0],
+                take_id=take_id,
+                # The seconds the take filmed (the server sizes each take), not the run's ceiling.
+                unit=f"take {_filmed_seconds(facts, clip_seconds)}s",
+                job_id=str(clip.get("job_id") or "") or None,
+            )
+            booked += priced[0]
+        record_filmed(desk, episode=episode, take_id=take_id)
+        jobs.append(
+            f"{take_id}: take job `{clip['job_id']}`"
+            + (
+                f" ({priced[1]}, ${priced[0]:.2f})"
+                if priced
+                else " (not priced; book by hand)"
+            )
+        )
     return CollectedTakes(
         jobs,
         booked,
@@ -2741,8 +2729,8 @@ def book_filmed_episode(
         "arc --list (pick the series arc)" if ep == 1 else f"author --episode {ep + 1}"
     )
     hint = (
-        " Not done yet: after the human says Use it, run `fictora-produce finish --desk <desk> --episode "
-        f"{ep} --take tK` per take (sound effects, music, mix, captions, mark; hosted post is off)."
+        f" Next: run `fictora-produce finish --desk <desk> --episode {ep}` once. The server finishes the whole "
+        "episode (captions, sound, hook title, Sokii mark, cover) and the kit downloads it for the human to watch."
     )
     return StepResult(
         state.phase,

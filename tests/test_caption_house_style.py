@@ -221,7 +221,7 @@ def test_bind_keeps_the_saved_server_captions_unless_a_flag_is_given() -> None:
     assert kept.caption_style == "subtle"
 
 
-@pytest.mark.parametrize("command", ["finish", "caption"])
+@pytest.mark.parametrize("command", ["caption"])
 def test_finish_and_caption_take_caption_style(command: str) -> None:
     from creation.cli_produce import main
 

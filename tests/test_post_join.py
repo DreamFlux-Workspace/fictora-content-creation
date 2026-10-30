@@ -762,27 +762,6 @@ def test_join_skips_matching_by_default_and_gain_match_forces_it(
     assert forced.gains_db[0] - forced.gains_db[1] > 30
 
 
-def test_join_cli_passes_the_gain_match_choice(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    seen: list[object] = []
-
-    class _Joined:
-        complete = True
-
-        def as_json(self) -> dict:
-            return {}
-
-    def fake(desk: Path, **kwargs: object) -> _Joined:
-        seen.append(kwargs["gain_match"])
-        return _Joined()
-
-    monkeypatch.setattr(cli_post, "run_join", fake)
-    for flag in ([], ["--gain-match"], ["--no-gain-match"]):
-        main(["join", "--desk", str(tmp_path), "--episode", "1", "--json", *flag])
-    assert seen == [None, True, False]
-
-
 # --- episode seams in a series cut are levelled (Noodle24 L-20260930-12) ---------------------------
 
 

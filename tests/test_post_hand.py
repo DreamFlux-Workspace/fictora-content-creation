@@ -711,25 +711,6 @@ def test_a_caption_label_parses_and_a_bad_one_says_the_form() -> None:
             parse_caption_label(bad)
 
 
-def test_finish_cli_passes_caption_labels(
-    post_desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from creation import cli_post
-
-    seen: dict[str, Any] = {}
-    monkeypatch.setattr(
-        cli_post, "run_finish", lambda desk, **kwargs: seen.update(kwargs) or _Done()
-    )
-    code = main(
-        ["finish", "--desk", str(post_desk), "--caption-label", "Blinking!@2.5-3.1"]
-    )
-    assert code == 0 and seen["caption_labels"] == (("Blinking!", 2.5, 3.1),)
-    assert (
-        main(["finish", "--desk", str(post_desk), "--caption-label", "Blinking!"]) == 2
-    )
-    assert "TEXT@A-B" in capsys.readouterr().err
-
-
 @needs_ffmpeg
 def test_finish_burns_a_caption_label_where_asked_with_no_spoken_line(
     post_desk: Path, monkeypatch: pytest.MonkeyPatch

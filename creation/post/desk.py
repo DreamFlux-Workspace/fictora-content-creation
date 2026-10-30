@@ -286,8 +286,9 @@ def latest_raw_take(desk: Path, episode: int, take_id: str) -> Path:
     ]
     if not found:
         raise FileNotFoundError(
-            f"no raw take take-ep{episode:02d}-{take_id}-raw-vN.mp4 in {takes}; "
-            "run `fictora-produce step --confirm-spend` first"
+            f"no raw take take-ep{episode:02d}-{take_id}-raw-vN.mp4 in {takes}. Since 30 Oct 2026 the kit "
+            "does not download raw takes: the server finishes the episode, and `fictora-produce finish` "
+            "downloads the finished episode"
         )
     return max(found, key=_version)
 

@@ -475,7 +475,8 @@ def test_episode_two_films_alone_and_books_the_take_from_its_facts(
     )  # episode 2 alone: episode 1 is not filmed or booked again
     assert "reroll_take_index" not in body and "seed_attempt" not in body
     downloads = [payload["url"] for phase, payload in api.events if phase == "download"]
-    assert downloads == ["https://r2.example/ep2.mp4"]
+    # Item 01 phase 4: no raw take is downloaded; the server finishes the episode.
+    assert downloads == []
     assert "also filmed another episode" not in result.message
     facts_call = [
         path

@@ -518,38 +518,6 @@ def test_a_check_that_cannot_run_is_loud_but_not_a_stop(post_desk: Path) -> None
     )
 
 
-def test_the_cli_passes_the_override(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    from creation import cli_post
-
-    seen: dict[str, object] = {}
-
-    class Done(Exception):
-        pass
-
-    def fake_finish(*_a: object, **kw: object) -> None:
-        seen.update(kw)
-        raise Done
-
-    monkeypatch.setattr(cli_post, "run_finish", fake_finish)
-    from creation.cli_produce import main
-
-    with pytest.raises(Done):
-        main(
-            [
-                "finish",
-                "--desk",
-                str(tmp_path),
-                "--take",
-                "t2",
-                "--accept-line-mismatch",
-                "t2",
-            ]
-        )
-    assert seen["accept_line_mismatch"] == ("t2",)
-
-
 # --- a clip to hear the line, and a quiet line the transcript missed (Noodle24 L-20261008-38) --------------
 
 
