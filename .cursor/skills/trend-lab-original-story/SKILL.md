@@ -26,7 +26,7 @@ Read [reference.md](reference.md) for the exact JSON, credentials, and how to pu
 3. **Film** (after storyboards are approved): `continue_from: <storyboard run>`, `film: true`. Deliver the MP4.
 To change a picture at step 1 or 2, edit the story's description, then rerun that step with a new id, `continue_from` the previous run, and `redo_cast` / `redo_frames` naming only what to redraw. Send `story_json` again whenever the story changed. A character who changes clothes for a big scene gets a second character id (for example `kane_tux`); each take allows at most 9 pictures (all character sheets plus that take's frames).
 
-To copy the look of a reference reel or picture, put up to 3 of its stills in the story's `style_refs` (https links or `data:image/png;base64,...` strings; pick clean frames with faces and a background, no text, no gore). Every character sheet copies all of them, and every frame copies the first. A `style_line` alone cannot copy a look: the worker drew modern glossy anime when asked for 90s cel anime by text only. Show the founder one restyled sheet beside a reference still before redrawing the rest.
+To copy the look of a reference reel or picture, upload up to 3 of its stills to the worker (`PUT /uploads/style` with the run token, body = the image file) and put each returned `style:<id>` in the story's `style_refs` (pick clean frames with faces and a background, no text, no gore). Every character sheet copies all of them, and every frame copies the first. A `style_line` alone cannot copy a look: the worker drew modern glossy anime when asked for 90s cel anime by text only. Show the founder one restyled sheet beside a reference still before redrawing the rest.
 
 ## Two rules
 
