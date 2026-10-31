@@ -70,27 +70,30 @@ Deliver the episode by downloading **`download_url`**. Callers do not need R2 cr
 
 No `output_path` after `finished` means the run held or failed (`failed` / `error`). Do not pull takes in its place. A `run_id` whose workflow has already ended cannot be submitted again; use a new id.
 
-## Check pictures before filming (pause, then continue)
+## Check pictures before filming (plates → storyboards → film)
 
 ```http
 POST {TREND_LAB_SERVE_URL}/runs
-{ "run_id": "<id A>", "story_json": "<StoryFile JSON string>", "film": false }
+{ "run_id": "<id A>", "story_json": "<StoryFile JSON string>", "film": false, "cast_only": true }
 ```
 
-Poll `GET /runs/<id A>` until `finished`. The snapshot carries **`plates`**:
-
-```json
-{ "cast": { "kane": "https://…png" }, "storyboard": { "f1": "https://…png" } }
-```
-
-Presigned links (~24h) to the newest version of each picture. Show them to the human. After approval:
+Poll `GET /runs/<id A>` until `finished`. The snapshot carries `plates.cast`: `{ "kane": "https://…png", … }` (presigned, ~24h, newest version of each). Show them. After approval:
 
 ```http
 POST {TREND_LAB_SERVE_URL}/runs
-{ "run_id": "<new id B>", "continue_from": "<id A>", "film": true }
+{ "run_id": "<id B>", "continue_from": "<id A>", "film": false }
 ```
 
-Run B copies A's cast pictures, storyboard frames and story, then films. Add `story_json` only when the story changed. To redraw one picture, add `redo_cast` / `redo_frames` (comma-separated ids). Cannot be combined with `from_reference`.
+Run B copies A's character sheets and story and draws the storyboard frames from them. Its poll has `plates.cast` and `plates.storyboard`. After approval:
+
+```http
+POST {TREND_LAB_SERVE_URL}/runs
+{ "run_id": "<id C>", "continue_from": "<id B>", "film": true }
+```
+
+Run C films those exact pictures and finishes; deliver `download_url`. Any step: add `story_json` when the story changed, and `redo_cast` / `redo_frames` (comma-separated ids) to redraw only those. `cast_only` cannot be combined with `film: true`; `continue_from` cannot be combined with `from_reference`.
+
+**Art style:** the worker appends the story's `style_line` to every picture prompt. For real people in a drawn style, write descriptions as "X drawn as a <style> character, recognisable as him", not "exactly as he looks", which pulls toward a photo.
 
 ## Story JSON (minimal)
 
