@@ -20,11 +20,15 @@ When the human gives a reference MP4, `PUT` the bytes, then `POST /runs` with `f
 
 Read [reference.md](reference.md) for the exact JSON, credentials, and how to pull the final.
 
-**Check the pictures first (when the human asks to see the cast or storyboards before filming):** send the story with `film: false`. Poll until `finished`, then show them every link in `plates` (cast pictures and storyboard frames). When they approve, start a **new** run id with `continue_from: <first run id>` and `film: true`. It films those exact pictures. Send a new `story_json` with it only if they changed the story; any new character or frame is drawn fresh. If they want a picture changed, change the story's description and run `film: false` again with a new id, `continue_from` the old one, and `redo_cast` / `redo_frames` naming what to redraw.
+**Check the pictures first (when the human asks to see plates or storyboards before filming).** Three short runs, each a new run id, each waiting for the human's OK:
+1. **Plates:** `film: false`, `cast_only: true`. Show every link in `plates.cast` (one character sheet per character) and stop.
+2. **Storyboards** (after plates are approved): `continue_from: <plates run>`, `film: false`. Show every link in `plates.storyboard` and stop.
+3. **Film** (after storyboards are approved): `continue_from: <storyboard run>`, `film: true`. Deliver the MP4.
+To change a picture at step 1 or 2, edit the story's description, then rerun that step with a new id, `continue_from` the previous run, and `redo_cast` / `redo_frames` naming only what to redraw. Send `story_json` again whenever the story changed. A character who changes clothes for a big scene gets a second character id (for example `kane_tux`); each take allows at most 9 pictures (all character sheets plus that take's frames).
 
 ## Two rules
 
-1. **One episode, one run.** Submit a single hosted run (`run_id`), wait until `output_path` is set or the workflow fails. Do not start a second run for the same episode unless the human asked to retry with a new id. The one exception is the picture check above: a `film: false` run followed by one `continue_from` run that films.
+1. **One episode, one run.** Submit a single hosted run (`run_id`), wait until `output_path` is set or the workflow fails. Do not start a second run for the same episode unless the human asked to retry with a new id. The one exception is the picture check above: plates, storyboards and film runs chained with `continue_from`.
 2. **Original story only.** A reference clip supplies **timing and hook shape**, never dialogue, faces, or on-screen copy from the source. The filmed episode uses **drawn** frames and **new** lines.
 
 ## Credentials (operator setup)
