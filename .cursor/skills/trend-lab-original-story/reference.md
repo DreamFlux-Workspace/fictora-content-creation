@@ -70,6 +70,28 @@ Deliver the episode by downloading **`download_url`**. Callers do not need R2 cr
 
 No `output_path` after `finished` means the run held or failed (`failed` / `error`). Do not pull takes in its place. A `run_id` whose workflow has already ended cannot be submitted again; use a new id.
 
+## Check pictures before filming (pause, then continue)
+
+```http
+POST {TREND_LAB_SERVE_URL}/runs
+{ "run_id": "<id A>", "story_json": "<StoryFile JSON string>", "film": false }
+```
+
+Poll `GET /runs/<id A>` until `finished`. The snapshot carries **`plates`**:
+
+```json
+{ "cast": { "kane": "https://…png" }, "storyboard": { "f1": "https://…png" } }
+```
+
+Presigned links (~24h) to the newest version of each picture. Show them to the human. After approval:
+
+```http
+POST {TREND_LAB_SERVE_URL}/runs
+{ "run_id": "<new id B>", "continue_from": "<id A>", "film": true }
+```
+
+Run B copies A's cast pictures, storyboard frames and story, then films. Add `story_json` only when the story changed. To redraw one picture, add `redo_cast` / `redo_frames` (comma-separated ids). Cannot be combined with `from_reference`.
+
 ## Story JSON (minimal)
 
 | Field | Purpose |
