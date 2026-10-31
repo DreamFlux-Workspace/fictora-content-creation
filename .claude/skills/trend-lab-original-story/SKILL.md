@@ -20,9 +20,11 @@ When the human gives a reference MP4, `PUT` the bytes, then `POST /runs` with `f
 
 Read [reference.md](reference.md) for the exact JSON, credentials, and how to pull the final.
 
+**Check the pictures first (when the human asks to see the cast or storyboards before filming):** send the story with `film: false`. Poll until `finished`, then show them every link in `plates` (cast pictures and storyboard frames). When they approve, start a **new** run id with `continue_from: <first run id>` and `film: true`. It films those exact pictures. Send a new `story_json` with it only if they changed the story; any new character or frame is drawn fresh. If they want a picture changed, change the story's description and run `film: false` again with a new id, `continue_from` the old one, and `redo_cast` / `redo_frames` naming what to redraw.
+
 ## Two rules
 
-1. **One episode, one run.** Submit a single hosted run (`run_id`), wait until `output_path` is set or the workflow fails. Do not start a second run for the same episode unless the human asked to retry with a new id.
+1. **One episode, one run.** Submit a single hosted run (`run_id`), wait until `output_path` is set or the workflow fails. Do not start a second run for the same episode unless the human asked to retry with a new id. The one exception is the picture check above: a `film: false` run followed by one `continue_from` run that films.
 2. **Original story only.** A reference clip supplies **timing and hook shape**, never dialogue, faces, or on-screen copy from the source. The filmed episode uses **drawn** frames and **new** lines.
 
 ## Credentials (operator setup)
