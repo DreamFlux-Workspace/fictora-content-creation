@@ -408,7 +408,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.command,
             desk_arg,
             transcribe=bool(getattr(args, "transcribe", False)),
-            sends=args.command in ("music-note", "rescore-music")
+            sends=args.command in ("music-note", "rescore-music", "sound-refresh")
             and bool(getattr(args, "yes", False)),
         )
         if refused:

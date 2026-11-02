@@ -37,6 +37,7 @@ POST_COMMANDS = (
             "cue",
             "set-bed",
             "music-note",
+            "sound-refresh",
             "rescore-music",
             "finish",
             "join",
@@ -584,6 +585,21 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="How long to follow the episodes being put together again after applying (default 600; 0 reads once).",
     )
 
+    refresh = sub.add_parser(
+        "sound-refresh",
+        help="Only when the human asks to fix an older episode's sound: the server re-does it under today's "
+        "sound rules (nothing filmed, no voice re-rendered). Prints the server's plan (removed sounds, "
+        "turned-down sounds, room change, cost; free unless a new room sound is needed, about 3 cents); "
+        "--yes applies, follows the server and downloads the new episode as a new numbered file.",
+    )
+    refresh.add_argument("--desk", type=Path, required=True)
+    refresh.add_argument("--episode", type=int, required=True)
+    refresh.add_argument("--yes", action="store_true", help="Apply after showing the plan.")
+    refresh.add_argument(
+        "--wait", type=float, default=None, metavar="SECONDS",
+        help="How long to follow the server after applying (default 900; 0 reads once).",
+    )
+
     rescore = sub.add_parser(
         "rescore-music",
         help="Give already-made episodes the music the harness's CURRENT rules give (opt-in; never films): "
@@ -881,6 +897,15 @@ def dispatch_post(args: argparse.Namespace) -> int:
             save_only=args.save_only,
             yes=args.yes,
             confirm_refilm=args.confirm_refilm,
+            wait_seconds=DEFAULT_WAIT_SECONDS if args.wait is None else args.wait,
+        )
+    if args.command == "sound-refresh":
+        from creation.post.sound_refresh import DEFAULT_WAIT_SECONDS, run_sound_refresh
+
+        return run_sound_refresh(
+            args.desk,
+            episode=args.episode,
+            yes=args.yes,
             wait_seconds=DEFAULT_WAIT_SECONDS if args.wait is None else args.wait,
         )
     if args.command == "rescore-music":
