@@ -79,7 +79,11 @@ def _scene_url(body: Any, episode_id: str) -> tuple[str | None, int | None]:
     output = body.get("output") if isinstance(body, dict) else None
     scenes = output.get("scenes") if isinstance(output, dict) else None
     for scene in scenes if isinstance(scenes, list) else []:
-        if isinstance(scene, dict) and scene.get("episode_id") == episode_id and scene.get("video_url"):
+        if (
+            isinstance(scene, dict)
+            and scene.get("episode_id") == episode_id
+            and scene.get("video_url")
+        ):
             return str(scene["video_url"]), scene.get("duration_ms")
     return None, None
 
@@ -120,41 +124,76 @@ def pull_episodes(
         return PULL_NOT_DONE
 
     with httpx.Client(timeout=READ_TIMEOUT_SECONDS, transport=transport) as client:
-        response, body = _get(client, base, headers, STANDING_ROUTE.format(spine_id=spine))
+        response, body = _get(
+            client, base, headers, STANDING_ROUTE.format(spine_id=spine)
+        )
         if response is None:
-            say("NOT DONE: could not reach the server. Check the internet connection and run it again. Nothing changed.")
+            say(
+                "NOT DONE: could not reach the server. Check the internet connection and run it again. Nothing changed."
+            )
             return PULL_NOT_DONE
         if response.status_code == 404 and _route_missing(body):
-            say("NOT DONE: this server cannot say which episode files are current yet (it needs the server update). Tell the core team. Nothing changed.")
+            say(
+                "NOT DONE: this server cannot say which episode files are current yet (it needs the server update). Tell the core team. Nothing changed."
+            )
             return PULL_NOT_DONE
         if not response.is_success or not isinstance(body, dict):
-            say(f"NOT DONE: the server did not say which episodes are finished (HTTP {response.status_code}: {api_error_text(body)[:200]}). Nothing changed.")
+            say(
+                f"NOT DONE: the server did not say which episodes are finished (HTTP {response.status_code}: {api_error_text(body)[:200]}). Nothing changed."
+            )
             return PULL_NOT_DONE
         rows = {
             int(row["episode_ordinal"]): row
             for row in body.get("episodes") or []
             if isinstance(row, dict) and isinstance(row.get("episode_ordinal"), int)
         }
-        wanted = [episode] if episode is not None else sorted(n for n, r in rows.items() if r.get("video") == "finished")
+        wanted = (
+            [episode]
+            if episode is not None
+            else sorted(n for n, r in rows.items() if r.get("video") == "finished")
+        )
         jobs: dict[str, Any] = {}
         results: list[Pulled] = []
         for number in wanted:
             row = rows.get(number)
-            if row is None or row.get("video") != "finished" or not row.get("video_job_id") or not row.get("episode_id"):
-                results.append(Pulled(number, f"ep {number}: the server has no finished episode {number} yet. Nothing changed.", failed=episode is not None))
+            if (
+                row is None
+                or row.get("video") != "finished"
+                or not row.get("video_job_id")
+                or not row.get("episode_id")
+            ):
+                results.append(
+                    Pulled(
+                        number,
+                        f"ep {number}: the server has no finished episode {number} yet. Nothing changed.",
+                        failed=episode is not None,
+                    )
+                )
                 continue
             job_id = str(row["video_job_id"])
             if job_id not in jobs:
-                answer, job_body = _get(client, base, headers, JOB_ROUTE.format(job_id=job_id))
-                jobs[job_id] = job_body if answer is not None and answer.is_success else None
+                answer, job_body = _get(
+                    client, base, headers, JOB_ROUTE.format(job_id=job_id)
+                )
+                jobs[job_id] = (
+                    job_body if answer is not None and answer.is_success else None
+                )
             url, scene_ms = _scene_url(jobs[job_id], str(row["episode_id"]))
             if url is None:
-                results.append(Pulled(number, f"ep {number}: the server's delivered file could not be read. Nothing changed.", failed=True))
+                results.append(
+                    Pulled(
+                        number,
+                        f"ep {number}: the server's delivered file could not be read. Nothing changed.",
+                        failed=True,
+                    )
+                )
                 continue
             folder = desk / f"ep{number:02d}" / "takes"
             have = _saved_video(folder, number, url)
             if have is not None:
-                results.append(Pulled(number, f"ep {number}: already up to date", current=True))
+                results.append(
+                    Pulled(number, f"ep {number}: already up to date", current=True)
+                )
                 continue
             before = newest_episode_file(folder, number) if folder.is_dir() else None
             was = _local_seconds(before) if before else None
@@ -172,16 +211,30 @@ def pull_episodes(
                     },
                 )
             except ServerFinishError as exc:
-                results.append(Pulled(number, f"ep {number}: not saved. {exc}", failed=True))
+                results.append(
+                    Pulled(number, f"ep {number}: not saved. {exc}", failed=True)
+                )
                 continue
             now = (scene_ms or row.get("duration_ms") or 0) / 1000 or None
-            was_text = f", was {_seconds(was)}" if before else ", no earlier file on the desk"
-            results.append(Pulled(number, f"ep {number}: new version saved ({_seconds(now)}{was_text}) → {saved}", saved=saved))
+            was_text = (
+                f", was {_seconds(was)}" if before else ", no earlier file on the desk"
+            )
+            results.append(
+                Pulled(
+                    number,
+                    f"ep {number}: new version saved ({_seconds(now)}{was_text}) → {saved}",
+                    saved=saved,
+                )
+            )
 
     for item in results:
         say(item.line)
     saved_n = sum(1 for r in results if r.saved)
     current_n = sum(1 for r in results if r.current)
     failed_n = sum(1 for r in results if r.failed)
-    say(f"{saved_n} new version(s) saved, {current_n} already up to date" + (f", {failed_n} not done" if failed_n else "") + ". Nothing was overwritten or deleted.")
+    say(
+        f"{saved_n} new version(s) saved, {current_n} already up to date"
+        + (f", {failed_n} not done" if failed_n else "")
+        + ". Nothing was overwritten or deleted."
+    )
     return PULL_NOT_DONE if failed_n else 0

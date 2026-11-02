@@ -18,7 +18,10 @@ from creation.post import episode_name, pull_episodes as pull
 from creation.shared_spine import READ_OR_LOCAL_COMMANDS
 
 BASE = "https://drama.example"
-HEADERS = {"Authorization": "Bearer kit-token", "X-Drama-Session-Id": "content-ops-test"}
+HEADERS = {
+    "Authorization": "Bearer kit-token",
+    "X-Drama-Session-Id": "content-ops-test",
+}
 URL1 = "https://media.example/ep01-v2.mp4"
 URL2 = "https://media.example/ep02-v1.mp4"
 BYTES = {URL1: b"ep1 repaired whole", URL2: b"ep2 current"}
@@ -27,14 +30,26 @@ BYTES = {URL1: b"ep1 repaired whole", URL2: b"ep2 current"}
 def standing(*numbers: int) -> dict[str, Any]:
     return {
         "episodes": [
-            {"episode_ordinal": n, "video": "finished", "video_job_id": f"job{n}", "episode_id": f"ep_{n:02d}", "duration_ms": 27000}
+            {
+                "episode_ordinal": n,
+                "video": "finished",
+                "video_job_id": f"job{n}",
+                "episode_id": f"ep_{n:02d}",
+                "duration_ms": 27000,
+            }
             for n in numbers
         ]
     }
 
 
 def job(n: int, url: str) -> dict[str, Any]:
-    return {"output": {"scenes": [{"episode_id": f"ep_{n:02d}", "video_url": url, "duration_ms": 27000}]}}
+    return {
+        "output": {
+            "scenes": [
+                {"episode_id": f"ep_{n:02d}", "video_url": url, "duration_ms": 27000}
+            ]
+        }
+    }
 
 
 class Server:
@@ -66,11 +81,19 @@ def _day(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def run(desk: Path, server: Server, **kw: Any) -> tuple[int, str]:
     out = io.StringIO()
-    code = pull.pull_episodes(desk, api=(BASE, HEADERS), transport=httpx.MockTransport(server), stream=out, **kw)
+    code = pull.pull_episodes(
+        desk,
+        api=(BASE, HEADERS),
+        transport=httpx.MockTransport(server),
+        stream=out,
+        **kw,
+    )
     return code, out.getvalue()
 
 
-def test_a_new_version_is_saved_beside_the_old_file_which_is_untouched(post_desk: Path) -> None:
+def test_a_new_version_is_saved_beside_the_old_file_which_is_untouched(
+    post_desk: Path,
+) -> None:
     folder = post_desk / "ep01" / "takes"
     old = folder / "post-test_ep01_draft_v1_2026-10-30.mp4"
     old.write_bytes(b"half episode")
@@ -96,7 +119,9 @@ def test_a_second_pull_says_up_to_date_and_downloads_nothing(post_desk: Path) ->
     assert sorted(p.name for p in (post_desk / "ep01" / "takes").iterdir()) == files
 
 
-def test_it_only_reads_the_server_and_never_overwrites_a_name_that_appeared(post_desk: Path) -> None:
+def test_it_only_reads_the_server_and_never_overwrites_a_name_that_appeared(
+    post_desk: Path,
+) -> None:
     server = Server()
     run(post_desk, server)
     assert server.methods == {"GET"}
@@ -106,8 +131,12 @@ def test_it_only_reads_the_server_and_never_overwrites_a_name_that_appeared(post
     server.jobs["job1"] = job(1, URL2)  # the server repaired it again
     code, _ = run(post_desk, server)
     folder = post_desk / "ep01" / "takes"
-    assert (folder / "post-test_ep01_draft_v1_2026-11-02.mp4").read_bytes() == BYTES[URL1]
-    assert (folder / "post-test_ep01_draft_v2_2026-11-02.mp4").read_bytes() == BYTES[URL2]
+    assert (folder / "post-test_ep01_draft_v1_2026-11-02.mp4").read_bytes() == BYTES[
+        URL1
+    ]
+    assert (folder / "post-test_ep01_draft_v2_2026-11-02.mp4").read_bytes() == BYTES[
+        URL2
+    ]
     assert code == 0
 
 
@@ -126,8 +155,13 @@ def test_one_episode_asks_only_for_that_episode(post_desk: Path) -> None:
 
     assert code == 0
     assert "ep 2: new version saved" in text and "ep 1:" not in text
-    assert server.paths == ["/v1/spines/spine_test/standing", "/v1/video-generations/job2"]
-    assert (post_desk / "ep02" / "takes" / "post-test_ep02_draft_v1_2026-11-02.mp4").read_bytes() == BYTES[URL2]
+    assert server.paths == [
+        "/v1/spines/spine_test/standing",
+        "/v1/video-generations/job2",
+    ]
+    assert (
+        post_desk / "ep02" / "takes" / "post-test_ep02_draft_v1_2026-11-02.mp4"
+    ).read_bytes() == BYTES[URL2]
 
 
 def test_an_episode_the_server_has_not_finished_is_not_done(post_desk: Path) -> None:

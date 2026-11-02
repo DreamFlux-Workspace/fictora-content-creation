@@ -627,7 +627,12 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "already has is left alone; a newer one is saved as the next numbered file. Nothing is overwritten or deleted.",
     )
     pull.add_argument("--desk", type=Path, required=True)
-    pull.add_argument("--episode", type=int, default=None, help="One episode (default: every finished episode).")
+    pull.add_argument(
+        "--episode",
+        type=int,
+        default=None,
+        help="One episode (default: every finished episode).",
+    )
 
     fin = sub.add_parser(
         "finish",
