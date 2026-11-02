@@ -177,7 +177,7 @@ def _sidecar_sustained(path: Path) -> bool | None:
 def _planned_sustained(desk: Path, episode: int) -> Iterator[tuple[Path, str]]:
     """The sustained effects planned on this episode's takes, from the cache ``finish`` laid them from."""
 
-    from creation.post.sfx import plan_from_take_facts
+    from creation.post.sfx import cached_cue_file, plan_from_take_facts
 
     api = desk / f"ep{episode:02d}" / "api"
     newest: dict[str, tuple[int, Path]] = {}
@@ -195,8 +195,8 @@ def _planned_sustained(desk: Path, episode: int) -> Iterator[tuple[Path, str]]:
         except (ValueError, KeyError, TypeError, OSError):
             continue
         for cue in cues:
-            cached = desk / f"ep{episode:02d}" / "sfx" / f"{cue.cache_key}.mp3"
-            if cue.kind == "sustained" and cached.is_file() and cached not in seen:
+            cached = cached_cue_file(desk / f"ep{episode:02d}" / "sfx", cue)
+            if cue.kind == "sustained" and cached is not None and cached not in seen:
                 seen.add(cached)
                 yield cached, f"planned effect {cue.sound!r} on {take_id}"
 

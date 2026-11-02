@@ -160,8 +160,7 @@ def test_sfx_is_laid_under_the_take_cached_and_dropped_on_request(
     assert first.rendered == 1 and first.cost_usd == pytest.approx(0.002)
     [peak] = first.peaks_db
     assert peak == pytest.approx(
-        max(measure_rms_windows(tmp_path / "sfx" / f"{plan.cues[0].cache_key}.mp3"))
-        - 8.0,
+        max(measure_rms_windows(tmp_path / "sfx" / plan.cues[0].file_name)) - 8.0,
         abs=0.2,
     )
 
@@ -174,9 +173,12 @@ def test_sfx_is_laid_under_the_take_cached_and_dropped_on_request(
     )
     assert calls == ["a door slams"] and second.rendered == 0 and second.cost_usd == 0
 
-    with pytest.raises(RuntimeError, match="no sound effect"):
-        lay_sfx(take, plan, cache_dir=tmp_path / "sfx", output=tmp_path / "sfx-v3.mp4", render=render,
-                adjustments=(parse_adjustment("door=drop"),))  # fmt: skip
+    # Dropping every cue on purpose is a finished take with no effect laid, never a failure.
+    none = lay_sfx(take, plan, cache_dir=tmp_path / "sfx", output=tmp_path / "sfx-v3.mp4", render=render,
+                   adjustments=(parse_adjustment("door=drop"),))  # fmt: skip
+    assert none.mixed == () and none.skipped == () and none.output.is_file()
+    assert none.dropped == ("a door slams (dropped by --sfx-adjust)",)
+    assert calls == ["a door slams"], "a dropped cue is never rendered"
     with pytest.raises(FileExistsError):
         lay_sfx(
             take, plan, cache_dir=tmp_path / "sfx", output=first.output, render=render
@@ -575,3 +577,107 @@ def test_the_sfx_renderer_sends_the_authored_label_and_refuses_a_bad_shape(
         "key": f"sfx-{cue.cache_key}",
     }
     assert asked[0]["key"] == asked[1]["key"], "a re-run sends the same idempotency key"
+
+
+# --- zero effects and effect file names (producer feedback, 2 Nov 2026) -------------------------
+
+
+@needs_ffmpeg
+def test_a_take_with_no_cue_planned_finishes_with_no_effect(tmp_path: Path) -> None:
+    take = make_take(tmp_path / "take.mp4", tones=((0.5, 1.0, 440),))
+    result = lay_sfx(take, SfxPlan((), ()), cache_dir=tmp_path / "sfx",
+                     output=tmp_path / "sfx-v1.mp4", render=lambda c, t: t)  # fmt: skip
+    assert result.output.is_file() and result.mixed == () and result.cost_usd == 0
+    assert result.skipped == () and result.dropped == ()
+
+
+@needs_ffmpeg
+def test_cues_wanted_but_every_render_failed_is_still_a_failure(tmp_path: Path) -> None:
+    """Zero effects on purpose is fine; zero effects because the server failed is not."""
+
+    take = make_take(tmp_path / "take.mp4", tones=((0.5, 1.0, 440),))
+    plan = SfxPlan((SfxCue(2, "a door slams", "event", 2.0, 1.0),), ())
+
+    def broken(cue: SfxCue, target: Path) -> Path:
+        raise RuntimeError("server unreachable")
+
+    with pytest.raises(
+        RuntimeError,
+        match="no sound effect could be laid: a door slams \\(render failed",
+    ):
+        lay_sfx(
+            take,
+            plan,
+            cache_dir=tmp_path / "sfx",
+            output=tmp_path / "sfx-v1.mp4",
+            render=broken,
+        )
+    assert not (tmp_path / "sfx-v1.mp4").exists()
+
+
+def test_an_effect_file_is_named_after_its_sound() -> None:
+    from creation.post.sfx import sound_slug
+
+    cue = SfxCue(3, "A door SLAMS shut!", "event", 2.0, 1.0)
+    assert cue.file_name == f"shot03-a-door-slams-shut-{cue.cache_key[:8]}.mp3"
+    long = SfxCue(
+        1,
+        "rain hammering on a tin roof while thunder rolls far away",
+        "sustained",
+        0.0,
+        4.0,
+    )
+    slug = sound_slug(long.sound)
+    assert len(slug) <= 40 and slug == "rain-hammering-on-a-tin-roof-while"
+    assert sound_slug("!!!") == "sound"
+    # Two lengths of the same sound never share a file.
+    assert (
+        SfxCue(3, "a door slams", "event", 2.0, 1.0).file_name
+        != SfxCue(3, "a door slams", "event", 2.0, 2.0).file_name
+    )
+
+
+@needs_ffmpeg
+def test_new_effects_are_saved_by_name_and_old_hash_named_files_are_still_reused(
+    tmp_path: Path,
+) -> None:
+    take = make_take(tmp_path / "take.mp4", tones=((0.5, 1.0, 440),))
+    cache = tmp_path / "sfx"
+    old, new = (
+        SfxCue(2, "a door slams", "event", 2.0, 1.0),
+        SfxCue(4, "glass breaks", "event", 3.0, 1.0),
+    )
+    make_tone(
+        cache / f"{old.cache_key}.mp3", seconds=1.0, freq=300, volume=0.8
+    )  # laid before 2 Nov 2026
+    calls: list[str] = []
+
+    def render(cue: SfxCue, target: Path) -> Path:
+        calls.append(cue.sound)
+        return make_tone(target, seconds=cue.seconds, freq=500, volume=0.8)
+
+    lay_sfx(
+        take,
+        SfxPlan((old, new), ()),
+        cache_dir=cache,
+        output=tmp_path / "a.mp4",
+        render=render,
+    )
+    assert calls == ["glass breaks"], (
+        "the old hash-named file is reused, not rendered again"
+    )
+    assert (cache / new.file_name).is_file()
+    assert sorted(p.name for p in cache.glob("*.mp3")) == sorted(
+        [f"{old.cache_key}.mp3", new.file_name]
+    )
+
+    # The same sound on another shot reuses the named file (no second paid render).
+    again = SfxCue(6, "glass breaks", "event", 1.0, 1.0)
+    lay_sfx(
+        take,
+        SfxPlan((again,), ()),
+        cache_dir=cache,
+        output=tmp_path / "b.mp4",
+        render=render,
+    )
+    assert calls == ["glass breaks"]

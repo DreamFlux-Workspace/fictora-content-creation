@@ -5,7 +5,7 @@ the authored Sound label, shot, start, length, kind; ``shots[].speaks`` for the
 speaking windows). Each cue is rendered on the server from its authored Sound
 label (:class:`~creation.post.audio_service.AudioService`; about $0.002 a
 second; no provider key or effect prompt on this laptop), is checked for shape (an event must hit early, a
-sustained sound must hold), and is cached in ``epNN/sfx/`` by sound and length,
+sustained sound must hold), and is cached in ``epNN/sfx/`` by sound and length (``shot03-a-door-slams-7344f298.mp3``),
 so a re-mix at another level costs nothing. Effects sit under the take
 (-8 dB by default) and drop a further 10 dB while someone speaks.
 
@@ -110,6 +110,55 @@ class SfxCue:
             [self.sound.strip().casefold(), self.kind, round(self.seconds, 2)]
         )
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+    @property
+    def file_name(self) -> str:
+        """``shot03-a-door-slams-7344f298.mp3``: the shot, the sound in words, a short hash.
+
+        Named after what the cue sounds like so an operator can find and reuse it; the hash (the
+        first characters of :attr:`cache_key`) keeps two lengths or kinds of the same sound apart.
+        Files laid before 2 Nov 2026 are named ``<cache_key>.mp3`` and are still found
+        (:func:`cached_cue_file`).
+        """
+
+        return f"shot{self.shot_index:02d}-{sound_slug(self.sound)}-{self.cache_key[:CUE_FILE_HASH_CHARS]}.mp3"
+
+
+#: Longest sound part of a cue's file name, and how much of the cache key ends it.
+CUE_FILE_SLUG_CHARS = 40
+CUE_FILE_HASH_CHARS = 8
+
+
+def sound_slug(sound: str) -> str:
+    """``"A door SLAMS!"`` -> ``a-door-slams``: lower case, words joined by ``-``, at most 40 characters.
+
+    Cut at a word break when one falls inside the limit; ``sound`` when nothing is left.
+    """
+
+    slug = re.sub(r"[^a-z0-9]+", "-", sound.casefold()).strip("-")
+    if len(slug) > CUE_FILE_SLUG_CHARS:
+        cut = slug[:CUE_FILE_SLUG_CHARS]
+        slug = cut.rsplit("-", 1)[0] if "-" in cut else cut
+    return slug.strip("-") or "sound"
+
+
+def cached_cue_file(cache_dir: Path, cue: SfxCue) -> Path | None:
+    """The rendered file for ``cue`` in ``cache_dir``, whichever name it was saved under, else ``None``.
+
+    Looks for the cue's own name (:attr:`SfxCue.file_name`), then the same sound rendered for
+    another shot (same words and hash), then the older content-hash name ``<cache_key>.mp3``.
+    """
+
+    own = cache_dir / cue.file_name
+    if own.is_file():
+        return own
+    tail = f"-{sound_slug(cue.sound)}-{cue.cache_key[:CUE_FILE_HASH_CHARS]}.mp3"
+    if cache_dir.is_dir():
+        for path in sorted(cache_dir.glob(f"shot*{tail}")):
+            if path.is_file():
+                return path
+    legacy = cache_dir / f"{cue.cache_key}.mp3"
+    return legacy if legacy.is_file() else None
 
 
 @dataclass(frozen=True)
@@ -1040,7 +1089,7 @@ def lay_sfx(
     plan
         Cues and speaking windows (:func:`plan_from_take_facts`).
     cache_dir
-        ``epNN/sfx``: rendered cues by sound.
+        ``epNN/sfx``: rendered cues, each named after its sound (:attr:`SfxCue.file_name`).
     output
         New file; must not exist.
     adjustments
@@ -1058,12 +1107,17 @@ def lay_sfx(
     Returns
     -------
     SfxResult
-        The new file, the cues on it and the render cost.
+        The new file, the cues on it and the render cost. When no cue is wanted (every planned
+        cue dropped on purpose, or none planned) the take is copied unchanged: zero effects is a
+        finished result, never a failure.
 
     Raises
     ------
     FileExistsError
         When ``output`` exists.
+    NothingLaid
+        When cues were wanted and none could be laid (each failed to render, came back the wrong
+        shape twice, or starts past the take).
     """
 
     if output.exists():
@@ -1086,16 +1140,17 @@ def lay_sfx(
             skipped.append(f"{cue.sound} (starts past the take)")
             continue
         cue = replace(cue, seconds=round(min(cue.seconds, room), 3))
-        cached = cache_dir / f"{cue.cache_key}.mp3"
-        if cached.is_file():
+        found = cached_cue_file(cache_dir, cue)
+        if found is not None:
             if (
-                shape_problem(checked_shape(cue), measure(cached), sound=cue.sound)
+                shape_problem(checked_shape(cue), measure(found), sound=cue.sound)
                 is None
             ):
-                kept.append((cue, cached))
+                kept.append((cue, found))
                 continue
             # A cached render that is silent (or the wrong shape) is never laid again: re-made below.
-            cached.unlink()
+            found.unlink()
+        cached = cache_dir / cue.file_name
         good: Path | None = None
         problem = ""
         # The first render, then ONE re-make of the same cue (same sound label, same placement):
@@ -1130,13 +1185,25 @@ def lay_sfx(
             )
         if good is not None:
             kept.append((cue, good))
+    if not kept and not skipped:
+        # Zero effects is a valid finish: every planned cue was dropped on purpose (--sfx-adjust),
+        # or the take facts plan none. Nothing failed, so the take is copied unchanged and done.
+        why = (
+            "every planned effect was dropped on purpose: " + "; ".join(dropped)
+            if dropped
+            else "the take facts plan no effect"
+        )
+        _log.info("no sound effect laid, and none was wanted (%s)", why)
+        run_ffmpeg(["-i", str(take), "-map", "0", "-c", "copy", str(output)])
+        return SfxResult(
+            output, (), (), rendered, round(cost, 4), (), tuple(dropped), ()
+        )
     if not kept:
+        # Cues were wanted and none could be laid (render failed, wrong shape twice, past the take).
         raise NothingLaid(
             "no sound effect could be laid: "
             + (
                 "; ".join([*skipped, *dropped])
-                if skipped or dropped
-                else "the take facts plan no cue"
             ),
             skipped=tuple(skipped), dropped=tuple(dropped), rendered=rendered,
             cost_usd=round(cost, 4),
