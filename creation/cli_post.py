@@ -596,9 +596,14 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     refresh.add_argument("--desk", type=Path, required=True)
     refresh.add_argument("--episode", type=int, required=True)
-    refresh.add_argument("--yes", action="store_true", help="Apply after showing the plan.")
     refresh.add_argument(
-        "--wait", type=float, default=None, metavar="SECONDS",
+        "--yes", action="store_true", help="Apply after showing the plan."
+    )
+    refresh.add_argument(
+        "--wait",
+        type=float,
+        default=None,
+        metavar="SECONDS",
         help="How long to follow the server after applying (default 900; 0 reads the status once).",
     )
 

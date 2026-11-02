@@ -52,20 +52,31 @@ def test_without_yes_prints_the_plan_in_plain_words_and_changes_nothing(
     assert _posts(api) == [{"dry_run": True}]
     text = capsys.readouterr().out
     assert "Quieter background between lines" in text
-    assert "t1: removed hiss, wind; turned down door slam -6 dB to -12.5 dB; room sound changed" in text
+    assert (
+        "t1: removed hiss, wind; turned down door slam -6 dB to -12.5 dB; room sound changed"
+        in text
+    )
     assert "t2: kept as it is (already under today's rules)" in text
     assert "Cost: $0.03" in text
     assert "Not applied: nothing was changed or spent" in text
 
 
 def test_yes_applies_follows_the_server_and_saves_the_new_episode_without_overwriting(
-    desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    desk: Path,
+    api: FakeApi,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     def post(_m: str, _p: str, body: dict[str, Any]) -> dict[str, Any]:
         return _view("planned") if body["dry_run"] else _view("running", job_id="j1")
 
     api.routes[("POST", ROUTE)] = post
-    answers = iter([_view("running", job_id="j1"), _view("done", video_url="https://media.test/new.mp4")])
+    answers = iter(
+        [
+            _view("running", job_id="j1"),
+            _view("done", video_url="https://media.test/new.mp4"),
+        ]
+    )
     api.routes[("GET", ROUTE)] = lambda *_: next(answers)
     saved: list[Path] = []
 
@@ -95,19 +106,25 @@ def test_a_failed_refresh_says_why_and_the_old_episode_still_plays(
     desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
 ) -> None:
     api.routes[("POST", ROUTE)] = lambda _m, _p, body: (
-        _view("planned") if body["dry_run"] else _view("failed", reason="the mix step failed")
+        _view("planned")
+        if body["dry_run"]
+        else _view("failed", reason="the mix step failed")
     )
 
     assert _run(desk, "--yes") == sound_refresh.NOT_APPLIED
 
-    assert "the mix step failed. The old episode still plays." in capsys.readouterr().out
+    assert (
+        "the mix step failed. The old episode still plays." in capsys.readouterr().out
+    )
 
 
 @pytest.mark.parametrize("state", ["unavailable", "nothing_to_change"])
 def test_unavailable_and_nothing_to_change_reasons_are_shown_verbatim(
     desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str], state: str
 ) -> None:
-    api.routes[("POST", ROUTE)] = _view(state, reason="This episode already has today's sound.")
+    api.routes[("POST", ROUTE)] = _view(
+        state, reason="This episode already has today's sound."
+    )
 
     code = _run(desk, "--yes")
 
@@ -128,13 +145,19 @@ def test_an_older_server_without_the_route_is_told_plainly(
 
 
 def _keys(api: FakeApi) -> list[str | None]:
-    return [k for m, p, _b, k in api.calls if m == "POST" and p == ROUTE and k and "-plan-" not in k]
+    return [
+        k
+        for m, p, _b, k in api.calls
+        if m == "POST" and p == ROUTE and k and "-plan-" not in k
+    ]
 
 
 def _fake_download(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     saved: list[Path] = []
 
-    def download(url: str, dest: Path, *, meta: dict[str, Any] | None = None, **_kw: Any) -> Path:
+    def download(
+        url: str, dest: Path, *, meta: dict[str, Any] | None = None, **_kw: Any
+    ) -> Path:
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(b"mp4")
         server_finish._write_sidecar(dest, meta or {"video_url": url})
@@ -154,7 +177,11 @@ def test_apply_sends_the_plan_id_and_a_new_plan_is_a_new_key(
     def post(_m: str, _p: str, body: dict[str, Any]) -> dict[str, Any]:
         if body["dry_run"]:
             return _view("planned", plan_id=plan_id[0])
-        return _view("done", plan_id=body["plan_id"], video_url=f"https://media.test/{body['plan_id']}.mp4")
+        return _view(
+            "done",
+            plan_id=body["plan_id"],
+            video_url=f"https://media.test/{body['plan_id']}.mp4",
+        )
 
     api.routes[("POST", ROUTE)] = post
 
@@ -165,7 +192,9 @@ def test_apply_sends_the_plan_id_and_a_new_plan_is_a_new_key(
     applies = [b for b in _posts(api) if not b["dry_run"]]
     assert [b["plan_id"] for b in applies] == ["plan_a", "plan_b"]
     keys = _keys(api)
-    assert keys[0].endswith("-sound-refresh-ep1-plan_a") and keys[1].endswith("-sound-refresh-ep1-plan_b")
+    assert keys[0].endswith("-sound-refresh-ep1-plan_a") and keys[1].endswith(
+        "-sound-refresh-ep1-plan_b"
+    )
 
 
 def test_a_changed_plan_shows_the_fresh_plan_and_applies_nothing(
@@ -176,7 +205,16 @@ def test_a_changed_plan_shows_the_fresh_plan_and_applies_nothing(
     api.routes[("POST", ROUTE)] = lambda _m, _p, body: (
         _view("planned")
         if body["dry_run"]
-        else (409, {"error": {"code": "sound_refresh_plan_changed", "message": "changed", "details": fresh}})
+        else (
+            409,
+            {
+                "error": {
+                    "code": "sound_refresh_plan_changed",
+                    "message": "changed",
+                    "details": fresh,
+                }
+            },
+        )
     )
 
     assert _run(desk, "--yes") == sound_refresh.NOT_APPLIED
@@ -188,11 +226,16 @@ def test_a_changed_plan_shows_the_fresh_plan_and_applies_nothing(
 
 
 def test_a_rerun_after_a_timeout_downloads_the_done_file_once(
-    desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    desk: Path,
+    api: FakeApi,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     saved = _fake_download(monkeypatch)
     api.routes[("POST", ROUTE)] = _view(
-        "nothing_to_change", reason="Already under today's sound.", video_url="https://media.test/new.mp4"
+        "nothing_to_change",
+        reason="Already under today's sound.",
+        video_url="https://media.test/new.mp4",
     )
 
     assert _run(desk) == 0
@@ -215,7 +258,9 @@ def test_a_timeout_exits_not_applied_and_says_how_to_pick_it_up(
     assert _run(desk, "--yes", "--wait", "0") == sound_refresh.NOT_APPLIED
 
     text = capsys.readouterr().out
-    assert "the old episode plays until it is done" in text and "Run again later" in text
+    assert (
+        "the old episode plays until it is done" in text and "Run again later" in text
+    )
 
 
 def test_wait_zero_reads_the_status_exactly_once(desk: Path, api: FakeApi) -> None:

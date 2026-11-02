@@ -87,14 +87,19 @@ def plan_lines(view: Mapping[str, Any], episode: int) -> list[str]:
             parts.append("turned down " + ", ".join(turned))
         if take.get("room_changed"):
             parts.append("room sound changed")
-        lines.append(f"{label}: " + ("; ".join(parts) or "sound rebuilt, no audible change listed"))
+        lines.append(
+            f"{label}: "
+            + ("; ".join(parts) or "sound rebuilt, no audible change listed")
+        )
     lines.append(f"Cost: {_money(view.get('cost_usd'))}")
     return lines
 
 
 def _error_code(body: Any) -> str | None:
     error = body.get("error") if isinstance(body, Mapping) else None
-    return str(error["code"]) if isinstance(error, Mapping) and error.get("code") else None
+    return (
+        str(error["code"]) if isinstance(error, Mapping) and error.get("code") else None
+    )
 
 
 def _fresh_plan(body: Any) -> Mapping[str, Any] | None:
@@ -104,7 +109,10 @@ def _fresh_plan(body: Any) -> Mapping[str, Any] | None:
         return None
     error = body.get("error")
     details = error.get("details") if isinstance(error, Mapping) else None
-    candidates = [details.get("plan") if isinstance(details, Mapping) else None, details]
+    candidates = [
+        details.get("plan") if isinstance(details, Mapping) else None,
+        details,
+    ]
     candidates += [body.get("plan"), body.get("details"), body]
     for candidate in candidates:
         if isinstance(candidate, Mapping) and "takes" in candidate:
@@ -112,11 +120,17 @@ def _fresh_plan(body: Any) -> Mapping[str, Any] | None:
     return None
 
 
-def _deliver(desk: Path, episode: int, url: str, out: TextIO) -> tuple[Path | None, bool]:
+def _deliver(
+    desk: Path, episode: int, url: str, out: TextIO
+) -> tuple[Path | None, bool]:
     """The server's finished file on the desk: ``(path, downloaded_now)``; never over an existing file."""
 
     from creation.post.episode_name import next_episode_path
-    from creation.post.server_finish import ServerFinishError, _saved_video, download_file
+    from creation.post.server_finish import (
+        ServerFinishError,
+        _saved_video,
+        download_file,
+    )
 
     folder = desk / f"ep{episode:02d}" / "takes"
     have = _saved_video(folder, episode, url)
@@ -130,7 +144,10 @@ def _deliver(desk: Path, episode: int, url: str, out: TextIO) -> tuple[Path | No
             meta={"episode": episode, "video_url": url, "source": "sound-refresh"},
         )
     except ServerFinishError as exc:
-        print(f"!! the new episode is ready on the server but did not download: {exc}", file=out)
+        print(
+            f"!! the new episode is ready on the server but did not download: {exc}",
+            file=out,
+        )
         return None, False
     return saved, True
 
@@ -142,7 +159,12 @@ def _report_file(desk: Path, episode: int, view: Mapping[str, Any], out: TextIO)
     if saved is None:
         print(f"Done: {summary}. New episode: {url}", file=out)
         return NOT_APPLIED
-    print(f"Done: {summary}. " + ("New episode file: " if fresh else "Already on the desk: ") + f"{saved}", file=out)
+    print(
+        f"Done: {summary}. "
+        + ("New episode file: " if fresh else "Already on the desk: ")
+        + f"{saved}",
+        file=out,
+    )
     return 0
 
 
@@ -163,7 +185,10 @@ def _follow(
                 file=out,
             )
             return NOT_APPLIED
-        print(f"Episode {episode}: the server is re-doing the sound ({view.get('state')})…", file=out)
+        print(
+            f"Episode {episode}: the server is re-doing the sound ({view.get('state')})…",
+            file=out,
+        )
         if wait_seconds > 0:
             pause(POLL_SECONDS)
         status, view = run.get_optional(route)
@@ -181,7 +206,9 @@ def _follow(
     if state_name == "nothing_to_change":
         print(view.get("reason") or "Nothing to change.", file=out)
         return 0
-    print(f"!! {view.get('reason') or state_name}. The old episode still plays.", file=out)
+    print(
+        f"!! {view.get('reason') or state_name}. The old episode still plays.", file=out
+    )
     return NOT_APPLIED
 
 
@@ -210,7 +237,13 @@ def run_sound_refresh(
     pause = sleep or _sleep
     desk, state, run = ec._desk_session(desk.expanduser().resolve())
     route = _route(state.spine_id or "", _desk_episode_id(desk, episode))
-    follow = {"desk": desk, "episode": episode, "wait_seconds": wait_seconds, "pause": pause, "out": out}
+    follow = {
+        "desk": desk,
+        "episode": episode,
+        "wait_seconds": wait_seconds,
+        "pause": pause,
+        "out": out,
+    }
     try:
         status, plan = run.post_optional(
             route,
@@ -221,11 +254,17 @@ def run_sound_refresh(
             print(OLDER_SERVER, file=out)
             return NOT_APPLIED
         if status >= 400 or not isinstance(plan, Mapping):
-            print(f"!! the server did not plan it ({_error_text(status, plan)}). Nothing was changed.", file=out)
+            print(
+                f"!! the server did not plan it ({_error_text(status, plan)}). Nothing was changed.",
+                file=out,
+            )
             return NOT_APPLIED
         plan_state = plan.get("state")
         if plan_state == "running":
-            print(f"Episode {episode}: a sound fix is already running on the server.", file=out)
+            print(
+                f"Episode {episode}: a sound fix is already running on the server.",
+                file=out,
+            )
             if not yes:
                 print(
                     "Nothing new was started. To follow it and download the new episode when it is done: "
@@ -235,7 +274,9 @@ def run_sound_refresh(
                 return 0
             return _follow(run, route, plan, **follow)
         if plan_state in ("unavailable", "nothing_to_change", "failed", "done"):
-            print(plan.get("reason") or plan.get("summary") or str(plan_state), file=out)
+            print(
+                plan.get("reason") or plan.get("summary") or str(plan_state), file=out
+            )
             if plan_state in ("nothing_to_change", "done") and plan.get("video_url"):
                 return _report_file(desk, episode, plan, out)
             return 0 if plan_state == "nothing_to_change" else NOT_APPLIED
@@ -255,7 +296,10 @@ def run_sound_refresh(
             idempotency_key=f"{run.prefix}-sound-refresh-ep{episode}-{plan_id or uuid.uuid4().hex[:8]}",
         )
         if status == 409 and _error_code(view) == PLAN_CHANGED:
-            print("The plan changed since it was shown, so nothing was applied. The new plan:", file=out)
+            print(
+                "The plan changed since it was shown, so nothing was applied. The new plan:",
+                file=out,
+            )
             for line in plan_lines(_fresh_plan(view) or {}, episode):
                 print(line, file=out)
             print(
@@ -265,7 +309,10 @@ def run_sound_refresh(
             )
             return NOT_APPLIED
         if status >= 400 or not isinstance(view, Mapping):
-            print(f"!! not applied ({_error_text(status, view)}). The old episode still plays.", file=out)
+            print(
+                f"!! not applied ({_error_text(status, view)}). The old episode still plays.",
+                file=out,
+            )
             return NOT_APPLIED
         return _follow(run, route, view, **follow)
     finally:
