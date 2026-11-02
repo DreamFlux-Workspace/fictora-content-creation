@@ -40,6 +40,7 @@ POST_COMMANDS = (
             "rescore-music",
             "finish",
             "join",
+            "pull-episodes",
         }
     )
     | EDIT_COMMANDS
@@ -619,6 +620,15 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Apply after showing the plan. Without it nothing is changed or spent.",
     )
 
+    pull = sub.add_parser(
+        "pull-episodes",
+        help="Bring the server's CURRENT version of each episode into the desk (free, read-only): run it after "
+        "the Fictora team repaired or re-sounded episodes, or any time the desk might be behind. A file the desk "
+        "already has is left alone; a newer one is saved as the next numbered file. Nothing is overwritten or deleted.",
+    )
+    pull.add_argument("--desk", type=Path, required=True)
+    pull.add_argument("--episode", type=int, default=None, help="One episode (default: every finished episode).")
+
     fin = sub.add_parser(
         "finish",
         help="Get the episode finished on the server and download it (free): one mix at -14 loudness, captions, "
@@ -894,6 +904,10 @@ def dispatch_post(args: argparse.Namespace) -> int:
             rescore_id=args.rescore_id,
             yes=args.yes,
         )
+    if args.command == "pull-episodes":
+        from creation.post.pull_episodes import pull_episodes
+
+        return pull_episodes(args.desk, episode=args.episode)
     if args.command in ("finish", "join"):
         return _server_finish_command(args)
     raise ValueError(f"unknown command {args.command}")
