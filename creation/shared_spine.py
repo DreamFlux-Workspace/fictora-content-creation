@@ -31,7 +31,7 @@ READ_OR_LOCAL_COMMANDS = frozenset(
         # planned (a dry run) -- `music-note --yes` changes the story's music and is checked (``sends``);
         # set-bed only refuses now (the music is the harness's); a re-score planned (`rescore-music --yes`
         # changes the story's music and is checked like `music-note --yes`)
-        "music-note", "set-bed", "rescore-music",
+        "music-note", "set-bed", "rescore-music", "sound-refresh",
     }
 )  # fmt: skip
 #: Flag that lets a command through on a shared story.
