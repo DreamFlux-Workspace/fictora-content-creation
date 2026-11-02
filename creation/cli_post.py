@@ -590,14 +590,16 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Only when the human asks to fix an older episode's sound: the server re-does it under today's "
         "sound rules (nothing filmed, no voice re-rendered). Prints the server's plan (removed sounds, "
         "turned-down sounds, room change, cost; free unless a new room sound is needed, about 3 cents); "
-        "--yes applies, follows the server and downloads the new episode as a new numbered file.",
+        "--yes applies, follows the server and downloads the new episode as a new numbered file. Exit 0 = "
+        "planned, done or nothing to change; exit 2 = not applied, failed, or still running when --wait ran "
+        "out (run it again later and the finished file is downloaded if it is not on the desk yet).",
     )
     refresh.add_argument("--desk", type=Path, required=True)
     refresh.add_argument("--episode", type=int, required=True)
     refresh.add_argument("--yes", action="store_true", help="Apply after showing the plan.")
     refresh.add_argument(
         "--wait", type=float, default=None, metavar="SECONDS",
-        help="How long to follow the server after applying (default 900; 0 reads once).",
+        help="How long to follow the server after applying (default 900; 0 reads the status once).",
     )
 
     rescore = sub.add_parser(
