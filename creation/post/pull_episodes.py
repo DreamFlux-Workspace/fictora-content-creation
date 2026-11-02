@@ -216,13 +216,17 @@ def pull_episodes(
                 )
                 continue
             now = (scene_ms or row.get("duration_ms") or 0) / 1000 or None
-            was_text = (
-                f", was {_seconds(was)}" if before else ", no earlier file on the desk"
+            older = (
+                f" Your older version is still here if you need it: {before.name} "
+                f"({_seconds(was)})."
+                if before
+                else " There was no earlier file for this episode on the desk."
             )
             results.append(
                 Pulled(
                     number,
-                    f"ep {number}: new version saved ({_seconds(now)}{was_text}) → {saved}",
+                    f"ep {number}: new version saved as {saved.name} "
+                    f"({_seconds(now)}) in {saved.parent}.{older}",
                     saved=saved,
                 )
             )

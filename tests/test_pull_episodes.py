@@ -104,7 +104,10 @@ def test_a_new_version_is_saved_beside_the_old_file_which_is_untouched(
     assert code == 0
     assert new.read_bytes() == BYTES[URL1]
     assert old.read_bytes() == b"half episode"
-    assert f"ep 1: new version saved (27 s, was 13 s) → {new}" in text
+    assert f"ep 1: new version saved as {new.name} (27 s) in {folder}." in text
+    assert (
+        f"Your older version is still here if you need it: {old.name} (13 s)." in text
+    )
     assert "1 new version(s) saved, 0 already up to date" in text
 
 
