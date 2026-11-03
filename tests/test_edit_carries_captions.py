@@ -187,42 +187,22 @@ def _finished(post_desk: Path) -> tuple[Path, Path]:
 
 
 @needs_ffmpeg
-def test_after_blur_the_captions_are_found(
+def test_after_a_freeze_the_captions_are_found(
     post_desk: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     takes, final = _finished(post_desk)
 
-    assert main(["blur", "--desk", str(post_desk), "--take-file", str(final), "--box", "20,40,40,30",
-                 "--from", "0.5", "--to", "2.5"]) == 0  # fmt: skip
+    assert main(["freeze", "--desk", str(post_desk), "--take-file", str(final),
+                 "--at", "0.5", "--hold", "0.5"]) == 0  # fmt: skip
 
     said = capsys.readouterr().out
-    carried = takes / "take-ep01-t1-blur-master-v1.ass"
+    carried = takes / "take-ep01-t1-freeze-master-v1.ass"
     assert carried.is_file(), said
     assert (
-        "- Captions: `take-ep01-t1-cap-v1.ass` -> `take-ep01-t1-blur-master-v1.ass`"
+        "- Captions: `take-ep01-t1-cap-v1.ass` -> `take-ep01-t1-freeze-master-v1.ass`"
         in said
     )
     captions, _ = captions_for_record(post_desk, finish_records(post_desk, 1)[-1])
     assert captions == carried and _times(carried) == _times(
         takes / "take-ep01-t1-cap-v1.ass"
     )
-
-
-@needs_ffmpeg
-def test_after_a_trim_the_cues_are_shifted_like_the_picture(
-    post_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    takes, final = _finished(post_desk)
-
-    assert main(["trim", "--desk", str(post_desk), "--take-file", str(final), "--cut", "1.46-2.5"]) == 0  # fmt: skip
-
-    said = capsys.readouterr().out
-    carried = takes / "take-ep01-t1-trim-master-v1.ass"
-    assert carried.is_file(), said
-    assert _times(carried) == [
-        (0.5, 1.0, "Open the door"),
-        (1.2, 1.5, "Who is"),
-        (1.6, 1.9, "It was me"),
-    ]
-    captions, _ = captions_for_record(post_desk, finish_records(post_desk, 1)[-1])
-    assert captions == carried

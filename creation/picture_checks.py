@@ -54,14 +54,13 @@ WRONG_SCALE_FIX = (
     "(`redraw-board ... --same-shots`, $0.30)"
 )
 #: The server's motion check on a filmed fight take (fictora-drama ``take_motion_check``): the free fix first. Every
-#: time it reports is on the take AS FILMED (the raw take, board frames included): ``trim --start/--end`` and
-#: ``finish --impact-at`` take those times as they are; ``trim --cut`` works on the FINISHED take, which starts at
-#: the take's trim start (take facts ``trim.start_s``), so subtract that first.
+#: time it reports is on the take AS FILMED (the raw take, board frames included): ``trim --start/--end``,
+#: ``trim --cut`` and ``finish --impact-at`` take those times as they are (all take edits on the server).
 MOTION_FIXES = {
     "unplanned_still": (
         "   free first (times are on the take as filmed): play past it with the take's handles (`fictora-produce "
-        "trim --desk D --episode N --take tK --start S --end E`, $0), or cut it out of the finished take (`trim "
-        "--cut A-B`, $0; the finished take starts at the take's trim start, so subtract that from both times); "
+        "trim --desk D --episode N --take tK --start S --end E`, $0), or cut it out of the take (`trim --desk D "
+        "--episode N --take tK --cut A-B`, $0, the same times); "
         "re-film only if the fight stalls there"
     ),
     "contact_no_spike": (
@@ -287,7 +286,7 @@ def take_picture_check_lines(
             len(lines) - 1,
             f"   lettering on a prop or sign (shot {shots}): write the story's real words on it in finish "
             f'(`--prop-text "@SHOT" --prop-box x,y,w,h`, or `--prop-text "WORDS@SHOT"`) or blur it '
-            "(`blur --box x,y,w,h`); never keep the model's letters",
+            "(`blur --episode N --take tK --box X,Y,W,H@WIDTHxHEIGHT --from S --to E`); never keep the model's letters",
         )
     return lines
 

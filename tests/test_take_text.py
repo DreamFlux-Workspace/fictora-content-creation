@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import subprocess
+import re
 from pathlib import Path
 
 from conftest import make_take, needs_ffmpeg
@@ -183,16 +184,15 @@ def test_burned_subtitles_are_found_with_times_and_a_crop_and_a_clean_take_passe
     assert subtitle.line_id == "line_01"
     assert subtitle.times and all(1.0 <= t < 3.0 for t in subtitle.times)
     assert found.sheet is not None and found.sheet.is_file()
-    text = "\n".join(
-        found.warning_lines(desk="D", episode=1, take_id="t2", final=Path("F.mp4"))
-    )
+    text = "\n".join(found.warning_lines(desk="D", episode=1, take_id="t2"))
     assert (
         text.startswith("!! DRAWN TEXT")
         and "1.00s" in text
         and str(found.sheet) in text
     )
     assert "fictora-produce film --desk D --episode 1 --take t2" in text
-    assert "fictora-produce blur --desk D --take-file F.mp4 --box " in text
+    assert "fictora-produce blur --desk D --episode 1 --take t2 --box " in text
+    assert re.search(r"--box \d+,\d+,\d+,\d+@\d+x\d+ ", text), text
     assert passed.status == "clean" and not passed.subtitles, [
         f.text for f in passed.findings
     ]
@@ -249,7 +249,10 @@ def test_finish_summary_carries_the_drawn_text_warning(post_desk: Path) -> None:
 
     summary = "\n".join(result.summary_lines())
     assert "!! DRAWN TEXT in the raw take `take-ep01-t1-raw-v1.mp4`" in summary
-    assert f"--take-file {result.final}" in summary
+    assert (
+        f"fictora-produce blur --desk {post_desk} --episode 1 --take t1 --box "
+        in summary
+    )
     assert "!! DRAWN TEXT" in (post_desk / "ep01" / "run-notes.md").read_text()
     assert result.as_json()["text_warnings"]
 

@@ -1012,7 +1012,7 @@ def text_section(
     except MediaToolError as exc:
         return Section("Text", NONE, f"not measured: {exc}", threshold)
     details = [line.strip() for line in check.warning_lines(
-        desk=desk, episode=episode, take_id=take_id, final=take if kind == "finished" else None
+        desk=desk, episode=episode, take_id=take_id
     )[1:]]  # fmt: skip
     details += [f"other text (sign or set dressing?): '{f.text}' at {f.times[0]:.2f}s"
                 for f in check.other[:4]]  # fmt: skip
