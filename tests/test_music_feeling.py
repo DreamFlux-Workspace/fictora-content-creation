@@ -88,6 +88,16 @@ def test_the_saved_answer_is_shown_in_the_servers_words(
     assert 'Answer: Something else… "warm".' in capsys.readouterr().out
 
 
+def test_new_music_with_no_feeling_reads_as_the_servers_pick(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    api.routes[("GET", ROUTE)] = _view(answer={"kind": "server_pick"})
+
+    assert _run(desk) == 0
+
+    assert "Answer: music, in a feeling the server picks" in capsys.readouterr().out
+
+
 def test_own_words_without_words_sends_nothing(
     desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
 ) -> None:

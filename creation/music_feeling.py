@@ -72,6 +72,8 @@ def answer_words(view: Mapping[str, Any]) -> str:
     answer = view.get("answer")
     if not isinstance(answer, Mapping):
         return "not answered yet, so the server picks the music it uses for this show"
+    if answer.get("kind") == "server_pick":
+        return "music, in a feeling the server picks (New music was asked for with no feeling)"
     for option in _options(view):
         if option.get("kind") != answer.get("kind"):
             continue

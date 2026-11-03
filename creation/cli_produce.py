@@ -381,6 +381,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--no-open", action="store_true", help="Do not open the captioned file."
     )
 
+    switch = sub.add_parser(
+        "music-switch",
+        help="Admins only: where episode music is on, kept on the server. status shows it and who changed it; "
+        "on turns it on for everyone; off turns it off; canary ACCOUNT_ID ... turns it on for those accounts only. "
+        "Every server picks a change up within half a minute. Free. Exit 0 = shown or changed; exit 2 = not.",
+    )
+    switch.add_argument("action", choices=("status", "on", "off", "canary"))
+    switch.add_argument(
+        "accounts",
+        nargs="*",
+        metavar="ACCOUNT_ID",
+        help="With canary: the accounts that get music.",
+    )
+    switch.add_argument(
+        "--as", dest="email", required=True, metavar="EMAIL", help="Your admin email."
+    )
+
     sub.add_parser(
         "setup-check",
         help="Is this laptop ready? API token set and accepted, ffmpeg/ffprobe with libass and the kit's filters, "
@@ -441,6 +458,10 @@ def _run_command(args: argparse.Namespace) -> int:
 
     if args.command == "setup-check":
         return run_setup_check()
+    if args.command == "music-switch":
+        from creation.music_switch import run_music_switch
+
+        return run_music_switch(args.action, args.accounts, email=args.email)
     if args.command == "continuing-fixes":
         try:
             run_continuing_fixes(
