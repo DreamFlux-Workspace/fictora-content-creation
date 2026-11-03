@@ -500,6 +500,49 @@ def test_episode_two_films_alone_and_books_the_take_from_its_facts(
     assert load_production(desk).phase == "complete"
 
 
+def test_step_confirm_spend_at_the_estimate_films_in_one_call(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _add_episode_two(desk, api)
+    set_phase(desk, "ready_estimate")
+    _video_routes(
+        api,
+        facts_lines=[{"line_id": "line_ep_02_01", "count": 1}],
+        children=("job_take_b",),
+    )
+    api.routes[("GET", "/v1/video-generations/job_video_1")] = {
+        "status": "completed",
+        "kit_spend": {
+            "quoted_usd": "1.20",
+            "cost_usd": "1.62",
+            "cost_final": True,
+            "over_budget_usd": "0.42",
+        },
+    }
+
+    result = orchestrate.run_step(desk, confirm_spend=True)
+
+    assert api.posted("/v1/spines/sp1/batches/estimate") == []
+    assert len(api.posted("/v1/video-generations")) == 1
+    assert "Server quote: $1.20" in capsys.readouterr().err
+    assert "⚠ Went over budget by $0.42 (quoted $1.20, cost $1.62)" in result.message
+    assert load_production(desk).phase == "complete"
+
+
+def test_a_bare_step_at_the_estimate_still_only_prices(
+    desk: Path, api: FakeApi
+) -> None:
+    set_phase(desk, "ready_estimate")
+    api.routes[("POST", "/v1/spines/sp1/batches/estimate")] = {
+        "cost_estimate": {"total_usd": "1.20"}
+    }
+
+    orchestrate.run_step(desk)
+
+    assert api.posted("/v1/video-generations") == []
+    assert load_production(desk).phase == "wait_spend"
+
+
 def test_a_take_the_server_refuses_says_why(
     desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch
 ) -> None:

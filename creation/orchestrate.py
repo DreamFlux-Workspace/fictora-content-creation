@@ -45,6 +45,7 @@ from creation.desk_media_urls import (
     cast_plate_urls,
     drawn_cast_rows,
 )
+from creation.film_spend import cost_lines, read_kit_spend
 from creation.harness import stages_gated as stages
 from creation.harness.credentials import load_drama_api_credentials
 from creation.harness.raw_video import (
@@ -1424,8 +1425,9 @@ def drawing_spend_stop(
 
     Plates and boards were paid by a bare ``step``, so a chained command drew
     plates before the producer's yes (The Gallery Heiress, L-20261006-17, $0.90).
-    Like ``film``, the first ``step`` shows the price and sends nothing; the
-    confirm needs that price on the desk. Desks created before 6 Oct 2026 keep
+    The first ``step`` shows the price and sends nothing; the confirm needs
+    that price on the desk. (Filming no longer works this way: since 3 Nov 2026
+    ``--confirm-spend`` films in one call and the server reports any overage.) Desks created before 6 Oct 2026 keep
     drawing on a bare ``step`` (rules epoch).
 
     Parameters
@@ -1516,7 +1518,11 @@ def run_step(
     desk
         Series desk.
     confirm_spend
-        After the estimate gate, confirm spend and film the take.
+        The human's explicit yes to spend. At the estimate (or the spend
+        gate) it films in this one call: the server quotes the film and
+        reports any overage (no earlier ``step`` that prints the estimate is
+        needed, founder 3 Nov 2026). Plates and boards still need their
+        price shown first (:func:`drawing_spend_stop`).
     accept_notices
         Brief notice kinds the creator acknowledged (``style_not_available``,
         ``real_person_not_allowed``); read by the draft step only.
@@ -1595,7 +1601,8 @@ def run_step(
             "--single-frame-start and --no-single-frame-start cannot go together; nothing was sent."
         ) from None
     if choice is not None and not (
-        (state.phase == "wait_spend" and confirm_spend) or state.phase == "ready_video"
+        (state.phase in {"ready_estimate", "wait_spend"} and confirm_spend)
+        or state.phase == "ready_video"
     ):
         run.client.close()
         raise RuntimeError(
@@ -1888,6 +1895,10 @@ def run_step(
                 tuple(paths),
             )
 
+        if state.phase == "ready_estimate" and confirm_spend:
+            # One call films (founder, 3 Nov 2026): no earlier estimate step is needed.
+            # The server quotes the film when it admits it and reports any overage.
+            state.phase = "wait_spend"
         if state.phase in {"wait_plates", "wait_script", "wait_board", "wait_spend"}:
             gate = {
                 "wait_plates": "plates",
@@ -2747,9 +2758,13 @@ def book_filmed_episode(
         f" Next: run `fictora-produce finish --desk <desk> --episode {ep}` once. The server finishes the whole "
         "episode (captions, sound, hook title, Sokii mark, cover) and the kit downloads it for the human to watch."
     )
+    spend = "".join(
+        f"{line}\n" for line in cost_lines(read_kit_spend(run, video_job_id))
+    )
     return StepResult(
         state.phase,
         f"Episode {ep} filmed: {len(got.jobs)} take(s), ${got.booked_usd:.2f} booked. Video job {video_job_id}.{hint}\n"
+        + spend
         + "\n".join(f"  {line}" for line in got.jobs + got.on_screen)
         + f"\nNext episode: fictora-produce {follow} --desk <desk>."
         + foreign_warning(got.foreign)

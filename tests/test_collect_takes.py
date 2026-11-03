@@ -221,14 +221,13 @@ def test_a_film_unit_the_desk_still_waits_on_is_collected_and_cleared(
     set_phase(desk, "complete", failed_phase=None)
     state = load_production(desk)
     state.pending["film-ep02-t2-s2"] = {"key": "k-1", "job_id": "job_video_1"}
-    state.film_estimates["ep02-t2"] = 1.20
     save_production(desk, state)
     _stuck(api, children=("job_take_b",))
 
     run_collect_takes(desk, now=NOW)
 
     state = load_production(desk)
-    assert state.pending == {} and state.film_estimates == {}
+    assert state.pending == {}
     assert (
         _record(desk, "film-ep02-t2-s2-raw-scene-clips.json")["clips"][0]["job_id"]
         == "job_take_b"
@@ -354,7 +353,6 @@ def _booked_film(desk: Path, api: FakeApi) -> None:
     )
     state = load_production(desk)
     state.last_video_job_id = "job_video_1"
-    state.film_estimates["ep02-t1"] = 1.20  # a price shown for the next film stays
     save_production(desk, state)
     _stuck(api, status="completed", children=("job_take_b",))
 
@@ -376,7 +374,6 @@ def test_a_finished_film_the_desk_booked_has_its_take_downloaded_and_nothing_els
     ]
     assert load_series(desk).spend_usd == pytest.approx(spent)
     after = load_production(desk)
-    assert after.film_estimates == before.film_estimates == {"ep02-t1": 1.20}
     assert after.attempts == before.attempts and after.pending == before.pending
     assert "downloaded only" in text and "ep02/takes/take-ep02-t2-raw-v1.mp4" in text
 

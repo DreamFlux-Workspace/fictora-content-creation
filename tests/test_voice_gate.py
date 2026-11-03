@@ -344,7 +344,7 @@ def test_film_is_refused_until_the_voices_have_a_yes_then_films(
     desk: Path, voiced: FakeApi
 ) -> None:
     _board_yes(desk)
-    set_phase(desk, "complete", film_estimates={"ep01": 1.2})
+    set_phase(desk, "complete")
     _ready_to_film(voiced)
 
     with pytest.raises(CommandStopped, match="--keep-all"):
@@ -793,7 +793,7 @@ def test_a_film_the_server_holds_for_voices_says_the_wait_names_who_and_what_to_
     desk: Path, voiced: FakeApi
 ) -> None:
     _board_yes(desk)
-    set_phase(desk, "complete", film_estimates={"ep01": 1.2})
+    set_phase(desk, "complete")
     _ready_to_film(voiced)
     assert (
         _keep(desk, "--keep-all") == 0
@@ -813,7 +813,7 @@ def test_the_film_hold_exits_non_zero_from_the_cli_with_no_stack_trace(
     desk: Path, voiced: FakeApi, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _board_yes(desk)
-    set_phase(desk, "complete", film_estimates={"ep01": 1.2})
+    set_phase(desk, "complete")
     _ready_to_film(voiced)
     assert _keep(desk, "--keep-all") == 0
     _server_holds_the_film(voiced)

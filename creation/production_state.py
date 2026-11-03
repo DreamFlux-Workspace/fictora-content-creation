@@ -67,8 +67,6 @@ class ProductionState:
     #: Series arcs offered by the episode-2 brief (``arc --list``) and the one kept (``arc --pick``).
     arc_options: list[dict[str, Any]] = field(default_factory=list)
     series_arc: dict[str, Any] | None = None
-    #: Prices ``film`` showed the human (``ep02`` or ``ep02-t3`` -> USD); ``--confirm-spend`` needs one.
-    film_estimates: dict[str, float] = field(default_factory=dict)
     #: Prices ``step`` showed for plates or boards (``plates-ep01`` / ``boards-ep02`` -> USD);
     #: ``step --confirm-spend`` draws them only after one (desks from 6 Oct 2026).
     drawing_estimates: dict[str, float] = field(default_factory=dict)

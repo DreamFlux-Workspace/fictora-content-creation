@@ -265,7 +265,7 @@ def test_a_locked_existing_show_whose_music_is_laid_in_finish_films_with_music_b
     ]
     _board_yes(desk)
     _ready_to_film(model_show)
-    set_phase(desk, "complete", film_estimates={"ep01": 1.2})
+    set_phase(desk, "complete")
     run_film(desk, episode=1, confirm_spend=True)
     # A new show on locked voices: the body is exactly main's.
     assert "music_by_finish" not in model_show.posted(VIDEO)[-1]
@@ -276,7 +276,7 @@ def test_a_locked_existing_show_whose_music_is_laid_in_finish_films_with_music_b
         DeskMusicLock(kind="finish", origin="inferred", episode=1),
         out=io.StringIO(),
     )
-    set_phase(desk, "complete", film_estimates={"ep01": 1.2})
+    set_phase(desk, "complete")
     run_film(desk, episode=1, cause="seedlings ep 4", confirm_spend=True)
     assert model_show.posted(VIDEO)[-1]["music_by_finish"] is True
 
