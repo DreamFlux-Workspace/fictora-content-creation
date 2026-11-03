@@ -215,6 +215,9 @@ class FakeApi:
         ):
             # A job status the test did not set (run_unit reads a saved job's status first).
             return 404, {"error": {"code": "not_found"}}
+        if path.endswith("/music-feeling") and ("GET", path) not in self.routes:
+            # A deploy whose music-feeling route the test did not set: read as an older server (no question).
+            return 404, {"detail": "Not Found"}
         if path.endswith("/voice-mode") and ("GET", path) not in self.routes:
             # A deploy whose voice-mode route the test did not set: read as an older server (locked).
             return 404, {"detail": "Not Found"}

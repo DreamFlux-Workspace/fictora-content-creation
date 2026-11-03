@@ -217,6 +217,7 @@ from creation.stranded_voice import (
     stranded_preflight,
     voices_left_without_lines,
 )
+from creation.music_feeling import film_lines as music_feeling_film_lines
 from creation.voice_gate import film_refusal as voices_film_refusal
 from creation.pitch_card import carry_before_paid_step
 from creation.rules_epoch import is_legacy
@@ -7625,6 +7626,7 @@ def _run_film(
     else:
         seed = seed_attempt_for(desk, episode=episode, take_ids=take_ids)
         unit = f"film-{key}" + (f"-s{seed}" if seed else "")
+    music_question = music_feeling_film_lines(desk, run, state.spine_id or "", episode)
     spine = run.spine(state.spine_id or "")
     stopped = film_stop_message(spine, episode=episode) or voices_film_refusal(
         desk, spine, episode=episode, run=run
@@ -7634,6 +7636,8 @@ def _run_film(
     for warning in stranded_preflight(spine, unit=key, desk=desk, episode=episode):
         print(warning, file=out)
     print(next_take_voices_line(desk, run, spine), file=out)
+    for line in music_question:
+        print(line, file=out)
     started = load_production(desk).pending.get(unit)
     if (
         started is not None

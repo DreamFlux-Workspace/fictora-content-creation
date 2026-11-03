@@ -38,6 +38,7 @@ POST_COMMANDS = (
             "set-bed",
             "music-note",
             "sound-refresh",
+            "music-feeling",
             "rescore-music",
             "finish",
             "join",
@@ -608,6 +609,28 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="How long to follow the server after applying (default 900; 0 reads the status once).",
     )
 
+    feeling = sub.add_parser(
+        "music-feeling",
+        help="What this episode's music should feel like, the same question creators get in the app. "
+        "With no answer, prints the server's four options as 1 to 4 (two suggested feelings, No music, "
+        'Something else) and the saved answer. 1, 2 or 3 answers; 4 "your own words" sends your own '
+        "feeling. The server keeps the answer and can change it until the episode is finished; nobody "
+        "answering means the server picks the show's usual music. Exit 0 = shown or saved; exit 2 = not saved.",
+    )
+    feeling.add_argument("--desk", type=Path, required=True)
+    feeling.add_argument("--episode", type=int, required=True)
+    feeling.add_argument(
+        "choice",
+        type=int,
+        nargs="?",
+        choices=range(1, 5),
+        metavar="1-4",
+        help="1 or 2: a suggested feeling; 3: No music; 4: Something else, with your words.",
+    )
+    feeling.add_argument(
+        "words", nargs="?", help='Your own feeling, with 4: 4 "warm and hopeful".'
+    )
+
     rescore = sub.add_parser(
         "rescore-music",
         help="Give already-made episodes the music the harness's CURRENT rules give (opt-in; never films): "
@@ -929,6 +952,12 @@ def dispatch_post(args: argparse.Namespace) -> int:
             episode=args.episode,
             yes=args.yes,
             wait_seconds=DEFAULT_WAIT_SECONDS if args.wait is None else args.wait,
+        )
+    if args.command == "music-feeling":
+        from creation.music_feeling import run_music_feeling
+
+        return run_music_feeling(
+            args.desk, episode=args.episode, choice=args.choice, words=args.words
         )
     if args.command == "rescore-music":
         from creation.post.music_rescore import run_rescore_music

@@ -862,3 +862,57 @@ def test_a_refilm_price_names_the_free_edit_first_when_the_cause_reads_like_one(
     assert api30.posted(VIDEO) == []
     plain = run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
     assert "Salvage first:" in plain and "!! salvage first" not in plain
+
+
+# --- Music feeling ----------------------------------------------------------------------------------
+
+MUSIC = "/v1/spines/sp1/episodes/ep_02/music-feeling"
+
+
+def test_film_prints_the_music_question_once_and_films_without_an_answer(
+    desk30: Path, api30: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    api30.routes[("GET", MUSIC)] = {
+        "spine_id": "sp1", "spine_version": "v1", "episode_id": "ep_02",
+        "line": "What should the music feel like?",
+        "options": [
+            {"kind": "suggested", "index": 0, "label": "Cold and tense", "description": "Low strings."},
+            {"kind": "suggested", "index": 1, "label": "Quietly sad", "description": "A lone piano."},
+            {"kind": "no_music", "index": None, "label": "No music", "description": None},
+            {"kind": "own_words", "index": None, "label": "Something else…", "description": None},
+        ],
+        "answer": None, "answerable": True,
+    }  # fmt: skip
+    (desk30 / "ep02" / "api" / "03_spine.json").write_text(
+        json.dumps(spine_fixture()), encoding="utf-8"
+    )
+    _filmed_once(desk30)
+    _take_two_of_episode_two(api30)
+    _server_spend(api30, quoted_usd="1.14", cost_usd="1.14", cost_final=True)
+
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+
+    assert len(api30.posted(VIDEO)) == 1, "filming goes ahead with no music answer"
+    shown = capsys.readouterr().out
+    assert shown.count("Music for episode 2: What should the music feel like?") == 1
+    assert shown.index("1. Cold and tense") < shown.index("2. Quietly sad")
+    assert shown.index("3. No music") < shown.index("4. Something else…")
+    assert "Filming goes ahead either way" in shown
+    paths = [path for method, path, _, _ in api30.calls if method == "GET"]
+    assert paths.count(MUSIC) == 1
+    assert paths.index(MUSIC) < paths.index("/v1/spines/sp1"), (
+        "read before the film reads the spine: the first read writes the feelings and moves its version"
+    )
+
+
+def test_film_on_an_older_server_prints_no_music_question(
+    desk30: Path, api30: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _filmed_once(desk30)
+    _take_two_of_episode_two(api30)
+    _server_spend(api30, quoted_usd="1.14", cost_usd="1.14", cost_final=True)
+
+    run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+
+    assert len(api30.posted(VIDEO)) == 1
+    assert "Music for episode" not in capsys.readouterr().out

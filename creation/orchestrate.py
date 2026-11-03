@@ -158,6 +158,7 @@ from creation.hook_line import gate_hook_line_lines
 from creation.pitch_card import carry_before_paid_step
 from creation.stranded_voice import explain_film_refusal, stranded_preflight
 from creation.stylised_only import BriefNoticePause
+from creation.music_feeling import film_lines as music_feeling_film_lines
 from creation.voice_gate import film_refusal as voices_film_refusal
 from creation.voice_mode import next_take_voices_line
 from creation.harness.http_util import ConnectionDropped, voices_hold_text
@@ -2576,6 +2577,7 @@ def _film(
     )
     delivery: dict[str, Any] | None = None
     if raw is None:
+        music_question = music_feeling_film_lines(desk, run, state.spine_id or "", ep)
         before = run.spine(state.spine_id or "")
         stopped = film_stop_message(before, episode=ep) or voices_film_refusal(
             desk, before, episode=ep, run=run
@@ -2587,6 +2589,8 @@ def _film(
         ):
             print(warning, file=sys.stderr)
         print(f"[film] {next_take_voices_line(desk, run, before)}", file=sys.stderr)
+        for line in music_question:
+            print(f"[film] {line}", file=sys.stderr)
         key = stages.video_enrol_key(run.prefix, ep, state.video_idempotency_suffix)
         if key in state.reference_mode_keys:
             # Legacy: this key was sent with the removed --reference-mode trial and no admitted
