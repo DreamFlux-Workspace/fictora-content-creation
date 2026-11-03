@@ -2266,11 +2266,14 @@ def collect_takes(
     clip_seconds: int,
     spine: dict[str, Any],
     asked: list[str] | None = None,
+    book: bool = True,
 ) -> CollectedTakes:
-    """Save one episode's filmed take facts, book spend, mark them filmed (no raw take is downloaded).
+    """Download one episode's filmed takes raw into ``takes/``, save their take facts, book spend, mark them filmed.
 
     Every take of the episode the job filmed is collected and booked (it was paid for),
-    so a one-take re-film collects the one take the server filmed.
+    so a one-take re-film collects the one take the server filmed. The raw take is the
+    file the human watches before Use it or Change this; ``finish`` still downloads the
+    server's finished episode.
 
     Parameters
     ----------
@@ -2291,6 +2294,9 @@ def collect_takes(
     asked
         The takes the film request asked for (default: every take of the episode).
         A clip is filed under a take only by explicit identity (:func:`take_for_clip`).
+    book
+        ``False`` only downloads the takes (``collect-takes`` on a film the desk already
+        booked): no take facts, spend or film count.
 
     Returns
     -------
@@ -2333,8 +2339,17 @@ def collect_takes(
                 f"take job `{clip.get('job_id')}` ({clip.get('url')}): {why}"
             )
             continue
-        # Item 01 phase 4 (30 Oct 2026): the raw take is not downloaded. The server finishes
-        # the episode from its own copy; `finish` downloads the finished episode.
+        with httpx.Client(timeout=300.0) as fetch:
+            path = download_to_versioned(
+                fetch,
+                str(clip["url"]),
+                ep_dir / "takes",
+                f"take-ep{episode:02d}-{take_id}-raw",
+                default_suffix=".mp4",
+            )
+        paths.append(str(path))
+        if not book:
+            continue
         if clip.get("job_id") and take_job_booked(desk, str(clip["job_id"])):
             # A run cut off mid-collect already booked and counted this take.
             jobs.append(

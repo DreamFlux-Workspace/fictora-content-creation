@@ -169,9 +169,16 @@ def test_every_take_filmed_and_the_job_idle_ten_minutes_is_collected_and_marked_
         "GET only: nothing paid"
     )
     downloads = [payload["url"] for phase, payload in api.events if phase == "download"]
-    # Item 01 phase 4: no raw take is downloaded; the server finishes the episode.
-    assert downloads == []
-    assert not list(desk.glob("ep*/takes/take-ep*-raw-v*.mp4"))
+    assert downloads == [
+        "https://r2.example/ep2-t1.mp4",
+        "https://r2.example/ep2-t2.mp4",
+    ]
+    assert sorted(
+        path.name for path in desk.glob("ep02/takes/take-ep02-*-raw-v*.mp4")
+    ) == [
+        "take-ep02-t1-raw-v1.mp4",
+        "take-ep02-t2-raw-v1.mp4",
+    ]
     state = load_production(desk)
     assert (
         state.phase == "complete"
@@ -243,6 +250,7 @@ def test_a_failed_film_the_desk_let_go_is_found_by_its_job_id(
     with pytest.raises(CommandStopped, match="not waiting on a film job"):
         run_collect_takes(desk, now=NOW)
     run_collect_takes(desk, job_id="job_video_1", now=NOW)
+    assert len(list(desk.glob("ep02/takes/take-ep02-t2-raw-v*.mp4"))) == 1
 
     assert take_job_id(desk, 2, "t2") == "job_take_b"
 
@@ -316,13 +324,77 @@ def test_a_failed_take_job_is_not_collected(desk: Path, api: FakeApi) -> None:
         run_collect_takes(desk, now=NOW)
 
 
-def test_a_film_job_that_finished_normally_points_to_the_normal_path(
+def test_a_finished_film_job_the_desk_still_waits_on_is_collected_and_booked(
     desk: Path, api: FakeApi
 ) -> None:
+    _stuck(api, status="completed", idle_minutes=1)
+
+    text = run_collect_takes(desk, now=NOW)
+
+    assert [method for method, *_ in api.calls if method != "GET"] == []
+    assert len(list(desk.glob("ep02/takes/take-ep02-*-raw-v*.mp4"))) == 2
+    assert [t.filmed_count for t in episode_by_ordinal(load_series(desk), 2).takes] == [
+        1,
+        1,
+    ]
+    assert "finished with all 2 take(s) filmed" in text and "STUCK" not in text
+    assert "collected_from_stuck_job" not in _record(desk)
+
+
+def _booked_film(desk: Path, api: FakeApi) -> None:
+    """A one-take film that finished and was booked, but whose raw take never reached the desk."""
+
+    set_phase(desk, "complete", failed_phase=None)
+    (desk / "api").mkdir(exist_ok=True)
+    (desk / "api" / "film-ep02-t2-s2-enrol-v1.json").write_text(
+        json.dumps({"job_id": "job_video_1"}), encoding="utf-8"
+    )
+    record_spend(
+        desk, episode=2, usd=1.2, take_id="t2", unit="take 15s", job_id="job_take_b"
+    )
+    state = load_production(desk)
+    state.last_video_job_id = "job_video_1"
+    state.film_estimates["ep02-t1"] = 1.20  # a price shown for the next film stays
+    save_production(desk, state)
+    _stuck(api, status="completed", children=("job_take_b",))
+
+
+def test_a_finished_film_the_desk_booked_has_its_take_downloaded_and_nothing_else(
+    desk: Path, api: FakeApi
+) -> None:
+    """Last Stream S2 ep 1: film said done, no raw take arrived, collect-takes said not stuck."""
+
+    _booked_film(desk, api)
+    before = load_production(desk)
+    spent = load_series(desk).spend_usd
+
+    text = run_collect_takes(desk, now=NOW)
+
+    assert [method for method, *_ in api.calls if method != "GET"] == []
+    assert [p.name for p in desk.glob("ep02/takes/take-ep02-*-raw-v*.mp4")] == [
+        "take-ep02-t2-raw-v1.mp4"
+    ]
+    assert load_series(desk).spend_usd == pytest.approx(spent)
+    after = load_production(desk)
+    assert after.film_estimates == before.film_estimates == {"ep02-t1": 1.20}
+    assert after.attempts == before.attempts and after.pending == before.pending
+    assert "downloaded only" in text and "ep02/takes/take-ep02-t2-raw-v1.mp4" in text
+
+
+def test_collect_takes_by_job_id_finds_a_finished_step_film(
+    desk: Path, api: FakeApi
+) -> None:
+    set_phase(desk, "complete", failed_phase=None)
+    for take, job in (("t1", "job_take_a"), ("t2", "job_take_b")):
+        record_spend(
+            desk, episode=2, usd=0.6, take_id=take, unit="take 15s", job_id=job
+        )
     _stuck(api, status="completed")
 
-    with pytest.raises(CommandStopped, match="finished normally"):
-        run_collect_takes(desk, now=NOW)
+    text = run_collect_takes(desk, job_id="job_video_1", now=NOW)
+
+    assert len(list(desk.glob("ep02/takes/take-ep02-*-raw-v*.mp4"))) == 2
+    assert "downloaded only" in text
 
 
 # --- Dry run ---------------------------------------------------------------------------------------

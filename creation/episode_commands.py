@@ -21,7 +21,7 @@ desk with a versioned name, and never approves (the human's yes goes through
 - ``look`` / ``look-note``: pin the style frame by URL, add or remove look notes.
 - ``sound-note``: add a sound to one take, or drop / level one on every take; ``--remove``; list.
 - ``take-facts --refresh``: read a filmed take's facts again (new sound notes, planned impacts), versioned.
-- ``collect-takes``: collect the filmed takes of a film job that stopped moving (spends nothing).
+- ``collect-takes``: collect the filmed takes of a finished or stuck film job (spends nothing).
 - ``spine --refresh``: save the story again.
 - ``redraw-board``: redraw one board on ``/boards/{set}/regenerate``; ``--note "what's wrong"`` first turns the note into
   shot edits through the director (the app's path) and prints them per row; stops unpaid when nothing it is drawn
@@ -5984,13 +5984,17 @@ def run_redraw_board(
             check_note_length(note, limit=BOARD_NOTE_MAX, command="redraw-board")
         except ValueError as exc:
             raise CommandStopped(str(exc)) from None
+    if not (take_id.startswith("t") and take_id[1:].isdigit()):
+        raise CommandStopped("--take is t1, t2 ...")
     cause = (cause or "").strip() or (note or "")
     if not cause:
         raise CommandStopped(
-            "--cause is required (a label for the desk) unless --note says what is wrong with the board"
+            "redraw-board needs --note saying what is wrong with the board, as the camera should see it. "
+            "For example:\n"
+            f"  fictora-produce redraw-board --desk {desk} --episode {episode} --take {take_id} "
+            '--note "Mira faces away in shot 2; she should face the camera"\n'
+            '(--cause "..." alone also works, but only labels the desk; it never changes the drawing.)'
         )
-    if not (take_id.startswith("t") and take_id[1:].isdigit()):
-        raise CommandStopped("--take is t1, t2 ...")
     set_index = int(take_id[1:])
     _hold_for_pitch(desk, "redraw-board", episode=episode)
     _hold_for_look(desk, "redraw-board")
@@ -7894,9 +7898,13 @@ def book_film_unit(
         f"Filmed {what}: {len(got.jobs)} take(s), ${got.booked_usd:.2f} booked. Video job {job_id}."
     ]
     lines += [f"  {line}" for line in got.jobs + got.on_screen]
+    saved = (
+        ", ".join(str(Path(path).relative_to(desk)) for path in got.paths)
+        or f"ep{episode:02d}/takes/"
+    )
     lines.append(
-        f"Watch the new take in ep{episode:02d}/takes/. After the human says Use it: "
-        f"`fictora-produce finish --desk <desk> --episode {episode} --take {take_id or 'tK'}`."
+        f"Watch the new take in {saved}. After the human says Use it: "
+        f"`fictora-produce finish --desk <desk> --episode {episode}` (the server finishes the whole episode)."
     )
     text = (
         "\n".join(lines) + foreign_warning(got.foreign) + unplaced_warning(got.unplaced)
@@ -9052,16 +9060,18 @@ def add_episode_parsers(
     collect = sub.add_parser(
         "collect-takes",
         help=(
-            "Collect the filmed takes of a film job that stopped moving (every take filmed, no change for 10 "
-            "minutes, or the job failed after filming them). Writes the clip record, downloads and books the "
-            "takes and marks the film done, as `film` does. Spends nothing."
+            "Collect the filmed takes of a film job: one that finished, or stopped moving (every take filmed, "
+            "no change for 10 minutes, or the job failed after filming them). Writes the clip record, downloads "
+            "and books the takes and marks the film done, as `film` does. A film the desk already booked has its "
+            "takes downloaded into takes/ again, nothing else. Default: the film in flight, else the desk's last "
+            "film. Spends nothing."
         ),
     )
     collect.add_argument("--desk", type=Path, required=True)
     collect.add_argument(
         "--job-id",
         default=None,
-        help="The film job, when the desk waits on more than one (or `film` let a failed one go).",
+        help="The film job, when the desk waits on more than one, or an older film than the desk's last.",
     )
     collect.add_argument(
         "--dry-run",

@@ -79,6 +79,14 @@ class StandIn:
     def __call__(self, request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
             self.posts.append(request)
+            if (
+                request.url.path.endswith("/decision")
+                and not request.headers.get("Idempotency-Key", "").strip()
+            ):
+                # As fictora-drama's take decision route answers (request_support.py).
+                return httpx.Response(
+                    400, json={"error": {"code": "idempotency_key_required"}}
+                )
             if self.timeout:
                 raise httpx.ReadTimeout("slow", request=request)
             if self.delay:
@@ -476,6 +484,18 @@ def test_keep_line_findings_records_keep_it_then_finishes(post_desk: Path) -> No
         "accept_line_findings": True,
     }
     assert paths[0] == paths[2] and paths[0].endswith("/posting-copy")
+
+
+def test_keep_it_sends_the_same_idempotency_key_every_time(post_desk: Path) -> None:
+    """Mihir, 2 Nov 2026: --keep-line-findings stopped on HTTP 400 idempotency_key_required."""
+
+    keys = []
+    for _ in range(2):
+        server = StandIn(OPEN, (200, answer()), (200, answer()))
+        assert finish(post_desk, server, keep_line_findings=("t2",)).complete
+        keys.append(server.posts[1].headers["Idempotency-Key"])
+
+    assert keys[0] == keys[1] and "job_video_1" in keys[0]
 
 
 def test_keeping_another_take_does_not_keep_this_one(post_desk: Path) -> None:

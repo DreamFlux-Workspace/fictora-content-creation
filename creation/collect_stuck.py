@@ -1,4 +1,9 @@
-"""``collect-takes``: collect the filmed takes of a film job that stopped moving. Spends nothing.
+"""``collect-takes``: collect the filmed takes of a film job, finished or stopped moving. Spends nothing.
+
+A finished film job the desk already booked only has its takes downloaded
+into ``takes/`` again (no booking, no state change): the way back when a film
+said it was done but no raw take arrived. With no ``--job-id`` and no film in
+flight, that is the desk's last film job.
 
 A film job can stall (NOCLIP ep 1, 6 Oct 2026: stuck at 50 % for an hour
 while its three take jobs had finished). ``film`` and ``step`` wait only for
@@ -14,7 +19,7 @@ and collects the takes only when:
   film asked for, never the film job's own list, which fills in as filming goes,
   L-20260925-1), and
 * the film job has not moved for :data:`COLLECT_AFTER_IDLE_SECONDS` (its own
-  ``updated_at``), or it ended failed / cancelled after every take was filmed.
+  ``updated_at``), or it ended (completed, failed or cancelled) after every take was filmed.
 
 It then writes the same clip record the film path writes
 (:func:`creation.harness.raw_video.raw_clips_record`), collects and books the
@@ -45,6 +50,7 @@ from creation.harness.raw_video import (
     raw_clips_record,
     video_generation_failure,
 )
+from creation.ops.floor import take_job_booked
 from creation.ops.state import episode_by_ordinal, load_series
 from creation.production_state import (
     ProductionState,
@@ -183,13 +189,34 @@ def _enrolled_film_units(desk: Path) -> dict[str, str]:
     return found
 
 
+def _step_job_by_id(desk: Path, job_id: str) -> FilmJob | None:
+    """A ``step`` film job named by id, from an episode's ``16_video_enrol.json`` (finished or not)."""
+
+    for path in sorted(desk.glob("ep*/api/16_video_enrol.json")):
+        try:
+            enrol = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(enrol, dict) or enrol.get("job_id") != job_id:
+            continue
+        episode = int(path.parent.parent.name.removeprefix("ep"))
+        slot = episode_by_ordinal(load_series(desk), episode)
+        return FilmJob(
+            job_id=job_id,
+            episode=episode,
+            take_ids=tuple(take.take_id for take in slot.takes),
+        )
+    return None
+
+
 def find_film_job(
     desk: Path, state: ProductionState, *, job_id: str | None = None
 ) -> FilmJob:
-    """The desk's current film job: the ``step``'s, or a ``film`` the desk is still waiting on.
+    """The desk's film job: the ``step``'s or a ``film`` in flight, else the desk's last film job.
 
-    With ``job_id``, that job, also when ``film`` already let it go after the
-    server failed it (its enrol record on the desk says which film it was).
+    With ``job_id``, that job, also when ``film`` or ``step`` already let it go
+    (finished and booked, or failed): its enrol record on the desk says which
+    film it was.
 
     Raises
     ------
@@ -214,7 +241,11 @@ def find_film_job(
         if named:
             return named[0]
         unit = _enrolled_film_units(desk).get(job_id)
-        found = _unit_film_job(desk, unit, job_id) if unit else None
+        found = (
+            _unit_film_job(desk, unit, job_id)
+            if unit
+            else _step_job_by_id(desk, job_id)
+        )
         if found is None:
             raise CommandStopped(
                 f"film job {job_id} is not a film this desk started (no enrol record in api/ names it); "
@@ -222,9 +253,11 @@ def find_film_job(
             )
         return found
     if not candidates:
+        if state.last_video_job_id:
+            return find_film_job(desk, state, job_id=state.last_video_job_id)
         raise CommandStopped(
-            "this desk is not waiting on a film job: nothing to collect. If a film job the desk let go "
-            "(the server failed it) has every take filmed, pass its id from the run notes with --job-id"
+            "this desk is not waiting on a film job and has filmed none: nothing to collect. For an "
+            "older film, pass its id from the run notes with --job-id"
         )
     if len(candidates) > 1:
         raise CommandStopped(
@@ -297,7 +330,7 @@ def decide(reading: JobReading, *, expected: int, now: datetime) -> Verdict:
         Whether to collect, and why (or why not yet, and when to try again).
     """
 
-    over = reading.status in _OVER
+    over = reading.status in _OVER or reading.status == "completed"
     if reading.failed:
         return Verdict(
             False,
@@ -305,12 +338,6 @@ def decide(reading: JobReading, *, expected: int, now: datetime) -> Verdict:
             + "; ".join(reading.failed)
             + ". This is not a stuck film with every take "
             "filmed, so there is nothing to collect. The failed take needs a new film (paid, after the human's yes)",
-        )
-    if reading.status == "completed":
-        return Verdict(
-            False,
-            "the film job finished normally. Pick it up with the command that started it: `step` (or "
-            "`film ... --confirm-spend` again); it reads the same job and nothing is charged twice",
         )
     if len(reading.children) > expected:
         return Verdict(
@@ -339,6 +366,10 @@ def decide(reading: JobReading, *, expected: int, now: datetime) -> Verdict:
             False,
             f"{filmed} of {expected} take(s) are filmed{still}{listed}. Filming is still going: try again in "
             f"about {int(COLLECT_AFTER_IDLE_SECONDS // 60)} minutes",
+        )
+    if reading.status == "completed":
+        return Verdict(
+            True, f"the film job finished with all {expected} take(s) filmed"
         )
     if over:
         return Verdict(
@@ -378,6 +409,57 @@ def _take_lines(reading: JobReading) -> list[str]:
     ]
 
 
+def _download_booked(
+    desk: Path,
+    run: Any,
+    state: ProductionState,
+    job: FilmJob,
+    reading: JobReading,
+    *,
+    header: str,
+    dry_run: bool,
+    out: Any,
+) -> str:
+    """Download a booked film job's takes into ``takes/`` again; book, count and change nothing else."""
+
+    from creation import orchestrate
+
+    if dry_run:
+        text = "\n".join(
+            [
+                f"{header}: already booked on this desk; would download its take(s) into "
+                f"ep{job.episode:02d}/takes/ only.",
+                *_take_lines(reading),
+                "Dry run: nothing was written.",
+            ]
+        )
+        print(text, file=out)
+        return text
+    raw = raw_clips_record(job.job_id, reading.clips)
+    got = orchestrate.collect_takes(
+        desk,
+        run,
+        state,
+        raw,
+        episode=job.episode,
+        clip_seconds=0,
+        spine=run.spine(state.spine_id or ""),
+        asked=list(job.take_ids),
+        book=False,
+    )
+    saved = [f"  saved {Path(path).relative_to(desk)}" for path in got.paths]
+    text = "\n".join(
+        [
+            f"{header}: already booked on this desk, so its take(s) were downloaded only "
+            "(nothing booked or charged).",
+            *saved,
+            orchestrate.unplaced_warning(got.unplaced).strip(),
+        ]
+    ).strip()
+    print(text, file=out)
+    return text
+
+
 def run_collect_takes(
     desk: Path,
     *,
@@ -386,14 +468,16 @@ def run_collect_takes(
     out: Any = None,
     now: datetime | None = None,
 ) -> str:
-    """Collect the filmed takes of the desk's stuck film job, or say why not yet. Spends nothing.
+    """Collect the filmed takes of a finished or stuck film job, or say why not yet. Spends nothing.
+
+    A job whose takes the desk already booked only has them downloaded again.
 
     Parameters
     ----------
     desk
         Series desk.
     job_id
-        The film job, when the desk waits on more than one or ``film`` let it go.
+        The film job, when the desk waits on more than one, or an older one than the desk's last.
     dry_run
         Say what would be collected; write nothing.
     out
@@ -448,9 +532,18 @@ def run_collect_takes(
             raise CommandStopped(
                 f"{header}: not collected: {verdict.why}. Nothing was written."
             )
+        booked = bool(reading.clips) and all(
+            take_job_booked(desk, str(clip["job_id"])) for clip in reading.clips
+        )
+        if booked:
+            return _download_booked(
+                desk, run, state, job, reading, header=header, dry_run=dry_run, out=out
+            )
+        finished = reading.status == "completed"
+        source = "a finished job" if finished else "a stuck job"
         if dry_run:
             lines = [
-                f"{header}: would collect from a stuck job: {verdict.why}.",
+                f"{header}: would collect from {source}: {verdict.why}.",
                 *_take_lines(reading),
                 f"Would write ep{job.episode:02d}/api/{job.record_name}, download and book the take(s), "
                 "save their take facts and mark the film done. Dry run: nothing was written.",
@@ -470,7 +563,9 @@ def run_collect_takes(
             "collected_at": collected_at.isoformat(),
         }
         raw = raw_clips_record(
-            job.job_id, reading.clips, collected_from_stuck_job=stuck
+            job.job_id,
+            reading.clips,
+            collected_from_stuck_job=None if finished else stuck,
         )
         run.save(job.record_name, raw)
         facts_before = {
@@ -512,21 +607,33 @@ def run_collect_takes(
             refreshed.append(f"{take}: take facts refreshed")
         except CommandStopped as exc:
             refreshed.append(f"!! {take}: take facts not refreshed: {exc}")
-    note = (
-        f"COLLECTED FROM A STUCK FILM JOB (not a completed one): film job `{job.job_id}` ({job.what}); "
-        f"{verdict.why}. `collect-takes` wrote `{job.record_name}` (marked collected_from_stuck_job) and "
-        "booked the takes the film path's way; nothing new was filmed or charged. Tell engineering with the "
-        "film job id."
-    )
+    if finished:
+        note = (
+            f"collect-takes collected finished film job `{job.job_id}` ({job.what}): wrote `{job.record_name}` "
+            "and booked the takes the film path's way; nothing new was filmed or charged."
+        )
+        head = f"{header}: collected: {verdict.why}."
+    else:
+        note = (
+            f"COLLECTED FROM A STUCK FILM JOB (not a completed one): film job `{job.job_id}` ({job.what}); "
+            f"{verdict.why}. `collect-takes` wrote `{job.record_name}` (marked collected_from_stuck_job) and "
+            "booked the takes the film path's way; nothing new was filmed or charged. Tell engineering with "
+            "the film job id."
+        )
+        head = (
+            f"{header}: COLLECTED FROM A STUCK JOB, not a completed one: {verdict.why}."
+        )
     episode_commands._note(desk, job.episode, note)
     lines = [
-        f"{header}: COLLECTED FROM A STUCK JOB, not a completed one: {verdict.why}.",
+        head,
         *_take_lines(reading),
         f"Wrote ep{job.episode:02d}/api/{job.record_name} (the clip record the film path writes). "
         "Nothing new was filmed or charged.",
         summary,
         *refreshed,
-        "Tell engineering the film job id: the job itself never finished.",
+        None
+        if finished
+        else "Tell engineering the film job id: the job itself never finished.",
     ]
     text = "\n".join(line for line in lines if line)
     print(text, file=out)
