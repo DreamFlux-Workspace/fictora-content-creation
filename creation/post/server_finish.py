@@ -779,6 +779,10 @@ def keep_take(
 ) -> None:
     """Record Keep it on one take whose lines came out wrong (the existing take decision; free).
 
+    The server wants an ``Idempotency-Key`` on the decision. It is built from the
+    take job and take number, so finish run again sends the same key and the
+    server answers with the keep it already recorded.
+
     Raises
     ------
     ServerFinishError
@@ -798,7 +802,10 @@ def keep_take(
         with httpx.Client(timeout=60.0, transport=transport) as client:
             response = client.post(
                 url,
-                headers=dict(headers),
+                headers={
+                    **headers,
+                    "Idempotency-Key": f"keep-line-findings-{job}-t{int(index)}",
+                },
                 json={"action": "use", "accept_line_findings": True},
             )
     except httpx.HTTPError as exc:
