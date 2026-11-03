@@ -249,8 +249,10 @@ def test_film_take_k_sends_the_episode_the_take_and_a_fresh_seed_and_books_only_
     downloads = [
         payload["url"] for phase, payload in api30.events if phase == "download"
     ]
-    # Item 01 phase 4: no raw take is downloaded; the server finishes the episode.
-    assert downloads == []
+    assert downloads == ["https://r2.example/ep2-t2.mp4"]
+    assert [
+        p.name for p in (desk30 / "ep02" / "takes").glob("take-ep02-*-raw-v*.mp4")
+    ] == ["take-ep02-t2-raw-v1.mp4"]
     slot = episode_by_ordinal(load_series(desk30), 2)
     t1, t2 = slot.takes
     assert (t1.filmed_count, t2.filmed_count) == (1, 2)
@@ -263,6 +265,7 @@ def test_film_take_k_sends_the_episode_the_take_and_a_fresh_seed_and_books_only_
         "768P",
     )  # the lane the facts named
     assert "Filmed ep02 t2: 1 take(s), $1.20 booked" in text
+    assert "Watch the new take in ep02/takes/take-ep02-t2-raw-v1.mp4." in text
     api_dir = desk30 / "ep02" / "api"
     assert (api_dir / "film-ep02-t2-s2-raw-scene-clips.json").is_file()
     assert not (

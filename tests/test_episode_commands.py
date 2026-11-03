@@ -711,7 +711,12 @@ def test_the_cli_says_why_a_command_stopped(
         ]
     )
     assert code == 2
-    assert "--cause is required" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "redraw-board needs --note" in err
+    assert (
+        f'fictora-produce redraw-board --desk {desk} --episode 1 --take t1 --note "'
+        in err
+    )
 
 
 def _row_facts(*line_shots: tuple[str, int | None], shots: int = 2) -> dict:
