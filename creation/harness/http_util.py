@@ -344,6 +344,15 @@ def voices_hold_text(body: Any, *, desk: str | Path | None = None) -> str | None
     return "\n".join(lines)
 
 
+#: The server's 409 code when a request names a video model other than the one the story was
+#: filmed on (one model per story after its first episode).
+VIDEO_LANE_LOCKED = "video_lane_locked"
+VIDEO_LANE_LOCKED_FIX = (
+    "This story keeps the video model it was filmed on; nothing was sent. Keep the story's own model "
+    "(re-bind the desk with that --video-lane), or start a new story for another one."
+)
+
+
 def api_error_text(body: Any) -> str:
     """Say what the server refused, from its error envelope, in one line.
 
@@ -392,6 +401,9 @@ def api_error_text(body: Any) -> str:
     if code == SHOT_CLIPS_BOARD_CODE:
         # Shot clips were removed (fictora-drama #914): a board still drawn as a shot-clips grid films nothing.
         text += "\n" + SHOT_CLIPS_BOARD_FIX
+    if code == VIDEO_LANE_LOCKED:
+        # One video model per story once a take is filmed: the server's message (above) says which.
+        text += "\n" + VIDEO_LANE_LOCKED_FIX
     return text
 
 

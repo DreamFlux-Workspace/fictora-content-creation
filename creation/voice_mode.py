@@ -80,6 +80,10 @@ class ShowVoices:
     source: str
     filmed_takes: int = 0
     model_voice_takes: int = 0
+    #: Whether thoughts and narration need locked voices on this show. The server says so
+    #: (``locked_voices_required`` on the voice-mode answer); a show whose video model keeps one
+    #: voice per character gets ``False``. Absent (today's servers): ``True``, the rule as before.
+    thoughts_need_locked: bool = True
 
     @property
     def locked(self) -> bool:
@@ -142,6 +146,7 @@ def show_voices(run: _Api, spine: Mapping[str, Any]) -> ShowVoices:
                 str(answer.get("source") or "show"),
                 int(answer.get("filmed_takes") or 0),
                 int(answer.get("model_voice_takes") or 0),
+                answer.get("locked_voices_required") is not False,
             )
     error = answer.get("error") if isinstance(answer, Mapping) else None
     if status in (404, 405) and not (isinstance(error, Mapping) and error.get("code")):
@@ -149,6 +154,21 @@ def show_voices(run: _Api, spine: Mapping[str, Any]) -> ShowVoices:
     raise RuntimeError(
         f"the server could not say which voices the show uses (HTTP {status}): {api_error_text(answer)}"
     )
+
+
+def thoughts_need_locked(run: _Api, spine: Mapping[str, Any]) -> bool:
+    """Whether the server says thoughts and narration need locked voices on this show (free).
+
+    The kit's own pre-check follows the server: on a show the server says needs
+    no locked voices (``locked_voices_required: false``) the kit stops nothing.
+    When the server cannot answer, the rule holds as before; the server still
+    refuses with ``locked_voices_required`` when it applies.
+    """
+
+    try:
+        return show_voices(run, spine).thoughts_need_locked
+    except RuntimeError:
+        return True
 
 
 def set_show_voices(
@@ -220,7 +240,12 @@ def send_desk_choice(
     if wanted is None or not _spine_id(body) or body.get("voice_mode") in VOICE_MODES:
         return
     names = thought_and_narration_names(body)
-    if wanted == "model" and names and not is_legacy(desk):
+    if (
+        wanted == "model"
+        and names
+        and not is_legacy(desk)
+        and thoughts_need_locked(run, body)
+    ):
         print(
             "Note: the desk's voice mode `model` (start --voice-mode) was not sent. "
             + locked_voices_needed(desk, names),
@@ -298,7 +323,7 @@ def run_voice_mode(
         spine = refresh_spine(run, desk, episode)
         if set_to == "model" and not is_legacy(desk):
             names = thought_and_narration_names(spine)
-            if names:
+            if names and thoughts_need_locked(run, spine):
                 raise RuntimeError(
                     "Not changed: the show stays on locked voices. "
                     + locked_voices_needed(desk, names)

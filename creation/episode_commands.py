@@ -172,7 +172,7 @@ from creation.orchestrate import (
     seed_attempt_for,
     sync_spine_lines,
 )
-from creation.prices import STILL_USD, server_lane
+from creation.prices import STILL_USD, server_lane, server_lane_label
 from creation.production_config import (
     SERVER_HOUSE_CAPTION_STYLE,
     load_production_config,
@@ -5144,7 +5144,8 @@ def run_inner_voice(
         added: dict[str, Any] | None = None
         what = ""
         dropped: list[str] = []
-        if adding and not is_legacy(desk) and not show_voices(run, spine).locked:
+        voices = show_voices(run, spine) if adding and not is_legacy(desk) else None
+        if voices is not None and not voices.locked and voices.thoughts_need_locked:
             raise CommandStopped(
                 "Not added, nothing sent: this show films in the video model's own voices, and a thought is "
                 "spoken in the character's kept voice, so it could never match the voice they speak in. "
@@ -7865,7 +7866,9 @@ def book_film_unit(
         asked=take_ids,
     )
     fresh = load_production(desk)
-    fresh.remember_server_lane(collecting.server_lane())
+    fresh.remember_server_lane(
+        collecting.server_lane(), label=collecting.video_lane_label
+    )
     fresh.pending.pop(unit, None)
     fresh.attempts[unit] = fresh.attempts.get(unit, 0) + 1
     if got.first_url is None:
@@ -7982,7 +7985,7 @@ def _price_film(
         reroll_take_index=take_index,
     )
     _save_desk_json(desk, f"film-{key}-estimate", estimate)
-    state.remember_server_lane(server_lane(estimate))
+    state.remember_server_lane(server_lane(estimate), label=server_lane_label(estimate))
     spine = run.spine(state.spine_id or "")
     stopped = film_stop_message(spine, episode=episode)
     if stopped:
@@ -8016,7 +8019,7 @@ def _price_film(
     ):
         source += "; the deployed API cannot price one take yet"
     fresh = load_production(desk)
-    fresh.remember_server_lane(state.server_lane())
+    fresh.remember_server_lane(state.server_lane(), label=state.video_lane_label)
     save_production(desk, fresh)
     if take_index is not None:
         record_estimate(desk, episode=episode, take_id=take_ids[0], usd=usd)

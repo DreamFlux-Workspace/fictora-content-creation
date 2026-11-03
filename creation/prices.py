@@ -281,6 +281,50 @@ def server_lane(answer: dict | None) -> tuple[str, str] | None:
     return None
 
 
+def _server_text(answer: dict | None, key: str) -> str | None:
+    """Read one optional text field from a server answer: ``cost_estimate`` first, then the top level."""
+
+    if not isinstance(answer, dict):
+        return None
+    cost = answer.get("cost_estimate")
+    for holder in (cost if isinstance(cost, dict) else {}, answer):
+        value = holder.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def server_lane_label(answer: dict | None) -> str | None:
+    """Read the server's own name for the video model a story films on (``lane_label``).
+
+    Newer servers send it on the batch estimate (and may on take facts), so a
+    lane the kit's table does not know still prints a real name. ``None`` on
+    an older server: the kit then names the lane from its own table.
+    """
+
+    return _server_text(answer, "lane_label")
+
+
+def server_take_line(answer: dict | None) -> str | None:
+    """Read the server's one-line take price (``take_line``, e.g. "15 s at $0.04/s"), or ``None``."""
+
+    return _server_text(answer, "take_line")
+
+
+def known_lane(
+    video_lane: str | None, *, server: tuple[str, str] | None = None
+) -> bool:
+    """Whether the kit's own price table can price this lane (today: the H3 endpoints only).
+
+    A lane the table does not know (a new model the server added) is never
+    priced or named by the kit: it shows the server's numbers or says they are
+    unavailable, with no local-table alarm.
+    """
+
+    endpoint = lane_endpoint(video_lane, server=server)
+    return endpoint is not None and endpoint[0] in LANE_LABELS
+
+
 def lane_endpoint(
     video_lane: str | None, *, server: tuple[str, str] | None = None
 ) -> tuple[str, str] | None:
@@ -461,12 +505,15 @@ __all__ = [
     "billed_seconds",
     "envelope_usd",
     "fal_billing_day",
+    "known_lane",
     "lane_endpoint",
     "lane_label",
     "lane_take_usd",
     "reference_images_ceiling",
     "reference_images_usd",
     "server_lane",
+    "server_lane_label",
+    "server_take_line",
     "take_facts_usd",
     "take_usd",
     "video_usd_per_second",

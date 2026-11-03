@@ -371,7 +371,7 @@ def test_an_estimate_that_names_turbo_keeps_the_turbo_price(
 
 
 @pytest.mark.parametrize(("fallback", "expected"), [(0.9, 0.9), (None, None)])
-def test_an_unpriced_lane_uses_the_desk_fallback_or_the_turbo_rate(
+def test_an_unpriced_lane_says_the_server_price_is_unavailable_without_a_local_table_alarm(
     desk: Path, api: FakeApi, fallback: float | None, expected: float | None
 ) -> None:
     save_production_config(desk, ProductionConfig(fallback_estimate_usd=fallback))
@@ -391,13 +391,15 @@ def test_an_unpriced_lane_uses_the_desk_fallback_or_the_turbo_rate(
     instead = (
         "the desk's fallback $0.90 a take"
         if fallback is not None
-        else "the H3 Max Turbo rate ($0.0"
+        else "the default model's rate"
     )
     assert (
-        f"!! vendor/new-lane has no verified price; priced at {instead}"
+        "The server's price for vendor/new-lane is unavailable right now"
         in result.message
     )
-    assert "vendor/new-lane 768P (no verified $/s)" in result.message
+    assert f"({instead}), not a quote" in result.message
+    assert "SERVER ESTIMATE FAILED" not in result.message
+    assert "has no verified price" not in result.message
 
 
 def test_over_the_envelope_is_a_warning_not_a_stop(desk: Path, api: FakeApi) -> None:

@@ -75,6 +75,10 @@ class ProductionState:
     #: prices the lane pin's default (H3 Max Turbo for ``minimax-h3``).
     video_endpoint_id: str | None = None
     video_resolution: str | None = None
+    #: The server's own name for that video model (the estimate's ``lane_label``, newer servers
+    #: only), so price lines name a model the kit's table does not know. Left out of the file
+    #: while ``None``, so older desks keep their ``production.json`` as before.
+    video_lane_label: str | None = None
     #: The episode steer `rewrite` last added, per episode id (``{note_id, text}``): the next
     #: `rewrite` of that episode removes it first, so the kit's directions do not pile up.
     rewrite_notes: dict[str, dict[str, str]] = field(default_factory=dict)
@@ -103,11 +107,15 @@ class ProductionState:
             return None
         return self.video_endpoint_id, self.video_resolution or "768P"
 
-    def remember_server_lane(self, lane: tuple[str, str] | None) -> None:
-        """Record the endpoint a server answer named (no-op when it named none)."""
+    def remember_server_lane(
+        self, lane: tuple[str, str] | None, *, label: str | None = None
+    ) -> None:
+        """Record the endpoint (and the server's name for it) an answer named (no-op when it named none)."""
 
         if lane is not None:
             self.video_endpoint_id, self.video_resolution = lane
+        if label:
+            self.video_lane_label = label
 
     @staticmethod
     def new_session_id(desk_slug: str) -> str:
@@ -227,6 +235,8 @@ def save_production(desk: Path, state: ProductionState) -> None:
     ):
         if not data[trial]:
             del data[trial]
+    if data.get("video_lane_label") is None:
+        data.pop("video_lane_label", None)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 

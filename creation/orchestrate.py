@@ -105,11 +105,14 @@ from creation.prices import (
     H3_RESOLUTION,
     STILL_USD,
     envelope_usd,
+    known_lane,
     lane_endpoint,
     lane_label,
     lane_take_usd,
     reference_images_ceiling,
     server_lane,
+    server_lane_label,
+    server_take_line,
     take_facts_usd,
     take_usd,
     video_usd_per_second,
@@ -335,6 +338,92 @@ def resolve_preset(preset_id: str) -> tuple[str, str]:
     """
 
     return _pick_preset(fetch_preset_rows(), preset_id)
+
+
+VIDEO_LANES_PATH = "/v1/video-lanes"
+"""The server's video models (``[{lane_id, label, note, servable, default, endpoint_ids}]``)."""
+
+
+def fetch_video_lanes() -> list[dict[str, Any]] | None:
+    """Read the server's video lane list. One authenticated GET; spends nothing.
+
+    Returns
+    -------
+    list[dict[str, Any]] | None
+        The rows, or ``None`` when the server could not list them (an older
+        deploy, a refusal, or no connection): the server still checks the lane
+        when the story is made.
+    """
+
+    base, token = load_drama_api_credentials(_repo_root())
+    probe = DramaApiRunSession(base_url=base, token=token, out_dir=_repo_root())
+    try:
+        status, body = probe.get_optional(VIDEO_LANES_PATH)
+    except httpx.TransportError:
+        return None
+    finally:
+        probe.client.close()
+    if not 200 <= status < 300 or not isinstance(body, list):
+        return None
+    return [row for row in body if isinstance(row, dict)]
+
+
+def video_lane_refusal(lane_id: str, rows: list[dict[str, Any]] | None) -> str | None:
+    """Why the server would not film ``lane_id``, from its own lane list; ``None`` when it would.
+
+    The kit keeps no list of models: a lane the server lists as servable is
+    accepted, whatever its id. With no list (``None``: an older server or no
+    connection) nothing is refused here; the server checks the lane itself.
+
+    Parameters
+    ----------
+    lane_id
+        The operator's ``--video-lane``.
+    rows
+        :func:`fetch_video_lanes`.
+
+    Returns
+    -------
+    str | None
+        A plain refusal naming the lanes that can be used, or ``None``.
+    """
+
+    if rows is None:
+        return None
+    usable = [row for row in rows if row.get("servable") is True]
+    names = (
+        ", ".join(
+            f"{row.get('lane_id')} ({row.get('label') or row.get('lane_id')})"
+            for row in usable
+        )
+        or "none"
+    )
+    for row in rows:
+        if row.get("lane_id") == lane_id:
+            if row.get("servable") is True:
+                return None
+            note = str(row.get("note") or "").strip()
+            return (
+                f"video lane {lane_id!r} is not available on this server yet"
+                + (f" ({note})" if note else "")
+                + f". Lanes you can use: {names}."
+            )
+    return f"video lane {lane_id!r} is not one the server offers. Lanes you can use: {names}."
+
+
+def resolve_video_lane(lane_id: str) -> str:
+    """Check ``--video-lane`` against the server's lane list before anything is made.
+
+    Raises
+    ------
+    RuntimeError
+        When the server lists lanes and this one is not servable.
+    """
+
+    refusal = video_lane_refusal(lane_id, fetch_video_lanes())
+    if refusal:
+        raise RuntimeError(refusal)
+    return lane_id
 
 
 def save_spine_snapshot(desk: Path, episode: int, spine: dict[str, Any]) -> Path:
@@ -638,6 +727,25 @@ def table_estimate_usd(
     return round(float(per_take or 0.0) * takes, 2)
 
 
+def lane_name(state: ProductionState) -> str:
+    """Name the video model a desk's takes film on: the server's own name first, else the kit's table.
+
+    Parameters
+    ----------
+    state
+        Desk production state (lane pin, the server's last-named endpoint and label).
+
+    Returns
+    -------
+    str
+        A short name (``H3 Max Turbo``, or whatever the server calls a newer model).
+    """
+
+    return state.video_lane_label or lane_label(
+        state.video_lane, server=state.server_lane()
+    )
+
+
 def lane_rate_words(state: ProductionState, *, on: date) -> str:
     """Name what a take films on and its per-second price (``H3 Max Turbo 768P at $0.02/s``).
 
@@ -655,8 +763,11 @@ def lane_rate_words(state: ProductionState, *, on: date) -> str:
     """
 
     server = state.server_lane()
-    label = lane_label(state.video_lane, server=server)
+    label = lane_name(state)
     endpoint = lane_endpoint(state.video_lane, server=server)
+    if not known_lane(state.video_lane, server=server):
+        # A model the kit's table does not know: the server prices it, the kit never guesses.
+        return f"{label} (priced by the server)"
     if endpoint is None:
         return f"{label} (no verified $/s)"
     rate = video_usd_per_second(endpoint[0], endpoint[1], on=on)
@@ -720,13 +831,17 @@ def price_estimate(
         if isinstance(estimate.get("cost_estimate"), dict)
         else None
     )
+    label = server_lane_label(estimate) or lane_name(state)
     if cost is not None and _money(cost.get("total_usd")) is not None:
         usd = _estimate_usd(estimate, fallback_usd=0.0)
         priced_on = _iso_day(cost.get("priced_on")) or today
         rate = lane_rate_words(state, on=priced_on)
         server_rate = _money(cost.get("usd_per_second"))
-        if server_rate is not None:
-            label = lane_label(state.video_lane, server=state.server_lane())
+        take_line = server_take_line(estimate)
+        if take_line:
+            # Newer servers word the take price themselves (any model, no kit table).
+            rate = f"{label}: {take_line}"
+        elif server_rate is not None:
             rate = f"{label} {cost.get('video_resolution') or H3_RESOLUTION} at ${server_rate:g}/s"
         source = f"server estimate priced {cost.get('priced_on')} ({cost.get('takes')} take(s)); {rate}, {seconds} s a take"
         mismatch = _server_sum_mismatch(cost)
@@ -740,6 +855,21 @@ def price_estimate(
         return max(usd, added), source, [warning]
     rate = lane_rate_words(state, on=today)
     table = table_estimate_usd(state, cfg, cast_count=cast_count, takes=takes)
+    server = state.server_lane()
+    if not known_lane(state.video_lane, server=server):
+        # A model only the server can price (a lane added after this table): no local-table
+        # alarm, just say the server's price is not here and what the stand-in number is.
+        fallback = getattr(cfg, "fallback_estimate_usd", None)
+        stand_in = (
+            f"the desk's fallback ${float(fallback):.2f} a take"
+            if fallback is not None
+            else "the default model's rate"
+        )
+        note = (
+            f"The server's price for {label} is unavailable right now; ${table:.2f} is a stand-in "
+            f"({stand_in}), not a quote. Run the same command again for the server's price."
+        )
+        return table, f"no server price yet ({label}, {seconds} s a take)", [note]
     if estimate.get("estimate_skipped"):
         why = (
             f"the server refused it: {str(estimate.get('detail') or 'no detail')[:160]}"
@@ -752,7 +882,6 @@ def price_estimate(
         f"!! SERVER ESTIMATE FAILED ({why}). This number is the kit's LOCAL price table, not the server's: "
         "check it before the human says yes."
     ]
-    server = state.server_lane()
     if lane_take_usd(state.video_lane, seconds, on=today, server=server) is None:
         fallback = getattr(cfg, "fallback_estimate_usd", None)
         instead = (
@@ -1244,12 +1373,13 @@ def board_report(
         )
     )
     if take_price is None:
-        label = lane_label(state.video_lane, server=state.server_lane())
+        label = lane_name(state)
         lines.append(
-            f"{label} has no verified price in the table; the take is not estimated."
+            f"{label}: the server prices the take at the estimate step."
+            if not known_lane(state.video_lane, server=state.server_lane())
+            else f"{label} has no verified price in the table; the take is not estimated."
         )
     else:
-        label = lane_label(state.video_lane, server=state.server_lane())
         what_goes = (
             f"up to {references} reference images"
             if lane and lane[0] == H3_MAX_R2V_ENDPOINT
@@ -2059,7 +2189,9 @@ def run_step(
             estimate = stages.estimate_batch(
                 run, spine_id=state.spine_id or "", episode=ep
             )
-            state.remember_server_lane(server_lane(estimate))
+            state.remember_server_lane(
+                server_lane(estimate), label=server_lane_label(estimate)
+            )
             spine = run.spine(state.spine_id or "")
             stopped = film_stop_message(spine, episode=ep)
             if stopped:
@@ -2379,7 +2511,9 @@ def collect_takes(
             on_screen += take_soundtrack_lines(take_id, facts)
             # The server's picture check of the take's stills (warnings only).
             on_screen += take_picture_check_lines(facts, take_id=take_id)
-            state.remember_server_lane(server_lane(facts))  # the caller saves the state
+            state.remember_server_lane(
+                server_lane(facts), label=server_lane_label(facts)
+            )  # the caller saves the state
         if priced is None:
             estimate = lane_take_usd(
                 state.video_lane, clip_seconds, on=today, server=state.server_lane()

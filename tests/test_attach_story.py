@@ -228,3 +228,29 @@ def test_stories_prints_the_server_s_rows_without_changing_anything() -> None:
 
 def test_last_written_episode_skips_summary_only_episodes() -> None:
     assert last_written_episode(SPINE) == 2
+
+
+@pytest.mark.parametrize(
+    ("story_lane", "flag", "want"),
+    [
+        ("wan-3.0", None, "wan-3.0"),
+        (None, None, "minimax-h3"),
+        ("wan-3.0", "minimax-h3", "minimax-h3"),
+    ],
+)
+def test_an_attached_desk_keeps_the_storys_own_video_model_unless_one_is_given(
+    tmp_path: Path, story_lane: str | None, flag: str | None, want: str
+) -> None:
+    from creation.production_state import load_production
+
+    spine = {**SPINE, **({"video_lane": story_lane} if story_lane else {})}
+    result = attach_story(
+        SPINE_ID,
+        parent=tmp_path,
+        video_lane=flag,
+        opener=_opener(FakeSession(spine=spine)),
+        today=date(2026, 10, 21),
+        out=io.StringIO(),
+    )
+
+    assert load_production(result.desk).video_lane == want
