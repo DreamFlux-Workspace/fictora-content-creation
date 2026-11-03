@@ -74,8 +74,6 @@ class FilmJob:
     take_ids: tuple[str, ...]
     #: The ``film`` unit (``film-ep02-t2-s2``); ``None`` for the ``step``'s own film.
     unit: str | None = None
-    #: Its scope key (``ep02-t2``); ``None`` for the step.
-    key: str | None = None
     #: ``tK`` for a one-take film.
     take_id: str | None = None
 
@@ -155,13 +153,12 @@ def _unit_film_job(desk: Path, unit: str, job_id: str) -> FilmJob | None:
     if not match:
         return None
     episode, take_id = int(match.group(2)), match.group(3)
-    take_ids, _, key = _film_scope(desk, episode=episode, take_id=take_id)
+    take_ids, _, _ = _film_scope(desk, episode=episode, take_id=take_id)
     return FilmJob(
         job_id=job_id,
         episode=episode,
         take_ids=tuple(take_ids),
         unit=unit,
-        key=key,
         take_id=take_id,
     )
 
@@ -587,7 +584,6 @@ def run_collect_takes(
                 raw,
                 episode=job.episode,
                 unit=job.unit,
-                key=job.key or "",
                 take_ids=list(job.take_ids),
                 take_id=job.take_id,
                 job_id=job.job_id,

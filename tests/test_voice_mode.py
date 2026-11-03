@@ -374,7 +374,7 @@ def test_a_model_show_films_with_music_by_finish_and_a_locked_show_without(
     """The kit lays the show's theme in finish: a model-voice take is filmed with no music in it."""
 
     _board_yes(desk)
-    set_phase(desk, "complete", film_estimates={"ep01": 1.2})
+    set_phase(desk, "complete")
     _ready_to_film(model_show)
 
     run_film(desk, episode=1, confirm_spend=True)
@@ -390,7 +390,7 @@ def test_a_model_show_films_with_music_by_finish_and_a_locked_show_without(
         }
         for c, v in (("cast_hana", "Aria"), ("cast_ren", "Liam"))
     ]
-    set_phase(desk, "complete", film_estimates={"ep01": 1.2})
+    set_phase(desk, "complete")
     run_film(desk, episode=1, cause="locked re-film", confirm_spend=True)
     assert "music_by_finish" not in model_show.posted(VIDEO)[-1]
 
@@ -411,7 +411,7 @@ def test_film_on_a_locked_show_is_still_held_for_the_voices(
 ) -> None:
     model_show.spine_doc["voice_mode"] = "locked"
     _board_yes(desk)
-    set_phase(desk, "complete", film_estimates={"ep01": 1.2})
+    set_phase(desk, "complete")
     _ready_to_film(model_show)
 
     with pytest.raises(CommandStopped, match="--keep-all"):

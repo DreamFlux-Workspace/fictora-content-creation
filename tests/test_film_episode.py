@@ -139,7 +139,7 @@ def test_film_take_prices_that_one_take_and_films_nothing(
         and "!! SERVER ESTIMATE FAILED" not in text
     )
     assert "episodes 1-1 are not filmed or booked again" in text
-    assert load_production(desk30).film_estimates == {"ep02-t2": 1.20}
+    assert load_production(desk30).pending == {}, "a price run records nothing"
     assert "--take t2" in text and "--confirm-spend" in text
 
 
@@ -153,9 +153,7 @@ def test_a_server_that_cannot_price_one_take_is_priced_from_the_table_for_one_ta
 
     text = run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
 
-    assert load_production(desk30).film_estimates["ep02-t2"] == pytest.approx(
-        turbo_take_usd(15)
-    )  # one take, not two
+    assert f"about ${turbo_take_usd(15):.2f}" in text  # one take, not two
     assert "cannot price one take yet" in text
     assert "!! SERVER ESTIMATE FAILED (the server refused it: HTTP 422" in text
 
@@ -174,22 +172,68 @@ def test_a_film_estimate_that_names_r2v_without_dollars_is_priced_on_r2v(
     text = run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
 
     state = load_production(desk30)
-    assert state.film_estimates["ep02-t2"] == pytest.approx(1.20)
+    assert "about $1.20" in text
     assert state.server_lane() == ("minimax/h3-max/reference-to-video", "768P")
     assert "price table (H3 Max R2V, 15 s a take); H3 Max R2V 768P at $0.08/s" in text
     assert text.startswith("!! SERVER ESTIMATE FAILED")
 
 
-def test_confirming_without_a_shown_price_sends_nothing(
+def _server_spend(api: FakeApi, **spend: object) -> None:
+    """What the server says the film was quoted and cost (fictora-drama ``kit_spend``)."""
+
+    api.routes[("GET", "/v1/video-generations/job_video_9")] = {
+        "status": "completed",
+        "kit_spend": spend,
+    }
+
+
+def test_confirm_spend_films_in_one_call_and_warns_how_far_it_went_over(
+    desk30: Path, api30: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _filmed_once(desk30)
+    _take_two_of_episode_two(api30)
+    _server_spend(
+        api30,
+        quoted_usd="1.14",
+        cost_usd="1.56",
+        cost_final=True,
+        over_budget_usd="0.42",
+    )
+
+    text = run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+
+    assert api30.posted(ESTIMATE) == [], (
+        "no earlier price run, and none inside the call"
+    )
+    assert len(api30.posted(VIDEO)) == 1
+    assert "Server quote: $1.14" in capsys.readouterr().err
+    assert "⚠ Went over budget by $0.42 (quoted $1.14, cost $1.56)" in text
+    assert "Server cost: $1.56 (quoted $1.14)." in text
+
+
+def test_a_film_within_its_quote_prints_the_cost_and_no_warning(
     desk30: Path, api30: FakeApi
 ) -> None:
     _filmed_once(desk30)
     _take_two_of_episode_two(api30)
+    _server_spend(api30, quoted_usd="1.14", cost_usd="1.14", cost_final=False)
 
-    with pytest.raises(CommandStopped, match="no price shown"):
-        run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+    text = run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
 
-    assert api30.posted(VIDEO) == []
+    assert "Server cost: $1.14 (quoted $1.14); the server is still finishing" in text
+    assert "Went over budget" not in text
+
+
+def test_an_older_server_that_sends_no_quote_is_named(
+    desk30: Path, api30: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _filmed_once(desk30)
+    _take_two_of_episode_two(api30)
+
+    text = run_film(desk30, episode=2, take_id="t2", cause=CAUSE, confirm_spend=True)
+
+    assert "did not send a quote" in capsys.readouterr().err
+    assert "Server cost" not in text
 
 
 # --- The written cause -----------------------------------------------------------------------------
@@ -259,7 +303,7 @@ def test_film_take_k_sends_the_episode_the_take_and_a_fresh_seed_and_books_only_
     assert t2.change_cause == CAUSE and t1.verdict == "pending"
     assert slot.spend_usd == pytest.approx(spend_before + 1.20)
     state = load_production(desk30)
-    assert state.film_estimates == {} and state.pending == {}
+    assert state.pending == {}
     assert state.server_lane() == (
         "minimax/h3-max/reference-to-video",
         "768P",

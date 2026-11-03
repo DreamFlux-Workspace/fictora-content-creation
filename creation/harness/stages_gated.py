@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -18,6 +19,7 @@ from creation.harness.http_util import (
 from creation import stylised_only
 from creation.harness.video_enrol_errors import server_refused_episode_ordinal_field
 from creation.desk_media_urls import drawn_cast_rows
+from creation.film_spend import quote_line, read_kit_spend
 from creation.harness.session import DramaApiRunSession
 from creation.spine_view import board_assets, episode_id_for
 from creation.opening_action import (
@@ -1008,7 +1010,11 @@ def _server_code(text: str) -> str | None:
 def post_video_generation(
     run: DramaApiRunSession, body: dict[str, Any], *, idempotency_key: str, episode: int
 ) -> dict[str, Any]:
-    """POST the take request; an older server's refusal of ``episode_ordinal`` becomes :data:`OLD_SERVER_FILM`.
+    """POST the take request and print the server's quote; an older server's refusal of ``episode_ordinal`` becomes :data:`OLD_SERVER_FILM`.
+
+    The film goes in this one call after the human's ``--confirm-spend``: the
+    server quotes it when it admits it (fictora-drama ``kit_film_spend``), and the
+    quote is printed here for ``film`` and ``step`` alike.
 
     Parameters
     ----------
@@ -1028,7 +1034,7 @@ def post_video_generation(
     """
 
     try:
-        return run.post("/v1/video-generations", body, idempotency_key=idempotency_key)
+        job = run.post("/v1/video-generations", body, idempotency_key=idempotency_key)
     except SystemExit as exc:
         text = str(exc.code)
         if "single_frame_start" in body and "single_frame_start" in text:
@@ -1043,6 +1049,9 @@ def post_video_generation(
                 f"{OLD_SERVER_FILM.format(episode=episode)} (server said: {text[:400]})"
             ) from None
         raise
+    spend = read_kit_spend(run, str(job.get("job_id") or ""))
+    print(f"[film] {quote_line(spend)}", file=sys.stderr)
+    return job
 
 
 def fetch_delivery_optional(

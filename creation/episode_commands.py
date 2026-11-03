@@ -87,6 +87,7 @@ from creation.new_cast import new_cast_notice, newcomers_owing_pictures
 from creation.story_objects import new_objects, new_objects_notice, suggested_objects
 from creation.desk_media_urls import drawn_cast_rows
 from creation.post.desk import name_matches
+from creation.film_spend import cost_lines, read_kit_spend
 from creation.harness import stages_gated as stages
 from creation import line_fit
 from creation import note_outfit
@@ -7491,11 +7492,14 @@ def run_film(
 
     Without ``confirm_spend`` it prices exactly what will be filmed
     (``batches/estimate`` for episode N, with ``reroll_take_index`` for one take),
-    says it against the envelope, records the number and stops for the human's
-    yes. With ``confirm_spend`` (only after that number was shown) it sends
-    ``POST /v1/video-generations`` with ``episode_count: N, episode_ordinal: N``
-    (plus ``reroll_take_index: K, seed_attempt: previous + 1`` for one take),
-    collects the new take(s) raw with their take facts and books them.
+    says it against the envelope and stops; nothing is sent or recorded. With
+    ``confirm_spend`` (the human's explicit yes to spend) it films in this one
+    call, with no earlier price run needed: it sends ``POST /v1/video-generations``
+    with ``episode_count: N, episode_ordinal: N`` (plus ``reroll_take_index: K,
+    seed_attempt: previous + 1`` for one take), prints the server's quote,
+    collects the new take(s) raw with their take facts, books them, and prints
+    the server's cost with a warning when it went over the quote (the server
+    owns that rule, fictora-drama ``kit_film_spend``; founder, 3 Nov 2026).
 
     A take (or episode) filmed before needs a written cause, recorded on the
     desk as Change this. An older deploy that cannot film one episode alone is
@@ -7512,7 +7516,7 @@ def run_film(
     cause
         Why it is filmed again (required for a re-film).
     confirm_spend
-        The human said yes to the printed number.
+        The human's explicit ``--confirm-spend``: film now.
     out
         Text stream.
     single_frame_start
@@ -7612,13 +7616,6 @@ def _run_film(
     if not confirm_spend:
         return _price_film(desk, state, run, cfg, episode=episode, take_ids=take_ids, take_index=take_index, key=key,
                            what=what, reason=reason, out=out, refilm=filmed_before)  # fmt: skip
-    priced = load_production(desk).film_estimates.get(key)
-    if priced is None:
-        raise CommandStopped(
-            f"no price shown for {what} yet: run `film --episode {episode}"
-            + (f" --take {take_id}" if take_id else "")
-            + "` without --confirm-spend, show the human the number, then confirm"
-        )
     resumed = _pending_film_unit(load_production(desk).pending, key)
     if resumed is not None:
         # An earlier run of this film was cut off. Collecting part of it may
@@ -7787,7 +7784,6 @@ def _run_film(
         raw,
         episode=episode,
         unit=unit,
-        key=key,
         take_ids=take_ids,
         take_id=take_id,
         job_id=str(job_id),
@@ -7804,7 +7800,6 @@ def book_film_unit(
     *,
     episode: int,
     unit: str,
-    key: str,
     take_ids: list[str],
     take_id: str | None,
     job_id: str,
@@ -7831,8 +7826,6 @@ def book_film_unit(
         Episode filmed.
     unit
         The film unit (``film-ep02-t2-s2``).
-    key
-        Its scope key (``ep02-t2``).
     take_ids
         The takes it asked for.
     take_id
@@ -7871,7 +7864,6 @@ def book_film_unit(
     fresh.remember_server_lane(collecting.server_lane())
     fresh.pending.pop(unit, None)
     fresh.attempts[unit] = fresh.attempts.get(unit, 0) + 1
-    fresh.film_estimates.pop(key, None)
     if got.first_url is None:
         save_production(desk, fresh)
         raise CommandStopped(
@@ -7895,7 +7887,8 @@ def book_film_unit(
         + (f" NOT FILED: {'; '.join(got.unplaced)}." if got.unplaced else ""),
     )
     lines = [
-        f"Filmed {what}: {len(got.jobs)} take(s), ${got.booked_usd:.2f} booked. Video job {job_id}."
+        f"Filmed {what}: {len(got.jobs)} take(s), ${got.booked_usd:.2f} booked. Video job {job_id}.",
+        *cost_lines(read_kit_spend(run, job_id)),
     ]
     lines += [f"  {line}" for line in got.jobs + got.on_screen]
     saved = (
@@ -8019,7 +8012,6 @@ def _price_film(
     ):
         source += "; the deployed API cannot price one take yet"
     fresh = load_production(desk)
-    fresh.film_estimates[key] = usd
     fresh.remember_server_lane(state.server_lane())
     save_production(desk, fresh)
     if take_index is not None:
