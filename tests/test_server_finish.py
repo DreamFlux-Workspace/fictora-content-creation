@@ -1105,7 +1105,7 @@ def test_mute_goes_to_the_servers_post_edit_and_prints_its_answer(
     out = capsys.readouterr().out
     assert "t2 edited on the server (2 muted stretches): free (0 tokens)." in out
     assert "put back together with it" in out
-    assert "run finish again" in out
+    assert "run a plain finish" in out
 
 
 def test_a_voice_line_file_is_laid_as_the_servers_copy(

@@ -257,7 +257,7 @@ class TextCheck:
         return lines
 
     def warning_lines(self, *, desk: Path | str = "<desk>", episode: int = 1,
-                      take_id: str = "t1", final: Path | None = None) -> list[str]:  # fmt: skip
+                      take_id: str = "t1") -> list[str]:  # fmt: skip
         """Loud lines for ``finish`` and ``review``: what was drawn, when, the crop, and the two fixes."""
 
         if self.status == "skipped":
@@ -278,9 +278,9 @@ class TextCheck:
             lines.append(f"   '{finding.text}'{said} at {times}{more}")
         if self.sheet is not None:
             lines.append(f"   crop: {self.sheet}")
-        target = final or Path("<finished file>")
+        frame = f"@{self.size[0]}x{self.size[1]}"
         boxes = " ".join(
-            "--box " + ",".join(str(v) for v in f.blur_box(self.size))
+            "--box " + ",".join(str(v) for v in f.blur_box(self.size)) + frame
             for f in self.subtitles
         )
         start = min(f.window(step)[0] for f in self.subtitles)
@@ -288,8 +288,8 @@ class TextCheck:
         lines.append(
             f"   Fix: re-film the take (`fictora-produce film --desk {desk} --episode {episode} --take {take_id} "
             f'--cause "the model drew the line as subtitles"`), or patch it with the blur edit '
-            f"(`fictora-produce blur --desk {desk} --take-file {target} {boxes} --from {start:.2f} --to {end:.2f}`) "
-            "and watch the window at full size"
+            f"(`fictora-produce blur --desk {desk} --episode {episode} --take {take_id} {boxes} --from {start:.2f} "
+            f"--to {end:.2f}`, saved on the server) and watch the window in the next finish"
         )
         return lines
 

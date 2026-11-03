@@ -19,6 +19,11 @@ Setting                            Server field
 ``--cue SOUND@SECONDS[@DB]``       ``cues[] {sound, start_seconds, gain_db}``; a saved ``cue`` file
                                    sends its own words and length
 ``--impact-at SECONDS[:blast]``    ``impact_hits[] {at_seconds, style}``
+``trim --cut A-B``                 ``trims[] {start_seconds, end_seconds}`` (the server snaps each
+                                   edge onto a shot change within a quarter second)
+``blur --box X,Y,W,H --from --to``  ``blurs[] {start_seconds, end_seconds, x, y, width, height}``:
+                                   the box in fractions of the frame, or ``X,Y,W,H@WIDTHxHEIGHT`` in
+                                   pixels of a frame grab that size
 =================================  =================================================================
 
 Routes: ``POST /v1/video-generations/{job}/takes/{n}/post-edit`` (the edit),
@@ -53,12 +58,19 @@ REVOICE_ROUTE = "/v1/video-generations/{job_id}/takes/{take_index}/revoice"
 ADD_TO_CURRENT_FIELD = "add_to_current_edit"
 #: The edit answers once its lines and sounds are made (the episode is rebuilt after, in the background).
 EDIT_TIMEOUT_SECONDS = 300.0
-#: Said after every edit the server took: the new cut is put together in the background.
-NEXT_STEP = "Next: run finish again (without the edit settings) in a few minutes to download the new cut."
+#: Said after every edit the server took: the server re-joins the episode itself and keeps the edit.
+NEXT_STEP = (
+    "No re-join to run: the server puts the episode back together with the edit, and every later join keeps it. "
+    "To see it on this laptop, run a plain finish in a few minutes; it downloads the new cut."
+)
 NOTHING_CHANGED = "Nothing was changed or charged."
 
 _SPAN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*$")
 _NUMBER = re.compile(r"^\s*[+-]?\d+(?:\.\d+)?\s*$")
+_DECIMAL = r"\s*(\d+(?:\.\d+)?)\s*"
+_BOX = re.compile(
+    rf"^{_DECIMAL},{_DECIMAL},{_DECIMAL},{_DECIMAL}(?:@\s*(\d+)\s*[xX]\s*(\d+)\s*)?$"
+)
 
 
 class TakeEditStop(RuntimeError):
@@ -73,6 +85,8 @@ class TakeEditRequest:
     dub_lines: list[dict[str, Any]] = field(default_factory=list)
     cues: list[dict[str, Any]] = field(default_factory=list)
     impact_hits: list[dict[str, Any]] = field(default_factory=list)
+    trims: list[dict[str, Any]] = field(default_factory=list)
+    blurs: list[dict[str, Any]] = field(default_factory=list)
     revoice: list[str] = field(default_factory=list)
 
     def edit_body(self) -> dict[str, Any] | None:
@@ -85,6 +99,8 @@ class TakeEditRequest:
                 ("dub_lines", self.dub_lines),
                 ("cues", self.cues),
                 ("impact_hits", self.impact_hits),
+                ("trims", self.trims),
+                ("blurs", self.blurs),
             )
             if value
         }
@@ -99,17 +115,66 @@ class TakeEditRequest:
         return self.edit_body() is None and not self.revoice
 
 
-def parse_mute(raw: str) -> dict[str, Any]:
-    """``"1.2-2.0"`` -> ``{"start_seconds": 1.2, "end_seconds": 2.0}`` (the server checks the window)."""
-
+def _span(raw: str, flag: str) -> dict[str, Any]:
     match = _SPAN.match(raw)
     if match is None:
         raise TakeEditStop(
-            f"--mute {raw!r}: write A-B seconds on the take, like 1.2-2.0"
+            f"{flag} {raw!r}: write A-B seconds on the take, like 1.2-2.0"
         )
     return {
         "start_seconds": float(match.group(1)),
         "end_seconds": float(match.group(2)),
+    }
+
+
+def parse_mute(raw: str) -> dict[str, Any]:
+    """``"1.2-2.0"`` -> ``{"start_seconds": 1.2, "end_seconds": 2.0}`` (the server checks the window)."""
+
+    return _span(raw, "--mute")
+
+
+def parse_cut(raw: str) -> dict[str, Any]:
+    """``trim --cut "10.17-12.15"`` -> one ``trims`` item (the server snaps it to the shot change)."""
+
+    return _span(raw, "trim --cut")
+
+
+def parse_blur_box(raw: str, *, start: float, end: float) -> dict[str, Any]:
+    """``blur --box`` over ``start``-``end`` -> one ``blurs`` item, the box in fractions of the frame.
+
+    ``X,Y,W,H`` are fractions of the frame (0 is the left or top edge, 1 the
+    right or bottom), the server's own form. ``X,Y,W,H@WIDTHxHEIGHT`` is pixels
+    measured on a frame grab that size, turned into fractions here; the server
+    checks the box's size and that it sits inside the frame.
+    """
+
+    match = _BOX.match(raw)
+    if match is None:
+        raise TakeEditStop(
+            f"blur --box {raw!r}: write X,Y,W,H as fractions of the frame, like 0.1,0.3,0.4,0.1, or as pixels "
+            "of a frame grab with its size, like 77,410,307,137@768x1366"
+        )
+    x, y, w, h = (float(value) for value in match.groups()[:4])
+    if match.group(5) is not None:
+        width, height = int(match.group(5)), int(match.group(6))
+        if not width or not height:
+            raise TakeEditStop(
+                f"blur --box {raw!r}: the frame size after @ must be more than 0"
+            )
+        x, w = x / width, w / width
+        y, h = y / height, h / height
+    elif max(x, y, w, h) > 1.0:
+        raise TakeEditStop(
+            f"blur --box {raw!r}: these look like pixels; add the frame grab's size, like {raw.strip()}@768x1366, "
+            "or write fractions of the frame (0 to 1)"
+        )
+    return {
+        "start_seconds": start,
+        "end_seconds": end,
+        "x": round(x, 4),
+        "y": round(y, 4),
+        "width": round(w, 4),
+        "height": round(h, 4),
     }
 
 
@@ -342,11 +407,11 @@ def replaced_warning(take_id: str, *, preview: bool) -> str:
     if preview:
         return (
             f"Warning: this server is older and does not keep earlier edits. Sending this would replace "
-            f"every earlier edit on {take_id} (mutes, laid lines, sounds, hits) with only this one."
+            f"every earlier edit on {take_id} (mutes, laid lines, sounds, hits, cuts, blurs) with only this one."
         )
     return (
         f"Warning: this server is older and does not keep earlier edits, so every earlier edit on {take_id} "
-        "(mutes, laid lines, sounds, hits) was replaced by this one. To get them back, run finish once with "
+        "(mutes, laid lines, sounds, hits, cuts, blurs) was replaced by this one. To get them back, run finish once with "
         "all of them together."
     )
 
@@ -379,18 +444,18 @@ def _post(
 
 def _counts(body: Mapping[str, Any]) -> str:
     named = (
-        ("mutes", "muted stretch"),
-        ("dub_lines", "laid line"),
-        ("cues", "added sound"),
-        ("impact_hits", "hit"),
+        ("mutes", "muted stretch", "muted stretches"),
+        ("dub_lines", "laid line", "laid lines"),
+        ("cues", "added sound", "added sounds"),
+        ("impact_hits", "hit", "hits"),
+        ("trims", "cut stretch", "cut stretches"),
+        ("blurs", "blurred box", "blurred boxes"),
     )
     parts = []
-    for key, word in named:
+    for key, one, many in named:
         count = len(body.get(key) or [])
         if count:
-            parts.append(
-                f"{count} {word}{'' if count == 1 else 'es' if word.endswith('ch') else 's'}"
-            )
+            parts.append(f"{count} {one if count == 1 else many}")
     return ", ".join(parts)
 
 
@@ -454,7 +519,8 @@ def send_take_edit(
                 )
             else:
                 lines.append(
-                    f"{take_id} edited on the server ({_counts(edit)}): {_tokens(answer.get('tokens'))}."
+                    f"{take_id} edited on the server ({_counts(edit)}): {_tokens(answer.get('tokens'))}. "
+                    "The edit is saved there as a take edit; nothing on this laptop was changed."
                 )
                 lines.append(
                     str(answer.get("episode_not_redelivered") or "")
@@ -549,7 +615,9 @@ __all__ = [
     "TakeEditRequest",
     "TakeEditStop",
     "build_request",
+    "parse_blur_box",
     "parse_cue",
+    "parse_cut",
     "parse_mute",
     "parse_voice",
     "refusal_line",

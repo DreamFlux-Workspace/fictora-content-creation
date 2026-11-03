@@ -24,7 +24,7 @@ the story does not give are refused (put them in the story first, then use
 ``@SHOT``); with none in the take facts nothing is written (blur the prop
 instead: ``blur --box``). ``"TEXT"`` alone still picks the shot whose story
 words they are. The box is the operator's
-(the same ``x,y,w,h`` convention as ``blur --box``), or the take facts' own
+(``x,y,w,h`` in pixels of the take), or the take facts' own
 ``box`` when a server sends one.
 """
 
@@ -361,7 +361,7 @@ def plan_prop_overlays(
                         "give the words"
                         if worded
                         else f"the story gives no words for shot {shot}'s prop: nothing is written "
-                        "(the kit never makes words up). Blur it instead: blur --box x,y,w,h"
+                        "(the kit never makes words up). Blur it instead: blur --box X,Y,W,H@WIDTHxHEIGHT (a take edit on the server)"
                     )
                 )
                 continue
@@ -378,8 +378,8 @@ def plan_prop_overlays(
             box = prop.box if prop is not None else None
         if box is None:
             notes.append(
-                f"{label}: no box for shot {shot}'s prop: give --prop-box x,y,w,h in pixels of the take "
-                "(as for blur --box), one per --prop-text. Nothing drawn"
+                f"{label}: no box for shot {shot}'s prop: give --prop-box x,y,w,h in pixels of the take, "
+                "one per --prop-text. Nothing drawn"
             )
             continue
         if shot not in windows:
@@ -490,7 +490,7 @@ def suggestion_lines(
             if worded
             else ""
         )
-        + "blur it (`blur --box x,y,w,h`)"
+        + "blur it (`blur --episode N --take tK --box X,Y,W,H@WIDTHxHEIGHT --from S --to E`, saved on the server)"
     )
     return lines
 

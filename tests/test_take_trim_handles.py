@@ -303,11 +303,14 @@ def test_a_server_without_the_route_says_so(
     assert "fictora-drama #563 is not deployed" in capsys.readouterr().err
 
 
-def test_the_local_cut_still_needs_its_finished_file(
+def test_a_cut_with_the_handles_is_two_commands(
     desk: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert _trim(desk, "--cut", "1-2") == 2
-    assert "trim needs --take-file" in capsys.readouterr().err
+    assert _trim(desk, "--cut", "1-2", "--start", "0.5") == 2
+    assert (
+        "Run them as two commands. Nothing was changed or charged."
+        in capsys.readouterr().err
+    )
 
 
 # --- finish cuts at the handles last ---------------------------------------------------------------

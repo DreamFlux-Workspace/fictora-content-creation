@@ -1,12 +1,10 @@
-"""Local picture edits on one take: trim, freeze, tempo, soften, blur, zoom.
+"""Local picture edits on one take: freeze, tempo, soften, zoom.
 
-All six are ffmpeg + numpy on this laptop, free, and write a new file; the
-take is never overwritten.
+All four are ffmpeg + numpy on this laptop, free, and write a new file; the
+take is never overwritten. ``trim --cut`` and ``blur`` are take edits on the
+server now (:mod:`creation.post.take_edit`), so the episode the server
+finishes keeps them.
 
-- ``trim``   cuts ``A-B`` seconds out, each edge snapped to the strongest
-  frame-to-frame change within +/-0.1 s (a real shot change stands far above
-  the motion around it), frame-accurate, and says how far everything after the
-  cut moves. Run it on the FINISHED take (cues at raw times first).
 - ``freeze`` holds the frame at ``at`` for ``hold`` seconds over the picture
   that was there: same length, same frame count, sound copied, so lines, cues
   and captions stay where they were.
@@ -17,9 +15,6 @@ take is never overwritten.
   seams that ffmpeg scene detect misses) and softens each in place: the last
   pre-cut frame is held over the new shot and faded out over 0.33 s. Same
   length, sound copied.
-- ``blur``   Gaussian-blurs pixel boxes of the picture inside a time window
-  (garbled text the video invented): crop, ``gblur``, overlay back with
-  ``enable=between(t,from,to)``. Same length, sound copied. A patch.
 - ``zoom``   a punch-in: crops a smaller window of the picture around a point
   and scales it back to the full frame, inside a time window (or the whole
   take). Hides a jump cut (the same shot, closer, reads as a new angle) or
@@ -29,7 +24,6 @@ take is never overwritten.
 
 from __future__ import annotations
 
-import json
 import math
 import re
 import subprocess
@@ -37,31 +31,15 @@ import tempfile
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
-from typing import Any
 
-import numpy as np
-import numpy.typing as npt
 
-from creation.ops.folder import next_versioned_path
 from creation.post.media import (
-    decode_frames,
     ffmpeg_bin,
     keep_cover_args,
     probe_video,
     run_ffmpeg,
     video_streams,
 )
-
-# --- trim ---------------------------------------------------------------------------------------
-
-#: How far from the asked time a shot change is looked for.
-SNAP_WINDOW_SECONDS = 0.1
-#: Frame-difference analysis size (9:16).
-TRIM_ANALYSIS_SIZE = (96, 168)
-#: A shot change moves the mean pixel at least this much (0-255)...
-CUT_MIN_DIFF = 12.0
-#: ...and at least this many times the take's typical frame-to-frame change.
-CUT_MIN_RATIO = 3.0
 
 # --- soften / cut trace -------------------------------------------------------------------------
 
@@ -83,398 +61,6 @@ HOUSE_FPS = 24.0
 
 _PTS = re.compile(r"pts_time:(?P<time>[0-9.]+)")
 _YAVG = re.compile(r"lavfi\.signalstats\.YAVG=(?P<value>[0-9.]+)")
-
-
-# ================================================================================================
-# trim
-# ================================================================================================
-
-
-@dataclass(frozen=True)
-class Snap:
-    """Where one end of the cut landed.
-
-    Parameters
-    ----------
-    asked
-        The time the operator gave.
-    frame
-        The frame the cut is made at (the first frame removed, or the first kept after).
-    seconds
-        ``frame / fps``.
-    snapped
-        True when a real shot change was found within the window.
-    strength
-        The frame difference at that frame (0-255 mean).
-    """
-
-    asked: float
-    frame: int
-    seconds: float
-    snapped: bool
-    strength: float
-
-    def one_line(self) -> str:
-        """``10.210 s -> 10.167 s (frame 244, shot change)``."""
-
-        how = (
-            "shot change"
-            if self.snapped
-            else "no shot change within ±0.1 s: nearest frame"
-        )
-        return f"{self.asked:.3f} s -> {self.seconds:.3f} s (frame {self.frame}, {how})"
-
-
-@dataclass(frozen=True)
-class TrimResult:
-    """What ``trim`` did."""
-
-    source: Path
-    output: Path
-    start: Snap
-    end: Snap
-    fps: float
-    duration_before: float
-
-    @property
-    def removed_seconds(self) -> float:
-        """Length cut out."""
-
-        return round((self.end.frame - self.start.frame) / self.fps, 3)
-
-    def shift_line(self) -> str:
-        """What to do with everything placed on the old file."""
-
-        return (
-            f"Removed {self.removed_seconds:.3f} s ({self.start.seconds:.3f}-{self.end.seconds:.3f} s). "
-            f"Cues, voice lines and captions at or after {self.end.seconds:.3f} s on the old file move "
-            f"{self.removed_seconds:.3f} s earlier; anything inside the cut is gone. New length "
-            f"{self.duration_before - self.removed_seconds:.3f} s."
-        )
-
-
-def frame_differences(take: Path) -> tuple[float, npt.NDArray[np.float64]]:
-    """Mean absolute difference between each frame and the one before it.
-
-    Parameters
-    ----------
-    take
-        Video.
-
-    Returns
-    -------
-    tuple[float, numpy.ndarray]
-        Frame rate, and ``diffs[i]`` = change from frame ``i - 1`` to frame ``i`` (``diffs[0] = 0``).
-    """
-
-    info = probe_video(take)
-    width, height = TRIM_ANALYSIS_SIZE
-    frames = decode_frames(take, width=width, height=height)
-    diffs = np.zeros(len(frames), dtype=np.float64)
-    if len(frames) > 1:
-        diffs[1:] = np.abs(frames[1:] - frames[:-1]).mean(axis=(1, 2, 3))
-    return float(info.fps or 24.0), diffs
-
-
-def snap_to_shot_change(
-    asked: float,
-    *,
-    fps: float,
-    diffs: npt.NDArray[np.float64],
-    window: float = SNAP_WINDOW_SECONDS,
-) -> Snap:
-    """Snap a time to the strongest shot change within ``window``, else to the nearest frame.
-
-    Parameters
-    ----------
-    asked
-        Seconds.
-    fps
-        Frame rate.
-    diffs
-        From :func:`frame_differences`.
-    window
-        Search half-width in seconds.
-
-    Returns
-    -------
-    Snap
-        The frame the cut is made at.
-    """
-
-    last = len(diffs)
-    nearest = min(max(int(round(asked * fps)), 0), last)
-    if nearest in (0, last):
-        return Snap(asked, nearest, round(nearest / fps, 3), False, 0.0)
-    reach = int(np.floor(window * fps + 1e-6))
-    candidates = [
-        index
-        for index in range(nearest - reach, nearest + reach + 1)
-        if 1 <= index < last
-    ]
-    best = max(candidates, key=lambda index: (diffs[index], -abs(index - nearest)))
-    typical = float(np.median(diffs[1:])) if last > 1 else 0.0
-    strength = float(diffs[best])
-    if strength >= max(CUT_MIN_DIFF, CUT_MIN_RATIO * typical):
-        return Snap(asked, best, round(best / fps, 3), True, round(strength, 2))
-    return Snap(
-        asked, nearest, round(nearest / fps, 3), False, round(float(diffs[nearest]), 2)
-    )
-
-
-def parse_cut(raw: str) -> tuple[float, float]:
-    """Parse ``A-B`` seconds.
-
-    Parameters
-    ----------
-    raw
-        ``10.17-12.15``.
-
-    Returns
-    -------
-    tuple[float, float]
-        Start and end.
-
-    Raises
-    ------
-    ValueError
-        When it does not parse or ``B <= A``.
-    """
-
-    match = re.fullmatch(r"\s*([0-9]*\.?[0-9]+)\s*-\s*([0-9]*\.?[0-9]+)\s*", raw)
-    if not match:
-        raise ValueError(f"--cut needs A-B seconds, e.g. 10.17-12.15: {raw!r}")
-    start, end = float(match.group(1)), float(match.group(2))
-    if end <= start:
-        raise ValueError("--cut end must be after its start")
-    return start, end
-
-
-def plan_trim(take: Path, cut: tuple[float, float]) -> tuple[Snap, Snap, float, float]:
-    """Snap both ends of ``A-B`` on ``take`` and check the cut, without writing anything.
-
-    Parameters
-    ----------
-    take
-        The take the operator named.
-    cut
-        ``(A, B)`` seconds on the take.
-
-    Returns
-    -------
-    tuple[Snap, Snap, float, float]
-        The first frame removed, the first frame kept after, the frame rate and the take's length.
-
-    Raises
-    ------
-    ValueError
-        When the cut is outside the take or removes all of it.
-    """
-
-    info = probe_video(take)
-    start, end = cut
-    if start < 0 or end > info.duration_seconds + 0.05:
-        raise ValueError(
-            f"--cut {start}-{end} is outside the take (0-{info.duration_seconds:.2f} s)"
-        )
-    fps, diffs = frame_differences(take)
-    first = snap_to_shot_change(start, fps=fps, diffs=diffs)
-    after = snap_to_shot_change(end, fps=fps, diffs=diffs)
-    if after.frame <= first.frame:
-        raise ValueError(
-            f"the cut snapped to nothing ({first.one_line()}; {after.one_line()})"
-        )
-    if first.frame == 0 and after.frame >= len(diffs):
-        raise ValueError("the cut removes the whole take")
-    return first, after, fps, info.duration_seconds
-
-
-def cut_frames(take: Path, out: Path, *, begin: int, stop: int, fps: float) -> Path:
-    """Remove frames ``begin`` to ``stop - 1`` (and the sound under them) from ``take`` into ``out``.
-
-    Parameters
-    ----------
-    take
-        Video (never overwritten).
-    out
-        New file.
-    begin, stop
-        First frame removed and first frame kept after it, at ``fps``.
-    fps
-        The frame rate the frame numbers count at.
-
-    Returns
-    -------
-    Path
-        ``out``.
-
-    Raises
-    ------
-    FileExistsError
-        When ``out`` exists.
-    """
-
-    if out.exists():
-        raise FileExistsError(f"{out} exists; trim never overwrites")
-    info = probe_video(take)
-    picture, cover = video_streams(take)
-    t_begin, t_stop = begin / fps, stop / fps
-    video = ["-map", f"0:v:{picture}",
-             "-filter:v:0", f"select='not(between(n\\,{begin}\\,{stop - 1}))',setpts=N/FRAME_RATE/TB",
-             "-r:v:0", f"{fps:g}", "-c:v", "libx264", "-crf", "16", "-preset", "medium", "-pix_fmt", "yuv420p"]  # fmt: skip
-    audio = (
-        ["-map", "0:a:0", "-af", f"aselect='not(gte(t\\,{t_begin:.6f})*lt(t\\,{t_stop:.6f}))',asetpts=N/SR/TB",
-         "-c:a", "aac", "-b:a", "192k"]
-        if info.has_audio
-        else ["-an"]
-    )  # fmt: skip
-    out.parent.mkdir(parents=True, exist_ok=True)
-    # An older file's attached cover (finish embedded one before 23 Oct 2026) is copied across as it was.
-    run_ffmpeg(["-i", str(take), *video, *audio, *keep_cover_args(cover), str(out)])
-    return out
-
-
-def trim_take(take: Path, cut: tuple[float, float], out: Path) -> TrimResult:
-    """Cut ``A-B`` out of a take on real shot changes, frame-accurately, into a new file.
-
-    Parameters
-    ----------
-    take
-        The take (never overwritten).
-    cut
-        ``(A, B)`` seconds on the take.
-    out
-        New file.
-
-    Returns
-    -------
-    TrimResult
-        Both snapped ends, the removed length and the output.
-
-    Raises
-    ------
-    ValueError
-        When the cut is outside the take or removes all of it.
-    FileExistsError
-        When ``out`` exists.
-    """
-
-    first, after, fps, before = plan_trim(take, cut)
-    cut_frames(take, out, begin=first.frame, stop=after.frame, fps=fps)
-    return TrimResult(
-        source=take,
-        output=out,
-        start=first,
-        end=after,
-        fps=fps,
-        duration_before=before,
-    )
-
-
-def shift_time(value: float, start: float, end: float) -> float | None:
-    """Where a time on the old file lands after ``start-end`` is cut; ``None`` inside the cut.
-
-    Parameters
-    ----------
-    value
-        Seconds on the old file.
-    start, end
-        The cut.
-
-    Returns
-    -------
-    float | None
-        Seconds on the new file.
-    """
-
-    if value < start:
-        return value
-    if value >= end:
-        return round(value - (end - start), 3)
-    return None
-
-
-def shift_timed_items(
-    items: list[dict[str, Any]], start: float, end: float
-) -> tuple[list[dict[str, Any]], list[str]]:
-    """Shift ``[{start, end?, ...}]`` (captions, cues) for a cut; drop what was inside it.
-
-    Parameters
-    ----------
-    items
-        Timed objects.
-    start, end
-        The cut on the old file.
-
-    Returns
-    -------
-    tuple[list[dict[str, Any]], list[str]]
-        The shifted items and one note per item dropped or clipped.
-    """
-
-    kept: list[dict[str, Any]] = []
-    notes: list[str] = []
-    for number, item in enumerate(items, start=1):
-        begin = float(item["start"])
-        finish = float(item["end"]) if item.get("end") is not None else None
-        new_begin = shift_time(begin, start, end)
-        new_finish = shift_time(finish, start, end) if finish is not None else None
-        moved = dict(item)
-        if new_begin is None:
-            if finish is None or finish <= end:
-                notes.append(
-                    f"item {number} ({begin:.2f}s) was inside the cut: dropped"
-                )
-                continue
-            new_begin = start
-            notes.append(
-                f"item {number} started inside the cut: now starts at the cut ({start:.3f}s)"
-            )
-        if finish is not None and new_finish is None:
-            new_finish = start
-            notes.append(
-                f"item {number} ran into the cut: now ends at the cut ({start:.3f}s)"
-            )
-        moved["start"] = new_begin
-        if finish is not None:
-            moved["end"] = new_finish
-        kept.append(moved)
-    return kept, notes
-
-
-def shift_json_file(path: Path, start: float, end: float) -> tuple[Path, list[str]]:
-    """Write a shifted copy of a cues or captions JSON list beside it (``<stem>-trim-vN.json``).
-
-    Parameters
-    ----------
-    path
-        JSON list of objects with ``start`` (and optional ``end``).
-    start, end
-        The cut on the old file.
-
-    Returns
-    -------
-    tuple[Path, list[str]]
-        The new file and the notes.
-
-    Raises
-    ------
-    ValueError
-        When the file is not a list of timed objects.
-    """
-
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, list) or not all(
-        isinstance(item, dict) and "start" in item for item in payload
-    ):
-        raise ValueError(f"{path} must be a JSON list of objects with a start")
-    shifted, notes = shift_timed_items(payload, start, end)
-    stem = re.sub(r"-v\d+$", "", path.stem)
-    out = next_versioned_path(path.parent, f"{stem}-trim", ".json")
-    out.write_text(
-        json.dumps(shifted, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
-    return out, notes
 
 
 # ================================================================================================
@@ -932,17 +518,13 @@ def soften_seams(
 
 
 # ================================================================================================
-# blur
+# boxes
 # ================================================================================================
-
-#: Gaussian sigma of the blur (pixels of the take): what hid garbled signs on Hanakaze ep 4 / ep 6.
-BLUR_SIGMA = 20.0
-_BOX = re.compile(r"^\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*$")
 
 
 @dataclass(frozen=True)
 class BlurBox:
-    """One rectangle to blur, in pixels of the take (``x``, ``y`` = top-left corner)."""
+    """One rectangle of the picture in pixels of the take (``x``, ``y`` = top-left corner): a prop-text box or a zoom crop."""
 
     x: int
     y: int
@@ -958,174 +540,6 @@ class BlurBox:
         """``x,y,w,h`` as the operator typed it."""
 
         return f"{self.x},{self.y},{self.w},{self.h}"
-
-
-def parse_box(text: str) -> BlurBox:
-    """Read ``x,y,w,h`` (whole pixels) into a :class:`BlurBox`.
-
-    Parameters
-    ----------
-    text
-        ``--box`` value, e.g. ``120,340,260,90``.
-
-    Returns
-    -------
-    BlurBox
-        The box.
-
-    Raises
-    ------
-    ValueError
-        When it is not four whole numbers or the width or height is 0.
-    """
-
-    match = _BOX.match(text)
-    if not match:
-        raise ValueError(
-            f"--box {text!r}: expected x,y,w,h in whole pixels of the take, e.g. 120,340,260,90"
-        )
-    box = BlurBox(*(int(value) for value in match.groups()))
-    if box.w <= 0 or box.h <= 0:
-        raise ValueError(f"--box {text!r}: width and height must be more than 0")
-    return box
-
-
-def _even_box(box: BlurBox, width: int, height: int) -> BlurBox:
-    """Grow ``box`` outward to even edges (4:2:0 chroma), never past the frame."""
-
-    x0, y0 = box.x - box.x % 2, box.y - box.y % 2
-    x1 = min(width, box.x + box.w + (box.x + box.w) % 2)
-    y1 = min(height, box.y + box.h + (box.y + box.h) % 2)
-    return BlurBox(x0, y0, x1 - x0, y1 - y0)
-
-
-@dataclass(frozen=True)
-class BlurResult:
-    """What :func:`blur_boxes` wrote."""
-
-    output: Path
-    boxes: tuple[BlurBox, ...]
-    start_seconds: float
-    end_seconds: float
-    strength: float
-    feather: int
-
-    def one_line(self) -> str:
-        """Report line."""
-
-        boxes = " ".join(box.label() for box in self.boxes)
-        edge = (
-            f", feathered {self.feather} px outside each box"
-            if self.feather
-            else ", hard edge"
-        )
-        return (
-            f"blurred {len(self.boxes)} box(es) [{boxes}] {self.start_seconds:.2f}-{self.end_seconds:.2f}s "
-            f"(sigma {self.strength:g}{edge}) -> {self.output.name}; length and sound unchanged"
-        )
-
-
-def blur_boxes(take: Path, out: Path, boxes: tuple[BlurBox, ...], *, start: float, end: float,
-               strength: float = BLUR_SIGMA, feather: int = 0) -> BlurResult:  # fmt: skip
-    """Blur rectangles of the picture between ``start`` and ``end`` seconds. The audio is copied.
-
-    Each box is cropped from the picture, Gaussian-blurred (``gblur``) and laid
-    back over itself with ``overlay`` enabled only inside the window, so the
-    take keeps its length, its frame count and its sound. The box is fully
-    blurred to its edge. ``feather`` adds a soft ramp OUTSIDE the box (the blur
-    fades out over that many pixels), so the box itself stays as obscured as
-    with the hard edge: a feather that eats into the box leaves text readable.
-
-    Parameters
-    ----------
-    take
-        Video.
-    out
-        New file.
-    boxes
-        Rectangles in pixels of the take; each must lie inside the frame.
-        Edges are grown outward to even pixels (4:2:0 chroma).
-    start, end
-        Seconds into the take: the blur shows from ``start`` to ``end``.
-    strength
-        Gaussian sigma in pixels (default 20).
-    feather
-        Pixels of soft edge outside each box (0 = hard edge, the default).
-
-    Returns
-    -------
-    BlurResult
-        The file, the boxes as blurred, and the window.
-
-    Raises
-    ------
-    ValueError
-        When there is no box, a box runs outside the frame, the window is empty
-        or outside the take, or ``strength`` / ``feather`` is out of range.
-    FileExistsError
-        When ``out`` exists.
-    """
-
-    if not boxes:
-        raise ValueError("blur needs at least one --box")
-    if not 0 < strength <= 200:
-        raise ValueError("--strength (blur sigma) must be within 0-200")
-    if feather < 0:
-        raise ValueError("--feather must be 0 or more pixels")
-    info = probe_video(take)
-    width, height, total = info.width, info.height, info.duration_seconds
-    for box in boxes:
-        if box.x < 0 or box.y < 0 or box.x + box.w > width or box.y + box.h > height:
-            raise ValueError(
-                f"--box {box.label()} runs outside the {width}x{height} frame "
-                f"(x+w must be <= {width}, y+h <= {height})"
-            )
-    if start < 0 or end <= start:
-        raise ValueError(
-            f"--from {start:g} / --to {end:g}: the window must start at 0 or later and end after it starts"
-        )
-    if start >= total:
-        raise ValueError(
-            f"--from {start:.2f}s is past the end of the {total:.2f}s take"
-        )
-    end = min(end, total)
-    if out.exists():
-        raise FileExistsError(f"{out} exists; blur never overwrites")
-    snapped = tuple(_even_box(box, width, height) for box in boxes)
-    picture, cover = video_streams(take)
-    labels = [f"c{index}" for index in range(len(snapped))]
-    graph = [
-        f"[0:v:{picture}]format=yuv420p,split={len(snapped) + 1}[base]{''.join(f'[{x}]' for x in labels)}"
-    ]
-    last = "base"
-    window = f"between(t,{start:.4f},{end:.4f})"
-    for index, box in enumerate(snapped):
-        pad = feather + feather % 2
-        x0, y0 = max(0, box.x - pad), max(0, box.y - pad)
-        x1, y1 = min(width, box.x + box.w + pad), min(height, box.y + box.h + pad)
-        chain = f"[c{index}]crop={x1 - x0}:{y1 - y0}:{x0}:{y0},gblur=sigma={strength:g}"
-        if feather:
-            # Alpha 255 on the box, ramping to 0 over `feather` px outside it (never inside).
-            left, top = box.x - x0, box.y - y0
-            right, bottom = left + box.w - 1, top + box.h - 1
-            dx = f"max(max({left}-X,0),max(X-{right},0))"
-            dy = f"max(max({top}-Y,0),max(Y-{bottom},0))"
-            chain += (
-                f",format=yuva444p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)'"
-                f":a='255*clip(1-max({dx},{dy})/{feather},0,1)'"
-            )
-        graph.append(f"{chain}[b{index}]")
-        graph.append(f"[{last}][b{index}]overlay={x0}:{y0}:enable='{window}'[v{index}]")
-        last = f"v{index}"
-    args = ["-i", str(take), "-filter_complex", ";".join(graph), "-map", f"[{last}]"]
-    if info.has_audio:
-        args += ["-map", "0:a", "-c:a", "copy"]
-    args += ["-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p"]
-    args += [*keep_cover_args(cover), "-t", f"{total:.3f}", str(out)]
-    out.parent.mkdir(parents=True, exist_ok=True)
-    run_ffmpeg(args)
-    return BlurResult(output=out, boxes=snapped, start_seconds=start, end_seconds=end,
-                      strength=strength, feather=feather)  # fmt: skip
 
 
 # ================================================================================================

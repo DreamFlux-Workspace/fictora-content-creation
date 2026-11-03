@@ -158,7 +158,7 @@ Then watch the file in `takes/`. A take that will be re-filmed gets no `finish`,
 
 Salvage first (Gallery Heiress review, 12 Oct 2026). Before any re-film:
 
-- [ ] The free edits were offered to the producer: `trim --cut` a short mistake (on screen about 0.5 s or less is always a cut), the trim handles for an end, `tempo` on one shot, `zoom` (punch-in) for a jump cut or a stray element at the edge, `join --take-file` in the right order for takes out of order
+- [ ] The free edits were offered to the producer: `trim --episode N --take tK --cut A-B` a short mistake (a take edit on the server) (on screen about 0.5 s or less is always a cut), the trim handles for an end, `tempo` on one shot, `zoom` (punch-in) for a jump cut or a stray element at the edge, `join --take-file` in the right order for takes out of order
 - [ ] Re-film only when none hides the fault (a smear or melt on a face, the wrong person throughout, a spoken line wrong on a model-voice take), or the producer saw the free edit and turned it down
 - [ ] A decent take that is still re-filmed is on the reuse list (`keep-take --note "…"`)
 

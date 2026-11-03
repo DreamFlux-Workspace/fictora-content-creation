@@ -1,4 +1,4 @@
-"""Local edit tools on tiny synthetic takes (real ffmpeg): deboard, trim, freeze, tempo, soften."""
+"""Local edit tools on tiny synthetic takes (real ffmpeg): deboard, freeze, tempo, soften."""
 
 from __future__ import annotations
 
@@ -19,10 +19,7 @@ from creation.post.edit import (
     change_tempo,
     freeze_frame,
     measure_cuts,
-    shift_timed_items,
-    snap_to_shot_change,
     soften_seams,
-    trim_take,
 )
 from creation.post.finish import run_finish
 from creation.post.media import count_frames, decode_frames, media_duration
@@ -235,142 +232,47 @@ def test_finish_no_deboard_keeps_the_board_frames(post_desk: Path) -> None:
 
 
 @needs_ffmpeg
-def test_trim_snaps_the_cut_to_the_shot_change_and_prints_the_shift(
-    post_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    takes = post_desk / "ep01" / "takes"
-    finished = _cut_take(takes / "take-ep01-t1-sokii-v1.mp4")
-    cues = post_desk / "ep01" / "cues-v1.json"
-    cues.write_text(
-        json.dumps(
-            [{"start": 0.5, "end": 1.0}, {"start": 1.8}, {"start": 2.75, "end": 2.9}]
-        )
-    )
-
-    code = main(["trim", "--desk", str(post_desk), "--take-file", str(finished), "--cut", "1.46-2.5",
-                 "--cues-json", str(cues)])  # fmt: skip
-
-    assert code == 0
-    printed = capsys.readouterr().out
-    assert "1.460 s -> 1.500 s (frame 36, shot change)" in printed, printed
-    out = takes / "take-ep01-t1-trim-v1.mp4"
-    assert count_frames(out) == 72 - 24
-    before, after = _frames(finished), _frames(out)
-    assert np.abs(after[35] - before[35]).mean() < 4, "the blue shot runs to the cut"
-    assert np.abs(after[36] - before[60]).mean() < 4, (
-        "the first frame after the cut is the kept frame 60"
-    )
-    shifted = json.loads((post_desk / "ep01" / "cues-trim-v1.json").read_text())
-    assert shifted == [{"start": 0.5, "end": 1.0}, {"start": 1.75, "end": 1.9}]
-
-
-@needs_ffmpeg
-def test_trimming_take_two_writes_a_take_two_file(post_desk: Path) -> None:
-    """--take defaulted to t1, so a trimmed take 2 was written as take-ep01-t1-trim."""
+def test_editing_take_two_writes_a_take_two_file(post_desk: Path) -> None:
+    """--take defaulted to t1, so an edit of take 2 was written as take-ep01-t1-<step>."""
 
     takes = post_desk / "ep01" / "takes"
     finished = _cut_take(takes / "take-ep01-t2-sokii-v1.mp4")
 
-    assert (
-        main(
-            [
-                "trim",
-                "--desk",
-                str(post_desk),
-                "--take-file",
-                str(finished),
-                "--cut",
-                "1.46-2.5",
-            ]
-        )
-        == 0
-    )
+    assert main(["freeze", "--desk", str(post_desk), "--take-file", str(finished),
+                 "--at", "0.5", "--hold", "0.5"]) == 0  # fmt: skip
 
-    assert (takes / "take-ep01-t2-trim-v1.mp4").is_file()
-    assert not list(takes.glob("take-ep01-t1-trim-*.mp4"))
+    assert (takes / "take-ep01-t2-freeze-v1.mp4").is_file()
+    assert not list(takes.glob("take-ep01-t1-freeze-*.mp4"))
 
 
 @needs_ffmpeg
-def test_trimming_episode_three_writes_under_episode_three(post_desk: Path) -> None:
-    """--episode defaulted to 1, so a trimmed episode 3 was written into ep01."""
+def test_editing_episode_three_writes_under_episode_three(post_desk: Path) -> None:
+    """--episode defaulted to 1, so an edit of episode 3 was written into ep01."""
 
     takes = post_desk / "ep03" / "takes"
     finished = _cut_take(takes / "take-ep03-t1-sokii-v1.mp4")
 
-    assert (
-        main(
-            [
-                "trim",
-                "--desk",
-                str(post_desk),
-                "--take-file",
-                str(finished),
-                "--cut",
-                "1.46-2.5",
-            ]
-        )
-        == 0
-    )
+    assert main(["freeze", "--desk", str(post_desk), "--take-file", str(finished),
+                 "--at", "0.5", "--hold", "0.5"]) == 0  # fmt: skip
 
-    assert (takes / "take-ep03-t1-trim-v1.mp4").is_file()
-    assert not list((post_desk / "ep01" / "takes").glob("*trim*"))
+    assert (takes / "take-ep03-t1-freeze-v1.mp4").is_file()
+    assert not list((post_desk / "ep01" / "takes").glob("*freeze*"))
 
 
 @needs_ffmpeg
-def test_trim_refuses_an_episode_flag_that_disagrees_with_the_file(
+def test_an_edit_refuses_an_episode_flag_that_disagrees_with_the_file(
     post_desk: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     takes = post_desk / "ep03" / "takes"
     finished = _cut_take(takes / "take-ep03-t1-sokii-v1.mp4")
 
-    code = main(
-        [
-            "trim",
-            "--desk",
-            str(post_desk),
-            "--episode",
-            "1",
-            "--take-file",
-            str(finished),
-            "--cut",
-            "0.2-0.5",
-        ]
-    )
+    code = main(["freeze", "--desk", str(post_desk), "--episode", "1", "--take-file", str(finished),
+                 "--at", "0.5", "--hold", "0.5"])  # fmt: skip
 
     assert code == 2
     assert "episode 3" in capsys.readouterr().err
-    assert not (takes / "take-ep03-t1-trim-v1.mp4").exists()
-    assert not list((post_desk / "ep01" / "takes").glob("*trim*"))
-
-
-def test_snap_keeps_the_nearest_frame_when_no_shot_change_is_near() -> None:
-    diffs = np.array([0.0] + [2.0] * 40 + [100.0] + [2.0] * 30)
-    assert snap_to_shot_change(1.0, fps=24.0, diffs=diffs).frame == 24
-    snapped = snap_to_shot_change(1.66, fps=24.0, diffs=diffs)
-    assert (snapped.frame, snapped.snapped) == (41, True)
-
-
-def test_shift_timed_items_clips_what_runs_into_the_cut() -> None:
-    kept, notes = shift_timed_items(
-        [{"start": 1.0, "end": 2.0}, {"start": 2.2, "end": 3.5}], 1.5, 3.0
-    )
-    assert kept == [{"start": 1.0, "end": 1.5}, {"start": 1.5, "end": 2.0}]
-    assert len(notes) == 2
-
-
-@needs_ffmpeg
-def test_trim_refuses_the_raw_take_and_a_cut_outside_the_take(
-    post_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    takes = post_desk / "ep01" / "takes"
-    raw = _cut_take(takes / "take-ep01-t1-raw-v1.mp4")
-    before = {p.name for p in takes.glob("*.mp4")}
-
-    assert main(["trim", "--desk", str(post_desk), "--cut", "1.0-2.0"]) == 2
-    assert "finish the raw take first" in capsys.readouterr().err
-    with pytest.raises(ValueError, match="outside the take"):
-        trim_take(raw, (1.0, 9.0), takes / "x.mp4")
-    assert _no_new_mp4(takes, before)
+    assert not (takes / "take-ep03-t1-freeze-v1.mp4").exists()
+    assert not list((post_desk / "ep01" / "takes").glob("*freeze*"))
 
 
 # ================================================================================================
@@ -584,7 +486,6 @@ def _covered_take(takes: Path) -> Path:
 @pytest.mark.parametrize(
     ("command", "flags"),
     [
-        ("trim", ["--cut", "1.46-2.5"]),
         ("freeze", ["--at", "0.5", "--hold", "0.5"]),
         ("tempo", ["--factor", "0.9"]),
         ("soften", ["--cut", "1.5"]),
@@ -613,7 +514,6 @@ def test_edits_keep_the_attached_cover_and_say_so_in_the_name(
     assert cover["codec_name"] == "mjpeg"
     # The edit worked on the picture, not on the one-frame cover.
     expected = {
-        "trim": frames_before - 24,
         "freeze": frames_before,
         "soften": frames_before,
     }

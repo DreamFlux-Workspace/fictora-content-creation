@@ -57,7 +57,7 @@ FREE_FIXES: tuple[FreeFix, ...] = (
     FreeFix(
         "a short mistake mid-take (on screen about 0.5 s or less: a double, a glance, a glitch)",
         "cut it out on the shot change",
-        "fictora-produce trim --desk {desk} --take-file {file} --cut A-B",
+        "fictora-produce trim --desk {desk} --episode {episode} --take {take} --cut A-B",
     ),
     FreeFix(
         "a mistake at the start or the end of the take",

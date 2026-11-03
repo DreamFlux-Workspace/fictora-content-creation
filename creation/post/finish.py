@@ -3675,7 +3675,7 @@ def run_finish(
     result.final = current
     if text_check is not None:
         result.text_warnings = text_check.warning_lines(
-            desk=desk, episode=episode, take_id=take_id, final=current
+            desk=desk, episode=episode, take_id=take_id
         )
         result.text_warnings += sign_suggestions
     try:

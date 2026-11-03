@@ -195,7 +195,7 @@ def test_the_free_fix_block_names_every_free_edit_the_short_flaw_rule_and_the_re
     None
 ):
     text = "\n".join(free_fix_lines("D", 2, "t1", take_file="F.mp4"))
-    for command in ("trim --desk D --take-file F.mp4 --cut", "trim --desk D --episode 2 --take t1 --start",
+    for command in ("trim --desk D --episode 2 --take t1 --cut", "trim --desk D --episode 2 --take t1 --start",
                     "tempo --desk D --take-file F.mp4", "zoom --desk D --episode 2 --take t1", "join --desk D",
                     "keep-take --desk D --episode 2 --take t1"):  # fmt: skip
         assert command in text, command

@@ -287,9 +287,13 @@ def test_the_motion_hints_say_whose_timeline_and_what_sfx_adjust_really_does() -
 
     from creation.post.sfx import parse_adjustment
 
-    # Every time the server reports is on the take as filmed; trim --cut works on the finished take.
+    # Every time the server reports is on the take as filmed, and trim --cut (a take edit) takes those times.
     still = MOTION_FIXES["unplanned_still"]
-    assert "as filmed" in still and "trim start" in still and "subtract" in still
+    assert (
+        "as filmed" in still
+        and "--take tK --cut A-B" in still
+        and "subtract" not in still
+    )
     for kind in ("contact_no_spike", "contact_reaction_missing"):
         assert "as filmed" in MOTION_FIXES[kind]
     # --sfx-adjust turns a sound down or drops it; it never moves one. Each example it names parses.
