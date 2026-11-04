@@ -652,26 +652,33 @@ def test_music_price_shows_the_servers_price_and_makes_nothing(
     assert "only if they say yes, run the same cut with --new-music" in out
 
 
+#: What the server says to the kit today: new music is paid with app tokens, which the kit has not.
+NO_WALLET = (
+    "New music for an edit is paid with app tokens, so for now it can only be bought in the app. "
+    "The edit can still be made with each episode's own sound."
+)
+
+
+@pytest.mark.parametrize(
+    "reason", ["New music is not available for these shows yet.", NO_WALLET]
+)
 def test_music_not_offered_says_why_in_plain_words(
-    stand_in_api: Server, capsys: pytest.CaptureFixture[str]
+    stand_in_api: Server, capsys: pytest.CaptureFixture[str], reason: str
 ) -> None:
     stand_in_api.offer = (
         200,
         {
             "offered": False,
             "price": None,
-            "tracks": 1,
+            "tracks": 0,
             "episodes_with_music": [],
             "what_changes": "",
-            "unavailable_reason": "New music is not available for these shows yet.",
+            "unavailable_reason": reason,
         },
     )
     assert cut_command(args(episodes=["sp_a:1", "sp_b:1"], music_price=True)) == 0
     out = capsys.readouterr().out
-    assert (
-        "No new music for this edit: New music is not available for these shows yet."
-        in out
-    )
+    assert f"No new music for this edit: {reason}" in out
     assert "costs" not in out
 
 
