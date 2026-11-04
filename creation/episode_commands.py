@@ -7965,6 +7965,13 @@ def _forget_failed_film(
     )
 
 
+def refilm_recap_lines(estimate: Mapping[str, Any]) -> list[str]:
+    """The server's ``refilm_recap`` on a free estimate, printed as sent; none when it is absent (every H3 take)."""
+
+    recap = estimate.get("refilm_recap")
+    return [recap.strip()] if isinstance(recap, str) and recap.strip() else []
+
+
 def _price_film(
     desk: Path,
     state: ProductionState,
@@ -8046,6 +8053,8 @@ def _price_film(
         *warnings,
         next_take_voices_line(desk, run, spine),
         f"Film {scope}: about ${usd:.2f} ({source}){earlier}{others}.",
+        # A Wan one-take re-film: which shots it films, in the server's words (fictora-drama wan_refilm_scope).
+        *refilm_recap_lines(estimate),
         envelope_line(desk, episode=episode, next_usd=usd),
     ]
     if reason:

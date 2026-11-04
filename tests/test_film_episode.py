@@ -918,3 +918,37 @@ def test_film_on_an_older_server_prints_no_music_question(
 
     assert len(api30.posted(VIDEO)) == 1
     assert "Music for episode" not in capsys.readouterr().out
+
+
+def test_a_wan_refilm_estimate_shows_the_servers_recap_beside_the_price(
+    desk30: Path, api30: FakeApi
+) -> None:
+    _filmed_once(desk30)
+    recap = "Films shot 2 of 3 again; shots 1 and 3 stay as they are."
+    api30.routes[("POST", ESTIMATE)] = {
+        "cost_estimate": {"total_usd": "1.20", "takes": 1},
+        "refilm_recap": recap,
+    }
+
+    text = run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
+
+    lines = text.splitlines()
+    price = next(
+        i for i, line in enumerate(lines) if "only t2 of episode 2: about $1.20" in line
+    )
+    assert lines[price + 1] == recap
+    assert api30.posted(VIDEO) == []
+
+
+def test_an_estimate_without_a_recap_prints_as_before(
+    desk30: Path, api30: FakeApi
+) -> None:
+    _filmed_once(desk30)
+    api30.routes[("POST", ESTIMATE)] = {
+        "cost_estimate": {"total_usd": "1.20", "takes": 1}
+    }
+
+    text = run_film(desk30, episode=2, take_id="t2", cause=CAUSE)
+
+    assert episode_commands.refilm_recap_lines({"refilm_recap": "  "}) == []
+    assert "Films shot" not in text
