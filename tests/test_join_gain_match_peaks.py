@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import needs_ffmpeg
 
 from creation.post.join import (
     JoinPart,
@@ -52,6 +53,7 @@ def scare_parts(tmp_path: Path) -> list[JoinPart]:
     return [_part(calm, "t1"), _part(scare, "t2")]
 
 
+@needs_ffmpeg
 def test_body_loudness_leaves_out_a_short_peak(scare_parts: list[JoinPart]) -> None:
     calm, scare = (p.pre_bed for p in scare_parts)
     assert measure_loudness(scare) - measure_loudness(calm) > 6, (
@@ -62,6 +64,7 @@ def test_body_loudness_leaves_out_a_short_peak(scare_parts: list[JoinPart]) -> N
     )
 
 
+@needs_ffmpeg
 def test_body_loudness_without_peaks_is_integrated(scare_parts: list[JoinPart]) -> None:
     calm = scare_parts[0].pre_bed
     assert body_loudness(momentary_loudness(calm)) == pytest.approx(
@@ -74,6 +77,7 @@ def test_body_loudness_of_silence() -> None:
     assert body_loudness([]) == -math.inf
 
 
+@needs_ffmpeg
 def test_new_desk_does_not_duck_the_scare_take(
     tmp_path: Path, scare_parts: list[JoinPart]
 ) -> None:
@@ -83,6 +87,7 @@ def test_new_desk_does_not_duck_the_scare_take(
     assert all(abs(g) <= 0.5 for g in gains), gains
 
 
+@needs_ffmpeg
 def test_legacy_desk_still_matches_whole_take_loudness(
     tmp_path: Path, scare_parts: list[JoinPart]
 ) -> None:
@@ -93,6 +98,7 @@ def test_legacy_desk_still_matches_whole_take_loudness(
     assert gains[1] < -3, gains
 
 
+@needs_ffmpeg
 def test_long_quiet_pauses_do_not_read_as_the_body(tmp_path: Path) -> None:
     """Lines over 4 s, near-silent room tone for 6 s: the level is the lines', as R128's gate reads it."""
 

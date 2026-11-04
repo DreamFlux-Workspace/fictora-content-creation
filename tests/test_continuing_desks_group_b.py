@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import make_take
+from conftest import make_take, needs_ffmpeg
 
 from creation.captions import Span, build_line_cues
 from creation.ops.floor import init_series_desk
@@ -93,6 +93,7 @@ def test_dashes_go_on_every_episode_of_a_legacy_desk(tmp_path: Path) -> None:
         assert [c.text for c in cues] == dropped
 
 
+@needs_ffmpeg
 def test_per_word_timing_on_every_episode_of_every_desk(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
