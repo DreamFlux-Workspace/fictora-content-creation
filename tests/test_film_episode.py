@@ -44,6 +44,8 @@ def desk30(tmp_path: Path) -> Path:
         prompt="A shop at closing time.",
         preset_id="modern-romance",
         preset_version="2",
+        # An H3 desk, like every desk made before the server picked the lane (4 Nov 2026).
+        video_lane="minimax-h3",
     )
     state.spine_id = "sp1"
     state.episode_ordinal = 2
