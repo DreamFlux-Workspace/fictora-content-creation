@@ -522,13 +522,11 @@ def _run_command(args: argparse.Namespace) -> int:
                 )
                 return 2
             try:
-                if args.video_lane:
-                    resolve_video_lane(args.video_lane)
                 attach_story(
                     args.spine_id,
                     parent=args.parent,
                     series=args.series,
-                    video_lane=args.video_lane,
+                    video_lane=resolve_video_lane(args.video_lane),
                 )
             except (AttachRefused, RuntimeError) as exc:
                 print(f"Stopped: {exc}", file=sys.stderr)
@@ -546,11 +544,7 @@ def _run_command(args: argparse.Namespace) -> int:
             # Check the preset before anything lands on disk: a wrong id used to leave a
             # half-made desk that the next start refused (L-20260930-13).
             preset = resolve_preset(args.preset_id)
-            video_lane = (
-                resolve_video_lane(args.video_lane)
-                if args.video_lane
-                else DEFAULT_VIDEO_LANE
-            )
+            video_lane = resolve_video_lane(args.video_lane) or DEFAULT_VIDEO_LANE
             try:
                 desk = init_series_desk(
                     args.parent,
@@ -601,8 +595,7 @@ def _run_command(args: argparse.Namespace) -> int:
             return 0
         if args.command == "bind":
             prompt = text_or_file(args.prompt, flag="--prompt")
-            if args.video_lane:
-                resolve_video_lane(args.video_lane)
+            resolve_video_lane(args.video_lane)
             preset_id, video_lane = bound_preset_and_lane(
                 args.desk, preset_id=args.preset_id, video_lane=args.video_lane
             )

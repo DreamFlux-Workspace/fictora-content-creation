@@ -428,7 +428,7 @@ def attach_story(
             preset_version=str(spine.get("art_style_preset_version") or ""),
             video_lane=video_lane
             or str(spine.get("video_lane") or "")
-            or DEFAULT_VIDEO_LANE,  # None: nothing is sent, the server keeps the story's own
+            or DEFAULT_VIDEO_LANE,
             episode_ordinal=max(episode, 1),
             band=band,
             spine_id=spine_id,

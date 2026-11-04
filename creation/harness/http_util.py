@@ -402,7 +402,6 @@ def api_error_text(body: Any) -> str:
         # Shot clips were removed (fictora-drama #914): a board still drawn as a shot-clips grid films nothing.
         text += "\n" + SHOT_CLIPS_BOARD_FIX
     if code == VIDEO_LANE_LOCKED:
-        # One video model per story once a take is filmed: the server's message (above) says which.
         text += "\n" + VIDEO_LANE_LOCKED_FIX
     return text
 

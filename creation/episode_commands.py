@@ -5144,8 +5144,7 @@ def run_inner_voice(
         added: dict[str, Any] | None = None
         what = ""
         dropped: list[str] = []
-        voices = show_voices(run, spine) if adding and not is_legacy(desk) else None
-        if voices is not None and not voices.locked and voices.thoughts_need_locked:
+        if adding and not is_legacy(desk) and show_voices(run, spine).thoughts_wait:
             raise CommandStopped(
                 "Not added, nothing sent: this show films in the video model's own voices, and a thought is "
                 "spoken in the character's kept voice, so it could never match the voice they speak in. "
@@ -8021,7 +8020,7 @@ def _price_film(
         source += "; the deployed API cannot price one take yet"
     fresh = load_production(desk)
     fresh.remember_server_lane(state.server_lane(), label=state.video_lane_label)
-    fresh.video_lane = fresh.video_lane or state.video_lane
+    fresh.remember_story_lane(spine)
     save_production(desk, fresh)
     if take_index is not None:
         record_estimate(desk, episode=episode, take_id=take_ids[0], usd=usd)

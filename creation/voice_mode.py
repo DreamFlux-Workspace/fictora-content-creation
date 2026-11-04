@@ -91,6 +91,12 @@ class ShowVoices:
 
         return self.mode == "locked"
 
+    @property
+    def thoughts_wait(self) -> bool:
+        """Whether a thought or narration line must wait until the voices are locked."""
+
+        return not self.locked and self.thoughts_need_locked
+
     def line(self) -> str:
         """``Voices for the next take: … (why).``"""
 

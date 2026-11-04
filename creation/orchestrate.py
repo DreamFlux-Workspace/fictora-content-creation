@@ -411,8 +411,10 @@ def video_lane_refusal(lane_id: str, rows: list[dict[str, Any]] | None) -> str |
     return f"video lane {lane_id!r} is not one the server offers. Lanes you can use: {names}."
 
 
-def resolve_video_lane(lane_id: str) -> str:
+def resolve_video_lane(lane_id: str | None) -> str | None:
     """Check ``--video-lane`` against the server's lane list before anything is made.
+
+    ``None`` (no flag) is returned as is, without asking the server.
 
     Raises
     ------
@@ -420,6 +422,8 @@ def resolve_video_lane(lane_id: str) -> str:
         When the server lists lanes and this one is not servable.
     """
 
+    if not lane_id:
+        return None
     refusal = video_lane_refusal(lane_id, fetch_video_lanes())
     if refusal:
         raise RuntimeError(refusal)
@@ -853,23 +857,23 @@ def price_estimate(
             f"which is ${added:.2f}. Showing the higher, ${max(usd, added):.2f}: check it before the human says yes."
         )
         return max(usd, added), source, [warning]
-    rate = lane_rate_words(state, on=today)
     table = table_estimate_usd(state, cfg, cast_count=cast_count, takes=takes)
     server = state.server_lane()
+    fallback = getattr(cfg, "fallback_estimate_usd", None)
+    desk_fallback = (
+        f"the desk's fallback ${float(fallback):.2f} a take"
+        if fallback is not None
+        else None
+    )
     if not known_lane(state.video_lane, server=server):
-        # A model only the server can price (a lane added after this table): no local-table
-        # alarm, just say the server's price is not here and what the stand-in number is.
-        fallback = getattr(cfg, "fallback_estimate_usd", None)
-        stand_in = (
-            f"the desk's fallback ${float(fallback):.2f} a take"
-            if fallback is not None
-            else "the default model's rate"
-        )
+        # Only the server can price a lane this table does not know: no local-table alarm.
+        stand_in = desk_fallback or "the default model's rate"
         note = (
             f"The server's price for {label} is unavailable right now; ${table:.2f} is a stand-in "
             f"({stand_in}), not a quote. Run the same command again for the server's price."
         )
         return table, f"no server price yet ({label}, {seconds} s a take)", [note]
+    rate = lane_rate_words(state, on=today)
     if estimate.get("estimate_skipped"):
         why = (
             f"the server refused it: {str(estimate.get('detail') or 'no detail')[:160]}"
@@ -883,11 +887,8 @@ def price_estimate(
         "check it before the human says yes."
     ]
     if lane_take_usd(state.video_lane, seconds, on=today, server=server) is None:
-        fallback = getattr(cfg, "fallback_estimate_usd", None)
-        instead = (
-            f"the desk's fallback ${float(fallback):.2f} a take"
-            if fallback is not None
-            else f"the H3 Max Turbo rate (${video_usd_per_second(H3_MAX_TURBO_I2V_ENDPOINT, H3_RESOLUTION, on=today)}/s)"
+        instead = desk_fallback or (
+            f"the H3 Max Turbo rate (${video_usd_per_second(H3_MAX_TURBO_I2V_ENDPOINT, H3_RESOLUTION, on=today)}/s)"
         )
         warnings.append(
             f"!! {lane_label(state.video_lane, server=server)} has no verified price; priced at {instead}."

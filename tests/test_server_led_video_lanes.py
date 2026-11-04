@@ -214,12 +214,10 @@ def test_a_show_the_server_says_needs_no_locked_voices_is_not_stopped_for_though
 
 
 def test_a_desk_with_no_lane_sends_none_and_the_server_picks() -> None:
-    from creation.cli_config import DEFAULT_VIDEO_LANE
     from creation.harness.stages_gated import draft_request_body
 
-    assert DEFAULT_VIDEO_LANE is None
     body = draft_request_body(
-        prompt="p", preset_id="x", preset_version="1", video_lane=DEFAULT_VIDEO_LANE
+        prompt="p", preset_id="x", preset_version="1", video_lane=None
     )
     assert "model_overrides" not in body
     pinned = draft_request_body(

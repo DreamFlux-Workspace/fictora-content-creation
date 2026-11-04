@@ -933,7 +933,6 @@ def voices_first_refusal(
     if not voices.locked:
         names = thought_and_narration_names(spine)
         if not names or not voices.thoughts_need_locked:
-            # The server says this show's thoughts need no locked voices: nothing to stop.
             return None
         return f"Stopped before {stage}. Nothing was sent.\n" + locked_voices_needed(
             desk, names
