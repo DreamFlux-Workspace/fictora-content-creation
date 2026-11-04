@@ -1,0 +1,226 @@
+{
+  "_source": "GET /v1/jobs/{id} and /v1/jobs/{id}/take-facts on prod, 4 Nov 2026, desk 2026-11-04-last-train-to-kessel-yard (Wan 3.0, 2 takes of 3 shots); trimmed to the fields the kit reads",
+  "video_job_id": "job_video_4b37371dc9214b35b819fd86773cc951",
+  "server_cost_usd": "1.20",
+  "parent": {
+    "job_id": "job_video_4b37371dc9214b35b819fd86773cc951",
+    "status": "completed",
+    "progress": 100,
+    "depends_on": [
+      "job_video_scene_208a3d7e3e73ecd6a8ddcfda",
+      "job_video_scene_cad9aea7071fff3046ccab0a",
+      "job_video_scene_b853b032018d379455585dbb",
+      "job_video_scene_fba8f2294cbbffc96bc905c6",
+      "job_video_scene_b0c43232193f7908b82f294d",
+      "job_video_scene_836b3373a5b7a596c747783d"
+    ]
+  },
+  "children": {
+    "job_video_scene_208a3d7e3e73ecd6a8ddcfda": {
+      "job_id": "job_video_scene_208a3d7e3e73ecd6a8ddcfda",
+      "status": "completed",
+      "progress": 100,
+      "recipe_id": "drama.wan3_shot_v1",
+      "relation": {
+        "type": "episode",
+        "id": "storyboard_sequence_episode_01_set01_beat01"
+      },
+      "episode_ids": [
+        "episode_01"
+      ],
+      "result": {
+        "video": {
+          "url": "https://media.example/clip/534a35743aecfeabbb25c59ca73e9abc151e620178e2825c3ec95cf8c5678c6e.mp4"
+        }
+      }
+    },
+    "job_video_scene_cad9aea7071fff3046ccab0a": {
+      "job_id": "job_video_scene_cad9aea7071fff3046ccab0a",
+      "status": "completed",
+      "progress": 100,
+      "recipe_id": "drama.wan3_shot_v1",
+      "relation": {
+        "type": "episode",
+        "id": "storyboard_sequence_episode_01_set01_beat02"
+      },
+      "episode_ids": [
+        "episode_01"
+      ],
+      "result": {
+        "video": {
+          "url": "https://media.example/clip/f75fd879a704afc7e63f23ed9fe328b1b2ec8711f68fc8e290eb3f9c2121aa1b.mp4"
+        }
+      }
+    },
+    "job_video_scene_b853b032018d379455585dbb": {
+      "job_id": "job_video_scene_b853b032018d379455585dbb",
+      "status": "completed",
+      "progress": 100,
+      "recipe_id": "drama.wan3_shot_v1",
+      "relation": {
+        "type": "episode",
+        "id": "storyboard_sequence_episode_01_set01_beat03"
+      },
+      "episode_ids": [
+        "episode_01"
+      ],
+      "result": {
+        "video": {
+          "url": "https://media.example/clip/a97d3d46ee7b5b6ce8a82c7aad4a7a50d971a7eae919a899be14a960de970d7a.mp4"
+        }
+      }
+    },
+    "job_video_scene_fba8f2294cbbffc96bc905c6": {
+      "job_id": "job_video_scene_fba8f2294cbbffc96bc905c6",
+      "status": "completed",
+      "progress": 100,
+      "recipe_id": "drama.wan3_shot_v1",
+      "relation": {
+        "type": "episode",
+        "id": "storyboard_sequence_episode_01_set02_beat04"
+      },
+      "episode_ids": [
+        "episode_01"
+      ],
+      "result": {
+        "video": {
+          "url": "https://media.example/clip/5d7a178f4acdb7ac420607f0c50944891d2db8f541b56815620e74712a8c54be.mp4"
+        }
+      }
+    },
+    "job_video_scene_b0c43232193f7908b82f294d": {
+      "job_id": "job_video_scene_b0c43232193f7908b82f294d",
+      "status": "completed",
+      "progress": 100,
+      "recipe_id": "drama.wan3_shot_v1",
+      "relation": {
+        "type": "episode",
+        "id": "storyboard_sequence_episode_01_set02_beat05"
+      },
+      "episode_ids": [
+        "episode_01"
+      ],
+      "result": {
+        "video": {
+          "url": "https://media.example/clip/b4ff6ff1092254a0ea277760634b6a767833bf340c676a78cae3a30f65af40a2.mp4"
+        }
+      }
+    },
+    "job_video_scene_836b3373a5b7a596c747783d": {
+      "job_id": "job_video_scene_836b3373a5b7a596c747783d",
+      "status": "completed",
+      "progress": 100,
+      "recipe_id": "drama.wan3_shot_v1",
+      "relation": {
+        "type": "episode",
+        "id": "storyboard_sequence_episode_01_set02_beat06"
+      },
+      "episode_ids": [
+        "episode_01"
+      ],
+      "result": {
+        "video": {
+          "url": "https://media.example/clip/ef778d013559ebe938f074042e0335a4618bf0de8c308d71a2009674c1172210.mp4"
+        }
+      }
+    }
+  },
+  "take_facts": {
+    "job_video_scene_208a3d7e3e73ecd6a8ddcfda": {
+      "take_facts": {
+        "job_id": "job_video_scene_208a3d7e3e73ecd6a8ddcfda",
+        "endpoint_id": "kie/wan/3-0-video",
+        "lane": "kie/wan/3-0-video",
+        "media_kind": "video",
+        "resolution": "480P",
+        "duration_seconds": 5.0,
+        "reference_image_count": 4,
+        "usd": 0.2,
+        "shot_index": 1,
+        "shots_in_take": 3,
+        "shot_label": "Take 1 · shot 1 of 3",
+        "spoken_line_count": 0
+      }
+    },
+    "job_video_scene_cad9aea7071fff3046ccab0a": {
+      "take_facts": {
+        "job_id": "job_video_scene_cad9aea7071fff3046ccab0a",
+        "endpoint_id": "kie/wan/3-0-video",
+        "lane": "kie/wan/3-0-video",
+        "media_kind": "video",
+        "resolution": "480P",
+        "duration_seconds": 5.0,
+        "reference_image_count": 4,
+        "usd": 0.2,
+        "shot_index": 2,
+        "shots_in_take": 3,
+        "shot_label": "Take 1 · shot 2 of 3",
+        "spoken_line_count": 0
+      }
+    },
+    "job_video_scene_b853b032018d379455585dbb": {
+      "take_facts": {
+        "job_id": "job_video_scene_b853b032018d379455585dbb",
+        "endpoint_id": "kie/wan/3-0-video",
+        "lane": "kie/wan/3-0-video",
+        "media_kind": "video",
+        "resolution": "480P",
+        "duration_seconds": 5.0,
+        "reference_image_count": 6,
+        "usd": 0.2,
+        "shot_index": 3,
+        "shots_in_take": 3,
+        "shot_label": "Take 1 · shot 3 of 3",
+        "spoken_line_count": 0
+      }
+    },
+    "job_video_scene_fba8f2294cbbffc96bc905c6": {
+      "take_facts": {
+        "job_id": "job_video_scene_fba8f2294cbbffc96bc905c6",
+        "endpoint_id": "kie/wan/3-0-video",
+        "lane": "kie/wan/3-0-video",
+        "media_kind": "video",
+        "resolution": "480P",
+        "duration_seconds": 5.0,
+        "reference_image_count": 3,
+        "usd": 0.2,
+        "shot_index": 1,
+        "shots_in_take": 3,
+        "shot_label": "Take 2 · shot 1 of 3",
+        "spoken_line_count": 0
+      }
+    },
+    "job_video_scene_b0c43232193f7908b82f294d": {
+      "take_facts": {
+        "job_id": "job_video_scene_b0c43232193f7908b82f294d",
+        "endpoint_id": "kie/wan/3-0-video",
+        "lane": "kie/wan/3-0-video",
+        "media_kind": "video",
+        "resolution": "480P",
+        "duration_seconds": 5.0,
+        "reference_image_count": 4,
+        "usd": 0.2,
+        "shot_index": 2,
+        "shots_in_take": 3,
+        "shot_label": "Take 2 · shot 2 of 3",
+        "spoken_line_count": 0
+      }
+    },
+    "job_video_scene_836b3373a5b7a596c747783d": {
+      "take_facts": {
+        "job_id": "job_video_scene_836b3373a5b7a596c747783d",
+        "endpoint_id": "kie/wan/3-0-video",
+        "lane": "kie/wan/3-0-video",
+        "media_kind": "video",
+        "resolution": "480P",
+        "duration_seconds": 5.0,
+        "reference_image_count": 6,
+        "usd": 0.2,
+        "shot_index": 3,
+        "shots_in_take": 3,
+        "shot_label": "Take 2 · shot 3 of 3",
+        "spoken_line_count": 0
+      }
+    }
+  }
+}

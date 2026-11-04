@@ -14,6 +14,7 @@ from conftest import set_phase, turbo_take_usd
 from creation import episode_commands, orchestrate
 from creation.episode_commands import CommandStopped, run_film
 from creation.harness import stages_gated as stages
+from creation.harness.raw_video import set_index_of
 from creation.ops.floor import (
     approve_board,
     init_series_desk,
@@ -952,3 +953,81 @@ def test_an_estimate_without_a_recap_prints_as_before(
 
     assert episode_commands.refilm_recap_lines({"refilm_recap": "  "}) == []
     assert "Films shot" not in text
+
+
+# --- A Wan take is three shot clips, each filed under its take (Last Train to Kessel Yard, 4 Nov 2026) ---
+
+WAN_FILM = json.loads(
+    (Path(__file__).parent / "fixtures" / "wan_film_kessel_yard_ep01.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+
+def _wan_film_of_episode_one(api: FakeApi) -> None:
+    """The real Wan job: episode 1, two takes of three 5 s shots each, $0.20 a shot."""
+
+    video_job = WAN_FILM["video_job_id"]
+    api.routes[("POST", VIDEO)] = {"job_id": video_job}
+    api.routes[("GET", f"/v1/jobs/{video_job}")] = WAN_FILM["parent"]
+    for job_id, child in WAN_FILM["children"].items():
+        api.routes[("GET", f"/v1/jobs/{job_id}")] = child
+        api.routes[("GET", f"/v1/jobs/{job_id}/take-facts")] = WAN_FILM["take_facts"][
+            job_id
+        ]
+
+
+def test_a_wan_film_files_each_shot_under_its_take_and_books_the_servers_price(
+    desk30: Path, api30: FakeApi
+) -> None:
+    api30.routes[("POST", ESTIMATE)] = {
+        "cost_estimate": {"total_usd": WAN_FILM["server_cost_usd"], "takes": 2}
+    }
+    run_film(desk30, episode=1)
+    _wan_film_of_episode_one(api30)
+
+    text = run_film(desk30, episode=1, confirm_spend=True)
+
+    assert "Not filed" not in text
+    assert "Filmed episode 1: 2 take(s), $1.20 booked" in text
+    t1, t2 = episode_by_ordinal(load_series(desk30), 1).takes
+    assert (t1.filmed_count, t2.filmed_count) == (1, 1), (
+        "one film per take, not per shot"
+    )
+    booked = {
+        entry.job_id: (entry.take_id, entry.usd)
+        for entry in load_series(desk30).spend_log
+        if entry.job_id
+    }
+    jobs = WAN_FILM["parent"]["depends_on"]
+    assert booked == {
+        **{job: ("t1", 0.2) for job in jobs[:3]},
+        **{job: ("t2", 0.2) for job in jobs[3:]},
+    }
+    takes = sorted(
+        path.name for path in (desk30 / "ep01" / "takes").glob("take-ep01-*-raw*")
+    )
+    assert takes == [
+        f"take-ep01-{take}-shot{shot}-raw-v1.mp4"
+        for take in ("t1", "t2")
+        for shot in (1, 2, 3)
+    ]
+    api_dir = desk30 / "ep01" / "api"
+    assert len(list(api_dir.glob("take-facts-ep01-t1-v*.json"))) == 3
+    assert len(list(api_dir.glob("take-facts-ep01-t2-v*.json"))) == 3
+    assert "t2 (Take 2 · shot 3 of 3)" in text
+
+
+@pytest.mark.parametrize(
+    ("relation_id", "take"),
+    [
+        ("storyboard_sequence_episode_01_set02", 2),
+        ("storyboard_sequence_episode_01_set02_beat05", 2),
+        ("storyboard_sequence_episode_01", None),
+        ("storyboard_sequence_episode_01_set02_beat05_x", None),
+    ],
+)
+def test_a_wan_shots_scene_id_names_its_take(
+    relation_id: str, take: int | None
+) -> None:
+    assert set_index_of(relation_id) == take

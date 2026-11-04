@@ -31,7 +31,9 @@ from creation.harness.http_util import (
 )
 from creation.harness.session import DramaApiRunSession
 
-_SET_SUFFIX = re.compile(r"_set(\d+)$")
+#: A take's scene id ends ``_setNN``; a Wan shot's ends ``_setNN_beatNN`` (one shot per beat, the
+#: server's ``wan_shot_scene_id``): its take is still ``NN`` (fictora-drama ``scene_take_number``).
+_SET_SUFFIX = re.compile(r"_set(\d+)(?:_beat\d+)?$")
 _FAILED = frozenset({"failed", "cancelled"})
 
 #: Seconds between two reads of a running film (generation speed plan item 04, 30 Oct 2026).
@@ -225,7 +227,10 @@ def stuck_film_warning(
 
 
 def set_index_of(relation_id: str | None) -> int | None:
-    """Return the 1-based board (take) index from a child's ``relation.id`` (``..._set02`` -> 2)."""
+    """Return the 1-based board (take) index from a child's ``relation.id``.
+
+    ``..._set02`` -> 2; a Wan shot ``..._set02_beat05`` -> 2 (the take the shot belongs to).
+    """
 
     match = _SET_SUFFIX.search(str(relation_id or ""))
     return int(match.group(1)) if match else None
