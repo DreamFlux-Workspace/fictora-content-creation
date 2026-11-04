@@ -353,6 +353,60 @@ VIDEO_LANE_LOCKED_FIX = (
 )
 
 
+def envelope_error(body: Any) -> Mapping[str, Any] | None:
+    """The server's ``error`` object (or a FastAPI ``detail`` object), or ``None``.
+
+    Parameters
+    ----------
+    body
+        Parsed response body (or raw text).
+
+    Returns
+    -------
+    Mapping[str, Any] | None
+        The object carrying ``code`` and ``message``, when there is one.
+    """
+    if not isinstance(body, Mapping):
+        return None
+    error = body.get("error") or body.get("detail")
+    return error if isinstance(error, Mapping) else None
+
+
+def envelope_code(body: Any) -> str | None:
+    """The refusal's ``code``, or ``None`` when the body carries none.
+
+    Parameters
+    ----------
+    body
+        Parsed response body (or raw text).
+
+    Returns
+    -------
+    str | None
+        The error code.
+    """
+    error = envelope_error(body)
+    return str(error["code"]) if error and error.get("code") else None
+
+
+def older_server(status: int, body: Any) -> bool:
+    """Whether a 404 came from a server without the route (no error code) rather than a refusal.
+
+    Parameters
+    ----------
+    status
+        HTTP status.
+    body
+        Parsed response body (or raw text).
+
+    Returns
+    -------
+    bool
+        ``True`` for a bare 404.
+    """
+    return status == 404 and envelope_code(body) is None
+
+
 def api_error_text(body: Any) -> str:
     """Say what the server refused, from its error envelope, in one line.
 

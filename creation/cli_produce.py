@@ -393,15 +393,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     switch = sub.add_parser(
         "music-switch",
         help="Admins only: where episode music is on, kept on the server. status shows it and who changed it; "
-        "on turns it on for everyone; off turns it off; canary ACCOUNT_ID ... turns it on for those accounts only. "
+        "on turns it on for everyone; off turns it off; canary ENTRY ... turns it on for those entries only, where an entry is "
+        "an account id, owner:<session id> (every story that desk session owns) or spine:<story id> (one story). "
         "Every server picks a change up within half a minute. Free. Exit 0 = shown or changed; exit 2 = not.",
     )
     switch.add_argument("action", choices=("status", "on", "off", "canary"))
     switch.add_argument(
         "accounts",
         nargs="*",
-        metavar="ACCOUNT_ID",
-        help="With canary: the accounts that get music.",
+        metavar="ENTRY",
+        help="With canary: who gets music. An account id, owner:<session id> or spine:<story id>.",
     )
     switch.add_argument(
         "--as", dest="email", required=True, metavar="EMAIL", help="Your admin email."

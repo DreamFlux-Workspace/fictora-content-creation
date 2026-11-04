@@ -19,6 +19,8 @@ from typing import Any, Protocol, TextIO
 
 import httpx
 
+from creation.harness.http_util import envelope_code, older_server
+
 #: Exit code when the answer was not saved.
 NOT_SAVED = 2
 VERSION_CONFLICT = "spine_version_conflict"
@@ -40,13 +42,6 @@ def route(spine_id: str, episode_id: str) -> str:
     return f"/v1/spines/{spine_id}/episodes/{episode_id}/music-feeling"
 
 
-def _error_code(body: Any) -> str | None:
-    error = body.get("error") if isinstance(body, Mapping) else None
-    return (
-        str(error["code"]) if isinstance(error, Mapping) and error.get("code") else None
-    )
-
-
 def _error_text(status: int, body: Any) -> str:
     if isinstance(body, Mapping):
         error = body.get("error")
@@ -56,10 +51,6 @@ def _error_text(status: int, body: Any) -> str:
         if message:
             return f"HTTP {status}: {message}"
     return f"HTTP {status}: {body}"
-
-
-def _older_server(status: int, body: Any) -> bool:
-    return status == 404 and _error_code(body) is None
 
 
 def _options(view: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -188,7 +179,7 @@ def ask(
 
     path = route(spine_id, episode_id)
     status, view = run.get_optional(path)
-    if _older_server(status, view):
+    if older_server(status, view):
         print(OLDER_SERVER, file=out)
         return 0
     if status >= 400 or not isinstance(view, Mapping):
@@ -208,7 +199,7 @@ def ask(
     if (
         not isinstance(sent, str)
         and sent[0] == 409
-        and _error_code(sent[1])
+        and envelope_code(sent[1])
         in (
             VERSION_CONFLICT,
             NOT_ASKED,
@@ -223,13 +214,13 @@ def ask(
         print(f"!! not saved: {sent}.", file=out)
         return NOT_SAVED
     status, saved = sent
-    if status == 409 and _error_code(saved) == EPISODE_FINISHED:
+    if status == 409 and envelope_code(saved) == EPISODE_FINISHED:
         print(
             f"Episode {episode} is finished, so its music can't change now. Nothing was changed.",
             file=out,
         )
         return NOT_SAVED
-    if _older_server(status, saved):
+    if older_server(status, saved):
         print(OLDER_SERVER, file=out)
         return 0
     if status >= 400 or not isinstance(saved, Mapping):

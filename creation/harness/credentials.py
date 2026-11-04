@@ -13,6 +13,34 @@ DEFAULT_DRAMA_API = "https://fictora-drama-generation-prod-drama.up.railway.app"
 RAILWAY_DRAMA_SERVICE = "fictora-drama-generation"
 
 
+def env_drama_api_credentials(
+    *env_files: Path, default_base_url: str = DEFAULT_DRAMA_API
+) -> tuple[str, str]:
+    """Read the drama API base URL and service token from dotenv files and the environment only.
+
+    Parameters
+    ----------
+    *env_files
+        Dotenv paths loaded in order without overriding existing keys.
+    default_base_url
+        Base URL when ``FICTORA_DRAMA_GENERATION_API_BASE_URL`` is unset.
+
+    Returns
+    -------
+    tuple[str, str]
+        ``(base_url, service_token)``; the token is ``""`` when none is set.
+    """
+    for path in env_files:
+        load_env_file(path)
+    base_url = (
+        os.environ.get("FICTORA_DRAMA_GENERATION_API_BASE_URL", "").strip()
+        or default_base_url
+    )
+    return base_url, os.environ.get(
+        "FICTORA_DRAMA_GENERATION_SERVICE_TOKEN", ""
+    ).strip()
+
+
 def load_drama_api_credentials(
     repo_root: Path,
     *,
@@ -40,14 +68,9 @@ def load_drama_api_credentials(
     SystemExit
         When no token is available from env or Railway CLI.
     """
-    load_env_file(repo_root / ".env")
-    for path in extra_env_files:
-        load_env_file(path)
-    base_url = (
-        os.environ.get("FICTORA_DRAMA_GENERATION_API_BASE_URL", "").strip()
-        or default_base_url
+    base_url, token = env_drama_api_credentials(
+        repo_root / ".env", *extra_env_files, default_base_url=default_base_url
     )
-    token = os.environ.get("FICTORA_DRAMA_GENERATION_SERVICE_TOKEN", "").strip()
     if token:
         return base_url, token
     completed = subprocess.run(
