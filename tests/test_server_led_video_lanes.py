@@ -30,8 +30,13 @@ CFG = SimpleNamespace(clip_duration_seconds=15, fallback_estimate_usd=None)
 DAY = date(2026, 11, 4)
 
 LANES = [
-    {"lane_id": "minimax-h3", "label": "Classic", "servable": True, "default": True},
-    {"lane_id": "wan-3.0", "label": "Cinematic", "servable": True},
+    {
+        "lane_id": "minimax-h3",
+        "label": "H3 Max Turbo",
+        "servable": True,
+        "default": True,
+    },
+    {"lane_id": "wan-3.0", "label": "Wan 3.0", "servable": True},
     {"lane_id": "later", "label": "Later", "servable": False, "note": "not ready"},
 ]
 
@@ -54,7 +59,7 @@ def test_any_lane_the_server_lists_as_servable_is_accepted() -> None:
 def test_a_lane_the_server_cannot_film_is_refused_with_the_usable_ones() -> None:
     refusal = video_lane_refusal("later", LANES) or ""
     assert "not available on this server yet (not ready)" in refusal
-    assert "minimax-h3 (Classic), wan-3.0 (Cinematic)" in refusal
+    assert "minimax-h3 (H3 Max Turbo), wan-3.0 (Wan 3.0)" in refusal
     unknown = video_lane_refusal("nope", LANES) or ""
     assert "'nope' is not one the server offers" in unknown
 
@@ -82,7 +87,7 @@ def _wan_estimate(**extra: Any) -> dict[str, Any]:
 def test_the_servers_label_and_take_line_are_printed_for_any_model() -> None:
     state = _state("wan-3.0")
     estimate = _wan_estimate(
-        lane_label="Cinematic", take_line="3 shots of 5 s at $0.04/s"
+        lane_label="Wan 3.0", take_line="3 shots of 5 s at $0.04/s"
     )
     state.remember_server_lane(
         prices.server_lane(estimate), label=prices.server_lane_label(estimate)
@@ -93,22 +98,22 @@ def test_the_servers_label_and_take_line_are_printed_for_any_model() -> None:
     )
 
     assert usd == 0.60 and warnings == []
-    assert "Cinematic: 3 shots of 5 s at $0.04/s" in source
+    assert "Wan 3.0: 3 shots of 5 s at $0.04/s" in source
     assert "H3" not in source
 
 
 def test_the_servers_label_names_the_rate_when_no_take_line_is_sent() -> None:
     state = _state("wan-3.0")
-    estimate = _wan_estimate(lane_label="Cinematic")
+    estimate = _wan_estimate(lane_label="Wan 3.0")
 
     _, source, _ = price_estimate(state, CFG, estimate, cast_count=2, takes=1, on=DAY)
 
-    assert "Cinematic 480P at $0.04/s" in source
+    assert "Wan 3.0 480P at $0.04/s" in source
 
 
 def test_a_lane_the_table_does_not_know_is_quiet_without_server_dollars() -> None:
     state = _state("wan-3.0")
-    state.remember_server_lane(None, label="Cinematic")
+    state.remember_server_lane(None, label="Wan 3.0")
 
     usd, source, warnings = price_estimate(
         state,
@@ -120,10 +125,10 @@ def test_a_lane_the_table_does_not_know_is_quiet_without_server_dollars() -> Non
     )
 
     assert usd > 0
-    assert source.startswith("no server price yet (Cinematic")
+    assert source.startswith("no server price yet (Wan 3.0")
     assert len(warnings) == 1 and not warnings[0].startswith("!!")
-    assert "The server's price for Cinematic is unavailable right now" in warnings[0]
-    assert lane_rate_words(state, on=DAY) == "Cinematic (priced by the server)"
+    assert "The server's price for Wan 3.0 is unavailable right now" in warnings[0]
+    assert lane_rate_words(state, on=DAY) == "Wan 3.0 (priced by the server)"
 
 
 def test_an_h3_desk_without_server_dollars_still_warns_loudly() -> None:
@@ -140,22 +145,22 @@ def test_the_server_label_is_saved_only_when_sent(tmp_path: Path) -> None:
     save_production(tmp_path, state)
     assert "video_lane_label" not in (tmp_path / "production.json").read_text()
 
-    state.remember_server_lane(None, label="Cinematic")
+    state.remember_server_lane(None, label="Wan 3.0")
     save_production(tmp_path, state)
-    assert load_production(tmp_path).video_lane_label == "Cinematic"
+    assert load_production(tmp_path).video_lane_label == "Wan 3.0"
 
 
 def test_a_locked_lane_refusal_keeps_the_servers_words_and_says_what_to_do() -> None:
     body = {
         "error": {
             "code": "video_lane_locked",
-            "message": "This story was filmed on Classic; it keeps that model.",
+            "message": "This story was filmed on H3 Max Turbo; it keeps that model.",
         }
     }
 
     text = api_error_text(body)
 
-    assert "This story was filmed on Classic; it keeps that model." in text
+    assert "This story was filmed on H3 Max Turbo; it keeps that model." in text
     assert VIDEO_LANE_LOCKED_FIX in text
 
 
