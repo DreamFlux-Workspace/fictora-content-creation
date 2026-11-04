@@ -80,6 +80,7 @@ def test_film_without_the_flag_sends_the_body_as_before(
         "reroll_take_index": 2,
         "seed_attempt": 2,
         "api_captions": True,
+        "video_lane": "minimax-h3",  # desk30's lane
     }
     plain = stages.video_request_body(api30, **built)
     trial = stages.video_request_body(api30, **built, single_frame_start=True)
