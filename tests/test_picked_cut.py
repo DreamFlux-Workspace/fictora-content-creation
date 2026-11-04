@@ -310,7 +310,7 @@ def test_older_server_refuses_clearly_on_list_and_on_post(
     assert cut_command(args(episodes=["a:1", "b:1"])) == 5
     err = capsys.readouterr().err.splitlines()
     expected = "NOT DONE: the server can't make a cut from picked episodes yet. Tell the core team; nothing was made."
-    assert err == [expected, NEWEST_VERSION_NOTICE, expected]
+    assert err == [expected, expected]
 
 
 def test_not_delivered_409_names_the_episode(
@@ -539,9 +539,7 @@ def test_no_files_named_asks_nothing_and_sends_no_video_url(
     assert not any(s[1].endswith("/uploads") or "upload" in s[1] for s in server.seen)
 
 
-def test_no_files_named_tells_the_creator_once_before_anything_else(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_no_files_named_tells_the_creator_once(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "builtins.input", lambda *a: pytest.fail("a question was asked")
     )
@@ -557,7 +555,11 @@ def test_no_files_named_tells_the_creator_once_before_anything_else(
 
     assert said == [NEWEST_VERSION_NOTICE]
     assert NEWEST_VERSION_NOTICE.startswith(
-        "Made from the newest version of each episode the server has."
+        "Heads up: I'll make this edit from the episodes saved on our server."
+    )
+    assert (
+        "30 Oct" not in NEWEST_VERSION_NOTICE
+        and "newest version" not in NEWEST_VERSION_NOTICE
     )
 
 

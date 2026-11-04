@@ -49,10 +49,9 @@ VIDEO_SUFFIXES = frozenset({".mp4", ".m4v"})
 #: Waits before asking again when a poll hits a busy answer or a dropped connection.
 POLL_RETRY_WAITS = (2.0, 4.0, 8.0, 15.0)
 NEWEST_VERSION_NOTICE = (
-    "Made from the newest version of each episode the server has. Episodes you finished on your laptop before "
-    "30 Oct were never sent to the server, so their captions, sound and mark will be the server's, not exactly "
-    "the copies you posted. To use your own finished files instead, name them (for example: episode 1 = the file "
-    "in your Downloads), and they'll be uploaded and used as they are."
+    "Heads up: I'll make this edit from the episodes saved on our server. If you made your own final versions "
+    "on your computer, with your own captions or sound, those won't be used unless you send them to me. "
+    "To use them, just tell me which file goes with which episode."
 )
 OLD_SERVER = (
     "NOT DONE: the server can't make a cut from picked episodes yet. "
@@ -329,8 +328,6 @@ def run_cut(
     for p in picks:
         if p.file is not None:
             check_video(str(p.file))
-    if any(p.file is None for p in picks):
-        progress(NEWEST_VERSION_NOTICE)
     client, base, headers = _client(transport, api)
     with client:
         if any(p.file for p in picks):
@@ -362,6 +359,8 @@ def run_cut(
             raise CutStop(
                 "NOT DONE: the server did not name the cut. Tell the core team; nothing was posted."
             )
+        if any(p.file is None for p in picks):
+            progress(NEWEST_VERSION_NOTICE)
         url = base + CUT_ROUTE.format(series_cut_id=cut_id)
         deadline, said = clock() + wait_seconds, clock()
         while True:
