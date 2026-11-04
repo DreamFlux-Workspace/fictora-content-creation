@@ -6,13 +6,11 @@ cut on this laptop, no state is kept, and the files stay on the server (links ar
 show's own series cut does).
 
 New music (founder, 4 Nov 2026): the edit adds no music by default. ``--music-price`` prints the
-server's question with its price ("New music for this edit costs $0.08, paid by Sokii. Make it?
-(yes/no)": the kit asks first, Sokii pays, no tokens) and makes and charges nothing. It sends the
-picks exactly as the cut will (the human's own files are uploaded first, as for the cut), so the
-price is for the edit that will be made. ``--new-music --music-quote Q`` passes the human's yes with
-the price they said yes to (``Q`` is printed with the price); when the server's price changed since,
-nothing is made and the new price is printed to ask again. The server prices it, decides what it
-plays under, writes and lays it, and keeps the purchase; the kit only shows and asks.
+server's question ("New music for this edit costs $0.08, paid by Sokii. Make it? (yes/no)": the kit
+asks first, Sokii pays) and makes nothing. It sends the picks exactly as the cut will (the human's
+own files are uploaded first, as for the cut). ``--new-music`` passes the human's yes. Sokii pays for
+every edit's music (5 Nov 2026: nothing is charged to anyone), so no price goes back with the yes.
+The server decides what it plays under, writes and lays it; the kit only shows and asks.
 """
 
 from __future__ import annotations
@@ -249,30 +247,6 @@ def _error(body: Any) -> Mapping[str, Any]:
     return body if isinstance(body, dict) else {}
 
 
-def quote_arg(offer: Mapping[str, Any]) -> str:
-    """The ``--music-quote`` value for an offer: its tokens, dollars and tracks, as the server sent them."""
-
-    price = offer.get("price") or {}
-    return f"{price.get('tokens')}:{price.get('usd')}:{offer.get('tracks')}"
-
-
-def parse_quote(raw: str) -> dict[str, Any]:
-    """``TOKENS:USD:TRACKS`` (as ``--music-price`` prints it) as the server takes it, or a plain stop."""
-
-    try:
-        tokens, usd, tracks = raw.split(":")
-        return {
-            "price": {"tokens": int(tokens), "usd": float(usd)},
-            "tracks": int(tracks),
-        }
-    except ValueError as exc:
-        raise CutStop(
-            f'Stopped: "{raw}" is not the price --music-price printed (it looks like 16:0.08:1). '
-            "Run --music-price, ask the human, then pass what it printed. Nothing was made.",
-            2,
-        ) from exc
-
-
 def _check(response: httpx.Response, *, what: str) -> Any:
     """The JSON body of an answer, or the plain stop for a server that cannot do this."""
 
@@ -306,16 +280,6 @@ def _check(response: httpx.Response, *, what: str) -> Any:
             )
         )
     error = _error(body)
-    if (
-        response.status_code == 409
-        and error.get("code") == "series_cut_music_price_changed"
-    ):
-        new = error.get("details") or {}
-        raise CutStop(
-            f"NOT DONE: the price of new music for this edit changed. Nothing was made or charged. Ask the human "
-            f"again: {new.get('question') or 'run --music-price for the new price.'} Only if they say yes, run the "
-            f"same cut with --new-music --music-quote {quote_arg(new)}."
-        )
     if (
         response.status_code == 409
         and error.get("code") == "series_cut_music_unavailable"
@@ -377,12 +341,11 @@ def run_cut(
     ),
     putter: Putter | None = None,
     new_music: bool = False,
-    music_quote: Mapping[str, Any] | None = None,
 ) -> list[str]:
     """Ask the server for one cut from the picked episodes and return the lines to print.
 
-    ``new_music`` passes the human's yes to the price ``--music-price`` showed (``music_quote``, sent
-    back as it was shown); the server makes another cut of the same picks with new music laid under it.
+    ``new_music`` passes the human's yes to the question ``--music-price`` showed; the server makes
+    another cut of the same picks with new music laid under it.
 
     Raises
     ------
@@ -397,7 +360,6 @@ def run_cut(
         body: dict[str, Any] = {"episodes": entries, "title": title}
         if new_music:
             body["new_music"] = True
-            body["music_quote"] = dict(music_quote or {})
         try:
             made = _check(
                 client.post(base + CUTS_ROUTE, headers=headers, json=body),
@@ -484,7 +446,7 @@ def music_price(
     transport: httpx.BaseTransport | None = None,
     putter: Putter | None = None,
 ) -> list[str]:
-    """The server's question and price for new music on this edit; nothing is made or charged.
+    """The server's question for new music on this edit; nothing is made or charged.
 
     The picks go exactly as the cut sends them: a pick the human gave a file for is uploaded first (once
     per file, as the cut does), so the price is the price of the edit that will be made.
@@ -519,11 +481,7 @@ def music_offer_lines(offer: Mapping[str, Any]) -> list[str]:
     if not offer.get("offered"):
         reason = str(offer.get("unavailable_reason") or "the server did not say why")
         return [f"No new music for this edit: {reason}", "Nothing was made or charged."]
-    tokens = (offer.get("price") or {}).get("tokens")
-    question = str(
-        offer.get("question") or f"New music for this edit costs {tokens} tokens."
-    )
-    lines = [question]
+    lines = [str(offer.get("question") or "Add new music written for this edit?")]
     if offer.get("what_changes"):
         lines.append(str(offer["what_changes"]))
     under = [str(n) for n in offer.get("episodes_with_music") or []]
@@ -533,7 +491,7 @@ def music_offer_lines(offer: Mapping[str, Any]) -> list[str]:
         )
     lines.append(
         "Nothing was made or charged. Ask the human this question; only if they say yes, "
-        f"run the same cut with --new-music --music-quote {quote_arg(offer)}."
+        "run the same cut with --new-music."
     )
     return lines
 
@@ -658,10 +616,8 @@ def _music_lines(music: Any) -> list[str]:
     if not isinstance(music, dict):
         return []
     message = str(music.get("message") or "")
-    if music.get("state") == "failed" and music.get("refund_eligible"):
-        return [
-            f"New music: {message or 'it could not be made; the edit has no added music.'}"
-        ]
+    if not message and music.get("state") == "failed":
+        message = "it could not be made; the edit has no added music."
     return [f"New music: {message}"] if message else []
 
 
@@ -675,11 +631,10 @@ def cut_command(args: Any) -> int:
             or args.wait is not None
             or args.music_price
             or args.new_music
-            or getattr(args, "music_quote", None)
         ):
             raise CutStop(
-                "Usage: cut --list takes only --show (and --json); drop --file, --title, --wait, --music-price, "
-                "--new-music and --music-quote. Nothing was made.",
+                "Usage: cut --list takes only --show (and --json); drop --file, --title, --wait, --music-price "
+                "and --new-music. Nothing was made.",
                 2,
             )
         if args.list:
@@ -722,24 +677,12 @@ def cut_command(args: Any) -> int:
                     2,
                 )
             return _emit(args, True, music_price(picks, title=args.title))
-        raw_quote = getattr(args, "music_quote", None)
-        if args.new_music and not raw_quote:
-            raise CutStop(
-                "Stopped: --new-music needs --music-quote with the price the human said yes to (run --music-price "
-                "first; it prints it). Nothing was made.",
-                2,
-            )
-        if raw_quote and not args.new_music:
-            raise CutStop(
-                "Stopped: --music-quote goes with --new-music. Nothing was made.", 2
-            )
         wait = args.wait if args.wait is not None else DEFAULT_WAIT_SECONDS
         lines = run_cut(
             picks,
             title=args.title,
             wait_seconds=wait,
             new_music=args.new_music,
-            music_quote=parse_quote(raw_quote) if raw_quote else None,
         )
         return _emit(args, True, lines)
     except CutStop as stop:

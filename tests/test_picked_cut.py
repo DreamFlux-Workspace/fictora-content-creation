@@ -122,7 +122,6 @@ def args(**over: Any) -> SimpleNamespace:
         file=[],
         music_price=False,
         new_music=False,
-        music_quote=None,
     )
     return SimpleNamespace(**{**base, **over})
 
@@ -661,10 +660,7 @@ def test_music_price_shows_the_servers_price_and_makes_nothing(
         "tokens" not in out and "second" not in out and "minute" not in out
     )  # never a length
     assert "picked episode(s) 1, 2" in out
-    assert (
-        "only if they say yes, run the same cut with --new-music --music-quote 16:0.08:1."
-        in out
-    )
+    assert "only if they say yes, run the same cut with --new-music." in out
 
 
 def test_music_price_sends_the_picks_exactly_as_the_cut_will_so_the_price_matches(
@@ -692,45 +688,6 @@ def test_music_price_sends_the_picks_exactly_as_the_cut_will_so_the_price_matche
         sorted(e) for e in offer[2]["episodes"]
     ]  # the same shape
     assert picked_cut.OWN_FILES_PRICE_NOTE in lines
-
-
-def test_new_music_without_the_agreed_price_is_refused_before_anything_is_sent(
-    stand_in_api: Server,
-) -> None:
-    assert cut_command(args(episodes=["sp_a:1", "sp_b:1"], new_music=True)) == 2
-    assert (
-        cut_command(args(episodes=["sp_a:1", "sp_b:1"], music_quote="16:0.08:1")) == 2
-    )
-    assert (
-        cut_command(
-            args(episodes=["sp_a:1", "sp_b:1"], new_music=True, music_quote="cheap")
-        )
-        == 2
-    )
-    assert stand_in_api.seen == []
-
-
-def test_a_changed_price_stops_with_the_new_price_to_ask_again(
-    stand_in_api: Server, capsys: pytest.CaptureFixture[str]
-) -> None:
-    question = "New music for this edit costs $0.16 (2 tracks at $0.08), paid by Sokii. Make it? (yes/no)"
-    stand_in_api.post = (
-        409,
-        {"error": {"code": "series_cut_music_price_changed", "message": "The price changed.",
-                   "details": {"price": {"tokens": 32, "usd": 0.16}, "tracks": 2, "question": question}}},
-    )  # fmt: skip
-    assert (
-        cut_command(
-            args(episodes=["sp_a:1", "sp_b:1"], new_music=True, music_quote="16:0.08:1")
-        )
-        == 5
-    )
-    err = capsys.readouterr().err
-    assert (
-        "price of new music for this edit changed" in err
-        and "Nothing was made or charged" in err
-    )
-    assert question in err and "--music-quote 32:0.16:2" in err
 
 
 #: What the server says when none of the picks has a copy without music.
@@ -779,28 +736,19 @@ def test_new_music_passes_the_yes_and_prints_the_music_state(
             "series_cut": CUT,
             "music": {
                 "state": "laid",
-                "price": {"tokens": 16, "usd": 0.08},
-                "refund_eligible": False,
                 "message": "New music is laid under the edit.",
             },
         }
     ]
-    assert (
-        cut_command(
-            args(episodes=["sp_a:1", "sp_b:1"], new_music=True, music_quote="16:0.08:1")
-        )
-        == 0
-    )
+    assert cut_command(args(episodes=["sp_a:1", "sp_b:1"], new_music=True)) == 0
     post = next(s for s in stand_in_api.seen if s[0] == "POST")
-    assert post[2]["new_music"] is True
-    assert post[2]["music_quote"] == {
-        "price": {"tokens": 16, "usd": 0.08},
-        "tracks": 1,
-    }  # the price agreed to
+    assert (
+        post[2]["new_music"] is True and "music_quote" not in post[2]
+    )  # Sokii pays: no price goes back
     assert "New music: New music is laid under the edit." in capsys.readouterr().out
 
 
-def test_failed_music_still_prints_the_edit_and_says_nothing_was_charged(
+def test_failed_music_still_prints_the_edit_with_the_servers_words(
     stand_in_api: Server, capsys: pytest.CaptureFixture[str]
 ) -> None:
     stand_in_api.polls = [
@@ -809,26 +757,13 @@ def test_failed_music_still_prints_the_edit_and_says_nothing_was_charged(
             "series_cut": CUT,
             "music": {
                 "state": "failed",
-                "price": {"tokens": 16, "usd": 0.08},
-                "paid_by": "sokii",
-                "charge_ref": None,
-                "refund_eligible": False,
-                "message": "The new music could not be made, so your edit plays each episode's own sound. "
-                "Nothing was charged.",
+                "message": "The new music could not be made, so your edit plays each episode's own sound.",
             },
         }
     ]
-    assert (
-        cut_command(
-            args(episodes=["sp_a:1", "sp_b:1"], new_music=True, music_quote="16:0.08:1")
-        )
-        == 0
-    )
+    assert cut_command(args(episodes=["sp_a:1", "sp_b:1"], new_music=True)) == 0
     out = capsys.readouterr().out
-    assert (
-        "New music: The new music could not be made" in out
-        and "Nothing was charged." in out
-    )
+    assert "New music: The new music could not be made" in out
     assert "Whole show: https://media.example/all.mp4" in out
 
 
@@ -842,12 +777,7 @@ def test_music_not_offered_409_stops_plainly(
             "message": "New music is not available for these shows yet.",
         },
     )
-    assert (
-        cut_command(
-            args(episodes=["sp_a:1", "sp_b:1"], new_music=True, music_quote="16:0.08:1")
-        )
-        == 5
-    )
+    assert cut_command(args(episodes=["sp_a:1", "sp_b:1"], new_music=True)) == 5
     err = capsys.readouterr().err
     assert "new music is not offered for this edit" in err
     assert "without --new-music" in err
