@@ -18,6 +18,11 @@ filmed today would get (``POST /v1/spines/{spine_id}/music-rescore``):
 - **revert.** ``--revert`` puts back what the latest re-score replaced
   (``--rescore-id`` names one re-score), free.
 
+While music is on for the show, the server answers with new music instead
+(``kind`` ``new_music``): each finished episode gets a track written from its own
+scenes, priced per episode in the plan. :mod:`creation.post.music_rescore_new`
+prints that plan, waits for each episode and downloads the new cut.
+
 After the harness applies (or reverts), it puts each changed episode together
 again on the server with the new music. For each changed episode, in episode
 order, the kit then asks the server for the finished episode and downloads it
@@ -42,6 +47,7 @@ from typing import Any, TextIO
 
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
+from creation.post import music_rescore_new
 from creation.post.episode_name import episode_files
 from creation.production_state import paid_key_prefix
 
@@ -225,6 +231,8 @@ def plan_lines(answer: Mapping[str, Any]) -> list[str]:
         Operator lines.
     """
 
+    if answer.get("kind") == "new_music":
+        return music_rescore_new.plan_lines(answer)
     revert = answer.get("kind") == "revert"
     takes = [t for t in answer.get("takes") or [] if isinstance(t, Mapping)]
     takes.sort(
@@ -299,7 +307,7 @@ def plan_lines(answer: Mapping[str, Any]) -> list[str]:
 
 
 def _actionable(answer: Mapping[str, Any]) -> int:
-    return sum(
+    return music_rescore_new.planned_count(answer) + sum(
         1
         for take in answer.get("takes") or []
         if isinstance(take, Mapping) and take.get("action") in ("rescore", "revert")
@@ -547,9 +555,13 @@ def run_rescore_music(
         if not yes:
             cost = plan.get("cost") or {}
             price = "free" if revert else f"costs {_money(cost.get('new_cues_usd'))}"
+            undo = "can be put back with --revert"
+            if plan.get("kind") == "new_music":
+                price = f"costs {music_rescore_new.price_words(plan)}"
+                undo = "the music can be taken off again with Remove music (free)"
             print(
                 f"Not applied: nothing was changed or spent. Applying {price}; the old episode cuts are kept "
-                f"and can be put back with --revert. To apply: "
+                f"and {undo}. To apply: "
                 f"{_command(desk, episode, revert=revert, rescore_id=rescore_id)}",
                 file=out,
             )
@@ -599,6 +611,10 @@ def run_rescore_music(
         print(f"Applied: {answer.get('message') or 'done'}", file=out)
         for line in plan_lines(answer):
             print(line, file=out)
+        if answer.get("kind") == "new_music":
+            return music_rescore_new.follow_new_music(
+                desk, answer, run=run, spine_id=spine_id, episode=episode, out=out
+            )
         changed = [
             t
             for t in answer.get("takes") or []
