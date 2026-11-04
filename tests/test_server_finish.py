@@ -19,7 +19,7 @@ import pytest
 
 from creation.cli_post import LAPTOP_ONLY_FLAGS
 from creation.cli_produce import main
-from creation.post import episode_name, server_finish
+from creation.post import episode_name, picked_cut, server_finish
 from creation.post.desk import saved_spine
 from creation.post.server_finish import (
     SERVER_FINISH_NOT_DONE,
@@ -746,34 +746,83 @@ def _series_transport(status: int, body: Any, seen: list[str]) -> httpx.MockTran
     return httpx.MockTransport(answer_)
 
 
-def test_episodes_shows_the_servers_series_cut(post_desk: Path) -> None:
-    seen: list[str] = []
+CUT_RECORD = {
+    "episodes": [1, 2],
+    "compilation_url": "https://media.example/series/all.mp4",
+    "parts": [{"part": 1, "video_url": "https://media.example/series/p1.mp4"}],
+}
 
-    ready, lines = server_finish.series_cut_lines(
-        post_desk, episodes=(1, 2), api=(BASE, HEADERS),
-        transport=_series_transport(200, SERIES_VIEW, seen),
+
+class CutServer:
+    """Stand-in server for a picked cut; ``old`` makes the picked-cut route missing."""
+
+    def __init__(self, old: bool = False) -> None:
+        self.old, self.seen = old, []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else None
+        self.seen.append((request.method, request.url.path, body))
+        if request.url.path.startswith("/v1/spines/"):
+            return httpx.Response(200, json=SERIES_VIEW)
+        if self.old:
+            return httpx.Response(404, json={"detail": "Not Found"})
+        if request.method == "POST":
+            return httpx.Response(202, json={"series_cut_id": "c1", "status": "queued"})
+        return httpx.Response(200, json={"status": "ready", "series_cut": CUT_RECORD})
+
+
+def test_join_episodes_asks_the_server_for_a_cut_of_the_named_episodes_in_order(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from creation.post.picked_cut import desk_cut_lines
+
+    monkeypatch.setattr(
+        "builtins.input", lambda *a: pytest.fail("a question was asked")
+    )
+    server = CutServer()
+
+    ready, lines = desk_cut_lines(
+        post_desk, (2, 1), api=(BASE, HEADERS), transport=httpx.MockTransport(server)
     )  # fmt: skip
 
     assert ready
-    assert seen == ["GET /v1/spines/spine_test/series-cut"]
-    text = "\n".join(lines)
-    assert "Whole show: https://media.example/series/all.mp4" in text
-    assert (
-        "Part 1 for Instagram and TikTok: https://media.example/series/p1.mp4" in text
-    )
-    assert "It plays episodes 1, 2, 3, 4, not only the ones named (1, 2)" in text
+    post = next(s for s in server.seen if s[0] == "POST")
+    assert post[1] == "/v1/series-cuts"
+    assert post[2]["episodes"] == [
+        {"spine_id": "spine_test", "episode": 2},
+        {"spine_id": "spine_test", "episode": 1},
+    ]
+    assert not any(s[1].startswith("/v1/spines/") for s in server.seen)
+    assert "Whole show: https://media.example/series/all.mp4" in "\n".join(lines)
 
 
-def test_a_show_without_enough_story_says_why(post_desk: Path) -> None:
-    ready, lines = server_finish.series_cut_lines(
-        post_desk, api=(BASE, HEADERS),
-        transport=_series_transport(
-            200, {"spine_id": "spine_test", "ready": False, "reason": "needs 4 episodes and 40 seconds"}, []
-        ),
+def test_an_older_server_is_not_done_and_makes_nothing(post_desk: Path) -> None:
+    from creation.post.picked_cut import OLD_SERVER, desk_cut_lines
+
+    server = CutServer(old=True)
+
+    ready, lines = desk_cut_lines(
+        post_desk, (1, 2), api=(BASE, HEADERS), transport=httpx.MockTransport(server)
     )  # fmt: skip
 
-    assert not ready
-    assert "NOT DONE: no series cut yet (needs 4 episodes and 40 seconds)." in lines
+    assert not ready and lines == [OLD_SERVER]
+    assert not any(s[1].startswith("/v1/spines/") for s in server.seen)
+
+
+@pytest.mark.parametrize("command", ["finish", "join"])
+def test_one_episode_is_a_usage_error(
+    command: str,
+    post_desk: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    called: list[Any] = []
+    monkeypatch.setattr(picked_cut, "desk_cut_lines", lambda *a, **k: called.append(a))
+
+    code = main([command, "--desk", str(post_desk), "--episodes", "2"])
+
+    assert code == 2 and called == []
+    assert "A series cut needs at least 2 episodes." in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("command", ["finish", "join"])
@@ -785,9 +834,9 @@ def test_episodes_never_finishes_or_joins_on_the_laptop(
     called: list[Any] = []
     monkeypatch.setattr(cli_post, "run_server_finish", lambda *a, **k: called.append(a))
     monkeypatch.setattr(
-        server_finish,
-        "series_cut_lines",
-        lambda desk, **_k: (False, ["NOT DONE: x"]),
+        picked_cut,
+        "desk_cut_lines",
+        lambda desk, *_a, **_k: (False, ["NOT DONE: x"]),
     )
 
     code = main([command, "--desk", str(post_desk), "--episodes", "1", "2"])
@@ -951,9 +1000,7 @@ def test_episodes_with_take_or_labels_is_refused(
 
     called: list[Any] = []
     monkeypatch.setattr(cli_post, "run_server_finish", lambda *a, **k: called.append(a))
-    monkeypatch.setattr(
-        server_finish, "series_cut_lines", lambda *a, **k: called.append(a)
-    )
+    monkeypatch.setattr(picked_cut, "desk_cut_lines", lambda *a, **k: called.append(a))
 
     code = main(["finish", "--desk", str(post_desk), "--episodes", "1", "2", *extra])
 
@@ -968,9 +1015,7 @@ def test_episodes_with_an_old_setting_is_still_refused(
 
     called: list[Any] = []
     monkeypatch.setattr(cli_post, "run_server_finish", lambda *a, **k: called.append(a))
-    monkeypatch.setattr(
-        server_finish, "series_cut_lines", lambda *a, **k: called.append(a)
-    )
+    monkeypatch.setattr(picked_cut, "desk_cut_lines", lambda *a, **k: called.append(a))
 
     code = main(
         ["join", "--desk", str(post_desk), "--episodes", "1", "2", "--dissolve"]
@@ -978,23 +1023,6 @@ def test_episodes_with_an_old_setting_is_still_refused(
 
     assert code == 2 and called == []
     assert "--dissolve" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize(
-    ("status", "body", "says"),
-    [
-        (404, {"detail": "Not Found"}, "the server does not make series cuts yet"),
-        (503, {"error": {"code": "x"}}, "Run join --episodes again in a few minutes"),
-    ],
-)
-def test_series_cut_errors_are_plain(
-    status: int, body: Any, says: str, post_desk: Path
-) -> None:
-    ready, lines = server_finish.series_cut_lines(
-        post_desk, api=(BASE, HEADERS), transport=_series_transport(status, body, [])
-    )
-
-    assert not ready and says in lines[0]
 
 
 # --- take edits on the server (fictora-drama #1189 / #1190) ------------------------------------------
