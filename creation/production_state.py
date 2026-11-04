@@ -33,7 +33,10 @@ class ProductionState:
     prompt: str
     preset_id: str
     preset_version: str
-    video_lane: str = "minimax-h3"
+    #: ``model_overrides.video`` sent on every request. ``None`` on a new desk that named no lane:
+    #: nothing is sent, the server picks, and the lane it reports for the story is recorded here
+    #: (:meth:`remember_story_lane`). Older desks keep the lane they saved.
+    video_lane: str | None = None
     episode_ordinal: int = 1
     band: str = "15s"
     spine_id: str | None = None
@@ -116,6 +119,22 @@ class ProductionState:
             self.video_endpoint_id, self.video_resolution = lane
         if label:
             self.video_lane_label = label
+
+    def remember_story_lane(self, spine: Any) -> bool:
+        """Record the lane the server reports for the story when the desk named none; ``True`` if it changed.
+
+        A desk that never names a lane gets the server's pick. Once the server says which lane
+        the story films on (``spine.video_lane``), the desk keeps it, so later requests name the
+        same lane the story is locked to, never an assumed H3.
+        """
+
+        if self.video_lane or not isinstance(spine, dict):
+            return False
+        lane = spine.get("video_lane")
+        if not isinstance(lane, str) or not lane.strip():
+            return False
+        self.video_lane = lane.strip()
+        return True
 
     @staticmethod
     def new_session_id(desk_slug: str) -> str:
@@ -246,7 +265,7 @@ def ensure_production(
     prompt: str,
     preset_id: str,
     preset_version: str,
-    video_lane: str = "minimax-h3",
+    video_lane: str | None = None,
     episode_ordinal: int = 1,
     band: str = "15s",
 ) -> ProductionState:
@@ -258,7 +277,8 @@ def ensure_production(
         state.prompt = prompt.strip()
         state.preset_id = preset_id
         state.preset_version = preset_version
-        state.video_lane = video_lane
+        # ``None`` names no lane: the saved one (the server's report, or an operator pin) stays.
+        state.video_lane = video_lane or state.video_lane
         state.episode_ordinal = episode_ordinal
         state.band = band
         save_production(desk, state)

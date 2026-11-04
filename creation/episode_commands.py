@@ -7987,6 +7987,7 @@ def _price_film(
     _save_desk_json(desk, f"film-{key}-estimate", estimate)
     state.remember_server_lane(server_lane(estimate), label=server_lane_label(estimate))
     spine = run.spine(state.spine_id or "")
+    state.remember_story_lane(spine)
     stopped = film_stop_message(spine, episode=episode)
     if stopped:
         raise CommandStopped(stopped)
@@ -8020,6 +8021,7 @@ def _price_film(
         source += "; the deployed API cannot price one take yet"
     fresh = load_production(desk)
     fresh.remember_server_lane(state.server_lane(), label=state.video_lane_label)
+    fresh.video_lane = fresh.video_lane or state.video_lane
     save_production(desk, fresh)
     if take_index is not None:
         record_estimate(desk, episode=episode, take_id=take_ids[0], usd=usd)

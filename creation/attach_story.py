@@ -346,8 +346,8 @@ def attach_story(
     series
         Desk name; the story's title when ``None``.
     video_lane
-        Lane recorded on the desk; ``None`` keeps the story's own (``spine.video_lane``), else
-        ``minimax-h3`` for a story that names none (the server names the lane it films on).
+        Lane recorded on the desk; ``None`` keeps the story's own (``spine.video_lane``); a story
+        that names none records none, so the server's lane applies.
     opener
         ``(session_id, out_dir) -> session``; :func:`open_session` by default.
     today
@@ -428,7 +428,7 @@ def attach_story(
             preset_version=str(spine.get("art_style_preset_version") or ""),
             video_lane=video_lane
             or str(spine.get("video_lane") or "")
-            or DEFAULT_VIDEO_LANE,
+            or DEFAULT_VIDEO_LANE,  # None: nothing is sent, the server keeps the story's own
             episode_ordinal=max(episode, 1),
             band=band,
             spine_id=spine_id,

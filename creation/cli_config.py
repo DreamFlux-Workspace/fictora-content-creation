@@ -174,12 +174,16 @@ def merge_config_from_args(
 
 #: Art-style preset and video lane a desk that was never bound gets from ``bind``.
 DEFAULT_PRESET_ID = "modern-dark-fantasy"
-DEFAULT_VIDEO_LANE = "minimax-h3"
+#: Founder decision (4 Nov 2026): no lane by default. The kit sends no ``model_overrides.video``
+#: and the server's per-story default applies (Wan for accounts its switch allows, else H3).
+#: The desk then records the lane the server reports for the story (``spine.video_lane``).
+#: Set ``"minimax-h3"`` to pin every new kit story to H3 again.
+DEFAULT_VIDEO_LANE: str | None = None
 
 
 def bound_preset_and_lane(
     desk, *, preset_id: str | None, video_lane: str | None
-) -> tuple[str, str]:
+) -> tuple[str, str | None]:
     """Return the preset and lane ``bind`` should use: the flag when given, else the desk's saved ones.
 
     ``bind`` defaulted ``--preset-id`` to modern-dark-fantasy and ``--video-lane``

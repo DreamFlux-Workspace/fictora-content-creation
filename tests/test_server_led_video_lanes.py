@@ -206,3 +206,43 @@ def test_a_show_the_server_says_needs_no_locked_voices_is_not_stopped_for_though
 
     assert "Mira" in (ask(True) or "")
     assert ask(False) is None
+
+
+def test_a_desk_with_no_lane_sends_none_and_the_server_picks() -> None:
+    from creation.cli_config import DEFAULT_VIDEO_LANE
+    from creation.harness.stages_gated import draft_request_body
+
+    assert DEFAULT_VIDEO_LANE is None
+    body = draft_request_body(
+        prompt="p", preset_id="x", preset_version="1", video_lane=DEFAULT_VIDEO_LANE
+    )
+    assert "model_overrides" not in body
+    pinned = draft_request_body(
+        prompt="p", preset_id="x", preset_version="1", video_lane="wan-3.0"
+    )
+    assert pinned["model_overrides"] == {"video": "wan-3.0"}
+
+
+def test_the_desk_records_the_lane_the_server_reports_and_never_overwrites_one() -> (
+    None
+):
+    state = _state()
+    state.video_lane = None
+
+    assert state.remember_story_lane({"video_lane": None}) is False
+    assert state.video_lane is None
+    assert state.remember_story_lane({"video_lane": "wan-3.0"}) is True
+    assert state.video_lane == "wan-3.0"
+    assert state.remember_story_lane({"video_lane": "minimax-h3"}) is False
+    assert state.video_lane == "wan-3.0"
+
+
+def test_a_no_lane_desk_before_any_server_answer_is_server_priced_and_quiet() -> None:
+    state = _state()
+    state.video_lane = None
+
+    assert lane_rate_words(state, on=DAY) == (
+        "the server's default model (priced by the server)"
+    )
+    _, _, warnings = price_estimate(state, CFG, {}, cast_count=1, takes=1, on=DAY)
+    assert not any(line.startswith("!!") for line in warnings)

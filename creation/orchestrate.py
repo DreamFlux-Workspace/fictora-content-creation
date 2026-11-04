@@ -973,7 +973,7 @@ def bind_desk(
     *,
     prompt: str,
     preset_id: str,
-    video_lane: str = "minimax-h3",
+    video_lane: str | None = None,
     episode_ordinal: int = 1,
     preset: tuple[str, str] | None = None,
 ) -> ProductionState:
@@ -988,7 +988,7 @@ def bind_desk(
     preset_id
         Operator's ``--preset-id``; checked against the published catalog.
     video_lane
-        Video lane pinned on the draft.
+        Video lane pinned on the draft; ``None`` sends none (the server picks the story's lane).
     episode_ordinal
         Episode the binding is for.
     preset
@@ -1840,6 +1840,8 @@ def run_step(
             )
             save_production(desk, state)
             spine = run.spine(spine_id)
+            if state.remember_story_lane(spine):
+                save_production(desk, state)
             save_spine_snapshot(desk, ep, spine)
             counts = sync_spine_lines(desk, spine, episode=ep)
             _note(
@@ -2193,6 +2195,7 @@ def run_step(
                 server_lane(estimate), label=server_lane_label(estimate)
             )
             spine = run.spine(state.spine_id or "")
+            state.remember_story_lane(spine)
             stopped = film_stop_message(spine, episode=ep)
             if stopped:
                 return StepResult(state.phase, stopped, ())

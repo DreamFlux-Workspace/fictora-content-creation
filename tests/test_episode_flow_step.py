@@ -38,6 +38,7 @@ def test_the_draft_writes_episode_one_alone_with_the_language_and_no_shot_plan()
         prompt="p",
         preset_id="x",
         preset_version="1",
+        video_lane="minimax-h3",
         spoken_language="ja",
         band="30s",
     )

@@ -84,6 +84,8 @@ def desk(tmp_path: Path) -> Path:
         prompt="A shop at closing time.",
         preset_id="modern-romance",
         preset_version="2",
+        # An H3 desk, like every desk made before the server picked the lane (4 Nov 2026).
+        video_lane="minimax-h3",
     )
     state.spine_id = "sp1"
     save_production(path, state)
@@ -233,6 +235,7 @@ def post_desk(tmp_path: Path) -> Path:
         preset_id="x",
         preset_version="1",
         spine_id="spine_test",
+        video_lane="minimax-h3",
     )
     save_production(made, state)
     api = made / "ep01" / "api"

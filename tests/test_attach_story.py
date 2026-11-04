@@ -234,12 +234,12 @@ def test_last_written_episode_skips_summary_only_episodes() -> None:
     ("story_lane", "flag", "want"),
     [
         ("wan-3.0", None, "wan-3.0"),
-        (None, None, "minimax-h3"),
+        (None, None, None),
         ("wan-3.0", "minimax-h3", "minimax-h3"),
     ],
 )
 def test_an_attached_desk_keeps_the_storys_own_video_model_unless_one_is_given(
-    tmp_path: Path, story_lane: str | None, flag: str | None, want: str
+    tmp_path: Path, story_lane: str | None, flag: str | None, want: str | None
 ) -> None:
     from creation.production_state import load_production
 

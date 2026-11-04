@@ -125,7 +125,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--video-lane",
         default=None,
         help="Video model for the story: any lane the server lists as available (checked before the "
-        f"desk is made). Default: {DEFAULT_VIDEO_LANE} for a new story; an attached story keeps its own.",
+        "desk is made). Default: none is sent, so the server picks the story's model; an attached "
+        "story keeps its own.",
     )
     add_production_config_args(start)
 
@@ -152,7 +153,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--video-lane",
         default=None,
         help="Video lane: any lane the server lists as available. Default: the desk's saved lane "
-        "(minimax-h3 on a desk never bound).",
+        "(on a desk never bound, none: the server picks).",
     )
     bind.add_argument("--episode", type=int, default=1)
     add_production_config_args(bind)

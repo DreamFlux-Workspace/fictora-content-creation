@@ -408,7 +408,7 @@ def lane_label(video_lane: str | None, *, server: tuple[str, str] | None = None)
     return (
         LANE_LABELS.get(endpoint[0], endpoint[0])
         if endpoint
-        else str(video_lane or "unknown lane")
+        else str(video_lane or "the server's default model")
     )
 
 
