@@ -1049,8 +1049,11 @@ def _send_caption_labels(
 def _show_series_cut(desk: Path, args: argparse.Namespace) -> int:
     """``--episodes``: ask the server for a cut of the desk's named episodes and print it (no laptop join)."""
 
-    from creation.post.picked_cut import desk_cut_lines
+    from creation.post.picked_cut import MIN_PICKED, desk_cut_lines
 
+    if len(args.episodes) < MIN_PICKED:
+        print("A series cut needs at least 2 episodes.", file=sys.stderr)
+        return 2
     ready, lines = desk_cut_lines(
         desk, tuple(args.episodes), wait_seconds=getattr(args, "wait", None)
     )

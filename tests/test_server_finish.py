@@ -794,8 +794,8 @@ def test_join_episodes_asks_the_server_for_a_cut_of_the_named_episodes_in_order(
     assert "Whole show: https://media.example/series/all.mp4" in "\n".join(lines)
 
 
-def test_an_older_server_shows_its_stored_cut_and_says_so(post_desk: Path) -> None:
-    from creation.post.picked_cut import desk_cut_lines
+def test_an_older_server_is_not_done_and_makes_nothing(post_desk: Path) -> None:
+    from creation.post.picked_cut import OLD_SERVER, desk_cut_lines
 
     server = CutServer(old=True)
 
@@ -803,26 +803,21 @@ def test_an_older_server_shows_its_stored_cut_and_says_so(post_desk: Path) -> No
         post_desk, (1, 2), api=(BASE, HEADERS), transport=httpx.MockTransport(server)
     )  # fmt: skip
 
-    assert ready
-    assert "This server is older" in lines[0]
-    text = "\n".join(lines)
-    assert "Whole show: https://media.example/series/all.mp4" in text
-    assert server.seen[-1][1] == "/v1/spines/spine_test/series-cut"
+    assert not ready and lines == [OLD_SERVER]
+    assert not any(s[1].startswith("/v1/spines/") for s in server.seen)
 
 
-def test_an_older_server_with_no_stored_cut_is_not_done(post_desk: Path) -> None:
-    from creation.post.picked_cut import desk_cut_lines
+@pytest.mark.parametrize("command", ["finish", "join"])
+def test_one_episode_is_a_usage_error(
+    command: str, post_desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    called: list[Any] = []
+    monkeypatch.setattr(picked_cut, "desk_cut_lines", lambda *a, **k: called.append(a))
 
-    def answer(request: httpx.Request) -> httpx.Response:
-        if request.url.path.startswith("/v1/spines/"):
-            return httpx.Response(200, json={"ready": False})
-        return httpx.Response(404, json={"detail": "Not Found"})
+    code = main([command, "--desk", str(post_desk), "--episodes", "2"])
 
-    ready, lines = desk_cut_lines(
-        post_desk, (1, 2), api=(BASE, HEADERS), transport=httpx.MockTransport(answer)
-    )  # fmt: skip
-
-    assert not ready and "NOT DONE" in lines[-1]
+    assert code == 2 and called == []
+    assert "A series cut needs at least 2 episodes." in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("command", ["finish", "join"])
