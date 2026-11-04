@@ -524,6 +524,19 @@ def shot_label(shot: Mapping[str, Any], position: int) -> str:
     return f"shot {index} ({float(start):.2f}-{float(end):.2f}s)"
 
 
+def take_head(take_id: str, facts: Mapping[str, Any] | None) -> str:
+    """``t1 (Take 1 · shot 2 of 3)`` for a Wan shot, ``t1`` for any other take.
+
+    The words are the server's (take facts ``shot_label``, fictora-drama #1266), shown as sent.
+    """
+
+    body = (facts or {}).get("take_facts", facts or {})
+    label = body.get("shot_label") if isinstance(body, Mapping) else None
+    return (
+        f"{take_id} ({label})" if isinstance(label, str) and label.strip() else take_id
+    )
+
+
 def has_people(facts: Mapping[str, Any] | None) -> bool:
     """Whether any shot in the facts carries a head count (``people``)."""
 
@@ -645,5 +658,6 @@ __all__ = [
     "stale_facts_reason",
     "stamp_facts",
     "take_add_notes",
+    "take_head",
     "take_number",
 ]

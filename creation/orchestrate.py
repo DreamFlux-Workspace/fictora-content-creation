@@ -97,6 +97,7 @@ from creation.post.take_facts import (
     cast_names_from,
     save_take_facts,
     shot_people_lines,
+    take_head,
 )
 from creation.prices import (
     fal_billing_day,
@@ -2505,16 +2506,18 @@ def collect_takes(
             )
             continue
         facts = fetch_take_facts(run, str(clip["job_id"]), spine_id=state.spine_id)
+        # A Wan shot prints the server's "Take 1 · shot 2 of 3" beside its desk take.
+        head = take_head(take_id, facts)
         priced: tuple[float, str] | None = None
         if facts is not None:
             save_take_facts(
                 desk, episode=episode, take_id=take_id, facts=facts, spine=spine
             )
             priced = take_facts_usd(facts, on=today)
-            on_screen += on_screen_lines(take_id, facts, cast_names)
-            on_screen += take_soundtrack_lines(take_id, facts)
+            on_screen += on_screen_lines(head, facts, cast_names)
+            on_screen += take_soundtrack_lines(head, facts)
             # The server's picture check of the take's stills (warnings only).
-            on_screen += take_picture_check_lines(facts, take_id=take_id)
+            on_screen += take_picture_check_lines(facts, take_id=head)
             state.remember_server_lane(
                 server_lane(facts), label=server_lane_label(facts)
             )  # the caller saves the state
@@ -2540,7 +2543,7 @@ def collect_takes(
             booked += priced[0]
         record_filmed(desk, episode=episode, take_id=take_id)
         jobs.append(
-            f"{take_id}: take job `{clip['job_id']}`"
+            f"{head}: take job `{clip['job_id']}`"
             + (
                 f" ({priced[1]}, ${priced[0]:.2f})"
                 if priced
