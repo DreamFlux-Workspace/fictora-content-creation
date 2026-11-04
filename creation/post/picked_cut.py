@@ -48,6 +48,12 @@ MIN_PICKED = 2
 VIDEO_SUFFIXES = frozenset({".mp4", ".m4v"})
 #: Waits before asking again when a poll hits a busy answer or a dropped connection.
 POLL_RETRY_WAITS = (2.0, 4.0, 8.0, 15.0)
+NEWEST_VERSION_NOTICE = (
+    "Made from the newest version of each episode the server has. Episodes you finished on your laptop before "
+    "30 Oct were never sent to the server, so their captions, sound and mark will be the server's, not exactly "
+    "the copies you posted. To use your own finished files instead, name them (for example: episode 1 = the file "
+    "in your Downloads), and they'll be uploaded and used as they are."
+)
 OLD_SERVER = (
     "NOT DONE: the server can't make a cut from picked episodes yet. "
     "Tell the core team; nothing was made."
@@ -323,6 +329,8 @@ def run_cut(
     for p in picks:
         if p.file is not None:
             check_video(str(p.file))
+    if any(p.file is None for p in picks):
+        progress(NEWEST_VERSION_NOTICE)
     client, base, headers = _client(transport, api)
     with client:
         if any(p.file for p in picks):
@@ -473,7 +481,9 @@ def desk_cut_lines(
         spine = spine_id(desk.expanduser().resolve())
         picks = [Pick(spine, int(n)) for n in episodes]
         wait = wait_seconds if wait_seconds is not None else DEFAULT_WAIT_SECONDS
-        return True, run_cut(picks, wait_seconds=wait, api=api, transport=transport, **run_kwargs)
+        return True, run_cut(
+            picks, wait_seconds=wait, api=api, transport=transport, **run_kwargs
+        )
     except CutStop as stop:
         return False, [stop.line]
     except (ValueError, FileNotFoundError) as exc:

@@ -12,6 +12,7 @@ import pytest
 
 from creation.post import picked_cut
 from creation.post.picked_cut import (
+    NEWEST_VERSION_NOTICE,
     CutStop,
     Pick,
     cut_command,
@@ -309,7 +310,7 @@ def test_older_server_refuses_clearly_on_list_and_on_post(
     assert cut_command(args(episodes=["a:1", "b:1"])) == 5
     err = capsys.readouterr().err.splitlines()
     expected = "NOT DONE: the server can't make a cut from picked episodes yet. Tell the core team; nothing was made."
-    assert err == [expected, expected]
+    assert err == [expected, NEWEST_VERSION_NOTICE, expected]
 
 
 def test_not_delivered_409_names_the_episode(
@@ -358,7 +359,8 @@ def test_polls_until_ready_and_says_it_is_working() -> None:
         sum(1 for s in server.seen if s[0] == "GET" and s[1] == "/v1/series-cuts/c1")
         == 3
     )
-    assert said and "Still making the cut" in said[0]
+    assert any("Still making the cut" in line for line in said)
+    assert said[0] == NEWEST_VERSION_NOTICE
     assert lines[1] == "Whole show: https://media.example/all.mp4"
 
 
@@ -515,14 +517,86 @@ def test_video_url_not_ours_prints_the_servers_message(
     assert "did not come from our storage" in capsys.readouterr().err
 
 
-def test_no_files_named_asks_nothing_and_sends_no_video_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("builtins.input", lambda *a: pytest.fail("a question was asked"))
+def test_no_files_named_asks_nothing_and_sends_no_video_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "builtins.input", lambda *a: pytest.fail("a question was asked")
+    )
     monkeypatch.setattr("sys.stdin", None)
     server = Server()
 
-    lines = run_cut([Pick("sp_a", 1), Pick("sp_b", 1)], api=API, transport=transport(server), sleep=lambda s: None)
+    lines = run_cut(
+        [Pick("sp_a", 1), Pick("sp_b", 1)],
+        api=API,
+        transport=transport(server),
+        sleep=lambda s: None,
+    )
 
     assert lines
     post = next(s for s in server.seen if s[0] == "POST")
     assert all("video_url" not in e for e in post[2]["episodes"])
     assert not any(s[1].endswith("/uploads") or "upload" in s[1] for s in server.seen)
+
+
+def test_no_files_named_tells_the_creator_once_before_anything_else(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "builtins.input", lambda *a: pytest.fail("a question was asked")
+    )
+    said: list[str] = []
+
+    run_cut(
+        [Pick("sp_a", 1), Pick("sp_b", 1)],
+        api=API,
+        transport=transport(Server()),
+        sleep=lambda s: None,
+        progress=said.append,
+    )
+
+    assert said == [NEWEST_VERSION_NOTICE]
+    assert NEWEST_VERSION_NOTICE.startswith(
+        "Made from the newest version of each episode the server has."
+    )
+
+
+def test_one_unnamed_episode_is_enough_to_tell_the_creator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = with_uploads(monkeypatch)
+    said: list[str] = []
+    picks = [Pick("sp_a", 1, video(tmp_path)), Pick("sp_b", 1)]
+
+    run_cut(
+        picks,
+        api=API,
+        transport=transport(server),
+        sleep=lambda s: None,
+        progress=said.append,
+        putter=lambda url, data, h: 200,
+    )
+
+    assert said == [NEWEST_VERSION_NOTICE]
+
+
+def test_all_files_named_prints_no_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = with_uploads(monkeypatch)
+    said: list[str] = []
+    picks = [
+        Pick("sp_a", 1, video(tmp_path, "a.mp4")),
+        Pick("sp_b", 1, video(tmp_path, "b.mp4", b"other")),
+    ]
+
+    run_cut(
+        picks,
+        api=API,
+        transport=transport(server),
+        sleep=lambda s: None,
+        progress=said.append,
+        putter=lambda url, data, h: 200,
+    )
+
+    assert said == []

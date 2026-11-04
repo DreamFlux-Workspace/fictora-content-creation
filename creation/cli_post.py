@@ -1051,7 +1051,9 @@ def _show_series_cut(desk: Path, args: argparse.Namespace) -> int:
 
     from creation.post.picked_cut import desk_cut_lines
 
-    ready, lines = desk_cut_lines(desk, tuple(args.episodes), wait_seconds=getattr(args, "wait", None))
+    ready, lines = desk_cut_lines(
+        desk, tuple(args.episodes), wait_seconds=getattr(args, "wait", None)
+    )
     if args.json:
         print(json.dumps({"ready": ready, "lines": lines}, indent=2))
     else:
