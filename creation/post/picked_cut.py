@@ -6,8 +6,10 @@ cut on this laptop, no state is kept, and the files stay on the server (links ar
 show's own series cut does).
 
 New music (founder, 4 Nov 2026): the edit adds no music by default. ``--music-price`` prints the
-server's price for new music in plain words and makes nothing; ``--new-music`` passes the human's
-yes. The server prices it, decides what it plays under, writes and lays it; the kit only shows and asks.
+server's question with its price ("New music for this edit costs $0.08, paid by Sokii. Make it?
+(yes/no)": the kit asks first, Sokii pays, no tokens) and makes, uploads and charges nothing;
+``--new-music`` passes the human's yes. The server prices it, decides what it plays under, writes and
+lays it, and keeps the purchase; the kit only shows and asks.
 """
 
 from __future__ import annotations
@@ -59,6 +61,10 @@ NEWEST_VERSION_NOTICE = (
     "To use them, just tell me which file goes with which episode."
 )
 NO_MUSIC_ROUTE = "NOT DONE: the server can't price new music for an edit yet. Tell the core team; nothing was made."
+OWN_FILES_PRICE_NOTE = (
+    "Your own files were not sent just to see the price; an episode played from your own file "
+    "keeps its own sound under the new music."
+)
 OLD_SERVER = (
     "NOT DONE: the server can't make a cut from picked episodes yet. "
     "Tell the core team; nothing was made."
@@ -430,14 +436,17 @@ def music_price(
     title: str | None = None,
     api: tuple[str, Mapping[str, str]] | None = None,
     transport: httpx.BaseTransport | None = None,
-    putter: Putter | None = None,
 ) -> list[str]:
-    """The server's price for new music on this edit, in plain words; nothing is made or charged."""
+    """The server's question and price for new music on this edit; nothing is made, uploaded or charged.
+
+    Describe-only: a pick the human gave a file for is priced as its episode on the server (the file
+    is uploaded only when the edit is made, where that episode keeps its own sound).
+    """
 
     _check_picks(picks)
+    entries = [{"spine_id": p.spine_id, "episode": p.episode} for p in picks]
     client, base, headers = _client(transport, api)
     with client:
-        entries = _entries(client, base, headers, picks, putter)
         try:
             response = client.post(
                 base + MUSIC_OFFER_ROUTE,
@@ -451,7 +460,10 @@ def music_price(
         if response.status_code in (404, 405) and _route_missing(_body(response)):
             raise CutStop(NO_MUSIC_ROUTE)
         offer = _check(response, what="price new music")
-    return music_offer_lines(offer)
+    lines = music_offer_lines(offer)
+    if offer.get("offered") and any(p.file for p in picks):
+        lines.insert(-1, OWN_FILES_PRICE_NOTE)
+    return lines
 
 
 def music_offer_lines(offer: Mapping[str, Any]) -> list[str]:
@@ -461,16 +473,20 @@ def music_offer_lines(offer: Mapping[str, Any]) -> list[str]:
         reason = str(offer.get("unavailable_reason") or "the server did not say why")
         return [f"No new music for this edit: {reason}", "Nothing was made or charged."]
     tokens = (offer.get("price") or {}).get("tokens")
+    question = str(
+        offer.get("question") or f"New music for this edit costs {tokens} tokens."
+    )
+    lines = [question]
+    if offer.get("what_changes"):
+        lines.append(str(offer["what_changes"]))
     under = [str(n) for n in offer.get("episodes_with_music") or []]
-    lines = [
-        f"New music for this edit costs {tokens} tokens. {offer.get('what_changes') or ''}".strip()
-    ]
     if under:
         lines.append(
             f"It plays under picked episode(s) {', '.join(under)}; the others keep their own sound."
         )
     lines.append(
-        "Nothing was made or charged. Ask the human; only if they say yes, run the same cut with --new-music."
+        "Nothing was made or charged. Ask the human this question; only if they say yes, "
+        "run the same cut with --new-music."
     )
     return lines
 

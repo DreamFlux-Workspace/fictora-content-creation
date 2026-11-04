@@ -62,6 +62,9 @@ EPISODES = [
 ]
 
 
+#: The kit's question, word for word as the server writes it (founder, 4 Nov 2026: "Kit asks first, we pay").
+KIT_QUESTION = "New music for this edit costs $0.08, paid by Sokii. Make it? (yes/no)"
+
 OFFER = {
     "offered": True,
     "price": {"tokens": 16, "usd": 0.08},
@@ -69,6 +72,8 @@ OFFER = {
     "episodes_with_music": [1, 2],
     "what_changes": "New music written for this edit, with changes at each episode and at the big turns.",
     "unavailable_reason": None,
+    "paid_by": "sokii",
+    "question": KIT_QUESTION,
 }
 
 
@@ -647,20 +652,42 @@ def test_music_price_shows_the_servers_price_and_makes_nothing(
         "title": None,
     }
     out = capsys.readouterr().out
-    assert "New music for this edit costs 16 tokens." in out
+    assert (
+        out.splitlines()[0] == KIT_QUESTION
+    )  # dollars, paid by Sokii, a yes/no question
+    assert (
+        "tokens" not in out and "second" not in out and "minute" not in out
+    )  # never a length
     assert "picked episode(s) 1, 2" in out
     assert "only if they say yes, run the same cut with --new-music" in out
 
 
-#: What the server says to the kit today: new music is paid with app tokens, which the kit has not.
-NO_WALLET = (
-    "New music for an edit is paid with app tokens, so for now it can only be bought in the app. "
-    "The edit can still be made with each episode's own sound."
+def test_music_price_never_uploads_the_humans_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    server = with_uploads(monkeypatch)
+    f = video(tmp_path)
+    assert cut_command(args(episodes=[f"sp_a:1={f}", "sp_b:1"], music_price=True)) == 0
+    assert [s[:2] for s in server.seen] == [
+        ("POST", "/v1/series-cuts/music-offer")
+    ]  # no upload, no pick check
+    assert server.seen[0][2]["episodes"] == [
+        {"spine_id": "sp_a", "episode": 1},
+        {"spine_id": "sp_b", "episode": 1},
+    ]
+    out = capsys.readouterr().out
+    assert "Your own files were not sent just to see the price" in out
+
+
+#: What the server says when none of the picks has a copy without music.
+NO_SOURCE = (
+    "None of these episodes has a copy without music, so new music cannot go under them. "
+    "The edit keeps each episode's own sound."
 )
 
 
 @pytest.mark.parametrize(
-    "reason", ["New music is not available for these shows yet.", NO_WALLET]
+    "reason", ["New music is not available for these shows yet.", NO_SOURCE]
 )
 def test_music_not_offered_says_why_in_plain_words(
     stand_in_api: Server, capsys: pytest.CaptureFixture[str], reason: str
@@ -710,7 +737,7 @@ def test_new_music_passes_the_yes_and_prints_the_music_state(
     assert "New music: New music is laid under the edit." in capsys.readouterr().out
 
 
-def test_failed_music_still_prints_the_edit_and_says_tokens_come_back(
+def test_failed_music_still_prints_the_edit_and_says_nothing_was_charged(
     stand_in_api: Server, capsys: pytest.CaptureFixture[str]
 ) -> None:
     stand_in_api.polls = [
@@ -720,15 +747,20 @@ def test_failed_music_still_prints_the_edit_and_says_tokens_come_back(
             "music": {
                 "state": "failed",
                 "price": {"tokens": 16, "usd": 0.08},
-                "refund_eligible": True,
-                "message": "The new music could not be made, so your edit has no added music. "
-                "Your tokens come back.",
+                "paid_by": "sokii",
+                "charge_ref": None,
+                "refund_eligible": False,
+                "message": "The new music could not be made, so your edit plays each episode's own sound. "
+                "Nothing was charged.",
             },
         }
     ]
     assert cut_command(args(episodes=["sp_a:1", "sp_b:1"], new_music=True)) == 0
     out = capsys.readouterr().out
-    assert "Your tokens come back." in out
+    assert (
+        "New music: The new music could not be made" in out
+        and "Nothing was charged." in out
+    )
     assert "Whole show: https://media.example/all.mp4" in out
 
 
