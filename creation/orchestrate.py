@@ -15,6 +15,7 @@ import re
 import shlex
 import sys
 import uuid
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date
@@ -2304,6 +2305,8 @@ class CollectedTakes:
     #: Clips of this episode the kit could not tie to a take (no take number and no request that names
     #: one): not downloaded, not booked, no facts saved; never filed under a guessed take.
     unplaced: list[str] = field(default_factory=list)
+    #: The desk takes the clips were filed under, once each, in order (a Wan take is several shot clips).
+    takes: list[str] = field(default_factory=list)
 
 
 def take_for_clip(
@@ -2317,7 +2320,8 @@ def take_for_clip(
 ) -> tuple[str | None, str]:
     """The desk take a filmed clip belongs to, by explicit identity only, or ``None`` and why.
 
-    1. The clip's take number from the server (``set_index``, from ``relation.id`` ``..._setNN``).
+    1. The clip's take number from the server (``set_index``, from ``relation.id`` ``..._setNN``;
+       a Wan shot's ``..._setNN_beatNN`` names its take, so a take's shots all file under it).
     2. Without one: the film request, when it asked for exactly one take and one clip came back.
     3. Without one: a whole-episode film whose job returned exactly the episode's takes and
        nothing else, none numbered: the server numbers takes by their place in the job's
@@ -2471,7 +2475,11 @@ def collect_takes(
     paths: list[str] = []
     on_screen: list[str] = []
     unplaced: list[str] = []
+    filed: list[str] = []
     cast_names = cast_names_from(spine)
+    shots_of = Counter(
+        clip["set_index"] for clip in clips if isinstance(clip.get("set_index"), int)
+    )
     for position, clip in enumerate(clips, start=1):
         take_id, why = take_for_clip(
             clip, position, desk_takes=take_ids, asked=list(asked or take_ids), clips=clips,
@@ -2488,12 +2496,19 @@ def collect_takes(
                 f"take job `{clip.get('job_id')}` ({clip.get('url')}): {why}"
             )
             continue
+        # A Wan take comes back as one clip per shot, all numbered with the take (``_setNN_beatNN``):
+        # each is kept as shot N of its take, in the server's order. Any other take is one clip.
+        shot = filed.count(take_id) + 1 if shots_of[clip.get("set_index")] > 1 else None
+        first_of_take = take_id not in filed
+        filed.append(take_id)
         with httpx.Client(timeout=300.0) as fetch:
             path = download_to_versioned(
                 fetch,
                 str(clip["url"]),
                 ep_dir / "takes",
-                f"take-ep{episode:02d}-{take_id}-raw",
+                f"take-ep{episode:02d}-{take_id}"
+                + (f"-shot{shot}" if shot else "")
+                + "-raw",
                 default_suffix=".mp4",
             )
         paths.append(str(path))
@@ -2537,11 +2552,13 @@ def collect_takes(
                 usd=priced[0],
                 take_id=take_id,
                 # The seconds the take filmed (the server sizes each take), not the run's ceiling.
-                unit=f"take {_filmed_seconds(facts, clip_seconds)}s",
+                unit=f"{'shot' if shot else 'take'} {_filmed_seconds(facts, clip_seconds)}s",
                 job_id=str(clip.get("job_id") or "") or None,
             )
             booked += priced[0]
-        record_filmed(desk, episode=episode, take_id=take_id)
+        if first_of_take:
+            # One film of the take, however many shot clips it came back as.
+            record_filmed(desk, episode=episode, take_id=take_id)
         jobs.append(
             f"{head}: take job `{clip['job_id']}`"
             + (
@@ -2558,6 +2575,7 @@ def collect_takes(
         foreign,
         on_screen,
         unplaced,
+        list(dict.fromkeys(filed)),
     )
 
 
@@ -2908,7 +2926,7 @@ def book_filmed_episode(
     )
     return StepResult(
         state.phase,
-        f"Episode {ep} filmed: {len(got.jobs)} take(s), ${got.booked_usd:.2f} booked. Video job {video_job_id}.{hint}\n"
+        f"Episode {ep} filmed: {len(got.takes)} take(s), ${got.booked_usd:.2f} booked. Video job {video_job_id}.{hint}\n"
         + spend
         + "\n".join(f"  {line}" for line in got.jobs + got.on_screen)
         + f"\nNext episode: fictora-produce {follow} --desk <desk>."

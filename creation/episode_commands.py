@@ -7896,7 +7896,7 @@ def book_film_unit(
         + (f" NOT FILED: {'; '.join(got.unplaced)}." if got.unplaced else ""),
     )
     lines = [
-        f"Filmed {what}: {len(got.jobs)} take(s), ${got.booked_usd:.2f} booked. Video job {job_id}.",
+        f"Filmed {what}: {len(got.takes)} take(s), ${got.booked_usd:.2f} booked. Video job {job_id}.",
         *cost_lines(read_kit_spend(run, job_id)),
     ]
     lines += [f"  {line}" for line in got.jobs + got.on_screen]
