@@ -62,6 +62,16 @@ EPISODES = [
 ]
 
 
+OFFER = {
+    "offered": True,
+    "price": {"tokens": 16, "usd": 0.08},
+    "tracks": 1,
+    "episodes_with_music": [1, 2],
+    "what_changes": "New music written for this edit, with changes at each episode and at the big turns.",
+    "unavailable_reason": None,
+}
+
+
 class Server:
     def __init__(
         self,
@@ -72,6 +82,7 @@ class Server:
         self.post = post
         self.polls = list(polls or [{"status": "ready", "series_cut": CUT}])
         self.pickable = pickable or (200, {"episodes": EPISODES})
+        self.offer: tuple[int, Any] = (200, OFFER)
         self.seen: list[tuple[str, str, Any]] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -79,6 +90,8 @@ class Server:
         self.seen.append((request.method, request.url.path, body))
         if request.url.path == "/v1/series-cuts/pickable":
             return httpx.Response(self.pickable[0], json=self.pickable[1])
+        if request.url.path == "/v1/series-cuts/music-offer":
+            return httpx.Response(self.offer[0], json=self.offer[1])
         if request.method == "POST":
             return httpx.Response(self.post[0], json=self.post[1])
         poll = self.polls.pop(0) if len(self.polls) > 1 else self.polls[0]
@@ -94,7 +107,15 @@ P2: list[Pick]
 
 def args(**over: Any) -> SimpleNamespace:
     base = dict(
-        list=False, episodes=None, show=None, title=None, wait=None, json=False, file=[]
+        list=False,
+        episodes=None,
+        show=None,
+        title=None,
+        wait=None,
+        json=False,
+        file=[],
+        music_price=False,
+        new_music=False,
     )
     return SimpleNamespace(**{**base, **over})
 
@@ -187,7 +208,14 @@ def test_equals_in_a_desk_path_still_parses(
 
 
 @pytest.mark.parametrize(
-    "extra", [{"file": ["1=x.mp4"]}, {"title": "T"}, {"wait": 5.0}]
+    "extra",
+    [
+        {"file": ["1=x.mp4"]},
+        {"title": "T"},
+        {"wait": 5.0},
+        {"music_price": True},
+        {"new_music": True},
+    ],
 )
 def test_list_with_make_options_is_a_usage_error(
     extra: dict[str, Any], stand_in_api: Server, capsys: pytest.CaptureFixture[str]
@@ -602,3 +630,132 @@ def test_all_files_named_prints_no_notice(
     )
 
     assert said == []
+
+
+def test_music_price_shows_the_servers_price_and_makes_nothing(
+    stand_in_api: Server, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert cut_command(args(episodes=["sp_a:1", "sp_b:1"], music_price=True)) == 0
+    assert [s[:2] for s in stand_in_api.seen] == [
+        ("POST", "/v1/series-cuts/music-offer")
+    ]
+    assert stand_in_api.seen[0][2] == {
+        "episodes": [
+            {"spine_id": "sp_a", "episode": 1},
+            {"spine_id": "sp_b", "episode": 1},
+        ],
+        "title": None,
+    }
+    out = capsys.readouterr().out
+    assert "New music for this edit costs 16 tokens." in out
+    assert "picked episode(s) 1, 2" in out
+    assert "only if they say yes, run the same cut with --new-music" in out
+
+
+def test_music_not_offered_says_why_in_plain_words(
+    stand_in_api: Server, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stand_in_api.offer = (
+        200,
+        {
+            "offered": False,
+            "price": None,
+            "tracks": 1,
+            "episodes_with_music": [],
+            "what_changes": "",
+            "unavailable_reason": "New music is not available for these shows yet.",
+        },
+    )
+    assert cut_command(args(episodes=["sp_a:1", "sp_b:1"], music_price=True)) == 0
+    out = capsys.readouterr().out
+    assert (
+        "No new music for this edit: New music is not available for these shows yet."
+        in out
+    )
+    assert "costs" not in out
+
+
+def test_default_cut_never_asks_for_new_music(stand_in_api: Server) -> None:
+    assert cut_command(args(episodes=["sp_a:1", "sp_b:1"])) == 0
+    post = next(s for s in stand_in_api.seen if s[0] == "POST")
+    assert "new_music" not in post[2]
+    assert not any(s[1].endswith("/music-offer") for s in stand_in_api.seen)
+
+
+def test_new_music_passes_the_yes_and_prints_the_music_state(
+    stand_in_api: Server, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stand_in_api.polls = [
+        {
+            "status": "ready",
+            "series_cut": CUT,
+            "music": {
+                "state": "laid",
+                "price": {"tokens": 16, "usd": 0.08},
+                "refund_eligible": False,
+                "message": "New music is laid under the edit.",
+            },
+        }
+    ]
+    assert cut_command(args(episodes=["sp_a:1", "sp_b:1"], new_music=True)) == 0
+    post = next(s for s in stand_in_api.seen if s[0] == "POST")
+    assert post[2]["new_music"] is True
+    assert "New music: New music is laid under the edit." in capsys.readouterr().out
+
+
+def test_failed_music_still_prints_the_edit_and_says_tokens_come_back(
+    stand_in_api: Server, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stand_in_api.polls = [
+        {
+            "status": "ready",
+            "series_cut": CUT,
+            "music": {
+                "state": "failed",
+                "price": {"tokens": 16, "usd": 0.08},
+                "refund_eligible": True,
+                "message": "The new music could not be made, so your edit has no added music. "
+                "Your tokens come back.",
+            },
+        }
+    ]
+    assert cut_command(args(episodes=["sp_a:1", "sp_b:1"], new_music=True)) == 0
+    out = capsys.readouterr().out
+    assert "Your tokens come back." in out
+    assert "Whole show: https://media.example/all.mp4" in out
+
+
+def test_music_not_offered_409_stops_plainly(
+    stand_in_api: Server, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stand_in_api.post = (
+        409,
+        {
+            "code": "series_cut_music_unavailable",
+            "message": "New music is not available for these shows yet.",
+        },
+    )
+    assert cut_command(args(episodes=["sp_a:1", "sp_b:1"], new_music=True)) == 5
+    err = capsys.readouterr().err
+    assert "new music is not offered for this edit" in err
+    assert "without --new-music" in err
+
+
+def test_music_price_and_new_music_together_is_refused(
+    stand_in_api: Server,
+) -> None:
+    assert (
+        cut_command(
+            args(episodes=["sp_a:1", "sp_b:1"], music_price=True, new_music=True)
+        )
+        == 2
+    )
+    assert stand_in_api.seen == []
+
+
+def test_older_server_without_music_price_says_so(
+    stand_in_api: Server, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stand_in_api.offer = (404, {"detail": "Not Found"})
+    assert cut_command(args(episodes=["sp_a:1", "sp_b:1"], music_price=True)) == 5
+    assert "can't price new music for an edit yet" in capsys.readouterr().err

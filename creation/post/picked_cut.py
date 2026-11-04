@@ -4,6 +4,10 @@ The picked episodes can come from any of the creator's shows (an operator who ma
 episode still gets one cut). The kit sends the pick and prints what the server made. Nothing is
 cut on this laptop, no state is kept, and the files stay on the server (links are printed, as the
 show's own series cut does).
+
+New music (founder, 4 Nov 2026): the edit adds no music by default. ``--music-price`` prints the
+server's price for new music in plain words and makes nothing; ``--new-music`` passes the human's
+yes. The server prices it, decides what it plays under, writes and lays it; the kit only shows and asks.
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ from creation.post.server_finish import (
 PICKABLE_ROUTE = "/v1/series-cuts/pickable"
 CUTS_ROUTE = "/v1/series-cuts"
 CUT_ROUTE = "/v1/series-cuts/{series_cut_id}"
+MUSIC_OFFER_ROUTE = "/v1/series-cuts/music-offer"
 #: The server needs a session header; a pick spans desks, so the kit uses one fixed id.
 SESSION_ID = "kit-picked-series-cut"
 POLL_SECONDS = 5.0
@@ -53,6 +58,7 @@ NEWEST_VERSION_NOTICE = (
     "on your computer, with your own captions or sound, those won't be used unless you send them to me. "
     "To use them, just tell me which file goes with which episode."
 )
+NO_MUSIC_ROUTE = "NOT DONE: the server can't price new music for an edit yet. Tell the core team; nothing was made."
 OLD_SERVER = (
     "NOT DONE: the server can't make a cut from picked episodes yet. "
     "Tell the core team; nothing was made."
@@ -259,6 +265,17 @@ def _check(response: httpx.Response, *, what: str) -> Any:
                 "  ", " "
             )
         )
+    if (
+        response.status_code == 409
+        and isinstance(body, dict)
+        and body.get("code") == "series_cut_music_unavailable"
+    ):
+        raise CutStop(
+            f"NOT DONE: new music is not offered for this edit. {body.get('message') or ''} Nothing was made. "
+            "Run it again without --new-music for the edit with each episode's own sound.".replace(
+                "  ", " "
+            )
+        )
     if response.status_code == 404:
         raise CutStop(
             f"NOT DONE: the server does not know one of the shows picked ({api_error_text(body)[:200]})."
@@ -309,8 +326,12 @@ def run_cut(
         line, file=sys.stderr, flush=True
     ),
     putter: Putter | None = None,
+    new_music: bool = False,
 ) -> list[str]:
     """Ask the server for one cut from the picked episodes and return the lines to print.
+
+    ``new_music`` passes the human's yes to the price ``--music-price`` showed; the server makes
+    another cut of the same picks with new music laid under it.
 
     Raises
     ------
@@ -318,36 +339,16 @@ def run_cut(
         With the plain NOT DONE line when the server did not give the cut.
     """
 
-    if len(picks) < MIN_PICKED:
-        raise CutStop(
-            f"Stopped: pick at least {MIN_PICKED} episodes (got {len(picks)}). Nothing was made.",
-            2,
-        )
-    if len({(p.spine_id, p.episode) for p in picks}) != len(picks):
-        raise CutStop("Stopped: an episode is picked twice. Nothing was made.", 2)
-    for p in picks:
-        if p.file is not None:
-            check_video(str(p.file))
+    _check_picks(picks)
     client, base, headers = _client(transport, api)
     with client:
-        if any(p.file for p in picks):
-            _get(client, base + PICKABLE_ROUTE, headers, what="check the pick")
-        urls = _upload_once(client, base, headers, picks, putter)
-        entries = [
-            {
-                "spine_id": p.spine_id,
-                "episode": p.episode,
-                **({"video_url": urls[p.file]} if p.file else {}),
-            }
-            for p in picks
-        ]
+        entries = _entries(client, base, headers, picks, putter)
+        body: dict[str, Any] = {"episodes": entries, "title": title}
+        if new_music:
+            body["new_music"] = True
         try:
             made = _check(
-                client.post(
-                    base + CUTS_ROUTE,
-                    headers=headers,
-                    json={"episodes": entries, "title": title},
-                ),
+                client.post(base + CUTS_ROUTE, headers=headers, json=body),
                 what="start the cut",
             )
         except httpx.HTTPError as exc:
@@ -386,6 +387,92 @@ def run_cut(
                 )
                 said = clock()
             sleep(POLL_SECONDS)
+
+
+def _check_picks(picks: Sequence[Pick]) -> None:
+    if len(picks) < MIN_PICKED:
+        raise CutStop(
+            f"Stopped: pick at least {MIN_PICKED} episodes (got {len(picks)}). Nothing was made.",
+            2,
+        )
+    if len({(p.spine_id, p.episode) for p in picks}) != len(picks):
+        raise CutStop("Stopped: an episode is picked twice. Nothing was made.", 2)
+    for p in picks:
+        if p.file is not None:
+            check_video(str(p.file))
+
+
+def _entries(
+    client: httpx.Client,
+    base: str,
+    headers: Mapping[str, str],
+    picks: Sequence[Pick],
+    putter: Putter | None,
+) -> list[dict[str, Any]]:
+    """The picks as the server takes them, each chosen file uploaded once."""
+
+    if any(p.file for p in picks):
+        _get(client, base + PICKABLE_ROUTE, headers, what="check the pick")
+    urls = _upload_once(client, base, headers, picks, putter)
+    return [
+        {
+            "spine_id": p.spine_id,
+            "episode": p.episode,
+            **({"video_url": urls[p.file]} if p.file else {}),
+        }
+        for p in picks
+    ]
+
+
+def music_price(
+    picks: Sequence[Pick],
+    *,
+    title: str | None = None,
+    api: tuple[str, Mapping[str, str]] | None = None,
+    transport: httpx.BaseTransport | None = None,
+    putter: Putter | None = None,
+) -> list[str]:
+    """The server's price for new music on this edit, in plain words; nothing is made or charged."""
+
+    _check_picks(picks)
+    client, base, headers = _client(transport, api)
+    with client:
+        entries = _entries(client, base, headers, picks, putter)
+        try:
+            response = client.post(
+                base + MUSIC_OFFER_ROUTE,
+                headers=headers,
+                json={"episodes": entries, "title": title},
+            )
+        except httpx.HTTPError as exc:
+            raise CutStop(
+                f"NOT DONE: could not reach the server ({type(exc).__name__}). Run it again."
+            ) from exc
+        if response.status_code in (404, 405) and _route_missing(_body(response)):
+            raise CutStop(NO_MUSIC_ROUTE)
+        offer = _check(response, what="price new music")
+    return music_offer_lines(offer)
+
+
+def music_offer_lines(offer: Mapping[str, Any]) -> list[str]:
+    """What the server offers, said so the human can answer yes or no."""
+
+    if not offer.get("offered"):
+        reason = str(offer.get("unavailable_reason") or "the server did not say why")
+        return [f"No new music for this edit: {reason}", "Nothing was made or charged."]
+    tokens = (offer.get("price") or {}).get("tokens")
+    under = [str(n) for n in offer.get("episodes_with_music") or []]
+    lines = [
+        f"New music for this edit costs {tokens} tokens. {offer.get('what_changes') or ''}".strip()
+    ]
+    if under:
+        lines.append(
+            f"It plays under picked episode(s) {', '.join(under)}; the others keep their own sound."
+        )
+    lines.append(
+        "Nothing was made or charged. Ask the human; only if they say yes, run the same cut with --new-music."
+    )
+    return lines
 
 
 def _poll(
@@ -497,17 +584,38 @@ def _ready_lines(body: Mapping[str, Any], picked: int) -> list[str]:
         )
     return [
         f"The server cut these {picked} picked episodes by itself; nothing was cut on this laptop.",
+        *_music_lines(body.get("music")),
         *series_cut_file_lines(cut),
     ]
+
+
+def _music_lines(music: Any) -> list[str]:
+    """The edit's new music as the server reports it (nothing when none was asked for)."""
+
+    if not isinstance(music, dict):
+        return []
+    message = str(music.get("message") or "")
+    if music.get("state") == "failed" and music.get("refund_eligible"):
+        return [
+            f"New music: {message or 'it could not be made; the edit has no added music.'}"
+        ]
+    return [f"New music: {message}"] if message else []
 
 
 def cut_command(args: Any) -> int:
     """``cut --list | --episodes REF… | --show TITLE``: returns the exit code (0 done, 5 NOT DONE, 2 bad ask)."""
 
     try:
-        if args.list and (args.file or args.title or args.wait is not None):
+        if args.list and (
+            args.file
+            or args.title
+            or args.wait is not None
+            or args.music_price
+            or args.new_music
+        ):
             raise CutStop(
-                "Usage: cut --list takes only --show (and --json); drop --file, --title and --wait. Nothing was made.",
+                "Usage: cut --list takes only --show (and --json); drop --file, --title, --wait, --music-price and "
+                "--new-music. Nothing was made.",
                 2,
             )
         if args.list:
@@ -542,8 +650,22 @@ def cut_command(args: Any) -> int:
                 2,
             )
         picks = apply_file_swaps(picks, args.file or [])
+        if args.music_price:
+            if args.new_music:
+                raise CutStop(
+                    "Stopped: --music-price only shows the price; ask the human, then run with --new-music. "
+                    "Nothing was made.",
+                    2,
+                )
+            return _emit(args, True, music_price(picks, title=args.title))
         wait = args.wait if args.wait is not None else DEFAULT_WAIT_SECONDS
-        return _emit(args, True, run_cut(picks, title=args.title, wait_seconds=wait))
+        lines = run_cut(
+            picks,
+            title=args.title,
+            wait_seconds=wait,
+            new_music=args.new_music,
+        )
+        return _emit(args, True, lines)
     except CutStop as stop:
         return _emit(args, False, [stop.line], stop.code)
 
