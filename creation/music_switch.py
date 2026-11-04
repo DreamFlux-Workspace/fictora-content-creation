@@ -9,7 +9,6 @@ English. It never reads a Railway variable.
 
 from __future__ import annotations
 
-import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
@@ -18,8 +17,8 @@ from typing import Any, TextIO
 
 import httpx
 
-from creation.harness.credentials import DEFAULT_DRAMA_API
-from creation.harness.env import load_env_file
+from creation.harness.credentials import env_drama_api_credentials
+from creation.harness.http_util import envelope_error, older_server
 
 ROUTE = "/v1/internal/music-switch"
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -85,12 +84,9 @@ def switch_lines(view: Mapping[str, Any]) -> list[str]:
 def refusal(status: int, body: Any, email: str) -> str:
     """What went wrong, in plain English."""
 
-    error = (
-        (body.get("error") or body.get("detail")) if isinstance(body, Mapping) else None
-    )
-    code = error.get("code") if isinstance(error, Mapping) else None
-    message = error.get("message") if isinstance(error, Mapping) else None
-    if status == 404 and code is None:
+    error = envelope_error(body)
+    message = error.get("message") if error else None
+    if older_server(status, body):
         return "This server has no music switch yet. Nothing was changed."
     if status == 403:
         return f"Only admins can read or change the music switch, and {email} is not one. Nothing was changed."
@@ -145,18 +141,13 @@ def run_music_switch(
     if action != "canary" and accounts:
         print("Only canary takes account ids.", file=out)
         return NOT_DONE
-    load_env_file(env_file or REPO_ROOT / ".env")
-    token = os.environ.get("FICTORA_DRAMA_GENERATION_SERVICE_TOKEN", "").strip()
+    base_url, token = env_drama_api_credentials(env_file or REPO_ROOT / ".env")
     if not token:
         print(
             "Set FICTORA_DRAMA_GENERATION_SERVICE_TOKEN in the kit's .env first.",
             file=out,
         )
         return NOT_DONE
-    base_url = (
-        os.environ.get("FICTORA_DRAMA_GENERATION_API_BASE_URL", "").strip()
-        or DEFAULT_DRAMA_API
-    )
     headers = {"Authorization": f"Bearer {token}", "X-Fictora-User-Email": email}
     url = base_url.rstrip("/") + ROUTE
     if action == "status":
