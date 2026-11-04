@@ -176,6 +176,76 @@ def wait_for_change(
         _sleep(POLL_SECONDS)
 
 
+def download_changed_episode(
+    desk: Path,
+    number: int,
+    latest: Mapping[str, Any],
+    *,
+    run: Any,
+    spine_id: str,
+    out: TextIO,
+    head: str,
+    note: str,
+) -> int:
+    """After one episode's music change ended on the server: download its new cut the usual way (``finish``).
+
+    Shared by ``rescore-music`` (new music) and ``music`` (remove, new or add on one episode).
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    number
+        Episode ordinal.
+    latest
+        The episode's change as the server last answered it (``done``, ``failed`` or still ``running``).
+    run
+        Server session.
+    spine_id
+        The story.
+    out
+        Where the lines go.
+    head
+        The line printed when the new cut is down, e.g. ``rebuilt with new music``.
+    note
+        What the run note on the desk says happened.
+
+    Returns
+    -------
+    int
+        ``0`` when the new cut is down (or there is no episode file here yet);
+        :data:`~creation.post.music_rescore.REBUILD_NOT_DONE` when the old file stays.
+    """
+
+    from creation.ops.notes import append_run_note
+    from creation.post.music_rescore import REBUILD_NOT_DONE, rebuild_episode
+
+    if latest.get("state") != "done":
+        reason = latest.get("reason") or "it is still being written"
+        print(
+            f"  ep{number:02d}: !! NOT rebuilt, the old file stays: {reason}", file=out
+        )
+        print(
+            f"    Run `fictora-produce finish --desk {desk} --episode {number}` again in a few minutes.",
+            file=out,
+        )
+        return REBUILD_NOT_DONE
+    rebuilt = rebuild_episode(desk, number, [], run=run, spine_id=spine_id, out=out)
+    words = {
+        "rebuilt": head,
+        "nothing_to_rebuild": "nothing to rebuild",
+        "not_rebuilt": "!! NOT rebuilt, the old file stays",
+    }[rebuilt.state]
+    print(f"  ep{number:02d}: {words}", file=out)
+    for line in rebuilt.lines:
+        print(f"    {line}", file=out)
+    run_dir = desk / f"ep{number:02d}"
+    if (run_dir / "run-notes.md").is_file():
+        name = rebuilt.file.name if rebuilt.file else rebuilt.state.replace("_", " ")
+        append_run_note(run_dir, f"{note}; kit file {name}")
+    return REBUILD_NOT_DONE if rebuilt.state == "not_rebuilt" else 0
+
+
 def follow_new_music(
     desk: Path,
     answer: Mapping[str, Any],
@@ -209,9 +279,8 @@ def follow_new_music(
         :data:`~creation.post.music_rescore.REBUILD_NOT_DONE` otherwise.
     """
 
-    from creation.ops.notes import append_run_note
     from creation.post.finish import book
-    from creation.post.music_rescore import REBUILD_NOT_DONE, rebuild_episode
+    from creation.post.music_rescore import REBUILD_NOT_DONE
 
     started = [
         row for row in _rows(answer) if _change(row).get("state") in _RUNNING | _ENDED
@@ -234,38 +303,17 @@ def follow_new_music(
         latest = wait_for_change(
             run, spine_id, str(row.get("episode_id")), change.get("job_id"), out
         )
-        if latest.get("state") != "done":
-            reason = latest.get("reason") or "it is still being written"
-            print(
-                f"  ep{number:02d}: !! NOT rebuilt, the old file stays: {reason}",
-                file=out,
-            )
-            print(
-                f"    Run `fictora-produce finish --desk {desk} --episode {number}` again in a few minutes.",
-                file=out,
-            )
+        if download_changed_episode(
+            desk,
+            number,
+            latest,
+            run=run,
+            spine_id=spine_id,
+            out=out,
+            head="rebuilt with new music",
+            note="Music re-scored with new music written from the episode's scenes",
+        ):
             worst = REBUILD_NOT_DONE
-            continue
-        rebuilt = rebuild_episode(desk, number, [], run=run, spine_id=spine_id, out=out)
-        head = {
-            "rebuilt": "rebuilt with new music",
-            "nothing_to_rebuild": "nothing to rebuild",
-            "not_rebuilt": "!! NOT rebuilt, the old file stays",
-        }[rebuilt.state]
-        print(f"  ep{number:02d}: {head}", file=out)
-        for line in rebuilt.lines:
-            print(f"    {line}", file=out)
-        if rebuilt.state == "not_rebuilt":
-            worst = REBUILD_NOT_DONE
-        run_dir = desk / f"ep{number:02d}"
-        if (run_dir / "run-notes.md").is_file():
-            name = (
-                rebuilt.file.name if rebuilt.file else rebuilt.state.replace("_", " ")
-            )
-            append_run_note(
-                run_dir,
-                f"Music re-scored with new music written from the episode's scenes; kit file {name}",
-            )
     if started:
         print(
             "  To take the music off again: Remove music (free) in the app. Reels and final copies made before "
@@ -276,6 +324,7 @@ def follow_new_music(
 
 
 __all__: Sequence[str] = (
+    "download_changed_episode",
     "follow_new_music",
     "plan_lines",
     "planned_count",

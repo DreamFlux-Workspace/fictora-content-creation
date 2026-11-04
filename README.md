@@ -191,7 +191,7 @@ creation/
   production_*.py   Desk config + state
   ops/              Desk floor, luma, gates
   recover.py        Cancel job + video retry suffix
-  cli_post.py       finish, voice, revoice, music-note, rescore-music
+  cli_post.py       finish, voice, revoice, music-note, rescore-music, music
   post/             Local finish: sfx, colour, mix (no music), watermark, voice, Whisper; audio_service = the one generated-audio interface
 tests/              Unit tests (no live API)
 scripts/            smoke_live, e2e helpers
