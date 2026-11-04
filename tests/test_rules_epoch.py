@@ -189,6 +189,7 @@ def _words(tmp_path: Path) -> Path:
     return words
 
 
+@needs_ffmpeg
 def test_a_legacy_finish_times_each_flicker_word_like_a_new_desk(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
