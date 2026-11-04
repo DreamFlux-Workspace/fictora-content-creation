@@ -40,6 +40,7 @@ POST_COMMANDS = (
             "music-note",
             "sound-refresh",
             "music-feeling",
+            "music",
             "rescore-music",
             "finish",
             "join",
@@ -641,6 +642,33 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "words", nargs="?", help='Your own feeling, with 4: 4 "warm and hopeful".'
     )
 
+    music = sub.add_parser(
+        "music",
+        help="Remove, New or Add music on one finished episode, the same change creators get in the app. With no "
+        "action, prints what the episode plays now and which changes it allows, with prices. remove takes the "
+        "music out (free); new replaces it with new music written for the episode; add puts music on an episode "
+        "that has none. Each prints the server's plan first (what changes, price, warnings); --yes applies it, "
+        "waits, and downloads the new cut as the next draft file (the old file is kept). Exit 0 = shown, planned "
+        "or applied; 2 = not applied; 5 = applied but the new file is not on this laptop yet.",
+    )
+    music.add_argument("--desk", type=Path, required=True)
+    music.add_argument("--episode", type=int, required=True)
+    music.add_argument(
+        "action", nargs="?", choices=("remove", "new", "add"), default=None
+    )
+    music.add_argument(
+        "--feeling",
+        default=None,
+        metavar="WORDS",
+        help='With new or add: what the music should feel like, in your words ("warm and hopeful"). Left out: '
+        "the episode's saved music feeling (music-feeling), else the server's pick.",
+    )
+    music.add_argument(
+        "--yes",
+        action="store_true",
+        help="Apply after showing the plan. Without it nothing is changed or spent.",
+    )
+
     rescore = sub.add_parser(
         "rescore-music",
         help="Give already-made episodes the music the harness's CURRENT rules give (opt-in; never films): "
@@ -1009,6 +1037,16 @@ def dispatch_post(args: argparse.Namespace) -> int:
 
         return run_music_feeling(
             args.desk, episode=args.episode, choice=args.choice, words=args.words
+        )
+    if args.command == "music":
+        from creation.post.episode_music import run_episode_music
+
+        return run_episode_music(
+            args.desk,
+            episode=args.episode,
+            action=args.action,
+            feeling=args.feeling,
+            yes=args.yes,
         )
     if args.command == "rescore-music":
         from creation.post.music_rescore import run_rescore_music
