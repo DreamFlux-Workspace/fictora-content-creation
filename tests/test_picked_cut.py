@@ -513,3 +513,16 @@ def test_video_url_not_ours_prints_the_servers_message(
     )
     assert cut_command(args(episodes=["a:1", "b:1"])) == 5
     assert "did not come from our storage" in capsys.readouterr().err
+
+
+def test_no_files_named_asks_nothing_and_sends_no_video_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("builtins.input", lambda *a: pytest.fail("a question was asked"))
+    monkeypatch.setattr("sys.stdin", None)
+    server = Server()
+
+    lines = run_cut([Pick("sp_a", 1), Pick("sp_b", 1)], api=API, transport=transport(server), sleep=lambda s: None)
+
+    assert lines
+    post = next(s for s in server.seen if s[0] == "POST")
+    assert all("video_url" not in e for e in post[2]["episodes"])
+    assert not any(s[1].endswith("/uploads") or "upload" in s[1] for s in server.seen)

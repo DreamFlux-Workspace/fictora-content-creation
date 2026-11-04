@@ -80,8 +80,6 @@ TAKE_DECISION_ROUTE = "/v1/video-generations/{job_id}/takes/{take_index}/decisio
 JOB_STATUS_ROUTE = "/v1/video-generations/{job_id}"
 #: Seconds the opening-note read may take (a warning only; the episode is already downloaded).
 OPENING_NOTE_TIMEOUT_SECONDS = 5.0
-#: The show's series cut as the server keeps it (made by the server from every finished episode).
-SERIES_CUT_ROUTE = "/v1/spines/{spine_id}/series-cut"
 
 
 class LineFindingsOpen(ServerFinishError):
@@ -678,77 +676,6 @@ def opening_notes(
         f"Note on the opening (a warning only; the episode is ready): {m}"
         for m in lines
     ]
-
-
-def series_cut_lines(
-    desk: Path,
-    *,
-    episodes: tuple[int, ...] = (),
-    api: tuple[str, Mapping[str, str]] | None = None,
-    transport: httpx.BaseTransport | None = None,
-) -> tuple[bool, list[str]]:
-    """The show's series cut as the server keeps it: ``(ready, lines to print)``.
-
-    The kit no longer joins episodes on the laptop. The server makes the show's
-    compilation and its Instagram and TikTok parts by itself from every finished
-    episode (``GET /v1/spines/{spine_id}/series-cut``); the kit only shows the links.
-    """
-
-    from creation.post.desk import spine_id as desk_spine_id
-
-    try:
-        spine = desk_spine_id(desk.expanduser().resolve())
-        base, headers = api if api is not None else _api(desk)
-    except (ValueError, FileNotFoundError) as exc:
-        return False, [f"NOT DONE: no series cut. {exc}"]
-    except SystemExit as exc:  # no kit token
-        return False, [f"NOT DONE: no series cut. {exc.code}"]
-    url = base.rstrip("/") + SERIES_CUT_ROUTE.format(spine_id=spine)
-    try:
-        with httpx.Client(timeout=60.0, transport=transport) as client:
-            response = client.get(url, headers=dict(headers))
-    except httpx.HTTPError as exc:
-        return False, [
-            f"NOT DONE: could not reach the server ({type(exc).__name__}). Check the internet "
-            "connection, then run join --episodes again."
-        ]
-    body = _body(response)
-    if response.status_code == 404 and _route_missing(body):
-        return False, [
-            "NOT DONE: the server does not make series cuts yet. Tell the core team; nothing was made."
-        ]
-    if response.status_code in BUSY_STATUSES:
-        return False, [
-            f"NOT DONE: the server is busy or restarting (HTTP {response.status_code}). "
-            "Run join --episodes again in a few minutes."
-        ]
-    if not response.is_success or not isinstance(body, dict):
-        return False, [
-            f"NOT DONE: the server did not give the series cut (HTTP {response.status_code}: "
-            f"{api_error_text(body)[:200]})."
-        ]
-    cut = body.get("series_cut") if isinstance(body.get("series_cut"), dict) else None
-    lines = [
-        "The server makes the show's series cut by itself from every finished episode; "
-        "the kit no longer joins episodes on this laptop."
-    ]
-    if not body.get("ready"):
-        reason = str(body.get("reason") or "not enough finished story yet")
-        lines.append(f"NOT DONE: no series cut yet ({reason}).")
-        return False, lines
-    if cut is None:
-        lines.append(
-            "NOT DONE: the server is still making the first cut. Run join --episodes again in a few minutes."
-        )
-        return False, lines
-    played = [int(n) for n in cut.get("episodes") or [] if isinstance(n, int)]
-    if episodes and played and list(episodes) != played:
-        lines.append(
-            f"It plays episodes {', '.join(map(str, played))}, not only the ones named "
-            f"({', '.join(map(str, episodes))})."
-        )
-    lines.extend(series_cut_file_lines(cut))
-    return True, lines
 
 
 def series_cut_file_lines(cut: Mapping[str, Any]) -> list[str]:

@@ -451,6 +451,35 @@ def _upload_once(
     return urls
 
 
+def desk_cut_lines(
+    desk: Path,
+    episodes: Sequence[int],
+    *,
+    wait_seconds: float | None = None,
+    api: tuple[str, Mapping[str, str]] | None = None,
+    transport: httpx.BaseTransport | None = None,
+    **run_kwargs: Any,
+) -> tuple[bool, list[str]]:
+    """``join --desk D --episodes …``: a picked cut of the desk's named episodes, in that order.
+
+    No files are named here, so the server uses the newest delivered version of each episode and the
+    cut goes straight ahead: nothing is asked and no ``video_url`` is sent. An older server without
+    the picked-cut route stops with the plain NOT DONE line; nothing is made.
+    """
+
+    from creation.post.desk import spine_id
+
+    try:
+        spine = spine_id(desk.expanduser().resolve())
+        picks = [Pick(spine, int(n)) for n in episodes]
+        wait = wait_seconds if wait_seconds is not None else DEFAULT_WAIT_SECONDS
+        return True, run_cut(picks, wait_seconds=wait, api=api, transport=transport, **run_kwargs)
+    except CutStop as stop:
+        return False, [stop.line]
+    except (ValueError, FileNotFoundError) as exc:
+        return False, [f"NOT DONE: no series cut. {exc}"]
+
+
 def _ready_lines(body: Mapping[str, Any], picked: int) -> list[str]:
     cut = body.get("series_cut")
     if not isinstance(cut, dict):

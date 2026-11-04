@@ -1047,11 +1047,11 @@ def _send_caption_labels(
 
 
 def _show_series_cut(desk: Path, args: argparse.Namespace) -> int:
-    """``--episodes``: print the series cut the server keeps for the show (no laptop join)."""
+    """``--episodes``: ask the server for a cut of the desk's named episodes and print it (no laptop join)."""
 
-    from creation.post.server_finish import series_cut_lines
+    from creation.post.picked_cut import desk_cut_lines
 
-    ready, lines = series_cut_lines(desk, episodes=tuple(args.episodes))
+    ready, lines = desk_cut_lines(desk, tuple(args.episodes), wait_seconds=getattr(args, "wait", None))
     if args.json:
         print(json.dumps({"ready": ready, "lines": lines}, indent=2))
     else:
