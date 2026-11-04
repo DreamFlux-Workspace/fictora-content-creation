@@ -16,6 +16,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from creation.lane_features import sound_notes_supported
 from creation.ops.state import episode_beat_pattern
 from creation.spine_view import beats_by_take, episode_id_for
 
@@ -874,6 +875,9 @@ def hands_on_sound_lines(spine: Mapping[str, Any], *, episode: int) -> list[str]
         One line when any of those actions is missing from the sound notes.
     """
 
+    if not sound_notes_supported(spine):
+        # The story's video model makes its own sound effects: a sound note would change nothing.
+        return []
     notes = " ".join(
         str(note.get("text") or "")
         for note in spine.get("sound_notes") or []

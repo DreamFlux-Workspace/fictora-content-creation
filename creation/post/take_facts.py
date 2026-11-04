@@ -27,6 +27,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from creation.lane_features import sound_notes_supported
 from creation.ops.folder import next_versioned_path
 from creation.post.sfx import FILMED_CUT_EDGE_SECONDS, FilmedShots, noted_gain_db
 from creation.spine_view import episode_id_for
@@ -212,6 +213,9 @@ def stale_facts_reason(
         What changed since the facts were saved; ``None`` when they carry every note.
     """
 
+    if not sound_notes_supported(spine):
+        # The server lays no sound note on this story's takes, so no saved facts are older than its notes.
+        return None
     body = facts.get("take_facts", facts)
     carried = {
         str(note.get("note_id"))

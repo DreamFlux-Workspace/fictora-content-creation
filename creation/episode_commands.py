@@ -91,6 +91,7 @@ from creation.film_spend import cost_lines, read_kit_spend
 from creation.harness import stages_gated as stages
 from creation import line_fit
 from creation import note_outfit
+from creation.lane_features import SOUND_NOTES_OFF, sound_notes_supported
 from creation.harness.http_util import (
     api_error_text,
     describe_job_error,
@@ -4934,6 +4935,8 @@ def run_sound_note(
     episode = episode or state.episode_ordinal
     try:
         spine = run.spine(state.spine_id or "")
+        if not sound_notes_supported(spine):
+            raise CommandStopped(SOUND_NOTES_OFF)
         notes = [
             note for note in spine.get("sound_notes") or [] if isinstance(note, Mapping)
         ]

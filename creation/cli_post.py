@@ -9,6 +9,7 @@ from typing import Any
 from pathlib import Path
 
 from creation.cli_text import HELP_SUFFIX, text_or_file
+from creation.lane_features import SFX_ADJUST_OFF_HOME, desk_sound_notes_supported
 from creation.post.edit_commands import EDIT_COMMANDS, add_edit_parsers, dispatch_edit
 from creation.post.handmade import CUE_DEFAULT_SECONDS
 from creation.post.impact_post import MAX_EDITOR_HITS
@@ -221,12 +222,20 @@ def _add_server_finish_args(parser: argparse.ArgumentParser) -> None:
         )
 
 
-def laptop_only_refusal(command: str, flags: list[str]) -> str:
-    """The plain stop for old laptop settings on ``finish`` / ``join``."""
+def laptop_only_refusal(
+    command: str, flags: list[str], *, sound_notes: bool = True
+) -> str:
+    """The plain stop for old laptop settings on ``finish`` / ``join``.
+
+    ``sound_notes`` is False on a story the server says takes none
+    (``lane_features``): ``--sfx-adjust`` then says why, not "use a sound note".
+    """
 
     grouped: dict[str, list[str]] = {}
     for flag in flags:
         home = _LAPTOP_FLAG_HOMES.get(flag) or _JOIN_REFUSED_HOMES.get(flag, "")
+        if flag == "--sfx-adjust" and not sound_notes:
+            home = SFX_ADJUST_OFF_HOME
         grouped.setdefault(home, []).append(flag)
     rows = [
         f"  {', '.join(names)}: {home}." if home else f"  {', '.join(names)}."
@@ -1156,7 +1165,13 @@ def _server_finish_command(args: argparse.Namespace) -> int:
 
     laptop = list(getattr(args, "laptop_only", None) or [])
     if laptop:
-        print(laptop_only_refusal(args.command, laptop), file=sys.stderr)
+        sound_notes = "--sfx-adjust" not in laptop or desk_sound_notes_supported(
+            args.desk.expanduser().resolve(), getattr(args, "episode", None)
+        )
+        print(
+            laptop_only_refusal(args.command, laptop, sound_notes=sound_notes),
+            file=sys.stderr,
+        )
         return 2
     desk = args.desk.expanduser().resolve()
     if args.episodes:
