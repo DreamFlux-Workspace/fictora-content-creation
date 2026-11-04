@@ -91,6 +91,83 @@ def test_show_matches_every_show_with_the_title_oldest_first() -> None:
     assert [e["spine_id"] for e in picked] == ["sp_a", "sp_b"]
 
 
+def test_show_orders_by_each_shows_earliest_delivery_then_episode() -> None:
+    eps = [
+        {"spine_id": "a", "show_title": "S", "episode": 1, "delivered_at": "2026-11-09T00:00:00Z"},
+        {"spine_id": "a", "show_title": "S", "episode": 2, "delivered_at": "2026-11-02T00:00:00Z"},
+        {"spine_id": "b", "show_title": "S", "episode": 1, "delivered_at": "2026-11-05T00:00:00Z"},
+    ]
+    assert [(e["spine_id"], e["episode"]) for e in select_show(eps, "s")] == [("a", 1), ("a", 2), ("b", 1)]
+
+
+@pytest.mark.parametrize("raw", ["spine_9:\u00b2", "spine_9:\u00b2=x.mp4"])
+def test_superscript_digit_is_a_plain_refusal(raw: str) -> None:
+    with pytest.raises(CutStop) as stop:
+        parse_ref(raw)
+    assert stop.value.code == 2
+
+
+def test_equals_in_a_desk_path_still_parses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("creation.post.desk.spine_id", lambda desk: "sp")
+    desk = tmp_path / "a=b"
+    desk.mkdir()
+    f = video(tmp_path, "x=y.mp4")
+    assert parse_ref(f"{desk}:2") == Pick("sp", 2)
+    assert parse_ref(f"{desk}:2={f}") == Pick("sp", 2, f.resolve())
+
+
+@pytest.mark.parametrize("extra", [{"file": ["1=x.mp4"]}, {"title": "T"}, {"wait": 5.0}])
+def test_list_with_make_options_is_a_usage_error(extra: dict[str, Any], stand_in_api: Server, capsys: pytest.CaptureFixture[str]) -> None:
+    assert cut_command(args(list=True, **extra)) == 2
+    assert stand_in_api.seen == [] and "Usage:" in capsys.readouterr().err
+
+
+def test_older_server_refuses_before_any_upload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    server = with_uploads(monkeypatch)
+    server.pickable = (404, {"detail": "Not Found"})
+    f = video(tmp_path)
+    assert cut_command(args(episodes=[f"a:1={f}", "b:1"])) == 5
+    assert [s[1] for s in server.seen] == ["/v1/series-cuts/pickable"]
+    assert "can't make a cut from picked episodes yet" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("name", ["clip.mov", "clip.webm", "clip.mkv"])
+def test_only_mp4_and_m4v_go_up(tmp_path: Path, name: str) -> None:
+    with pytest.raises(CutStop, match=r"not an \.mp4 or \.m4v") as stop:
+        parse_ref(f"a:1={video(tmp_path, name)}")
+    assert stop.value.code == 2
+    assert parse_ref(f"a:1={video(tmp_path, 'c.M4V')}").file is not None
+
+
+def test_poll_retries_busy_and_dropped_connections_until_ready() -> None:
+    server = Server()
+    calls = {"n": 0}
+
+    def flaky(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/v1/series-cuts/c1":
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(502, text="bad gateway")
+            if calls["n"] == 2:
+                raise httpx.ConnectError("dropped")
+        return server(request)
+
+    waits: list[float] = []
+    lines = run_cut(P2, api=API, transport=httpx.MockTransport(flaky), sleep=waits.append, clock=lambda: 0.0)
+    assert calls["n"] == 3 and waits == [2.0, 4.0] and lines[1].startswith("Whole show")
+
+
+def test_poll_gives_up_with_a_plain_line_at_the_deadline() -> None:
+    def down(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(503, text="x")
+        return httpx.Response(202, json={"series_cut_id": "c1"})
+
+    now = [0.0]
+    with pytest.raises(CutStop, match="busy or restarting"):
+        run_cut(P2, wait_seconds=30, api=API, transport=httpx.MockTransport(down), sleep=lambda s: now.__setitem__(0, now[0] + 20), clock=lambda: now[0])
+
+
 def test_list_prints_handles_grouped_by_show(stand_in_api: Server, capsys: pytest.CaptureFixture[str]) -> None:
     assert cut_command(args(list=True, show="exit strategy")) == 0
     out = capsys.readouterr().out
@@ -220,7 +297,7 @@ def test_missing_or_non_video_file_is_refused_before_any_upload(tmp_path: Path, 
         parse_ref(f"a:1={tmp_path}/nope.mp4")
     note = tmp_path / "notes.txt"
     note.write_text("x")
-    with pytest.raises(CutStop, match="not a video"):
+    with pytest.raises(CutStop, match="not an .mp4 or .m4v"):
         parse_ref(f"a:1={note}")
     assert server.seen == []
 

@@ -44,7 +44,10 @@ CUT_ROUTE = "/v1/series-cuts/{series_cut_id}"
 SESSION_ID = "kit-picked-series-cut"
 POLL_SECONDS = 5.0
 MIN_PICKED = 2
-VIDEO_SUFFIXES = frozenset({".mp4", ".mov", ".m4v", ".webm", ".mkv"})
+#: The upload helper labels every file video/mp4, so only containers that really are MP4 go up.
+VIDEO_SUFFIXES = frozenset({".mp4", ".m4v"})
+#: Waits before asking again when a poll hits a busy answer or a dropped connection.
+POLL_RETRY_WAITS = (2.0, 4.0, 8.0, 15.0)
 OLD_SERVER = (
     "NOT DONE: the server can't make a cut from picked episodes yet. "
     "Tell the core team; nothing was made."
@@ -69,15 +72,26 @@ class CutStop(Exception):
         self.code = code
 
 
+def _split_ref(raw: str) -> tuple[str, str]:
+    """Split ``REF=FILE`` at the last ``=`` that leaves a valid ``<where>:<number>`` ref, so ``=`` in a desk path works."""
+
+    cuts = [len(raw), *(i for i in range(len(raw) - 1, -1, -1) if raw[i] == "=")]
+    for end in cuts:
+        left, _, tail = raw[:end].rpartition(":")
+        if left and tail.isdecimal():
+            return raw[:end], raw[end + 1 :]
+    return raw, ""
+
+
 def parse_ref(raw: str) -> Pick:
     """``<spine_id>:<n>`` or ``<desk path>:<n>``, optionally ``=FILE`` to use that file for the episode.
 
     A desk's spine id is read from its own ``production.json``; nothing new is saved.
     """
 
-    ref, _, file_part = raw.partition("=")
-    left, sep, tail = ref.rpartition(":")
-    if not sep or not left or not tail.isdigit() or int(tail) < 1:
+    ref, file_part = _split_ref(raw)
+    left, _, tail = ref.rpartition(":")
+    if not left or not tail.isdecimal() or int(tail) < 1:
         raise CutStop(
             f'"{raw}" is not an episode pick. Use <show id>:<episode number> or <desk folder>:<episode number>, '
             "with =FILE to use your own file for it (run cut --list for the ids). Nothing was made.",
@@ -104,7 +118,7 @@ def check_video(raw: str) -> Path:
     if not path.is_file():
         raise CutStop(f"Stopped: no file at {path}. Nothing was made or uploaded.", 2)
     if path.suffix.lower() not in VIDEO_SUFFIXES:
-        raise CutStop(f"Stopped: {path.name} is not a video file. Nothing was made or uploaded.", 2)
+        raise CutStop(f"Stopped: {path.name} is not an .mp4 or .m4v video. Nothing was made or uploaded.", 2)
     if path.stat().st_size > VIDEO_UPLOAD_MAX_BYTES:
         raise CutStop(f"Stopped: {path.name} is over the server's 300 MB upload limit. Nothing was made or uploaded.", 2)
     return path.resolve()
@@ -116,7 +130,7 @@ def apply_file_swaps(picks: Sequence[Pick], swaps: Sequence[str]) -> list[Pick]:
     out = list(picks)
     for raw in swaps:
         number, sep, path = raw.partition("=")
-        if not sep or not number.isdigit() or not 1 <= int(number) <= len(out):
+        if not sep or not number.isdecimal() or not 1 <= int(number) <= len(out):
             raise CutStop(
                 f'Stopped: "{raw}" is not N=PATH with N from 1 to {len(out)} (the order the episodes play). '
                 "Nothing was made or uploaded.",
@@ -128,11 +142,15 @@ def apply_file_swaps(picks: Sequence[Pick], swaps: Sequence[str]) -> list[Pick]:
 
 
 def select_show(episodes: Sequence[Mapping[str, Any]], title: str) -> list[Mapping[str, Any]]:
-    """Every delivered episode of every show titled ``title`` (any case), oldest first."""
+    """Every delivered episode of every show titled ``title`` (any case): shows by first delivery, episodes in order."""
 
     wanted = title.strip().casefold()
     chosen = [e for e in episodes if str(e.get("show_title") or "").strip().casefold() == wanted]
-    return sorted(chosen, key=lambda e: (str(e.get("delivered_at") or ""), int(e.get("episode") or 0)))
+    first: dict[str, str] = {}
+    for e in chosen:
+        key, at = str(e.get("spine_id")), str(e.get("delivered_at") or "")
+        first[key] = min(first.get(key, at), at)
+    return sorted(chosen, key=lambda e: (first[str(e.get("spine_id"))], str(e.get("spine_id")), int(e.get("episode") or 0)))
 
 
 def pickable_lines(episodes: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -251,6 +269,8 @@ def run_cut(
             check_video(str(p.file))
     client, base, headers = _client(transport, api)
     with client:
+        if any(p.file for p in picks):
+            _get(client, base + PICKABLE_ROUTE, headers, what="check the pick")
         urls = _upload_once(client, base, headers, picks, putter)
         entries = [
             {"spine_id": p.spine_id, "episode": p.episode, **({"video_url": urls[p.file]} if p.file else {})}
@@ -266,7 +286,7 @@ def run_cut(
         url = base + CUT_ROUTE.format(series_cut_id=cut_id)
         deadline, said = clock() + wait_seconds, clock()
         while True:
-            body = _get(client, url, headers, what="give the cut")
+            body = _poll(client, url, headers, deadline=deadline, clock=clock, sleep=sleep)
             status = str(body.get("status") or "")
             if status == "ready":
                 return _ready_lines(body, len(picks))
@@ -282,6 +302,36 @@ def run_cut(
                 progress(f"Still making the cut ({status or 'working'}); waiting up to {_duration(wait_seconds)}.")
                 said = clock()
             sleep(POLL_SECONDS)
+
+
+def _poll(
+    client: httpx.Client,
+    url: str,
+    headers: Mapping[str, str],
+    *,
+    deadline: float,
+    clock: Callable[[], float],
+    sleep: Callable[[float], None],
+) -> Any:
+    """One status answer, asking again after a busy answer or dropped connection until ``deadline``."""
+
+    attempt = 0
+    while True:
+        try:
+            response = client.get(url, headers=dict(headers))
+        except httpx.TransportError as exc:
+            if clock() >= deadline:
+                raise CutStop(
+                    f"NOT DONE: could not reach the server ({type(exc).__name__}). Check the internet connection, "
+                    "then run the same command again; the server keeps the same cut."
+                ) from exc
+        except httpx.HTTPError as exc:
+            raise CutStop(f"NOT DONE: could not reach the server ({type(exc).__name__}). Run it again.") from exc
+        else:
+            if response.status_code not in BUSY_STATUSES or clock() >= deadline:
+                return _check(response, what="give the cut")
+        sleep(POLL_RETRY_WAITS[min(attempt, len(POLL_RETRY_WAITS) - 1)])
+        attempt += 1
 
 
 class _Run:
@@ -323,6 +373,8 @@ def cut_command(args: Any) -> int:
     """``cut --list | --episodes REF… | --show TITLE``: returns the exit code (0 done, 5 NOT DONE, 2 bad ask)."""
 
     try:
+        if args.list and (args.file or args.title or args.wait is not None):
+            raise CutStop("Usage: cut --list takes only --show (and --json); drop --file, --title and --wait. Nothing was made.", 2)
         if args.list:
             if args.episodes:
                 raise CutStop("Stopped: --list only shows; do not combine it with --episodes. Nothing was made.", 2)
