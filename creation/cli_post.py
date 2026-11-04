@@ -42,6 +42,7 @@ POST_COMMANDS = (
             "rescore-music",
             "finish",
             "join",
+            "cut",
             "pull-episodes",
         }
     )
@@ -755,6 +756,43 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         )
     _add_server_finish_args(join)
 
+    cut = sub.add_parser(
+        "cut",
+        help="The server's punchy series cut (whole file, Instagram and TikTok parts, covers, captions) from "
+        "episodes you pick, from any of the creator's shows (free). Nothing is cut on this laptop. "
+        f"Exits {SERVER_FINISH_NOT_DONE} (NOT DONE) when the server did not give the cut.",
+    )
+    cut.add_argument(
+        "--list",
+        action="store_true",
+        help="Show the delivered episodes you can pick, grouped by show.",
+    )
+    cut.add_argument(
+        "--episodes", nargs="+", default=None, metavar="REF",
+        help="Episodes in the order they should play (2 or more): <show id>:<n> or <desk folder>:<n>, add =FILE to use your own video file for that episode.",
+    )  # fmt: skip
+    cut.add_argument(
+        "--show", default=None, metavar="TITLE",
+        help="With --list: only shows with this title. Alone: every delivered episode of every show with this "
+        "title, oldest first (case does not matter).",
+    )  # fmt: skip
+    cut.add_argument(
+        "--file", action="append", default=[], metavar="N=PATH",
+        help="With --show: use this video file for the Nth episode that plays (repeat). With --episodes, write "
+        "REF=FILE instead. The kit uploads the file; the server makes the cut.",
+    )  # fmt: skip
+    cut.add_argument("--title", default=None, help="Optional name for the cut.")
+    cut.add_argument(
+        "--wait",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help=f"Longest wait (default {DEFAULT_WAIT_SECONDS / 60:g} minutes).",
+    )
+    cut.add_argument(
+        "--json", action="store_true", help="Print the result as JSON on stdout."
+    )
+
     add_edit_parsers(sub)
     add_review_parser(sub)
 
@@ -806,6 +844,10 @@ def dispatch_post(args: argparse.Namespace) -> int:
         When the command is unknown.
     """
 
+    if args.command == "cut":
+        from creation.post.picked_cut import cut_command
+
+        return cut_command(args)
     if args.command in EDIT_COMMANDS:
         return dispatch_edit(args)
     if args.command in REVIEW_COMMANDS:

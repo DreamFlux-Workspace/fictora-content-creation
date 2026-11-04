@@ -747,7 +747,14 @@ def series_cut_lines(
             f"It plays episodes {', '.join(map(str, played))}, not only the ones named "
             f"({', '.join(map(str, episodes))})."
         )
-    lines.append(f"Whole show: {cut.get('compilation_url')}")
+    lines.extend(series_cut_file_lines(cut))
+    return True, lines
+
+
+def series_cut_file_lines(cut: Mapping[str, Any]) -> list[str]:
+    """The server's series cut record as plain lines: whole file, each part, its cover and caption."""
+
+    lines = [f"Whole show: {cut.get('compilation_url')}"]
     for part in cut.get("parts") or []:
         if not isinstance(part, dict):
             continue
@@ -758,7 +765,7 @@ def series_cut_lines(
             lines.append(f"  Cover: {part['cover_url']}")
         if part.get("caption"):
             lines.append(f"  Post caption: {part['caption']}")
-    return True, lines
+    return lines
 
 
 def _kept_all(takes: list[dict[str, Any]], keep: tuple[str, ...]) -> bool:
