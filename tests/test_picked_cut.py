@@ -16,6 +16,7 @@ from creation.post.picked_cut import (
     CutStop,
     Pick,
     cut_command,
+    music_price,
     parse_ref,
     run_cut,
     select_show,
@@ -121,6 +122,7 @@ def args(**over: Any) -> SimpleNamespace:
         file=[],
         music_price=False,
         new_music=False,
+        music_quote=None,
     )
     return SimpleNamespace(**{**base, **over})
 
@@ -659,24 +661,76 @@ def test_music_price_shows_the_servers_price_and_makes_nothing(
         "tokens" not in out and "second" not in out and "minute" not in out
     )  # never a length
     assert "picked episode(s) 1, 2" in out
-    assert "only if they say yes, run the same cut with --new-music" in out
+    assert (
+        "only if they say yes, run the same cut with --new-music --music-quote 16:0.08:1."
+        in out
+    )
 
 
-def test_music_price_never_uploads_the_humans_files(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_music_price_sends_the_picks_exactly_as_the_cut_will_so_the_price_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Review round 3: a pick played from the human's own file is priced as that file, not as its episode."""
+
     server = with_uploads(monkeypatch)
     f = video(tmp_path)
-    assert cut_command(args(episodes=[f"sp_a:1={f}", "sp_b:1"], music_price=True)) == 0
-    assert [s[:2] for s in server.seen] == [
-        ("POST", "/v1/series-cuts/music-offer")
-    ]  # no upload, no pick check
-    assert server.seen[0][2]["episodes"] == [
-        {"spine_id": "sp_a", "episode": 1},
+    picks = [Pick("sp_a", 1, f.resolve()), Pick("sp_b", 1)]
+    put = lambda url, data, h: 200  # noqa: E731
+    lines = music_price(picks, api=API, transport=transport(server), putter=put)
+    run_cut(picks, api=API, transport=transport(server), putter=put)
+    offer = next(s for s in server.seen if s[1] == "/v1/series-cuts/music-offer")
+    cut = next(s for s in server.seen if s[1] == "/v1/series-cuts" and s[0] == "POST")
+    assert offer[2]["episodes"] == [
+        {
+            "spine_id": "sp_a",
+            "episode": 1,
+            "video_url": "https://media.example/up1.mp4",
+        },
         {"spine_id": "sp_b", "episode": 1},
     ]
-    out = capsys.readouterr().out
-    assert "Your own files were not sent just to see the price" in out
+    assert [sorted(e) for e in cut[2]["episodes"]] == [
+        sorted(e) for e in offer[2]["episodes"]
+    ]  # the same shape
+    assert picked_cut.OWN_FILES_PRICE_NOTE in lines
+
+
+def test_new_music_without_the_agreed_price_is_refused_before_anything_is_sent(
+    stand_in_api: Server,
+) -> None:
+    assert cut_command(args(episodes=["sp_a:1", "sp_b:1"], new_music=True)) == 2
+    assert (
+        cut_command(args(episodes=["sp_a:1", "sp_b:1"], music_quote="16:0.08:1")) == 2
+    )
+    assert (
+        cut_command(
+            args(episodes=["sp_a:1", "sp_b:1"], new_music=True, music_quote="cheap")
+        )
+        == 2
+    )
+    assert stand_in_api.seen == []
+
+
+def test_a_changed_price_stops_with_the_new_price_to_ask_again(
+    stand_in_api: Server, capsys: pytest.CaptureFixture[str]
+) -> None:
+    question = "New music for this edit costs $0.16 (2 tracks at $0.08), paid by Sokii. Make it? (yes/no)"
+    stand_in_api.post = (
+        409,
+        {"error": {"code": "series_cut_music_price_changed", "message": "The price changed.",
+                   "details": {"price": {"tokens": 32, "usd": 0.16}, "tracks": 2, "question": question}}},
+    )  # fmt: skip
+    assert (
+        cut_command(
+            args(episodes=["sp_a:1", "sp_b:1"], new_music=True, music_quote="16:0.08:1")
+        )
+        == 5
+    )
+    err = capsys.readouterr().err
+    assert (
+        "price of new music for this edit changed" in err
+        and "Nothing was made or charged" in err
+    )
+    assert question in err and "--music-quote 32:0.16:2" in err
 
 
 #: What the server says when none of the picks has a copy without music.
@@ -731,9 +785,18 @@ def test_new_music_passes_the_yes_and_prints_the_music_state(
             },
         }
     ]
-    assert cut_command(args(episodes=["sp_a:1", "sp_b:1"], new_music=True)) == 0
+    assert (
+        cut_command(
+            args(episodes=["sp_a:1", "sp_b:1"], new_music=True, music_quote="16:0.08:1")
+        )
+        == 0
+    )
     post = next(s for s in stand_in_api.seen if s[0] == "POST")
     assert post[2]["new_music"] is True
+    assert post[2]["music_quote"] == {
+        "price": {"tokens": 16, "usd": 0.08},
+        "tracks": 1,
+    }  # the price agreed to
     assert "New music: New music is laid under the edit." in capsys.readouterr().out
 
 
@@ -755,7 +818,12 @@ def test_failed_music_still_prints_the_edit_and_says_nothing_was_charged(
             },
         }
     ]
-    assert cut_command(args(episodes=["sp_a:1", "sp_b:1"], new_music=True)) == 0
+    assert (
+        cut_command(
+            args(episodes=["sp_a:1", "sp_b:1"], new_music=True, music_quote="16:0.08:1")
+        )
+        == 0
+    )
     out = capsys.readouterr().out
     assert (
         "New music: The new music could not be made" in out
@@ -774,7 +842,12 @@ def test_music_not_offered_409_stops_plainly(
             "message": "New music is not available for these shows yet.",
         },
     )
-    assert cut_command(args(episodes=["sp_a:1", "sp_b:1"], new_music=True)) == 5
+    assert (
+        cut_command(
+            args(episodes=["sp_a:1", "sp_b:1"], new_music=True, music_quote="16:0.08:1")
+        )
+        == 5
+    )
     err = capsys.readouterr().err
     assert "new music is not offered for this edit" in err
     assert "without --new-music" in err

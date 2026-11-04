@@ -829,6 +829,11 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "under the episodes that have a copy without music. Without it the edit adds no music.",
     )  # fmt: skip
     cut.add_argument(
+        "--music-quote", default=None, metavar="TOKENS:USD:TRACKS",
+        help="With --new-music: the price the human said yes to, exactly as --music-price printed it. If the "
+        "server's price changed since, nothing is made and the new price is printed to ask again.",
+    )  # fmt: skip
+    cut.add_argument(
         "--wait",
         type=float,
         default=None,
