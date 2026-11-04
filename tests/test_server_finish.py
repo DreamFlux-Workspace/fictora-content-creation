@@ -776,7 +776,9 @@ def test_join_episodes_asks_the_server_for_a_cut_of_the_named_episodes_in_order(
 ) -> None:
     from creation.post.picked_cut import desk_cut_lines
 
-    monkeypatch.setattr("builtins.input", lambda *a: pytest.fail("a question was asked"))
+    monkeypatch.setattr(
+        "builtins.input", lambda *a: pytest.fail("a question was asked")
+    )
     server = CutServer()
 
     ready, lines = desk_cut_lines(
@@ -809,7 +811,10 @@ def test_an_older_server_is_not_done_and_makes_nothing(post_desk: Path) -> None:
 
 @pytest.mark.parametrize("command", ["finish", "join"])
 def test_one_episode_is_a_usage_error(
-    command: str, post_desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    command: str,
+    post_desk: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     called: list[Any] = []
     monkeypatch.setattr(picked_cut, "desk_cut_lines", lambda *a, **k: called.append(a))
@@ -995,9 +1000,7 @@ def test_episodes_with_take_or_labels_is_refused(
 
     called: list[Any] = []
     monkeypatch.setattr(cli_post, "run_server_finish", lambda *a, **k: called.append(a))
-    monkeypatch.setattr(
-        picked_cut, "desk_cut_lines", lambda *a, **k: called.append(a)
-    )
+    monkeypatch.setattr(picked_cut, "desk_cut_lines", lambda *a, **k: called.append(a))
 
     code = main(["finish", "--desk", str(post_desk), "--episodes", "1", "2", *extra])
 
@@ -1012,9 +1015,7 @@ def test_episodes_with_an_old_setting_is_still_refused(
 
     called: list[Any] = []
     monkeypatch.setattr(cli_post, "run_server_finish", lambda *a, **k: called.append(a))
-    monkeypatch.setattr(
-        picked_cut, "desk_cut_lines", lambda *a, **k: called.append(a)
-    )
+    monkeypatch.setattr(picked_cut, "desk_cut_lines", lambda *a, **k: called.append(a))
 
     code = main(
         ["join", "--desk", str(post_desk), "--episodes", "1", "2", "--dissolve"]
