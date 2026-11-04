@@ -929,9 +929,10 @@ def voices_first_refusal(
 
     from creation.voice_mode import voices_for_film
 
-    if not voices_for_film(desk, run, spine).locked:
+    voices = voices_for_film(desk, run, spine)
+    if not voices.locked:
         names = thought_and_narration_names(spine)
-        if not names:
+        if not names or not voices.thoughts_need_locked:
             return None
         return f"Stopped before {stage}. Nothing was sent.\n" + locked_voices_needed(
             desk, names

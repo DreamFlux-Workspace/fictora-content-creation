@@ -91,6 +91,7 @@ from creation.film_spend import cost_lines, read_kit_spend
 from creation.harness import stages_gated as stages
 from creation import line_fit
 from creation import note_outfit
+from creation.lane_features import SOUND_NOTES_OFF, sound_notes_supported
 from creation.harness.http_util import (
     api_error_text,
     describe_job_error,
@@ -172,7 +173,7 @@ from creation.orchestrate import (
     seed_attempt_for,
     sync_spine_lines,
 )
-from creation.prices import STILL_USD, server_lane
+from creation.prices import STILL_USD, server_lane, server_lane_label
 from creation.production_config import (
     SERVER_HOUSE_CAPTION_STYLE,
     load_production_config,
@@ -4934,6 +4935,8 @@ def run_sound_note(
     episode = episode or state.episode_ordinal
     try:
         spine = run.spine(state.spine_id or "")
+        if not sound_notes_supported(spine):
+            raise CommandStopped(SOUND_NOTES_OFF)
         notes = [
             note for note in spine.get("sound_notes") or [] if isinstance(note, Mapping)
         ]
@@ -5144,7 +5147,7 @@ def run_inner_voice(
         added: dict[str, Any] | None = None
         what = ""
         dropped: list[str] = []
-        if adding and not is_legacy(desk) and not show_voices(run, spine).locked:
+        if adding and not is_legacy(desk) and show_voices(run, spine).thoughts_wait:
             raise CommandStopped(
                 "Not added, nothing sent: this show films in the video model's own voices, and a thought is "
                 "spoken in the character's kept voice, so it could never match the voice they speak in. "
@@ -7865,7 +7868,9 @@ def book_film_unit(
         asked=take_ids,
     )
     fresh = load_production(desk)
-    fresh.remember_server_lane(collecting.server_lane())
+    fresh.remember_server_lane(
+        collecting.server_lane(), label=collecting.video_lane_label
+    )
     fresh.pending.pop(unit, None)
     fresh.attempts[unit] = fresh.attempts.get(unit, 0) + 1
     if got.first_url is None:
@@ -7960,6 +7965,13 @@ def _forget_failed_film(
     )
 
 
+def refilm_recap_lines(estimate: Mapping[str, Any]) -> list[str]:
+    """The server's ``refilm_recap`` on a free estimate, printed as sent; none when it is absent (every H3 take)."""
+
+    recap = estimate.get("refilm_recap")
+    return [recap.strip()] if isinstance(recap, str) and recap.strip() else []
+
+
 def _price_film(
     desk: Path,
     state: ProductionState,
@@ -7982,8 +7994,9 @@ def _price_film(
         reroll_take_index=take_index,
     )
     _save_desk_json(desk, f"film-{key}-estimate", estimate)
-    state.remember_server_lane(server_lane(estimate))
+    state.remember_server_lane(server_lane(estimate), label=server_lane_label(estimate))
     spine = run.spine(state.spine_id or "")
+    state.remember_story_lane(spine)
     stopped = film_stop_message(spine, episode=episode)
     if stopped:
         raise CommandStopped(stopped)
@@ -8016,7 +8029,8 @@ def _price_film(
     ):
         source += "; the deployed API cannot price one take yet"
     fresh = load_production(desk)
-    fresh.remember_server_lane(state.server_lane())
+    fresh.remember_server_lane(state.server_lane(), label=state.video_lane_label)
+    fresh.remember_story_lane(spine)
     save_production(desk, fresh)
     if take_index is not None:
         record_estimate(desk, episode=episode, take_id=take_ids[0], usd=usd)
@@ -8039,6 +8053,8 @@ def _price_film(
         *warnings,
         next_take_voices_line(desk, run, spine),
         f"Film {scope}: about ${usd:.2f} ({source}){earlier}{others}.",
+        # A Wan one-take re-film: which shots it films, in the server's words (fictora-drama wan_refilm_scope).
+        *refilm_recap_lines(estimate),
         envelope_line(desk, episode=episode, next_usd=usd),
     ]
     if reason:

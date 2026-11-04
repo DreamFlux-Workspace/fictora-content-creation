@@ -13,6 +13,7 @@ from typing import Sequence
 
 from creation.captions import caption_take, find_ffmpeg, take_index_from_name
 from creation.cli_config import (
+    DEFAULT_VIDEO_LANE,
     add_production_config_args,
     bound_preset_and_lane,
     config_from_args,
@@ -44,6 +45,7 @@ from creation.orchestrate import (
     bind_desk,
     published_preset_lines,
     resolve_preset,
+    resolve_video_lane,
     run_step,
     status_message,
     unbound_desk_recovery,
@@ -119,7 +121,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Published art-style preset (list them: fictora-produce presets). "
         "Checked before the desk is made.",
     )
-    start.add_argument("--video-lane", default="minimax-h3")
+    start.add_argument(
+        "--video-lane",
+        default=None,
+        help="Video model for the story: any lane the server lists as available (checked before the "
+        "desk is made). Default: none is sent, so the server picks the story's model; an attached "
+        "story keeps its own.",
+    )
     add_production_config_args(start)
 
     stories = sub.add_parser(
@@ -144,7 +152,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     bind.add_argument(
         "--video-lane",
         default=None,
-        help="Video lane. Default: the desk's saved lane (minimax-h3 on a desk never bound).",
+        help="Video lane: any lane the server lists as available. Default: the desk's saved lane "
+        "(on a desk never bound, none: the server picks).",
     )
     bind.add_argument("--episode", type=int, default=1)
     add_production_config_args(bind)
@@ -517,9 +526,9 @@ def _run_command(args: argparse.Namespace) -> int:
                     args.spine_id,
                     parent=args.parent,
                     series=args.series,
-                    video_lane=args.video_lane,
+                    video_lane=resolve_video_lane(args.video_lane),
                 )
-            except AttachRefused as exc:
+            except (AttachRefused, RuntimeError) as exc:
                 print(f"Stopped: {exc}", file=sys.stderr)
                 return 2
             return 0
@@ -535,6 +544,7 @@ def _run_command(args: argparse.Namespace) -> int:
             # Check the preset before anything lands on disk: a wrong id used to leave a
             # half-made desk that the next start refused (L-20260930-13).
             preset = resolve_preset(args.preset_id)
+            video_lane = resolve_video_lane(args.video_lane) or DEFAULT_VIDEO_LANE
             try:
                 desk = init_series_desk(
                     args.parent,
@@ -558,7 +568,7 @@ def _run_command(args: argparse.Namespace) -> int:
                     desk,
                     prompt=prompt,
                     preset_id=args.preset_id,
-                    video_lane=args.video_lane,
+                    video_lane=video_lane,
                     preset=preset,
                 )
             except (RuntimeError, ValueError, OSError):
@@ -585,6 +595,7 @@ def _run_command(args: argparse.Namespace) -> int:
             return 0
         if args.command == "bind":
             prompt = text_or_file(args.prompt, flag="--prompt")
+            resolve_video_lane(args.video_lane)
             preset_id, video_lane = bound_preset_and_lane(
                 args.desk, preset_id=args.preset_id, video_lane=args.video_lane
             )

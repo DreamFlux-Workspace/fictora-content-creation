@@ -27,6 +27,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from creation.lane_features import sound_notes_supported
 from creation.ops.folder import next_versioned_path
 from creation.post.sfx import FILMED_CUT_EDGE_SECONDS, FilmedShots, noted_gain_db
 from creation.spine_view import episode_id_for
@@ -212,6 +213,9 @@ def stale_facts_reason(
         What changed since the facts were saved; ``None`` when they carry every note.
     """
 
+    if not sound_notes_supported(spine):
+        # The server lays no sound note on this story's takes, so no saved facts are older than its notes.
+        return None
     body = facts.get("take_facts", facts)
     carried = {
         str(note.get("note_id"))
@@ -524,6 +528,19 @@ def shot_label(shot: Mapping[str, Any], position: int) -> str:
     return f"shot {index} ({float(start):.2f}-{float(end):.2f}s)"
 
 
+def take_head(take_id: str, facts: Mapping[str, Any] | None) -> str:
+    """``t1 (Take 1 · shot 2 of 3)`` for a Wan shot, ``t1`` for any other take.
+
+    The words are the server's (take facts ``shot_label``, fictora-drama #1266), shown as sent.
+    """
+
+    body = (facts or {}).get("take_facts", facts or {})
+    label = body.get("shot_label") if isinstance(body, Mapping) else None
+    return (
+        f"{take_id} ({label})" if isinstance(label, str) and label.strip() else take_id
+    )
+
+
 def has_people(facts: Mapping[str, Any] | None) -> bool:
     """Whether any shot in the facts carries a head count (``people``)."""
 
@@ -645,5 +662,6 @@ __all__ = [
     "stale_facts_reason",
     "stamp_facts",
     "take_add_notes",
+    "take_head",
     "take_number",
 ]

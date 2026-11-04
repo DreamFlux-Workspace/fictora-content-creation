@@ -97,7 +97,7 @@ After draft completes, the product order is:
 
 `clip_duration_seconds` defaults to 15. Send 4–15 for a shorter or full take. 16 is a rejection, not a longer film. Use `caption_style=house` for the runbook caption recipe.
 
-Lane pin: `model_overrides.video=minimax-h3`. The server picks the endpoint behind it: `minimax/h3-max-turbo/image-to-video` at 768P by default (the take's storyboard board is the only image sent; no cast plates, no voice references), or `minimax/h3-max/reference-to-video` when engineering switches the deploy to R2V. The pin never decides it. Read the live endpoint from the estimate (`cost_estimate.video_endpoint_id`, `usd_per_second`) or a take's facts (`endpoint_id`), or `GET /v1/video-lanes` (`endpoint_ids`), before trusting a string from memory.
+Lane pin: `model_overrides.video=minimax-h3`. The server picks the endpoint behind it: `minimax/h3-max-turbo/image-to-video` at 768P by default (the take's storyboard board is the only image sent; no cast plates, no voice references), or `minimax/h3-max/reference-to-video` when engineering switches the deploy to R2V. The pin never decides it. Read the live endpoint from the estimate (`cost_estimate.video_endpoint_id`, `usd_per_second`) or a take's facts (`endpoint_id`), or `GET /v1/video-lanes` (`endpoint_ids`), before trusting a string from memory. `start`/`bind --video-lane` accept any lane `GET /v1/video-lanes` lists as `servable` (the kit keeps no list of its own); newer servers also send the estimate's `lane_label` and `take_line`, which the kit prints instead of its own H3 table, and refuse a model change after a story's first take with `409 video_lane_locked`.
 
 ## Download into the run folder
 

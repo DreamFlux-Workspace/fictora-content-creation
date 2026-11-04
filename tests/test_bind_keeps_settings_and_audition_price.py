@@ -141,7 +141,7 @@ def test_rebinding_keeps_the_desks_art_style_and_lane(
     assert (bound["preset_id"], bound["video_lane"]) == ("noir-ink", "seedance")
 
 
-def test_a_desk_never_bound_gets_the_old_defaults(
+def test_a_desk_never_bound_gets_the_default_preset_and_no_lane_so_the_server_picks(
     tmp_path: Path, bound: dict[str, Any]
 ) -> None:
     desk = init_series_desk(tmp_path, "Fresh", band="15s", episode_count=1)
@@ -149,7 +149,7 @@ def test_a_desk_never_bound_gets_the_old_defaults(
     assert cli_produce.main(["bind", "--desk", str(desk), "--prompt", "A door."]) == 0
     assert (bound["preset_id"], bound["video_lane"]) == (
         "modern-dark-fantasy",
-        "minimax-h3",
+        None,
     )
 
 

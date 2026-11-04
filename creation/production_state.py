@@ -33,7 +33,10 @@ class ProductionState:
     prompt: str
     preset_id: str
     preset_version: str
-    video_lane: str = "minimax-h3"
+    #: ``model_overrides.video`` sent on every request. ``None`` on a new desk that named no lane:
+    #: nothing is sent, the server picks, and the lane it reports for the story is recorded here
+    #: (:meth:`remember_story_lane`). Older desks keep the lane they saved.
+    video_lane: str | None = None
     episode_ordinal: int = 1
     band: str = "15s"
     spine_id: str | None = None
@@ -75,6 +78,10 @@ class ProductionState:
     #: prices the lane pin's default (H3 Max Turbo for ``minimax-h3``).
     video_endpoint_id: str | None = None
     video_resolution: str | None = None
+    #: The server's own name for that video model (the estimate's ``lane_label``, newer servers
+    #: only), so price lines name a model the kit's table does not know. Left out of the file
+    #: while ``None``, so older desks keep their ``production.json`` as before.
+    video_lane_label: str | None = None
     #: The episode steer `rewrite` last added, per episode id (``{note_id, text}``): the next
     #: `rewrite` of that episode removes it first, so the kit's directions do not pile up.
     rewrite_notes: dict[str, dict[str, str]] = field(default_factory=dict)
@@ -103,11 +110,31 @@ class ProductionState:
             return None
         return self.video_endpoint_id, self.video_resolution or "768P"
 
-    def remember_server_lane(self, lane: tuple[str, str] | None) -> None:
-        """Record the endpoint a server answer named (no-op when it named none)."""
+    def remember_server_lane(
+        self, lane: tuple[str, str] | None, *, label: str | None = None
+    ) -> None:
+        """Record the endpoint (and the server's name for it) an answer named (no-op when it named none)."""
 
         if lane is not None:
             self.video_endpoint_id, self.video_resolution = lane
+        if label:
+            self.video_lane_label = label
+
+    def remember_story_lane(self, spine: Any) -> bool:
+        """Record the lane the server reports for the story when the desk named none; ``True`` if it changed.
+
+        A desk that never names a lane gets the server's pick. Once the server says which lane
+        the story films on (``spine.video_lane``), the desk keeps it, so later requests name the
+        same lane the story is locked to, never an assumed H3.
+        """
+
+        if self.video_lane or not isinstance(spine, dict):
+            return False
+        lane = spine.get("video_lane")
+        if not isinstance(lane, str) or not lane.strip():
+            return False
+        self.video_lane = lane.strip()
+        return True
 
     @staticmethod
     def new_session_id(desk_slug: str) -> str:
@@ -227,6 +254,8 @@ def save_production(desk: Path, state: ProductionState) -> None:
     ):
         if not data[trial]:
             del data[trial]
+    if data.get("video_lane_label") is None:
+        data.pop("video_lane_label", None)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
@@ -236,7 +265,7 @@ def ensure_production(
     prompt: str,
     preset_id: str,
     preset_version: str,
-    video_lane: str = "minimax-h3",
+    video_lane: str | None = None,
     episode_ordinal: int = 1,
     band: str = "15s",
 ) -> ProductionState:
@@ -248,7 +277,8 @@ def ensure_production(
         state.prompt = prompt.strip()
         state.preset_id = preset_id
         state.preset_version = preset_version
-        state.video_lane = video_lane
+        # ``None`` names no lane: the saved one (the server's report, or an operator pin) stays.
+        state.video_lane = video_lane or state.video_lane
         state.episode_ordinal = episode_ordinal
         state.band = band
         save_production(desk, state)

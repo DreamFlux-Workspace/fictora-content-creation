@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, TextIO
 from urllib.parse import quote, urlencode
 
+from creation.cli_config import DEFAULT_VIDEO_LANE
 from creation.harness.credentials import load_drama_api_credentials
 from creation.harness.session import DramaApiRunSession
 from creation.ops.floor import init_series_desk
@@ -322,7 +323,7 @@ def attach_story(
     *,
     parent: Path,
     series: str | None = None,
-    video_lane: str = "minimax-h3",
+    video_lane: str | None = None,
     opener: Callable[[str, Path], Any] | None = None,
     today: date | None = None,
     out: TextIO | None = None,
@@ -345,7 +346,8 @@ def attach_story(
     series
         Desk name; the story's title when ``None``.
     video_lane
-        Lane recorded on the desk (the server names the lane it films on).
+        Lane recorded on the desk; ``None`` keeps the story's own (``spine.video_lane``); a story
+        that names none records none, so the server's lane applies.
     opener
         ``(session_id, out_dir) -> session``; :func:`open_session` by default.
     today
@@ -424,7 +426,9 @@ def attach_story(
             prompt=str(spine.get("scene_prompt") or spine.get("logline") or title),
             preset_id=str(spine.get("art_style_preset_id") or ""),
             preset_version=str(spine.get("art_style_preset_version") or ""),
-            video_lane=video_lane,
+            video_lane=video_lane
+            or str(spine.get("video_lane") or "")
+            or DEFAULT_VIDEO_LANE,
             episode_ordinal=max(episode, 1),
             band=band,
             spine_id=spine_id,
