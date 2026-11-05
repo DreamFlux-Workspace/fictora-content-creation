@@ -397,7 +397,9 @@ def retry_line(cut_id: str) -> str:
     return f"To try again, run: fictora-produce cut-retry {cut_id}"
 
 
-BEING_REMADE = "Being made again: the earlier edit keeps playing until the new one is ready."
+BEING_REMADE = (
+    "Being made again: the earlier edit keeps playing until the new one is ready."
+)
 
 
 def wait_for_cut(
