@@ -146,10 +146,10 @@ def test_a_preview_asks_the_quote_and_changes_nothing(
     assert [path for path, _ in server.sent()] == [POST_EDIT + "/quote"]
     assert "Idempotency-Key" not in server.requests[0].headers
     out = capsys.readouterr().out
-    assert (
-        "would cost free (0 tokens). Preview only: nothing was changed or charged."
-        in out
-    )
+    assert out.splitlines()[-2:] == [
+        "The t2 edit (1 blurred box) would cost free (0 tokens).",
+        "Preview only: nothing was changed or charged.",
+    ]
     assert "No re-join to run" not in out
 
 

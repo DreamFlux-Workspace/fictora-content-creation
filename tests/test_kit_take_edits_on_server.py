@@ -129,13 +129,77 @@ def test_revoice_asks_the_server_to_revoice_the_character_by_its_cast_id(
 ) -> None:
     before = _files(post_desk)
 
-    assert _run(post_desk, "revoice", "--cast", "kenji") == 0
+    assert _run(post_desk, "revoice", "--cast", "kenji", "--yes") == 0
 
     (request,) = server.requests
     assert request.url.path == REVOICE
     assert json.loads(request.content) == {"cast_id": "cast_kenji", "dry_run": False}
     assert _files(post_desk) == before
-    assert "cast_kenji's lines on t2 re-voiced on the server" in capsys.readouterr().out
+    assert "Kenji's lines in take t2 re-voiced on the server" in capsys.readouterr().out
+
+
+def test_revoice_without_yes_prints_the_price_and_spends_nothing(
+    post_desk: Path,
+    server: Server,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert _run(post_desk, "revoice", "--cast", "kenji") == 2
+
+    (request,) = server.requests
+    assert request.url.path == REVOICE
+    assert json.loads(request.content) == {"cast_id": "cast_kenji", "dry_run": True}
+    err = capsys.readouterr().err
+    assert "Re-voicing Kenji's lines in take t2 would cost" in err
+    assert "Nothing was changed or charged; add --yes to apply." in err
+
+
+def test_revoice_reads_the_cast_from_a_desk_written_with_a_tilde(
+    post_desk: Path,
+    server: Server,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(post_desk.parent))
+
+    code = main(
+        ["revoice", "--desk", f"~/{post_desk.name}", "--episode", "1", "--take", "t2",
+         "--cast", "Kenji", "--yes"]
+    )  # fmt: skip
+
+    assert code == 0
+    assert json.loads(server.requests[0].content)["cast_id"] == "cast_kenji"
+
+
+@pytest.mark.parametrize(
+    ("argv", "says"),
+    [
+        (["revoice", *TAKE, "--cast", "kenji", "--take-file", "F.mp4"],
+         "revoice is a take edit on the server now and edits no file: drop --take-file"),
+        (["voice-fx", *TAKE, "--range", "0-1", "--preset", "phone", "--file", "F.mp4"],
+         "voice-fx is a take edit on the server now and edits no file: drop --file"),
+        (["caption", "--desk", "{desk}", "--episode", "1", "--take", "F.mp4"],
+         "caption is made on the server now and edits no file: drop --take"),
+        (["tempo", "--desk", "{desk}", "--factor", "0.9"],
+         "tempo edits one take on the server: add --episode N --take tK"),
+        (["trim", "--desk", "{desk}", "--episode", "1", "--start", "0.5"],
+         "trim edits one take on the server: add --episode N --take tK"),
+    ],
+)  # fmt: skip
+def test_an_old_way_of_naming_the_take_is_one_plain_stop(
+    argv: list[str],
+    says: str,
+    post_desk: Path,
+    server: Server,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    before = _files(post_desk)
+
+    assert main([part.format(desk=post_desk) for part in argv]) == 2
+
+    assert server.requests == []
+    assert _files(post_desk) == before
+    err = capsys.readouterr().err
+    assert says in err and "Nothing was changed or charged." in err
+    assert "usage:" not in err
 
 
 def test_a_take_file_is_refused_before_any_call(

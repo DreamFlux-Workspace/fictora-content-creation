@@ -450,6 +450,9 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     fx.add_argument("--preset", required=True, choices=("intercom", "phone", "radio"))
     fx.add_argument(
+        "--file", dest="take_file", type=Path, default=None, help=argparse.SUPPRESS
+    )
+    fx.add_argument(
         "--preview",
         action="store_true",
         help="Ask the server what it would cost (free); nothing is changed.",
@@ -459,8 +462,9 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "revoice",
         help="On the server: make every line one character says in a delivered take again in their locked voice "
         "and lay each where the take put it, the take's own voice muted under it (paid in tokens; --preview "
-        "prices it). The take's other edits are kept and the server re-joins the episode. Same as finish --take "
-        "tK --voice CHARACTER. A take whose voices the video model made cannot be re-voiced: film it again.",
+        "prices it, and without --yes it only prints the price). The take's other edits are kept and the server "
+        "re-joins the episode. Same as finish --take tK --voice CHARACTER. A take whose voices the video model "
+        "made cannot be re-voiced: film it again.",
     )
     revoice.add_argument("--desk", type=Path, required=True)
     revoice.add_argument("--cast", required=True, help="cast_id or name.")
@@ -471,6 +475,12 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         action="store_true",
         help="Ask the server what it would cost; nothing is changed or charged.",
     )
+    revoice.add_argument(
+        "--yes",
+        action="store_true",
+        help="Spend the tokens. Without it the server's price is printed and nothing is changed.",
+    )
+    revoice.add_argument("--take-file", type=Path, default=None, help=argparse.SUPPRESS)
 
     line = sub.add_parser(
         "voice-line",
@@ -742,6 +752,11 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="With take edits: ask the server what they would cost in tokens; nothing is changed or charged.",
     )  # fmt: skip
     fin.add_argument(
+        "--yes", action="store_true",
+        help="With a paid take edit (--voice CHARACTER, --cue): spend the tokens. Without it the server's price "
+        "is printed and nothing is changed.",
+    )  # fmt: skip
+    fin.add_argument(
         "--caption-label", action="append", default=[], metavar="TEXT@A-B",
         help="A caption with no spoken line under it: TEXT@A-B seconds on the --take as filmed (repeat). "
         "Saved on the server as the take's labels (its notes print), then the episode is finished.",
@@ -953,7 +968,9 @@ def dispatch_post(args: argparse.Namespace) -> int:
         def request(parsed: argparse.Namespace) -> TakeEditRequest:
             if parsed.command == "revoice":
                 return build_request(
-                    desk=parsed.desk, episode=parsed.episode, voices=[parsed.cast]
+                    desk=parsed.desk.expanduser().resolve(),
+                    episode=parsed.episode,
+                    voices=[parsed.cast],
                 )
             return TakeEditRequest(
                 voice_fx=[
@@ -1158,6 +1175,7 @@ def _send_take_edits(
             take_id=take_id,
             request=request,
             preview=bool(getattr(args, "preview", False)),
+            yes=bool(getattr(args, "yes", False)),
         )
     except TakeEditStop as exc:
         print(f"Stopped: {exc}", file=sys.stderr)

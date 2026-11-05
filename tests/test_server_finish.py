@@ -1186,7 +1186,7 @@ def test_a_characters_name_re_voices_them_on_the_take(
 ) -> None:
     server, _ = edit_server
 
-    code = _finish(post_desk, "--take", "t2", "--voice", "Aya")
+    code = _finish(post_desk, "--take", "t2", "--voice", "Aya", "--yes")
 
     assert code == 0
     assert server.sent() == [(REVOICE_PATH, {"cast_id": "cast_aya", "dry_run": False})]
@@ -1196,7 +1196,7 @@ def test_a_characters_name_re_voices_them_on_the_take(
         .startswith("kit-take-revoice-t2-cast_aya-")
     )
     out = capsys.readouterr().out
-    assert "cast_aya's lines on t2 re-voiced on the server: 3 tokens." in out
+    assert "Aya's lines in take t2 re-voiced on the server: 3 tokens." in out
 
 
 def test_an_unknown_character_is_refused_with_the_cast(
@@ -1216,7 +1216,10 @@ def test_mute_and_re_voice_send_the_edit_first_then_the_re_voice(
 ) -> None:
     server, _ = edit_server
 
-    assert _finish(post_desk, "--take", "t2", "--mute", "0-1", "--voice", "Kenji") == 0
+    assert (
+        _finish(post_desk, "--take", "t2", "--mute", "0-1", "--voice", "Kenji", "--yes")
+        == 0
+    )
     assert [path for path, _ in server.sent()] == [POST_EDIT_PATH, REVOICE_PATH]
     assert server.sent()[1][1]["cast_id"] == "cast_kenji"
 
@@ -1236,7 +1239,7 @@ def test_cue_and_impact_at_map_to_their_fields(
     code = _finish(
         post_desk, "--take", "t2",
         "--cue", "low rumble@2.5", "--cue", "ep01/sfx/cue-gaan-sting-v1.mp3@4@-9",
-        "--impact-at", "1.25, 3:blast",
+        "--impact-at", "1.25, 3:blast", "--yes",
     )  # fmt: skip
 
     assert code == 0
@@ -1249,6 +1252,40 @@ def test_cue_and_impact_at_map_to_their_fields(
             "add_to_current_edit": True,
         }),
     ]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("extra", "sent", "says"),
+    [
+        (
+            ["--voice", "Aya"],
+            [(REVOICE_PATH, {"cast_id": "cast_aya", "dry_run": True})],
+            "Re-voicing Aya's lines in take t2 would cost 3 tokens.",
+        ),
+        (
+            ["--cue", "door slam@1"],
+            [(POST_EDIT_PATH + "/quote", {"cues": [{"sound": "door slam", "start_seconds": 1.0}],
+                                          "add_to_current_edit": True})],
+            "The t2 edit (1 added sound) would cost 2 tokens.",
+        ),
+    ],
+)  # fmt: skip
+def test_a_paid_take_edit_without_yes_prints_the_price_and_spends_nothing(
+    extra: list[str],
+    sent: list[tuple[str, dict[str, Any]]],
+    says: str,
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, finished = edit_server
+
+    assert _finish(post_desk, "--take", "t2", *extra) == 2
+
+    assert server.sent() == sent and finished == []
+    err = capsys.readouterr().err
+    assert says in err
+    assert "Nothing was changed or charged; add --yes to apply." in err
 
 
 def test_preview_asks_the_quote_and_the_dry_run_and_changes_nothing(
@@ -1513,7 +1550,10 @@ def test_a_refused_edit_does_not_send_the_re_voice(
     server, _ = edit_server
     server.answers.append((409, _envelope("take_post_edit_unavailable", "Not here.")))
 
-    assert _finish(post_desk, "--take", "t2", "--mute", "1-2", "--voice", "Aya") == 2
+    assert (
+        _finish(post_desk, "--take", "t2", "--mute", "1-2", "--voice", "Aya", "--yes")
+        == 2
+    )
     assert [path for path, _ in server.sent()] == [POST_EDIT_PATH]
 
 

@@ -356,6 +356,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     cap.add_argument("--desk", type=Path, required=True)
     cap.add_argument("--episode", type=int, required=True)
+    cap.add_argument(
+        "--take", dest="take_file", type=Path, default=None, help=argparse.SUPPRESS
+    )
     add_caption_style_arg(cap)
     cap.add_argument(
         "--retime",
@@ -672,6 +675,15 @@ def _run_command(args: argparse.Namespace) -> int:
             return 0
         if args.command == "caption":
             from creation.captions import resolve_caption_style
+
+            if args.take_file is not None:
+                print(
+                    "Stopped: caption is made on the server now and edits no file: drop --take and name the "
+                    "episode with --episode N. The server captions the whole delivered episode. Nothing was "
+                    "changed or charged.",
+                    file=sys.stderr,
+                )
+                return 2
             from creation.post.episode_caption import run_caption
 
             style, style_note = resolve_caption_style(

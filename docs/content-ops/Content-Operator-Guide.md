@@ -175,7 +175,7 @@ The last line reads `Sound: no music ✓ · SFX ✓ · mix ✓ · captions ✓`.
 
 **No music in the videos we deliver** (founder decision, 20 Oct 2026). The finished take and the joined episode carry the voices, the sound effects and the room sound only. When you post, add a trending sound inside Instagram or TikTok that fits the show (for example an eerie sound for horror). Keep the captions on. If one episode truly needs its own score (a jumpscare sting, say), ask the Fictora team for its "with score" version; the no-music version stays the default, and you choose which one to post when you post it. New videos already come with no music. An older episode keeps its music unless you ask: to remove it, ask for "no music" on that episode (it costs nothing). Some older clips had their music made by the video model itself; those can't be cleaned without filming them again, and the server reports them as skipped.
 
-A character's voice feels off? Never regenerate: `voice --audition`, you pick, `voice --pick N`, `revoice` the takes already filmed that they speak in, then `finish --take-file <revoice file>` (skill: "Change a character's voice").
+A character's voice feels off? Never regenerate: `voice --audition`, you pick, `voice --pick N`, then re-voice each take already filmed that they speak in with `revoice --episode N --take tK --cast NAME`. It tells you the price in tokens first and changes nothing; add `--yes` to spend them. The server puts the episode back together with the new voice, and a plain `finish` downloads it (skill: "Change a character's voice").
 
 ---
 

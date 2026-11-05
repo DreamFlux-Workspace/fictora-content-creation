@@ -20,7 +20,6 @@ every take itself, and ``trim --start S`` holds a start it left as filmed.
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -206,82 +205,15 @@ def _take_args(parser: argparse.ArgumentParser, *, take_file_help: str) -> None:
         "--episode",
         type=int,
         default=None,
-        help="Episode ordinal. Default: the episode --take-file names, else 1.",
+        help="Episode ordinal.",
     )
     parser.add_argument(
         "--take",
         dest="take_id",
         default=None,
-        help="Take id (default: the take --take-file names, else t1).",
+        help="Take id, like t2.",
     )
     parser.add_argument("--take-file", type=Path, default=None, help=take_file_help)
-
-
-_TAKE_IN_NAME = re.compile(r"^take-ep(\d+)-(t\d+)(?:-|\.|$)")
-
-
-def take_id_for(args: argparse.Namespace) -> str:
-    """The take an edit writes under: ``--take``, else the take ``--take-file`` names, else ``t1``.
-
-    A trimmed take 2 used to be written as ``t1`` because ``--take`` defaulted to
-    t1 whatever file was passed.
-
-    Raises
-    ------
-    ValueError
-        When ``--take`` and the file name disagree.
-    """
-
-    named = None
-    if args.take_file is not None:
-        match = _TAKE_IN_NAME.match(Path(args.take_file).name)
-        named = match.group(2) if match else None
-    if args.take_id is None:
-        return named or "t1"
-    if named is not None and named != args.take_id:
-        raise ValueError(
-            f"--take {args.take_id} but --take-file `{Path(args.take_file).name}` is {named}; "
-            "drop --take (the file names its take) or pass the right file"
-        )
-    return str(args.take_id)
-
-
-def episode_for(args: argparse.Namespace) -> int:
-    """The episode an edit writes under: the file name, unless ``--episode`` agrees.
-
-    ``--episode`` used to default to 1, so a trim of ``take-ep03-…`` was written
-    into ``ep01/takes``. A second trim then could not find the finish record,
-    which still lived on the episode the file names.
-
-    Parameters
-    ----------
-    args
-        Parsed edit namespace.
-
-    Returns
-    -------
-    int
-        Episode ordinal.
-
-    Raises
-    ------
-    ValueError
-        When ``--episode`` and the file name disagree.
-    """
-
-    named = None
-    if args.take_file is not None:
-        match = _TAKE_IN_NAME.match(Path(args.take_file).name)
-        named = int(match.group(1)) if match else None
-    chosen = getattr(args, "episode", None)
-    if chosen is None:
-        return named if named is not None else 1
-    if named is not None and named != chosen:
-        raise ValueError(
-            f"--episode {chosen} but --take-file `{Path(args.take_file).name}` is episode {named}; "
-            "drop --episode (the file names its episode) or pass the right one"
-        )
-    return int(chosen)
 
 
 def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -513,8 +445,9 @@ def send_server_edit(
     what = args.command if args.command != "trim" else "trim --cut"
     try:
         if getattr(args, "take_file", None) is not None:
+            flag = "--file" if args.command == "voice-fx" else "--take-file"
             raise TakeEditStop(
-                f"{what} is a take edit on the server now and edits no file: drop --take-file and name the take "
+                f"{what} is a take edit on the server now and edits no file: drop {flag} and name the take "
                 "with --episode N --take tK. Times are seconds on the take as filmed (take facts times, the same "
                 f"as finish --mute), not on a finished file. {NOTHING_CHANGED}"
             )
@@ -528,6 +461,7 @@ def send_server_edit(
             take_id=args.take_id,
             request=request(args),
             preview=bool(getattr(args, "preview", False)),
+            yes=bool(getattr(args, "yes", False)),
         )
     except TakeEditStop as exc:
         print(f"Stopped: {exc}", file=sys.stderr)
@@ -577,8 +511,12 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
             f"{args.command} is set on the server and edits no file: drop --take-file and name the take with "
             "--episode N --take tK"
         )
-    args.take_id = take_id_for(args)
-    args.episode = episode_for(args)
+    if args.take_id is None or args.episode is None:
+        print(
+            f"Stopped: {args.command} edits one take on the server: add --episode N --take tK. {NOTHING_CHANGED}",
+            file=sys.stderr,
+        )
+        return 2
     if args.command == "trim":
         if args.start is None and args.end is None and not args.reset:
             raise ValueError(
