@@ -1,5 +1,9 @@
 # Local captions (house recipe)
 
+> **5 Nov 2026:** the `caption` command no longer burns captions on this laptop. `caption --desk D --episode N`
+> has the server caption the delivered episode (`--retime` re-times mistimed captions, core team only), and a
+> plain `finish` downloads it. The rest of this page describes the older local burn, for reading old run notes.
+
 **Default desks** (`api_captions: true`) still run **`finish`** / **`caption`** on the **raw** take: the show's Bold or Subtle style on the laptop is the deliverable. The server may also burn **house** captions on the finished episode asset (Modal in prod); that does not replace local finish.
 
 Use this doc for timing and style when captions run **only on the laptop**: `api_captions: false`, `--no-api-captions`, or the `caption` command alone. The API always downloads a **raw scene MP4** (`ep01/api/17_raw_scene_clips.json` → `ep01/takes/take-ep01-t1-raw-vN.mp4`).

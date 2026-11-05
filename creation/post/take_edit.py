@@ -24,6 +24,13 @@ Setting                            Server field
 ``blur --box X,Y,W,H --from --to``  ``blurs[] {start_seconds, end_seconds, x, y, width, height}``:
                                    the box in fractions of the frame, or ``X,Y,W,H@WIDTHxHEIGHT`` in
                                    pixels of a frame grab that size
+``freeze --at A --hold H``         ``freeze_frames[] {at_seconds, hold_seconds}``
+``soften --cut T``                 ``soften[] {at_seconds, snap_to_cut: true}`` (the server moves it
+                                   onto a shot change within a quarter second)
+``zoom --from A --to B``           ``zooms[] {start_seconds, end_seconds, zoom, center_x, center_y}``:
+                                   the centre in fractions of the frame, or ``X,Y@WIDTHxHEIGHT``
+``voice-fx --range A-B --preset``  ``voice_fx[] {start_seconds, end_seconds, preset}``
+``revoice --cast CHARACTER``       ``POST .../takes/{n}/revoice {cast_id}``, as ``--voice CHARACTER``
 =================================  =================================================================
 
 Routes: ``POST /v1/video-generations/{job}/takes/{n}/post-edit`` (the edit),
@@ -71,6 +78,20 @@ _DECIMAL = r"\s*(\d+(?:\.\d+)?)\s*"
 _BOX = re.compile(
     rf"^{_DECIMAL},{_DECIMAL},{_DECIMAL},{_DECIMAL}(?:@\s*(\d+)\s*[xX]\s*(\d+)\s*)?$"
 )
+_POINT = re.compile(rf"^{_DECIMAL},{_DECIMAL}(?:@\s*(\d+)\s*[xX]\s*(\d+)\s*)?$")
+#: The server's edit fields, in the order an edit is reported, with how one and many of each read.
+EDIT_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("mutes", "muted stretch", "muted stretches"),
+    ("dub_lines", "laid line", "laid lines"),
+    ("cues", "added sound", "added sounds"),
+    ("impact_hits", "hit", "hits"),
+    ("trims", "cut stretch", "cut stretches"),
+    ("blurs", "blurred box", "blurred boxes"),
+    ("freeze_frames", "freeze", "freezes"),
+    ("soften", "softened jump", "softened jumps"),
+    ("zooms", "zoom", "zooms"),
+    ("voice_fx", "voice effect", "voice effects"),
+)
 
 
 class TakeEditStop(RuntimeError):
@@ -87,22 +108,17 @@ class TakeEditRequest:
     impact_hits: list[dict[str, Any]] = field(default_factory=list)
     trims: list[dict[str, Any]] = field(default_factory=list)
     blurs: list[dict[str, Any]] = field(default_factory=list)
+    freeze_frames: list[dict[str, Any]] = field(default_factory=list)
+    soften: list[dict[str, Any]] = field(default_factory=list)
+    zooms: list[dict[str, Any]] = field(default_factory=list)
+    voice_fx: list[dict[str, Any]] = field(default_factory=list)
     revoice: list[str] = field(default_factory=list)
 
     def edit_body(self) -> dict[str, Any] | None:
         """The ``post-edit`` body, or ``None`` when only re-voices were asked."""
 
         body = {
-            key: value
-            for key, value in (
-                ("mutes", self.mutes),
-                ("dub_lines", self.dub_lines),
-                ("cues", self.cues),
-                ("impact_hits", self.impact_hits),
-                ("trims", self.trims),
-                ("blurs", self.blurs),
-            )
-            if value
+            key: getattr(self, key) for key, _, _ in EDIT_FIELDS if getattr(self, key)
         }
         if not body:
             return None
@@ -176,6 +192,43 @@ def parse_blur_box(raw: str, *, start: float, end: float) -> dict[str, Any]:
         "width": round(w, 4),
         "height": round(h, 4),
     }
+
+
+def parse_center(raw: str) -> tuple[float, float]:
+    """``zoom --center``: ``X,Y`` fractions of the frame, or ``X,Y@WIDTHxHEIGHT`` pixels of a frame grab.
+
+    Returns
+    -------
+    tuple[float, float]
+        The centre as fractions of the frame (the server checks it is inside).
+    """
+
+    match = _POINT.match(raw)
+    if match is None:
+        raise TakeEditStop(
+            f"zoom --center {raw!r}: write X,Y as fractions of the frame, like 0.5,0.4, or as pixels of a "
+            "frame grab with its size, like 384,560@768x1366"
+        )
+    x, y = float(match.group(1)), float(match.group(2))
+    if match.group(3) is not None:
+        width, height = int(match.group(3)), int(match.group(4))
+        if not width or not height:
+            raise TakeEditStop(
+                f"zoom --center {raw!r}: the frame size after @ must be more than 0"
+            )
+        x, y = x / width, y / height
+    elif max(x, y) > 1.0:
+        raise TakeEditStop(
+            f"zoom --center {raw!r}: these look like pixels; add the frame grab's size, like "
+            f"{raw.strip()}@768x1366, or write fractions of the frame (0 to 1)"
+        )
+    return round(x, 4), round(y, 4)
+
+
+def parse_voice_fx(raw: str, *, preset: str) -> dict[str, Any]:
+    """``voice-fx --range "1.2-3.0"`` -> one ``voice_fx`` item (the server checks overlaps)."""
+
+    return {**_span(raw, "voice-fx --range"), "preset": preset}
 
 
 def _at_and_level(raw: str, flag: str, shape: str) -> tuple[str, float, float | None]:
@@ -407,11 +460,11 @@ def replaced_warning(take_id: str, *, preview: bool) -> str:
     if preview:
         return (
             f"Warning: this server is older and does not keep earlier edits. Sending this would replace "
-            f"every earlier edit on {take_id} (mutes, laid lines, sounds, hits, cuts, blurs) with only this one."
+            f"every earlier edit on {take_id} (mutes, laid lines, sounds, hits, cuts, blurs, freezes, softens, zooms, voice effects) with only this one."
         )
     return (
         f"Warning: this server is older and does not keep earlier edits, so every earlier edit on {take_id} "
-        "(mutes, laid lines, sounds, hits, cuts, blurs) was replaced by this one. To get them back, run finish once with "
+        "(mutes, laid lines, sounds, hits, cuts, blurs, freezes, softens, zooms, voice effects) was replaced by this one. To get them back, run finish once with "
         "all of them together."
     )
 
@@ -443,16 +496,8 @@ def _post(
 
 
 def _counts(body: Mapping[str, Any]) -> str:
-    named = (
-        ("mutes", "muted stretch", "muted stretches"),
-        ("dub_lines", "laid line", "laid lines"),
-        ("cues", "added sound", "added sounds"),
-        ("impact_hits", "hit", "hits"),
-        ("trims", "cut stretch", "cut stretches"),
-        ("blurs", "blurred box", "blurred boxes"),
-    )
     parts = []
-    for key, one, many in named:
+    for key, one, many in EDIT_FIELDS:
         count = len(body.get(key) or [])
         if count:
             parts.append(f"{count} {one if count == 1 else many}")
@@ -616,10 +661,12 @@ __all__ = [
     "TakeEditStop",
     "build_request",
     "parse_blur_box",
+    "parse_center",
     "parse_cue",
     "parse_cut",
     "parse_mute",
     "parse_voice",
+    "parse_voice_fx",
     "refusal_line",
     "refuses_add_to_current",
     "replaced_warning",

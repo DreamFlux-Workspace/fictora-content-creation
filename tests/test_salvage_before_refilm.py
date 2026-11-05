@@ -3,7 +3,6 @@ re-film price naming the free edit (Gallery Heiress review, 12 Oct 2026)."""
 
 from __future__ import annotations
 
-import json
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,8 +14,6 @@ from conftest import needs_ffmpeg, shot_frames, write_frames
 
 from creation.cli_produce import main
 from creation.post.edit import BlurBox, punch_in, zoom_crop
-from creation.post.finish_record import write_finish_record
-from creation.post.lineage import raw_take_behind
 from creation.post.media import count_frames, decode_frames
 from creation.post.salvage import (
     free_fix_hints,
@@ -106,53 +103,6 @@ def test_punch_in_refuses_half_a_window_and_never_overwrites(tmp_path: Path) -> 
     assert whole.whole_take and whole.factor == 1.15
     with pytest.raises(FileExistsError):
         punch_in(take, tmp_path / "a.mp4")
-
-
-@needs_ffmpeg
-def test_zoom_command_writes_the_file_and_the_chain_and_keeps_the_raw_timeline(
-    post_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    takes = post_desk / "ep01" / "takes"
-    raw = write_frames(takes / "take-ep01-t1-raw-v1.mp4", _quadrant_frames(), tone=440)
-
-    assert main(["zoom", "--desk", str(post_desk), "--factor", "1.3", "--center", "48,84",
-                 "--from", "0.5", "--to", "1.5"]) == 0  # fmt: skip
-
-    said = capsys.readouterr().out
-    out = takes / "take-ep01-t1-zoom-v1.mp4"
-    assert out.is_file() and "punched in 1.3x" in said and "finish --desk" in said, said
-    chain = [
-        json.loads(line)
-        for line in (takes / "edit-chain.jsonl").read_text().splitlines()
-    ]
-    assert (
-        chain[-1]["op"] == "zoom"
-        and chain[-1]["from"] == 0.5
-        and chain[-1]["to"] == 1.5
-    )
-    lineage = raw_take_behind(post_desk, out)
-    assert lineage.raw == raw and lineage.keeps_timeline, (
-        "finish --take-file lays everything at the filmed times"
-    )
-
-
-@needs_ffmpeg
-def test_zoom_refuses_a_finished_file_whose_captions_and_mark_would_zoom_too(
-    post_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    takes = post_desk / "ep01" / "takes"
-    master = write_frames(
-        takes / "take-ep01-t1-cap-v1.mp4", _quadrant_frames(24), tone=440
-    )
-    final = write_frames(
-        takes / "take-ep01-t1-sokii-v1.mp4", _quadrant_frames(24), tone=440
-    )
-    write_finish_record(post_desk, episode=1, take_id="t1", complete=True, pre_bed=None, master=master,
-                        final=final, bed=None, bed_db=-16.5, duck_db=None)  # fmt: skip
-
-    assert main(["zoom", "--desk", str(post_desk), "--take-file", str(final)]) == 2
-    assert "finished file" in capsys.readouterr().err
-    assert not list(takes.glob("*zoom*"))
 
 
 # --- the free-fix rules -----------------------------------------------------------------------------------------

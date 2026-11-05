@@ -11,7 +11,7 @@ from datetime import date
 from pathlib import Path
 from typing import Sequence
 
-from creation.captions import caption_take, find_ffmpeg, take_index_from_name
+from creation.captions import find_ffmpeg
 from creation.cli_config import (
     DEFAULT_VIDEO_LANE,
     add_production_config_args,
@@ -21,7 +21,6 @@ from creation.cli_config import (
 )
 from creation.cli_post import (
     POST_COMMANDS,
-    add_caption_scale_arg,
     add_caption_style_arg,
     add_post_parsers,
     dispatch_post,
@@ -39,7 +38,6 @@ from creation.narrator_cast import add_narrator_answer_args, interactive_ask
 from creation.plan_prompt import narrator_warning
 from creation.ops.floor import init_series_desk
 from creation.ops.folder import DEFAULT_RUN_PARENT, run_folder_name
-from creation.ops.notes import append_run_note
 from creation.orchestrate import (
     approve_gate,
     bind_desk,
@@ -352,42 +350,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     cap = sub.add_parser(
         "caption",
-        help="Burn house captions on the raw take locally (ffmpeg on this machine).",
+        help="On the server: burn the show's captions on a delivered episode that has none (the server "
+        "transcribes the cut, burns them and delivers the new cut in place of the old one). --retime re-times "
+        "mistimed captions instead (core team). Nothing is burned on this laptop; a plain finish downloads it.",
     )
     cap.add_argument("--desk", type=Path, required=True)
-    cap.add_argument("--episode", type=int, default=1)
-    cap.add_argument(
-        "--take",
-        type=Path,
-        default=None,
-        help="Raw MP4; default newest take-epNN-t1-raw-v*.mp4. A take-epNN-tK-… file gets only "
-        "take K's lines; a file not named for one take (a joined episode) gets every line.",
-    )
-    cap.add_argument(
-        "--line-start",
-        type=float,
-        action="append",
-        default=None,
-        help="Seconds where a line starts, once per line in order. Overrides speech detection.",
-    )
-    cap.add_argument(
-        "--line-end",
-        type=float,
-        action="append",
-        default=None,
-        help="Seconds where a line's caption goes off, once per line in order.",
-    )
-    cap.add_argument(
-        "--words-json",
-        type=Path,
-        default=None,
-        help="Transcript of the take to time the lines on (any show); "
-        "default: the newest take-epNN-t1-*words-vN.json when captioning the raw take.",
-    )
+    cap.add_argument("--episode", type=int, required=True)
     add_caption_style_arg(cap)
-    add_caption_scale_arg(cap)
     cap.add_argument(
-        "--no-open", action="store_true", help="Do not open the captioned file."
+        "--retime",
+        action="store_true",
+        help="Join the episode again from its takes with freshly timed captions (core-team token only).",
     )
 
     switch = sub.add_parser(
@@ -698,81 +671,21 @@ def _run_command(args: argparse.Namespace) -> int:
             print(result.message)
             return 0
         if args.command == "caption":
-            from creation.captions import current_spine, resolve_caption_style
-            from creation.post.review import saved_words
+            from creation.captions import resolve_caption_style
+            from creation.post.episode_caption import run_caption
 
             style, style_note = resolve_caption_style(
                 args.desk.expanduser().resolve(), args.caption_style
             )
             if style_note:
                 print(f"note: {style_note}")
-            if style == "none":
-                print("caption style none: nothing burned.")
-                return 0
-
-            # The lines the story has now, not a desk copy saved before a line was changed (L-20261001-8).
-            spine, spine_note = current_spine(args.desk, args.episode)
-            if spine_note:
-                print(spine_note)
-
-            words_json = args.words_json or (
-                saved_words(args.desk.expanduser().resolve(), args.episode, "t1")
-                if args.take is None
-                else None
-            )
-            result = caption_take(
+            return run_caption(
                 args.desk,
-                episode_ordinal=args.episode,
-                take=args.take,
-                line_starts=args.line_start,
-                line_ends=args.line_end,
-                words_json=words_json,
-                # A take file gets only its own beats' lines; a joined episode file gets them all.
-                take_index=take_index_from_name(args.take) if args.take else None,
+                episode=args.episode,
                 style=style,
-                spine=spine,
-                caption_scale=args.caption_scale,
+                retime=args.retime,
+                out=sys.stdout,
             )
-            ep_dir = args.desk.expanduser().resolve() / f"ep{args.episode:02d}"
-            timing = "; ".join(result.timing_lines())
-            warnings = "".join(
-                f" {w}."
-                for w in (
-                    *result.not_english,
-                    result.font_warning,
-                    result.take_lines_warning,
-                    result.timing_warning,
-                    spine_note,
-                )
-                if w
-            )
-            append_run_note(
-                ep_dir,
-                f"Local {style} captions ({'whole English lines' if result.whole_lines else 'word flicker'}): "
-                f"{result.video.name} (cues {result.ass.name}). Lines: {timing}.{warnings}",
-            )
-            italic = result.italic or (False,) * len(result.lines)
-            methods = result.methods or ("speech",) * len(result.lines)
-            shown = result.shown or (None,) * len(result.lines)
-            for line, span, seen, how, slanted in zip(
-                result.lines, result.anchors, shown, methods, italic
-            ):
-                mark = "  (italic: heard, not seen)" if slanted else ""
-                span = seen or span
-                print(f"  {span.start:6.2f}-{span.end:6.2f}s  {line}{mark}  [{how}]")
-            for warning in (*result.not_english, result.timing_warning):
-                if warning:
-                    print(warning)
-            print(f"  file: {result.ass}")
-            print(f"  file: {result.video}")
-            print(
-                "Human QC: watch the captioned take. Wrong timing? Re-run with --line-start / --line-end per line."
-            )
-            if not args.no_open and sys.platform == "darwin":
-                subprocess.run(
-                    ["open", str(result.video)], stdin=subprocess.DEVNULL, check=False
-                )
-            return 0
         if args.command == "cancel-job":
             payload, lines = cancel_video_job(args.desk, args.job_id)
             print(payload)

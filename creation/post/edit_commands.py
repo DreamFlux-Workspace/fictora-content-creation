@@ -1,41 +1,25 @@
-"""``fictora-produce`` edit commands: deboard, trim, freeze, tempo, soften, blur, zoom.
+"""``fictora-produce`` take edit commands: trim, freeze, tempo, soften, blur, zoom (and ``deboard``, gone).
 
-``trim`` and ``blur`` are take edits on the server: ``trim --start/--end``
-sets the take's handles (:mod:`creation.post.take_handles`), ``trim --cut A-B``
-and ``blur --box`` go to the take's post edit (:mod:`creation.post.take_edit`),
-so the episode the server finishes and every later re-join keeps them. They
-edit no file on this laptop. ``tempo`` asks the server first too.
+Every one is a take edit on the server, and none edits a file on this laptop
+(server-heavy rule, 15 Oct 2026; gap 2 of the 5 Nov audit: every final video
+is made and saved on the server). ``trim --start/--end`` sets the take's
+handles (:mod:`creation.post.take_handles`), ``tempo`` its speed
+(:mod:`creation.post.take_tempo`); ``trim --cut``, ``freeze``, ``soften``,
+``blur`` and ``zoom`` go to the take's post edit (:mod:`creation.post.take_edit`).
+The server stores the edited take, records it on the episode and joins the
+episode again with it, and every later finish and join keeps it. Name the take
+with ``--episode N --take tK``; times are seconds on the take as filmed (take
+facts times).
 
-The rest each reads one take on the desk (``--take-file``, else the newest raw take),
-writes ``epNN/takes/take-epNN-tK-<step>-vN.mp4`` (never overwriting), appends
-a run note, records the edit in ``epNN/takes/edit-chain.jsonl``
-(:mod:`creation.post.lineage`: ``finish`` reads it to know a ``freeze`` or
-``soften`` output still has the raw take's sound timeline) and prints what it
-did. Free: ffmpeg and numpy on this laptop.
-An older file with the episode cover attached (``finish``'s ``-sokii-cover-``
-deliverable before 23 Oct 2026; the cover is now a separate JPEG the server makes) keeps the cover through the edit and is written
-``take-epNN-tK-<step>-cover-vN.mp4``.
+``deboard`` is gone: the server cuts the storyboard frames off the start of
+every take itself, and ``trim --start S`` holds a start it left as filmed.
 
-When the file edited is one a finish record names (``tempo`` on the
-finished take, or ``freeze`` / ``soften`` run on it), the same edit is applied
-to the record's other files first: the take before the bed (``pre_bed``) and
-the un-marked master (``take-epNN-tK-<step>-prebed-vN.mp4``,
-``-master-vN.mp4``, ``-final-vN.mp4``), then to the named file, and a new
-finish record names the edited three with the edit chain, so ``join`` still
-lays one bed across the edited take and marks once. ``freeze`` and ``soften``
-leave the sound alone, so the record keeps the same pre-bed take.
-
-``zoom`` (a punch-in, the free salvage for a jump cut or a stray element at the
-edge of the frame) runs BEFORE ``finish``, like ``soften``: on a finished file it
-would enlarge the burned captions and the mark too, so a file a finish record
-names is refused. It keeps the raw take's timeline, so ``finish --take-file``
-lays everything at the filmed times.
+:class:`RecordCarry` is kept for the trim handles' finish record.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 from collections.abc import Callable
@@ -43,39 +27,34 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from creation.ops.folder import next_versioned_path
-from creation.ops.notes import append_run_note
-from creation.post.deboard import (
-    BOARD_LEAK_MAX_FRAMES,
-    deboard,
-    opened_on_earlier_drawing,
-    pick_board,
-)
-from creation.post.desk import approved_board, board_versions, latest_raw_take
-from creation.post.edit import (
-    SLOW_TEMPO,
-    ZOOM_FACTOR,
-    change_tempo,
-    freeze_frame,
-    measure_cuts,
-    parse_point,
-    punch_in,
-    soften_seams,
-)
+from creation.post.edit import SLOW_TEMPO, ZOOM_FACTOR
 from creation.post.finish_record import (
     RECORD_FILES,
     FinishRecord,
     carry_finish_record,
-    record_for_file,
 )
-from creation.post.lineage import record_edit
-from creation.post.media import probe_video, video_streams
-from creation.post.take_timeline import UnsureRun, unsure_head
+from creation.post.take_edit import (
+    NOTHING_CHANGED,
+    TakeEditRequest,
+    TakeEditStop,
+    parse_blur_box,
+    parse_center,
+    parse_cut,
+    run_take_edit,
+)
 
 EDIT_COMMANDS = frozenset(
     {"deboard", "trim", "freeze", "tempo", "soften", "blur", "zoom"}
 )
-#: Edits that carry a finish record onto their output.
-CARRIED = frozenset({"tempo", "freeze", "soften"})
+#: Edits sent whole to the take's post edit on the server.
+SERVER_EDITS = frozenset({"freeze", "soften", "blur", "zoom"})
+#: Said for ``deboard``, which the server does itself.
+DEBOARD_GONE = (
+    "deboard is gone: the server cuts the storyboard frames off the start of every take itself, before the take "
+    "plays. When it left a possible board frame at the start as filmed (take facts board_frames.unsure) and you "
+    "looked and saw the board, set where the take starts on the server: trim --episode N --take tK --start S. "
+    "Nothing was changed."
+)
 #: Edits that leave the sound as it was: the record keeps the same pre-bed take.
 PICTURE_ONLY = frozenset({"freeze", "soften"})
 #: Name part of each edited record file: ``take-epNN-tK-<step>-<part>-vN.mp4``.
@@ -238,239 +217,6 @@ def _take_args(parser: argparse.ArgumentParser, *, take_file_help: str) -> None:
     parser.add_argument("--take-file", type=Path, default=None, help=take_file_help)
 
 
-def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """Register the local edit subcommands.
-
-    Parameters
-    ----------
-    sub
-        ``fictora-produce`` subparsers.
-    """
-
-    raw_default = "Default: the newest raw take."
-    deb = sub.add_parser(
-        "deboard",
-        help="Replace the storyboard frames a take opens on with its first real frame (measured against the "
-        "board, cap 12; length and sound unchanged). finish runs this first; no board frames = nothing written.",
-    )
-    _take_args(deb, take_file_help=raw_default)
-    deb.add_argument(
-        "--board",
-        type=Path,
-        default=None,
-        help="Default: the take's approved board on the desk.",
-    )
-    deb.add_argument("--max-frames", type=int, default=BOARD_LEAK_MAX_FRAMES)
-    deb.add_argument(
-        "--hold-unsure", action="store_true",
-        help="Hold the start even though the server left possible board frames there as filmed "
-        "(take facts board_frames.unsure, fictora-drama #559). Only after a person looked and saw the board.",
-    )  # fmt: skip
-
-    server_edit_file = (
-        "Not taken: this is a take edit on the server and edits no file. Name the take with --episode N "
-        "--take tK; times are on the take as filmed."
-    )
-    trim = sub.add_parser(
-        "trim",
-        help="Two kinds, both saved on the server. --start S --end E (or --reset): set where the take starts and "
-        "ends when it plays (the server's trim handles, fictora-drama #563; nothing billed). --cut A-B (with "
-        "--episode N --take tK): a take edit that cuts A-B seconds out of the middle of the take, free; the server "
-        "snaps each edge onto the shot change, moves later lines, sounds and captions up with the picture, "
-        "re-joins the episode, and every later finish and join keeps it. Times are on the take as filmed (take "
-        "facts times, the same as finish --mute).",
-    )
-    _take_args(trim, take_file_help=server_edit_file)
-    trim.add_argument(
-        "--cut", default=None,
-        help="Take edit: A-B seconds on the take as filmed, e.g. 10.17-12.15. Added to the take's earlier edits.",
-    )  # fmt: skip
-    trim.add_argument(
-        "--start", type=float, default=None,
-        help="Handles: where the take starts playing, seconds on the take as filmed (take-facts times); "
-        "alone, the end stays where it is.",
-    )  # fmt: skip
-    trim.add_argument(
-        "--end", type=float, default=None,
-        help="Handles: where it stops playing, seconds on the take as filmed (at least 1 s after --start); "
-        "alone, the start stays where it is.",
-    )  # fmt: skip
-    trim.add_argument(
-        "--reset", action="store_true",
-        help="Handles: back to the automatic handles (just past the board frames the server held).",
-    )  # fmt: skip
-    trim.add_argument(
-        "--preview", action="store_true",
-        help="Print what would change (handles) or what the cut would cost (--cut, free); send nothing.",
-    )  # fmt: skip
-
-    frz = sub.add_parser(
-        "freeze",
-        help="Comic freeze-frame: hold the frame at --at for --hold seconds over the picture that was there. "
-        "Same length, sound copied, so lines, cues and captions stay put.",
-    )
-    _take_args(frz, take_file_help=raw_default)
-    frz.add_argument(
-        "--at",
-        type=float,
-        required=True,
-        help="Seconds into the take: the frame to hold.",
-    )
-    frz.add_argument(
-        "--hold",
-        type=float,
-        required=True,
-        help="Seconds to hold it (0.6 is a comic beat).",
-    )
-
-    tempo = sub.add_parser(
-        "tempo",
-        help="Change a take's speed (0.9 = 10%% slower), on the server: picture and the whole sound together, "
-        "pitch kept (lips stay on their words), and every time the take reports moves with it (take facts, "
-        "captions, effects, trim handles, post edits); then finish the new raw take. A server without the route "
-        "changes it here instead (picture and sound together, run it on the FINISHED take). --from and --to "
-        "speed only that window (the action).",
-    )
-    _take_args(
-        tempo,
-        take_file_help="The take to change (the finished take). Default: the newest raw take.",
-    )
-    tempo.add_argument(
-        "--factor", type=float, default=SLOW_TEMPO, help="0.5-2.0; default 0.9."
-    )
-    tempo.add_argument(
-        "--from",
-        dest="start",
-        type=float,
-        default=None,
-        help="Seconds: the sped window starts. Requires --to. Lines inside it speed; put the window on the action.",
-    )
-    tempo.add_argument(
-        "--to",
-        dest="end",
-        type=float,
-        default=None,
-        help="Seconds: the sped window ends. Requires --from.",
-    )
-    tempo.add_argument(
-        "--preview",
-        action="store_true",
-        help="Print where each line goes at the new speed; change nothing (server tempo).",
-    )
-    tempo.add_argument(
-        "--revert",
-        action="store_true",
-        help="Put back what the take played before its tempo (the server keeps it).",
-    )
-
-    soft = sub.add_parser(
-        "soften",
-        help="Hold-and-fade 0.33 s at each hard cut (tblend trace), or at each --cut. Same length, sound copied. "
-        "Deboard first; then finish --take-file the softened file.",
-    )
-    _take_args(soft, take_file_help=raw_default)
-    soft.add_argument(
-        "--cut",
-        type=float,
-        action="append",
-        default=[],
-        help="Cut time in seconds (repeat).",
-    )
-
-    blur = sub.add_parser(
-        "blur",
-        help="PATCH, a take edit on the server (with --episode N --take tK, free): blur boxes of the picture "
-        "(garbled readable text the video invented, e.g. a sign) from --from to --to seconds on the take as "
-        "filmed. The server re-joins the episode and every later finish and join keeps it. Report it.",
-    )
-    _take_args(blur, take_file_help=server_edit_file)
-    blur.add_argument(
-        "--box", dest="boxes", action="append", required=True, metavar="X,Y,W,H[@WIDTHxHEIGHT]",
-        help="The box's top-left corner, width and height as fractions of the frame (0 to 1), or in pixels of a "
-        "frame grab with its size after @, like 77,410,307,137@768x1366. At least 2%% of the frame each way, "
-        "inside the frame (repeat).",
-    )  # fmt: skip
-    blur.add_argument(
-        "--from", dest="start", type=float, required=True, help="Seconds: blur starts."
-    )
-    blur.add_argument(
-        "--to", dest="end", type=float, required=True, help="Seconds: blur ends."
-    )
-    blur.add_argument(
-        "--preview", action="store_true",
-        help="Ask the server what the blur would cost (free); nothing is changed.",
-    )  # fmt: skip
-
-    zoom = sub.add_parser(
-        "zoom",
-        help="Punch-in (free): show the picture closer, cropped around --center and scaled back to the full "
-        "frame, from --from to --to seconds (the whole take without them). Hides a jump cut (punch in on the "
-        "shot after it) or crops a stray element out of the edge of the frame, instead of a paid re-film. "
-        "Same length, sound copied. Run it BEFORE finish (on the raw or deboarded take), then finish "
-        "--take-file the zoomed file: a finished file is refused (its captions and mark would zoom too).",
-    )
-    _take_args(
-        zoom,
-        take_file_help="The take to zoom (raw or deboarded, not finished). Default: the newest raw take.",
-    )
-    zoom.add_argument(
-        "--factor", type=float, default=ZOOM_FACTOR,
-        help=f"How much closer, more than 1.0 and at most 2.0 (default {ZOOM_FACTOR:g}).",
-    )  # fmt: skip
-    zoom.add_argument(
-        "--center", type=parse_point, default=None,
-        help="x,y in pixels of the take to zoom on (frame-grab the moment to measure); default the middle. "
-        "Near an edge the window slides inward.",
-    )  # fmt: skip
-    zoom.add_argument(
-        "--from", dest="start", type=float, default=None,
-        help="Seconds: the punch-in starts (put it on the jump cut). Requires --to.",
-    )  # fmt: skip
-    zoom.add_argument(
-        "--to", dest="end", type=float, default=None,
-        help="Seconds: the punch-in ends. Requires --from.",
-    )  # fmt: skip
-
-
-def _saved_facts(desk: Path, episode: int, take_id: str) -> dict[str, Any] | None:
-    from creation.post.sfx import saved_take_facts
-
-    path = saved_take_facts(desk, episode, take_id)
-    if path is None:
-        return None
-    loaded = json.loads(path.read_text(encoding="utf-8"))
-    return loaded if isinstance(loaded, dict) else None
-
-
-def unsure_refusal(doubt: UnsureRun, episode: int, take_id: str) -> str:
-    """Why ``deboard`` will not hold a start the server left as filmed, and what the producer decides.
-
-    Parameters
-    ----------
-    doubt
-        The server's unsure run at the head.
-    episode, take_id
-        The take.
-
-    Returns
-    -------
-    str
-        The question for the producer, ending on ``Refused: ...``.
-    """
-
-    return "\n".join(
-        [
-            f"The server found {doubt.frames} possible board frame(s) at the start of ep{episode:02d} {take_id} "
-            f"and left them as filmed: {doubt.reason}.",
-            "It was not sure they are the board, so the kit does not hold them on its own either. "
-            "Look at the start of the take (`review --original` writes the original beside it), then decide:",
-            "  - they are the board: run deboard again with --hold-unsure",
-            "  - they are real footage: leave them; finish keeps them",
-            "Refused: deboard holds no end the server left as filmed without --hold-unsure",
-        ]
-    )
-
-
 _TAKE_IN_NAME = re.compile(r"^take-ep(\d+)-(t\d+)(?:-|\.|$)")
 
 
@@ -538,35 +284,235 @@ def episode_for(args: argparse.Namespace) -> int:
     return int(chosen)
 
 
-def _source(args: argparse.Namespace, desk: Path) -> Path:
-    if args.take_file is not None:
-        path = args.take_file.expanduser().resolve()
-        if not path.is_file():
-            raise FileNotFoundError(f"take not found: {path}")
-        return path
-    return latest_raw_take(desk, args.episode, args.take_id)
+def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """Register the take edit subcommands.
+
+    Parameters
+    ----------
+    sub
+        ``fictora-produce`` subparsers.
+    """
+
+    gone = sub.add_parser(
+        "deboard",
+        help="Gone: the server cuts the storyboard frames off the start of every take itself. To hold a start "
+        "it left as filmed, set the take's start with trim --start S.",
+    )
+    # The old settings are still read, so an old command gets the answer, not a usage error.
+    _take_args(gone, take_file_help=argparse.SUPPRESS)
+    gone.add_argument("--board", default=None, help=argparse.SUPPRESS)
+    gone.add_argument("--max-frames", default=None, help=argparse.SUPPRESS)
+    gone.add_argument("--hold-unsure", action="store_true", help=argparse.SUPPRESS)
+    server_edit_file = (
+        "Not taken: this is a take edit on the server and edits no file. Name the take with --episode N "
+        "--take tK; times are on the take as filmed."
+    )
+    preview_help = "Ask the server what the edit would cost (free); nothing is changed."
+    trim = sub.add_parser(
+        "trim",
+        help="Two kinds, both saved on the server. --start S --end E (or --reset): set where the take starts and "
+        "ends when it plays (the server's trim handles, fictora-drama #563; nothing billed). --cut A-B (with "
+        "--episode N --take tK): a take edit that cuts A-B seconds out of the middle of the take, free; the server "
+        "snaps each edge onto the shot change, moves later lines, sounds and captions up with the picture, "
+        "re-joins the episode, and every later finish and join keeps it. Times are on the take as filmed (take "
+        "facts times, the same as finish --mute).",
+    )
+    _take_args(trim, take_file_help=server_edit_file)
+    trim.add_argument(
+        "--cut", default=None,
+        help="Take edit: A-B seconds on the take as filmed, e.g. 10.17-12.15. Added to the take's earlier edits.",
+    )  # fmt: skip
+    trim.add_argument(
+        "--start", type=float, default=None,
+        help="Handles: where the take starts playing, seconds on the take as filmed (take-facts times); "
+        "alone, the end stays where it is.",
+    )  # fmt: skip
+    trim.add_argument(
+        "--end", type=float, default=None,
+        help="Handles: where it stops playing, seconds on the take as filmed (at least 1 s after --start); "
+        "alone, the start stays where it is.",
+    )  # fmt: skip
+    trim.add_argument(
+        "--reset", action="store_true",
+        help="Handles: back to the automatic handles (just past the board frames the server held).",
+    )  # fmt: skip
+    trim.add_argument(
+        "--preview", action="store_true",
+        help="Print what would change (handles) or what the cut would cost (--cut, free); send nothing.",
+    )  # fmt: skip
+
+    frz = sub.add_parser(
+        "freeze",
+        help="A take edit on the server (with --episode N --take tK, free): hold the frame at --at for --hold "
+        "seconds over the picture that was there. Same length, sound unchanged, so lines, cues and captions stay "
+        "put. The server re-joins the episode and every later finish and join keeps it.",
+    )
+    _take_args(frz, take_file_help=server_edit_file)
+    frz.add_argument(
+        "--at", type=float, required=True, help="Seconds on the take as filmed: the frame to hold."
+    )  # fmt: skip
+    frz.add_argument(
+        "--hold", type=float, required=True, help="Seconds to hold it (0.6 is a comic beat)."
+    )  # fmt: skip
+    frz.add_argument("--preview", action="store_true", help=preview_help)
+
+    tempo = sub.add_parser(
+        "tempo",
+        help="Change a take's speed (0.9 = 10%% slower), on the server: picture and the whole sound together, "
+        "pitch kept (lips stay on their words), and every time the take reports moves with it (take facts, "
+        "captions, effects, trim handles, post edits). --from and --to speed only that window (the action).",
+    )
+    _take_args(tempo, take_file_help=server_edit_file)
+    tempo.add_argument(
+        "--factor", type=float, default=SLOW_TEMPO, help="0.5-2.0; default 0.9."
+    )
+    tempo.add_argument(
+        "--from",
+        dest="start",
+        type=float,
+        default=None,
+        help="Seconds: the sped window starts. Requires --to. Lines inside it speed; put the window on the action.",
+    )
+    tempo.add_argument(
+        "--to",
+        dest="end",
+        type=float,
+        default=None,
+        help="Seconds: the sped window ends. Requires --from.",
+    )
+    tempo.add_argument(
+        "--preview",
+        action="store_true",
+        help="Print where each line goes at the new speed; change nothing.",
+    )
+    tempo.add_argument(
+        "--revert",
+        action="store_true",
+        help="Put back what the take played before its tempo (the server keeps it).",
+    )
+
+    soft = sub.add_parser(
+        "soften",
+        help="A take edit on the server (with --episode N --take tK, free): at each --cut, hold the frame before "
+        "the jump and fade it into the next shot over a third of a second. The server moves each one onto a shot "
+        "change within a quarter second. Same length, sound unchanged.",
+    )
+    _take_args(soft, take_file_help=server_edit_file)
+    soft.add_argument(
+        "--cut", type=float, action="append", required=True,
+        help="Seconds on the take as filmed where the jump is (repeat). The take facts list its shot changes.",
+    )  # fmt: skip
+    soft.add_argument("--preview", action="store_true", help=preview_help)
+
+    blur = sub.add_parser(
+        "blur",
+        help="PATCH, a take edit on the server (with --episode N --take tK, free): blur boxes of the picture "
+        "(garbled readable text the video invented, e.g. a sign) from --from to --to seconds on the take as "
+        "filmed. The server re-joins the episode and every later finish and join keeps it. Report it.",
+    )
+    _take_args(blur, take_file_help=server_edit_file)
+    blur.add_argument(
+        "--box", dest="boxes", action="append", required=True, metavar="X,Y,W,H[@WIDTHxHEIGHT]",
+        help="The box's top-left corner, width and height as fractions of the frame (0 to 1), or in pixels of a "
+        "frame grab with its size after @, like 77,410,307,137@768x1366. At least 2%% of the frame each way, "
+        "inside the frame (repeat).",
+    )  # fmt: skip
+    blur.add_argument(
+        "--from", dest="start", type=float, required=True, help="Seconds: blur starts."
+    )
+    blur.add_argument(
+        "--to", dest="end", type=float, required=True, help="Seconds: blur ends."
+    )
+    blur.add_argument("--preview", action="store_true", help=preview_help)
+
+    zoom = sub.add_parser(
+        "zoom",
+        help="Punch-in, a take edit on the server (with --episode N --take tK, free): push in on --center from "
+        "--from to --to seconds on the take as filmed, easing in and out. Hides a jump cut (punch in on the shot "
+        "after it) or crops a stray element out of the edge of the frame, instead of a paid re-film. Same length, "
+        "sound unchanged. The server re-joins the episode, captions and mark stay their size.",
+    )
+    _take_args(zoom, take_file_help=server_edit_file)
+    zoom.add_argument(
+        "--factor", type=float, default=ZOOM_FACTOR,
+        help=f"How much closer, more than 1.0 and at most 2.0 (default {ZOOM_FACTOR:g}).",
+    )  # fmt: skip
+    zoom.add_argument(
+        "--center", default=None, metavar="X,Y[@WIDTHxHEIGHT]",
+        help="Where to push in: fractions of the frame (0.5,0.42 is the server's default, where faces sit), or "
+        "pixels of a frame grab with its size after @, like 384,560@768x1366.",
+    )  # fmt: skip
+    zoom.add_argument(
+        "--from", dest="start", type=float, required=True,
+        help="Seconds: the punch-in starts (put it on the jump cut).",
+    )  # fmt: skip
+    zoom.add_argument(
+        "--to", dest="end", type=float, required=True, help="Seconds: the punch-in ends."
+    )  # fmt: skip
+    zoom.add_argument("--preview", action="store_true", help=preview_help)
 
 
-def _server_take_edit(args: argparse.Namespace, out: TextIO) -> int:
-    """``trim --cut A-B`` / ``blur --box``: a take edit saved on the server; no file is edited here.
+def _edit_request(args: argparse.Namespace) -> TakeEditRequest:
+    """The command's settings as the server's take edit fields (format only; the server checks the rest)."""
+
+    if args.command == "trim":
+        if args.start is not None or args.end is not None or args.reset:
+            raise TakeEditStop(
+                "trim --cut cuts a stretch out of the take; --start/--end/--reset move where it starts and "
+                f"ends. Run them as two commands. {NOTHING_CHANGED}"
+            )
+        return TakeEditRequest(trims=[parse_cut(args.cut)])
+    if args.command == "blur":
+        return TakeEditRequest(
+            blurs=[parse_blur_box(raw, start=args.start, end=args.end) for raw in args.boxes]
+        )  # fmt: skip
+    if args.command == "freeze":
+        return TakeEditRequest(
+            freeze_frames=[{"at_seconds": args.at, "hold_seconds": args.hold}]
+        )
+    if args.command == "soften":
+        return TakeEditRequest(
+            soften=[{"at_seconds": cut, "snap_to_cut": True} for cut in args.cut]
+        )
+    zoom: dict[str, Any] = {
+        "start_seconds": args.start,
+        "end_seconds": args.end,
+        "zoom": args.factor,
+    }
+    if args.center is not None:
+        zoom["center_x"], zoom["center_y"] = parse_center(args.center)
+    return TakeEditRequest(zooms=[zoom])
+
+
+def send_server_edit(
+    args: argparse.Namespace,
+    request: Callable[[argparse.Namespace], TakeEditRequest],
+    out: TextIO,
+) -> int:
+    """Send one take edit to the server and print its answer; no file on this laptop is edited.
 
     The server adds it to the take's current edit, re-joins the episode with it,
     and keeps it in every later finish and join (kit #316 finishes from the
     server's copy, so an edit made only on this laptop was lost).
+
+    Parameters
+    ----------
+    args
+        Parsed namespace with ``desk``, ``episode``, ``take_id``, ``preview`` and the command's settings.
+    request
+        Turns the settings into the server's fields.
+    out
+        Where the server's answer is printed.
+
+    Returns
+    -------
+    int
+        ``0`` when the server took (or priced) the edit; ``2`` when it was refused.
     """
 
-    from creation.post.take_edit import (
-        NOTHING_CHANGED,
-        TakeEditRequest,
-        TakeEditStop,
-        parse_blur_box,
-        parse_cut,
-        run_take_edit,
-    )
-
-    what = "blur" if args.command == "blur" else "trim --cut"
+    what = args.command if args.command != "trim" else "trim --cut"
     try:
-        if args.take_file is not None:
+        if getattr(args, "take_file", None) is not None:
             raise TakeEditStop(
                 f"{what} is a take edit on the server now and edits no file: drop --take-file and name the take "
                 "with --episode N --take tK. Times are seconds on the take as filmed (take facts times, the same "
@@ -576,26 +522,12 @@ def _server_take_edit(args: argparse.Namespace, out: TextIO) -> int:
             raise TakeEditStop(
                 f"{what} edits one take on the server: add --episode N --take tK. {NOTHING_CHANGED}"
             )
-        if args.command == "trim":
-            if args.start is not None or args.end is not None or args.reset:
-                raise TakeEditStop(
-                    "trim --cut cuts a stretch out of the take; --start/--end/--reset move where it starts and "
-                    f"ends. Run them as two commands. {NOTHING_CHANGED}"
-                )
-            request = TakeEditRequest(trims=[parse_cut(args.cut)])
-        else:
-            request = TakeEditRequest(
-                blurs=[
-                    parse_blur_box(raw, start=args.start, end=args.end)
-                    for raw in args.boxes
-                ]
-            )
         lines = run_take_edit(
             args.desk,
             episode=args.episode,
             take_id=args.take_id,
-            request=request,
-            preview=bool(args.preview),
+            request=request(args),
+            preview=bool(getattr(args, "preview", False)),
         )
     except TakeEditStop as exc:
         print(f"Stopped: {exc}", file=sys.stderr)
@@ -611,7 +543,7 @@ def _server_take_edit(args: argparse.Namespace, out: TextIO) -> int:
 
 
 def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> int:
-    """Run one local edit command.
+    """Run one take edit command; every edit is made and saved on the server.
 
     Parameters
     ----------
@@ -623,33 +555,35 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
     Returns
     -------
     int
-        ``0``; ``2`` when a take edit on the server (``trim``, ``blur``) was refused.
+        ``0``; ``2`` when the server refused the edit, or for ``deboard`` (gone).
 
     Raises
     ------
     ValueError
-        When the command is unknown, or a tool refuses its input.
-    FileNotFoundError
-        When the take or the board is missing.
+        When the command is unknown, or ``trim`` names neither handles nor a cut.
     """
 
     out = stream or sys.stdout
-    if args.command == "blur" or (args.command == "trim" and args.cut is not None):
-        return _server_take_edit(args, out)
+    if args.command == "deboard":
+        print(DEBOARD_GONE, file=sys.stderr)
+        return 2
+    if args.command in SERVER_EDITS or (
+        args.command == "trim" and args.cut is not None
+    ):
+        return send_server_edit(args, _edit_request, out)
     desk = args.desk.expanduser().resolve()
+    if args.take_file is not None:
+        raise ValueError(
+            f"{args.command} is set on the server and edits no file: drop --take-file and name the take with "
+            "--episode N --take tK"
+        )
     args.take_id = take_id_for(args)
     args.episode = episode_for(args)
-    run_dir = desk / f"ep{args.episode:02d}"
-    takes = run_dir / "takes"
-    base = f"take-ep{args.episode:02d}-{args.take_id}"
-    handles = args.command == "trim" and (
-        args.start is not None or args.end is not None or args.reset
-    )
-    if handles:
-        if args.take_file is not None:
+    if args.command == "trim":
+        if args.start is None and args.end is None and not args.reset:
             raise ValueError(
-                "trim --start/--end/--reset sets the take's handles on the server and edits no file: drop "
-                "--take-file and name the take with --episode N --take tK"
+                "trim needs --start S and/or --end E (or --reset) for the take's handles, or --cut A-B to cut a "
+                "stretch out of the take"
             )
         from creation.post.take_handles import run_take_trim
 
@@ -663,195 +597,20 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
             preview=args.preview,
             out=out,
         )
-    if args.command == "trim":
-        raise ValueError(
-            "trim needs --start S and/or --end E (or --reset) for the take's handles, or --cut A-B to cut a "
-            "stretch out of the take"
-        )
     if args.command == "tempo":
         # A take's tempo is set on the server: picture and sound change speed together and every
-        # time the take reports moves with it, so captions land on time (L-20261014-20). Only a
-        # server without the route (or a take with no video job on the desk) falls through to the
-        # local edit below, which says so.
+        # time the take reports moves with it, so captions land on time (L-20261014-20).
         from creation.post.take_tempo import run_take_tempo
 
-        answered = run_take_tempo(
+        return run_take_tempo(
             desk,
             episode=args.episode,
             take_id=args.take_id,
             factor=args.factor,
-            start_s=getattr(args, "start", None),
-            end_s=getattr(args, "end", None),
-            preview=bool(getattr(args, "preview", False)),
-            revert=bool(getattr(args, "revert", False)),
+            start_s=args.start,
+            end_s=args.end,
+            preview=bool(args.preview),
+            revert=bool(args.revert),
             out=out,
         )
-        if answered is not None:
-            return answered
-        if getattr(args, "preview", False) or getattr(args, "revert", False):
-            raise ValueError(
-                "tempo --preview / --revert are for a locked-voice take the server keeps"
-            )
-    source = _source(args, desk)
-    # A finished file with the episode cover attached keeps it through the edit, and says so in its name.
-    covered = "-cover" if video_streams(source)[1] is not None else ""
-
-    def target(step: str) -> Path:
-        takes.mkdir(parents=True, exist_ok=True)
-        return next_versioned_path(takes, f"{base}-{step}{covered}", ".mp4")
-
-    carry = RecordCarry(
-        desk,
-        record_for_file(desk, source) if args.command in CARRIED else None,
-        source,
-        args.command,
-    )
-    lines: list[str]
-    record: Path | None = None
-    if args.command == "deboard":
-        board = (
-            args.board.expanduser().resolve()
-            if args.board
-            else approved_board(desk, args.episode, args.take_id)
-        )
-        if board is None:
-            raise FileNotFoundError(
-                f"no board for {args.take_id} on the desk; pass --board"
-            )
-        doubt = unsure_head(_saved_facts(desk, args.episode, args.take_id))
-        # Without --board, every drawing of the take's board on the desk is
-        # measured: a take compiled before a redraw opens on the earlier one
-        # (L-20261009-1). A start the server was unsure of is held without
-        # --hold-unsure only when it surely is an earlier drawing.
-        versions = (
-            [] if args.board else board_versions(desk, args.episode, args.take_id)
-        )
-        earlier_note = None
-        if doubt is not None and not args.hold_unsure:
-            earlier = opened_on_earlier_drawing(
-                source, versions, max_frames=args.max_frames
-            )
-            if earlier is None:
-                raise ValueError(unsure_refusal(doubt, args.episode, args.take_id))
-            earlier_note = (
-                f"- held although the server was unsure of the start ({doubt.reason}): the take opens on an "
-                f"earlier drawing of its board, `{earlier.name}`, not the approved `{board.name}`"
-            )
-            board, doubt = earlier, None
-        elif len(versions) > 1:
-            board = pick_board(source, versions, max_frames=args.max_frames)[0]
-        result = deboard(source, board, target("deboard"), max_frames=args.max_frames)
-        if result.output is not None:
-            # How many clones it holds, so `finish --take-file` cuts them off last (review #13).
-            record_edit(
-                desk, op="deboard", source=source, output=result.output,
-                frames=result.removed, fps=probe_video(result.output).fps or 24.0,
-            )  # fmt: skip
-        lines = [f"Deboard `{source.name}` against `{board.name}`: {result.one_line()}"]
-        if earlier_note is not None:
-            lines.append(earlier_note)
-        if doubt is not None:
-            lines.append(
-                f"- held although the server left {doubt.frames} possible board frame(s) at the start as filmed "
-                f"({doubt.reason}): --hold-unsure"
-            )
-    elif args.command == "freeze":
-
-        def freeze_same(take: Path, out: Path) -> object:
-            return freeze_frame(take, out, at=args.at, hold=args.hold)
-
-        carry.edit_companions(freeze_same)
-        frozen = freeze_frame(source, target("freeze"), at=args.at, hold=args.hold)
-        record_edit(
-            desk, op="freeze", source=source, output=frozen.output,
-            at=frozen.at_seconds, hold=frozen.hold_seconds,
-        )  # fmt: skip
-        record = carry.write(
-            frozen.output,
-            {"op": "freeze", "at": frozen.at_seconds, "hold": frozen.hold_seconds},
-        )
-        lines = [f"`{source.name}`: {frozen.one_line()}", *carry.lines(record)]
-    elif args.command == "tempo":
-        window = (getattr(args, "start", None), getattr(args, "end", None))
-
-        def tempo_same(take: Path, out: Path) -> Path:
-            return change_tempo(
-                take, out, factor=args.factor, start=window[0], end=window[1]
-            )
-
-        carry.edit_companions(tempo_same)
-        slowed = change_tempo(
-            source, target("tempo"), factor=args.factor, start=window[0], end=window[1]
-        )
-        detail: dict[str, Any] = {"op": "tempo", "factor": args.factor}
-        if window[0] is not None:
-            detail["from"] = window[0]
-            detail["to"] = window[1]
-        record_edit(
-            desk,
-            op="tempo",
-            source=source,
-            output=slowed,
-            factor=args.factor,
-            **{key: detail[key] for key in ("from", "to") if key in detail},
-        )
-        record = carry.write(slowed, detail)
-        if window[0] is None:
-            heard = (
-                f"Tempo {args.factor:g}x `{source.name}` -> `{slowed.name}`: every time on the old file is now "
-                f"time / {args.factor:g}."
-            )
-        else:
-            heard = (
-                f"Tempo {args.factor:g}x from {window[0]:g}s to {window[1]:g}s `{source.name}` -> `{slowed.name}`. "
-                "Lines inside that window speed with it; put the window on the action."
-            )
-        lines = [heard, *carry.lines(record)]
-    elif args.command == "soften":
-        cuts = tuple(args.cut) or measure_cuts(source)
-        if not cuts:
-            lines = [f"No hard cuts in `{source.name}` (tblend trace); nothing written"]
-        else:
-
-            def soften_same(take: Path, out: Path) -> Path:
-                return soften_seams(take, out, cuts)
-
-            carry.edit_companions(soften_same)
-            softened = soften_seams(source, target("soften"), cuts)
-            record_edit(
-                desk, op="soften", source=source, output=softened, cuts=list(cuts)
-            )
-            record = carry.write(softened, {"op": "soften", "cuts": list(cuts)})
-            found = "given" if args.cut else "found"
-            lines = [
-                f"Softened {len(cuts)} cut(s) {found} at {', '.join(f'{c:.2f}s' for c in cuts)} in `{source.name}` "
-                f"-> `{softened.name}` (hold-and-fade 0.33 s; length and sound unchanged)",
-                *carry.lines(record),
-            ]
-    elif args.command == "zoom":
-        if record_for_file(desk, source) is not None:
-            raise ValueError(
-                f"zoom `{source.name}`: this is a finished file, and a punch-in on it would enlarge its captions "
-                "and mark too. Zoom the raw (or deboarded) take, then `finish --take-file` the zoomed file."
-            )
-        zoomed = punch_in(source, target("zoom"), factor=args.factor, center=args.center,
-                          start=args.start, end=args.end)  # fmt: skip
-        detail = {
-            "factor": zoomed.factor,
-            "crop": zoomed.crop.as_list(),
-            "from": zoomed.start_seconds,
-            "to": zoomed.end_seconds,
-        }
-        record_edit(desk, op="zoom", source=source, output=zoomed.output, **detail)
-        lines = [
-            f"Zoom `{source.name}`: {zoomed.one_line()}",
-            "- Free salvage: watch the window at full size (a punch-in past ~1.3x on a 768p take can look soft).",
-            f"Next: `fictora-produce finish --desk {desk} --take-file {zoomed.output}`",
-        ]
-    else:
-        raise ValueError(f"unknown command {args.command}")
-    if (run_dir / "run-notes.md").is_file():
-        append_run_note(run_dir, "\n".join(lines))
-    for line in lines:
-        print(line, file=out)
-    return 0
+    raise ValueError(f"unknown command {args.command}")

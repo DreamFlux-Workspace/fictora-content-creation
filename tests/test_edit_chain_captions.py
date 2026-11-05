@@ -8,15 +8,13 @@ notes on an older desk) now says how the file was made.
 from __future__ import annotations
 
 import io
-import json
 import shutil
 from pathlib import Path
 
 from conftest import make_tone, needs_ffmpeg
 
-from creation.cli_produce import main as produce_main
 from creation.post.finish import run_finish
-from creation.post.lineage import CHAIN_FILE, raw_take_behind, record_edit
+from creation.post.lineage import raw_take_behind, record_edit
 from test_captions_word_timing import _japanese_desk, _japanese_words
 
 
@@ -41,58 +39,6 @@ def _finish(desk: Path, take_file: Path, asked: list[str]) -> tuple[object, str]
 
 def _captions(result: object) -> str:
     return next(s for s in result.steps if s.step == "captions").detail  # type: ignore[attr-defined]
-
-
-@needs_ffmpeg
-def test_a_freeze_of_the_raw_take_is_captioned_on_the_raw_takes_words(
-    post_desk: Path,
-) -> None:
-    _japanese_desk(post_desk)
-    takes = post_desk / "ep01" / "takes"
-    for at in ("0.5", "2.0"):
-        source = sorted(takes.glob("take-ep01-t1-freeze-v*.mp4"))
-        cmd = ["freeze", "--desk", str(post_desk), "--at", at, "--hold", "0.4"]
-        if source:
-            cmd += ["--take-file", str(source[-1])]
-        assert produce_main(cmd) == 0
-    frozen = takes / "take-ep01-t1-freeze-v2.mp4"
-    chain = [json.loads(line) for line in (takes / CHAIN_FILE).read_text().splitlines()]
-    assert [
-        (c["op"], Path(c["source"]).name, Path(c["output"]).name) for c in chain
-    ] == [
-        ("freeze", "take-ep01-t1-raw-v1.mp4", "take-ep01-t1-freeze-v1.mp4"),
-        ("freeze", "take-ep01-t1-freeze-v1.mp4", "take-ep01-t1-freeze-v2.mp4"),
-    ]
-    asked: list[str] = []
-
-    result, out = _finish(post_desk, frozen, asked)
-
-    detail = _captions(result)
-    assert asked == ["t1"], out
-    assert (
-        "raw take's words" in detail
-        and "take-ep01-t1-raw-v1.mp4 -> freeze -> freeze" in detail
-    )
-    assert '3.50-4.70s "I-I\'m sorry." (words)' in detail, detail
-    assert "not the raw take" not in detail
-
-
-@needs_ffmpeg
-def test_after_tempo_the_raw_takes_words_are_refused(post_desk: Path) -> None:
-    _japanese_desk(post_desk)
-    assert produce_main(["tempo", "--desk", str(post_desk), "--factor", "0.9"]) == 0
-    slowed = post_desk / "ep01" / "takes" / "take-ep01-t1-tempo-v1.mp4"
-    asked: list[str] = []
-
-    result, out = _finish(post_desk, slowed, asked)
-
-    detail = _captions(result)
-    # One transcript of the RAW take, for the model-voice line check (its words and the take facts'
-    # shot windows are both on the raw take's timeline); the captions still refuse it after tempo.
-    assert asked == ["t1"] and "[lines] line check:" in out, out
-    assert "no transcript timing: `take-ep01-t1-tempo-v1.mp4` came from" in detail
-    assert "by tempo: tempo changes the speed" in detail
-    assert "(speech)" in detail
 
 
 @needs_ffmpeg

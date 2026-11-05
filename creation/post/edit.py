@@ -1,35 +1,20 @@
-"""Local picture edits on one take: freeze, tempo, soften, zoom.
+"""Picture measurements and the punch-in other kit steps share: the hard-cut trace and ``punch_in``.
 
-All four are ffmpeg + numpy on this laptop, free, and write a new file; the
-take is never overwritten. ``trim --cut`` and ``blur`` are take edits on the
-server now (:mod:`creation.post.take_edit`), so the episode the server
-finishes keeps them.
+The take edit commands (``freeze``, ``tempo``, ``soften``, ``zoom``, ``trim --cut``,
+``blur``) are take edits on the server (:mod:`creation.post.take_edit`,
+:mod:`creation.post.take_tempo`); nothing here is one of them.
 
-- ``freeze`` holds the frame at ``at`` for ``hold`` seconds over the picture
-  that was there: same length, same frame count, sound copied, so lines, cues
-  and captions stay where they were.
-- ``tempo``  changes picture and sound speed together (``setpts`` / ``atempo``,
-  pitch kept). A ``start``/``end`` window speeds only that span; the rest stays
-  at 1x. Without a window the whole timeline changes by the factor.
-- ``soften`` finds hard cuts with a scaled ``tblend`` difference trace (H3 cell
-  seams that ffmpeg scene detect misses) and softens each in place: the last
-  pre-cut frame is held over the new shot and faded out over 0.33 s. Same
-  length, sound copied.
-- ``zoom``   a punch-in: crops a smaller window of the picture around a point
-  and scales it back to the full frame, inside a time window (or the whole
-  take). Hides a jump cut (the same shot, closer, reads as a new angle) or
-  crops a stray element out of the edge of the frame: a free salvage before a
-  paid re-film (Gallery Heiress review, 12 Oct 2026). Same length, sound copied.
+- :func:`measure_cuts` finds hard cuts with a scaled ``tblend`` difference trace
+  (H3 cell seams that ffmpeg scene detect misses), for review and the join.
+- :func:`punch_in` crops a smaller window of the picture around a point and scales
+  it back to the full frame (the impact punch-ins of the finish).
 """
 
 from __future__ import annotations
 
-import math
 import re
 import subprocess
-import tempfile
 from dataclasses import dataclass
-from fractions import Fraction
 from pathlib import Path
 
 
@@ -43,8 +28,6 @@ from creation.post.media import (
 
 # --- soften / cut trace -------------------------------------------------------------------------
 
-#: Hold the last pre-cut frame and fade it out over this long.
-SOFTEN_SECONDS = 0.33
 #: Mean luma on ``scale=16:28,tblend=difference`` that marks a cut (inclusive).
 FRAME_DIFF_CUT_THRESHOLD = 25.0
 #: Tiny analysis size of the frame-difference recipe.
@@ -61,285 +44,6 @@ HOUSE_FPS = 24.0
 
 _PTS = re.compile(r"pts_time:(?P<time>[0-9.]+)")
 _YAVG = re.compile(r"lavfi\.signalstats\.YAVG=(?P<value>[0-9.]+)")
-
-
-# ================================================================================================
-# freeze
-# ================================================================================================
-
-
-@dataclass(frozen=True)
-class FreezeResult:
-    """What ``freeze`` wrote.
-
-    Parameters
-    ----------
-    output
-        The new file.
-    at_seconds
-        Where the held frame was taken from, snapped to the frame grid.
-    hold_seconds
-        How long it is held.
-    duration_seconds
-        Duration of the output (the same as the take).
-    """
-
-    output: Path
-    at_seconds: float
-    hold_seconds: float
-    duration_seconds: float
-
-    def one_line(self) -> str:
-        """``Freeze at 1.25s held 0.60s -> file (duration 15.00s, audio timeline unchanged)``."""
-
-        return (
-            f"Freeze at {self.at_seconds:.2f}s held {self.hold_seconds:.2f}s -> `{self.output.name}` "
-            f"(duration {self.duration_seconds:.2f}s, audio timeline unchanged)"
-        )
-
-
-def _rate(fps: float) -> str:
-    fraction = Fraction(fps).limit_denominator(1001)
-    return f"{fraction.numerator}/{fraction.denominator}"
-
-
-def freeze_frame_chain(
-    *, input_label: str, frame_seconds: float, hold_seconds: float, frame_rate: str, frame_filter: str,
-    output_label: str,
-) -> str:  # fmt: skip
-    """Return the ffmpeg chain that holds one source frame for a fixed time.
-
-    The frame is repeated with ``loop``: ``tpad=stop_mode=clone`` after
-    ``trim=end_frame=1`` does not clone on ffmpeg 7, so a freeze came out as
-    one frame and the cut came up short.
-
-    Parameters
-    ----------
-    input_label
-        Video pad to read, without brackets (``0:v``).
-    frame_seconds
-        Source time of the held frame.
-    hold_seconds
-        How long the frame is held.
-    frame_rate
-        Output frame rate as ffmpeg reads it (``24/1``).
-    frame_filter
-        Filters applied to the still before it is held.
-    output_label
-        Output pad, without brackets.
-
-    Returns
-    -------
-    str
-        One ``filter_complex`` chain ending at ``[output_label]``.
-    """
-
-    hold = f"{hold_seconds:.6f}"
-    numerator, _, denominator = frame_rate.partition("/")
-    rate = float(numerator) / float(denominator or 1)
-    repeats = max(1, math.ceil(hold_seconds * rate) + 1)
-    return (
-        f"[{input_label}]trim=start={frame_seconds:.6f},"
-        "setpts=PTS-STARTPTS,trim=end_frame=1,setpts=PTS-STARTPTS,"
-        f"{frame_filter},loop=loop={repeats}:size=1:start=0,setpts=N/({frame_rate})/TB,"
-        f"fps={frame_rate},trim=duration={hold},setpts=PTS-STARTPTS[{output_label}]"
-    )
-
-
-def freeze_frame(take: Path, out: Path, *, at: float, hold: float) -> FreezeResult:
-    """Hold the frame at ``at`` for ``hold`` seconds, over the picture that was there. The audio is copied.
-
-    Nothing is inserted: the take keeps its length, its frame count and its
-    sound, so lines, cues and captions placed on it stay where they were.
-
-    Parameters
-    ----------
-    take
-        Video.
-    out
-        New file.
-    at
-        Seconds into the take: the frame to hold, and where the hold starts.
-    hold
-        Seconds to hold it (0.6 is a comic beat).
-
-    Returns
-    -------
-    FreezeResult
-        The file and what was held.
-
-    Raises
-    ------
-    ValueError
-        When ``hold`` is not positive, or the hold does not fit inside the take.
-    FileExistsError
-        When ``out`` exists.
-    """
-
-    info = probe_video(take)
-    fps = info.fps or 24.0
-    total = info.duration_seconds
-    if hold <= 0:
-        raise ValueError("--hold must be more than 0 seconds")
-    frame = 1.0 / fps
-    start = round(at * fps) / fps
-    if start < 0 or start >= total - frame:
-        raise ValueError(f"--at {at:.2f}s is outside the {total:.2f}s take")
-    if start + hold > total + frame / 2:
-        raise ValueError(
-            f"a {hold:.2f}s hold from {start:.2f}s runs past the {total:.2f}s take; the most that fits is "
-            f"{total - start:.2f}s"
-        )
-    if out.exists():
-        raise FileExistsError(f"{out} exists; freeze never overwrites")
-    end = min(start + hold, total)
-    picture, cover = video_streams(take)
-    source = f"0:v:{picture}"
-    rate = _rate(fps)
-    normalize = f"fps={rate},format=yuv420p,setsar=1"
-    parts: list[str] = []
-    labels: list[str] = []
-    if start > 0:
-        parts.append(
-            f"[{source}]trim=start=0:end={start:.6f},setpts=PTS-STARTPTS,{normalize}[head]"
-        )
-        labels.append("[head]")
-    parts.append(
-        freeze_frame_chain(input_label=source, frame_seconds=start, hold_seconds=end - start, frame_rate=rate,
-                           frame_filter="format=yuv420p,setsar=1", output_label="hold")
-    )  # fmt: skip
-    labels.append("[hold]")
-    if end < total - frame / 2:
-        parts.append(
-            f"[{source}]trim=start={end:.6f},setpts=PTS-STARTPTS,{normalize}[tail]"
-        )
-        labels.append("[tail]")
-    parts.append(f"{''.join(labels)}concat=n={len(labels)}:v=1:a=0[v]")
-    args = ["-i", str(take), "-filter_complex", ";".join(parts), "-map", "[v]"]
-    if info.has_audio:
-        args += ["-map", "0:a", "-c:a", "copy"]
-    # The take's own rate, said out loud: ffmpeg 7.0 leaves the concat output's rate unset and
-    # writes 25 fps (72 frames came out 75), which ``join`` then refuses as "not 24 fps".
-    args += ["-r", rate, "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p"]
-    args += [*keep_cover_args(cover), "-t", f"{total:.3f}", str(out)]
-    out.parent.mkdir(parents=True, exist_ok=True)
-    run_ffmpeg(args)
-    return FreezeResult(
-        output=out,
-        at_seconds=start,
-        hold_seconds=end - start,
-        duration_seconds=probe_video(out).duration_seconds,
-    )
-
-
-# ================================================================================================
-# tempo
-# ================================================================================================
-
-
-def change_tempo(
-    take: Path,
-    out: Path,
-    *,
-    factor: float = SLOW_TEMPO,
-    start: float | None = None,
-    end: float | None = None,
-) -> Path:
-    """Change picture and sound speed together (``setpts`` / ``atempo``, pitch kept).
-
-    Parameters
-    ----------
-    take
-        Video.
-    out
-        New file.
-    factor
-        Speed factor: 0.9 plays 10% slower (the take gets longer), 1.1 faster.
-    start
-        Seconds where a partial speed-up starts. Requires ``end``. Lines inside
-        the window speed with it, so the window sits on the action.
-    end
-        Seconds where the partial speed-up ends.
-
-    Returns
-    -------
-    Path
-        The new file.
-
-    Raises
-    ------
-    ValueError
-        When ``factor`` is outside 0.5-2.0, only one of ``start`` and ``end`` is
-        set, or the window does not fit the take.
-    FileExistsError
-        When ``out`` exists.
-    """
-
-    if not 0.5 <= factor <= 2.0:
-        raise ValueError("tempo factor must be within 0.5-2.0")
-    if (start is None) != (end is None):
-        raise ValueError(
-            "tempo --from and --to go together: speed the action; lines outside the window stay at 1x"
-        )
-    if out.exists():
-        raise FileExistsError(f"{out} exists; tempo never overwrites")
-    info = probe_video(take)
-    picture, cover = video_streams(take)
-    total = info.duration_seconds
-    source = f"0:v:{picture}"
-    whole = start is None or (start <= 0.02 and end is not None and end >= total - 0.02)
-    if not whole:
-        assert start is not None and end is not None
-        if start < 0 or end <= start or end > total + 0.05:
-            raise ValueError(
-                f"tempo window {start:g}-{end:g}s does not fit the {total:.2f}s take"
-            )
-        end = min(end, total)
-        spans: list[tuple[float, float, float]] = []
-        if start > 0.02:
-            spans.append((0.0, start, 1.0))
-        spans.append((start, end, factor))
-        if end < total - 0.02:
-            spans.append((end, total, 1.0))
-        parts: list[str] = []
-        vlabels: list[str] = []
-        alabels: list[str] = []
-        for index, (span_start, span_end, speed) in enumerate(spans):
-            pts = (
-                "setpts=PTS-STARTPTS"
-                if speed == 1
-                else f"setpts=(PTS-STARTPTS)/{speed}"
-            )
-            parts.append(
-                f"[{source}]trim=start={span_start:.6f}:end={span_end:.6f},{pts},fps={HOUSE_FPS:g}[v{index}]"
-            )
-            vlabels.append(f"[v{index}]")
-            if info.has_audio:
-                tempo = "" if speed == 1 else f",atempo={speed}"
-                parts.append(
-                    f"[0:a]atrim=start={span_start:.6f}:end={span_end:.6f},asetpts=PTS-STARTPTS{tempo}[a{index}]"
-                )
-                alabels.append(f"[a{index}]")
-        parts.append(f"{''.join(vlabels)}concat=n={len(vlabels)}:v=1:a=0[v]")
-        if info.has_audio:
-            parts.append(f"{''.join(alabels)}concat=n={len(alabels)}:v=0:a=1[a]")
-        graph = ";".join(parts)
-    else:
-        graph = f"[{source}]setpts=PTS/{factor},fps={HOUSE_FPS:g}[v]"
-        if info.has_audio:
-            graph += f";[0:a]atempo={factor}[a]"
-    maps = ["-map", "[v]"]
-    if info.has_audio:
-        maps += ["-map", "[a]", "-c:a", "aac", "-b:a", "192k"]
-    out.parent.mkdir(parents=True, exist_ok=True)
-    run_ffmpeg(["-i", str(take), "-filter_complex", graph, *maps,
-                "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", *keep_cover_args(cover), str(out)])  # fmt: skip
-    return out
-
-
-# ================================================================================================
-# soften
-# ================================================================================================
 
 
 def parse_frame_motion(metadata_text: str) -> tuple[tuple[float, float], ...]:
@@ -448,75 +152,6 @@ def measure_cuts(
     return tuple(time for time in cuts if time > floor)
 
 
-def soften_seams(
-    take: Path, out: Path, cuts: tuple[float, ...], *, seconds: float = SOFTEN_SECONDS
-) -> Path:
-    """Soften hard cuts in place: hold the last pre-cut frame and fade it out over ``seconds``.
-
-    Duration and lip-sync are preserved; audio is copied.
-
-    Parameters
-    ----------
-    take
-        Video.
-    out
-        New file.
-    cuts
-        Cut times in seconds (at least one).
-    seconds
-        Fade length.
-
-    Returns
-    -------
-    Path
-        The softened file.
-
-    Raises
-    ------
-    ValueError
-        When ``cuts`` is empty.
-    FileExistsError
-        When ``out`` exists.
-    """
-
-    if not cuts:
-        raise ValueError("no cuts to soften")
-    if out.exists():
-        raise FileExistsError(f"{out} exists; soften never overwrites")
-    info = probe_video(take)
-    picture, cover = video_streams(take)
-    fps = info.fps or 24.0
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory() as tmp:
-        inputs = ["-i", str(take)]
-        graph: list[str] = []
-        last = f"0:v:{picture}"
-        for index, cut in enumerate(sorted(cuts), start=1):
-            still = Path(tmp) / f"cut{index}.png"
-            run_ffmpeg(["-ss", f"{max(0.0, cut - 1 / fps):.4f}", "-i", str(take), "-map", f"0:v:{picture}",
-                        "-frames:v", "1", "-update", "1", str(still)])  # fmt: skip
-            inputs += ["-loop", "1", "-framerate", f"{fps:g}", "-i", str(still)]
-            graph.append(
-                f"[{index}:v]format=yuva420p,fade=t=out:st={cut:.4f}:d={seconds}:alpha=1[o{index}]"
-            )
-            graph.append(
-                f"[{last}][o{index}]overlay=eof_action=pass:enable='between(t,{cut:.4f},{cut + seconds:.4f})'[v{index}]"
-            )
-            last = f"v{index}"
-        args = [*inputs, "-filter_complex", ";".join(graph), "-map", f"[{last}]"]
-        if info.has_audio:
-            args += ["-map", "0:a", "-c:a", "copy"]
-        args += ["-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p"]
-        args += [
-            *keep_cover_args(cover),
-            "-t",
-            f"{info.duration_seconds:.3f}",
-            str(out),
-        ]
-        run_ffmpeg(args)
-    return out
-
-
 # ================================================================================================
 # boxes
 # ================================================================================================
@@ -550,34 +185,6 @@ class BlurBox:
 ZOOM_FACTOR = 1.15
 #: Closest punch-in: past 2x a 768p take turns visibly soft.
 ZOOM_MAX = 2.0
-_POINT = re.compile(r"^\s*(\d+)\s*,\s*(\d+)\s*$")
-
-
-def parse_point(text: str) -> tuple[int, int]:
-    """Read ``x,y`` (whole pixels of the take) for ``zoom --center``.
-
-    Parameters
-    ----------
-    text
-        ``--center`` value, e.g. ``540,700``.
-
-    Returns
-    -------
-    tuple[int, int]
-        The point.
-
-    Raises
-    ------
-    ValueError
-        When it is not two whole numbers.
-    """
-
-    match = _POINT.match(text)
-    if not match:
-        raise ValueError(
-            f"--center {text!r}: expected x,y in whole pixels of the take, e.g. 540,700"
-        )
-    return int(match.group(1)), int(match.group(2))
 
 
 def zoom_crop(
