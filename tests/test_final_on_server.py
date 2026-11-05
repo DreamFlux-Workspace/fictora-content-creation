@@ -1,9 +1,4 @@
-"""``approve --gate post`` records "this episode is final" on the server (after fictora-drama #1358).
-
-The server keeps which file is final, who and when; the desk's ``series.json`` post gate and the
-``…_final_vN_…`` file are only a convenience copy written after the server said yes. Every call goes
-to a stand-in server (``httpx.MockTransport``).
-"""
+"""``approve --gate post`` records "this episode is final" on the server (after fictora-drama #1358)."""
 
 from __future__ import annotations
 
@@ -15,11 +10,14 @@ from typing import Any
 import httpx
 import pytest
 
+from creation.captions import desk_has_finished_episodes
 from creation.cli_ops import FINAL_NOT_RECORDED
 from creation.cli_ops import main as ops_main
+from creation.ops.floor import QUEUE_FILENAME, status_rows
 from creation.ops.state import load_series
 from creation.post import final_approval, server_finish
 from creation.post.episode_name import next_episode_path
+from creation.post.final_approval import show_finals as real_show_finals
 
 BASE = "https://drama.example"
 WHEN = "2026-11-05T10:00:00Z"
@@ -84,6 +82,25 @@ def _stand_in(monkeypatch: pytest.MonkeyPatch, server: Server) -> None:
         "approve_final",
         lambda **kw: real(**{**kw, "transport": httpx.MockTransport(server)}),
     )
+    monkeypatch.setattr(
+        final_approval,
+        "show_finals",
+        lambda desk, **kw: real_show_finals(
+            desk, **{**kw, "transport": httpx.MockTransport(server)}
+        ),
+    )
+
+
+def _only_final_left(desk: Path) -> None:
+    path = desk / "series.json"
+    series = json.loads(path.read_text(encoding="utf-8"))
+    for gate in ("look", "plates"):
+        series[gate]["status"] = "approved"
+    episode = series["episodes"][0]
+    episode["script"]["status"] = "approved"
+    for take in episode["takes"]:
+        take["verdict"] = "use"
+    path.write_text(json.dumps(series), encoding="utf-8")
 
 
 def _approve(desk: Path, *extra: str) -> int:
@@ -114,11 +131,9 @@ def test_the_yes_goes_to_the_server_first_and_the_desk_keeps_only_a_copy(
     )
     out = capsys.readouterr().out
     assert f"Recorded on the server: episode 1 is final = {watched.name}" in out
-    post = load_series(post_desk).episodes[0].post
-    assert post.status == "approved" and post.at_utc == WHEN, (
-        "the desk copy carries the server's time"
+    assert load_series(post_desk).episodes[0].post.status == "pending", (
+        "the desk keeps no post gate of its own"
     )
-    assert post.note is not None and digest[:12] in post.note
     assert any(
         "_final_" in p.name for p in (post_desk / "ep01" / "takes").glob("*.mp4")
     )
@@ -189,3 +204,104 @@ def test_a_yes_the_server_does_not_show_back_is_not_taken_as_recorded(
     assert _approve(post_desk) == FINAL_NOT_RECORDED
     assert "does not show this file as final" in capsys.readouterr().err
     assert load_series(post_desk).episodes[0].post.status == "pending"
+
+
+def test_the_queue_reads_done_from_the_server_not_the_desk(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _only_final_left(post_desk)
+    _file(post_desk, b"server copy")
+    server = Server({hashlib.sha256(b"server copy").hexdigest()})
+    _stand_in(monkeypatch, server)
+    assert (
+        status_rows(post_desk, final_approval.show_finals(post_desk))[0]["waiting"]
+        == "post"
+    )
+
+    assert _approve(post_desk) == 0
+
+    assert (
+        status_rows(post_desk, final_approval.show_finals(post_desk))[0]["waiting"]
+        == "done"
+    )
+    assert "| ep01 | done |" in (post_desk / QUEUE_FILENAME).read_text(encoding="utf-8")
+
+
+def test_a_final_on_an_older_cut_is_not_done_and_is_warned_about(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _only_final_left(post_desk)
+    _file(post_desk, b"server copy")
+    server = Server({hashlib.sha256(b"server copy").hexdigest()})
+    _stand_in(monkeypatch, server)
+    assert _approve(post_desk) == 0
+    assert server.final is not None
+    server.final["current"] = False
+    capsys.readouterr()
+
+    assert ops_main(["status", "--desk", str(post_desk)]) == 0
+
+    assert (
+        status_rows(post_desk, final_approval.show_finals(post_desk))[0]["waiting"]
+        == "post:older-cut"
+    )
+    assert "copy of an older cut" in capsys.readouterr().err
+    assert "copy of an older cut" in (post_desk / QUEUE_FILENAME).read_text(
+        encoding="utf-8"
+    )
+
+
+def test_approving_says_when_the_servers_final_is_an_older_cut(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _file(post_desk, b"server copy")
+    server = Server({hashlib.sha256(b"server copy").hexdigest()})
+    _stand_in(monkeypatch, server)
+    assert _approve(post_desk) == 0
+    assert server.final is not None
+    server.final["current"] = False
+    capsys.readouterr()
+
+    assert _approve(post_desk) == 0
+
+    assert "is a copy of an older cut" in capsys.readouterr().out
+
+
+def test_an_unreachable_server_never_reads_as_done(
+    post_desk: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _only_final_left(post_desk)
+
+    assert ops_main(["status", "--desk", str(post_desk), "--json"]) == 0
+
+    assert json.loads(capsys.readouterr().out)[0]["waiting"] == "post"
+    assert "| ep01 | post |" in (post_desk / QUEUE_FILENAME).read_text(encoding="utf-8")
+
+
+def test_captions_count_a_final_on_the_server_as_a_finished_episode(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _file(post_desk, b"server copy")
+    server = Server({hashlib.sha256(b"server copy").hexdigest()})
+    _stand_in(monkeypatch, server)
+    assert desk_has_finished_episodes(post_desk) is False
+
+    assert _approve(post_desk) == 0
+
+    assert desk_has_finished_episodes(post_desk) is True
+
+
+def test_an_old_desk_yes_without_a_final_on_the_server_is_not_done(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _only_final_left(post_desk)
+    path = post_desk / "series.json"
+    series = json.loads(path.read_text(encoding="utf-8"))
+    series["episodes"][0]["post"]["status"] = "approved"
+    path.write_text(json.dumps(series), encoding="utf-8")
+    _stand_in(monkeypatch, Server(saved=set()))
+
+    assert (
+        status_rows(post_desk, final_approval.show_finals(post_desk))[0]["waiting"]
+        == "post"
+    )

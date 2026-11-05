@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from creation.ops.folder import (
     DEFAULT_RUN_PARENT,
@@ -14,6 +14,7 @@ from creation.ops.folder import (
 )
 from creation.look_gate import record_look_approval
 from creation.ops.luma import measure_board_luma
+from creation.post.final_approval import ServerFinal, stale_final_line
 from creation.ops.notes import ensure_run_notes
 from creation.ops.preflight import PreflightReport, evaluate_preflight
 from creation.ops.state import (
@@ -312,49 +313,6 @@ def approve_board(
     save_series(desk, series)
     write_queue(desk, series)
     return take.board
-
-
-def approve_post(
-    desk: Path,
-    *,
-    episode: int,
-    path: str | None = None,
-    at_utc: str | None = None,
-    note: str | None = None,
-) -> GateRecord:
-    """Write the desk's local copy of the episode-is-final yes the server already recorded.
-
-    Not the record (5 Nov 2026): the server keeps which file is final, who and when
-    (:mod:`creation.post.final_approval`). This mirror only lets the desk's queue and captions
-    read it offline; ``fictora-ops approve --gate post`` writes it after the server said yes.
-
-    Parameters
-    ----------
-    desk
-        Series desk.
-    episode
-        Episode ordinal.
-    path
-        Final file the human watched.
-    at_utc
-        When the server recorded it (default now).
-    note
-        What the server holds, in one line.
-
-    Returns
-    -------
-    GateRecord
-        Approved post gate.
-    """
-
-    series = load_series(desk)
-    slot = episode_by_ordinal(series, episode)
-    slot.post = GateRecord(
-        status="approved", at_utc=at_utc or utc_now(), path=path, note=note
-    )
-    save_series(desk, series)
-    write_queue(desk, series)
-    return slot.post
 
 
 def record_estimate(desk: Path, *, episode: int, take_id: str, usd: float) -> TakeState:
@@ -681,7 +639,13 @@ def confirm_preflight(
     return evaluate_preflight(series, slot, take, desk=desk)
 
 
-def waiting_on(series: SeriesState, episode: EpisodeState, *, desk: Path) -> str:
+def waiting_on(
+    series: SeriesState,
+    episode: EpisodeState,
+    *,
+    desk: Path,
+    final: ServerFinal | None = None,
+) -> str:
     """Return the next human or fix action for one episode.
 
     Parameters
@@ -692,11 +656,14 @@ def waiting_on(series: SeriesState, episode: EpisodeState, *, desk: Path) -> str
         Episode slot.
     desk
         Desk path for preflight.
+    final
+        The episode's final in the server's show standing, when it was read.
 
     Returns
     -------
     str
-        Queue token such as ``board:t1`` or ``done``.
+        Queue token such as ``board:t1``; ``done`` only for a current final on the server,
+        ``post:older-cut`` for a final that is not current, else ``post``.
     """
 
     if series.look.status != "approved":
@@ -720,18 +687,23 @@ def waiting_on(series: SeriesState, episode: EpisodeState, *, desk: Path) -> str
         if take.filmed_count == 0 or take.verdict == "change":
             return f"cost-yes:{take.take_id}"
         return f"take-read:{take.take_id}"
-    if episode.post.status != "approved":
+    if final is None:
         return "post"
-    return "done"
+    return "done" if final.current else "post:older-cut"
 
 
-def status_rows(desk: Path) -> list[dict[str, str]]:
+def status_rows(
+    desk: Path, finals: Mapping[int, ServerFinal] | None = None
+) -> list[dict[str, str]]:
     """Return one status row per episode.
 
     Parameters
     ----------
     desk
         Series desk.
+    finals
+        Each episode's final from the server's show standing (:func:`show_finals`); without
+        it no episode reads as done.
 
     Returns
     -------
@@ -742,7 +714,9 @@ def status_rows(desk: Path) -> list[dict[str, str]]:
     series = load_series(desk)
     rows: list[dict[str, str]] = []
     for episode in series.episodes:
-        waiting = waiting_on(series, episode, desk=desk)
+        waiting = waiting_on(
+            series, episode, desk=desk, final=(finals or {}).get(episode.ordinal)
+        )
         first_open = next(
             (take.take_id for take in episode.takes if take.verdict != "use"),
             episode.takes[-1].take_id,
@@ -762,7 +736,11 @@ def status_rows(desk: Path) -> list[dict[str, str]]:
     return rows
 
 
-def write_queue(desk: Path, series: SeriesState | None = None) -> Path:
+def write_queue(
+    desk: Path,
+    series: SeriesState | None = None,
+    finals: Mapping[int, ServerFinal] | None = None,
+) -> Path:
     """Write QUEUE.md so a human can review every waiting gate.
 
     Parameters
@@ -771,6 +749,9 @@ def write_queue(desk: Path, series: SeriesState | None = None) -> Path:
         Series desk.
     series
         Optional already-loaded desk.
+    finals
+        Each episode's final from the server's show standing; the gate writes leave it out, so
+        only ``fictora-ops status`` and the final approval mark episodes done.
 
     Returns
     -------
@@ -779,7 +760,7 @@ def write_queue(desk: Path, series: SeriesState | None = None) -> Path:
     """
 
     current = series or load_series(desk)
-    rows = status_rows(desk)
+    rows = status_rows(desk, finals)
     lines = [
         f"# {current.title} — review queue",
         "",
@@ -795,6 +776,11 @@ def write_queue(desk: Path, series: SeriesState | None = None) -> Path:
         )
     waiting = [row for row in rows if row["waiting"] != "done"]
     lines.extend(["", f"Open gates: {len(waiting)}.", ""])
+    lines.extend(
+        stale_final_line(ordinal, final)
+        for ordinal, final in sorted((finals or {}).items())
+        if not final.current
+    )
     path = desk / QUEUE_FILENAME
     path.write_text("\n".join(lines), encoding="utf-8")
     return path

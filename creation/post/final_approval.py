@@ -11,9 +11,8 @@ Server-heavy rule (founder, 15 Oct 2026): the yes lives on the server, not on th
 3. reads the episode back from show standing (``GET /v1/spines/{spine_id}/standing``) and
    prints what the server holds.
 
-Only after the server said yes does the kit write its local copy (the ``post`` gate in
-``series.json`` and the ``…_final_vN_…`` file). Those are a convenience for the desk and are not
-the record: when they disagree with the server, the server is right.
+A final whose ``current`` is false names a copy of an older cut (the episode changed since);
+the kit says so and the episode waits on a new yes.
 """
 
 from __future__ import annotations
@@ -41,6 +40,35 @@ class FinalNotRecorded(RuntimeError):
 
 
 @dataclass(frozen=True)
+class ServerFinal:
+    """One episode's final as the server's show standing holds it.
+
+    Attributes
+    ----------
+    export_sha256
+        The approved saved copy's digest.
+    approved_at
+        When it was approved.
+    by_creator
+        Whether an app creator said it (else the kit or an operator).
+    current
+        False when the copy is of an older cut (the episode changed since) or a newer copy was saved;
+        a missing field reads as False.
+    """
+
+    export_sha256: str
+    approved_at: str
+    by_creator: bool
+    current: bool
+
+    @property
+    def file(self) -> str:
+        """The approved copy's short digest, as the operator sees it."""
+
+        return self.export_sha256[:12]
+
+
+@dataclass(frozen=True)
 class FinalOnServer:
     """The final approval as the server holds it after the call.
 
@@ -49,14 +77,17 @@ class FinalOnServer:
     recorded
         False when this file was already the episode's final (nothing changed on the server).
     final
-        The episode's ``final`` from show standing (which file, who, when, ``current``).
-    replaced
-        The earlier final this one replaced, if any.
+        The episode's final from show standing.
+    finals
+        Every episode's final from the same read, by ordinal.
+    replaced_sha256
+        Digest of the earlier final this one replaced, if any.
     """
 
     recorded: bool
-    final: Mapping[str, Any]
-    replaced: Mapping[str, Any] | None = None
+    final: ServerFinal
+    finals: dict[int, ServerFinal]
+    replaced_sha256: str | None = None
 
 
 def file_sha256(path: Path) -> str:
@@ -79,6 +110,79 @@ def _body(response: httpx.Response) -> Any:
 def _code(body: Any) -> str:
     error = body.get("error") if isinstance(body, dict) else None
     return str(error.get("code") or "") if isinstance(error, dict) else ""
+
+
+def _finals(got: httpx.Response) -> dict[int, ServerFinal]:
+    standing = _body(got)
+    rows = (
+        standing.get("episodes")
+        if got.is_success and isinstance(standing, dict)
+        else None
+    )
+    return {
+        row["episode_ordinal"]: ServerFinal(
+            export_sha256=str(final.get("export_sha256") or ""),
+            approved_at=str(final.get("approved_at") or ""),
+            by_creator=final.get("approved_by_kind") == "creator",
+            current=final.get("current") is True,
+        )
+        for row in rows or []
+        if isinstance(row, dict)
+        and isinstance(row.get("episode_ordinal"), int)
+        and isinstance(final := row.get("final"), dict)
+    }
+
+
+def show_finals(
+    desk: Path,
+    *,
+    api: tuple[str, Mapping[str, str]] | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> dict[int, ServerFinal] | None:
+    """Each episode's final as the server's show standing holds it, by episode ordinal.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    api
+        ``(base_url, headers)``; default the kit's credentials on the desk's session.
+    transport
+        HTTP transport (tests fake the server with it).
+
+    Returns
+    -------
+    dict[int, ServerFinal] | None
+        Only episodes with a final; ``None`` when the desk has no story yet or the server cannot be read.
+    """
+
+    from creation.post.desk import spine_id as desk_spine_id
+    from creation.post.server_finish import _api
+
+    try:
+        spine = desk_spine_id(desk)
+        base, headers = api if api is not None else _api(desk)
+    except (ValueError, OSError, SystemExit):
+        return None
+    try:
+        with httpx.Client(transport=transport, timeout=TIMEOUT_SECONDS) as client:
+            got = client.get(
+                base.rstrip("/") + STANDING_ROUTE.format(spine_id=spine),
+                headers=dict(headers),
+            )
+    except httpx.HTTPError:
+        return None
+    return _finals(got) if got.is_success else None
+
+
+def stale_final_line(episode: int, final: ServerFinal) -> str:
+    """The warning for a final that is no longer the episode's current copy."""
+
+    return (
+        f"Warning: episode {episode}'s final on the server (file {final.file}) "
+        "is a copy of an older cut; the episode changed since it was approved. Do not post that file. "
+        "Finish the episode again, watch the new file, then approve it."
+    )
 
 
 def refusal_line(status: int, body: Any, *, episode: int) -> str:
@@ -165,22 +269,9 @@ def approve_final(
             f"Could not reach the server ({type(exc).__name__}). Check the internet connection and approve again. "
             "Nothing was recorded on this laptop."
         ) from None
-    standing = _body(got)
-    rows = (
-        standing.get("episodes")
-        if got.is_success and isinstance(standing, dict)
-        else None
-    )
-    row = next(
-        (
-            r
-            for r in rows or []
-            if isinstance(r, dict) and r.get("episode_ordinal") == episode
-        ),
-        None,
-    )
-    final = row.get("final") if row else None
-    if not isinstance(final, dict) or final.get("export_sha256") != digest:
+    finals = _finals(got)
+    final = finals.get(episode)
+    if final is None or final.export_sha256 != digest:
         raise FinalNotRecorded(
             f"The server took the yes but its standing for episode {episode} does not show this file as final. "
             "Approve again in a minute; if it still does not show, tell the core team."
@@ -189,7 +280,10 @@ def approve_final(
     return FinalOnServer(
         recorded=bool(answer.get("recorded")) if isinstance(answer, dict) else False,
         final=final,
-        replaced=replaced if isinstance(replaced, dict) else None,
+        finals=finals,
+        replaced_sha256=str(replaced.get("export_sha256") or "")
+        if isinstance(replaced, dict)
+        else None,
     )
 
 
@@ -197,7 +291,7 @@ def final_line(episode: int, path: Path, held: FinalOnServer) -> str:
     """What the kit prints once the server holds the yes."""
 
     final = held.final
-    who = "an app creator" if final.get("approved_by_kind") == "creator" else "the kit"
+    who = "an app creator" if final.by_creator else "the kit"
     head = (
         "Recorded on the server"
         if held.recorded
@@ -205,10 +299,12 @@ def final_line(episode: int, path: Path, held: FinalOnServer) -> str:
     )
     line = (
         f"{head}: episode {episode} is final = {path.name} "
-        f"(file {str(final.get('export_sha256', ''))[:12]}, said by {who} at {final.get('approved_at')})."
+        f"(file {final.file}, said by {who} at {final.approved_at})."
     )
-    if held.replaced:
-        line += f" It replaces the earlier final (file {str(held.replaced.get('export_sha256', ''))[:12]})."
+    if held.replaced_sha256:
+        line += f" It replaces the earlier final (file {held.replaced_sha256[:12]})."
+    if not final.current:
+        line += "\n" + stale_final_line(episode, final)
     return line
 
 
@@ -283,9 +379,12 @@ __all__ = [
     "STANDING_ROUTE",
     "FinalNotRecorded",
     "FinalOnServer",
+    "ServerFinal",
     "approve_desk_final",
     "approve_final",
     "file_sha256",
     "final_line",
     "refusal_line",
+    "show_finals",
+    "stale_final_line",
 ]

@@ -159,7 +159,7 @@ def caption_style_word(style: str) -> str:
 
 
 def desk_has_finished_episodes(desk: Path) -> bool:
-    """True when the show has a finished episode: a ``finish`` record on a take, or a post yes.
+    """True when the show has a finished episode: a ``finish`` record on a take, or a final on the server.
 
     Parameters
     ----------
@@ -169,20 +169,16 @@ def desk_has_finished_episodes(desk: Path) -> bool:
     Returns
     -------
     bool
-        Whether any ``epNN/takes/take-epNN-tK-finish-vN.json`` exists or any
-        episode's post gate in ``series.json`` is approved.
+        Whether any ``epNN/takes/take-epNN-tK-finish-vN.json`` exists or the server's show
+        standing holds a final for any episode.
     """
 
     desk = desk.expanduser().resolve()
     if any(desk.glob("ep*/takes/take-ep*-t*-finish-v*.json")):
         return True
-    from creation.ops.state import load_series
+    from creation.post import final_approval
 
-    try:
-        series = load_series(desk)
-    except (FileNotFoundError, ValueError, KeyError, TypeError):
-        return False
-    return any(ep.post.status == "approved" for ep in series.episodes)
+    return bool(final_approval.show_finals(desk))
 
 
 def _legacy_desk(desk: Path) -> bool:

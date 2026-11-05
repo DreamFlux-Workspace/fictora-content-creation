@@ -15,7 +15,6 @@ from creation.ops.adopt import AdoptRefused, adopt_desk
 from creation.ops.floor import (
     add_episode,
     approve_board,
-    approve_post,
     approve_script,
     approve_series_gate,
     confirm_preflight,
@@ -305,8 +304,19 @@ def _dispatch(args: argparse.Namespace) -> int:
         print(episode.slug)
         return 0
     if args.command == "status":
-        rows = status_rows(args.desk)
-        write_queue(args.desk)
+        from creation.post import final_approval
+
+        finals = final_approval.show_finals(args.desk)
+        if finals is None:
+            print(
+                "Could not read the finals from the server: no episode shows as done.",
+                file=sys.stderr,
+            )
+        rows = status_rows(args.desk, finals)
+        write_queue(args.desk, finals=finals)
+        for ordinal, final in sorted((finals or {}).items()):
+            if not final.current:
+                print(final_approval.stale_final_line(ordinal, final), file=sys.stderr)
         if args.json:
             print(json.dumps(rows))
         else:
@@ -460,13 +470,6 @@ def _dispatch_approve(args: argparse.Namespace) -> int:
 
 
 def _approve_post(desk: Path, episode: int, path: Path | None) -> int:
-    """The human's "this episode is final": recorded on the server first, then copied on the desk.
-
-    The server's record (which file, who, when) is the one that counts. Only after it said yes does
-    the desk get its convenience copies: the ``post`` gate in ``series.json`` and a file named
-    ``<show>_epNN_final_vN_<date>.mp4`` (founder, 14 Oct 2026). The file watched is left as it was.
-    """
-
     from creation.post.episode_name import mark_final
     from creation.post.final_approval import (
         FinalNotRecorded,
@@ -480,14 +483,7 @@ def _approve_post(desk: Path, episode: int, path: Path | None) -> int:
         print(str(exc), file=sys.stderr)
         return FINAL_NOT_RECORDED
     print(final_line(episode, source, held))
-    record = approve_post(
-        desk,
-        episode=episode,
-        path=str(source),
-        at_utc=str(held.final.get("approved_at") or "") or None,
-        note=f"server final {str(held.final.get('export_sha256', ''))[:12]} (local copy; the server's record counts)",
-    )
-    print(f"ep{episode:02d} post {record.status} (desk copy of the server's record)")
+    write_queue(desk, finals=held.finals)
     final = mark_final(desk, episode, source)
     if final is not None:
         print(f"Final file (a desk convenience copy): {final}")
