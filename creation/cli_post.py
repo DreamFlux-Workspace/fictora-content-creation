@@ -807,8 +807,9 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     cut = sub.add_parser(
         "cut",
-        help="The server's punchy series cut (whole file, Instagram and TikTok parts, covers, captions) from "
-        "episodes you pick, from any of the creator's shows (free). Nothing is cut on this laptop. "
+        help="The server's punchy series cut as Instagram and TikTok parts (with covers and captions) from "
+        "episodes you pick, from any of the creator's shows (free). It prints every planned part and makes "
+        "nothing until you say go ahead. Nothing is cut on this laptop. "
         f"Exits {SERVER_FINISH_NOT_DONE} (NOT DONE) when the server did not give the cut.",
     )
     cut.add_argument(
@@ -818,17 +819,30 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     cut.add_argument(
         "--episodes", nargs="+", default=None, metavar="REF",
-        help="Episodes in the order they should play (2 or more): <show id>:<n> or <desk folder>:<n>, add =FILE to use your own video file for that episode.",
+        help="Episodes in the order they should play (2 or more): <show id>:<n> or <desk folder>:<n>. Each is cut as the server holds it.",
     )  # fmt: skip
     cut.add_argument(
         "--show", default=None, metavar="TITLE",
         help="With --list: only shows with this title. Alone: every delivered episode of every show with this "
         "title, oldest first (case does not matter).",
     )  # fmt: skip
+    # Removed 5 Nov 2026 (a laptop file never reached the episode); kept only to refuse in plain words.
+    cut.add_argument("--file", action="append", default=[], help=argparse.SUPPRESS)
     cut.add_argument(
-        "--file", action="append", default=[], metavar="N=PATH",
-        help="With --show: use this video file for the Nth episode that plays (repeat). With --episodes, write "
-        "REF=FILE instead. The kit uploads the file; the server makes the cut.",
+        "--parts", type=int, default=None, metavar="N",
+        help="How many Instagram and TikTok parts (default: the server's suggestion).",
+    )  # fmt: skip
+    cut.add_argument(
+        "--start-number", type=int, default=None, metavar="N",
+        help="The number the first part carries (default: the server's, carrying on from the creator's earlier parts).",
+    )  # fmt: skip
+    cut.add_argument(
+        "--part-text", action="append", default=[], metavar="N:opening=TEXT",
+        help="Change part N's opening or ending text: N:opening=TEXT or N:ending=TEXT (repeat).",
+    )  # fmt: skip
+    cut.add_argument(
+        "--yes", action="store_true",
+        help="The human already said go ahead to the printed parts: make them without asking.",
     )  # fmt: skip
     cut.add_argument("--title", default=None, help="Optional name for the cut.")
     cut.add_argument(
