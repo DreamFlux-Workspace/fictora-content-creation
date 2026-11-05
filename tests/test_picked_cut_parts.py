@@ -523,6 +523,35 @@ def test_too_many_parts_typed_is_shown_plainly_and_the_last_plan_asked_again(
     assert [c["part_count"] for c in server.creates()] == [2]
 
 
+def test_a_typed_change_the_text_cannot_fit_is_shown_plainly_and_the_last_plan_asked_again(
+    server: PlanServer,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    answers(monkeypatch, THREE_PARTS, "end part 4 with a very long sentence", "y")
+    server_plan = server.plan
+
+    def too_long(body: dict[str, Any]) -> httpx.Response:
+        if body.get("change_request") == "end part 4 with a very long sentence":
+            error = {
+                "code": "part_text_too_long",
+                "message": TOO_LONG,
+                "details": {"part": 4, "which": "ending"},
+            }
+            return httpx.Response(422, json={"error": error})
+        return server_plan(body)
+
+    server.plan = too_long  # type: ignore[method-assign]
+    assert cut_command(args()) == 0
+    assert screen(capsys.readouterr().out) == [
+        *TWO_PART_PRINTOUT,
+        *THREE_PART_PRINTOUT,
+        TOO_LONG,
+        *THREE_PART_PRINTOUT,
+    ]
+    assert [c["part_count"] for c in server.creates()] == [3]
+
+
 def test_too_many_parts_under_yes_stops_with_the_servers_words(
     server: PlanServer, capsys: pytest.CaptureFixture[str]
 ) -> None:

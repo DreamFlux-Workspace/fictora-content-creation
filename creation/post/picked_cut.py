@@ -4,7 +4,7 @@ The picked episodes can come from any of the creator's shows (an operator who ma
 episode still gets one cut). The kit sends the pick and prints what the server made. Nothing is
 cut on this laptop, no state is kept, and the files stay on the server (links are printed).
 
-Parts only (founder, 5 Nov 2026): a punchy edit is split into parts, never one whole video. Before
+Parts only (founder, 5 Nov 2026): a punchy edit is split into parts and only the parts are made. Before
 anything is made the kit asks the server for the plan and prints the server's own words, which end
 "Make it, or tell me what to change?", with the episodes each part plays. Anything else the human
 types goes back to the server as the change they want, with the last plan as it was answered, so

@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 import pytest
 
+from creation.post import edit_actions
 from creation.post.edit_actions import (
     cut_action_command,
     rename_cut,
@@ -372,30 +373,54 @@ def test_save_asks_then_polls_the_same_file_and_downloads_it(tmp_path: Path) -> 
     assert "Note: Some episodes had no mark." in lines
 
 
-def test_save_of_the_whole_edit_without_music_sends_no_part(tmp_path: Path) -> None:
-    ready = export(
-        "ready",
+def test_save_without_a_part_names_the_part_and_sends_nothing(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent: list[str] = []
+    monkeypatch.setattr(
+        edit_actions, "save_cut", lambda *a, **k: sent.append("called") or []
+    )
+    args = SimpleNamespace(
+        command="cut-save",
+        id="c1",
         part=None,
-        music=False,
-        export_url="https://media.example/w.mp4",
-        file_name="e-whole-no-music-sokii.mp4",
+        no_music=False,
+        to=Path("."),
+        wait=None,
+        json=False,
     )
-    server = Server({"POST /v1/series-cuts/c1/export": [(202, ready)]})
-    lines = save_cut(
-        "c1",
-        music=False,
-        folder=tmp_path,
-        media_transport=media(),
-        **call(server),
-        **waits(),
+    assert cut_action_command(args) == 2
+    assert capsys.readouterr().err.strip() == (
+        "Name the part to save: cut-save ID --part N."
     )
-    assert server.asks("POST", "/v1/series-cuts/c1/export") == [
-        ({}, {"part": None, "music": False})
-    ]
-    assert not server.asks("GET", "/v1/series-cuts/c1/export")
-    assert lines[0].startswith(
-        "Saved the whole edit with the Sokii mark, with no added music"
+    assert sent == []
+
+
+def test_a_server_that_requires_a_part_gets_the_same_plain_line(
+    tmp_path: Path,
+) -> None:
+    server = Server(
+        {
+            "POST /v1/series-cuts/c1/export": [
+                refusal(422, "series_cut_part_required", "Name a part.")
+            ]
+        }
     )
+    with pytest.raises(CutStop) as stop:
+        save_cut("c1", part=1, folder=tmp_path, **call(server), **waits())
+    assert stop.value.line == "Name the part to save: cut-save ID --part N."
+    assert stop.value.code == 2
+
+
+def test_no_save_wording_offers_the_whole_edit(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from creation.cli_produce import main
+
+    with pytest.raises(SystemExit):
+        main(["cut-save", "--help"])
+    words = capsys.readouterr().out + " ".join(edit_actions.NEXT_STEP.values())
+    assert "whole" not in words
 
 
 def test_save_never_writes_over_a_file_already_there(tmp_path: Path) -> None:
@@ -423,6 +448,7 @@ def test_save_keeps_the_server_file_name_inside_the_folder(tmp_path: Path) -> No
     server = Server({"POST /v1/series-cuts/c1/export": [(202, ready)]})
     save_cut(
         "c1",
+        part=1,
         folder=tmp_path / "out",
         media_transport=media(),
         **call(server),
@@ -505,7 +531,7 @@ def test_save_waits_no_longer_than_asked(tmp_path: Path) -> None:
 def test_save_on_a_server_without_the_route_says_so(tmp_path: Path) -> None:
     server = Server({"POST /v1/series-cuts/c1/export": [NOT_FOUND]})
     with pytest.raises(CutStop, match="can't save an edit with the Sokii mark yet"):
-        save_cut("c1", folder=tmp_path, **call(server), **waits())
+        save_cut("c1", part=1, folder=tmp_path, **call(server), **waits())
 
 
 def test_save_part_zero_is_a_bad_ask(capsys: pytest.CaptureFixture[str]) -> None:
