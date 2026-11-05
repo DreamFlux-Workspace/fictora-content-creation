@@ -188,6 +188,75 @@ def test_retry_of_a_ready_edit_prints_it_without_running_it_again() -> None:
     assert "Whole show: https://media.example/all.mp4" in lines
 
 
+REMAKE_FAILED = "This edit could not be made again just now, so it stays as it was. You can try again later."
+
+
+def test_retry_of_an_older_ready_edit_says_it_is_being_remade_and_prints_the_new_one() -> (
+    None
+):
+    server = Server(
+        {
+            "POST /v1/series-cuts/c1/retry": [
+                (202, {"series_cut_id": "c1", "status": "queued"})
+            ],
+            "GET /v1/series-cuts/c1": [
+                (200, {"status": "queued", "series_cut": CUT}),
+                (200, {"status": "making", "series_cut": CUT}),
+                (200, {"status": "ready", "episodes": [{}, {}], "series_cut": CUT}),
+            ],
+        }
+    )
+    said: list[str] = []
+    lines = retry_cut("c1", **call(server), **{**waits(), "progress": said.append})
+    assert [line for line in said if line.startswith("Being remade")] == [said[1]]
+    assert not any("Server note" in line for line in lines)
+
+
+def test_retry_of_a_first_cut_never_says_being_remade() -> None:
+    server = Server(
+        {
+            "POST /v1/series-cuts/c1/retry": [
+                (202, {"series_cut_id": "c1", "status": "queued"})
+            ],
+            "GET /v1/series-cuts/c1": [
+                (200, {"status": "making"}),
+                (200, {"status": "ready", "episodes": [{}, {}], "series_cut": CUT}),
+            ],
+        }
+    )
+    said: list[str] = []
+    retry_cut("c1", **call(server), **{**waits(), "progress": said.append})
+    assert not any(line.startswith("Being remade") for line in said)
+
+
+def test_a_remake_that_did_not_work_prints_the_servers_reason_on_the_ready_edit() -> (
+    None
+):
+    server = Server(
+        {
+            "POST /v1/series-cuts/c1/retry": [
+                (202, {"series_cut_id": "c1", "status": "queued"})
+            ],
+            "GET /v1/series-cuts/c1": [
+                (200, {"status": "making", "series_cut": CUT}),
+                (
+                    200,
+                    {
+                        "status": "ready",
+                        "reason": REMAKE_FAILED,
+                        "episodes": [{}, {}],
+                        "series_cut": CUT,
+                    },
+                ),
+            ],
+        }
+    )
+    lines = retry_cut("c1", **call(server), **waits())
+    assert f"Server note: {REMAKE_FAILED}" in lines
+    assert "To try again, run: fictora-produce cut-retry c1" in lines
+    assert "Whole show: https://media.example/all.mp4" in lines
+
+
 def test_retry_that_fails_again_offers_the_same_retry() -> None:
     server = Server(
         {

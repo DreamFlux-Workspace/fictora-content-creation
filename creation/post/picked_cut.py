@@ -397,6 +397,12 @@ def retry_line(cut_id: str) -> str:
     return f"To try again, run: fictora-produce cut-retry {cut_id}"
 
 
+BEING_REMADE = (
+    "Being remade: the server is making this ready edit again under its newer rules. The earlier edit "
+    "stays as it was and keeps playing until the new one is ready."
+)
+
+
 def wait_for_cut(
     client: httpx.Client,
     base: str,
@@ -419,9 +425,18 @@ def wait_for_cut(
 
     url = base + CUT_ROUTE.format(series_cut_id=cut_id)
     deadline, said = clock() + wait_seconds, clock()
+    told_remade = False
     while True:
         body = _poll(client, url, headers, deadline=deadline, clock=clock, sleep=sleep)
         status = str(body.get("status") or "")
+        # A cut that is queued or making yet still carries its series_cut is a ready edit being made again.
+        if (
+            not told_remade
+            and status in ("queued", "making")
+            and isinstance(body.get("series_cut"), dict)
+        ):
+            progress(BEING_REMADE)
+            told_remade = True
         if status == "ready":
             count = picked or len(body.get("episodes") or [])
             return _ready_lines(body, count, cut_id)
@@ -650,8 +665,10 @@ def _ready_lines(body: Mapping[str, Any], picked: int, cut_id: str) -> list[str]
         raise CutStop(
             "NOT DONE: the server said the cut is ready but sent no files. Tell the core team."
         )
+    reason = str(body.get("reason") or "").strip()
     return [
         f"The server cut these {picked} picked episodes by itself; nothing was cut on this laptop.",
+        *([f"Server note: {reason}", retry_line(cut_id)] if reason else []),
         *_music_lines(body.get("music"), cut_id),
         *series_cut_file_lines(cut),
         f'Edit id: {cut_id}. Rename it with: fictora-produce cut-rename {cut_id} "NAME". Save it with the Sokii '
