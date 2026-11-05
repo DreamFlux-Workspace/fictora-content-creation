@@ -19,6 +19,7 @@ from creation.ops.floor import (
     approve_series_gate,
     confirm_preflight,
     default_desk_parent,
+    finals_warnings,
     init_series_desk,
     preflight_take,
     record_estimate,
@@ -307,16 +308,10 @@ def _dispatch(args: argparse.Namespace) -> int:
         from creation.post import final_approval
 
         finals = final_approval.show_finals(args.desk)
-        if finals is None:
-            print(
-                "Could not read the finals from the server: episodes keep the done they had.",
-                file=sys.stderr,
-            )
         rows = status_rows(args.desk, finals)
         write_queue(args.desk, finals=finals)
-        for ordinal, final in sorted((finals or {}).items()):
-            if not final.current:
-                print(final_approval.stale_final_line(ordinal, final), file=sys.stderr)
+        for warning in finals_warnings(finals):
+            print(warning, file=sys.stderr)
         if args.json:
             print(json.dumps(rows))
         else:

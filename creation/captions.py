@@ -159,7 +159,7 @@ def caption_style_word(style: str) -> str:
 
 
 def desk_has_finished_episodes(desk: Path) -> bool:
-    """True when the show has a finished episode: a ``finish`` record on a take, or a final on the server.
+    """True when the show has a finished episode, or the server could not be asked.
 
     Parameters
     ----------
@@ -171,7 +171,8 @@ def desk_has_finished_episodes(desk: Path) -> bool:
     bool
         Whether any ``epNN/takes/take-epNN-tK-finish-vN.json`` exists, the server's show
         standing holds a final for any episode, or an episode was approved on the desk before
-        finals moved to the server (read-only legacy fallback).
+        finals moved to the server (read-only legacy fallback). True when the server could not
+        be read, so an offline run never switches a continuing show to the new-show style.
     """
 
     desk = desk.expanduser().resolve()
@@ -180,7 +181,8 @@ def desk_has_finished_episodes(desk: Path) -> bool:
     from creation.ops.state import approved_on_desk_before_server, load_series
     from creation.post import final_approval
 
-    if final_approval.show_finals(desk):
+    finals = final_approval.show_finals(desk)
+    if not finals.checked or finals.by_episode:
         return True
     try:
         series = load_series(desk)

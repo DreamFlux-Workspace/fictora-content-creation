@@ -37,7 +37,6 @@ from creation.captions import (
     build_line_cues,
     canonical_caption_style,
     caption_style_word,
-    desk_has_finished_episodes,
     episode_caption_lines,
     find_ffmpeg,
     show_caption_style,
@@ -251,7 +250,7 @@ def caption_style_at_look(desk: Path, *, out: TextIO | None = None) -> Path | No
     if config.caption_style:
         return None
     _, source = show_caption_style(desk)
-    if source == "continuing" or desk_has_finished_episodes(desk):
+    if source == "continuing":
         config.caption_style = CONTINUING_SHOW_CAPTION_STYLE
         save_production_config(desk, config)
         print(

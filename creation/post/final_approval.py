@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -62,10 +63,45 @@ class ServerFinal:
     current: bool
 
     @property
-    def file(self) -> str:
+    def short_sha(self) -> str:
         """The approved copy's short digest, as the operator sees it."""
 
         return self.export_sha256[:12]
+
+
+@dataclass(frozen=True)
+class ShowFinals:
+    """Every episode's final from one read of the server's show standing.
+
+    Attributes
+    ----------
+    checked
+        False when the server could not be read (no story on the desk, no kit token, or no answer).
+    by_episode
+        The finals by episode ordinal; empty when not checked.
+    """
+
+    checked: bool
+    by_episode: dict[int, ServerFinal] = field(default_factory=dict)
+
+
+NOT_CHECKED = ShowFinals(checked=False)
+
+
+class PostStatus(StrEnum):
+    """Where an episode stands once only its final is left."""
+
+    @property
+    def is_done(self) -> bool:
+        """Whether the episode needs nothing more."""
+
+        return self in (PostStatus.DONE, PostStatus.DONE_ON_DESK)
+
+    DONE = "done"
+    DONE_ON_DESK = "done (approved on desk before 5 Nov)"
+    WAITING = "post"
+    OLDER_CUT = "post:older-cut"
+    NOT_CHECKED = "post (final not checked)"
 
 
 @dataclass(frozen=True)
@@ -79,14 +115,14 @@ class FinalOnServer:
     final
         The episode's final from show standing.
     finals
-        Every episode's final from the same read, by ordinal.
+        Every episode's final from the same read.
     replaced_sha256
         Digest of the earlier final this one replaced, if any.
     """
 
     recorded: bool
     final: ServerFinal
-    finals: dict[int, ServerFinal]
+    finals: ShowFinals
     replaced_sha256: str | None = None
 
 
@@ -133,37 +169,59 @@ def _finals(got: httpx.Response) -> dict[int, ServerFinal]:
     }
 
 
+def _kit_api(desk: Path) -> tuple[str, dict[str, str]] | None:
+    """``(base_url, headers)`` from the kit's own environment on the desk's session; ``None`` without a token."""
+
+    from creation.harness.credentials import env_drama_api_credentials
+    from creation.harness.http_util import api_headers
+    from creation.production_state import load_production
+
+    base, token = env_drama_api_credentials(
+        Path(__file__).resolve().parents[2] / ".env"
+    )
+    if not token:
+        return None
+    try:
+        session_id = load_production(desk).session_id
+    except (ValueError, OSError):
+        return None
+    return base, api_headers(token, session_id)
+
+
 def show_finals(
     desk: Path,
     *,
     api: tuple[str, Mapping[str, str]] | None = None,
     transport: httpx.BaseTransport | None = None,
-) -> dict[int, ServerFinal] | None:
-    """Each episode's final as the server's show standing holds it, by episode ordinal.
+) -> ShowFinals:
+    """Every episode's final as the server's show standing holds it.
 
     Parameters
     ----------
     desk
         Series desk.
     api
-        ``(base_url, headers)``; default the kit's credentials on the desk's session.
+        ``(base_url, headers)``; default the kit's token from its environment on the desk's session.
     transport
         HTTP transport (tests fake the server with it).
 
     Returns
     -------
-    dict[int, ServerFinal] | None
-        Only episodes with a final; ``None`` when the desk has no story yet or the server cannot be read.
+    ShowFinals
+        :data:`NOT_CHECKED` when the desk has no story yet, the kit has no token or the server
+        could not be read.
     """
 
     from creation.post.desk import spine_id as desk_spine_id
-    from creation.post.server_finish import _api
 
     try:
         spine = desk_spine_id(desk)
-        base, headers = api if api is not None else _api(desk)
-    except (ValueError, OSError, SystemExit):
-        return None
+    except (ValueError, OSError):
+        return NOT_CHECKED
+    found = api if api is not None else _kit_api(desk)
+    if found is None:
+        return NOT_CHECKED
+    base, headers = found
     try:
         with httpx.Client(transport=transport, timeout=TIMEOUT_SECONDS) as client:
             got = client.get(
@@ -171,15 +229,19 @@ def show_finals(
                 headers=dict(headers),
             )
     except httpx.HTTPError:
-        return None
-    return _finals(got) if got.is_success else None
+        return NOT_CHECKED
+    return (
+        ShowFinals(checked=True, by_episode=_finals(got))
+        if got.is_success
+        else NOT_CHECKED
+    )
 
 
 def stale_final_line(episode: int, final: ServerFinal) -> str:
     """The warning for a final that is no longer the episode's current copy."""
 
     return (
-        f"Warning: episode {episode}'s final on the server (file {final.file}) "
+        f"Warning: episode {episode}'s final on the server (file {final.short_sha}) "
         "is a copy of an older cut; the episode changed since it was approved. Do not post that file. "
         "Finish the episode again, watch the new file, then approve it."
     )
@@ -269,8 +331,8 @@ def approve_final(
             f"Could not reach the server ({type(exc).__name__}). Check the internet connection and approve again. "
             "Nothing was recorded on this laptop."
         ) from None
-    finals = _finals(got)
-    final = finals.get(episode)
+    finals = ShowFinals(checked=True, by_episode=_finals(got))
+    final = finals.by_episode.get(episode)
     if final is None or final.export_sha256 != digest:
         raise FinalNotRecorded(
             f"The server took the yes but its standing for episode {episode} does not show this file as final. "
@@ -299,7 +361,7 @@ def final_line(episode: int, path: Path, held: FinalOnServer) -> str:
     )
     line = (
         f"{head}: episode {episode} is final = {path.name} "
-        f"(file {final.file}, said by {who} at {final.approved_at})."
+        f"(file {final.short_sha}, said by {who} at {final.approved_at})."
     )
     if held.replaced_sha256:
         line += f" It replaces the earlier final (file {held.replaced_sha256[:12]})."
@@ -378,8 +440,11 @@ __all__ = [
     "FINAL_ROUTE",
     "STANDING_ROUTE",
     "FinalNotRecorded",
+    "NOT_CHECKED",
     "FinalOnServer",
+    "PostStatus",
     "ServerFinal",
+    "ShowFinals",
     "approve_desk_final",
     "approve_final",
     "file_sha256",

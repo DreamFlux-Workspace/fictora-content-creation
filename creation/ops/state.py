@@ -314,11 +314,22 @@ def parse_spoken_lines(payload: list[Any]) -> list[SpokenLine]:
 SERVER_FINALS_SINCE = datetime(2026, 11, 5, 12, 59, tzinfo=timezone.utc)
 
 
+def _gate_time(gate: GateRecord) -> datetime | None:
+    if not gate.at_utc:
+        return None
+    try:
+        at = datetime.fromisoformat(gate.at_utc.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return at if at.tzinfo is not None else at.replace(tzinfo=timezone.utc)
+
+
 def approved_on_desk_before_server(episode: EpisodeState) -> bool:
-    """Whether the episode's final was said on the desk before finals moved to the server.
+    """Whether the episode's final was said on the desk before finals moved to the server and still stands.
 
     Read-only legacy fallback: the old ``post`` gate counts only when it was approved before
-    :data:`SERVER_FINALS_SINCE`; an unreadable time does not count.
+    :data:`SERVER_FINALS_SINCE` and no take's board was answered after it. An unreadable post
+    time does not count; an unreadable board time is ignored.
 
     Parameters
     ----------
@@ -328,19 +339,15 @@ def approved_on_desk_before_server(episode: EpisodeState) -> bool:
     Returns
     -------
     bool
-        True for a desk yes from before 5 Nov 2026, 18:29 IST.
+        True for a desk yes from before 5 Nov 2026, 18:29 IST with no board answered after it.
     """
 
     gate = episode.post
-    if gate.status != "approved" or not gate.at_utc:
+    said = _gate_time(gate) if gate.status == "approved" else None
+    if said is None or said >= SERVER_FINALS_SINCE:
         return False
-    try:
-        at = datetime.fromisoformat(gate.at_utc.replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    if at.tzinfo is None:
-        at = at.replace(tzinfo=timezone.utc)
-    return at < SERVER_FINALS_SINCE
+    boards = (_gate_time(take.board) for take in episode.takes)
+    return all(at is None or at <= said for at in boards)
 
 
 def utc_now() -> str:
