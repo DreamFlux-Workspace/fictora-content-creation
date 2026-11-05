@@ -509,8 +509,20 @@ def _counts(body: Mapping[str, Any]) -> str:
     return ", ".join(parts)
 
 
+def _whole_tokens(value: Any) -> int:
+    """The server's token count as a whole number; anything else is a plain stop, not a crash."""
+
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        raise TakeEditStop(
+            f"the server sent a price that is not a number ({value!r}), so the edit is not trusted. "
+            f"{NOTHING_CHANGED} Try again in a minute, and tell the team if it keeps happening."
+        ) from None
+
+
 def _tokens(value: Any) -> str:
-    tokens = int(value or 0)
+    tokens = _whole_tokens(value)
     return (
         "free (0 tokens)"
         if tokens == 0
@@ -608,7 +620,7 @@ def _send(
                 raise TakeEditStop(refusal_line(status, answer, take_id=take_id))
             if replaced:
                 lines.append(replaced_warning(take_id, preview=preview))
-            spent += int(answer.get("tokens") or 0)
+            spent += _whole_tokens(answer.get("tokens"))
             if preview:
                 lines.append(
                     f"The {take_id} edit ({_counts(edit)}) would cost {_tokens(answer.get('tokens'))}."
@@ -635,7 +647,7 @@ def _send(
                 raise TakeEditStop(refusal_line(status, answer, take_id=take_id))
             quote = answer.get("quote") if isinstance(answer.get("quote"), dict) else {}
             if preview:
-                spent += int(quote.get("tokens") or 0)
+                spent += _whole_tokens(quote.get("tokens"))
                 lines.append(
                     f"Re-voicing {name}'s lines in take {take_id} would cost {_tokens(quote.get('tokens'))}."
                 )
@@ -643,7 +655,7 @@ def _send(
             applied = (
                 answer.get("applied") if isinstance(answer.get("applied"), dict) else {}
             )
-            spent += int(applied.get("tokens", quote.get("tokens")) or 0)
+            spent += _whole_tokens(applied.get("tokens", quote.get("tokens")))
             lines.append(
                 f"{name}'s lines in take {take_id} re-voiced on the server: "
                 f"{_tokens(applied.get('tokens', quote.get('tokens')))}."

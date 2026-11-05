@@ -493,6 +493,11 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     fx.add_argument("--preset", required=True, choices=("intercom", "phone", "radio"))
     fx.add_argument(
+        "--yes",
+        action="store_true",
+        help="Apply a priced edit. Without it a price the server quotes is printed and nothing is changed.",
+    )
+    fx.add_argument(
         "--file", dest="take_file", type=Path, default=None, help=argparse.SUPPRESS
     )
     fx.add_argument(

@@ -460,3 +460,59 @@ def test_the_old_forms_without_an_episode_get_the_plain_refusal_not_a_usage_erro
     assert err.startswith("Stopped:") and "usage:" not in err
     assert "required" not in err
     assert server.requests == []
+
+
+def test_a_missing_desk_alone_is_named_exactly(
+    post_desk: Path,
+    server: Server,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert (
+        main(
+            [
+                "voice-fx",
+                "--episode",
+                "1",
+                "--take",
+                "t2",
+                "--range",
+                "0-1",
+                "--preset",
+                "phone",
+            ]
+        )
+        == 2
+    )
+
+    err = capsys.readouterr().err
+    assert "add --desk D." in err and "--episode" not in err.split("add ")[1]
+    assert server.requests == []
+
+
+def test_voice_fx_takes_yes_like_finish_and_revoice(
+    post_desk: Path,
+    server: Server,
+) -> None:
+    assert (
+        _run(post_desk, "voice-fx", "--range", "0-1", "--preset", "phone", "--yes") == 0
+    )
+
+    assert server.applied()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [("freeze", "--at", "1", "--hold", "0.5"), ("revoice", "--cast", "kenji")],
+)
+def test_a_price_that_is_not_a_number_is_a_plain_stop(
+    post_desk: Path,
+    server: Server,
+    capsys: pytest.CaptureFixture[str],
+    command: tuple[str, ...],
+) -> None:
+    server.quote_tokens = "three"  # type: ignore[assignment]
+
+    assert _run(post_desk, *command) == 2
+
+    err = capsys.readouterr().err
+    assert "not a number" in err and "Traceback" not in err

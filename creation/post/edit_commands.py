@@ -451,9 +451,18 @@ def send_server_edit(
                 "with --episode N --take tK. Times are seconds on the take as filmed (take facts times, the same "
                 f"as finish --mute), not on a finished file. {NOTHING_CHANGED}"
             )
-        if args.take_id is None or args.episode is None or args.desk is None:
+        missing = [
+            flag
+            for flag, value in (
+                ("--desk D", args.desk),
+                ("--episode N", args.episode),
+                ("--take tK", args.take_id),
+            )
+            if value is None
+        ]
+        if missing:
             raise TakeEditStop(
-                f"{what} edits one take on the server: add --episode N --take tK. {NOTHING_CHANGED}"
+                f"{what} edits one take on the server: add {' '.join(missing)}. {NOTHING_CHANGED}"
             )
         lines = run_take_edit(
             args.desk,

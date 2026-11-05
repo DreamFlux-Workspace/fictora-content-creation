@@ -33,7 +33,7 @@ Every rule here was paid for in a production.
 - One cue per action. Two cues on one action read as two actions; a looped cue under a single gesture reads as the gesture repeating (Dumplings ep 3: "multiple purrs").
 - Place it on the frame where the action lands, not where it starts. Find that frame on the contact sheet, then check it at full rate.
 - Room tone and weather are the bed, one layer per location, not a cue per shot.
-- Times are seconds on the take **as filmed** (the raw take). `deboard` keeps the timeline, so never subtract the board frames.
+- Times are seconds on the take **as filmed** (the raw take). the server holds the board frames without cutting, so never subtract the board frames.
 
 ## Measure the cue's shape before you place it
 
