@@ -75,28 +75,65 @@ def _recording(monkeypatch: pytest.MonkeyPatch, roots: list[Path]) -> list[list[
     return calls
 
 
-#: A number in an ffmpeg argument or a caption file.
-_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
-#: How far a number measured from the test media may differ between machines. The takes are encoded
+#: A number that is a length or a point in time: a trim's bounds or length, an ``anullsrc``
+#: duration, or a caption timestamp (``0:00:01.00``).
+_TIME = re.compile(
+    r"(?<=\btrim=)[\d.:]+|(?<=atrim=)[\d.:]+|(?<=start=)[\d.]+|(?<=end=)[\d.]+"
+    r"|(?<=duration=)[\d.]+|\b\d+:\d{2}:\d{2}\.\d{2}\b"
+)
+#: Arguments whose value is a time.
+_TIME_FLAGS = {"-t", "-ss", "-to"}
+#: How far a time measured from the test media may differ between machines. The takes are encoded
 #: on the machine running the test, and another ffmpeg build gives a container a few milliseconds more
 #: (a 5 s take probes 5.013 s on CI's ubuntu ffmpeg, 5.000 s on a laptop), which moves every length,
-#: trim and seek computed from it. Any real change (a step, a filter, an argument, a caption's place,
-#: colour, chunk or italics, a timing shift of a frame or more) still differs.
-NUMBER_TOLERANCE = 0.03
+#: trim and seek computed from it. Only times get this slack: a volume, a mix level or any other
+#: number must match exactly, and a timing shift of a frame (0.042 s) or more still differs.
+TIME_TOLERANCE = 0.03
 
 
-def _same(got: Any, want: Any) -> bool:
-    """Equal, except numbers inside strings may differ by :data:`NUMBER_TOLERANCE`."""
+def _seconds(text: str) -> list[float]:
+    """The numbers in a time value; a ``h:mm:ss.cc`` timestamp is one number of seconds."""
+
+    if re.fullmatch(r"\d+:\d{2}:\d{2}\.\d{2}", text):
+        h, m, s = text.split(":")
+        return [int(h) * 3600 + int(m) * 60 + float(s)]
+    return [float(n) for n in re.findall(r"\d+(?:\.\d+)?", text)]
+
+
+def _times(text: str, after_time_flag: bool) -> tuple[str, list[float]]:
+    """The text with its time values blanked, and those values in seconds."""
+
+    if after_time_flag and re.fullmatch(r"-?\d+(?:\.\d+)?", text):
+        return "#", [float(text)]
+    found: list[float] = []
+
+    def blank(match: re.Match[str]) -> str:
+        found.extend(_seconds(match.group()))
+        return "#" * match.group().count(":") + "#"
+
+    return _TIME.sub(blank, text), found
+
+
+def _same(got: Any, want: Any, after_time_flag: bool = False) -> bool:
+    """Equal, except times inside strings may differ by :data:`TIME_TOLERANCE`."""
 
     if isinstance(got, list) and isinstance(want, list):
-        return len(got) == len(want) and all(_same(g, w) for g, w in zip(got, want))
+        return len(got) == len(want) and all(
+            _same(
+                g,
+                w,
+                i > 0 and isinstance(want[i - 1], str) and want[i - 1] in _TIME_FLAGS,
+            )
+            for i, (g, w) in enumerate(zip(got, want))
+        )
     if not isinstance(got, str) or not isinstance(want, str):
         return got == want
-    if _NUMBER.sub("#", got) != _NUMBER.sub("#", want):
-        return False
-    return all(
-        abs(float(g) - float(w)) <= NUMBER_TOLERANCE
-        for g, w in zip(_NUMBER.findall(got), _NUMBER.findall(want))
+    got_rest, got_times = _times(got, after_time_flag)
+    want_rest, want_times = _times(want, after_time_flag)
+    return (
+        got_rest == want_rest
+        and len(got_times) == len(want_times)
+        and all(abs(g - w) <= TIME_TOLERANCE for g, w in zip(got_times, want_times))
     )
 
 

@@ -20,7 +20,7 @@ are unchanged here (the test voices start exactly on their windows). The join's 
 file has had its readable name since 14 Oct 2026 (``join-test_ep01_draft_v1_<date>.mp4``,
 the date pinned in the test); its commands are unchanged. Numbers measured from
 the test media may differ by a few milliseconds between ffmpeg builds
-(:data:`NUMBER_TOLERANCE`); everything else must match exactly. Regenerate only on purpose:
+(:data:`TIME_TOLERANCE`), so only times get that slack; everything else must match exactly. Regenerate only on purpose:
 ``UPDATE_GOLDEN=1 uv run pytest tests/test_letterbox_portrait_unchanged.py``.
 
 Re-recorded 25 Oct 2026 (kit #294) for the mark only: 3% in and the approved reels' size
@@ -70,6 +70,18 @@ def _check(key: str, calls: list[Any]) -> None:
 
 def test_the_comparison_tolerates_media_timing_only() -> None:
     assert _same(["atrim=0:5.013", "-ss", "1.999"], ["atrim=0:5.000", "-ss", "2.000"])
+    assert _same(
+        ["Dialogue: 0,0:00:01.01,0:00:02.60,House"],
+        ["Dialogue: 0,0:00:01.00,0:00:02.60,House"],
+    )
+    assert not _same(["atrim=0:5.042"], ["atrim=0:5.000"]), (
+        "a one-frame shift is caught"
+    )
+    assert not _same(["volume=0.52"], ["volume=0.50"]), "a volume change is caught"
+    assert not _same(["amix=weights=1 0.98"], ["amix=weights=1 1"]), (
+        "a mix level is caught"
+    )
+    assert not _same(["-ar", "48001"], ["-ar", "48000"]), "only time flags get slack"
     assert not _same(["atrim=0:5.200"], ["atrim=0:5.000"]), (
         "a real timing shift is caught"
     )
