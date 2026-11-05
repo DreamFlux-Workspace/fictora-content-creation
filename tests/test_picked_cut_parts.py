@@ -1,7 +1,8 @@
-"""``cut`` plans the Instagram and TikTok parts with the server and makes nothing until go ahead.
+"""``cut`` plans the parts with the server, asks "Make it?", and makes nothing until yes.
 
-Founder, 5 Nov 2026: a punchy edit is parts only; every part is printed before anything is made;
-the server suggests the count, the first number and each part's texts; the human can change them.
+Founder, 5 Nov 2026: a punchy edit is parts only; every part is printed before anything is made.
+The kit prints the server's own words and asks one question; anything else the human types goes
+back to the server as the change they want, and the new plan is asked again.
 """
 
 from __future__ import annotations
@@ -27,6 +28,10 @@ CUT = {
     ],
 }
 TOO_LONG = "Part 4's ending is too long to fit on screen. Try 8 words or fewer."
+#: The fake server's reading of a typed change: these words split it into three parts.
+THREE_PARTS = "make it three parts"
+#: These words make the server ask back instead of planning anew.
+UNCLEAR = "different"
 
 
 class PlanServer:
@@ -36,6 +41,7 @@ class PlanServer:
         self.seen: list[tuple[str, str, Any]] = []
         self.plan_missing = False
         self.too_long_over = 1000
+        self.too_long_message = TOO_LONG
 
     def plans(self) -> list[Any]:
         return [b for m, p, b in self.seen if p == "/v1/series-cuts/plan"]
@@ -55,7 +61,9 @@ class PlanServer:
         return httpx.Response(200, json={"status": "ready", "series_cut": CUT})
 
     def plan(self, body: dict[str, Any]) -> httpx.Response:
-        count, start = body.get("part_count", 2), body.get("start_number", 3)
+        change = body.get("change_request")
+        count = 3 if change == THREE_PARTS else body.get("part_count", 2)
+        start = body.get("start_number", 3)
         texts = {t["number"]: t for t in body.get("texts", [])}
         for n, t in texts.items():
             if any(
@@ -67,8 +75,8 @@ class PlanServer:
                     json={
                         "error": {
                             "code": "part_text_too_long",
-                            "message": TOO_LONG,
-                            "number": n,
+                            "message": self.too_long_message,
+                            "details": {"part": n},
                         }
                     },
                 )
@@ -88,17 +96,18 @@ class PlanServer:
                     "ending_text": texts.get(n, {}).get("ending_text", ending),
                 }
             )
-        return httpx.Response(
-            200,
-            json={
-                "part_count": count,
-                "suggested_part_count": 2,
-                "start_number": start,
-                "suggested_start_number": 3,
-                "parts": parts,
-                "summary": f"{count} Instagram and TikTok parts, Part {start} to Part {start + count - 1}:",
-            },
-        )
+        plan: dict[str, Any] = {
+            "part_count": count,
+            "suggested_part_count": 2,
+            "start_number": start,
+            "suggested_start_number": 3,
+            "parts": parts,
+            "summary": f"I'll split this into {count} parts, Part {start} to Part {start + count - 1}. "
+            "Make it, or tell me what to change?",
+        }
+        if change == UNCLEAR:
+            plan["clarify"] = "Different how: more parts, fewer, or other openings?"
+        return httpx.Response(200, json=plan)
 
 
 @pytest.fixture
@@ -116,7 +125,8 @@ def server(monkeypatch: pytest.MonkeyPatch) -> PlanServer:
 def args(**over: Any) -> SimpleNamespace:
     base = dict(
         list=False, episodes=["sp_a:1", "sp_b:1"], show=None, title=None, wait=None, json=False,
-        file=[], music_price=False, new_music=False, parts=None, start_number=None, part_text=[], yes=False,
+        file=[], music_price=False, new_music=False, parts=None, start_number=None, part_text=[],
+        change=None, yes=False,
     )  # fmt: skip
     return SimpleNamespace(**{**base, **over})
 
@@ -135,17 +145,37 @@ def answers(monkeypatch: pytest.MonkeyPatch, *typed: str) -> None:
     monkeypatch.setattr("builtins.input", fake_input)
 
 
+def screen(out: str) -> list[str]:
+    """The printed lines as the human sees them: their typed answer ends the question's line."""
+
+    return out.replace(picked_cut.GO_AHEAD, picked_cut.GO_AHEAD + "\n").splitlines()
+
+
 TWO_PART_PRINTOUT = [
-    "2 Instagram and TikTok parts, Part 3 to Part 4:",
+    "I'll split this into 2 parts, Part 3 to Part 4. Make it, or tell me what to change?",
     'Part 3 · about 0:52 · starts with "Mira finds the key" · ends with "the door is already open"',
     'Part 4 · about 0:48 · starts with "Someone is inside" · ends with "she drops the key"',
-    "2 part(s) is the server's suggestion.",
-    "Starting at Part 3 is the server's suggestion (it carries on from this creator's earlier parts of the show).",
-    "Each opening and ending is the server's suggestion.",
+    picked_cut.GO_AHEAD,
 ]
+THREE_PART_PRINTOUT = [
+    "I'll split this into 3 parts, Part 3 to Part 5. Make it, or tell me what to change?",
+    'Part 3 · about 0:52 · starts with "Mira finds the key" · ends with "the door is already open"',
+    'Part 4 · about 0:48 · starts with "Someone is inside" · ends with "she drops the key"',
+    'Part 5 · about 0:48 · starts with "The lights go out" · ends with "he says her name"',
+    picked_cut.GO_AHEAD,
+]
+EPISODES = [
+    {"spine_id": "sp_a", "episode": 1},
+    {"spine_id": "sp_b", "episode": 1},
+]
+THREE_PART_TEXTS = [
+    {"number": 3, "opening_text": "Mira finds the key", "ending_text": "the door is already open"},
+    {"number": 4, "opening_text": "Someone is inside", "ending_text": "she drops the key"},
+    {"number": 5, "opening_text": "The lights go out", "ending_text": "he says her name"},
+]  # fmt: skip
 
 
-def test_every_part_is_printed_before_anything_is_made(
+def test_the_servers_summary_and_every_part_are_printed_then_one_question(
     server: PlanServer,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -159,17 +189,56 @@ def test_every_part_is_printed_before_anything_is_made(
 
     monkeypatch.setattr("builtins.input", at_question)
     assert cut_command(args()) == 0
-    printed = seen_at_question[0].splitlines()
-    assert printed[: len(TWO_PART_PRINTOUT)] == TWO_PART_PRINTOUT
-    assert printed[-1] == picked_cut.GO_AHEAD
-    assert (
-        server.creates()[0]["part_count"] == 2
-        and server.creates()[0]["start_number"] == 3
-    )
+    assert seen_at_question[0].splitlines() == TWO_PART_PRINTOUT
 
 
-@pytest.mark.parametrize("answer", ["n", "", "no", "maybe"])
-def test_anything_but_yes_or_edit_makes_nothing(
+def test_typed_words_go_to_the_server_as_the_change_and_the_new_plan_is_asked_again(
+    server: PlanServer,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    answers(monkeypatch, THREE_PARTS, "n")
+    assert cut_command(args()) == 5
+    assert server.plans() == [
+        {"episodes": EPISODES, "title": None},
+        {"episodes": EPISODES, "title": None, "change_request": THREE_PARTS},
+    ]
+    assert server.creates() == []
+    assert screen(capsys.readouterr().out) == TWO_PART_PRINTOUT + THREE_PART_PRINTOUT
+
+
+def test_yes_makes_exactly_the_last_plan_shown(
+    server: PlanServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answers(monkeypatch, THREE_PARTS, "y")
+    assert cut_command(args()) == 0
+    assert server.creates() == [
+        {
+            "episodes": EPISODES,
+            "title": None,
+            "part_count": 3,
+            "start_number": 3,
+            "texts": THREE_PART_TEXTS,
+        }
+    ]
+
+
+def test_the_servers_question_back_is_printed(
+    server: PlanServer,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    answers(monkeypatch, UNCLEAR, "")
+    assert cut_command(args()) == 5
+    printed = screen(capsys.readouterr().out)
+    assert printed[-2:] == [
+        "Different how: more parts, fewer, or other openings?",
+        picked_cut.GO_AHEAD,
+    ]
+
+
+@pytest.mark.parametrize("answer", ["n", "N", "", "no", "  "])
+def test_no_or_nothing_typed_makes_nothing(
     server: PlanServer,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -178,7 +247,7 @@ def test_anything_but_yes_or_edit_makes_nothing(
     answers(monkeypatch, answer)
     assert cut_command(args()) == 5
     assert server.creates() == [] and len(server.plans()) == 1
-    assert "nothing was made" in capsys.readouterr().err
+    assert picked_cut.NOT_CONFIRMED in capsys.readouterr().err
 
 
 def test_no_keyboard_counts_as_no(
@@ -192,48 +261,21 @@ def test_no_keyboard_counts_as_no(
     assert server.creates() == []
 
 
-def test_edit_plans_again_prints_it_and_the_cut_makes_the_edited_plan(
+def test_change_flag_goes_to_the_plan_and_yes_makes_that_plan_without_asking(
     server: PlanServer,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    answers(
-        monkeypatch,
-        "e",
-        "3",  # parts
-        "1",  # first number
-        "2",  # change part 2
-        "",  # keep its opening
-        "she runs",  # new ending
-        "",  # done editing
-        "y",
-    )
-    assert cut_command(args()) == 0
-    assert server.plans()[1] == {
-        "episodes": [
-            {"spine_id": "sp_a", "episode": 1},
-            {"spine_id": "sp_b", "episode": 1},
-        ],
-        "title": None,
-        "part_count": 3,
-        "start_number": 1,
-        "texts": [{"number": 2, "ending_text": "she runs"}],
-    }
-    assert [
-        {k: v for k, v in c.items() if k != "episodes"} for c in server.creates()
-    ] == [
-        {
-            "title": None,
-            "part_count": 3,
-            "start_number": 1,
-            "texts": [{"number": 2, "ending_text": "she runs"}],
-        }
+    answers(monkeypatch)
+    assert cut_command(args(change=THREE_PARTS, yes=True)) == 0
+    assert server.plans() == [
+        {"episodes": EPISODES, "title": None, "change_request": THREE_PARTS}
     ]
-    out = capsys.readouterr().out
-    assert 'Part 2 · about 0:48 · starts with "opening 2" · ends with "she runs"' in out
-    assert "3 part(s) is your choice; the server suggested 2." in out
-    assert "Starting at Part 1 is your choice; the server suggested Part 3." in out
-    assert "except the ones you changed: Part 2 ending." in out
+    assert [(c["part_count"], c["texts"]) for c in server.creates()] == [
+        (3, THREE_PART_TEXTS)
+    ]
+    assert "change_request" not in server.creates()[0]
+    assert THREE_PART_PRINTOUT[0] in capsys.readouterr().out
 
 
 def test_flags_pass_through_to_the_plan_and_the_cut_without_asking(
@@ -257,11 +299,35 @@ def test_flags_pass_through_to_the_plan_and_the_cut_without_asking(
         "texts": [{"number": 6, "opening_text": "Back again", "ending_text": "Gone"}],
     }
     assert {k: server.plans()[0][k] for k in wanted} == wanted
-    assert {k: server.creates()[0][k] for k in wanted} == wanted
+    made = server.creates()[0]
+    assert (made["part_count"], made["start_number"]) == (3, 5)
+    assert {"number": 6, "opening_text": "Back again", "ending_text": "Gone"} in made[
+        "texts"
+    ]
     assert (
         'Part 6 · about 0:48 · starts with "Back again" · ends with "Gone"'
         in capsys.readouterr().out
     )
+
+
+def test_no_instagram_or_tiktok_in_anything_a_punchy_edit_prints(
+    server: PlanServer,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from creation.cli_produce import main
+
+    answers(monkeypatch, UNCLEAR, THREE_PARTS, "y")
+    assert cut_command(args()) == 0
+    server.plan_missing = True
+    assert cut_command(args(yes=True)) == 5
+    for command in ("cut", "join", "finish"):
+        with pytest.raises(SystemExit):
+            main([command, "--help"])
+    printed = capsys.readouterr()
+    everything = (printed.out + printed.err).lower()
+    assert "part 3: https://media.example/p3.mp4" in everything
+    assert "instagram" not in everything and "tiktok" not in everything
 
 
 @pytest.mark.parametrize("bad", ["2=Hi", "x:opening=Hi", "2:middle=Hi", "2:opening="])
@@ -278,27 +344,25 @@ def test_too_long_text_is_shown_plainly_and_asked_again(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     server.too_long_over = 20
-    answers(
-        monkeypatch,
-        "",  # keep 2 parts
-        "",  # keep Part 3 first
-        "4",
-        "",  # keep opening
-        "she drops it",  # shorter ending
-        "",
-        "y",
-    )
-    assert (
-        cut_command(
-            args(part_text=["4:ending=she drops the key and runs into the night"])
-        )
-        == 0
-    )
-    out = capsys.readouterr().out
-    assert out.splitlines()[0] == TOO_LONG
-    assert [c["texts"] for c in server.creates()] == [
-        [{"number": 4, "ending_text": "she drops it"}]
+    answers(monkeypatch, "y")
+    long_ending = "4:ending=she drops the key and runs into the night"
+    assert cut_command(args(part_text=[long_ending])) == 0
+    assert screen(capsys.readouterr().out)[:5] == [TOO_LONG, *TWO_PART_PRINTOUT]
+    assert [c["texts"][1]["ending_text"] for c in server.creates()] == [
+        "she drops the key"
     ]
+
+
+def test_too_long_without_words_names_the_part_from_the_error_details(
+    server: PlanServer, capsys: pytest.CaptureFixture[str]
+) -> None:
+    server.too_long_over = 20
+    server.too_long_message = ""
+    long_ending = "4:ending=she drops the key and runs into the night"
+    assert cut_command(args(part_text=[long_ending], yes=True)) == 2
+    assert capsys.readouterr().err.strip() == (
+        "Stopped: The text for part 4 is too long to fit. Nothing was made."
+    )
 
 
 def test_too_long_text_under_yes_stops_with_the_servers_words(
@@ -318,8 +382,8 @@ def test_only_the_parts_are_offered_never_the_whole_video(
 ) -> None:
     assert cut_command(args(yes=True)) == 0
     out = capsys.readouterr().out
-    assert "Part 3 for Instagram and TikTok: https://media.example/p3.mp4" in out
-    assert "Part 4 for Instagram and TikTok: https://media.example/p4.mp4" in out
+    assert "Part 3: https://media.example/p3.mp4" in out
+    assert "Part 4: https://media.example/p4.mp4" in out
     assert "whole.mp4" not in out and "Whole" not in out
 
 
@@ -378,7 +442,7 @@ def test_a_server_that_cannot_plan_makes_nothing(
     assert capsys.readouterr().err.strip() == NO_PLAN_ROUTE
 
 
-# --- join / finish --desk D --episodes: the same plan, print and go-ahead as cut ------------------------
+# --- join / finish --desk D --episodes: the same plan, print and question as cut ------------------------
 
 DESK_COMMANDS = pytest.mark.parametrize("command", ["join", "finish"])
 
@@ -406,9 +470,7 @@ def test_desk_episodes_print_every_part_before_anything_is_made(
 
     monkeypatch.setattr("builtins.input", at_question)
     assert desk_run(command, post_desk) == 0
-    printed = seen_at_question[0].splitlines()
-    assert printed[: len(TWO_PART_PRINTOUT)] == TWO_PART_PRINTOUT
-    assert printed[-1] == picked_cut.GO_AHEAD
+    assert seen_at_question[0].splitlines() == TWO_PART_PRINTOUT
     made = server.creates()
     assert len(made) == 1
     assert made[0]["episodes"] == [
@@ -448,7 +510,11 @@ def test_desk_episodes_yes_goes_ahead_with_the_settings_given(
     assert desk_run(command, post_desk, *extra, "--part-text", "8:ending=GONE") == 0
     sent = {"part_count": 3, "start_number": 7, "texts": [{"number": 8, "ending_text": "GONE"}]}  # fmt: skip
     assert {k: server.plans()[0][k] for k in sent} == sent
-    assert {k: server.creates()[0][k] for k in sent} == sent
+    made = server.creates()[0]
+    assert (made["part_count"], made["start_number"]) == (3, 7)
+    assert {"number": 8, "opening_text": "opening 8", "ending_text": "GONE"} in made[
+        "texts"
+    ]
     assert 'Part 8 · about 0:48 · starts with "opening 8" · ends with "GONE"' in (
         capsys.readouterr().out
     )
