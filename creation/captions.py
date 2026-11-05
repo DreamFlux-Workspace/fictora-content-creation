@@ -158,8 +158,8 @@ def caption_style_word(style: str) -> str:
     return "subtle" if style in ("house", "subtle") else style
 
 
-def desk_has_finished_episodes(desk: Path) -> bool:
-    """True when the show has a finished episode, or the server could not be asked.
+def desk_has_finished_episodes(desk: Path) -> bool | None:
+    """Whether the show has a finished episode; ``None`` when that cannot be told now.
 
     Parameters
     ----------
@@ -168,27 +168,22 @@ def desk_has_finished_episodes(desk: Path) -> bool:
 
     Returns
     -------
-    bool
-        Whether any ``epNN/takes/take-epNN-tK-finish-vN.json`` exists, the server's show
-        standing holds a final for any episode, or an episode was approved on the desk before
-        finals moved to the server (read-only legacy fallback). True when the server could not
-        be read, so an offline run never switches a continuing show to the new-show style.
+    bool | None
+        True when any ``epNN/takes/take-epNN-tK-finish-vN.json`` exists or the server's show
+        standing holds a final for any episode; ``None`` when there is no finish record and
+        the server could not be read; else False. A desk yes from before finals moved to the
+        server does not count.
     """
 
     desk = desk.expanduser().resolve()
     if any(desk.glob("ep*/takes/take-ep*-t*-finish-v*.json")):
         return True
-    from creation.ops.state import approved_on_desk_before_server, load_series
     from creation.post import final_approval
 
     finals = final_approval.show_finals(desk)
-    if not finals.checked or finals.by_episode:
-        return True
-    try:
-        series = load_series(desk)
-    except (FileNotFoundError, ValueError, KeyError, TypeError):
-        return False
-    return any(approved_on_desk_before_server(ep) for ep in series.episodes)
+    if not finals.checked:
+        return None
+    return bool(finals.by_episode)
 
 
 def _legacy_desk(desk: Path) -> bool:
@@ -210,13 +205,16 @@ def show_caption_style(desk: Path) -> tuple[str, str]:
 
     ``caption_style`` in ``production.config.json`` when set; otherwise a show
     with finished episodes keeps ``subtle`` (the captions it was finished
-    with) and a new show gets ``bold``.
+    with) and a new show gets ``bold``. When that cannot be told (the server's
+    finals could not be read) the source is ``unchecked`` and the style
+    ``subtle``, so an offline run never switches a continuing show; nothing
+    should be saved from it.
 
     Returns
     -------
     tuple[str, str]
         The style as configured (``bold``, ``subtle``, ``house`` ...; may be a
-        server recipe), and ``show`` / ``continuing`` / ``new``, or ``legacy``
+        server recipe), and ``show`` / ``continuing`` / ``new`` / ``unchecked``, or ``legacy``
         (a desk created before 6 Oct 2026 with no style set: ``house``, as it
         always was; :mod:`creation.rules_epoch`).
     """
@@ -229,7 +227,10 @@ def show_caption_style(desk: Path) -> tuple[str, str]:
     if _legacy_desk(desk):
         # Frozen for desks created before 2026-10-06; do not change: their unset style was house.
         return LEGACY_CAPTION_STYLE, "legacy"
-    if desk_has_finished_episodes(desk):
+    finished = desk_has_finished_episodes(desk)
+    if finished is None:
+        return CONTINUING_SHOW_CAPTION_STYLE, "unchecked"
+    if finished:
         return CONTINUING_SHOW_CAPTION_STYLE, "continuing"
     return NEW_SHOW_CAPTION_STYLE, "new"
 
@@ -273,11 +274,8 @@ def resolve_caption_style(desk: Path, given: str | None = None) -> tuple[str, st
             f"the desk's caption_style {configured!r} is not a local caption style "
             f"({', '.join(LEGACY_CAPTION_STYLES)}); captioned {LEGACY_CAPTION_STYLE}"
         )
-    fallback = (
-        CONTINUING_SHOW_CAPTION_STYLE
-        if desk_has_finished_episodes(desk)
-        else NEW_SHOW_CAPTION_STYLE
-    )
+    new_show = desk_has_finished_episodes(desk) is False
+    fallback = NEW_SHOW_CAPTION_STYLE if new_show else CONTINUING_SHOW_CAPTION_STYLE
     return canonical_caption_style(fallback), (
         f"the desk's caption_style {configured!r} is not a local caption style "
         f"({', '.join(CAPTION_STYLES)}); captioned {fallback}"

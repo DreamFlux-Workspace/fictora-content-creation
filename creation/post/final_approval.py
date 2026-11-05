@@ -75,33 +75,52 @@ class ShowFinals:
 
     Attributes
     ----------
-    checked
-        False when the server could not be read (no story on the desk, no kit token, or no answer).
     by_episode
         The finals by episode ordinal; empty when not checked.
+    reason
+        Why it could not be read (``server said 401``, ``offline`` ...); empty when checked.
     """
 
-    checked: bool
     by_episode: dict[int, ServerFinal] = field(default_factory=dict)
+    reason: str = ""
+
+    @property
+    def checked(self) -> bool:
+        """Whether the finals were read (no ``reason``)."""
+
+        return not self.reason
+
+    @property
+    def not_checked_status(self) -> str:
+        """The queue status of an episode waiting on its final while the finals are not checked."""
+
+        return f"post (final not checked: {self.reason})"
 
 
-NOT_CHECKED = ShowFinals(checked=False)
+def not_checked(reason: str) -> ShowFinals:
+    """A read of the finals that did not happen, and why.
+
+    Parameters
+    ----------
+    reason
+        Plain cause, such as ``offline`` or ``server said 404``.
+
+    Returns
+    -------
+    ShowFinals
+        Not checked.
+    """
+
+    return ShowFinals(reason=reason)
 
 
 class PostStatus(StrEnum):
-    """Where an episode stands once only its final is left."""
-
-    @property
-    def is_done(self) -> bool:
-        """Whether the episode needs nothing more."""
-
-        return self in (PostStatus.DONE, PostStatus.DONE_ON_DESK)
+    """Where an episode stands once only its final is left (when the finals were checked)."""
 
     DONE = "done"
-    DONE_ON_DESK = "done (approved on desk before 5 Nov)"
+    DESK_ONLY = "post (approved on desk before 5 Nov; approve the final on the server)"
     WAITING = "post"
     OLDER_CUT = "post:older-cut"
-    NOT_CHECKED = "post (final not checked)"
 
 
 @dataclass(frozen=True)
@@ -170,22 +189,14 @@ def _finals(got: httpx.Response) -> dict[int, ServerFinal]:
 
 
 def _kit_api(desk: Path) -> tuple[str, dict[str, str]] | None:
-    """``(base_url, headers)`` from the kit's own environment on the desk's session; ``None`` without a token."""
+    """The kit's server and headers on the desk's session; ``None`` without a token."""
 
-    from creation.harness.credentials import env_drama_api_credentials
-    from creation.harness.http_util import api_headers
-    from creation.production_state import load_production
+    from creation.post.server_finish import _api
 
-    base, token = env_drama_api_credentials(
-        Path(__file__).resolve().parents[2] / ".env"
-    )
-    if not token:
-        return None
     try:
-        session_id = load_production(desk).session_id
-    except (ValueError, OSError):
+        return _api(desk)
+    except SystemExit:
         return None
-    return base, api_headers(token, session_id)
 
 
 def show_finals(
@@ -193,6 +204,7 @@ def show_finals(
     *,
     api: tuple[str, Mapping[str, str]] | None = None,
     transport: httpx.BaseTransport | None = None,
+    timeout: float = TIMEOUT_SECONDS,
 ) -> ShowFinals:
     """Every episode's final as the server's show standing holds it.
 
@@ -201,15 +213,17 @@ def show_finals(
     desk
         Series desk.
     api
-        ``(base_url, headers)``; default the kit's token from its environment on the desk's session.
+        ``(base_url, headers)``; default the kit's credentials on the desk's session.
     transport
         HTTP transport (tests fake the server with it).
+    timeout
+        Seconds the read may take.
 
     Returns
     -------
     ShowFinals
-        :data:`NOT_CHECKED` when the desk has no story yet, the kit has no token or the server
-        could not be read.
+        Not checked, with the cause, when the desk has no story yet, the kit has no token, the
+        server is unreachable or it refused.
     """
 
     from creation.post.desk import spine_id as desk_spine_id
@@ -217,24 +231,25 @@ def show_finals(
     try:
         spine = desk_spine_id(desk)
     except (ValueError, OSError):
-        return NOT_CHECKED
-    found = api if api is not None else _kit_api(desk)
+        return not_checked("no story on the desk yet")
+    try:
+        found = api if api is not None else _kit_api(desk)
+    except (ValueError, OSError):
+        return not_checked("no kit session on the desk")
     if found is None:
-        return NOT_CHECKED
+        return not_checked("no kit token")
     base, headers = found
     try:
-        with httpx.Client(transport=transport, timeout=TIMEOUT_SECONDS) as client:
+        with httpx.Client(transport=transport, timeout=timeout) as client:
             got = client.get(
                 base.rstrip("/") + STANDING_ROUTE.format(spine_id=spine),
                 headers=dict(headers),
             )
     except httpx.HTTPError:
-        return NOT_CHECKED
-    return (
-        ShowFinals(checked=True, by_episode=_finals(got))
-        if got.is_success
-        else NOT_CHECKED
-    )
+        return not_checked("offline")
+    if not got.is_success:
+        return not_checked(f"server said {got.status_code}")
+    return ShowFinals(by_episode=_finals(got))
 
 
 def stale_final_line(episode: int, final: ServerFinal) -> str:
@@ -331,7 +346,7 @@ def approve_final(
             f"Could not reach the server ({type(exc).__name__}). Check the internet connection and approve again. "
             "Nothing was recorded on this laptop."
         ) from None
-    finals = ShowFinals(checked=True, by_episode=_finals(got))
+    finals = ShowFinals(by_episode=_finals(got))
     final = finals.by_episode.get(episode)
     if final is None or final.export_sha256 != digest:
         raise FinalNotRecorded(
@@ -440,7 +455,6 @@ __all__ = [
     "FINAL_ROUTE",
     "STANDING_ROUTE",
     "FinalNotRecorded",
-    "NOT_CHECKED",
     "FinalOnServer",
     "PostStatus",
     "ServerFinal",
@@ -449,6 +463,7 @@ __all__ = [
     "approve_final",
     "file_sha256",
     "final_line",
+    "not_checked",
     "refusal_line",
     "show_finals",
     "stale_final_line",

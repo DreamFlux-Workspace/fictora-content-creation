@@ -361,7 +361,7 @@ def _house_face_installed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 def _no_show_finals_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     from creation.post import final_approval
 
-    no_finals = final_approval.ShowFinals(checked=True)
+    no_finals = final_approval.ShowFinals()
     monkeypatch.setattr(final_approval, "show_finals", lambda desk, **_k: no_finals)
 
 

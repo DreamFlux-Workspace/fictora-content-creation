@@ -250,6 +250,13 @@ def caption_style_at_look(desk: Path, *, out: TextIO | None = None) -> Path | No
     if config.caption_style:
         return None
     _, source = show_caption_style(desk)
+    if source == "unchecked":
+        print(
+            "Captions: could not check this show's finished episodes on the server; "
+            "the caption style is asked again at the next step.",
+            file=out,
+        )
+        return None
     if source == "continuing":
         config.caption_style = CONTINUING_SHOW_CAPTION_STYLE
         save_production_config(desk, config)
@@ -336,6 +343,8 @@ def run_caption_style(
         "show": "set for this show",
         "continuing": "not chosen; this show has finished episodes, so it keeps subtle",
         "new": "not chosen yet; a new show is captioned bold (asked at the look approval)",
+        "unchecked": "not chosen; the server could not be asked whether this show has finished "
+        "episodes, so subtle for now (asked again at the next step)",
         "legacy": "not chosen; a desk created before 6 Oct 2026 keeps subtle, as it always had",
     }[source]
     word = (

@@ -41,6 +41,9 @@ from creation.ops.state import (
 )
 
 
+#: Seconds a gate write's queue rewrite may wait on the server's finals.
+QUEUE_READ_SECONDS = 5.0
+
 SHARED_SUBDIRS: tuple[str, ...] = (
     "shared/look",
     "shared/plates",
@@ -665,8 +668,7 @@ def waiting_on(
     Returns
     -------
     str
-        Queue token such as ``board:t1``, or the episode's :class:`PostStatus` once only its
-        final is left.
+        Queue token such as ``board:t1``, or :func:`post_status` once only its final is left.
     """
 
     if series.look.status != "approved":
@@ -693,7 +695,7 @@ def waiting_on(
     return post_status(episode, finals)
 
 
-def post_status(episode: EpisodeState, finals: ShowFinals) -> PostStatus:
+def post_status(episode: EpisodeState, finals: ShowFinals) -> str:
     """Where an episode stands once only its final is left.
 
     Parameters
@@ -705,19 +707,20 @@ def post_status(episode: EpisodeState, finals: ShowFinals) -> PostStatus:
 
     Returns
     -------
-    PostStatus
-        Not checked when the server could not be read; done for a current final on the server;
-        older cut for one that is not; done on the desk for a desk yes from before finals moved
-        to the server (read only); else waiting.
+    str
+        Not checked (with the cause) when the server could not be read, else a
+        :class:`PostStatus`: done only for a current final on the server; older cut for one
+        that is not; a hint to approve on the server for a desk yes from before finals moved
+        there (read only, never done); else waiting.
     """
 
     if not finals.checked:
-        return PostStatus.NOT_CHECKED
+        return finals.not_checked_status
     final = finals.by_episode.get(episode.ordinal)
     if final is not None:
         return PostStatus.DONE if final.current else PostStatus.OLDER_CUT
     if approved_on_desk_before_server(episode):
-        return PostStatus.DONE_ON_DESK
+        return PostStatus.DESK_ONLY
     return PostStatus.WAITING
 
 
@@ -776,8 +779,8 @@ def finals_warnings(finals: ShowFinals) -> list[str]:
 
     if not finals.checked:
         return [
-            "Could not read the finals from the server: episodes waiting on their final show "
-            f"'{PostStatus.NOT_CHECKED}'. Run status again once online."
+            f"Could not read the finals from the server ({finals.reason}): episodes waiting on "
+            f"their final show '{finals.not_checked_status}'. Run status again."
         ]
     return [
         stale_final_line(ordinal, final)
@@ -809,7 +812,11 @@ def write_queue(
     """
 
     current = series or load_series(desk)
-    finals = finals if finals is not None else final_approval.show_finals(desk)
+    finals = (
+        finals
+        if finals is not None
+        else final_approval.show_finals(desk, timeout=QUEUE_READ_SECONDS)
+    )
     rows = status_rows(desk, finals)
     path = desk / QUEUE_FILENAME
     lines = [
@@ -825,11 +832,7 @@ def write_queue(
         lines.append(
             f"| {row['episode']} | {row['waiting']} | {row['preflight']} | {row['spend']} | {row['envelope']} |"
         )
-    waiting = [
-        row
-        for row in rows
-        if not (row["waiting"] in PostStatus and PostStatus(row["waiting"]).is_done)
-    ]
+    waiting = [row for row in rows if row["waiting"] != PostStatus.DONE]
     lines.extend(["", f"Open gates: {len(waiting)}.", ""])
     lines.extend(finals_warnings(finals))
     path.write_text("\n".join(lines), encoding="utf-8")

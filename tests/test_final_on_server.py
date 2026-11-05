@@ -4,16 +4,23 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
-from creation.captions import desk_has_finished_episodes
+from creation.captions import desk_has_finished_episodes, show_caption_style
 from creation.cli_ops import FINAL_NOT_RECORDED
 from creation.cli_ops import main as ops_main
-from creation.ops.floor import QUEUE_FILENAME, status_rows, write_queue
+from creation.ops.floor import (
+    QUEUE_FILENAME,
+    QUEUE_READ_SECONDS,
+    status_rows,
+    write_queue,
+)
 from creation.ops.state import load_series
 from creation.post import final_approval, server_finish
 from creation.post.episode_name import next_episode_path
@@ -73,7 +80,9 @@ def _file(desk: Path, body: bytes) -> Path:
     return path
 
 
-def _stand_in(monkeypatch: pytest.MonkeyPatch, server: Server) -> None:
+def _stand_in(
+    monkeypatch: pytest.MonkeyPatch, server: Callable[[httpx.Request], httpx.Response]
+) -> None:
     monkeypatch.setattr(
         server_finish, "_api", lambda desk: (BASE, {"Authorization": "Bearer t"})
     )
@@ -202,7 +211,7 @@ def test_a_yes_the_server_does_not_show_back_is_not_taken_as_recorded(
             return httpx.Response(200, json={"episodes": [{"episode_ordinal": 1}]})
         return answer
 
-    _stand_in(monkeypatch, forgetful)  # type: ignore[arg-type]
+    _stand_in(monkeypatch, forgetful)
 
     assert _approve(post_desk) == FINAL_NOT_RECORDED
     assert "does not show this file as final" in capsys.readouterr().err
@@ -277,18 +286,17 @@ def test_an_unreachable_server_says_not_checked_everywhere_and_never_done(
     _file(post_desk, b"server copy")
     _stand_in(monkeypatch, Server({hashlib.sha256(b"server copy").hexdigest()}))
     assert _approve(post_desk) == 0
-    monkeypatch.setattr(
-        final_approval, "show_finals", lambda desk, **_k: final_approval.NOT_CHECKED
-    )
+    _stand_in(monkeypatch, lambda _request: httpx.Response(401, json={}))
     capsys.readouterr()
 
     assert ops_main(["status", "--desk", str(post_desk), "--json"]) == 0
 
     out, err = capsys.readouterr()
-    assert json.loads(out)[0]["waiting"] == PostStatus.NOT_CHECKED
-    assert PostStatus.NOT_CHECKED in err
+    waiting = "post (final not checked: server said 401)"
+    assert json.loads(out)[0]["waiting"] == waiting
+    assert waiting in err
     queue = (post_desk / QUEUE_FILENAME).read_text(encoding="utf-8")
-    assert f"| ep01 | {PostStatus.NOT_CHECKED} |" in queue
+    assert f"| ep01 | {waiting} |" in queue
     assert "| ep01 | done |" not in queue
 
 
@@ -297,10 +305,32 @@ def test_captions_keep_the_continuing_style_when_the_server_cannot_be_read(
 ) -> None:
     assert desk_has_finished_episodes(post_desk) is False
     monkeypatch.setattr(
-        final_approval, "show_finals", lambda desk, **_k: final_approval.NOT_CHECKED
+        final_approval,
+        "show_finals",
+        lambda desk, **_k: final_approval.not_checked("offline"),
     )
 
-    assert desk_has_finished_episodes(post_desk) is True
+    assert desk_has_finished_episodes(post_desk) is None
+    assert show_caption_style(post_desk) == ("subtle", "unchecked")
+
+
+def test_a_new_show_whose_finals_cannot_be_checked_saves_no_caption_style(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from creation.caption_preview import caption_style_at_look
+    from creation.production_config import load_production_config
+
+    monkeypatch.setattr(
+        final_approval,
+        "show_finals",
+        lambda desk, **_k: final_approval.not_checked("offline"),
+    )
+
+    assert caption_style_at_look(post_desk, out=sys.stdout) is None
+
+    assert not load_production_config(post_desk).caption_style
+    out = capsys.readouterr().out
+    assert "asked again at the next step" in out and "keeps Subtle" not in out
 
 
 def test_captions_count_a_final_on_the_server_as_a_finished_episode(
@@ -326,13 +356,13 @@ def _desk_yes(desk: Path, at_utc: str | None) -> None:
 @pytest.mark.parametrize(
     ("at_utc", "waiting"),
     [
-        ("2026-10-20T08:00:00+00:00", PostStatus.DONE_ON_DESK),
-        ("2026-11-05T12:58:59+00:00", PostStatus.DONE_ON_DESK),
+        ("2026-10-20T08:00:00+00:00", PostStatus.DESK_ONLY),
+        ("2026-11-05T12:58:59+00:00", PostStatus.DESK_ONLY),
         ("2026-11-05T12:59:00+00:00", PostStatus.WAITING),
         (None, PostStatus.WAITING),
     ],
 )
-def test_a_desk_yes_from_before_server_finals_still_reads_as_done(
+def test_a_desk_yes_from_before_server_finals_is_a_hint_never_done(
     post_desk: Path, monkeypatch: pytest.MonkeyPatch, at_utc: str | None, waiting: str
 ) -> None:
     _only_final_left(post_desk)
@@ -349,7 +379,7 @@ def test_a_desk_yes_from_before_server_finals_still_reads_as_done(
 @pytest.mark.parametrize(
     ("board_at", "waiting"),
     [
-        ("2026-10-19T08:00:00+00:00", PostStatus.DONE_ON_DESK),
+        ("2026-10-19T08:00:00+00:00", PostStatus.DESK_ONLY),
         ("2026-10-21T08:00:00+00:00", PostStatus.WAITING),
     ],
 )
@@ -372,14 +402,13 @@ def test_a_desk_yes_is_dropped_once_a_board_was_approved_after_it(
     )
 
 
-def test_captions_count_a_desk_yes_from_before_server_finals(
+def test_captions_do_not_count_a_desk_yes_from_before_server_finals(
     post_desk: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _stand_in(monkeypatch, Server(saved=set()))
-    assert desk_has_finished_episodes(post_desk) is False
     _desk_yes(post_desk, "2026-10-20T08:00:00+00:00")
 
-    assert desk_has_finished_episodes(post_desk) is True
+    assert desk_has_finished_episodes(post_desk) is False
 
 
 def test_a_gate_write_reads_the_finals_from_the_server(
@@ -397,18 +426,75 @@ def test_a_gate_write_reads_the_finals_from_the_server(
     assert "| ep01 | done |" in (post_desk / QUEUE_FILENAME).read_text(encoding="utf-8")
 
 
-def test_without_a_kit_token_the_finals_are_not_checked_and_railway_is_not_asked(
+def test_without_a_kit_token_the_finals_are_not_checked_and_say_why(
     post_desk: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from creation.harness import credentials
+    def no_token(desk: Path) -> tuple[str, dict[str, str]]:
+        raise SystemExit("FICTORA_DRAMA_GENERATION_SERVICE_TOKEN must be set")
+
+    monkeypatch.setattr(server_finish, "_api", no_token)
+
+    assert real_show_finals(post_desk) == final_approval.not_checked("no kit token")
+
+
+def test_the_finals_use_the_kits_own_credentials(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"episodes": []})
 
     monkeypatch.setattr(
-        credentials, "env_drama_api_credentials", lambda *_a, **_k: (BASE, "")
+        server_finish, "_api", lambda desk: (BASE, {"Authorization": "Bearer kit"})
     )
 
-    def no_railway(*_a: object, **_k: object) -> None:
-        raise AssertionError("the Railway CLI must not be asked for a token")
+    finals = real_show_finals(post_desk, transport=httpx.MockTransport(answer))
 
-    monkeypatch.setattr(credentials.subprocess, "run", no_railway)
+    assert finals.checked and seen[0].headers["Authorization"] == "Bearer kit"
 
-    assert real_show_finals(post_desk) == final_approval.NOT_CHECKED
+
+def _offline(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("down", request=request)
+
+
+@pytest.mark.parametrize(
+    ("answer", "reason"),
+    [
+        (
+            lambda _r: httpx.Response(404, json={"detail": "Not Found"}),
+            "server said 404",
+        ),
+        (_offline, "offline"),
+    ],
+)
+def test_a_failed_read_names_its_cause(
+    post_desk: Path,
+    answer: Callable[[httpx.Request], httpx.Response],
+    reason: str,
+) -> None:
+    finals = real_show_finals(
+        post_desk,
+        api=(BASE, {"Authorization": "Bearer t"}),
+        transport=httpx.MockTransport(answer),
+    )
+
+    assert finals == final_approval.not_checked(reason)
+    assert finals.not_checked_status == f"post (final not checked: {reason})"
+
+
+def test_a_gate_write_reads_the_finals_with_a_short_timeout(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[float] = []
+
+    def spy(desk: Path, **kw: Any) -> final_approval.ShowFinals:
+        seen.append(kw["timeout"])
+        return final_approval.ShowFinals()
+
+    monkeypatch.setattr(final_approval, "show_finals", spy)
+
+    write_queue(post_desk)
+
+    assert seen == [QUEUE_READ_SECONDS]
