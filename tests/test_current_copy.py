@@ -238,7 +238,7 @@ def test_an_old_server_never_counts_an_unproven_laptop_file_as_done(
     assert (status["waiting"], status["copy"]) == (str(CopyStatus.UNCONFIRMED), "")
     assert (
         status["waiting"].startswith("can't confirm")
-        and "run finish for this episode" in status["waiting"]
+        and "don't post yet" in status["waiting"]
     )
     assert "can't confirm the file on this laptop" in err
     queue = (post_desk / QUEUE_FILENAME).read_text(encoding="utf-8")

@@ -134,7 +134,7 @@ class CopyStatus:
     )
     WAITING: Final = QueueStatus("finish")
     UNCONFIRMED: Final = QueueStatus(
-        f"can't confirm the copy, check with the server: {NEXT_STEP}"
+        "can't confirm the copy: don't post yet, ask Tejas to check it with the server"
     )
 
 
@@ -178,7 +178,7 @@ def unconfirmed_line(episode: int) -> str:
 
     return (
         f"Warning: episode {episode}: can't confirm the file on this laptop comes from the video the app "
-        f"plays now, so it is not the copy to post. Check with the server: {NEXT_STEP}."
+        f"plays now, so it is not the copy to post. Don't post it yet; ask Tejas to check it with the server."
     )
 
 
