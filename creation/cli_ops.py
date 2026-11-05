@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Sequence
 
 from creation.cli_text import force_utf8_output, json_or_file
-from creation.gate_tools import PITCH_GATE, POST_GATE, wrong_tool_for_gate
+from creation.gate_tools import (
+    NO_FINAL_STEP,
+    PITCH_GATE,
+    POST_GATE,
+    wrong_tool_for_gate,
+)
 from creation.ops.adopt import AdoptRefused, adopt_desk
 from creation.ops.floor import (
     add_episode,
@@ -19,7 +24,6 @@ from creation.ops.floor import (
     approve_series_gate,
     confirm_preflight,
     default_desk_parent,
-    finals_warnings,
     init_series_desk,
     preflight_take,
     record_estimate,
@@ -40,8 +44,6 @@ PREFLIGHT_GATE_OPEN = 3
 """A human gate is still open: nothing overrides it."""
 PREFLIGHT_WARNINGS = 4
 """Warnings are open and not confirmed with ``--proceed-anyway UNIT``."""
-FINAL_NOT_RECORDED = 6
-"""The server did not record the episode-is-final yes: nothing was written on the desk."""
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -57,6 +59,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "approve" and args.gate == PITCH_GATE:
         print(wrong_tool_for_gate(args), file=sys.stderr)
         return 2
+    if args.command == "approve" and args.gate == POST_GATE:
+        print(NO_FINAL_STEP)
+        return 0
     try:
         return _dispatch(args)
     except (AdoptRefused, FileExistsError, FileNotFoundError, ValueError) as exc:
@@ -153,17 +158,15 @@ def _add_floor_parsers(
 
     ap = sub.add_parser(
         "approve",
-        help="Record a human yes on a gate. --gate post (the episode is final) records the file watched "
-        "(--path FILE, default the newest finished file) on the server, then copies it on the desk "
-        "to <show>_epNN_final_vN_<date>.mp4.",
+        help="Record a human yes on a gate.",
     )
     ap.add_argument("--desk", type=Path, required=True)
     ap.add_argument(
         "--gate",
         required=True,
-        # "pitch" is accepted only to say where it lives (fictora-produce), and kept out of --help.
+        # "pitch" only says where it lives (fictora-produce); "post" only says there is no final step.
         choices=("look", "plates", "script", "board", POST_GATE, PITCH_GATE),
-        metavar="{look,plates,script,board,post}",
+        metavar="{look,plates,script,board}",
     )
     ap.add_argument("--episode", type=int, default=None)
     ap.add_argument("--take", default=None)
@@ -305,12 +308,12 @@ def _dispatch(args: argparse.Namespace) -> int:
         print(episode.slug)
         return 0
     if args.command == "status":
-        from creation.post import final_approval
+        from creation.post import current_copy
 
-        finals = final_approval.show_finals(args.desk)
-        rows = status_rows(args.desk, finals)
-        write_queue(args.desk, finals=finals)
-        for warning in finals_warnings(finals):
+        copies = current_copy.show_copies(args.desk)
+        rows = status_rows(args.desk, copies)
+        write_queue(args.desk, copies=copies)
+        for warning in current_copy.copy_warnings(copies):
             print(warning, file=sys.stderr)
         if args.json:
             print(json.dumps(rows))
@@ -319,6 +322,7 @@ def _dispatch(args: argparse.Namespace) -> int:
                 print(
                     f"{row['episode']}  waiting={row['waiting']}  "
                     f"preflight={row['preflight']}  {row['spend']} of {row['envelope']}"
+                    + (f"  copy to post: {row['copy']}" if row["copy"] else "")
                 )
         return 0
     if args.command == "set-lines":
@@ -448,8 +452,6 @@ def _dispatch_approve(args: argparse.Namespace) -> int:
         record = approve_script(args.desk, episode=args.episode)
         print(f"ep{args.episode:02d} script {record.status}")
         return 0
-    if args.gate == "post":
-        return _approve_post(args.desk, args.episode, args.path)
     if args.take is None or args.path is None:
         raise ValueError("board approve needs --take and --path")
     record = approve_board(
@@ -461,35 +463,6 @@ def _dispatch_approve(args: argparse.Namespace) -> int:
         f"`fictora-produce approve --desk {args.desk} --gate board` (after a redraw on a desk past the "
         "board gate it approves again, $0)."
     )
-    return 0
-
-
-def _approve_post(desk: Path, episode: int, path: Path | None) -> int:
-    from creation.post.episode_name import mark_final
-    from creation.post.final_approval import (
-        FinalNotRecorded,
-        approve_desk_final,
-        final_line,
-    )
-
-    try:
-        source, held = approve_desk_final(desk, episode, path)
-    except FinalNotRecorded as exc:
-        print(str(exc), file=sys.stderr)
-        return FINAL_NOT_RECORDED
-    print(final_line(episode, source, held))
-    write_queue(desk, finals=held.finals)
-    final = mark_final(desk, episode, source)
-    if final is not None:
-        print(f"Final file (a desk convenience copy): {final}")
-        notes_dir = desk / f"ep{episode:02d}"
-        if (notes_dir / "run-notes.md").is_file():
-            append_run_note(
-                notes_dir,
-                "Episode marked final (recorded on the server)\n"
-                f"Final file -> {final.name}"
-                + (f" (a copy of {source.name})" if source.name != final.name else ""),
-            )
     return 0
 
 

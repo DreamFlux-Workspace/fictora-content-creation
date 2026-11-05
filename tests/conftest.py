@@ -358,11 +358,11 @@ def _house_face_installed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _no_show_finals_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    from creation.post import final_approval
+def _no_show_copies_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from creation.post import current_copy
 
-    no_finals = final_approval.ShowFinals()
-    monkeypatch.setattr(final_approval, "show_finals", lambda desk, **_k: no_finals)
+    no_copies = current_copy.ShowCopies()
+    monkeypatch.setattr(current_copy, "show_copies", lambda desk, **_k: no_copies)
 
 
 @pytest.fixture(autouse=True)

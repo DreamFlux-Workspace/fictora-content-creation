@@ -22,8 +22,8 @@ the kit only asks, waits and downloads.
 
 There is no laptop fallback: when the server cannot finish the episode the
 command stops with one plain line the operator can act on, and nothing is
-made on the laptop. ``fictora-ops approve --gate post`` still makes the
-``…_final_vN_…`` copy of the downloaded file.
+made on the laptop. The copy saved is the episode's copy to post on the
+server (fictora-drama #1407); there is no separate "final" yes.
 """
 
 from __future__ import annotations

@@ -35,7 +35,7 @@ ENVELOPE_FIRST_USD = _prices.ENVELOPE_FIRST_USD
 ENVELOPE_CONTINUING_USD: dict[str, float] = dict(_prices.ENVELOPE_CONTINUING_USD)
 
 SERIES_GATES = frozenset({"look", "plates"})
-EPISODE_GATES = frozenset({"script", "board", "post"})
+EPISODE_GATES = frozenset({"script", "board"})
 
 
 @dataclass
@@ -199,8 +199,6 @@ class EpisodeState:
         Folder name, ``ep01``.
     script
         Line gate.
-    post
-        Mix and captions gate.
     takes
         Take slots for the series band.
     spend_usd
@@ -213,7 +211,6 @@ class EpisodeState:
     ordinal: int
     slug: str
     script: GateRecord = field(default_factory=GateRecord)
-    post: GateRecord = field(default_factory=GateRecord)
     takes: list[TakeState] = field(default_factory=list)
     spend_usd: float = 0.0
     extra: dict[str, Any] = field(default_factory=dict)
@@ -307,47 +304,6 @@ def parse_spoken_lines(payload: list[Any]) -> list[SpokenLine]:
             )
         )
     return lines
-
-
-#: When finals moved to the server (fictora-drama #1358, 5 Nov 2026, 18:29 IST). A desk ``post``
-#: gate approved before then is the only record of those finals; nothing writes the gate since.
-SERVER_FINALS_SINCE = datetime(2026, 11, 5, 12, 59, tzinfo=timezone.utc)
-
-
-def _gate_time(gate: GateRecord) -> datetime | None:
-    if not gate.at_utc:
-        return None
-    try:
-        at = datetime.fromisoformat(gate.at_utc.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return at if at.tzinfo is not None else at.replace(tzinfo=timezone.utc)
-
-
-def approved_on_desk_before_server(episode: EpisodeState) -> bool:
-    """Whether the episode's final was said on the desk before finals moved to the server and still stands.
-
-    Read-only legacy fallback: the old ``post`` gate counts only when it was approved before
-    :data:`SERVER_FINALS_SINCE` and no take's board was answered after it. An unreadable post
-    time does not count; an unreadable board time is ignored.
-
-    Parameters
-    ----------
-    episode
-        Episode slot.
-
-    Returns
-    -------
-    bool
-        True for a desk yes from before 5 Nov 2026, 18:29 IST with no board answered after it.
-    """
-
-    gate = episode.post
-    said = _gate_time(gate) if gate.status == "approved" else None
-    if said is None or said >= SERVER_FINALS_SINCE:
-        return False
-    boards = (_gate_time(take.board) for take in episode.takes)
-    return all(at is None or at <= said for at in boards)
 
 
 def utc_now() -> str:
@@ -914,7 +870,6 @@ def _episode_from_dict(raw: dict[str, Any]) -> EpisodeState:
         ordinal=int(raw["ordinal"]),
         slug=str(raw["slug"]),
         script=_gate_from_dict(raw["script"]),
-        post=_gate_from_dict(raw["post"]),
         takes=[_take_from_dict(item) for item in raw["takes"]],
         spend_usd=float(raw["spend_usd"]),
         extra=_unmodelled(raw, EpisodeState),

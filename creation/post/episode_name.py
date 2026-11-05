@@ -7,9 +7,9 @@ The joined, marked episode is written as
 * ``series-slug``: the show's title from ``series.json`` (lowercased, anything
   but letters and digits a single hyphen, at most :data:`SLUG_MAX` characters),
   else the desk folder's name, else ``series``.
-* ``draft`` for every file ``join`` makes. ``final`` only on the copy
-  ``fictora-ops approve --gate post --episode N`` makes once the human has
-  said the episode is final (:func:`mark_final`).
+* ``draft`` for every file ``finish`` downloads. ``final`` only on desk copies made
+  before 6 Nov 2026, when an episode still needed a "this episode is final" yes;
+  they are still read, never made.
 * ``v<N>``: one counter per episode across draft and final, continuing the
   old ``episode-epNN-join-sokii-vN.mp4`` numbers on a desk that has them, so a
   name never collides and nothing is ever overwritten.
@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import unicodedata
 from datetime import date
 from pathlib import Path
@@ -152,39 +151,3 @@ def newest_episode_file(folder: Path, episode: int) -> Path | None:
 
     files = episode_files(folder, episode)
     return files[-1] if files else None
-
-
-def mark_final(desk: Path, episode: int, source: Path | None = None) -> Path | None:
-    """Copy the episode file the human called final to a new ``…_final_vN_…`` name.
-
-    The source is left as it was; the copy gets the next version number, so nothing is
-    overwritten. A source already named ``final`` is not copied again.
-
-    Parameters
-    ----------
-    desk
-        Series desk.
-    episode
-        Episode ordinal.
-    source
-        The file the human watched. Default: the episode's newest joined file.
-
-    Returns
-    -------
-    Path | None
-        The final copy (or ``source`` when it already carries ``final``); ``None`` when
-        there is no episode file to copy.
-    """
-
-    folder = desk / f"ep{episode:02d}" / "takes"
-    if source is None:
-        source = newest_episode_file(folder, episode)
-    if source is None or not source.is_file() or source.suffix.lower() != ".mp4":
-        return None
-    named = NEW_NAME.match(source.name)
-    if named and named.group("stage") == "final":
-        return source
-    folder.mkdir(parents=True, exist_ok=True)
-    target = next_episode_path(folder, desk, episode, "final")
-    shutil.copy2(source, target)
-    return target

@@ -170,20 +170,19 @@ def desk_has_finished_episodes(desk: Path) -> bool | None:
     -------
     bool | None
         True when any ``epNN/takes/take-epNN-tK-finish-vN.json`` exists or the server's show
-        standing holds a final for any episode; ``None`` when there is no finish record and
-        the server could not be read; else False. A desk yes from before finals moved to the
-        server does not count.
+        standing names a copy to post for any episode; ``None`` when there is no finish record
+        and the server could not be read; else False.
     """
 
     desk = desk.expanduser().resolve()
     if any(desk.glob("ep*/takes/take-ep*-t*-finish-v*.json")):
         return True
-    from creation.post import final_approval
+    from creation.post import current_copy
 
-    finals = final_approval.show_finals(desk)
-    if not finals.checked:
+    copies = current_copy.show_copies(desk)
+    if not copies.checked:
         return None
-    return bool(finals.by_episode)
+    return bool(copies.by_episode)
 
 
 def _legacy_desk(desk: Path) -> bool:
@@ -206,7 +205,7 @@ def show_caption_style(desk: Path) -> tuple[str, str]:
     ``caption_style`` in ``production.config.json`` when set; otherwise a show
     with finished episodes keeps ``subtle`` (the captions it was finished
     with) and a new show gets ``bold``. When that cannot be told (the server's
-    finals could not be read) the source is ``unchecked`` and the style
+    copies to post could not be read) the source is ``unchecked`` and the style
     ``subtle``, so an offline run never switches a continuing show; nothing
     should be saved from it.
 

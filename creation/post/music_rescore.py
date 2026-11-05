@@ -689,8 +689,8 @@ def run_rescore_music(
                 )
         if by_episode:
             print(
-                "  Reels and final copies made before keep the old music: make the reel again and approve the "
-                "new draft (`fictora-ops approve --gate post --episode N`) when the human says it is final.",
+                "  Reels and copies saved before keep the old music: make the reel again, and finish the episode "
+                "again for a new copy to post.",
                 file=out,
             )
         return worst
