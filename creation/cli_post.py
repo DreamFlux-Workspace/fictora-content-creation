@@ -820,6 +820,15 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )  # fmt: skip
     cut.add_argument("--title", default=None, help="Optional name for the cut.")
     cut.add_argument(
+        "--music-price", action="store_true",
+        help="Only show the server's question for new music on this edit (its dollars, paid by Sokii). Makes nothing.",
+    )  # fmt: skip
+    cut.add_argument(
+        "--new-music", action="store_true",
+        help="The human said yes to the --music-price question: the server writes new music for the edit and lays it "
+        "under the episodes that have a copy without music. Without it the edit adds no music.",
+    )  # fmt: skip
+    cut.add_argument(
         "--wait",
         type=float,
         default=None,
