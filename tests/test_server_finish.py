@@ -793,7 +793,10 @@ def test_join_episodes_asks_the_server_for_a_cut_of_the_named_episodes_in_order(
         {"spine_id": "spine_test", "episode": 1},
     ]
     assert not any(s[1].startswith("/v1/spines/") for s in server.seen)
-    assert "Whole show: https://media.example/series/all.mp4" in "\n".join(lines)
+    assert (
+        "Part 1 for Instagram and TikTok: https://media.example/series/p1.mp4" in lines
+    )
+    assert "all.mp4" not in "\n".join(lines)
 
 
 def test_an_older_server_is_not_done_and_makes_nothing(post_desk: Path) -> None:

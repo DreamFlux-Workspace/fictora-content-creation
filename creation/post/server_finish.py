@@ -679,9 +679,13 @@ def opening_notes(
 
 
 def series_cut_file_lines(cut: Mapping[str, Any]) -> list[str]:
-    """The server's series cut record as plain lines: whole file, each part, its cover and caption."""
+    """The server's series cut as plain lines: each Instagram and TikTok part, its cover and caption.
 
-    lines = [f"Whole show: {cut.get('compilation_url')}"]
+    Parts only (founder, 5 Nov 2026): the whole combined video is never offered, even when the
+    server's record still names one.
+    """
+
+    lines: list[str] = []
     for part in cut.get("parts") or []:
         if not isinstance(part, dict):
             continue
