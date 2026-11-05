@@ -49,10 +49,14 @@ NEXT_STEP = {
     "series_cut_not_ready": "Run cut-retry with the same id to wait for it, then save it.",
     "series_cut_part_not_found": "Use a part number that cut printed, or leave out --part for the whole edit.",
     "series_cut_no_music_copy": "Leave out --no-music to save it with its music.",
-    "series_cut_remake_needed": "Tell the core team: this edit has to be made again before it can be saved.",
+    "series_cut_remake_needed": (
+        "Run cut-retry with the same id: the server makes it again with the same picks, name and music. "
+        "Then run the same cut-save."
+    ),
     "series_cut_show_gone": "",
     "series_cut_export_not_found": "Run the same cut-save again.",
     "invalid_request": "",
+    "title_invalid": "",
 }
 
 _MISSING_DETAILS = frozenset({"Not Found", "Method Not Allowed"})

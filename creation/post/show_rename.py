@@ -33,6 +33,7 @@ MISSING = (
 NEXT_STEP = {
     "spine_not_found": "Check the show id (cut --list shows it) or the desk folder.",
     "invalid_request": "",
+    "title_invalid": "",
     "cascade_required": (
         "This server can't rename a show after its script is approved yet. Tell the core team; it needs the "
         "show-rename update."

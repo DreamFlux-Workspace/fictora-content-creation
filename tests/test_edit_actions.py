@@ -106,11 +106,11 @@ def test_empty_rename_clears_the_name_back_to_the_shows() -> None:
 
 
 def test_rename_a_bad_name_prints_the_servers_reason() -> None:
-    message = "title: the name needs at least one visible character"
+    message = "The name needs at least one visible character, such as a letter, a number or an emoji."
     server = Server(
         {
             "PATCH /v1/series-cuts/c1": [
-                (422, {"error": {"code": "invalid_request", "message": message}})
+                (422, {"error": {"code": "title_invalid", "message": message}})
             ]
         }
     )
@@ -365,8 +365,9 @@ def test_save_that_fails_prints_the_reason_in_plain_words(tmp_path: Path) -> Non
         ),
         (
             "series_cut_remake_needed",
-            "This edit was made before its titles moved clear of the Sokii mark.",
-            "Tell the core team",
+            "This edit was made before its titles moved clear of the Sokii mark. Use Try again to make it "
+            "again with the new layout, then save it.",
+            "Run cut-retry with the same id",
         ),
         ("series_cut_show_gone", "A show in this edit was deleted.", ""),
     ],
@@ -503,6 +504,21 @@ def test_show_rename_on_a_server_that_wants_a_cascade_says_it_needs_the_update()
     )
     with pytest.raises(CutStop, match="needs the show-rename update"):
         rename_show("sp_a", "Lock Night", **call(server))
+
+
+def test_show_rename_a_bad_name_prints_the_servers_plain_words() -> None:
+    message = "The name can be at most 80 characters."
+    server = Server(
+        {
+            "GET /v1/spines/sp_a": [(200, spine("v1", "Exit Strategy"))],
+            "PATCH /v1/spines/sp_a": [
+                (422, {"error": {"code": "title_invalid", "message": message}})
+            ],
+        }
+    )
+    with pytest.raises(CutStop) as stop:
+        rename_show("sp_a", "x" * 81, **call(server))
+    assert stop.value.line == f"NOT DONE: {message} Nothing was changed."
 
 
 def test_show_rename_reads_a_desk_folders_own_show_id(
