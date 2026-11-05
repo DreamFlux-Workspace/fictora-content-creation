@@ -397,10 +397,7 @@ def retry_line(cut_id: str) -> str:
     return f"To try again, run: fictora-produce cut-retry {cut_id}"
 
 
-BEING_REMADE = (
-    "Being remade: the server is making this ready edit again under its newer rules. The earlier edit "
-    "stays as it was and keeps playing until the new one is ready."
-)
+BEING_REMADE = "Being made again: the earlier edit keeps playing until the new one is ready."
 
 
 def wait_for_cut(
@@ -666,7 +663,7 @@ def _ready_lines(body: Mapping[str, Any], picked: int, cut_id: str) -> list[str]
             "NOT DONE: the server said the cut is ready but sent no files. Tell the core team."
         )
     reason = str(body.get("reason") or "").strip()
-    return [
+    lines = [
         f"The server cut these {picked} picked episodes by itself; nothing was cut on this laptop.",
         *([f"Server note: {reason}", retry_line(cut_id)] if reason else []),
         *_music_lines(body.get("music"), cut_id),
@@ -674,6 +671,8 @@ def _ready_lines(body: Mapping[str, Any], picked: int, cut_id: str) -> list[str]
         f'Edit id: {cut_id}. Rename it with: fictora-produce cut-rename {cut_id} "NAME". Save it with the Sokii '
         f"mark for Instagram and TikTok with: fictora-produce cut-save {cut_id} --part N (no --part: the whole edit).",
     ]
+    # A failed remake and failed music both offer the same retry; say it once.
+    return list(dict.fromkeys(lines))
 
 
 def _music_lines(music: Any, cut_id: str) -> list[str]:

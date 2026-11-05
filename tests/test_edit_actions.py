@@ -208,7 +208,7 @@ def test_retry_of_an_older_ready_edit_says_it_is_being_remade_and_prints_the_new
     )
     said: list[str] = []
     lines = retry_cut("c1", **call(server), **{**waits(), "progress": said.append})
-    assert [line for line in said if line.startswith("Being remade")] == [said[1]]
+    assert [line for line in said if line.startswith("Being made again")] == [said[1]]
     assert not any("Server note" in line for line in lines)
 
 
@@ -226,7 +226,7 @@ def test_retry_of_a_first_cut_never_says_being_remade() -> None:
     )
     said: list[str] = []
     retry_cut("c1", **call(server), **{**waits(), "progress": said.append})
-    assert not any(line.startswith("Being remade") for line in said)
+    assert not any(line.startswith("Being made again") for line in said)
 
 
 def test_a_remake_that_did_not_work_prints_the_servers_reason_on_the_ready_edit() -> (
@@ -255,6 +255,39 @@ def test_a_remake_that_did_not_work_prints_the_servers_reason_on_the_ready_edit(
     assert f"Server note: {REMAKE_FAILED}" in lines
     assert "To try again, run: fictora-produce cut-retry c1" in lines
     assert "Whole show: https://media.example/all.mp4" in lines
+
+
+def test_music_retry_on_a_ready_edit_says_made_again_and_offers_the_retry_once() -> (
+    None
+):
+    music = {"state": "failed"}
+    server = Server(
+        {
+            "POST /v1/series-cuts/c1/retry": [
+                (202, {"series_cut_id": "c1", "status": "queued"})
+            ],
+            "GET /v1/series-cuts/c1": [
+                (200, {"status": "queued", "series_cut": CUT, "music": music}),
+                (
+                    200,
+                    {
+                        "status": "ready",
+                        "reason": REMAKE_FAILED,
+                        "episodes": [{}, {}],
+                        "series_cut": CUT,
+                        "music": music,
+                    },
+                ),
+            ],
+        }
+    )
+    said: list[str] = []
+    lines = retry_cut("c1", **call(server), **{**waits(), "progress": said.append})
+    assert (
+        "Being made again: the earlier edit keeps playing until the new one is ready."
+        in said
+    )
+    assert lines.count("To try again, run: fictora-produce cut-retry c1") == 1
 
 
 def test_retry_that_fails_again_offers_the_same_retry() -> None:
