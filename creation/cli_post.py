@@ -170,6 +170,27 @@ class _LaptopOnly(argparse.Action):
         setattr(namespace, self.dest, seen)
 
 
+def add_part_args(parser: argparse.ArgumentParser) -> None:
+    """The Instagram and TikTok part settings, the same on ``cut``, ``join --episodes`` and ``finish --episodes``."""
+
+    parser.add_argument(
+        "--parts", type=int, default=None, metavar="N",
+        help="How many Instagram and TikTok parts (default: the server's suggestion).",
+    )  # fmt: skip
+    parser.add_argument(
+        "--start-number", type=int, default=None, metavar="N",
+        help="The number the first part carries (default: the server's, carrying on from the creator's earlier parts).",
+    )  # fmt: skip
+    parser.add_argument(
+        "--part-text", action="append", default=[], metavar="N:opening=TEXT",
+        help="Change part N's opening or ending text: N:opening=TEXT or N:ending=TEXT (repeat).",
+    )  # fmt: skip
+    parser.add_argument(
+        "--yes", action="store_true",
+        help="The human already said go ahead to the printed parts: make them without asking.",
+    )  # fmt: skip
+
+
 def _add_server_finish_args(parser: argparse.ArgumentParser) -> None:
     """``--wait``, ``--json``, the hook line, and the old laptop settings (refused) on ``finish`` and ``join``."""
 
@@ -209,9 +230,11 @@ def _add_server_finish_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         nargs="+",
         default=None,
-        help="Show the show's series cut instead (the server makes it from every finished episode; "
-        "nothing is joined on this laptop).",
+        help="Make Instagram and TikTok parts of these episodes instead, in this order (2 or more). Every "
+        "planned part is printed and nothing is made until you say go ahead, as with cut; nothing is joined "
+        "on this laptop.",
     )
+    add_part_args(parser)
     for flag in LAPTOP_ONLY_FLAGS:
         parser.add_argument(
             flag,
@@ -816,22 +839,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )  # fmt: skip
     # Removed 5 Nov 2026 (a laptop file never reached the episode); kept only to refuse in plain words.
     cut.add_argument("--file", action="append", default=[], help=argparse.SUPPRESS)
-    cut.add_argument(
-        "--parts", type=int, default=None, metavar="N",
-        help="How many Instagram and TikTok parts (default: the server's suggestion).",
-    )  # fmt: skip
-    cut.add_argument(
-        "--start-number", type=int, default=None, metavar="N",
-        help="The number the first part carries (default: the server's, carrying on from the creator's earlier parts).",
-    )  # fmt: skip
-    cut.add_argument(
-        "--part-text", action="append", default=[], metavar="N:opening=TEXT",
-        help="Change part N's opening or ending text: N:opening=TEXT or N:ending=TEXT (repeat).",
-    )  # fmt: skip
-    cut.add_argument(
-        "--yes", action="store_true",
-        help="The human already said go ahead to the printed parts: make them without asking.",
-    )  # fmt: skip
+    add_part_args(cut)
     cut.add_argument("--title", default=None, help="Optional name for the cut.")
     cut.add_argument(
         "--music-price", action="store_true",
@@ -1117,21 +1125,14 @@ def _send_caption_labels(
 
 
 def _show_series_cut(desk: Path, args: argparse.Namespace) -> int:
-    """``--episodes``: ask the server for a cut of the desk's named episodes and print it (no laptop join)."""
+    """``--episodes``: the server's Instagram and TikTok parts of the desk's named episodes, shown first."""
 
-    from creation.post.picked_cut import MIN_PICKED, desk_cut_lines
+    from creation.post.picked_cut import MIN_PICKED, desk_cut_command
 
     if len(args.episodes) < MIN_PICKED:
         print("A series cut needs at least 2 episodes.", file=sys.stderr)
         return 2
-    ready, lines = desk_cut_lines(
-        desk, tuple(args.episodes), wait_seconds=getattr(args, "wait", None)
-    )
-    if args.json:
-        print(json.dumps({"ready": ready, "lines": lines}, indent=2))
-    else:
-        print("\n".join(lines))
-    return 0 if ready else SERVER_FINISH_NOT_DONE
+    return desk_cut_command(desk, args)
 
 
 #: ``finish`` settings that edit one take on the server (fictora-drama #1189 / #1190).
@@ -1253,6 +1254,15 @@ def _server_finish_command(args: argparse.Namespace) -> int:
             )
             return 2
         return _show_series_cut(desk, args)
+    from creation.post.picked_cut import part_flags_given
+
+    if part_flags_given(args):
+        print(
+            "Stopped: --parts, --start-number, --part-text and --yes are for Instagram and TikTok parts; "
+            "add --episodes N N ... (or use cut). Nothing was made or charged.",
+            file=sys.stderr,
+        )
+        return 2
     if args.episode is None:
         args.episode = load_production(desk).episode_ordinal
     edits = _take_edit_settings(args)
