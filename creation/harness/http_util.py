@@ -16,6 +16,7 @@ import httpx
 
 from creation.harness.board_edit_refusal import board_edit_choice
 from creation.harness.minor_scene_refusal import minor_scene_fix, says_minor_scene
+from creation.harness.raw_error_detail import raw_detail_line
 
 _TERMINAL = frozenset({"completed", "failed", "cancelled"})
 
@@ -457,6 +458,9 @@ def api_error_text(body: Any) -> str:
         text += "\n" + SHOT_CLIPS_BOARD_FIX
     if code == VIDEO_LANE_LOCKED:
         text += "\n" + VIDEO_LANE_LOCKED_FIX
+    raw = raw_detail_line(error)
+    if raw is not None:
+        text += "\n" + raw
     return text
 
 
