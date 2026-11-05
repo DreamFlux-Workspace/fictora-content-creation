@@ -314,8 +314,19 @@ def approve_board(
     return take.board
 
 
-def approve_post(desk: Path, *, episode: int, path: str | None = None) -> GateRecord:
-    """Record a human yes on the mixed and captioned episode.
+def approve_post(
+    desk: Path,
+    *,
+    episode: int,
+    path: str | None = None,
+    at_utc: str | None = None,
+    note: str | None = None,
+) -> GateRecord:
+    """Write the desk's local copy of the episode-is-final yes the server already recorded.
+
+    Not the record (5 Nov 2026): the server keeps which file is final, who and when
+    (:mod:`creation.post.final_approval`). This mirror only lets the desk's queue and captions
+    read it offline; ``fictora-ops approve --gate post`` writes it after the server said yes.
 
     Parameters
     ----------
@@ -325,6 +336,10 @@ def approve_post(desk: Path, *, episode: int, path: str | None = None) -> GateRe
         Episode ordinal.
     path
         Final file the human watched.
+    at_utc
+        When the server recorded it (default now).
+    note
+        What the server holds, in one line.
 
     Returns
     -------
@@ -334,7 +349,9 @@ def approve_post(desk: Path, *, episode: int, path: str | None = None) -> GateRe
 
     series = load_series(desk)
     slot = episode_by_ordinal(series, episode)
-    slot.post = GateRecord(status="approved", at_utc=utc_now(), path=path)
+    slot.post = GateRecord(
+        status="approved", at_utc=at_utc or utc_now(), path=path, note=note
+    )
     save_series(desk, series)
     write_queue(desk, series)
     return slot.post

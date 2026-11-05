@@ -11,6 +11,11 @@ from pathlib import Path
 
 from creation.cli_text import HELP_SUFFIX, text_or_file
 from creation.lane_features import SFX_ADJUST_OFF_HOME, desk_sound_notes_supported
+from creation.post.edit_actions import (
+    CUT_ACTION_COMMANDS,
+    add_cut_action_parsers,
+    cut_action_command,
+)
 from creation.post.edit_commands import EDIT_COMMANDS, add_edit_parsers, dispatch_edit
 from creation.post.handmade import CUE_DEFAULT_SECONDS
 from creation.post.impact_post import MAX_EDITOR_HITS
@@ -23,6 +28,11 @@ from creation.post.server_finish import (
     DEFAULT_WAIT_SECONDS,
     SERVER_FINISH_NOT_DONE,
     run_server_finish,
+)
+from creation.post.show_rename import (
+    SHOW_RENAME_COMMANDS,
+    add_show_rename_parser,
+    show_rename_command,
 )
 from creation.post.voice_fx import PRESET_NAMES as VOICE_FX_PRESETS
 
@@ -52,6 +62,8 @@ POST_COMMANDS = (
     )
     | EDIT_COMMANDS
     | REVIEW_COMMANDS
+    | CUT_ACTION_COMMANDS
+    | SHOW_RENAME_COMMANDS
 )
 
 
@@ -873,6 +885,8 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     cut.add_argument(
         "--json", action="store_true", help="Print the result as JSON on stdout."
     )
+    add_cut_action_parsers(sub)
+    add_show_rename_parser(sub)
 
     add_edit_parsers(sub)
     add_review_parser(sub)
@@ -929,6 +943,10 @@ def dispatch_post(args: argparse.Namespace) -> int:
         from creation.post.picked_cut import cut_command
 
         return cut_command(args)
+    if args.command in CUT_ACTION_COMMANDS:
+        return cut_action_command(args)
+    if args.command in SHOW_RENAME_COMMANDS:
+        return show_rename_command(args)
     if args.command in EDIT_COMMANDS:
         return dispatch_edit(args)
     if args.command in REVIEW_COMMANDS:

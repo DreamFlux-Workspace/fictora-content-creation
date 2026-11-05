@@ -524,11 +524,14 @@ def download_file(
     transport: httpx.BaseTransport | None = None,
     kind: str,
     meta: Mapping[str, Any] | None = None,
+    again: str = "finish",
 ) -> Path:
     """Download one file the server saved into ``dest``: whole or not at all, never over an existing file.
 
     One try: the server saved the file before it answered, so a failure is
     reported plainly instead of being asked again.
+
+    ``again`` is the command that downloads it again, named in every failure line.
 
     ``meta`` is written beside the file (``<name>.json``) before the file is put in
     place, so a file on the desk always carries the server link it came from.
@@ -557,31 +560,31 @@ def download_file(
                 if not response.is_success:
                     raise ServerFinishError(
                         f"The {kind} could not be downloaded (HTTP {response.status_code}). The server keeps it: "
-                        "run finish again to download it."
+                        f"run {again} again to download it."
                     )
                 with part.open("wb") as handle:
                     for chunk in response.iter_bytes():
                         handle.write(chunk)
         if part.stat().st_size == 0:
             raise ServerFinishError(
-                f"The {kind} came back empty. Run finish again to download it."
+                f"The {kind} came back empty. Run {again} again to download it."
             )
         if meta is not None:
             _write_sidecar(dest, meta)
         _place(part, dest)
     except httpx.HTTPError as exc:
         raise ServerFinishError(
-            f"The {kind} download stopped ({type(exc).__name__}). The server keeps it: run finish again."
+            f"The {kind} download stopped ({type(exc).__name__}). The server keeps it: run {again} again."
         ) from None
     except FileExistsError:
         raise ServerFinishError(
-            f"Another file named {dest.name} appeared while the {kind} downloaded (two finishes at once?). "
-            "Nothing was overwritten: run finish again."
+            f"Another file named {dest.name} appeared while the {kind} downloaded (two downloads at once?). "
+            f"Nothing was overwritten: run {again} again."
         ) from None
     except OSError as exc:
         raise ServerFinishError(
             f"The {kind} could not be saved on this laptop ({exc.strerror or type(exc).__name__}: {dest.parent}). "
-            "Check the disk has space and the folder can be written, then run finish again. The server keeps it."
+            f"Check the disk has space and the folder can be written, then run {again} again. The server keeps it."
         ) from None
     finally:
         part.unlink(missing_ok=True)

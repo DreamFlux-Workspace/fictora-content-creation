@@ -220,7 +220,9 @@ def pickable_lines(episodes: Sequence[Mapping[str, Any]]) -> list[str]:
 
 
 def _client(
-    transport: httpx.BaseTransport | None, api: tuple[str, Mapping[str, str]] | None
+    transport: httpx.BaseTransport | None,
+    api: tuple[str, Mapping[str, str]] | None,
+    session_id: str = SESSION_ID,
 ) -> tuple[httpx.Client, str, dict[str, str]]:
     if api is None:
         from creation.harness.credentials import load_drama_api_credentials
@@ -231,7 +233,7 @@ def _client(
             )
         except SystemExit as exc:
             raise CutStop(f"NOT DONE: {exc.code}") from exc
-        api = (base, api_headers(token, SESSION_ID))
+        api = (base, api_headers(token, session_id))
     return (
         httpx.Client(timeout=60.0, transport=transport),
         api[0].rstrip("/"),
@@ -376,31 +378,84 @@ def run_cut(
             )
         if any(p.file is None for p in picks):
             progress(NEWEST_VERSION_NOTICE)
-        url = base + CUT_ROUTE.format(series_cut_id=cut_id)
-        deadline, said = clock() + wait_seconds, clock()
-        while True:
-            body = _poll(
-                client, url, headers, deadline=deadline, clock=clock, sleep=sleep
+        return wait_for_cut(
+            client,
+            base,
+            headers,
+            cut_id,
+            picked=len(picks),
+            wait_seconds=wait_seconds,
+            sleep=sleep,
+            clock=clock,
+            progress=progress,
+        )
+
+
+def retry_line(cut_id: str) -> str:
+    """How to run this same edit again by its id (never a second ask with the picks)."""
+
+    return f"To try again, run: fictora-produce cut-retry {cut_id}"
+
+
+BEING_REMADE = (
+    "Being made again: the earlier edit keeps playing until the new one is ready."
+)
+
+
+def wait_for_cut(
+    client: httpx.Client,
+    base: str,
+    headers: Mapping[str, str],
+    cut_id: str,
+    *,
+    picked: int | None,
+    wait_seconds: float,
+    sleep: Callable[[float], None],
+    clock: Callable[[], float],
+    progress: Callable[[str], None],
+) -> list[str]:
+    """Ask the server about one edit until it is ready or failed, and return the lines to print.
+
+    Raises
+    ------
+    CutStop
+        With the plain NOT DONE line when the edit failed or is still being made at the deadline.
+    """
+
+    url = base + CUT_ROUTE.format(series_cut_id=cut_id)
+    deadline, said = clock() + wait_seconds, clock()
+    told_remade = False
+    while True:
+        body = _poll(client, url, headers, deadline=deadline, clock=clock, sleep=sleep)
+        status = str(body.get("status") or "")
+        # A cut that is queued or making yet still carries its series_cut is a ready edit being made again.
+        if (
+            not told_remade
+            and status in ("queued", "making")
+            and isinstance(body.get("series_cut"), dict)
+        ):
+            progress(BEING_REMADE)
+            told_remade = True
+        if status == "ready":
+            count = picked or len(body.get("episodes") or [])
+            return _ready_lines(body, count, cut_id)
+        if status == "failed":
+            reason = str(body.get("reason") or "no reason given")
+            raise CutStop(
+                f"NOT DONE: the server could not make the cut ({reason}). Nothing was posted. {retry_line(cut_id)}"
             )
-            status = str(body.get("status") or "")
-            if status == "ready":
-                return _ready_lines(body, len(picks))
-            if status == "failed":
-                reason = str(body.get("reason") or "no reason given")
-                raise CutStop(
-                    f"NOT DONE: the server could not make the cut ({reason}). Nothing was posted."
-                )
-            if clock() >= deadline:
-                raise CutStop(
-                    f"NOT DONE: the cut is still being made after {_duration(wait_seconds)}. Run the same command "
-                    "again later; the server keeps the same cut and nothing is made twice."
-                )
-            if clock() - said >= PROGRESS_EVERY_SECONDS:
-                progress(
-                    f"Still making the cut ({status or 'working'}); waiting up to {_duration(wait_seconds)}."
-                )
-                said = clock()
-            sleep(POLL_SECONDS)
+        if clock() >= deadline:
+            raise CutStop(
+                f"NOT DONE: the cut is still being made after {_duration(wait_seconds)}. Later, run "
+                f"fictora-produce cut-retry {cut_id}: it waits for this same edit, starts it again only if it "
+                "stalled, and never makes a second one."
+            )
+        if clock() - said >= PROGRESS_EVERY_SECONDS:
+            progress(
+                f"Still making the cut ({status or 'working'}); waiting up to {_duration(wait_seconds)}."
+            )
+            said = clock()
+        sleep(POLL_SECONDS)
 
 
 def _check_picks(picks: Sequence[Pick]) -> None:
@@ -504,8 +559,12 @@ def _poll(
     deadline: float,
     clock: Callable[[], float],
     sleep: Callable[[float], None],
+    check: Callable[[httpx.Response], Any] | None = None,
 ) -> Any:
-    """One status answer, asking again after a busy answer or dropped connection until ``deadline``."""
+    """One status answer, asking again after a busy answer or dropped connection until ``deadline``.
+
+    ``check`` reads the answer (default: the cut's own refusals).
+    """
 
     attempt = 0
     while True:
@@ -523,6 +582,8 @@ def _poll(
             ) from exc
         else:
             if response.status_code not in BUSY_STATUSES or clock() >= deadline:
+                if check is not None:
+                    return check(response)
                 return _check(response, what="give the cut")
         sleep(POLL_RETRY_WAITS[min(attempt, len(POLL_RETRY_WAITS) - 1)])
         attempt += 1
@@ -597,28 +658,36 @@ def desk_cut_lines(
         return False, [f"NOT DONE: no series cut. {exc}"]
 
 
-def _ready_lines(body: Mapping[str, Any], picked: int) -> list[str]:
+def _ready_lines(body: Mapping[str, Any], picked: int, cut_id: str) -> list[str]:
     cut = body.get("series_cut")
     if not isinstance(cut, dict):
         raise CutStop(
             "NOT DONE: the server said the cut is ready but sent no files. Tell the core team."
         )
-    return [
+    reason = str(body.get("reason") or "").strip()
+    lines = [
         f"The server cut these {picked} picked episodes by itself; nothing was cut on this laptop.",
-        *_music_lines(body.get("music")),
+        *([f"Server note: {reason}", retry_line(cut_id)] if reason else []),
+        *_music_lines(body.get("music"), cut_id),
         *series_cut_file_lines(cut),
+        f'Edit id: {cut_id}. Rename it with: fictora-produce cut-rename {cut_id} "NAME". Save it with the Sokii '
+        f"mark for Instagram and TikTok with: fictora-produce cut-save {cut_id} --part N (no --part: the whole edit).",
     ]
+    # A failed remake and failed music both offer the same retry; say it once.
+    return list(dict.fromkeys(lines))
 
 
-def _music_lines(music: Any) -> list[str]:
+def _music_lines(music: Any, cut_id: str) -> list[str]:
     """The edit's new music as the server reports it (nothing when none was asked for)."""
 
     if not isinstance(music, dict):
         return []
+    failed = music.get("state") == "failed"
     message = str(music.get("message") or "")
-    if not message and music.get("state") == "failed":
+    if not message and failed:
         message = "it could not be made; the edit has no added music."
-    return [f"New music: {message}"] if message else []
+    lines = [f"New music: {message}"] if message else []
+    return [*lines, retry_line(cut_id)] if failed else lines
 
 
 def cut_command(args: Any) -> int:
