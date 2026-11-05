@@ -13,7 +13,13 @@ import pytest
 from creation.captions import desk_has_finished_episodes
 from creation.cli_ops import FINAL_NOT_RECORDED
 from creation.cli_ops import main as ops_main
-from creation.ops.floor import QUEUE_FILENAME, status_rows
+from creation.ops.floor import (
+    FINALS_NOT_CHECKED,
+    LEGACY_DONE,
+    QUEUE_FILENAME,
+    status_rows,
+    write_queue,
+)
 from creation.ops.state import load_series
 from creation.post import final_approval, server_finish
 from creation.post.episode_name import next_episode_path
@@ -291,17 +297,70 @@ def test_captions_count_a_final_on_the_server_as_a_finished_episode(
     assert desk_has_finished_episodes(post_desk) is True
 
 
-def test_an_old_desk_yes_without_a_final_on_the_server_is_not_done(
-    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+def _desk_yes(desk: Path, at_utc: str | None) -> None:
+    path = desk / "series.json"
+    series = json.loads(path.read_text(encoding="utf-8"))
+    series["episodes"][0]["post"].update({"status": "approved", "at_utc": at_utc})
+    path.write_text(json.dumps(series), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("at_utc", "waiting"),
+    [
+        ("2026-10-20T08:00:00+00:00", LEGACY_DONE),
+        ("2026-11-05T12:58:59+00:00", LEGACY_DONE),
+        ("2026-11-05T12:59:00+00:00", "post"),
+        (None, "post"),
+    ],
+)
+def test_a_desk_yes_from_before_server_finals_still_reads_as_done(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch, at_utc: str | None, waiting: str
 ) -> None:
     _only_final_left(post_desk)
-    path = post_desk / "series.json"
-    series = json.loads(path.read_text(encoding="utf-8"))
-    series["episodes"][0]["post"]["status"] = "approved"
-    path.write_text(json.dumps(series), encoding="utf-8")
+    _desk_yes(post_desk, at_utc)
     _stand_in(monkeypatch, Server(saved=set()))
 
     assert (
         status_rows(post_desk, final_approval.show_finals(post_desk))[0]["waiting"]
-        == "post"
+        == waiting
     )
+    assert load_series(post_desk).episodes[0].post.at_utc == at_utc, "read only"
+
+
+def test_captions_count_a_desk_yes_from_before_server_finals(post_desk: Path) -> None:
+    assert desk_has_finished_episodes(post_desk) is False
+    _desk_yes(post_desk, "2026-10-20T08:00:00+00:00")
+
+    assert desk_has_finished_episodes(post_desk) is True
+
+
+def test_a_gate_write_keeps_the_done_rows_and_says_finals_were_not_checked(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _only_final_left(post_desk)
+    _file(post_desk, b"server copy")
+    _stand_in(monkeypatch, Server({hashlib.sha256(b"server copy").hexdigest()}))
+    assert _approve(post_desk) == 0
+    queue = post_desk / QUEUE_FILENAME
+    assert "| ep01 | done |" in queue.read_text(encoding="utf-8")
+
+    write_queue(post_desk)
+
+    text = queue.read_text(encoding="utf-8")
+    assert "| ep01 | done |" in text
+    assert FINALS_NOT_CHECKED in text
+
+
+def test_status_with_the_server_unreachable_keeps_the_done_rows(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _only_final_left(post_desk)
+    _file(post_desk, b"server copy")
+    _stand_in(monkeypatch, Server({hashlib.sha256(b"server copy").hexdigest()}))
+    assert _approve(post_desk) == 0
+    monkeypatch.setattr(final_approval, "show_finals", lambda desk, **_k: None)
+
+    assert ops_main(["status", "--desk", str(post_desk)]) == 0
+
+    text = (post_desk / QUEUE_FILENAME).read_text(encoding="utf-8")
+    assert "| ep01 | done |" in text and FINALS_NOT_CHECKED in text

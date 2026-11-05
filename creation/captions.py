@@ -169,16 +169,24 @@ def desk_has_finished_episodes(desk: Path) -> bool:
     Returns
     -------
     bool
-        Whether any ``epNN/takes/take-epNN-tK-finish-vN.json`` exists or the server's show
-        standing holds a final for any episode.
+        Whether any ``epNN/takes/take-epNN-tK-finish-vN.json`` exists, the server's show
+        standing holds a final for any episode, or an episode was approved on the desk before
+        finals moved to the server (read-only legacy fallback).
     """
 
     desk = desk.expanduser().resolve()
     if any(desk.glob("ep*/takes/take-ep*-t*-finish-v*.json")):
         return True
+    from creation.ops.state import approved_on_desk_before_server, load_series
     from creation.post import final_approval
 
-    return bool(final_approval.show_finals(desk))
+    if final_approval.show_finals(desk):
+        return True
+    try:
+        series = load_series(desk)
+    except (FileNotFoundError, ValueError, KeyError, TypeError):
+        return False
+    return any(approved_on_desk_before_server(ep) for ep in series.episodes)
 
 
 def _legacy_desk(desk: Path) -> bool:

@@ -27,6 +27,7 @@ from creation.ops.state import (
     SpendEntry,
     SpokenLine,
     TakeState,
+    approved_on_desk_before_server,
     envelope_usd,
     episode_by_ordinal,
     load_series,
@@ -36,6 +37,14 @@ from creation.ops.state import (
     take_by_id,
     unit_id,
     utc_now,
+)
+
+#: The queue token of an episode approved on the desk before finals moved to the server.
+LEGACY_DONE = "done (approved on desk before 5 Nov)"
+#: The queue line when a rewrite did not read the finals from the server.
+FINALS_NOT_CHECKED = (
+    "Finals not checked with the server in this update; episodes keep the done they had. "
+    "Run status to check them."
 )
 
 SHARED_SUBDIRS: tuple[str, ...] = (
@@ -663,7 +672,8 @@ def waiting_on(
     -------
     str
         Queue token such as ``board:t1``; ``done`` only for a current final on the server,
-        ``post:older-cut`` for a final that is not current, else ``post``.
+        ``post:older-cut`` for a final that is not current, :data:`LEGACY_DONE` for a desk
+        yes from before finals moved to the server and no final there, else ``post``.
     """
 
     if series.look.status != "approved":
@@ -688,7 +698,7 @@ def waiting_on(
             return f"cost-yes:{take.take_id}"
         return f"take-read:{take.take_id}"
     if final is None:
-        return "post"
+        return LEGACY_DONE if approved_on_desk_before_server(episode) else "post"
     return "done" if final.current else "post:older-cut"
 
 
@@ -736,6 +746,19 @@ def status_rows(
     return rows
 
 
+def _done_rows(path: Path) -> dict[str, str]:
+    """The done tokens an existing QUEUE.md shows, by episode slug."""
+
+    if not path.is_file():
+        return {}
+    kept: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) >= 2 and cells[1].startswith("done"):
+            kept[cells[0]] = cells[1]
+    return kept
+
+
 def write_queue(
     desk: Path,
     series: SeriesState | None = None,
@@ -761,6 +784,12 @@ def write_queue(
 
     current = series or load_series(desk)
     rows = status_rows(desk, finals)
+    path = desk / QUEUE_FILENAME
+    if finals is None:
+        kept = _done_rows(path)
+        for row in rows:
+            if row["waiting"] == "post" and row["episode"] in kept:
+                row["waiting"] = kept[row["episode"]]
     lines = [
         f"# {current.title} — review queue",
         "",
@@ -774,14 +803,15 @@ def write_queue(
         lines.append(
             f"| {row['episode']} | {row['waiting']} | {row['preflight']} | {row['spend']} | {row['envelope']} |"
         )
-    waiting = [row for row in rows if row["waiting"] != "done"]
+    waiting = [row for row in rows if not row["waiting"].startswith("done")]
     lines.extend(["", f"Open gates: {len(waiting)}.", ""])
+    if finals is None:
+        lines.append(FINALS_NOT_CHECKED)
     lines.extend(
         stale_final_line(ordinal, final)
         for ordinal, final in sorted((finals or {}).items())
         if not final.current
     )
-    path = desk / QUEUE_FILENAME
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
 

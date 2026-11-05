@@ -309,6 +309,40 @@ def parse_spoken_lines(payload: list[Any]) -> list[SpokenLine]:
     return lines
 
 
+#: When finals moved to the server (fictora-drama #1358, 5 Nov 2026, 18:29 IST). A desk ``post``
+#: gate approved before then is the only record of those finals; nothing writes the gate since.
+SERVER_FINALS_SINCE = datetime(2026, 11, 5, 12, 59, tzinfo=timezone.utc)
+
+
+def approved_on_desk_before_server(episode: EpisodeState) -> bool:
+    """Whether the episode's final was said on the desk before finals moved to the server.
+
+    Read-only legacy fallback: the old ``post`` gate counts only when it was approved before
+    :data:`SERVER_FINALS_SINCE`; an unreadable time does not count.
+
+    Parameters
+    ----------
+    episode
+        Episode slot.
+
+    Returns
+    -------
+    bool
+        True for a desk yes from before 5 Nov 2026, 18:29 IST.
+    """
+
+    gate = episode.post
+    if gate.status != "approved" or not gate.at_utc:
+        return False
+    try:
+        at = datetime.fromisoformat(gate.at_utc.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return at < SERVER_FINALS_SINCE
+
+
 def utc_now() -> str:
     """Return the current UTC timestamp.
 

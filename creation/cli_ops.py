@@ -309,7 +309,7 @@ def _dispatch(args: argparse.Namespace) -> int:
         finals = final_approval.show_finals(args.desk)
         if finals is None:
             print(
-                "Could not read the finals from the server: no episode shows as done.",
+                "Could not read the finals from the server: episodes keep the done they had.",
                 file=sys.stderr,
             )
         rows = status_rows(args.desk, finals)
