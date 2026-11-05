@@ -171,7 +171,7 @@ uv run fictora-produce finish --desk <desk>
 | `ep01/takes/take-ep01-t1-cap-v1.mp4` | House captions |
 | `ep01/takes/take-ep01-t1-sokii-v1.mp4` | **Ship candidate**: Sokii mark top left |
 
-The last line reads `Sound: no music ✓ · SFX ✓ · mix ✓ · captions ✓`. **NOT DONE** (exit 5) names what is missing; that file is not a deliverable. Wrong caption timing? Re-run with `--line-start <seconds>` and/or `--line-end <seconds>` once per line.
+The last line reads `Sound: no music ✓ · SFX ✓ · mix ✓ · captions ✓`. **NOT DONE** (exit 5) names what is missing; that file is not a deliverable. Wrong caption timing? Tell the core team which line is early or late: the server re-times captions, not the kit.
 
 **No music in the videos we deliver** (founder decision, 20 Oct 2026). The finished take and the joined episode carry the voices, the sound effects and the room sound only. When you post, add a trending sound inside Instagram or TikTok that fits the show (for example an eerie sound for horror). Keep the captions on. If one episode truly needs its own score (a jumpscare sting, say), ask the Fictora team for its "with score" version; the no-music version stays the default, and you choose which one to post when you post it. New videos already come with no music. An older episode keeps its music unless you ask: to remove it, ask for "no music" on that episode (it costs nothing). Some older clips had their music made by the video model itself; those can't be cleaned without filming them again, and the server reports them as skipped.
 

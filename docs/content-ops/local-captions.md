@@ -2,7 +2,7 @@
 
 > **5 Nov 2026:** the `caption` command no longer burns captions on this laptop. `caption --desk D --episode N`
 > has the server caption the delivered episode (`--retime` re-times mistimed captions, core team only), and a
-> plain `finish` downloads it. The rest of this page describes the older local burn, for reading old run notes.
+> plain `finish` downloads it. `--line-start` and `--line-end` are refused: the server times each caption from the line's own sound, and a caption that is mistimed goes to the core team for `--retime`. The rest of this page describes the older local burn, for reading old run notes.
 
 **Default desks** (`api_captions: true`) still run **`finish`** / **`caption`** on the **raw** take: the show's Bold or Subtle style on the laptop is the deliverable. The server may also burn **house** captions on the finished episode asset (Modal in prod); that does not replace local finish.
 
@@ -18,8 +18,6 @@ uv run fictora-produce caption --desk <desk>
 | --- | --- |
 | `--episode N` | Episode other than 1 |
 | `--take <path>` | A specific raw MP4 (default: newest `take-epNN-t1-raw-v*.mp4`) |
-| `--line-start S` | Seconds where a line starts; once per line, in order. Overrides speech detection and word timing |
-| `--line-end S` | Seconds where a line's caption goes off; once per line, in order. Exact: no hold, no reading minimum. Works with or without `--line-start` |
 | `--caption-style S` | `bold`, `subtle` (`house` is its older name), `plain` (white whole lines) or `none` (nothing burned). Default: the show's style (`caption_style` in the desk's `production.config.json`, else `bold` for a new show and `subtle` for one with finished episodes). Same flag on `finish` |
 | `--words-json J` | A transcript of the take (`/v1/transcripts` words) to time the lines on, on any show. Default: the newest `takes/take-epNN-t1-*words-vN.json` when captioning the raw take |
 | `--no-open` | Do not open the result |
@@ -65,10 +63,10 @@ Set it per run with `--caption-style` on `finish` or `caption`, or for the show 
 
 1. **Lines**: the take's dialogue from the **current spine**: `finish` and `caption` read it from the server (a free `GET`, saved on the desk as `spine.json`), so a line deleted or changed before filming is never captioned from an old desk copy (L-20261001-8). Only when the server cannot be read is the newest snapshot in `epNN/api/` used, and the report says `!! captions from the desk's copy …`.
 2. **Speech spans**: `silencedetect=noise=-30dB:d=0.3` on the take. Gaps shorter than 0.12 s are clicks, not speech.
-3. **Anchor**: each line starts on the next speech span (silence-end onset) and absorbs following spans only while the pause is under 0.6 s and the line still needs time. Spans after the last line are not captioned, and the report and run notes say **`EXTRA SPEECH: N speech stretch(es) for M line(s); not captioned: a-b s …`** (also on stderr). Lines take spans strictly in order, so one stray stretch of speech before a line (a mumble, a line the take made up) puts every later caption on the wrong words; leftover spans are the only sign of it without a transcript (L-20260930-6: "You must be Hana." over Hana). It can also be a door or the music tail: watch the captions. Fix: a transcript (`review --transcribe`, then finish again: captions follow the words), `finish --mute A-B` for stray speech, or `--line-start` / `--line-end`.
+3. **Anchor**: each line starts on the next speech span (silence-end onset) and absorbs following spans only while the pause is under 0.6 s and the line still needs time. Spans after the last line are not captioned, and the report and run notes say **`EXTRA SPEECH: N speech stretch(es) for M line(s); not captioned: a-b s …`** (also on stderr). Lines take spans strictly in order, so one stray stretch of speech before a line (a mumble, a line the take made up) puts every later caption on the wrong words; leftover spans are the only sign of it without a transcript (L-20260930-6: "You must be Hana." over Hana). It can also be a door or the music tail: watch the captions. Fix: a transcript (`review --transcribe`, then finish again: captions follow the words) or `finish --mute A-B` for stray speech.
 4. **Words**: with a transcript, each word shows when it is said (below); without one they are spread across the line's span, weighted by word length (an estimate).
 
-No transcription model is needed for an English show: the words are already fixed at the script gate. If detection picks the wrong sound, watch the raw take, note where each line starts and ends, and re-run with `--line-start` / `--line-end`.
+No transcription model is needed for an English show: the words are already fixed at the script gate. If detection picks the wrong sound, watch the raw take, tell the core team which line is early or late; the server re-times it.
 
 ### A show not spoken in English: timed on the transcript's words
 
@@ -79,7 +77,7 @@ Speech spans cannot tell a stammer or a mid-line pause from a line: on Hanakaze 
 3. **Start**: the first matched word. A word at the head that Whisper stretched past what one word can last (over 1.2 s and 0.25 s a character) starts where its speech starts: the last speech span of the take (the same silencedetect as speech spans) that begins inside the word after a pause over 0.6 s (ep 4 `ちょっと!` heard 9.37–12.45 s starts at 11.34 s; ep 6 `悪` 8.81–12.57 s at 12.42 s). Only with no such onset is it skipped (`もう` over 9.47–11.33 s with no speech in it would be). Also skipped: one short leading word (two characters or fewer, a stammer) cut off from the rest by a pause over 0.6 s.
 4. **End**: the last matched word's end (a stretched last word is cut to 1.2 s from its start), plus a 0.25 s hold, never into the next line.
 5. **Readable**: each whole line stays up at least max(1.2 s, 0.3 s per English word), extended forward only, never into the next line.
-6. **Fallback**: a line the transcript did not match is timed on speech spans (steps 2–3 above). So is every line when there is no transcript (and none can be made), when `--voice`/`--mute` changed the take's speech, or when `finish --take-file` is not the raw take the server transcribed. The report says which method timed each line.
+6. **Fallback**: a line the transcript did not match is timed on speech spans (steps 2–3 above). So is every line when there is no transcript (and none can be made), when `--voice`/`--mute` changed the take's speech, or when the take was edited after the server transcribed it. The report says which method timed each line.
 
 Hanakaze ep02 t1 with its transcript: line 1 `0.03–3.30 s` (was 0.03–1.63), line 2 `11.33–13.50 s` (was 9.47–10.43).
 
