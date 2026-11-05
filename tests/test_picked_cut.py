@@ -12,6 +12,7 @@ import pytest
 
 from creation.post import picked_cut
 from creation.post.picked_cut import (
+    BEING_REMADE,
     NEWEST_VERSION_NOTICE,
     CutStop,
     Pick,
@@ -420,6 +421,20 @@ def test_failed_cut_prints_the_servers_reason_and_retry_by_id() -> None:
     with pytest.raises(CutStop, match="episode 2 has no sound") as stop:
         run_cut(P2, api=API, transport=transport(server))
     assert stop.value.line.endswith("To try again, run: fictora-produce cut-retry c1")
+
+
+def test_a_cut_being_made_again_says_so_once_on_the_cut_path() -> None:
+    remade = {"status": "making", "series_cut": CUT}
+    server = Server(polls=[remade, remade, {"status": "ready", "series_cut": CUT}])
+    said: list[str] = []
+    run_cut(
+        P2,
+        api=API,
+        transport=transport(server),
+        sleep=lambda s: None,
+        progress=said.append,
+    )
+    assert said.count(BEING_REMADE) == 1
 
 
 def test_ready_cut_prints_its_id_for_rename_and_save() -> None:

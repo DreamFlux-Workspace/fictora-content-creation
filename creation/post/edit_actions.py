@@ -9,8 +9,8 @@ but the saved video.
   is not made again.
 * ``cut-retry ID`` runs the same edit again when it failed, stalled or its new music did not arrive, and
   waits for it. It never sends the picks again, so it never makes a second edit.
-* ``cut-save ID [--part N] [--no-music]`` saves the whole edit or one part with the Sokii mark, for
-  Instagram and TikTok. The edit the app plays stays unmarked.
+* ``cut-save ID [--part N] [--no-music]`` saves the whole edit or one part with the Sokii mark,
+  ready to post. The edit the app plays stays unmarked.
 """
 
 from __future__ import annotations
@@ -332,7 +332,7 @@ def _saved_lines(
     what = "the whole edit" if part is None else f"part {part}"
     sound = "with the edit's music" if copy.get("music") else "with no added music"
     return [
-        f"Saved {what} with the Sokii mark, {sound}, ready for Instagram and TikTok: {dest}",
+        f"Saved {what} with the Sokii mark, {sound}, ready to post: {dest}",
         f"Link: {export_url}",
         *(f"Note: {warning}" for warning in copy.get("warnings") or []),
     ]
@@ -376,7 +376,7 @@ def add_cut_action_parsers(
     retry.add_argument("id", metavar="ID", help="The edit id cut printed.")
     save = sub.add_parser(
         "cut-save",
-        help="Save a punchy edit with the Sokii mark, for Instagram and TikTok: the server adds the mark and the "
+        help="Save a punchy edit with the Sokii mark, ready to post: the server adds the mark and the "
         "kit downloads the file. The edit the app plays stays unmarked.",
     )
     save.add_argument("id", metavar="ID", help="The edit id cut printed.")

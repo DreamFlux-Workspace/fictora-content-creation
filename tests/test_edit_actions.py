@@ -168,7 +168,7 @@ def test_retry_runs_the_same_edit_by_id_and_never_sends_the_picks() -> None:
     assert not server.asks("POST", "/v1/series-cuts")
     assert said[0].startswith("Making the same edit again")
     assert lines[0].startswith("The server cut these 3 picked episodes")
-    assert "Whole show: https://media.example/all.mp4" in lines
+    assert "Part 1: https://media.example/p1.mp4" in lines
 
 
 def test_retry_of_a_ready_edit_prints_it_without_running_it_again() -> None:
@@ -185,7 +185,7 @@ def test_retry_of_a_ready_edit_prints_it_without_running_it_again() -> None:
     said: list[str] = []
     lines = retry_cut("c1", **call(server), **{**waits(), "progress": said.append})
     assert said == []
-    assert "Whole show: https://media.example/all.mp4" in lines
+    assert "Part 1: https://media.example/p1.mp4" in lines
 
 
 REMAKE_FAILED = "This edit could not be made again just now, so it stays as it was. You can try again later."
@@ -254,7 +254,7 @@ def test_a_remake_that_did_not_work_prints_the_servers_reason_on_the_ready_edit(
     lines = retry_cut("c1", **call(server), **waits())
     assert f"Server note: {REMAKE_FAILED}" in lines
     assert "To try again, run: fictora-produce cut-retry c1" in lines
-    assert "Whole show: https://media.example/all.mp4" in lines
+    assert "Part 1: https://media.example/p1.mp4" in lines
 
 
 def test_music_retry_on_a_ready_edit_says_made_again_and_offers_the_retry_once() -> (
@@ -367,7 +367,7 @@ def test_save_asks_then_polls_the_same_file_and_downloads_it(tmp_path: Path) -> 
     saved = tmp_path / "lock-night-part-2-sokii.mp4"
     assert saved.read_bytes() == b"marked-video"
     assert lines[0] == (
-        f"Saved part 2 with the Sokii mark, with the edit's music, ready for Instagram and TikTok: {saved}"
+        f"Saved part 2 with the Sokii mark, with the edit's music, ready to post: {saved}"
     )
     assert "Note: Some episodes had no mark." in lines
 

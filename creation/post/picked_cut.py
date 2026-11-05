@@ -5,9 +5,10 @@ episode still gets one cut). The kit sends the pick and prints what the server m
 cut on this laptop, no state is kept, and the files stay on the server (links are printed).
 
 Parts only (founder, 5 Nov 2026): a punchy edit is split into parts, never one whole video. Before
-anything is made the kit asks the server for the plan, prints the server's own words and every part,
-and asks "Make it?". Anything else the human types goes back to the server as the change they want;
-the server plans again and the kit prints it again. Nothing is made until they say yes.
+anything is made the kit asks the server for the plan and prints the server's own words, which end
+"Make it, or tell me what to change?", with the episodes each part plays. Anything else the human
+types goes back to the server as the change they want, with the last plan as it was answered, so
+each change keeps the ones before it. Nothing is made until they say yes.
 
 Only what the server holds (5 Nov 2026): the edit is cut from each episode as the server keeps it.
 A video file on this laptop is never uploaded for an episode; a better take has to become that
@@ -56,7 +57,8 @@ MIN_PICKED = 2
 POLL_RETRY_WAITS = (2.0, 4.0, 8.0, 15.0)
 #: ``--part-text N:<side>=TEXT`` side -> the field the server takes.
 TEXT_SIDES = {"opening": "opening_text", "ending": "ending_text"}
-GO_AHEAD = "Make it? [y/N, or type what to change] "
+#: The server's summary already ends "Make it, or tell me what to change?"; the kit only adds the answers.
+GO_AHEAD = "[y/N, or type what to change] "
 NEWEST_VERSION_NOTICE = (
     "Heads up: I'll make this edit from the episodes saved on our server. A version made on your "
     "computer, with your own captions or sound, is not used. To use a better take, make it that "
@@ -89,14 +91,16 @@ class PartChoice:
     """What the human set for the parts; anything left ``None`` or out is the server's suggestion.
 
     ``texts`` maps a part's number as printed (``Part 4``) to the fields it overrides,
-    ``opening_text`` and/or ``ending_text``. ``change_request`` is what the human typed (or
-    ``--change``) for the server to change in its plan; only the plan route takes it.
+    ``opening_text`` and/or ``ending_text``. ``splits`` is the last plan's own split points, sent
+    back as the server answered them and never worked out here. ``change_request`` is what the
+    human typed (or ``--change``) for the server to change in its plan; only the plan route takes it.
     """
 
     part_count: int | None = None
     start_number: int | None = None
     texts: Mapping[int, Mapping[str, str]] = field(default_factory=dict)
     change_request: str | None = None
+    splits: Sequence[float] | None = None
 
     def body(self) -> dict[str, Any]:
         """The optional plan fields, as the plan and the cut both take them."""
@@ -110,6 +114,8 @@ class PartChoice:
             out["texts"] = [
                 {"number": n, **dict(self.texts[n])} for n in sorted(self.texts)
             ]
+        if self.splits is not None:
+            out["splits"] = list(self.splits)
         if self.change_request:
             out["change_request"] = self.change_request
         return out
@@ -125,10 +131,10 @@ class CutStop(Exception):
 
 
 class PlanRefused(CutStop):
-    """The server's 422 on a setting the human gave: a text won't fit, or the part count is out of range.
+    """The server's 422 on a setting: a text won't fit, the part count or a part's length is out of range.
 
-    ``message`` is the server's plain words. ``setting`` names what to drop to plan again:
-    ``"texts"`` or ``"part_count"``.
+    ``message`` is the plain words to show. ``setting`` names what to drop to plan again:
+    ``"texts"``, ``"part_count"`` or ``"splits"``.
     """
 
     def __init__(self, message: str, setting: str) -> None:
@@ -140,7 +146,11 @@ class PlanRefused(CutStop):
         """The human's settings minus the one the server refused (and minus the typed change)."""
 
         if self.setting == "texts":
-            return PartChoice(choice.part_count, choice.start_number)
+            return PartChoice(
+                choice.part_count, choice.start_number, splits=choice.splits
+            )
+        if self.setting == "splits":
+            return PartChoice(choice.part_count, choice.start_number, choice.texts)
         return PartChoice(None, choice.start_number, choice.texts)
 
 
@@ -335,6 +345,11 @@ def _check(response: httpx.Response, *, what: str) -> Any:
             f"(the server suggests {details.get('parts_suggested')}).",
             "part_count",
         )
+    if response.status_code == 422 and error.get("code") == "part_length_out_of_range":
+        which = f"Part {details.get('part')} would be {details.get('seconds')} s"
+        if "part" not in details or "seconds" not in details:
+            which = "A part would run too short or too long"
+        raise PlanRefused(f"{which}; parts must be 35 to 68 s.", "splits")
     if response.status_code == 409 and error.get("code") == "series_cut_not_ready":
         raise CutStop(
             f"NOT DONE: {message or 'the edit is not ready yet.'} Run the same command again later; nothing was made."
@@ -455,16 +470,37 @@ def _clock(seconds: Any) -> str:
 
 
 def plan_lines(plan: Mapping[str, Any]) -> list[str]:
-    """The server's summary as it sent it, then its question back if it has one.
+    """The server's line about the change, its summary, and the episodes each part plays, all as sent.
 
-    The summary already names every part; only a server that sends none gets one line per part.
+    The summary names every part with its length and ends with the question, so the episode lines
+    go just above that last line. Only a server that sends no summary gets one line per part.
     """
 
+    clarify = str(plan.get("clarify") or "").strip()
     summary = str(plan.get("summary") or "").strip()
     lines = summary.splitlines() if summary else _part_lines(plan)
-    clarify = str(plan.get("clarify") or "").strip()
-    if clarify:
-        lines.append(clarify)
+    return [
+        *([clarify] if clarify else []),
+        *lines[:-1],
+        *_episode_lines(plan),
+        *lines[-1:],
+    ]
+
+
+def _episode_lines(plan: Mapping[str, Any]) -> list[str]:
+    lines = []
+    for p in plan.get("parts") or []:
+        played = (
+            [e for e in (p.get("episodes") or []) if isinstance(e, dict)]
+            if isinstance(p, dict)
+            else []
+        )
+        if played:
+            names = ", ".join(
+                f"{e.get('show_title') or e.get('spine_id')} ep {e.get('episode')}"
+                for e in played
+            )
+            lines.append(f"Part {p.get('number')} plays {names}.")
     return lines
 
 
@@ -478,21 +514,27 @@ def _part_lines(plan: Mapping[str, Any]) -> list[str]:
                 f"Part {p.get('number')} · about {_clock(p.get('approx_seconds'))} · "
                 f'starts with "{p.get("opening_text") or ""}" · ends with "{p.get("ending_text") or ""}"'
             )
-    return lines
+    return [*lines, "Make it, or tell me what to change?"]
 
 
 def planned_choice(plan: Mapping[str, Any]) -> PartChoice:
-    """Exactly the parts this plan shows: its count, first number and every part's texts."""
+    """Exactly the parts this plan shows: its count, first number, every part's texts and its splits.
+
+    The plan's other part fields (``cover_url``, ``episodes``, ``start_s``, ``end_s``) are for
+    showing only: the server refuses them on a request.
+    """
 
     texts = {
         int(p["number"]): {k: str(p[k]) for k in TEXT_SIDES.values() if p.get(k)}
         for p in plan.get("parts") or []
         if isinstance(p, dict) and str(p.get("number", "")).isdecimal()
     }
+    splits = plan.get("splits")
     return PartChoice(
         int(plan["part_count"]),
         int(plan["start_number"]),
         {n: t for n, t in texts.items() if t},
+        splits=list(splits) if isinstance(splits, list) else None,
     )
 
 
@@ -510,8 +552,9 @@ def confirm_parts(
 ) -> PartChoice:
     """Plan, print and ask "Make it?" until the human says yes; returns the parts the cut must make.
 
-    Any other words the human types go back to the server as ``change_request`` and the new plan
-    is printed and asked again. ``yes`` (``--yes``) takes the printed plan without asking. The
+    Any other words the human types go back to the server as ``change_request``, on top of the last
+    plan as it was answered, so a second change keeps the first; the new plan is printed and asked
+    again. ``yes`` (``--yes``) takes the printed plan without asking. The
     returned choice pins the last printed plan, so the cut makes exactly what was shown.
 
     Raises
@@ -550,7 +593,7 @@ def confirm_parts(
             return planned_choice(plan)
         if answer.lower() in ("", "n", "no"):
             raise CutStop(NOT_CONFIRMED)
-        choice = replace(choice, change_request=answer)
+        choice = replace(planned_choice(plan), change_request=answer)
 
 
 def run_cut(
@@ -798,8 +841,8 @@ def _ready_lines(body: Mapping[str, Any], picked: int, cut_id: str) -> list[str]
         *([f"Server note: {reason}", retry_line(cut_id)] if reason else []),
         *_music_lines(body.get("music"), cut_id),
         *series_cut_file_lines(cut),
-        f'Edit id: {cut_id}. Rename it with: fictora-produce cut-rename {cut_id} "NAME". Save it with the Sokii '
-        f"mark for Instagram and TikTok with: fictora-produce cut-save {cut_id} --part N (no --part: the whole edit).",
+        f'Edit id: {cut_id}. Rename it with: fictora-produce cut-rename {cut_id} "NAME". Save a part with the '
+        f"Sokii mark with: fictora-produce cut-save {cut_id} --part N.",
     ]
     # A failed remake and failed music both offer the same retry; say it once.
     return list(dict.fromkeys(lines))
