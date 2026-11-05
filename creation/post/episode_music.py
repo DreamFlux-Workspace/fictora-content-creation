@@ -18,7 +18,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal, TextIO
 
-from creation.music_feeling import _error_code, _error_text, _older_server
+from creation.harness.http_util import envelope_code, older_server
+from creation.music_feeling import _error_text
 
 #: Exit code when nothing was applied (refused, not possible here, or the server said no).
 NOT_APPLIED = 2
@@ -163,7 +164,7 @@ def change_music(
 
     path = route(spine_id, episode_id)
     status, view = run.get_optional(path)
-    if _older_server(status, view):
+    if older_server(status, view):
         print(OLDER_SERVER, file=out)
         return NOT_APPLIED
     if status >= 400 or not isinstance(view, Mapping):
@@ -224,7 +225,7 @@ def change_music(
         _body(action, feeling, plan_id=plan_id),
         idempotency_key=f"{key}-apply-{plan_id}-{uuid.uuid4().hex[:8]}",
     )
-    if status == 409 and _error_code(change) == PLAN_CHANGED:
+    if status == 409 and envelope_code(change) == PLAN_CHANGED:
         print(
             "!! not applied: the plan changed on the server since it was read (the episode or the price moved). "
             "Nothing was spent. Run the same command again to see the new plan.",
