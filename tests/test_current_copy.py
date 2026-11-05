@@ -183,15 +183,12 @@ def test_an_old_server_falls_back_to_its_current_final(
     assert row["copy"] == f"file 1a2b3c4d5e6f, {watched.name}"
 
 
-@pytest.mark.parametrize("final", [None, {"export_sha256": OLD_SHA, "current": False}])
-def test_an_old_server_without_a_current_final_falls_back_to_the_newest_desk_file(
-    post_desk: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    final: dict[str, Any] | None,
+def test_an_old_server_without_a_final_falls_back_to_the_newest_desk_file(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _every_take_kept(post_desk)
     newest = _downloaded(post_desk)
-    _standing(monkeypatch, **({"final": final} if final else {}))
+    _standing(monkeypatch)
 
     row = _row(post_desk)
     copies = current_copy.show_copies(post_desk)
@@ -210,6 +207,18 @@ def test_an_old_server_with_nothing_on_the_desk_waits_on_finish(
     _standing(monkeypatch)
 
     assert _row(post_desk)["waiting"] == CopyStatus.WAITING
+
+
+def test_an_old_servers_final_of_an_older_cut_is_never_the_copy_to_post(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _every_take_kept(post_desk)
+    _downloaded(post_desk)
+    _standing(monkeypatch, final={"export_sha256": OLD_SHA, "current": False})
+
+    row = _row(post_desk)
+
+    assert (row["waiting"], row["copy"]) == (CopyStatus.WAITING, "")
 
 
 def test_an_unreachable_server_says_not_checked_everywhere_and_never_done(

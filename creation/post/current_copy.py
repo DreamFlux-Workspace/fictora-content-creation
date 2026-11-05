@@ -7,8 +7,9 @@ the desk keeps nothing about it.
 
 * ``current_copy`` names the copy; ``current_copy_unchecked`` says the server could not read the
   video the app plays, so the copy is only the newest one saved: watch it before posting.
-* A server without #1407 has neither. Its ``final`` field still names the copy when ``current``;
-  otherwise the copy to post is the newest file ``finish`` downloaded to the desk, flagged the same way.
+* A server without #1407 has neither. Its ``final`` field names the copy when ``current``; a final
+  that is not current is a copy of an older cut, so there is none until ``finish`` runs again. With
+  no final at all, the copy to post is the newest file ``finish`` downloaded, flagged as unchecked.
 """
 
 from __future__ import annotations
@@ -207,8 +208,12 @@ def _episode_copy(
     if "current_copy_unchecked" in row or row.get("video") != "finished":
         return None
     final = row.get("final")
-    if isinstance(final, dict) and final.get("current") is True:
-        return _from_server(final, CopySource.OLD_SERVER_FINAL, folder, episode)
+    if isinstance(final, dict):
+        return (
+            _from_server(final, CopySource.OLD_SERVER_FINAL, folder, episode)
+            if final.get("current") is True
+            else None
+        )
     newest = newest_episode_file(folder, episode) if folder.is_dir() else None
     return CurrentCopy(CopySource.DESK_NEWEST, desk_file=newest) if newest else None
 
