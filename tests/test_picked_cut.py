@@ -398,18 +398,30 @@ def test_polls_until_ready_and_says_it_is_working() -> None:
     assert lines[1] == "Whole show: https://media.example/all.mp4"
 
 
-def test_failed_cut_prints_the_servers_reason() -> None:
+def test_failed_cut_prints_the_servers_reason_and_retry_by_id() -> None:
     server = Server(polls=[{"status": "failed", "reason": "episode 2 has no sound"}])
-    with pytest.raises(CutStop, match="episode 2 has no sound"):
+    with pytest.raises(CutStop, match="episode 2 has no sound") as stop:
         run_cut(P2, api=API, transport=transport(server))
+    assert stop.value.line.endswith("To try again, run: fictora-produce cut-retry c1")
 
 
-def test_waiting_too_long_says_to_run_it_again() -> None:
+def test_ready_cut_prints_its_id_for_rename_and_save() -> None:
+    lines = run_cut(P2, api=API, transport=transport(Server()))
+    assert lines[-1].startswith("Edit id: c1.")
+    assert "cut-rename c1" in lines[-1] and "cut-save c1 --part N" in lines[-1]
+
+
+def test_failed_music_says_to_retry_the_same_edit_by_id() -> None:
+    music = {"state": "failed", "message": "the music could not be made."}
+    server = Server(polls=[{"status": "ready", "series_cut": CUT, "music": music}])
+    lines = run_cut(P2, api=API, transport=transport(server), new_music=True)
+    assert "To try again, run: fictora-produce cut-retry c1" in lines
+
+
+def test_waiting_too_long_says_to_retry_the_same_edit_by_id() -> None:
     server = Server(polls=[{"status": "making"}])
     now = [0.0]
-    with pytest.raises(
-        CutStop, match="run the same command again|Run the same command again"
-    ):
+    with pytest.raises(CutStop, match="fictora-produce cut-retry c1"):
         run_cut(
             P2,
             wait_seconds=30,
