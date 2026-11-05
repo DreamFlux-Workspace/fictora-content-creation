@@ -13,6 +13,7 @@ keeps nothing; a plain ``finish`` downloads the new cut.
 
 from __future__ import annotations
 
+import sys
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
@@ -181,13 +182,13 @@ def run_caption(
     if where is None:
         print(
             f"Refused: the desk has no filmed episode {episode}, so the server cannot find it to caption.",
-            file=out,
+            file=sys.stderr,
         )
         return 2
     try:
         base, headers = api if api is not None else _api(desk)
     except SystemExit as exc:  # no kit token
-        print(f"Refused: {exc.code}", file=out)
+        print(f"Refused: {exc.code}", file=sys.stderr)
         return 2
     ok, line = send_caption(
         base_url=base,
@@ -198,8 +199,11 @@ def run_caption(
         retime=retime,
         transport=transport,
     )
-    print(line if ok else f"Refused: {line}", file=out)
-    return 0 if ok else 2
+    if not ok:
+        print(f"Refused: {line}", file=sys.stderr)
+        return 2
+    print(line, file=out)
+    return 0
 
 
 __all__ = ["run_caption", "send_caption", "server_style"]

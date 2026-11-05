@@ -27,16 +27,21 @@ SAVED = "The edit is saved. The episode is being put back together with it and p
 class Server:
     """Keeps every request; answers a post edit as taken and a quote as free."""
 
-    def __init__(self) -> None:
+    def __init__(self, quote_tokens: int = 0) -> None:
         self.requests: list[httpx.Request] = []
+        self.quote_tokens = quote_tokens
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
+        if request.url.path.endswith("/revoice") and json.loads(request.content).get(
+            "dry_run"
+        ):
+            return httpx.Response(200, json={"quote": {"tokens": self.quote_tokens}})
         if request.url.path.endswith("/quote"):
             return httpx.Response(
                 200,
                 json={
-                    "tokens": 0,
+                    "tokens": self.quote_tokens,
                     "voiced_lines": 0,
                     "voiced_characters": 0,
                     "new_sounds": 0,
@@ -48,6 +53,15 @@ class Server:
 
     def sent(self) -> list[tuple[str, dict[str, Any]]]:
         return [(r.url.path, json.loads(r.content)) for r in self.requests]
+
+    def applied(self) -> list[tuple[str, dict[str, Any]]]:
+        """What was sent for real: the kit asks the price first, then applies."""
+
+        return [
+            (path, body)
+            for path, body in self.sent()
+            if not path.endswith("/quote") and not body.get("dry_run")
+        ]
 
 
 @pytest.fixture
@@ -94,7 +108,7 @@ def test_a_cut_is_saved_on_the_server_and_no_file_on_the_desk_changes(
     )
 
     assert code == 0
-    assert server.sent() == [
+    assert server.applied() == [
         (
             POST_EDIT,
             {
@@ -103,7 +117,9 @@ def test_a_cut_is_saved_on_the_server_and_no_file_on_the_desk_changes(
             },
         )
     ]
-    assert server.requests[0].headers["Idempotency-Key"].startswith("kit-take-edit-t2-")
+    assert (
+        server.requests[-1].headers["Idempotency-Key"].startswith("kit-take-edit-t2-")
+    )
     assert _files(post_desk) == before, "the kit edits no file"
     out = capsys.readouterr().out
     assert "t2 edited on the server (1 cut stretch): free (0 tokens)." in out
@@ -123,7 +139,7 @@ def test_blur_boxes_go_as_fractions_of_the_frame_over_one_window(
                  "--from", "2.38", "--to", "6.62"])  # fmt: skip
 
     assert code == 0
-    assert server.sent() == [(POST_EDIT, {
+    assert server.applied() == [(POST_EDIT, {
         "blurs": [
             {"start_seconds": 2.38, "end_seconds": 6.62, "x": 0.1, "y": 0.25, "width": 0.4, "height": 0.1},
             {"start_seconds": 2.38, "end_seconds": 6.62, "x": 0.1003, "y": 0.3001, "width": 0.3997, "height": 0.1003},

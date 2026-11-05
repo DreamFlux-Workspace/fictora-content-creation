@@ -451,7 +451,7 @@ def send_server_edit(
                 "with --episode N --take tK. Times are seconds on the take as filmed (take facts times, the same "
                 f"as finish --mute), not on a finished file. {NOTHING_CHANGED}"
             )
-        if args.take_id is None or args.episode is None:
+        if args.take_id is None or args.episode is None or args.desk is None:
             raise TakeEditStop(
                 f"{what} edits one take on the server: add --episode N --take tK. {NOTHING_CHANGED}"
             )

@@ -8,8 +8,8 @@ scratched when a free edit on this laptop would have saved them:
   could have reconsidered" (``trim --cut``, ``tempo --from --to``);
 - "cut the part where the male MC looked at himself" (``trim --cut``, or the
   handles ``trim --start/--end`` when it is at an end);
-- "scenes being out of order can be made in order ... for free" (``join
-  --take-file`` in the right order for takes);
+- "scenes being out of order" (no free edit: inside one take, film that take
+  again; two swapped takes are the story's beat order, which the core team fixes);
 - "instead of the cut you could ... zoom into the stranger's face as he enters
   the doorway" (``zoom``: a punch-in hides a jump cut or crops a stray element);
 - "take 1 raw is decent at best, could be repurposed for some other scene"
@@ -67,17 +67,12 @@ FREE_FIXES: tuple[FreeFix, ...] = (
     FreeFix(
         "a shot that holds the mistake too long",
         "speed up only that shot",
-        "fictora-produce tempo --desk {desk} --take-file {file} --factor 1.5 --from S --to S",
+        "fictora-produce tempo --desk {desk} --episode {episode} --take {take} --factor 1.5 --from S --to S",
     ),
     FreeFix(
         "a jump cut, or a stray element at the edge of the frame",
         "punch in on the shot (before finish)",
         "fictora-produce zoom --desk {desk} --episode {episode} --take {take} --factor 1.2 --center X,Y --from S --to S",
-    ),
-    FreeFix(
-        "takes or episodes in the wrong order",
-        "join them in the right order",
-        "fictora-produce join --desk {desk} --take-file F2 --take-file F1",
     ),
 )
 
@@ -97,7 +92,8 @@ _FREE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (
         re.compile(r"\b(out of order|wrong order|swapped)\b", re.IGNORECASE),
-        "takes in the wrong order: `join --take-file` them in the right order",
+        "takes in the wrong order: there is no free edit. Inside one take, film that take again; if two takes are "
+        "swapped, the story's beat order needs fixing (ask the core team)",
     ),
     (
         re.compile(
@@ -234,7 +230,7 @@ def refilm_cause_lines(cause: str | None) -> list[str]:
     hints = free_fix_hints(text)
     if not hints:
         return [
-            "Salvage first: could a free edit save the take (trim, speed up a shot, zoom, reorder)? "
+            "Salvage first: could a free edit save the take (trim, speed up a shot, or zoom)? "
             "`review` lists them; re-film only when none does."
         ]
     return [

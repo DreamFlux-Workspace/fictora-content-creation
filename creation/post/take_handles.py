@@ -526,7 +526,7 @@ def apply_take_handles(
         note += (
             f"\n!! the creator's start ({handles.start_s:.3f} s) reaches into the {held_head_s:.3f} s the server "
             "held: the server plays the original's frames there, this cut shows the held copies. If those frames "
-            "matter, `review --original` and finish --take-file the original"
+            "matter, `review --original`, then set the take's start earlier with `trim --start S`"
         )
     return HandleCut(output, new_record, note)
 

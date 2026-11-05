@@ -1033,7 +1033,14 @@ EDIT_JOB = "job_video_1"
 class EditServer:
     """The stand-in take-edit routes: keeps every request, answers from a queue (default: taken)."""
 
-    def __init__(self, *answers: tuple[int, Any], drop: bool = False) -> None:
+    def __init__(
+        self,
+        *answers: tuple[int, Any],
+        drop: bool = False,
+        edit_tokens: int = 2,
+        revoice_tokens: int = 3,
+    ) -> None:
+        self.edit_tokens, self.revoice_tokens = edit_tokens, revoice_tokens
         self.answers = list(answers)
         self.requests: list[httpx.Request] = []
         self.drop = drop
@@ -1050,7 +1057,7 @@ class EditServer:
             return httpx.Response(
                 200,
                 json={
-                    "tokens": 2,
+                    "tokens": self.edit_tokens,
                     "voiced_lines": 0,
                     "voiced_characters": 0,
                     "new_sounds": 1,
@@ -1060,7 +1067,7 @@ class EditServer:
             dry = json.loads(request.content)["dry_run"]
             return httpx.Response(200, json={
                 "job_id": EDIT_JOB, "take_index": 2, "cast_id": "cast_aya", "edit": {},
-                "quote": {"tokens": 3}, "applied": None if dry else {
+                "quote": {"tokens": self.revoice_tokens}, "applied": None if dry else {
                     "tokens": 3, "episode_not_redelivered": "The edit is saved. The episode is being put "
                     "back together with it and plays the new cut soon."}})  # fmt: skip
         return httpx.Response(200, json={
@@ -1071,6 +1078,15 @@ class EditServer:
 
     def sent(self) -> list[tuple[str, dict[str, Any]]]:
         return [(r.url.path, json.loads(r.content)) for r in self.requests]
+
+    def applied(self) -> list[tuple[str, dict[str, Any]]]:
+        """What was sent for real: the kit asks the price first, then applies."""
+
+        return [
+            (path, body)
+            for path, body in self.sent()
+            if not path.endswith("/quote") and not body.get("dry_run")
+        ]
 
 
 @pytest.fixture
@@ -1119,7 +1135,9 @@ def test_mute_goes_to_the_servers_post_edit_and_prints_its_answer(
 ) -> None:
     server, finished = edit_server
 
-    code = _finish(post_desk, "--take", "t2", "--mute", "1.2-2.0", "--mute", "4-4.5")
+    code = _finish(
+        post_desk, "--take", "t2", "--mute", "1.2-2.0", "--mute", "4-4.5", "--yes"
+    )
 
     assert code == 0 and finished == []
     assert server.sent() == [
@@ -1151,7 +1169,12 @@ def test_a_voice_line_file_is_laid_as_the_servers_copy(
     )
 
     code = _finish(
-        post_desk, "--take", "t2", "--voice", "ep01/voices/voice-ep01-aya-v1.mp3@3.5@-2"
+        post_desk,
+        "--take",
+        "t2",
+        "--voice",
+        "ep01/voices/voice-ep01-aya-v1.mp3@3.5@-2",
+        "--yes",
     )
 
     assert code == 0
@@ -1288,6 +1311,48 @@ def test_a_paid_take_edit_without_yes_prints_the_price_and_spends_nothing(
     assert "Nothing was changed or charged; add --yes to apply." in err
 
 
+def test_a_free_quote_applies_without_yes_after_asking_the_price_first(
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, _ = edit_server
+    server.edit_tokens = 0
+
+    assert _finish(post_desk, "--take", "t2", "--mute", "1-2") == 0
+
+    assert [path for path, _ in server.sent()] == [
+        POST_EDIT_PATH + "/quote",
+        POST_EDIT_PATH,
+    ]
+    assert "t2 edited on the server" in capsys.readouterr().out
+
+
+def test_a_quote_over_zero_tokens_stops_without_yes_even_for_a_mute(
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, _ = edit_server
+    server.edit_tokens = 1
+
+    assert _finish(post_desk, "--take", "t2", "--mute", "1-2") == 2
+
+    assert [path for path, _ in server.sent()] == [POST_EDIT_PATH + "/quote"]
+    assert "add --yes to apply" in capsys.readouterr().err
+
+
+def test_a_free_revoice_quote_applies_without_yes(
+    post_desk: Path, edit_server: tuple[EditServer, list[Any]]
+) -> None:
+    server, _ = edit_server
+    server.revoice_tokens = 0
+
+    assert _finish(post_desk, "--take", "t2", "--voice", "Aya") == 0
+
+    assert [body.get("dry_run") for _, body in server.sent()] == [True, False]
+
+
 def test_preview_asks_the_quote_and_the_dry_run_and_changes_nothing(
     post_desk: Path,
     edit_server: tuple[EditServer, list[Any]],
@@ -1333,7 +1398,7 @@ def test_every_take_edit_asks_the_server_to_keep_the_takes_earlier_edits(
 ) -> None:
     server, _ = edit_server
 
-    assert _finish(post_desk, "--take", "t2", "--impact-at", "2") == 0
+    assert _finish(post_desk, "--take", "t2", "--impact-at", "2", "--yes") == 0
 
     ((path, body),) = server.sent()
     assert path == POST_EDIT_PATH and body["add_to_current_edit"] is True
@@ -1349,7 +1414,7 @@ def test_an_older_server_gets_the_edit_once_more_without_the_field_and_a_plain_w
     server, _ = edit_server
     server.answers.append(OLD_SERVER_EXTRA_FIELD)
 
-    assert _finish(post_desk, "--take", "t2", "--mute", "1-2") == 0
+    assert _finish(post_desk, "--take", "t2", "--mute", "1-2", "--yes") == 0
 
     sent = server.sent()
     assert [path for path, _ in sent] == [POST_EDIT_PATH, POST_EDIT_PATH]

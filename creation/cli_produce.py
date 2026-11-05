@@ -23,6 +23,8 @@ from creation.cli_post import (
     POST_COMMANDS,
     add_caption_style_arg,
     add_post_parsers,
+    add_retired_flags,
+    retired_refusal,
     dispatch_post,
 )
 from creation.cli_text import HELP_SUFFIX, force_utf8_output, text_or_file
@@ -355,10 +357,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "mistimed captions instead (core team). Nothing is burned on this laptop; a plain finish downloads it.",
     )
     cap.add_argument("--desk", type=Path, required=True)
-    cap.add_argument("--episode", type=int, required=True)
+    cap.add_argument("--episode", type=int, default=None)
     cap.add_argument(
         "--take", dest="take_file", type=Path, default=None, help=argparse.SUPPRESS
     )
+    add_retired_flags(cap, "caption")
     add_caption_style_arg(cap)
     cap.add_argument(
         "--retime",
@@ -676,11 +679,22 @@ def _run_command(args: argparse.Namespace) -> int:
         if args.command == "caption":
             from creation.captions import resolve_caption_style
 
+            old = list(args.laptop_only or [])
+            if old:
+                print(retired_refusal("caption", old), file=sys.stderr)
+                return 2
             if args.take_file is not None:
                 print(
                     "Stopped: caption is made on the server now and edits no file: drop --take and name the "
                     "episode with --episode N. The server captions the whole delivered episode. Nothing was "
                     "changed or charged.",
+                    file=sys.stderr,
+                )
+                return 2
+            if args.episode is None:
+                print(
+                    "Stopped: caption is made on the server for a whole episode: add --episode N. "
+                    "Nothing was changed or charged.",
                     file=sys.stderr,
                 )
                 return 2

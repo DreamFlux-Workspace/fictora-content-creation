@@ -353,7 +353,7 @@ def test_head_board_frames_are_fine_on_a_raw_take_and_a_fault_after_deboard(
         and on_raw.data["later"] == []
     )
     assert "finish removes them" in "\n".join(on_raw.lines())
-    assert after.status == WARN and "still the board on a deboarded file" in "\n".join(
+    assert after.status == WARN and "still the board: set the take" in "\n".join(
         after.lines()
     )
 

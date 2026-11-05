@@ -1,34 +1,25 @@
 # Local captions (house recipe)
 
-> **5 Nov 2026:** the `caption` command no longer burns captions on this laptop. `caption --desk D --episode N`
-> has the server caption the delivered episode (`--retime` re-times mistimed captions, core team only), and a
-> plain `finish` downloads it. `--line-start` and `--line-end` are refused: the server times each caption from the line's own sound, and a caption that is mistimed goes to the core team for `--retime`. The rest of this page describes the older local burn, for reading old run notes.
-
-**Default desks** (`api_captions: true`) still run **`finish`** / **`caption`** on the **raw** take: the show's Bold or Subtle style on the laptop is the deliverable. The server may also burn **house** captions on the finished episode asset (Modal in prod); that does not replace local finish.
-
-Use this doc for timing and style when captions run **only on the laptop**: `api_captions: false`, `--no-api-captions`, or the `caption` command alone. The API always downloads a **raw scene MP4** (`ep01/api/17_raw_scene_clips.json` → `ep01/takes/take-ep01-t1-raw-vN.mp4`).
+> **5 Nov 2026:** the kit burns no captions on this laptop. `caption --desk D --episode N` has the server
+> caption the delivered episode (`--caption-style S` picks the look for that run, `--retime` re-times mistimed
+> captions, core team only), and a plain `finish` downloads it. `--take`, `--line-start`, `--line-end`,
+> `--words-json`, `--caption-scale` and `--no-open` are refused by name: the server times and sizes every caption
+> from the line's own sound, and a mistimed caption goes to the core team for `--retime`. The rest of this page
+> describes the older local burn, for reading old run notes.
 
 ## One command
 
 ```bash
-uv run fictora-produce caption --desk <desk>
+uv run fictora-produce caption --desk <desk> --episode N [--caption-style S] [--retime]
 ```
 
 | Option | Use |
 | --- | --- |
-| `--episode N` | Episode other than 1 |
-| `--take <path>` | A specific raw MP4 (default: newest `take-epNN-t1-raw-v*.mp4`) |
-| `--caption-style S` | `bold`, `subtle` (`house` is its older name), `plain` (white whole lines) or `none` (nothing burned). Default: the show's style (`caption_style` in the desk's `production.config.json`, else `bold` for a new show and `subtle` for one with finished episodes). Same flag on `finish` |
-| `--words-json J` | A transcript of the take (`/v1/transcripts` words) to time the lines on, on any show. Default: the newest `takes/take-epNN-t1-*words-vN.json` when captioning the raw take |
-| `--no-open` | Do not open the result |
+| `--episode N` | The delivered episode to caption (required) |
+| `--caption-style S` | `bold`, `subtle` (`house` is its older name), `plain` (white whole lines) or `none` (nothing captioned). Default: the show's style, kept on the server |
+| `--retime` | Join the episode again from its takes with freshly timed captions (core-team token only) |
 
-Writes, never overwriting:
-
-| File | Content |
-| --- | --- |
-| `takes/take-ep01-t1-house-vN.ass` | Caption cues |
-| `takes/take-ep01-t1-captioned-vN.mp4` | Raw take with captions burned in (audio copied) |
-| `run-notes.md` | One note with the files and, per line, when it is on screen and what timed it: `(words)`, `(speech)`, `(manual)`, or a mix such as `(words start, manual end)` |
+Prints the server's answer (the new cut's link) and writes nothing on the desk. A refusal prints one plain line on stderr and exits 2.
 
 ## House look
 

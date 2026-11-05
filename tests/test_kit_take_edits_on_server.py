@@ -101,7 +101,7 @@ def test_each_edit_is_sent_to_the_takes_post_edit_and_no_file_changes(
 
     assert _run(post_desk, command, *settings) == 0
 
-    assert server.sent() == [(POST_EDIT, {**sent, "add_to_current_edit": True})]
+    assert server.applied() == [(POST_EDIT, {**sent, "add_to_current_edit": True})]
     assert _files(post_desk) == before, "the kit edits no file"
     out = capsys.readouterr().out
     assert (
@@ -143,6 +143,10 @@ def test_revoice_without_yes_prints_the_price_and_spends_nothing(
     server: Server,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    server.quote_tokens = 3
+
+    server.quote_tokens = 3
+
     assert _run(post_desk, "revoice", "--cast", "kenji") == 2
 
     (request,) = server.requests
@@ -373,11 +377,13 @@ def test_a_caption_refusal_is_one_plain_line(
         == 2
     )
 
-    out = capsys.readouterr().out
+    captured = capsys.readouterr()
     assert (
-        "Refused: The server would not caption it (HTTP 409): Captions are on." in out
+        "Refused: The server would not caption it (HTTP 409): Captions are on."
+        in captured.err
     )
-    assert "The delivered episode was not changed." in out
+    assert "The delivered episode was not changed." in captured.err
+    assert "Refused" not in captured.out
 
 
 def test_tempo_never_changes_the_take_on_this_laptop(
@@ -394,3 +400,63 @@ def test_tempo_never_changes_the_take_on_this_laptop(
 
     assert _files(post_desk) == before, "no local tempo"
     assert "the server cannot find it to change its speed" in capsys.readouterr().err
+
+
+RETIRED = [
+    ("caption", ["--line-start", "1.0"], "--line-start"),
+    ("caption", ["--line-end", "2.0"], "--line-end"),
+    ("caption", ["--words-json", "w.json"], "--words-json"),
+    ("caption", ["--caption-scale", "1.2"], "--caption-scale"),
+    ("caption", ["--no-open"], "--no-open"),
+    ("revoice", ["--over-locked-voices"], "--over-locked-voices"),
+    ("revoice", ["--voice-db", "3"], "--voice-db"),
+    ("revoice", ["--words-json", "w.json"], "--words-json"),
+]
+
+
+@pytest.mark.parametrize(("command", "extra", "flag"), RETIRED)
+def test_each_retired_flag_is_refused_by_name_in_one_plain_sentence(
+    command: str,
+    extra: list[str],
+    flag: str,
+    post_desk: Path,
+    server: Server,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    base = (
+        ["caption", "--desk", str(post_desk), "--episode", "1"]
+        if command == "caption"
+        else ["revoice", "--desk", str(post_desk), "--cast", "kenji", "--episode", "1",
+              "--take", "t2", "--yes"]
+    )  # fmt: skip
+
+    assert main([*base, *extra]) == 2
+
+    err = capsys.readouterr().err
+    assert f"{command} no longer takes {flag}" in err
+    assert "usage:" not in err and "unrecognized" not in err
+    assert err.count("\n") == 1 and "Nothing was changed or charged." in err
+    assert server.requests == []
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["caption", "--desk", "{desk}", "--take", "F.mp4"],
+        ["voice-fx", "--file", "F.mp4", "--range", "0-1", "--preset", "phone"],
+        ["voice-fx", "--desk", "{desk}", "--file", "F.mp4", "--range", "0-1",
+         "--preset", "phone"],
+    ],
+)  # fmt: skip
+def test_the_old_forms_without_an_episode_get_the_plain_refusal_not_a_usage_error(
+    argv: list[str],
+    post_desk: Path,
+    server: Server,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main([part.format(desk=post_desk) for part in argv]) == 2
+
+    err = capsys.readouterr().err
+    assert err.startswith("Stopped:") and "usage:" not in err
+    assert "required" not in err
+    assert server.requests == []

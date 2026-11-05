@@ -297,7 +297,7 @@ from creation.post.soundtrack import (
     soundtrack_from,
     unheard_lines,
 )
-from creation.post.voice_fx import PRESETS as VOICE_FX_PRESETS
+from creation.post.voice_fx import PRESET_NAMES as VOICE_FX_PRESETS
 from creation.harness_rules import (
     OPENING_WINDOW_SECONDS,
     opening_sound_flat,
@@ -2008,7 +2008,7 @@ def run_finish(
             ask = (
                 f"!! the server left {doubt.frames} possible board frame(s) at the start as filmed "
                 f"({doubt.reason}); not held. Look at the start: if it is the board, run "
-                f"`deboard --episode {episode} --take {take_id} --hold-unsure` and finish --take-file the result"
+                f"set the take's start past it with `trim --episode {episode} --take {take_id} --start S`"
             )
             append_run_note(run_dir, f"Finish · deboard: {ask}")
             return StepReport("deboard", "skipped", ask)

@@ -35,9 +35,9 @@ Setting                            Server field
 
 Routes: ``POST /v1/video-generations/{job}/takes/{n}/post-edit`` (the edit),
 ``.../post-edit/quote`` and ``.../revoice`` with ``dry_run`` (``finish --preview``:
-the tokens, nothing changed). A paid edit (a re-voice or ``--cue``) is priced first
-the same way and sent only with ``--yes``, like ``music-note`` and ``film``. Times are seconds on the take as the server
-delivered it. Every edit is sent with ``add_to_current_edit`` (fictora-drama
+the tokens, nothing changed). Without ``--yes`` the server quotes every edit first; one that costs
+tokens is sent only with ``--yes``, like ``music-note`` and ``film``. Times are seconds on the take as
+the server delivered it. Every edit is sent with ``add_to_current_edit`` (fictora-drama
 #1193): the server adds it to the take's current edit, so an operator's
 earlier edits on the take are kept and only the new paid work is charged. A
 server older than that refuses the field (422); the kit then sends the edit
@@ -132,11 +132,6 @@ class TakeEditRequest:
         """Whether no edit setting was given."""
 
         return self.edit_body() is None and not self.revoice
-
-    def paid(self) -> bool:
-        """Whether the server spends tokens on it: a re-voice or a sound it makes (asked first, then ``--yes``)."""
-
-        return bool(self.revoice or self.cues)
 
 
 def _span(raw: str, flag: str) -> dict[str, Any]:
@@ -537,19 +532,18 @@ def send_take_edit(
 ) -> list[str]:
     """Send one take's edit (then any re-voices) and answer the server's words as lines to print.
 
-    A paid edit (:meth:`TakeEditRequest.paid`) without ``yes`` is priced only,
-    like ``music-note`` and ``film``: the server's quote is the stop line.
+    Without ``yes`` the server is asked the price first (the quote, free). A quote of
+    more than 0 tokens stops there, like ``music-note`` and ``film``; a free edit applies.
 
     Raises
     ------
     TakeEditStop
         With one plain line when the server refused or could not be reached, or with the
-        price of a paid edit sent without ``yes``.
+        price of an edit that costs tokens sent without ``yes``.
     """
 
-    asking = not preview and not yes and request.paid()
-    if asking:
-        quote = send_take_edit(
+    if not preview and not yes:
+        quote, tokens = _send(
             base_url=base_url,
             headers=headers,
             job_id=job_id,
@@ -559,9 +553,36 @@ def send_take_edit(
             preview=True,
             transport=transport,
         )
-        raise TakeEditStop(
-            f"{' '.join(quote[:-1])} Nothing was changed or charged; add --yes to apply."
-        )
+        if tokens > 0:
+            raise TakeEditStop(
+                f"{' '.join(quote[:-1])} Nothing was changed or charged; add --yes to apply."
+            )
+    return _send(
+        base_url=base_url,
+        headers=headers,
+        job_id=job_id,
+        take_index=take_index,
+        take_id=take_id,
+        request=request,
+        preview=preview,
+        transport=transport,
+    )[0]
+
+
+def _send(
+    *,
+    base_url: str,
+    headers: Mapping[str, str],
+    job_id: str,
+    take_index: int,
+    take_id: str,
+    request: TakeEditRequest,
+    preview: bool,
+    transport: httpx.BaseTransport | None,
+) -> tuple[list[str], int]:
+    """One round trip to the server: the lines to print and the tokens it quoted or took."""
+
+    spent = 0
     base = base_url.rstrip("/")
     lines: list[str] = []
     run = uuid.uuid4().hex[:12]
@@ -587,6 +608,7 @@ def send_take_edit(
                 raise TakeEditStop(refusal_line(status, answer, take_id=take_id))
             if replaced:
                 lines.append(replaced_warning(take_id, preview=preview))
+            spent += int(answer.get("tokens") or 0)
             if preview:
                 lines.append(
                     f"The {take_id} edit ({_counts(edit)}) would cost {_tokens(answer.get('tokens'))}."
@@ -613,6 +635,7 @@ def send_take_edit(
                 raise TakeEditStop(refusal_line(status, answer, take_id=take_id))
             quote = answer.get("quote") if isinstance(answer.get("quote"), dict) else {}
             if preview:
+                spent += int(quote.get("tokens") or 0)
                 lines.append(
                     f"Re-voicing {name}'s lines in take {take_id} would cost {_tokens(quote.get('tokens'))}."
                 )
@@ -620,6 +643,7 @@ def send_take_edit(
             applied = (
                 answer.get("applied") if isinstance(answer.get("applied"), dict) else {}
             )
+            spent += int(applied.get("tokens", quote.get("tokens")) or 0)
             lines.append(
                 f"{name}'s lines in take {take_id} re-voiced on the server: "
                 f"{_tokens(applied.get('tokens', quote.get('tokens')))}."
@@ -629,7 +653,7 @@ def send_take_edit(
                 or "The episode was put back together with the edit."
             )
     lines.append(PREVIEW_ONLY if preview else NEXT_STEP)
-    return lines
+    return lines, spent
 
 
 def run_take_edit(

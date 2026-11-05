@@ -1,21 +1,19 @@
-"""Salvage before re-filming: free edits first (zoom punch-in, trim, tempo, reorder), a reuse list, and the
+"""Salvage before re-filming: free edits first (trim, tempo, zoom), a reuse list, and the
 re-film price naming the free edit (Gallery Heiress review, 12 Oct 2026)."""
 
 from __future__ import annotations
 
-import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
-import numpy as np
+import re
+
 import pytest
-from conftest import needs_ffmpeg, shot_frames, write_frames
 
 from creation.cli_produce import main
-from creation.post.edit import BlurBox, punch_in, zoom_crop
-from creation.post.media import count_frames, decode_frames
+from creation.post import salvage
 from creation.post.salvage import (
+    FREE_FIXES,
     free_fix_hints,
     free_fix_lines,
     keep_for_reuse,
@@ -25,86 +23,6 @@ from creation.post.salvage import (
     reuse_lines,
 )
 
-W, H = 96, 168
-
-
-def _quadrant_frames(count: int = 48) -> list[Any]:
-    """A white square in the top-left corner on a blue gradient: what a punch-in pushes out of frame."""
-
-    frames = shot_frames(count, (40, 60, 200))
-    for frame in frames:
-        frame[0:16, 0:16] = 255
-    return frames
-
-
-def _frames(path: Path) -> np.ndarray:
-    return decode_frames(path, width=W, height=H)
-
-
-def _pcm(path: Path) -> bytes:
-    return subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(path), "-vn", "-f", "s16le", "-"],
-        capture_output=True, check=True,
-    ).stdout  # fmt: skip
-
-
-# --- zoom: the punch-in -----------------------------------------------------------------------------------------
-
-
-def test_zoom_crop_keeps_the_frame_shape_and_slides_inside_at_an_edge() -> None:
-    middle = zoom_crop(1080, 1920, 1.2)
-    assert (middle.w, middle.h) == (900, 1600)
-    assert (middle.x, middle.y) == (90, 160), "default: the middle of the frame"
-    corner = zoom_crop(1080, 1920, 1.2, (10, 10))
-    assert (corner.x, corner.y) == (0, 0), (
-        "a centre near the edge slides the window inward"
-    )
-    far = zoom_crop(1080, 1920, 2.0, (1079, 1919))
-    assert far == BlurBox(540, 960, 540, 960)
-    for bad in (1.0, 0.8, 2.5):
-        with pytest.raises(ValueError, match="punch-in"):
-            zoom_crop(1080, 1920, bad)
-    with pytest.raises(ValueError, match="outside the 1080x1920 frame"):
-        zoom_crop(1080, 1920, 1.2, (1200, 10))
-
-
-@needs_ffmpeg
-def test_punch_in_crops_out_the_corner_only_inside_the_window_and_copies_the_sound(
-    tmp_path: Path,
-) -> None:
-    take = write_frames(tmp_path / "take.mp4", _quadrant_frames(), tone=440)
-    out = punch_in(
-        take, tmp_path / "zoom.mp4", factor=1.5, center=(60, 110), start=1.0, end=1.5
-    )
-
-    assert out.crop == zoom_crop(W, H, 1.5, (60, 110)) and not out.whole_take
-    assert count_frames(out.output) == count_frames(take), "same length"
-    assert _pcm(out.output) == _pcm(take), "the sound is copied untouched"
-    before, after = _frames(take), _frames(out.output)
-    corner = (slice(2, 12), slice(2, 12))
-    assert before[30][corner].mean() > 230, "(the corner square is there)"
-    assert after[30][corner].mean() < 200, (
-        "inside the window the punch-in crops the corner out"
-    )
-    for index in (0, 10, 40, 47):
-        assert np.abs(after[index] - before[index]).mean() < 2, (
-            f"frame {index} (outside the window) unchanged"
-        )
-
-
-@needs_ffmpeg
-def test_punch_in_refuses_half_a_window_and_never_overwrites(tmp_path: Path) -> None:
-    take = write_frames(tmp_path / "take.mp4", _quadrant_frames(24), tone=440)
-    with pytest.raises(ValueError, match="go together"):
-        punch_in(take, tmp_path / "a.mp4", start=0.2)
-    with pytest.raises(ValueError, match="past the end"):
-        punch_in(take, tmp_path / "a.mp4", start=5.0, end=6.0)
-    whole = punch_in(take, tmp_path / "a.mp4")
-    assert whole.whole_take and whole.factor == 1.15
-    with pytest.raises(FileExistsError):
-        punch_in(take, tmp_path / "a.mp4")
-
-
 # --- the free-fix rules -----------------------------------------------------------------------------------------
 
 
@@ -113,7 +31,6 @@ def test_punch_in_refuses_half_a_window_and_never_overwrites(tmp_path: Path) -> 
     [
         ("same person rendered twice at shot 3", "trim --cut"),
         ("the male MC looked at himself for half a second", "trim --cut"),
-        ("scenes out of order", "join --take-file"),
         ("jump cut as the stranger enters the doorway", "zoom"),
         ("a stray hand in the corner", "zoom"),
     ],
@@ -146,13 +63,59 @@ def test_the_free_fix_block_names_every_free_edit_the_short_flaw_rule_and_the_re
 ):
     text = "\n".join(free_fix_lines("D", 2, "t1", take_file="F.mp4"))
     for command in ("trim --desk D --episode 2 --take t1 --cut", "trim --desk D --episode 2 --take t1 --start",
-                    "tempo --desk D --take-file F.mp4", "zoom --desk D --episode 2 --take t1", "join --desk D",
+                    "tempo --desk D --episode 2 --take t1", "zoom --desk D --episode 2 --take t1",
                     "keep-take --desk D --episode 2 --take t1"):  # fmt: skip
         assert command in text, command
     assert "0.5 s or less is a cut, never a re-film" in text
     assert "smear or melt on a face" in text
     for word in ("$", "model", "fal", "seedance", "h3"):
         assert word not in text.lower().replace("model voices", ""), word
+
+
+REFUSED = re.compile(r"--take-file|\bjoin\b|\bdeboard\b|--hold-unsure")
+WRONG_ORDER = "scenes out of order, the takes are swapped"
+
+
+def _every_salvage_line() -> list[str]:
+    lines = [
+        fix.command.format(desk="D", episode=2, take="t1", file="F.mp4")
+        for fix in FREE_FIXES
+    ]
+    lines += [hint for _, hint in salvage._FREE_HINTS]
+    lines += free_fix_lines("D", 2, "t1", take_file="F.mp4")
+    lines += free_fix_lines()
+    for cause in (
+        WRONG_ORDER,
+        "wrong order",
+        "double at shot 2",
+        "a pop",
+        "the ring is late",
+    ):
+        lines += free_fix_hints(cause) + refilm_cause_lines(cause)
+    return lines
+
+
+def test_no_salvage_hint_names_a_command_the_cli_refuses() -> None:
+    for line in _every_salvage_line():
+        assert not REFUSED.search(line), line
+
+
+def test_wrong_order_says_there_is_no_free_edit_and_names_who_fixes_it() -> None:
+    text = " ".join(free_fix_hints(WRONG_ORDER))
+    assert "no free edit" in text and "film that take again" in text
+    assert "core team" in text
+
+
+def test_no_printed_hint_in_the_kit_source_advises_a_refused_command() -> None:
+    root = Path(__file__).resolve().parents[1] / "creation" / "post"
+    forbidden = re.compile(
+        r"--hold-unsure`|run deboard|finish --take-file|`join --take-file|tempo --desk \{desk\} --take-file"
+    )
+    for name in ("salvage.py", "review.py", "finish.py", "take_handles.py"):
+        for number, line in enumerate((root / name).read_text().splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            assert not forbidden.search(line), f"{name}:{number}: {line.strip()}"
 
 
 # --- the re-film price names the free edit first -----------------------------------------------------------------

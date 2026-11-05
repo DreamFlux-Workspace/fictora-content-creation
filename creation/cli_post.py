@@ -156,6 +156,48 @@ class _LaptopOnly(argparse.Action):
         setattr(namespace, self.dest, seen)
 
 
+#: Old laptop settings of ``caption`` and ``revoice``: refused by name (the reason is the sentence's second half).
+RETIRED_FLAG_HOMES: dict[str, dict[str, str]] = {
+    "caption": {
+        "--line-start": "the server times each caption from the line's own sound",
+        "--line-end": "the server times each caption from the line's own sound",
+        "--words-json": "the server times each caption from the line's own sound",
+        "--caption-scale": "the server owns the size of the captions",
+        "--no-open": "nothing is opened or burned on this laptop",
+    },
+    "revoice": {
+        "--over-locked-voices": "the server always re-voices in the character's locked voice",
+        "--voice-db": "the server sets how loud the new lines are",
+        "--words-json": "the server times each line from its own sound",
+    },
+}
+
+
+def add_retired_flags(parser: argparse.ArgumentParser, command: str) -> None:
+    """Accept the old laptop settings of ``command`` so :func:`retired_refusal` can name them."""
+
+    for flag in RETIRED_FLAG_HOMES[command]:
+        parser.add_argument(
+            flag,
+            dest="laptop_only",
+            action=_LaptopOnly,
+            nargs="*",
+            default=None,
+            help=argparse.SUPPRESS,
+        )
+
+
+def retired_refusal(command: str, flags: list[str]) -> str:
+    """One plain sentence naming the old settings given to ``command`` (exit 2, nothing done)."""
+
+    homes = RETIRED_FLAG_HOMES[command]
+    reasons = list(dict.fromkeys(homes[flag] for flag in flags))
+    return (
+        f"Stopped: {command} no longer takes {', '.join(flags)} ({'; '.join(reasons)}). "
+        "Run it again without them. Nothing was changed or charged."
+    )
+
+
 def _add_server_finish_args(parser: argparse.ArgumentParser) -> None:
     """``--wait``, ``--json``, the hook line, and the old laptop settings (refused) on ``finish`` and ``join``."""
 
@@ -437,9 +479,10 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "come through an intercom, a phone or a radio. The server re-joins the episode and every later finish and "
         "join keeps it; no file on this laptop is edited.",
     )
-    fx.add_argument("--desk", type=Path, required=True)
-    fx.add_argument("--episode", type=int, required=True)
-    fx.add_argument("--take", dest="take_id", required=True, help=take_help)
+    # Not required here: an old command (--file, no --episode) gets the plain stop, not a usage error.
+    fx.add_argument("--desk", type=Path, default=None)
+    fx.add_argument("--episode", type=int, default=None)
+    fx.add_argument("--take", dest="take_id", default=None, help=take_help)
     fx.add_argument(
         "--range",
         dest="span",
@@ -468,8 +511,8 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     revoice.add_argument("--desk", type=Path, required=True)
     revoice.add_argument("--cast", required=True, help="cast_id or name.")
-    revoice.add_argument("--episode", type=int, required=True)
-    revoice.add_argument("--take", dest="take_id", required=True, help=take_help)
+    revoice.add_argument("--episode", type=int, default=None)
+    revoice.add_argument("--take", dest="take_id", default=None, help=take_help)
     revoice.add_argument(
         "--preview",
         action="store_true",
@@ -481,6 +524,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Spend the tokens. Without it the server's price is printed and nothing is changed.",
     )
     revoice.add_argument("--take-file", type=Path, default=None, help=argparse.SUPPRESS)
+    add_retired_flags(revoice, "revoice")
 
     line = sub.add_parser(
         "voice-line",
@@ -958,6 +1002,10 @@ def dispatch_post(args: argparse.Namespace) -> int:
         run_caption_style(args.desk, set_to=args.set_to)
         return 0
     if args.command in ("voice-fx", "revoice"):
+        old = list(getattr(args, "laptop_only", None) or [])
+        if old:
+            print(retired_refusal(args.command, old), file=sys.stderr)
+            return 2
         from creation.post.edit_commands import send_server_edit
         from creation.post.take_edit import (
             TakeEditRequest,
