@@ -72,6 +72,7 @@ NEXT_STEP = (
     "To see it on this laptop, run a plain finish in a few minutes; it downloads the new cut."
 )
 NOTHING_CHANGED = "Nothing was changed or charged."
+SERVER_SAYS_NOTHING_CHANGED = ("Nothing was changed.", "何も変更されていません。", "아무것도 바뀌지 않았어요.")
 PREVIEW_ONLY = "Preview only: nothing was changed or charged."
 
 _SPAN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*$")
@@ -393,6 +394,8 @@ def refusal_line(status: int, body: Any, *, take_id: str) -> str:
             "to download the new cut. Nothing was charged twice."
         )
     if code == "take_post_edit_unavailable":
+        if message.endswith(SERVER_SAYS_NOTHING_CHANGED):
+            return message
         return f"{said or 'Editing a take is not available on this server right now.'} {NOTHING_CHANGED}"
     if code == "take_not_ready":
         return f"{take_id} has not been delivered yet. Wait until filming is complete, then run this again. {NOTHING_CHANGED}"
