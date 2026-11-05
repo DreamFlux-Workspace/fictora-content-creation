@@ -34,14 +34,13 @@ import copy
 import io
 import json
 import os
-import re
 from datetime import date
 from pathlib import Path
 from typing import Any
 
 import pytest
 from conftest import make_take, needs_ffmpeg
-from test_hook_overlay_portrait_unchanged import REPO, _recording
+from test_hook_overlay_portrait_unchanged import REPO, _recording, _same
 from test_post_finish import FACTS, TWO_LINES, _board, fake_sfx
 from test_post_join import finished_take
 
@@ -57,32 +56,6 @@ LOCKED_LINES = [
     {"line_id": "l1", "cast_id": "cast_kenji", "start_s": 1.0, "end_s": 2.6, "off_screen": True},
     {"line_id": "l2", "cast_id": "cast_aya", "start_s": 3.2, "end_s": 4.6, "off_screen": False},
 ]  # fmt: skip
-
-
-#: A number in an ffmpeg argument or a caption file.
-_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
-#: How far a number measured from the test media may differ between machines. The takes are encoded
-#: on the machine running the test, and another ffmpeg build gives a container a few milliseconds more
-#: (a 5 s take probes 5.013 s on CI's ubuntu ffmpeg, 5.000 s on a laptop), which moves every length,
-#: trim and seek computed from it. Anything the letterbox work could change on a portrait show (a
-#: step, a filter, an argument, a caption's place, colour, chunk or italics, a timing shift of a
-#: frame or more) still differs.
-NUMBER_TOLERANCE = 0.03
-
-
-def _same(got: Any, want: Any) -> bool:
-    """Equal, except numbers inside strings may differ by :data:`NUMBER_TOLERANCE`."""
-
-    if isinstance(got, list) and isinstance(want, list):
-        return len(got) == len(want) and all(_same(g, w) for g, w in zip(got, want))
-    if not isinstance(got, str) or not isinstance(want, str):
-        return got == want
-    if _NUMBER.sub("#", got) != _NUMBER.sub("#", want):
-        return False
-    return all(
-        abs(float(g) - float(w)) <= NUMBER_TOLERANCE
-        for g, w in zip(_NUMBER.findall(got), _NUMBER.findall(want))
-    )
 
 
 def _check(key: str, calls: list[Any]) -> None:

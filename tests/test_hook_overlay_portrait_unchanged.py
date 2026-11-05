@@ -66,6 +66,7 @@ def _recording(monkeypatch: pytest.MonkeyPatch, roots: list[Path]) -> list[list[
             isinstance(args, (list, tuple))
             and args
             and "ffmpeg" in Path(str(args[0])).name
+            and "-filters" not in args
         ):
             calls.append(_normalised([str(x) for x in args], roots))
         return real(args, *a, **k)
@@ -74,13 +75,39 @@ def _recording(monkeypatch: pytest.MonkeyPatch, roots: list[Path]) -> list[list[
     return calls
 
 
+#: A number in an ffmpeg argument or a caption file.
+_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+#: How far a number measured from the test media may differ between machines. The takes are encoded
+#: on the machine running the test, and another ffmpeg build gives a container a few milliseconds more
+#: (a 5 s take probes 5.013 s on CI's ubuntu ffmpeg, 5.000 s on a laptop), which moves every length,
+#: trim and seek computed from it. Any real change (a step, a filter, an argument, a caption's place,
+#: colour, chunk or italics, a timing shift of a frame or more) still differs.
+NUMBER_TOLERANCE = 0.03
+
+
+def _same(got: Any, want: Any) -> bool:
+    """Equal, except numbers inside strings may differ by :data:`NUMBER_TOLERANCE`."""
+
+    if isinstance(got, list) and isinstance(want, list):
+        return len(got) == len(want) and all(_same(g, w) for g, w in zip(got, want))
+    if not isinstance(got, str) or not isinstance(want, str):
+        return got == want
+    if _NUMBER.sub("#", got) != _NUMBER.sub("#", want):
+        return False
+    return all(
+        abs(float(g) - float(w)) <= NUMBER_TOLERANCE
+        for g, w in zip(_NUMBER.findall(got), _NUMBER.findall(want))
+    )
+
+
 def _check(key: str, calls: list[list[str]]) -> None:
     golden: dict[str, Any] = json.loads(GOLDEN.read_text()) if GOLDEN.exists() else {}
     if os.environ.get("UPDATE_GOLDEN") == "1":
         golden[key] = calls
         GOLDEN.write_text(json.dumps(golden, indent=1) + "\n")
         return
-    assert calls == golden[key]
+    if not _same(calls, golden[key]):
+        assert calls == golden[key]  # the exact diff, for the reader
 
 
 def _without_action_trace(calls: list[list[str]]) -> list[list[str]]:
