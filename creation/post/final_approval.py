@@ -188,15 +188,36 @@ def _finals(got: httpx.Response) -> dict[int, ServerFinal]:
     }
 
 
-def _kit_api(desk: Path) -> tuple[str, dict[str, str]] | None:
-    """The kit's server and headers on the desk's session; ``None`` without a token."""
+class _NotChecked(Exception):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
-    from creation.post.server_finish import _api
+
+def _kit_api(desk: Path, *, env_token_only: bool) -> tuple[str, dict[str, str]]:
+    from creation.harness.credentials import (
+        env_drama_api_credentials,
+        load_drama_api_credentials,
+    )
+    from creation.harness.http_util import api_headers
+    from creation.production_state import load_production
 
     try:
-        return _api(desk)
-    except SystemExit:
-        return None
+        session_id = load_production(desk).session_id
+    except (ValueError, OSError):
+        raise _NotChecked("no kit session on the desk") from None
+    root = Path(__file__).resolve().parents[2]
+    try:
+        base, token = (
+            env_drama_api_credentials(root / ".env")
+            if env_token_only
+            else load_drama_api_credentials(root)
+        )
+    except (SystemExit, FileNotFoundError, ValueError):
+        raise _NotChecked("no kit token") from None
+    if not token:
+        raise _NotChecked("no kit token")
+    return base, api_headers(token, session_id)
 
 
 def show_finals(
@@ -205,6 +226,7 @@ def show_finals(
     api: tuple[str, Mapping[str, str]] | None = None,
     transport: httpx.BaseTransport | None = None,
     timeout: float = TIMEOUT_SECONDS,
+    env_token_only: bool = False,
 ) -> ShowFinals:
     """Every episode's final as the server's show standing holds it.
 
@@ -218,6 +240,8 @@ def show_finals(
         HTTP transport (tests fake the server with it).
     timeout
         Seconds the read may take.
+    env_token_only
+        Take the kit's token only from its ``.env``/environment, never from the Railway CLI.
 
     Returns
     -------
@@ -233,12 +257,11 @@ def show_finals(
     except (ValueError, OSError):
         return not_checked("no story on the desk yet")
     try:
-        found = api if api is not None else _kit_api(desk)
-    except (ValueError, OSError):
-        return not_checked("no kit session on the desk")
-    if found is None:
-        return not_checked("no kit token")
-    base, headers = found
+        base, headers = (
+            api if api is not None else _kit_api(desk, env_token_only=env_token_only)
+        )
+    except _NotChecked as exc:
+        return not_checked(exc.reason)
     try:
         with httpx.Client(transport=transport, timeout=timeout) as client:
             got = client.get(

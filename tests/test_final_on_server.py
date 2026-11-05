@@ -426,13 +426,37 @@ def test_a_gate_write_reads_the_finals_from_the_server(
     assert "| ep01 | done |" in (post_desk / QUEUE_FILENAME).read_text(encoding="utf-8")
 
 
-def test_without_a_kit_token_the_finals_are_not_checked_and_say_why(
-    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+def _loaders(
+    monkeypatch: pytest.MonkeyPatch, *, env: str = "", full: Any = None
 ) -> None:
-    def no_token(desk: Path) -> tuple[str, dict[str, str]]:
-        raise SystemExit("FICTORA_DRAMA_GENERATION_SERVICE_TOKEN must be set")
+    from creation.harness import credentials
 
-    monkeypatch.setattr(server_finish, "_api", no_token)
+    monkeypatch.setattr(
+        credentials, "env_drama_api_credentials", lambda *_a, **_k: (BASE, env)
+    )
+
+    def loader(*_a: object, **_k: object) -> tuple[str, str]:
+        if isinstance(full, BaseException):
+            raise full
+        if full is None:
+            raise AssertionError("the full loader (Railway CLI) must not be used")
+        return BASE, full
+
+    monkeypatch.setattr(credentials, "load_drama_api_credentials", loader)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        SystemExit("FICTORA_DRAMA_GENERATION_SERVICE_TOKEN must be set"),
+        FileNotFoundError("railway"),
+        json.JSONDecodeError("bad", "{", 0),
+    ],
+)
+def test_a_kit_token_that_cannot_be_had_reads_as_no_kit_token(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch, failure: BaseException
+) -> None:
+    _loaders(monkeypatch, full=failure)
 
     assert real_show_finals(post_desk) == final_approval.not_checked("no kit token")
 
@@ -446,13 +470,42 @@ def test_the_finals_use_the_kits_own_credentials(
         seen.append(request)
         return httpx.Response(200, json={"episodes": []})
 
-    monkeypatch.setattr(
-        server_finish, "_api", lambda desk: (BASE, {"Authorization": "Bearer kit"})
-    )
+    _loaders(monkeypatch, full="kit")
 
     finals = real_show_finals(post_desk, transport=httpx.MockTransport(answer))
 
     assert finals.checked and seen[0].headers["Authorization"] == "Bearer kit"
+
+
+def test_a_queue_read_uses_only_the_env_token_never_railway(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _loaders(monkeypatch, env="")
+
+    assert real_show_finals(
+        post_desk, env_token_only=True
+    ) == final_approval.not_checked("no kit token")
+
+
+def test_the_railway_cli_has_a_time_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    from creation.harness import credentials
+
+    monkeypatch.setattr(
+        credentials, "env_drama_api_credentials", lambda *_a, **_k: (BASE, "")
+    )
+    limits: list[object] = []
+
+    def slow(*_a: object, **kw: object) -> None:
+        limits.append(kw.get("timeout"))
+        raise subprocess.TimeoutExpired("railway", kw.get("timeout") or 0)
+
+    monkeypatch.setattr(credentials.subprocess, "run", slow)
+
+    with pytest.raises(SystemExit):
+        credentials.load_drama_api_credentials(Path("."))
+    assert limits == [credentials.RAILWAY_TIMEOUT_SECONDS]
 
 
 def _offline(request: httpx.Request) -> httpx.Response:
@@ -484,17 +537,17 @@ def test_a_failed_read_names_its_cause(
     assert finals.not_checked_status == f"post (final not checked: {reason})"
 
 
-def test_a_gate_write_reads_the_finals_with_a_short_timeout(
+def test_a_gate_write_reads_the_finals_quickly_with_the_env_token_only(
     post_desk: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    seen: list[float] = []
+    seen: list[dict[str, Any]] = []
 
     def spy(desk: Path, **kw: Any) -> final_approval.ShowFinals:
-        seen.append(kw["timeout"])
+        seen.append(kw)
         return final_approval.ShowFinals()
 
     monkeypatch.setattr(final_approval, "show_finals", spy)
 
     write_queue(post_desk)
 
-    assert seen == [QUEUE_READ_SECONDS]
+    assert seen == [{"timeout": QUEUE_READ_SECONDS, "env_token_only": True}]

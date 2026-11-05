@@ -815,7 +815,9 @@ def write_queue(
     finals = (
         finals
         if finals is not None
-        else final_approval.show_finals(desk, timeout=QUEUE_READ_SECONDS)
+        else final_approval.show_finals(
+            desk, timeout=QUEUE_READ_SECONDS, env_token_only=True
+        )
     )
     rows = status_rows(desk, finals)
     path = desk / QUEUE_FILENAME
