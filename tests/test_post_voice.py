@@ -15,7 +15,6 @@ from conftest import SPINE, make_take, make_tone, needs_ffmpeg
 from creation.cli_produce import main
 from creation.ops.state import load_series
 from creation.post import voice as voice_mod
-from creation.post.media import measure_rms_windows
 
 
 class FakePostApi:
@@ -194,115 +193,15 @@ def test_pick_locks_the_listed_candidate_on_the_cast_card(
         voice_mod.run_voice_pick(post_desk, cast="kenji", pick=9, out=io.StringIO())
 
 
-@needs_ffmpeg
-def test_revoice_mutes_only_that_characters_line_and_lays_the_new_voice_in(
-    post_desk: Path, post_api: FakePostApi, downloads: list[str]
-) -> None:
-    post_api.spine_body["cast"][0]["voice_brief"] = {"provider_voice": "Aria"}
-    take = make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", seconds=5.0,
-                     tones=((1.0, 2.0, 440), (3.0, 4.0, 880)))  # fmt: skip
-    stored = "https://media.test/tenants/t/drama/take-ep01-t1.mp4"
-    (post_desk / "ep01" / "api" / "17_raw_scene_clips.json").write_text(json.dumps(
-        {"clips": [{"job_id": "job_scene_1", "url": stored, "episode_id": "episode_01", "set_index": 1}]}))  # fmt: skip
-    audio = FakeAudio()
-
-    out = voice_mod.run_revoice(post_desk, cast="Kenji", audio=audio, out=io.StringIO())
-
-    assert out.name == "take-ep01-t1-revoice-v1.mp4" and take.is_file()
-    (kind, heard), (endpoint, arguments) = audio.calls
-    assert kind == "transcribe" and heard["audio_url"] == stored, (
-        "the take's stored URL, never an upload"
-    )
-    assert endpoint == "line"
-    assert (arguments["cast_id"], arguments["text"]) == (
-        "cast_kenji",
-        "Wait for me here.",
-    )
-    levels = np.array(measure_rms_windows(out, window_seconds=0.1))
-    assert levels[10:13].max() > -30.0, (
-        "the new 0.4 s line starts where the old one did"
-    )
-    assert levels[15:20].max() < -60.0, "the rest of the original line is muted"
-    assert levels[31:39].min() > -30.0, "Aya's line is left as filmed"
-    record = json.loads(out.with_suffix(".json").read_text())
-    assert record["lines"][0]["muted"] == [pytest.approx(0.92), pytest.approx(2.15)]
-    assert [
-        (entry.unit, entry.take_id) for entry in load_series(post_desk).spend_log
-    ] == [("revoice:kenji", "t1")]
-
-
-@needs_ffmpeg
-def test_revoice_refuses_a_character_with_no_locked_voice(
-    post_desk: Path, post_api: FakePostApi
-) -> None:
-    post_api.spine_body["cast"][0]["voice_brief"] = None
-    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4")
-    with pytest.raises(ValueError, match="no locked voice"):
-        voice_mod.run_revoice(
-            post_desk,
-            cast="Kenji",
-            words_json=Path("unused.json"),
-            audio=FakeAudio(),
-            out=io.StringIO(),
-        )
-
-
 def test_cli_voice_needs_audition_or_pick(post_desk: Path) -> None:
     with pytest.raises(SystemExit):
         main(["voice", "--desk", str(post_desk), "--cast", "Kenji"])
-
-
-@needs_ffmpeg
-def test_revoice_without_a_stored_take_url_refuses_to_upload(
-    post_desk: Path, post_api: FakePostApi
-) -> None:
-    post_api.spine_body["cast"][0]["voice_brief"] = {"provider_voice": "Aria"}
-    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4")
-    audio = FakeAudio()
-    with pytest.raises(ValueError, match="never uploads"):
-        voice_mod.run_revoice(post_desk, cast="Kenji", audio=audio, out=io.StringIO())
-    assert audio.calls == []
 
 
 JA_WORDS = [
     {"word": "ここで", "start": 1.0, "end": 1.4}, {"word": "待ってて", "start": 1.4, "end": 2.0},
     {"word": "今夜は", "start": 3.0, "end": 3.5}, {"word": "だめ", "start": 3.5, "end": 4.0},
 ]  # fmt: skip
-
-
-@needs_ffmpeg
-def test_revoice_on_a_japanese_show_voices_and_finds_the_performed_line_not_the_subtitle(
-    post_desk: Path, post_api: FakePostApi, downloads: list[str]
-) -> None:
-    spine = post_api.spine_body
-    spine["spoken_language"] = "ja-JP"
-    spine["cast"][0]["voice_brief"] = {"provider_voice": "Aria"}
-    kenji, aya = spine["beats"][0]["dialogue_lines"]
-    kenji.update(spoken_text="ここで待ってて", subtitle_text="Wait for me here.")
-    aya.update(spoken_text="今夜はだめ", subtitle_text="Not tonight.")
-    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4", seconds=5.0,
-              tones=((1.0, 2.0, 440), (3.0, 4.0, 880)))  # fmt: skip
-    (post_desk / "ep01" / "api" / "17_raw_scene_clips.json").write_text(json.dumps(
-        {"clips": [{"job_id": "j1", "url": "https://media.test/tenants/t/drama/t1.mp4", "episode_id": "episode_01", "set_index": 1}]}))  # fmt: skip
-    audio = FakeAudio()
-    audio.words = JA_WORDS
-
-    out = voice_mod.run_revoice(post_desk, cast="Kenji", audio=audio, out=io.StringIO())
-
-    (_, heard), (_, line) = audio.calls
-    assert heard["language"] == "ja", "the take is transcribed in the show's language"
-    assert line["language"] == "ja"
-    assert line["text"] == "ここで待ってて", (
-        "the performed line, not the English subtitle"
-    )
-    assert line["spoken_text"] == "ここで待ってて", (
-        "so the server's kana re-check applies"
-    )
-    record = json.loads(out.with_suffix(".json").read_text())
-    assert record["lines"][0]["original_window"] == [1.0, 2.0], (
-        "found by the Japanese words"
-    )
-    assert record["not_heard"] == []
 
 
 def test_the_voice_line_route_gets_the_performed_line_language_and_spoken_text(
@@ -566,144 +465,6 @@ def _samples(path: Path, tmp: Path) -> np.ndarray:
         ).astype(float)
 
 
-@needs_ffmpeg
-def test_voice_fx_treats_only_the_range_keeps_its_level_and_writes_a_new_file(
-    tmp_path: Path,
-) -> None:
-    from creation.post.voice_fx import apply_voice_fx, parse_range
-
-    from creation.post.media import run_ffmpeg
-
-    loud = make_take(
-        tmp_path / "loud.mp4", seconds=5.0, tones=((0.5, 4.5, 150), (0.5, 4.5, 1000))
-    )
-    take = tmp_path / "take-ep01-t1-raw-v1.mp4"
-    # A hot voice (about -8.5 dB RMS): the band-pass and compressor alone would drop the range ~10 dB.
-    run_ffmpeg(
-        ["-i", str(loud), "-c:v", "copy", "-af", "volume=6", "-c:a", "aac", str(take)]
-    )
-    before = take.read_bytes()
-    start, end = parse_range("1-3")
-
-    made = apply_voice_fx(take, start=start, end=end, preset="intercom")
-
-    assert (
-        made.name == "take-ep01-t1-raw-v1-intercom-v1.mp4"
-        and take.read_bytes() == before
-    )
-    dry, wet = _samples(take, tmp_path), _samples(made, tmp_path)
-    rate = 16000
-    inside = slice(int(1.5 * rate), int(2.5 * rate))
-    outside = slice(int(3.5 * rate), int(4.3 * rate))
-
-    def corr(a: np.ndarray, b: np.ndarray) -> float:
-        return float(np.corrcoef(a, b)[0, 1])
-
-    def low_to_band_db(a: np.ndarray) -> float:
-        spectrum = np.abs(np.fft.rfft(a))  # 1 s of audio: bin n is n Hz
-        return 20 * np.log10(spectrum[145:156].max() / spectrum[995:1006].max())
-
-    def db(a: np.ndarray) -> float:
-        return 20 * np.log10(np.sqrt(np.mean(a**2)) + 1e-9)
-
-    assert corr(dry[outside], wet[outside]) > 0.99, (
-        "outside the range the take is as filmed"
-    )
-    assert low_to_band_db(wet[inside]) < low_to_band_db(dry[inside]) - 20, (
-        "inside, the band-pass takes the lows out"
-    )
-    assert abs(db(wet[inside]) - db(dry[inside])) < 1.5, (
-        "the treated range keeps the level it had"
-    )
-    assert apply_voice_fx(take, start=1, end=3, preset="intercom").name.endswith(
-        "-intercom-v2.mp4"
-    )
-
-
-def test_voice_fx_refuses_a_bad_range_or_preset(tmp_path: Path) -> None:
-    from creation.post.voice_fx import apply_voice_fx, parse_range
-
-    for raw in ("3-1", "abc", "2-2"):
-        with pytest.raises(ValueError, match="START-END"):
-            parse_range(raw)
-    with pytest.raises(ValueError, match="intercom, phone, radio"):
-        apply_voice_fx(tmp_path / "x.mp4", start=0, end=1, preset="robot")
-
-
-@needs_ffmpeg
-def test_cli_voice_fx_writes_a_new_file(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    take = make_take(tmp_path / "take.mp4", seconds=3.0)
-    assert (
-        main(["voice-fx", "--file", str(take), "--range", "0.5-2", "--preset", "phone"])
-        == 0
-    )
-    assert (tmp_path / "take-phone-v1.mp4").is_file()
-    assert (
-        main(["voice-fx", "--file", str(take), "--range", "2-1", "--preset", "radio"])
-        == 2
-    )
-
-
-@needs_ffmpeg
-def test_voice_fx_treats_every_repeated_range_into_one_file(tmp_path: Path) -> None:
-    take = make_take(
-        tmp_path / "take-ep01-t1-revoice-v1.mp4",
-        seconds=5.0,
-        tones=((0.1, 4.9, 150), (0.1, 4.9, 1000)),
-    )
-
-    assert (
-        main(
-            [
-                "voice-fx",
-                "--file",
-                str(take),
-                "--range",
-                "0.3-1.7",
-                "--range",
-                "3.1-4.5",
-                "--preset",
-                "intercom",
-            ]
-        )  # fmt: skip
-        == 0
-    )
-
-    made = tmp_path / "take-ep01-t1-revoice-v1-intercom-v1.mp4"
-    assert made.is_file()
-    assert not list(tmp_path.glob("*-intercom-v1-intercom-*")), "one pass, not a chain"
-    dry, wet = _samples(take, tmp_path), _samples(made, tmp_path)
-    rate = 16000
-
-    def lows_db(a: np.ndarray) -> float:
-        spectrum = np.abs(np.fft.rfft(a))  # 1 s of audio: bin n is n Hz
-        return 20 * np.log10(spectrum[145:156].max() + 1e-9)
-
-    def second(at: float) -> slice:
-        return slice(int(at * rate), int(at * rate) + rate)
-
-    for at in (0.5, 3.3):
-        assert lows_db(wet[second(at)]) < lows_db(dry[second(at)]) - 15, (
-            f"the range around {at}s is treated"
-        )
-    assert float(np.corrcoef(dry[second(1.9)], wet[second(1.9)])[0, 1]) > 0.99, (
-        "between the ranges the take is as filmed"
-    )
-
-
-def test_voice_fx_refuses_ranges_that_overlap(tmp_path: Path) -> None:
-    from creation.post.voice_fx import apply_voice_fx
-
-    with pytest.raises(ValueError, match="do not overlap"):
-        apply_voice_fx(
-            make_take(tmp_path / "take.mp4", seconds=3.0),
-            ranges=[(0.5, 2.0), (1.5, 2.5)],
-            preset="phone",
-        )
-
-
 def _blink_take(post_desk: Path, post_api: FakePostApi) -> FakeAudio:
     """Kenji's line is one word the transcript missed ("Blinking!", SCP-173 Blink #97)."""
 
@@ -723,62 +484,6 @@ def _blink_take(post_desk: Path, post_api: FakePostApi) -> FakeAudio:
         {"word": "tonight.", "start": 3.4, "end": 4.0},
     ]
     return audio
-
-
-@needs_ffmpeg
-def test_revoice_places_a_short_line_the_transcript_missed_on_its_planned_window(
-    post_desk: Path, post_api: FakePostApi, downloads: list[str]
-) -> None:
-    audio = _blink_take(post_desk, post_api)
-    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(json.dumps(
-        {"take_facts": {"lines": [{"line_id": "l1", "count": 1, "shot_index": 1,
-                                   "start_seconds": 1.0, "end_seconds": 2.0}]}}))  # fmt: skip
-    printed = io.StringIO()
-
-    out = voice_mod.run_revoice(post_desk, cast="Kenji", audio=audio, out=printed)
-
-    record = json.loads(out.with_suffix(".json").read_text())
-    assert [line["original_window"] for line in record["lines"]] == [[1.0, 2.0]]
-    assert record["not_heard"] == [] and len(record["planned_window"]) == 1
-    assert (
-        "used its planned window 1.00-2.00s (the planned shot timing)"
-        in printed.getvalue()
-    )
-
-
-@needs_ffmpeg
-def test_revoice_without_a_planned_window_still_says_the_short_line_was_not_heard(
-    post_desk: Path, post_api: FakePostApi, downloads: list[str]
-) -> None:
-    audio = _blink_take(post_desk, post_api)
-
-    with pytest.raises(ValueError, match="none of Kenji's lines was heard"):
-        voice_mod.run_revoice(post_desk, cast="Kenji", audio=audio, out=io.StringIO())
-
-
-def test_the_planned_window_prefers_the_soundtrack_then_the_shot_and_only_short_lines() -> (
-    None
-):
-    facts = {"take_facts": {
-        "soundtrack": {"mode": "target_audio", "lines": [{"line_id": "l1", "start_s": 1.2, "end_s": 1.6}]},
-        "lines": [{"line_id": "l1", "start_seconds": 1.0, "end_seconds": 2.0},
-                  {"line_id": "l2", "start_seconds": None, "end_seconds": None}],
-    }}  # fmt: skip
-    assert voice_mod.planned_line_window(facts, "l1") == (
-        1.2,
-        1.6,
-        "the soundtrack's line window",
-    )
-    assert voice_mod.planned_line_window(facts["take_facts"] | {"soundtrack": None}, "l1") == (
-        1.0, 2.0, "the planned shot timing")  # fmt: skip
-    assert voice_mod.planned_line_window(facts, "l2") is None
-    assert voice_mod.planned_line_window(None, "l1") is None
-    assert voice_mod.is_short_line("Blinking!") and voice_mod.is_short_line(
-        "Not tonight."
-    )
-    assert not voice_mod.is_short_line(
-        "Wait for me here."
-    ) and not voice_mod.is_short_line("…")
 
 
 # --- a voice matched to a listed real person: the one-tap notice (fictora-drama #833) -------------

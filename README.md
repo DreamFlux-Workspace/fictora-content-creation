@@ -109,8 +109,8 @@ Sound effects (from the take facts), colour match to the approved board, a mix n
 ```bash
 uv run fictora-produce voice --desk … --cast NAME --audition
 uv run fictora-produce voice --desk … --cast NAME --pick N
-uv run fictora-produce revoice --desk … --cast NAME --episode 1 --take t1
-uv run fictora-produce finish --desk … --take-file <take-ep01-t1-revoice-vN.mp4>
+uv run fictora-produce revoice --desk … --cast NAME --episode 1 --take t1   # on the server
+uv run fictora-produce finish --desk … --episode 1                          # downloads the new cut
 ```
 
 ### Recovery

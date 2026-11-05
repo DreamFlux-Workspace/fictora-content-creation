@@ -346,17 +346,6 @@ def test_the_flag_overrides_the_show(tmp_path: Path) -> None:
     assert resolve_caption_style(tmp_path, "bold") == ("bold", "")
 
 
-def test_caption_takes_subtle_and_none_burns_nothing(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from creation.cli_produce import main
-
-    assert main(["caption", "--desk", str(tmp_path), "--caption-style", "none"]) == 0
-    with pytest.raises(SystemExit):
-        main(["caption", "--desk", str(tmp_path), "--caption-style", "loud"])
-    assert "invalid choice" in capsys.readouterr().err
-
-
 def test_start_leaves_the_style_unchosen_and_server_captions_keep_house() -> None:
     from creation.cli_config import add_production_config_args, config_from_args
     from creation.production_config import server_caption_style

@@ -145,7 +145,7 @@ Then watch the file in `takes/`. A take that will be re-filmed gets no `finish`,
 - [ ] Wrong take dialogue (stray or garbled speech, a wrong line): take audio dropped and rebuilt (voices, effects, ambience), no muted ranges; every hand cue answers a visible action, inside its own take, and audible
 - [ ] Captions are English, where the show's caption style puts them (Bold bottom at 76%, Subtle in the 55–70% band), on screen only while the line is spoken; no `NOT ENGLISH` in the finish summary
 - [ ] Off-screen and voice-only lines are in italic (the same face as the rest); every on-screen line is upright; one caption face in the whole episode
-- [ ] Any `trim` / `tempo` done after `finish`, on the finished file, with the producer's yes; what was cut shown; first frame after a cut checked; new length stated (shorter than the band is fine). `deboard` holds board frames and never cuts
+- [ ] Any `trim` / `tempo` done after `finish`, on the finished file, with the producer's yes; what was cut shown; first frame after a cut checked; new length stated (shorter than the band is fine).
 - [ ] No post overlay covers the key reveal (test frames of the key shots looked at)
 - [ ] Previews, rough cuts and "just combine" files carry the house captions too
 - [ ] Join: no music under it, 24 fps, seam steps under 5 dB
@@ -158,7 +158,7 @@ Then watch the file in `takes/`. A take that will be re-filmed gets no `finish`,
 
 Salvage first (Gallery Heiress review, 12 Oct 2026). Before any re-film:
 
-- [ ] The free edits were offered to the producer: `trim --episode N --take tK --cut A-B` a short mistake (a take edit on the server) (on screen about 0.5 s or less is always a cut), the trim handles for an end, `tempo` on one shot, `zoom` (punch-in) for a jump cut or a stray element at the edge, `join --take-file` in the right order for takes out of order
+- [ ] The free edits were offered to the producer: `trim --episode N --take tK --cut A-B` a short mistake (a take edit on the server) (on screen about 0.5 s or less is always a cut), the trim handles for an end, `tempo` on one shot, `blur` for garbled invented text; takes out of order or a stray element at the edge have no free edit (film the take again, priced first)
 - [ ] Re-film only when none hides the fault (a smear or melt on a face, the wrong person throughout, a spoken line wrong on a model-voice take), or the producer saw the free edit and turned it down
 - [ ] A decent take that is still re-filmed is on the reuse list (`keep-take --note "…"`)
 

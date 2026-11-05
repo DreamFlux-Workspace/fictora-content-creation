@@ -20,11 +20,6 @@ on the cast card, and a take that is already filmed takes a new voice in post:
   that already holds the wording and the named voices makes a new reel for free.
 - ``voice --pick N`` (or ``--pick NAME``): ``POST .../voice-auditions/pick`` locks that candidate on the
   cast card and saves the spine again. Takes filmed from now on use it.
-- ``revoice``: for a filmed take, each line that character speaks is rendered
-  dry in the locked voice on the server, its window found from Whisper words on the take,
-  the original muted there (0.08 s before to 0.15 s after) and the new line
-  laid in at the same start. Picture copied, other characters left as filmed.
-  Writes ``take-epNN-tK-revoice-vN.mp4``; then run ``finish --take-file`` on it.
 
 When a dub will not sit (lips visibly wrong, a shouted line), re-film only the
 takes that character speaks in, never the story.
@@ -52,17 +47,13 @@ from creation.post.desk import (
     cast_slug,
     episode_dialogue,
     find_cast,
-    latest_raw_take,
     open_api,
     refresh_spine,
     saved_spine,
-    show_language,
     spine_id,
-    take_stored_url,
 )
 from creation.post.finish import book
-from creation.post.media import media_duration, probe_video, run_ffmpeg
-from creation.post.whisper import line_windows, load_words, transcribe
+from creation.post.media import media_duration, run_ffmpeg
 from creation.prices import audition_quote, audition_usd
 from creation.production_state import load_production
 from creation.stylised_only import server_notices, voice_notice_text
@@ -87,12 +78,7 @@ from creation.voice_gate import (
 AUDITION_MAX_LINES = 3
 MIN_CANDIDATES, MAX_CANDIDATES = 4, 10
 ELEVEN_V3_USD_PER_1000_CHARS = 0.10
-MUTE_LEAD_SECONDS = 0.08
-MUTE_TAIL_SECONDS = 0.15
 REEL_GAP_SECONDS = 0.8
-#: A line this many words or fewer ("Blinking!") is short: a transcript often misses it,
-#: so ``revoice`` falls back to its planned window (SCP-173 Blink #97).
-SHORT_LINE_WORDS = 3
 REEL_LOUDNESS_LUFS = -18.0
 
 
@@ -581,7 +567,7 @@ def run_voice_pick(
     )
     print(
         "Next: takes filmed from now on use the new voice. For a take already filmed: "
-        f"fictora-produce revoice --desk {desk} --cast {cast_id} --episode N --take tK, then finish --take-file.",
+        f"fictora-produce revoice --desk {desk} --cast {cast_id} --episode N --take tK (the server re-voices it).",
         file=out,
     )
     return str(chosen["provider_voice"])
@@ -726,372 +712,6 @@ def run_voice_gate(
     if rest:
         print(rest, file=out)
     return [v.cast_id for v in voices]
-
-
-def is_short_line(text: str) -> bool:
-    """Whether a line is short enough that a transcript may miss it (``SHORT_LINE_WORDS`` words or fewer)."""
-
-    words = [word for word in text.split() if any(ch.isalnum() for ch in word)]
-    return 0 < len(words) <= SHORT_LINE_WORDS
-
-
-def planned_line_window(
-    facts: Mapping[str, Any] | None, line_id: str
-) -> tuple[float, float, str] | None:
-    """Where the take facts plan a line, when the transcript cannot find it.
-
-    The locked-voice track's own window (``soundtrack.lines[].start_s/end_s``) comes
-    first; then the window of the shot the line was written into
-    (``lines[].start_seconds/end_seconds``, the planned shot timing). Seconds are on
-    the take as filmed.
-
-    Parameters
-    ----------
-    facts
-        A saved take-facts file (``{"take_facts": {...}}`` or the facts alone), or ``None``.
-    line_id
-        The spine's ``line_id``.
-
-    Returns
-    -------
-    tuple[float, float, str] | None
-        ``(start, end, where it came from)``, or ``None`` when the facts plan no window for it.
-    """
-
-    if not facts or not line_id:
-        return None
-    body = facts.get("take_facts", facts)
-    if not isinstance(body, Mapping):
-        return None
-    soundtrack = body.get("soundtrack")
-    sources = (
-        (
-            soundtrack.get("lines") if isinstance(soundtrack, Mapping) else None,
-            "start_s",
-            "end_s",
-            "the soundtrack's line window",
-        ),
-        (body.get("lines"), "start_seconds", "end_seconds", "the planned shot timing"),
-    )
-    for items, start_key, end_key, label in sources:
-        for item in items if isinstance(items, list) else ():
-            if (
-                not isinstance(item, Mapping)
-                or str(item.get("line_id") or "") != line_id
-            ):
-                continue
-            start, end = item.get(start_key), item.get(end_key)
-            if (
-                isinstance(start, (int, float))
-                and isinstance(end, (int, float))
-                and not isinstance(start, bool)
-                and 0 <= start < end
-            ):
-                return round(float(start), 3), round(float(end), 3), label
-    return None
-
-
-@dataclass(frozen=True)
-class Replacement:
-    """One original line replaced by a dry line."""
-
-    line: str
-    voice: Path
-    start: float
-    end: float
-
-    def mute(self, take_seconds: float) -> tuple[float, float]:
-        """The window silenced on the take."""
-
-        return (
-            max(0.0, self.start - MUTE_LEAD_SECONDS),
-            min(take_seconds, self.end + MUTE_TAIL_SECONDS),
-        )
-
-
-def replace_lines(
-    take: Path,
-    out: Path,
-    replacements: tuple[Replacement, ...],
-    *,
-    voice_db: float = 0.0,
-) -> Path:
-    """Mute each original line and lay its dry replacement in at the same start (picture copied).
-
-    Raises
-    ------
-    FileExistsError
-        When ``out`` exists.
-    """
-
-    if out.exists():
-        raise FileExistsError(f"{out} exists; local post never overwrites")
-    seconds = probe_video(take).duration_seconds
-    mutes = "".join(
-        f"volume=0:enable='between(t,{a:.3f},{b:.3f})',"
-        for a, b in (r.mute(seconds) for r in replacements)
-    )
-    graph = [f"[0:a]aresample=48000,{mutes}anull[orig]"]
-    labels = ["[orig]"]
-    inputs: list[str] = []
-    for number, item in enumerate(replacements, start=1):
-        inputs += ["-i", str(item.voice)]
-        delay = round(item.start * 1000)
-        graph.append(
-            f"[{number}:a]aresample=48000,volume={voice_db:+.1f}dB,adelay={delay}|{delay}[v{number}]"
-        )
-        labels.append(f"[v{number}]")
-    graph.append(
-        f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0:duration=first[a]"
-    )
-    run_ffmpeg(
-        ["-i", str(take), *inputs, "-filter_complex", ";".join(graph), "-map", "0:v", "-map", "[a]",
-         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", str(out)]
-    )  # fmt: skip
-    return out
-
-
-def run_revoice(
-    desk: Path,
-    *,
-    cast: str,
-    episode: int = 1,
-    take_id: str = "t1",
-    take_file: Path | None = None,
-    words_json: Path | None = None,
-    voice_db: float = 0.0,
-    audio: AudioService | None = None,
-    out: TextIO | None = None,
-    over_locked_voices: bool = False,
-) -> Path:
-    """Re-voice one character's lines on a filmed take in their locked voice.
-
-    A take whose facts say its sound is already the show's locked voices
-    (``soundtrack.mode == "target_audio"``) is refused before anything is spent,
-    unless ``over_locked_voices`` (then it is warned about and revoiced).
-
-    Parameters
-    ----------
-    desk
-        Series desk.
-    cast
-        ``cast_id`` or name.
-    episode
-        Episode ordinal.
-    take_id
-        ``t1``.
-    take_file
-        Take to revoice; default the newest raw take.
-    words_json
-        Saved Whisper words for the take; default transcribe it now (pennies).
-    voice_db
-        Gain on every new line.
-    audio
-        Generated-audio service for the dry lines and the transcript (the Drama API by default).
-    out
-        Where results print.
-    over_locked_voices
-        ``--over-locked-voices``: revoice a locked-voice take anyway (a voice picked after it was filmed).
-
-    Returns
-    -------
-    Path
-        ``take-epNN-tK-revoice-vN.mp4``.
-
-    Raises
-    ------
-    ValueError
-        No locked voice, no line for the character, none of their lines heard, or
-        the take's sound is already the locked voices (without ``over_locked_voices``).
-    """
-
-    from creation.post.soundtrack import locked_voice_refusal, saved_soundtrack
-
-    out = out or sys.stdout
-    desk = desk.expanduser().resolve()
-    soundtrack = saved_soundtrack(desk, episode, take_id)
-    if soundtrack.target_audio:
-        warning = locked_voice_refusal(
-            soundtrack, f"revoice of ep{episode:02d} {take_id}"
-        )
-        if not over_locked_voices:
-            raise ValueError(warning)
-        print(f"{warning} (given: revoicing anyway)", file=out)
-    source = (
-        take_file.expanduser().resolve()
-        if take_file
-        else latest_raw_take(desk, episode, take_id)
-    )
-    run = open_api(desk, episode)
-    try:
-        spine = refresh_spine(run, desk, episode)
-    finally:
-        run.client.close()
-    card = find_cast(spine, cast)
-    cast_id, name = str(card["cast_id"]), str(card.get("name") or card["cast_id"])
-    voice = str((card.get("voice_brief") or {}).get("provider_voice") or "").strip()
-    if not voice:
-        raise ValueError(
-            f"{name} has no locked voice on the cast card; run voice --audition then --pick N first"
-        )
-    dialogue = episode_dialogue(spine, episode)
-    language = show_language(spine)
-    theirs = [i for i, line in enumerate(dialogue) if line["cast_id"] == cast_id]
-    if not theirs:
-        raise ValueError(
-            f"{name} speaks no line in episode {episode} on the spine; nothing to revoice"
-        )
-    takes = source.parent
-    service = audio or DramaApiAudio(desk, episode=episode)
-    if words_json is None:
-        stored = take_stored_url(desk, episode, take_id)
-        if stored is None:
-            raise ValueError(
-                f"no stored URL for ep{episode:02d} {take_id} in api/ (17_raw_scene_clips.json or film-*-raw-scene-clips.json) "
-                "to transcribe "
-                "(this kit never uploads local files); pass --words-json"
-            )
-        target = next_versioned_path(
-            takes, f"take-ep{episode:02d}-{take_id}-revoice-words", ".json"
-        )
-        words_json = transcribe(
-            stored, target, audio=service, spine_id=spine_id(desk), language=language
-        )
-    # Windows are found on what is heard: the performed line, in the show's language.
-    # A line's other spellings (the script ``text``, a kana-pinned ``spoken_text``) count as heard too.
-    windows = line_windows(
-        load_words(words_json),
-        tuple(line["performed"] for line in dialogue),
-        alternates=tuple((line["text"], line["spoken_text"]) for line in dialogue),
-    )
-    voices_dir = desk / f"ep{episode:02d}" / "voices"
-    voices_dir.mkdir(parents=True, exist_ok=True)
-    slug = cast_slug(cast_id)
-    replacements: list[Replacement] = []
-    missing: list[str] = []
-    unsure: list[str] = []
-    planned: list[str] = []
-    facts: dict[str, Any] | None = None
-    paid = 0.0
-    for index in theirs:
-        window = windows[index]
-        line = dialogue[index]
-        text = line["performed"]
-        start, end = window.start, window.end
-        if start is None or end is None:
-            # A one-word line ("Blinking!") is often not in the transcript at all:
-            # place it where the take facts planned it, and say so.
-            if facts is None:
-                facts = _saved_facts(desk, episode, take_id)
-            fallback = (
-                planned_line_window(facts, line["line_id"])
-                if is_short_line(text)
-                else None
-            )
-            if fallback is None:
-                missing.append(text)
-                continue
-            start, end, where = fallback
-            planned.append(
-                f"{text!r}: not in the transcript; used its planned window {start:.2f}-{end:.2f}s "
-                f"({where}). Listen: the dub may sit early or late"
-            )
-        key = _unit(
-            f"voice-ep{episode:02d}-{slug}",
-            {"text": text, "voice": voice, "language": language},
-        )
-        answer = service.voice_line(
-            spine_id=spine_id(desk), cast_id=cast_id, text=text, language=language, key=key,
-            spoken_text=line["spoken_text"] or None,
-        )  # fmt: skip
-        url = str(answer["audio_url"])
-        path = download(
-            url,
-            next_versioned_path(voices_dir, f"voice-ep{episode:02d}-{slug}", ".mp3"),
-        )
-        paid += float(
-            answer.get("cost_usd")
-            or round(len(text) * ELEVEN_V3_USD_PER_1000_CHARS / 1000, 4)
-        )
-        reading = answer.get("reading") or {}
-        if reading.get("checked") and not reading.get("read_right"):
-            unsure.append(text)
-        path.with_suffix(".json").write_text(
-            json.dumps({"line": text, "cast_id": cast_id, "voice": answer.get("provider_voice") or voice, "key": key,
-                        "url": url, "reading": reading}, indent=2) + "\n",
-            encoding="utf-8",
-        )  # fmt: skip
-        replacements.append(Replacement(text, path, start, end))
-    if not replacements:
-        raise ValueError(
-            f"none of {name}'s lines was heard in {source.name}; pass --words-json, or re-film only this take"
-        )
-    dest = replace_lines(
-        source,
-        next_versioned_path(takes, f"take-ep{episode:02d}-{take_id}-revoice", ".mp4"),
-        tuple(replacements),
-        voice_db=voice_db,
-    )
-    seconds = probe_video(source).duration_seconds
-    record = {
-        "source": source.name,
-        "cast_id": cast_id,
-        "voice": voice,
-        "words_json": str(words_json),
-        "lines": [{"line": r.line, "voice": str(r.voice), "original_window": [r.start, r.end],
-                   "muted": list(r.mute(seconds))} for r in replacements],
-        "not_heard": missing,
-        "planned_window": planned,
-        "cost_usd": round(paid, 4),
-    }  # fmt: skip
-    dest.with_suffix(".json").write_text(
-        json.dumps(record, indent=2) + "\n", encoding="utf-8"
-    )
-    if paid:
-        book(
-            desk,
-            episode=episode,
-            usd=round(paid, 4),
-            take_id=take_id,
-            stream=out,
-            unit=f"revoice:{slug}",
-        )
-    for item in replacements:
-        print(
-            f"{item.start:6.2f}-{item.end:6.2f}s  {item.line!r} -> {item.voice.name}",
-            file=out,
-        )
-    for line in planned:
-        print(f"!! {line}", file=out)
-    for line in missing:
-        print(f"!! not heard in the take, left as filmed: {line!r}", file=out)
-    for line in unsure:
-        print(
-            f"!! the new line may be misread, listen before using it: {line!r}",
-            file=out,
-        )
-    print(dest, file=out)
-    _note(desk, episode, f"revoice: {name} on `{source.name}` -> `{dest.name}`, {len(replacements)} line(s) "
-          f"replaced in {voice}" + (f", {len(planned)} on the planned window" if planned else "")
-          + (f", {len(missing)} not heard" if missing else "") + f"; cost ${paid:.3f}")  # fmt: skip
-    print(
-        f"Next: listen to it, then fictora-produce finish --desk {desk} --episode {episode} --take {take_id} "
-        f"--take-file {dest}. If the dub does not sit (lips visibly wrong), re-film only this take, never the story.",
-        file=out,
-    )
-    return dest
-
-
-def _saved_facts(desk: Path, episode: int, take_id: str) -> dict[str, Any]:
-    """The newest saved take facts for the take (empty when none are saved)."""
-
-    from creation.post.sfx import saved_take_facts
-
-    path = saved_take_facts(desk, episode, take_id)
-    if path is None:
-        return {}
-    loaded = json.loads(path.read_text(encoding="utf-8"))
-    return loaded if isinstance(loaded, dict) else {}
 
 
 def _note(desk: Path, episode: int, body: str) -> None:

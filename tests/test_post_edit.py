@@ -1,10 +1,7 @@
-"""Local edit tools on tiny synthetic takes (real ffmpeg): deboard, freeze, tempo, soften."""
-
 from __future__ import annotations
 
 import io
 import json
-import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -14,13 +11,8 @@ from PIL import Image
 
 from creation.cli_produce import main
 from creation.ops.floor import approve_board
-from creation.post.deboard import deboard, measure_board_leak
-from creation.post.edit import (
-    change_tempo,
-    freeze_frame,
-    measure_cuts,
-    soften_seams,
-)
+from creation.post.deboard import deboard
+from creation.post.edit import measure_cuts
 from creation.post.finish import run_finish
 from creation.post.media import count_frames, decode_frames, media_duration
 from creation.post.sfx import SfxCue
@@ -94,51 +86,21 @@ def _no_new_mp4(takes: Path, before: set[str]) -> bool:
 
 
 @needs_ffmpeg
-@pytest.mark.parametrize("leaked", [1, 3])
-def test_deboard_replaces_exactly_the_measured_board_frames_and_keeps_the_timeline(
-    post_desk: Path, leaked: int, capsys: pytest.CaptureFixture[str]
-) -> None:
-    takes = post_desk / "ep01" / "takes"
-    raw = _leak_take(takes / "take-ep01-t1-raw-v1.mp4", leaked)
-    board = _board_png(post_desk / "ep01" / "boards" / "board-ep01-t1-v1.png")
-    assert measure_board_leak(raw, board).frames == leaked
-
-    assert main(["deboard", "--desk", str(post_desk), "--board", str(board)]) == 0
-
-    out = takes / "take-ep01-t1-deboard-v1.mp4"
-    assert out.is_file()
-    assert f"replaced {leaked} board frame(s)" in capsys.readouterr().out
-    assert count_frames(out) == count_frames(raw), (
-        "same frame count: nothing after the head moves"
-    )
-    assert abs(media_duration(out) - media_duration(raw)) < 0.05
-    frames = _frames(out)
-    for index in range(leaked):
-        assert np.abs(frames[index] - frames[leaked]).mean() < 3, (
-            f"frame {index} is the first real frame now"
-        )
-    assert measure_board_leak(out, board).frames == 0
-    assert "Deboard" in (post_desk / "ep01" / "run-notes.md").read_text()
-    # The chain keeps how many clones it holds, so `finish --take-file` cuts them (review #13).
-    from creation.post.lineage import deboard_clones_behind
-
-    held = deboard_clones_behind(post_desk, out)
-    assert held is not None and held[0] == leaked
-
-
-@needs_ffmpeg
-def test_deboard_with_no_board_frames_writes_nothing_and_says_so(
+def test_deboard_is_gone_and_points_at_the_servers_trim(
     post_desk: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     takes = post_desk / "ep01" / "takes"
-    _leak_take(takes / "take-ep01-t1-raw-v1.mp4", 0)
-    board = _board_png(post_desk / "ep01" / "boards" / "board-ep01-t1-v1.png")
+    _leak_take(takes / "take-ep01-t1-raw-v1.mp4", 3)
     before = {p.name for p in takes.glob("*.mp4")}
 
-    assert main(["deboard", "--desk", str(post_desk), "--board", str(board)]) == 0
+    assert main(["deboard", "--desk", str(post_desk)]) == 2
 
-    assert "no board frames" in capsys.readouterr().out
-    assert _no_new_mp4(takes, before)
+    err = capsys.readouterr().err
+    assert (
+        "the server cuts the storyboard frames" in err
+        and "trim --episode N --take tK --start S" in err
+    )
+    assert _no_new_mp4(takes, before), "nothing is written on this laptop"
 
 
 @needs_ffmpeg
@@ -226,298 +188,8 @@ def test_finish_no_deboard_keeps_the_board_frames(post_desk: Path) -> None:
     assert not (takes / "take-ep01-t1-deboard-v1.mp4").exists()
 
 
-# ================================================================================================
-# trim
-# ================================================================================================
-
-
 @needs_ffmpeg
-def test_editing_take_two_writes_a_take_two_file(post_desk: Path) -> None:
-    """--take defaulted to t1, so an edit of take 2 was written as take-ep01-t1-<step>."""
+def test_measure_cuts_finds_the_hard_cut(post_desk: Path) -> None:
+    raw = _cut_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4")
 
-    takes = post_desk / "ep01" / "takes"
-    finished = _cut_take(takes / "take-ep01-t2-sokii-v1.mp4")
-
-    assert main(["freeze", "--desk", str(post_desk), "--take-file", str(finished),
-                 "--at", "0.5", "--hold", "0.5"]) == 0  # fmt: skip
-
-    assert (takes / "take-ep01-t2-freeze-v1.mp4").is_file()
-    assert not list(takes.glob("take-ep01-t1-freeze-*.mp4"))
-
-
-@needs_ffmpeg
-def test_editing_episode_three_writes_under_episode_three(post_desk: Path) -> None:
-    """--episode defaulted to 1, so an edit of episode 3 was written into ep01."""
-
-    takes = post_desk / "ep03" / "takes"
-    finished = _cut_take(takes / "take-ep03-t1-sokii-v1.mp4")
-
-    assert main(["freeze", "--desk", str(post_desk), "--take-file", str(finished),
-                 "--at", "0.5", "--hold", "0.5"]) == 0  # fmt: skip
-
-    assert (takes / "take-ep03-t1-freeze-v1.mp4").is_file()
-    assert not list((post_desk / "ep01" / "takes").glob("*freeze*"))
-
-
-@needs_ffmpeg
-def test_an_edit_refuses_an_episode_flag_that_disagrees_with_the_file(
-    post_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    takes = post_desk / "ep03" / "takes"
-    finished = _cut_take(takes / "take-ep03-t1-sokii-v1.mp4")
-
-    code = main(["freeze", "--desk", str(post_desk), "--episode", "1", "--take-file", str(finished),
-                 "--at", "0.5", "--hold", "0.5"])  # fmt: skip
-
-    assert code == 2
-    assert "episode 3" in capsys.readouterr().err
-    assert not (takes / "take-ep03-t1-freeze-v1.mp4").exists()
-    assert not list((post_desk / "ep01" / "takes").glob("*freeze*"))
-
-
-# ================================================================================================
-# freeze
-# ================================================================================================
-
-
-@needs_ffmpeg
-def test_freeze_holds_the_frame_over_the_picture_and_keeps_length_and_sound(
-    tmp_path: Path,
-) -> None:
-    take = write_frames(tmp_path / "take.mp4", shot_frames(72, BLUE))
-    out = freeze_frame(take, tmp_path / "freeze.mp4", at=1.0, hold=0.5)
-
-    assert out.at_seconds == 1.0 and abs(out.hold_seconds - 0.5) < 1e-9
-    assert count_frames(out.output) == count_frames(take)
-    assert abs(media_duration(out.output) - media_duration(take)) < 0.06
-    before, after = _frames(take), _frames(out.output)
-    for index in range(24, 36):
-        assert np.abs(after[index] - before[24]).mean() < 3, (
-            f"frame {index} holds frame 24"
-        )
-    assert np.abs(after[36] - before[36]).mean() < 3, (
-        "the picture picks up where it was"
-    )
-    assert np.abs(before[35] - before[24]).mean() > 5, (
-        "(the source moves over the hold)"
-    )
-
-
-@needs_ffmpeg
-def test_freeze_refuses_a_hold_past_the_end(tmp_path: Path) -> None:
-    take = write_frames(tmp_path / "take.mp4", shot_frames(72, BLUE))
-    with pytest.raises(ValueError, match="runs past"):
-        freeze_frame(take, tmp_path / "freeze.mp4", at=2.5, hold=1.0)
-    with pytest.raises(ValueError, match="more than 0"):
-        freeze_frame(take, tmp_path / "freeze.mp4", at=1.0, hold=0.0)
-    assert not (tmp_path / "freeze.mp4").exists()
-
-
-# ================================================================================================
-# tempo
-# ================================================================================================
-
-
-def _audio(path: Path) -> np.ndarray:
-    raw = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"],
-        capture_output=True, check=True,
-    ).stdout  # fmt: skip
-    return np.frombuffer(raw, dtype=np.int16).astype(np.float64)
-
-
-def _dominant_hz(path: Path) -> float:
-    samples = _audio(path)
-    spectrum = np.abs(np.fft.rfft(samples * np.hanning(len(samples))))
-    return float(np.fft.rfftfreq(len(samples), 1 / 8000)[int(np.argmax(spectrum))])
-
-
-@needs_ffmpeg
-def test_tempo_slows_picture_and_sound_together_with_the_pitch_kept(
-    post_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    takes = post_desk / "ep01" / "takes"
-    take = write_frames(
-        takes / "take-ep01-t1-sokii-v1.mp4", shot_frames(72, BLUE), tone=440
-    )
-
-    assert (
-        main(
-            [
-                "tempo",
-                "--desk",
-                str(post_desk),
-                "--take-file",
-                str(take),
-                "--factor",
-                "0.9",
-            ]
-        )
-        == 0
-    )
-
-    out = takes / "take-ep01-t1-tempo-v1.mp4"
-    assert "Tempo 0.9x" in capsys.readouterr().out
-    assert abs(media_duration(out) - 3.0 / 0.9) < 0.1
-    assert abs(count_frames(out) / 24.0 - 3.0 / 0.9) < 0.1, "the picture is slowed"
-    assert abs(len(_audio(out)) / 8000 - 3.0 / 0.9) < 0.1, "and the sound with it"
-    assert abs(_dominant_hz(out) - 440) < 8, "atempo keeps the pitch"
-
-
-@needs_ffmpeg
-def test_tempo_window_speeds_only_the_middle(
-    post_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """1 s head + 1 s at 2x + 1 s tail of a 3 s take is 2.5 s."""
-
-    takes = post_desk / "ep01" / "takes"
-    take = write_frames(
-        takes / "take-ep01-t1-sokii-v1.mp4", shot_frames(72, BLUE), tone=440
-    )
-
-    assert (
-        main(
-            [
-                "tempo",
-                "--desk",
-                str(post_desk),
-                "--take-file",
-                str(take),
-                "--factor",
-                "2",
-                "--from",
-                "1",
-                "--to",
-                "2",
-            ]
-        )
-        == 0
-    )
-
-    out = takes / "take-ep01-t1-tempo-v1.mp4"
-    assert "from 1s to 2s" in capsys.readouterr().out
-    assert abs(media_duration(out) - 2.5) < 0.15
-
-
-@needs_ffmpeg
-def test_tempo_refuses_a_factor_out_of_range(tmp_path: Path) -> None:
-    take = write_frames(tmp_path / "take.mp4", shot_frames(24, BLUE))
-    with pytest.raises(ValueError, match="0.5-2.0"):
-        change_tempo(take, tmp_path / "t.mp4", factor=0.3)
-    assert not (tmp_path / "t.mp4").exists()
-
-
-# ================================================================================================
-# soften
-# ================================================================================================
-
-
-@needs_ffmpeg
-def test_soften_finds_the_hard_cut_and_fades_the_last_frame_over_it(
-    post_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    takes = post_desk / "ep01" / "takes"
-    raw = _cut_take(takes / "take-ep01-t1-raw-v1.mp4")
     assert measure_cuts(raw) == (1.5,)
-
-    assert main(["soften", "--desk", str(post_desk)]) == 0
-
-    assert "Softened 1 cut(s) found at 1.50s" in capsys.readouterr().out
-    out = takes / "take-ep01-t1-soften-v1.mp4"
-    assert count_frames(out) == count_frames(raw)
-    before, after = _frames(raw), _frames(out)
-    assert np.abs(after[37] - before[37]).mean() > 20, (
-        "the held blue frame lies over the new shot"
-    )
-    assert np.abs(after[37] - before[35]).mean() > 5, (
-        "and it is fading, not a plain hold"
-    )
-    assert np.abs(after[48] - before[48]).mean() < 4, (
-        "past 0.33 s the new shot is clean"
-    )
-    assert np.abs(after[20] - before[20]).mean() < 4, "before the cut nothing changes"
-
-
-@needs_ffmpeg
-def test_soften_with_no_hard_cut_writes_nothing(
-    post_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    takes = post_desk / "ep01" / "takes"
-    write_frames(takes / "take-ep01-t1-raw-v1.mp4", shot_frames(72, BLUE))
-    before = {p.name for p in takes.glob("*.mp4")}
-
-    assert main(["soften", "--desk", str(post_desk)]) == 0
-
-    assert "No hard cuts" in capsys.readouterr().out
-    assert _no_new_mp4(takes, before)
-    with pytest.raises(ValueError, match="no cuts"):
-        soften_seams(takes / "take-ep01-t1-raw-v1.mp4", takes / "x.mp4", ())
-
-
-# ================================================================================================
-# an older finished file's attached cover survives every edit
-# ================================================================================================
-
-
-def _streams(path: Path) -> list[dict]:
-    probed = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries",
-         "stream=codec_type,codec_name:stream_disposition=attached_pic", "-of", "json", str(path)],
-        capture_output=True, text=True, check=True,
-    )  # fmt: skip
-    return json.loads(probed.stdout)["streams"]
-
-
-def _covered_take(takes: Path) -> Path:
-    # Finish attached a cover picture inside the MP4 before 23 Oct 2026; desks still hold those files.
-    plain = _cut_take(takes / "take-ep01-t1-sokii-v1.mp4")
-    cover = takes / "take-ep01-t1-thumb-v1.jpg"
-    Image.new("RGB", (W, H), (200, 30, 30)).save(cover, format="JPEG")
-    out = takes / "take-ep01-t1-sokii-cover-v1.mp4"
-    subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(plain), "-i", str(cover), "-map", "0", "-map", "1",
-         "-c", "copy", "-c:v:1", "mjpeg", "-disposition:v:1", "attached_pic", str(out)],
-        check=True,
-    )  # fmt: skip
-    return out
-
-
-@needs_ffmpeg
-@pytest.mark.parametrize(
-    ("command", "flags"),
-    [
-        ("freeze", ["--at", "0.5", "--hold", "0.5"]),
-        ("tempo", ["--factor", "0.9"]),
-        ("soften", ["--cut", "1.5"]),
-    ],
-)
-def test_edits_keep_the_attached_cover_and_say_so_in_the_name(
-    post_desk: Path, command: str, flags: list[str]
-) -> None:
-    takes = post_desk / "ep01" / "takes"
-    covered = _covered_take(takes)
-    frames_before = count_frames(covered)
-
-    code = main(
-        [command, "--desk", str(post_desk), "--take-file", str(covered), *flags]
-    )
-
-    assert code == 0
-    out = takes / f"take-ep01-t1-{command}-cover-v1.mp4"
-    assert out.is_file(), sorted(p.name for p in takes.glob("*.mp4"))
-    streams = _streams(out)
-    kinds = [(s["codec_type"], s["disposition"]["attached_pic"]) for s in streams]
-    assert kinds.count(("video", 1)) == 1, kinds  # the cover
-    assert kinds.count(("video", 0)) == 1, kinds  # the picture, re-encoded
-    assert ("audio", 0) in kinds
-    cover = next(s for s in streams if s["disposition"]["attached_pic"])
-    assert cover["codec_name"] == "mjpeg"
-    # The edit worked on the picture, not on the one-frame cover.
-    expected = {
-        "freeze": frames_before,
-        "soften": frames_before,
-    }
-    if command in expected:
-        assert count_frames(out) == expected[command]
-    else:
-        assert count_frames(out) > frames_before

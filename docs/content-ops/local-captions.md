@@ -1,32 +1,25 @@
 # Local captions (house recipe)
 
-**Default desks** (`api_captions: true`) still run **`finish`** / **`caption`** on the **raw** take: the show's Bold or Subtle style on the laptop is the deliverable. The server may also burn **house** captions on the finished episode asset (Modal in prod); that does not replace local finish.
-
-Use this doc for timing and style when captions run **only on the laptop**: `api_captions: false`, `--no-api-captions`, or the `caption` command alone. The API always downloads a **raw scene MP4** (`ep01/api/17_raw_scene_clips.json` → `ep01/takes/take-ep01-t1-raw-vN.mp4`).
+> **5 Nov 2026:** the kit burns no captions on this laptop. `caption --desk D --episode N` has the server
+> caption the delivered episode (`--caption-style S` picks the look for that run, `--retime` re-times mistimed
+> captions, core team only), and a plain `finish` downloads it. `--take`, `--line-start`, `--line-end`,
+> `--words-json`, `--caption-scale` and `--no-open` are refused by name: the server times and sizes every caption
+> from the line's own sound, and a mistimed caption goes to the core team for `--retime`. The rest of this page
+> describes the older local burn, for reading old run notes.
 
 ## One command
 
 ```bash
-uv run fictora-produce caption --desk <desk>
+uv run fictora-produce caption --desk <desk> --episode N [--caption-style S] [--retime]
 ```
 
 | Option | Use |
 | --- | --- |
-| `--episode N` | Episode other than 1 |
-| `--take <path>` | A specific raw MP4 (default: newest `take-epNN-t1-raw-v*.mp4`) |
-| `--line-start S` | Seconds where a line starts; once per line, in order. Overrides speech detection and word timing |
-| `--line-end S` | Seconds where a line's caption goes off; once per line, in order. Exact: no hold, no reading minimum. Works with or without `--line-start` |
-| `--caption-style S` | `bold`, `subtle` (`house` is its older name), `plain` (white whole lines) or `none` (nothing burned). Default: the show's style (`caption_style` in the desk's `production.config.json`, else `bold` for a new show and `subtle` for one with finished episodes). Same flag on `finish` |
-| `--words-json J` | A transcript of the take (`/v1/transcripts` words) to time the lines on, on any show. Default: the newest `takes/take-epNN-t1-*words-vN.json` when captioning the raw take |
-| `--no-open` | Do not open the result |
+| `--episode N` | The delivered episode to caption (required) |
+| `--caption-style S` | `bold`, `subtle` (`house` is its older name), `plain` (white whole lines) or `none` (nothing captioned). Default: the show's style, kept on the server |
+| `--retime` | Join the episode again from its takes with freshly timed captions (core-team token only) |
 
-Writes, never overwriting:
-
-| File | Content |
-| --- | --- |
-| `takes/take-ep01-t1-house-vN.ass` | Caption cues |
-| `takes/take-ep01-t1-captioned-vN.mp4` | Raw take with captions burned in (audio copied) |
-| `run-notes.md` | One note with the files and, per line, when it is on screen and what timed it: `(words)`, `(speech)`, `(manual)`, or a mix such as `(words start, manual end)` |
+Prints the server's answer (the new cut's link) and writes nothing on the desk. A refusal prints one plain line on stderr and exits 2.
 
 ## House look
 
@@ -36,7 +29,7 @@ The house style the content team delivers (runbook rule 1): **Arial Bold 64 on a
 | --- | --- |
 | Text colour | Yellow `#FFE500` |
 | Font | Arial Bold. A system font (macOS ships it; it cannot be bundled): `setup-check` warns (⚠) when it is missing, and a render that falls back prints `WARNING FONT: …` and notes it in the run notes |
-| Size | 64 on a 1920 px-tall frame (3.3% of height), scaled to the take: 45 on 1344, 43 on 1280. 45 on the 1344-high take IS the house 64: never re-burn at 64 (that is 1.4x house size). Bigger on purpose: `finish` / `caption --caption-scale X` (0.5-2), wrapped and placed by the kit |
+| Size | 64 on a 1920 px-tall frame (3.3% of height), scaled to the take: 45 on 1344, 43 on 1280. 45 on the 1344-high take IS the house 64: never re-burn at 64 (that is 1.4x house size). Size is the server's; `--caption-scale` is refused |
 | Edge | Black outline 5 (4 on 1344), soft 50% black shadow 2 (1 on 1344), no box |
 | Placement | Centred, side margins 60 px on a 1080-wide frame (43 on 768); bottom of text at 62% of frame height (margin 511 px on 1344, 730 on 1920), block inside 55–70% (social safe zones), two lines included |
 | Long lines | A caption too wide for one line wraps onto **two balanced lines** (the break that makes the two lines closest in width; the kit breaks it, `WrapStyle: 2`, so libass adds no breaks of its own). Only a caption that does not fit on two lines is set smaller |
@@ -61,25 +54,25 @@ Set it per run with `--caption-style` on `finish` or `caption`, or for the show 
 
 1. **Lines**: the take's dialogue from the **current spine**: `finish` and `caption` read it from the server (a free `GET`, saved on the desk as `spine.json`), so a line deleted or changed before filming is never captioned from an old desk copy (L-20261001-8). Only when the server cannot be read is the newest snapshot in `epNN/api/` used, and the report says `!! captions from the desk's copy …`.
 2. **Speech spans**: `silencedetect=noise=-30dB:d=0.3` on the take. Gaps shorter than 0.12 s are clicks, not speech.
-3. **Anchor**: each line starts on the next speech span (silence-end onset) and absorbs following spans only while the pause is under 0.6 s and the line still needs time. Spans after the last line are not captioned, and the report and run notes say **`EXTRA SPEECH: N speech stretch(es) for M line(s); not captioned: a-b s …`** (also on stderr). Lines take spans strictly in order, so one stray stretch of speech before a line (a mumble, a line the take made up) puts every later caption on the wrong words; leftover spans are the only sign of it without a transcript (L-20260930-6: "You must be Hana." over Hana). It can also be a door or the music tail: watch the captions. Fix: a transcript (`review --transcribe`, then finish again: captions follow the words), `finish --mute A-B` for stray speech, or `--line-start` / `--line-end`.
+3. **Anchor**: each line starts on the next speech span (silence-end onset) and absorbs following spans only while the pause is under 0.6 s and the line still needs time. Spans after the last line are not captioned, and the report and run notes say **`EXTRA SPEECH: N speech stretch(es) for M line(s); not captioned: a-b s …`** (also on stderr). Lines take spans strictly in order, so one stray stretch of speech before a line (a mumble, a line the take made up) puts every later caption on the wrong words; leftover spans are the only sign of it without a transcript (L-20260930-6: "You must be Hana." over Hana). It can also be a door or the music tail: watch the captions. Fix: a transcript (`review --transcribe`, then finish again: captions follow the words) or `finish --mute A-B` for stray speech.
 4. **Words**: with a transcript, each word shows when it is said (below); without one they are spread across the line's span, weighted by word length (an estimate).
 
-No transcription model is needed for an English show: the words are already fixed at the script gate. If detection picks the wrong sound, watch the raw take, note where each line starts and ends, and re-run with `--line-start` / `--line-end`.
+No transcription model is needed for an English show: the words are already fixed at the script gate. If detection picks the wrong sound, watch the raw take, tell the core team which line is early or late; the server re-times it.
 
 ### A show not spoken in English: timed on the transcript's words
 
 Speech spans cannot tell a stammer or a mid-line pause from a line: on Hanakaze Sweets ep02 t1 (Japanese) a stammer `も、` at 9.5 s started line 2 two seconds early, and a pause inside line 1 ended it at 1.63 s of 3.05 s. So when the show's `spoken_language` is not English (whole English lines), each line is timed on the words a Whisper transcript of the take heard for it:
 
-1. **Transcript**: `--words-json`, else the newest saved `takes/take-epNN-tK-*words-vN.json` (`review --transcribe`, `revoice`; `review` itself reads only a transcript of the exact take it checks: see reference.md). `finish` asks the server for one when none is saved (`/v1/transcripts` on the take's stored URL, a few cents, saved as `take-epNN-tK-review-words-vN.json` and reused next time); `caption` never does.
+1. **Transcript**: the newest saved `takes/take-epNN-tK-*words-vN.json` (`review --transcribe`, `revoice`; `review` itself reads only a transcript of the exact take it checks: see reference.md). `finish` asks the server for one when none is saved (`/v1/transcripts` on the take's stored URL, a few cents, saved as `take-epNN-tK-review-words-vN.json` and reused next time); `caption` never does.
 2. **Match**: the same matcher `review` uses for "heard" (`creation/post/whisper.py`, `line_windows`), on what is performed (`spoken_text`, else `text`) and every spelling; a Japanese line is matched on the server's per-word readings (a word with several plausible readings, `readings`, is compared on the one a line has: 美味 heard for うまい as ウマ, 今日 for こんにちは as コンニチ).
 3. **Start**: the first matched word. A word at the head that Whisper stretched past what one word can last (over 1.2 s and 0.25 s a character) starts where its speech starts: the last speech span of the take (the same silencedetect as speech spans) that begins inside the word after a pause over 0.6 s (ep 4 `ちょっと!` heard 9.37–12.45 s starts at 11.34 s; ep 6 `悪` 8.81–12.57 s at 12.42 s). Only with no such onset is it skipped (`もう` over 9.47–11.33 s with no speech in it would be). Also skipped: one short leading word (two characters or fewer, a stammer) cut off from the rest by a pause over 0.6 s.
 4. **End**: the last matched word's end (a stretched last word is cut to 1.2 s from its start), plus a 0.25 s hold, never into the next line.
 5. **Readable**: each whole line stays up at least max(1.2 s, 0.3 s per English word), extended forward only, never into the next line.
-6. **Fallback**: a line the transcript did not match is timed on speech spans (steps 2–3 above). So is every line when there is no transcript (and none can be made), when `--voice`/`--mute` changed the take's speech, or when `finish --take-file` is not the raw take the server transcribed. The report says which method timed each line.
+6. **Fallback**: a line the transcript did not match is timed on speech spans (steps 2–3 above). So is every line when there is no transcript (and none can be made), when `--voice`/`--mute` changed the take's speech, or when the take was edited after the server transcribed it. The report says which method timed each line.
 
 Hanakaze ep02 t1 with its transcript: line 1 `0.03–3.30 s` (was 0.03–1.63), line 2 `11.33–13.50 s` (was 9.47–10.43).
 
-**English shows use a transcript too** when one is saved (`--words-json`, else the newest `take-epNN-tK-*words-vN.json`; `review --transcribe` makes one): each line is placed on the words heard for it, the same matcher as above, so extra speech on the take no longer moves it. `finish` never asks the server for a transcript of an English take: with none saved it times on speech spans and warns `EXTRA SPEECH` when stretches are left over. A take with hand `--voice` / `--mute` uses the saved transcript with the hand lines added and the mutes taken out (`take-epNN-tK-cap-timing-vN.json`). English still flickers, and each word now shows **when it is said** (6 Oct 2026): its own transcript time, checked against the take's speech spans, because Whisper stamps a word after a pause from the end of the word before it (SCP-173 Blink ep 1: `Please,` heard 6.29 s, said 7.83 s; `open` heard 8.19 s, said 8.83 s). A word that starts mostly in silence starts where the speech inside it starts (at least 0.1 s later); a stretched word starts at its onset after a pause, else where it is stamped when that is speech. No word shows before its sound. Spreading the words over the line by length put that episode's `door!` 0.8 s after it was said. Where the line as written and what was said differ, **what was said is shown** (the line's own spelling stays where the words agree, `NOT—` for a heard `not!`, and for a name or a 4+ letter word one letter off); the report and run notes say `WORDING: captioned as said, not as written: …`. A line timed on speech spans or hand times is still spread (an estimate). A locked-voice take (`soundtrack: target_audio`) is still timed on its exact line windows, never a transcript.
+**English shows use a transcript too** when one is saved (the newest `take-epNN-tK-*words-vN.json`; `review --transcribe` makes one): each line is placed on the words heard for it, the same matcher as above, so extra speech on the take no longer moves it. `finish` never asks the server for a transcript of an English take: with none saved it times on speech spans and warns `EXTRA SPEECH` when stretches are left over. A take with hand `--voice` / `--mute` uses the saved transcript with the hand lines added and the mutes taken out (`take-epNN-tK-cap-timing-vN.json`). English still flickers, and each word now shows **when it is said** (6 Oct 2026): its own transcript time, checked against the take's speech spans, because Whisper stamps a word after a pause from the end of the word before it (SCP-173 Blink ep 1: `Please,` heard 6.29 s, said 7.83 s; `open` heard 8.19 s, said 8.83 s). A word that starts mostly in silence starts where the speech inside it starts (at least 0.1 s later); a stretched word starts at its onset after a pause, else where it is stamped when that is speech. No word shows before its sound. Spreading the words over the line by length put that episode's `door!` 0.8 s after it was said. Where the line as written and what was said differ, **what was said is shown** (the line's own spelling stays where the words agree, `NOT—` for a heard `not!`, and for a name or a 4+ letter word one letter off); the report and run notes say `WORDING: captioned as said, not as written: …`. A line timed on speech spans or hand times is still spread (an estimate). A locked-voice take (`soundtrack: target_audio`) is still timed on its exact line windows, never a transcript.
 
 ### Lines laid by hand
 

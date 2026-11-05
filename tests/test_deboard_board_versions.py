@@ -17,7 +17,6 @@ import pytest
 from conftest import board_array, needs_ffmpeg, shot_frames, write_frames
 from PIL import Image
 
-from creation.cli_produce import main as produce_main
 from creation.ops.floor import approve_board
 from creation.post import deboard as deboard_module
 from creation.post.deboard import BoardLeak, opened_on_earlier_drawing, pick_board
@@ -107,18 +106,3 @@ def test_finish_holds_a_start_on_an_earlier_drawing_of_the_board(
     step = next(s for s in result.steps if s.step == "deboard")
     assert step.status == "ran" and step.output is not None, step.detail
     assert "replaced 6 board frame(s)" in step.detail
-
-
-@needs_ffmpeg
-def test_the_deboard_command_measures_every_drawing(
-    post_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _setup_take(post_desk, unsure=False)
-
-    code = produce_main(
-        ["deboard", "--desk", str(post_desk), "--episode", "1", "--take", "t1"]
-    )
-
-    out = capsys.readouterr().out
-    assert code == 0
-    assert "board-ep01-t1-v1.png" in out and "replaced 6 board frame(s)" in out

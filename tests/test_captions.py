@@ -31,7 +31,6 @@ from creation.captions import (
     time_words,
     wrap_caption,
 )
-from creation.cli_produce import main as produce_main
 from creation.post.finish import run_finish
 
 # silencedetect output from a real H3 take: one line at 1.07–2.09 s, then
@@ -512,20 +511,6 @@ def test_caption_take_italic_for_heard_voices_and_skips_lines_that_are_not_engli
 
 
 @needs_ffmpeg
-def test_caption_command_prints_not_english(
-    post_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _mixed_desk(post_desk)
-    assert produce_main(["caption", "--desk", str(post_desk), "--no-open"]) == 0
-    out = capsys.readouterr().out
-    assert 'NOT ENGLISH: l2 "待って" — add an English subtitle' in out
-    assert "Behind you.  (italic: heard, not seen)" in out
-    assert "NOT ENGLISH: l2" in (post_desk / "ep01" / "run-notes.md").read_text(
-        encoding="utf-8"
-    )
-
-
-@needs_ffmpeg
 def test_finish_summary_shows_not_english(post_desk: Path) -> None:
     spine = json.loads(json.dumps(SPINE))
     lines = spine["beats"][0]["dialogue_lines"]
@@ -552,24 +537,3 @@ def test_finish_summary_shows_not_english(post_desk: Path) -> None:
     rows = _dialogue(ass.read_text(encoding="utf-8"))
     assert rows and all(style == "Italic" for style, _ in rows), "Kenji is off screen"
     assert not any("今夜" in text for _, text in rows)
-
-
-@needs_ffmpeg
-def test_caption_command_warns_when_the_italic_face_falls_back(
-    post_desk: Path,
-    capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import creation.captions as cap
-
-    monkeypatch.setattr(
-        cap,
-        "find_italic_font",
-        lambda: cap.ItalicFont(None, None, "Arial (/a/Arial.ttf)"),
-    )
-    _mixed_desk(post_desk)
-    assert produce_main(["caption", "--desk", str(post_desk), "--no-open"]) == 0
-    err = capsys.readouterr().err
-    assert "WARNING FONT: Arial Bold Italic not found" in err
-    notes = (post_desk / "ep01" / "run-notes.md").read_text(encoding="utf-8")
-    assert "FONT: Arial Bold Italic not found" in notes

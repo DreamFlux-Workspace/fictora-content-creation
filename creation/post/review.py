@@ -946,7 +946,7 @@ def board_section(
         if deboarded:
             faults += 1
             details.append(
-                f"the first {scan.head} frame(s) are still the board on a deboarded file: run deboard on the raw take"
+                f"the first {scan.head} frame(s) are still the board: set the take's start past them with `trim --episode N --take tK --start S`"
             )
         else:
             details.append(
@@ -2057,7 +2057,7 @@ def review_take(
                 detail.replace(
                     "finish removes them (deboard)",
                     "finish leaves them (the server was unsure); if they are the board, "
-                    "`deboard --hold-unsure` then finish --take-file the result",
+                    "look at the start; if it is the board, set the take's start past it with `trim --episode N --take tK --start S`",
                 )
                 for detail in board_sec.details
             ]

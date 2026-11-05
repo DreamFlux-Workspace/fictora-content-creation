@@ -31,7 +31,6 @@ from creation.captions import (
     time_lines,
     word_span,
 )
-from creation.cli_produce import main as produce_main
 from creation.post.finish import run_finish
 from creation.post.whisper import Word, load_words
 
@@ -398,31 +397,6 @@ def _japanese_words(path: Path) -> Path:
         {"word": "ない", "start": 4.0, "end": 4.2, "reading": "ナイ"},
     ]}, ensure_ascii=False), encoding="utf-8")  # fmt: skip
     return path
-
-
-@needs_ffmpeg
-def test_caption_command_times_whole_lines_on_the_saved_transcript(
-    post_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _japanese_desk(post_desk)
-    _japanese_words(post_desk / "ep01" / "takes" / "take-ep01-t1-review-words-v1.json")
-    assert produce_main(["caption", "--desk", str(post_desk), "--no-open"]) == 0
-    out = capsys.readouterr().out
-    assert "3.50-" in out and "I-I'm sorry.  [words]" in out, out
-    notes = (post_desk / "ep01" / "run-notes.md").read_text(encoding="utf-8")
-    assert '"I-I\'m sorry." (words)' in notes
-
-
-@needs_ffmpeg
-def test_caption_command_line_end(
-    post_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _japanese_desk(post_desk)
-    assert produce_main(["caption", "--desk", str(post_desk), "--no-open",
-                         "--line-end", "2.2", "--line-end", "5.5"]) == 0  # fmt: skip
-    out = capsys.readouterr().out
-    assert "2.20s  Wait here for me.  [speech start, manual end]" in out, out
-    assert "5.50s  I-I'm sorry.  [speech start, manual end]" in out, out
 
 
 def _finish(desk: Path, **kwargs: object) -> tuple[object, str]:

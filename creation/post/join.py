@@ -419,7 +419,7 @@ def episode_parts(desk: Path, episode: int) -> list[JoinPart]:
     if missing:
         raise ValueError(
             f"ep{episode:02d}: no finished {', '.join(missing)}. Fix what is missing and run "
-            "`fictora-produce finish` on that take again, or name the takes with --take-file"
+            "`fictora-produce finish` on that take again"
         )
     return parts
 

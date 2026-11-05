@@ -12,7 +12,6 @@ import io
 import json
 from pathlib import Path
 
-import pytest
 from conftest import board_array, needs_ffmpeg, shot_frames, write_frames
 from PIL import Image
 
@@ -52,43 +51,6 @@ def _deboard(post_desk: Path, *extra: str) -> int:
 
 
 @needs_ffmpeg
-def test_deboard_asks_instead_of_holding_a_start_the_server_was_unsure_of(
-    post_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _setup(post_desk, unsure=[{"end": "head", "frames": 6, "reason": REASON}])
-
-    code = _deboard(post_desk)
-
-    err = capsys.readouterr().err
-    assert code == 2
-    assert REASON in err and "--hold-unsure" in err
-    assert [row for row in err.splitlines() if row.strip()][-1].startswith("Refused: ")
-    assert not list((post_desk / "ep01" / "takes").glob("*deboard*"))
-
-
-@needs_ffmpeg
-def test_deboard_holds_the_start_once_the_producer_says_so(
-    post_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _setup(post_desk, unsure=[{"end": "head", "frames": 6, "reason": REASON}])
-
-    code = _deboard(post_desk, "--hold-unsure")
-
-    out = capsys.readouterr().out
-    assert code == 0
-    assert "replaced 6 board frame(s)" in out and "--hold-unsure" in out
-    assert list((post_desk / "ep01" / "takes").glob("*deboard*"))
-
-
-@needs_ffmpeg
-def test_an_unsure_tail_does_not_stop_deboard_at_the_head(post_desk: Path) -> None:
-    _setup(post_desk, unsure=[{"end": "tail", "frames": 12, "reason": "cap run"}])
-
-    assert _deboard(post_desk) == 0
-    assert list((post_desk / "ep01" / "takes").glob("*deboard*"))
-
-
-@needs_ffmpeg
 def test_finish_does_not_auto_hold_an_unsure_start_and_says_how_to(
     post_desk: Path,
 ) -> None:
@@ -100,5 +62,7 @@ def test_finish_does_not_auto_hold_an_unsure_start_and_says_how_to(
 
     step = next(s for s in result.steps if s.step == "deboard")
     assert step.status == "skipped" and step.output is None
-    assert REASON in step.detail and "--hold-unsure" in step.detail
+    assert (
+        REASON in step.detail and "trim --episode 1 --take t1 --start S" in step.detail
+    )
     assert not list((post_desk / "ep01" / "takes").glob("*deboard*"))
