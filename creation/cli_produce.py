@@ -68,6 +68,9 @@ from creation.recover import (
 from creation.setup_check import run_setup_check
 from creation.shared_spine import shared_spine_refusal
 
+PRODUCE_GATES = ("pitch", "look", "plates", "script", "board")
+"""The gates fictora-produce records; ``post`` is accepted only to say there is no final step."""
+
 
 def _warn_if_no_local_ffmpeg() -> None:
     """Warn at desk creation when this machine cannot burn local captions."""
@@ -280,9 +283,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument(
         "--gate",
         required=True,
-        # "post" only says there is no final step (fictora-drama #1407).
-        choices=("pitch", "look", "plates", "script", "board", POST_GATE),
-        metavar="{pitch,look,plates,script,board}",
+        choices=(*PRODUCE_GATES, POST_GATE),
+        metavar="{" + ",".join(PRODUCE_GATES) + "}",
     )
     ap.add_argument(
         "--episode",

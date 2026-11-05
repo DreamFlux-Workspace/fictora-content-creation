@@ -40,6 +40,8 @@ from creation.ops.luma import measure_board_luma
 from creation.ops.notes import append_run_note, ensure_run_notes
 from creation.ops.state import parse_spoken_lines
 
+OPS_GATES = ("look", "plates", "script", "board")
+"""The gates fictora-ops records; ``post`` and ``pitch`` are accepted only to say where they went."""
 PREFLIGHT_GATE_OPEN = 3
 """A human gate is still open: nothing overrides it."""
 PREFLIGHT_WARNINGS = 4
@@ -164,9 +166,8 @@ def _add_floor_parsers(
     ap.add_argument(
         "--gate",
         required=True,
-        # "pitch" only says where it lives (fictora-produce); "post" only says there is no final step.
-        choices=("look", "plates", "script", "board", POST_GATE, PITCH_GATE),
-        metavar="{look,plates,script,board}",
+        choices=(*OPS_GATES, POST_GATE, PITCH_GATE),
+        metavar="{" + ",".join(OPS_GATES) + "}",
     )
     ap.add_argument("--episode", type=int, default=None)
     ap.add_argument("--take", default=None)

@@ -23,7 +23,6 @@ from typing import Any
 import httpx
 
 STANDING_ROUTE = "/v1/spines/{spine_id}/standing"
-#: Seconds the read may take.
 TIMEOUT_SECONDS = 30.0
 
 
@@ -32,7 +31,6 @@ class CopySource(StrEnum):
 
     SERVER = "server"
     SERVER_UNCHECKED = "server-unchecked"
-    OLD_SERVER_FINAL = "old-server-final"
     DESK_NEWEST = "desk-newest"
 
 
@@ -210,11 +208,11 @@ def _episode_copy(
     final = row.get("final")
     if isinstance(final, dict):
         return (
-            _from_server(final, CopySource.OLD_SERVER_FINAL, folder, episode)
+            _from_server(final, CopySource.SERVER, folder, episode)
             if final.get("current") is True
             else None
         )
-    newest = newest_episode_file(folder, episode) if folder.is_dir() else None
+    newest = newest_episode_file(folder, episode)
     return CurrentCopy(CopySource.DESK_NEWEST, desk_file=newest) if newest else None
 
 
