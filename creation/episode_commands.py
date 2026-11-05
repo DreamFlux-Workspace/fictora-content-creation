@@ -60,6 +60,7 @@ from urllib.parse import quote
 import httpx
 
 from creation import inner_voice
+from creation.finish_again import finish_again_offer_lines
 from creation.captions import is_english
 from creation.default_staging import cast_ids_in_episode, default_subject_blocking
 from creation.authoring_warnings import (
@@ -8050,6 +8051,8 @@ def _price_film(
         else ""
     )
     lines = [
+        # Only the ending failed: the server offers finishing it free, first, before new takes are paid for.
+        *finish_again_offer_lines(estimate, desk=desk, episode=episode),
         *warnings,
         next_take_voices_line(desk, run, spine),
         f"Film {scope}: about ${usd:.2f} ({source}){earlier}{others}.",
@@ -8116,6 +8119,7 @@ EPISODE_COMMANDS = frozenset(
         "remove-prop",
         "check-lines",
         "film",
+        "finish-again",
         "collect-takes",
     }
 )
@@ -9069,6 +9073,16 @@ def add_episode_parsers(
         "no flag since 9 Oct 2026). Goes with --confirm-spend; a resume keeps what the film was first sent with.",
     )
 
+    finish = sub.add_parser(
+        "finish-again",
+        help=(
+            "Finish episode N again from its stored takes when the server says only its ending failed: "
+            "no new takes, $0. `film` offers it before a re-film price."
+        ),
+    )
+    finish.add_argument("--desk", type=Path, required=True)
+    finish.add_argument("--episode", type=int, required=True)
+
     collect = sub.add_parser(
         "collect-takes",
         help=(
@@ -9435,6 +9449,11 @@ def dispatch_episode(args: argparse.Namespace) -> int:
                 single_frame_start=args.single_frame_start,
                 no_single_frame_start=args.no_single_frame_start,
             )
+            return 0
+        if args.command == "finish-again":
+            from creation.finish_again import run_finish_again
+
+            run_finish_again(args.desk, episode=args.episode)
             return 0
         if args.command == "collect-takes":
             from creation.collect_stuck import run_collect_takes
