@@ -119,9 +119,6 @@ def test_the_servers_current_copy_is_the_copy_to_post_with_no_approval(
     assert [(r.method, r.url.path) for r in seen] == [
         ("GET", "/v1/spines/spine_test/standing")
     ], "status only reads; nothing is approved"
-    assert (
-        "post" not in json.loads((post_desk / "series.json").read_text())["episodes"][0]
-    )
 
 
 def test_a_copy_not_on_this_laptop_says_so(
@@ -426,3 +423,16 @@ def test_a_gate_write_reads_the_copies_quickly_with_the_env_token_only(
     write_queue(post_desk)
 
     assert seen == [{"timeout": QUEUE_READ_SECONDS, "env_token_only": True}]
+
+
+def test_a_new_desk_still_writes_the_post_gate_older_kits_need(
+    post_desk: Path,
+) -> None:
+    from creation.ops.state import load_series, save_series
+
+    save_series(post_desk, load_series(post_desk))
+
+    episode = json.loads((post_desk / "series.json").read_text(encoding="utf-8"))[
+        "episodes"
+    ][0]
+    assert episode["post"]["status"] == "pending"

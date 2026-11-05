@@ -799,6 +799,8 @@ def series_to_dict(series: SeriesState) -> dict[str, Any]:
     payload["episodes"] = [_fold_extra(episode) for episode in payload["episodes"]]
     for episode in payload["episodes"]:
         episode["takes"] = [_fold_extra(take) for take in episode["takes"]]
+        # Kits before 6 Nov 2026 refuse a desk whose episodes lack "post"; this kit never reads it.
+        episode.setdefault("post", asdict(GateRecord()))
     # Only take lines carry a job; other lines keep the keys the old kit wrote.
     for entry in payload["spend_log"]:
         if entry.get("job_id") is None:
