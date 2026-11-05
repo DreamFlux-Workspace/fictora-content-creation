@@ -124,13 +124,24 @@ class CutStop(Exception):
         self.code = code
 
 
-class PartTextTooLong(CutStop):
-    """The server's 422: a part's opening or ending text won't fit. ``message`` is its plain words."""
+class PlanRefused(CutStop):
+    """The server's 422 on a setting the human gave: a text won't fit, or the part count is out of range.
 
-    def __init__(self, message: str, part: Any) -> None:
-        self.message = message or f"The text for part {part} is too long to fit."
-        self.part = part
-        super().__init__(f"Stopped: {self.message} Nothing was made.", 2)
+    ``message`` is the server's plain words. ``setting`` names what to drop to plan again:
+    ``"texts"`` or ``"part_count"``.
+    """
+
+    def __init__(self, message: str, setting: str) -> None:
+        self.message = message
+        self.setting = setting
+        super().__init__(f"Stopped: {message} Nothing was made.", 2)
+
+    def without_it(self, choice: PartChoice) -> PartChoice:
+        """The human's settings minus the one the server refused (and minus the typed change)."""
+
+        if self.setting == "texts":
+            return PartChoice(choice.part_count, choice.start_number)
+        return PartChoice(None, choice.start_number, choice.texts)
 
 
 def parse_ref(raw: str) -> Pick:
@@ -306,12 +317,27 @@ def _check(response: httpx.Response, *, what: str) -> Any:
             + ". Finish it first, or leave it out of the pick. Nothing was made."
         )
     error = _error(body)
+    details = error.get("details")
+    details = details if isinstance(details, dict) else {}
+    message = str(error.get("message") or "").strip()
     if response.status_code == 422 and error.get("code") == "part_text_too_long":
-        details = error.get("details")
-        details = details if isinstance(details, dict) else {}
-        raise PartTextTooLong(
-            str(error.get("message") or "").strip(),
-            details.get("part"),
+        part = details.get("part", error.get("part"))
+        raise PlanRefused(
+            message or f"The text for part {part} is too long to fit.", "texts"
+        )
+    if (
+        response.status_code == 422
+        and error.get("code") == "series_cut_parts_out_of_range"
+    ):
+        raise PlanRefused(
+            message
+            or f"This edit can have 1 to {details.get('parts_max')} parts "
+            f"(the server suggests {details.get('parts_suggested')}).",
+            "part_count",
+        )
+    if response.status_code == 409 and error.get("code") == "series_cut_not_ready":
+        raise CutStop(
+            f"NOT DONE: {message or 'the edit is not ready yet.'} Run the same command again later; nothing was made."
         )
     if (
         response.status_code == 409
@@ -378,11 +404,23 @@ def _entries(picks: Sequence[Pick]) -> list[dict[str, Any]]:
     return [{"spine_id": p.spine_id, "episode": p.episode} for p in picks]
 
 
+def _cut_body(
+    picks: Sequence[Pick], choice: PartChoice, *, title: str | None, new_music: bool
+) -> dict[str, Any]:
+    """The body the plan and the cut both take (the cut ignores ``change_request``)."""
+
+    body: dict[str, Any] = {"episodes": _entries(picks), "title": title}
+    if new_music:
+        body["new_music"] = True
+    return {**body, **choice.body()}
+
+
 def plan_parts(
     picks: Sequence[Pick],
     choice: PartChoice,
     *,
     title: str | None = None,
+    new_music: bool = False,
     api: tuple[str, Mapping[str, str]] | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> Mapping[str, Any]:
@@ -390,8 +428,8 @@ def plan_parts(
 
     Raises
     ------
-    PartTextTooLong
-        When a text the human set won't fit in its part.
+    PlanRefused
+        When a text the human set won't fit, or the part count they set is out of range.
     CutStop
         With the plain NOT DONE line when the server cannot plan.
     """
@@ -399,7 +437,7 @@ def plan_parts(
     _check_picks(picks)
     client, base, headers = _client(transport, api)
     with client:
-        body = {"episodes": _entries(picks), "title": title, **choice.body()}
+        body = _cut_body(picks, choice, title=title, new_music=new_music)
         response = _post(client, base + PLAN_ROUTE, headers, body)
         if response.status_code in (404, 405) and _route_missing(_body(response)):
             raise CutStop(NO_PLAN_ROUTE)
@@ -417,12 +455,22 @@ def _clock(seconds: Any) -> str:
 
 
 def plan_lines(plan: Mapping[str, Any]) -> list[str]:
-    """The server's own words for the plan, every planned part, then its question if it has one."""
+    """The server's summary as it sent it, then its question back if it has one.
 
-    count, start = plan.get("part_count"), plan.get("start_number")
+    The summary already names every part; only a server that sends none gets one line per part.
+    """
+
+    summary = str(plan.get("summary") or "").strip()
+    lines = summary.splitlines() if summary else _part_lines(plan)
+    clarify = str(plan.get("clarify") or "").strip()
+    if clarify:
+        lines.append(clarify)
+    return lines
+
+
+def _part_lines(plan: Mapping[str, Any]) -> list[str]:
     lines = [
-        str(plan.get("summary") or "").strip()
-        or f"{count} parts, Part {start} onwards:"
+        f"{plan.get('part_count')} parts, Part {plan.get('start_number')} onwards:"
     ]
     for p in plan.get("parts") or []:
         if isinstance(p, dict):
@@ -430,9 +478,6 @@ def plan_lines(plan: Mapping[str, Any]) -> list[str]:
                 f"Part {p.get('number')} · about {_clock(p.get('approx_seconds'))} · "
                 f'starts with "{p.get("opening_text") or ""}" · ends with "{p.get("ending_text") or ""}"'
             )
-    clarify = str(plan.get("clarify") or "").strip()
-    if clarify:
-        lines.append(clarify)
     return lines
 
 
@@ -456,6 +501,7 @@ def confirm_parts(
     choice: PartChoice,
     *,
     title: str | None = None,
+    new_music: bool = False,
     yes: bool = False,
     ask: Callable[[str], str],
     say: Callable[[str], None],
@@ -471,21 +517,29 @@ def confirm_parts(
     Raises
     ------
     CutStop
-        When nobody said yes, a text won't fit under ``yes``, or the server cannot plan.
+        When nobody said yes, the server refuses a setting under ``yes``, or it cannot plan.
     """
+
+    def plan_for(choice: PartChoice) -> Mapping[str, Any]:
+        return plan_parts(
+            picks,
+            choice,
+            title=title,
+            new_music=new_music,
+            api=api,
+            transport=transport,
+        )
 
     last: Mapping[str, Any] | None = None
     while True:
         try:
-            plan = plan_parts(picks, choice, title=title, api=api, transport=transport)
-        except PartTextTooLong as too_long:
+            plan = plan_for(choice)
+        except PlanRefused as refused:
             if yes:
                 raise
-            say(too_long.message)
-            choice = PartChoice(choice.part_count, choice.start_number)
-            plan = last or plan_parts(
-                picks, choice, title=title, api=api, transport=transport
-            )
+            say(refused.message)
+            choice = refused.without_it(choice)
+            plan = last or plan_for(choice)
         last = plan
         for line in plan_lines(plan):
             say(line)
@@ -528,11 +582,7 @@ def run_cut(
     _check_picks(picks)
     client, base, headers = _client(transport, api)
     with client:
-        body: dict[str, Any] = {"episodes": _entries(picks), "title": title}
-        if parts is not None:
-            body.update(parts.body())
-        if new_music:
-            body["new_music"] = True
+        body = _cut_body(picks, parts or PartChoice(), title=title, new_music=new_music)
         made = _check(
             _post(client, base + CUTS_ROUTE, headers, body), what="start the cut"
         )
@@ -861,10 +911,12 @@ def _confirm_and_cut(picks: Sequence[Pick], choice: PartChoice, args: Any) -> li
 
     out = sys.stderr if getattr(args, "json", False) else sys.stdout
     title = getattr(args, "title", None)
+    new_music = getattr(args, "new_music", False)
     confirmed = confirm_parts(
         picks,
         choice,
         title=title,
+        new_music=new_music,
         yes=args.yes,
         ask=_asker(out),
         say=lambda line: print(line, file=out, flush=True),
@@ -874,7 +926,7 @@ def _confirm_and_cut(picks: Sequence[Pick], choice: PartChoice, args: Any) -> li
         title=title,
         parts=confirmed,
         wait_seconds=args.wait if args.wait is not None else DEFAULT_WAIT_SECONDS,
-        new_music=getattr(args, "new_music", False),
+        new_music=new_music,
     )
 
 

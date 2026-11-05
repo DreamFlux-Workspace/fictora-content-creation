@@ -32,6 +32,8 @@ TOO_LONG = "Part 4's ending is too long to fit on screen. Try 8 words or fewer."
 THREE_PARTS = "make it three parts"
 #: These words make the server ask back instead of planning anew.
 UNCLEAR = "different"
+MAX_PARTS = 4
+OUT_OF_RANGE = "This edit can have 1 to 4 parts."
 
 
 class PlanServer:
@@ -64,19 +66,41 @@ class PlanServer:
         change = body.get("change_request")
         count = 3 if change == THREE_PARTS else body.get("part_count", 2)
         start = body.get("start_number", 3)
+        if count > MAX_PARTS:
+            return httpx.Response(
+                422,
+                json={
+                    "error": {
+                        "code": "series_cut_parts_out_of_range",
+                        "message": OUT_OF_RANGE,
+                        "details": {
+                            "parts": count,
+                            "parts_max": MAX_PARTS,
+                            "parts_suggested": 2,
+                        },
+                    }
+                },
+            )
         texts = {t["number"]: t for t in body.get("texts", [])}
         for n, t in texts.items():
             if any(
                 len(t.get(k, "")) > self.too_long_over
                 for k in ("opening_text", "ending_text")
             ):
+                side = (
+                    "opening"
+                    if len(t.get("opening_text", "")) > self.too_long_over
+                    else "ending"
+                )
                 return httpx.Response(
                     422,
                     json={
                         "error": {
                             "code": "part_text_too_long",
                             "message": self.too_long_message,
-                            "details": {"part": n},
+                            "part": n,
+                            "which": side,
+                            "details": {"part": n, "which": side},
                         }
                     },
                 )
@@ -96,14 +120,23 @@ class PlanServer:
                     "ending_text": texts.get(n, {}).get("ending_text", ending),
                 }
             )
+        summary = [
+            f"I'll split this into {count} parts:",
+            *(
+                f'Part {p["number"]}: starts "{p["opening_text"]}", ends "{p["ending_text"]}"'
+                for p in parts
+            ),
+            "Make it, or tell me what to change?",
+        ]
         plan: dict[str, Any] = {
             "part_count": count,
             "suggested_part_count": 2,
+            "max_part_count": MAX_PARTS,
             "start_number": start,
             "suggested_start_number": 3,
             "parts": parts,
-            "summary": f"I'll split this into {count} parts, Part {start} to Part {start + count - 1}. "
-            "Make it, or tell me what to change?",
+            "summary": "\n".join(summary),
+            "clarify": None,
         }
         if change == UNCLEAR:
             plan["clarify"] = "Different how: more parts, fewer, or other openings?"
@@ -152,16 +185,18 @@ def screen(out: str) -> list[str]:
 
 
 TWO_PART_PRINTOUT = [
-    "I'll split this into 2 parts, Part 3 to Part 4. Make it, or tell me what to change?",
-    'Part 3 · about 0:52 · starts with "Mira finds the key" · ends with "the door is already open"',
-    'Part 4 · about 0:48 · starts with "Someone is inside" · ends with "she drops the key"',
+    "I'll split this into 2 parts:",
+    'Part 3: starts "Mira finds the key", ends "the door is already open"',
+    'Part 4: starts "Someone is inside", ends "she drops the key"',
+    "Make it, or tell me what to change?",
     picked_cut.GO_AHEAD,
 ]
 THREE_PART_PRINTOUT = [
-    "I'll split this into 3 parts, Part 3 to Part 5. Make it, or tell me what to change?",
-    'Part 3 · about 0:52 · starts with "Mira finds the key" · ends with "the door is already open"',
-    'Part 4 · about 0:48 · starts with "Someone is inside" · ends with "she drops the key"',
-    'Part 5 · about 0:48 · starts with "The lights go out" · ends with "he says her name"',
+    "I'll split this into 3 parts:",
+    'Part 3: starts "Mira finds the key", ends "the door is already open"',
+    'Part 4: starts "Someone is inside", ends "she drops the key"',
+    'Part 5: starts "The lights go out", ends "he says her name"',
+    "Make it, or tell me what to change?",
     picked_cut.GO_AHEAD,
 ]
 EPISODES = [
@@ -304,10 +339,7 @@ def test_flags_pass_through_to_the_plan_and_the_cut_without_asking(
     assert {"number": 6, "opening_text": "Back again", "ending_text": "Gone"} in made[
         "texts"
     ]
-    assert (
-        'Part 6 · about 0:48 · starts with "Back again" · ends with "Gone"'
-        in capsys.readouterr().out
-    )
+    assert 'Part 6: starts "Back again", ends "Gone"' in capsys.readouterr().out
 
 
 def test_no_instagram_or_tiktok_in_anything_a_punchy_edit_prints(
@@ -347,7 +379,7 @@ def test_too_long_text_is_shown_plainly_and_asked_again(
     answers(monkeypatch, "y")
     long_ending = "4:ending=she drops the key and runs into the night"
     assert cut_command(args(part_text=[long_ending])) == 0
-    assert screen(capsys.readouterr().out)[:5] == [TOO_LONG, *TWO_PART_PRINTOUT]
+    assert screen(capsys.readouterr().out)[:6] == [TOO_LONG, *TWO_PART_PRINTOUT]
     assert [c["texts"][1]["ending_text"] for c in server.creates()] == [
         "she drops the key"
     ]
@@ -363,6 +395,65 @@ def test_too_long_without_words_names_the_part_from_the_error_details(
     assert capsys.readouterr().err.strip() == (
         "Stopped: The text for part 4 is too long to fit. Nothing was made."
     )
+
+
+def test_too_many_parts_typed_is_shown_plainly_and_the_last_plan_asked_again(
+    server: PlanServer,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    answers(monkeypatch, "9 parts please", "y")
+    server_plan = server.plan
+
+    def nine_parts(body: dict[str, Any]) -> httpx.Response:
+        if body.get("change_request") == "9 parts please":
+            body = {**body, "part_count": 9}
+        return server_plan(body)
+
+    server.plan = nine_parts  # type: ignore[method-assign]
+    assert cut_command(args()) == 0
+    assert screen(capsys.readouterr().out)[:11] == [
+        *TWO_PART_PRINTOUT,
+        OUT_OF_RANGE,
+        *TWO_PART_PRINTOUT,
+    ]
+    assert [c["part_count"] for c in server.creates()] == [2]
+
+
+def test_too_many_parts_under_yes_stops_with_the_servers_words(
+    server: PlanServer, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert cut_command(args(parts=9, yes=True)) == 2
+    assert server.creates() == []
+    assert (
+        capsys.readouterr().err.strip() == f"Stopped: {OUT_OF_RANGE} Nothing was made."
+    )
+
+
+def test_an_edit_that_is_not_ready_makes_nothing(
+    server: PlanServer,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def not_ready(body: dict[str, Any]) -> httpx.Response:
+        error = {
+            "code": "series_cut_not_ready",
+            "message": "An episode is still being finished.",
+        }
+        return httpx.Response(409, json={"error": error})
+
+    server.plan = not_ready  # type: ignore[method-assign]
+    assert cut_command(args(yes=True)) == 5
+    assert server.creates() == []
+    assert capsys.readouterr().err.strip() == (
+        "NOT DONE: An episode is still being finished. Run the same command again later; nothing was made."
+    )
+
+
+def test_new_music_goes_to_the_plan_and_the_cut(server: PlanServer) -> None:
+    assert cut_command(args(new_music=True, yes=True)) == 0
+    assert server.plans()[0]["new_music"] is True
+    assert server.creates()[0]["new_music"] is True
 
 
 def test_too_long_text_under_yes_stops_with_the_servers_words(
@@ -515,9 +606,7 @@ def test_desk_episodes_yes_goes_ahead_with_the_settings_given(
     assert {"number": 8, "opening_text": "opening 8", "ending_text": "GONE"} in made[
         "texts"
     ]
-    assert 'Part 8 · about 0:48 · starts with "opening 8" · ends with "GONE"' in (
-        capsys.readouterr().out
-    )
+    assert 'Part 8: starts "opening 8", ends "GONE"' in (capsys.readouterr().out)
 
 
 @DESK_COMMANDS
