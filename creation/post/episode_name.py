@@ -27,6 +27,7 @@ import re
 import unicodedata
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 #: Longest series slug in a file name.
 SLUG_MAX = 40
@@ -151,3 +152,69 @@ def newest_episode_file(folder: Path, episode: int) -> Path | None:
 
     files = episode_files(folder, episode)
     return files[-1] if files else None
+
+
+def sidecar_path(path: Path) -> Path:
+    """The JSON record saved beside a downloaded file."""
+
+    return path.with_suffix(".json")
+
+
+def _read_json(path: Path) -> dict[str, Any] | None:
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def finished_files(folder: Path, episode: int) -> list[tuple[Path, dict[str, Any]]]:
+    """Every episode file ``finish`` downloaded, newest first, with the server's answer saved beside it.
+
+    Parameters
+    ----------
+    folder
+        The episode's ``takes`` folder.
+    episode
+        Episode ordinal.
+
+    Returns
+    -------
+    list[tuple[Path, dict[str, Any]]]
+        Each file and its sidecar; files with no readable sidecar are left out.
+    """
+
+    found: list[tuple[Path, dict[str, Any]]] = []
+    for path in reversed(episode_files(folder, episode)):
+        meta = _read_json(sidecar_path(path))
+        if meta and path.is_file():
+            found.append((path, meta))
+    return found
+
+
+def saved_video(folder: Path, episode: int, video_url: str) -> Path | None:
+    """The episode file already downloaded for this exact server copy, if any.
+
+    Parameters
+    ----------
+    folder
+        The episode's ``takes`` folder.
+    episode
+        Episode ordinal.
+    video_url
+        The server copy's link.
+
+    Returns
+    -------
+    Path | None
+        The newest file downloaded from ``video_url``, else ``None``.
+    """
+
+    return next(
+        (
+            path
+            for path, meta in finished_files(folder, episode)
+            if meta.get("video_url") == video_url
+        ),
+        None,
+    )

@@ -169,9 +169,10 @@ def desk_has_finished_episodes(desk: Path) -> bool | None:
     Returns
     -------
     bool | None
-        True when any ``epNN/takes/take-epNN-tK-finish-vN.json`` exists or the server's show
-        standing names a copy to post for any episode; ``None`` when there is no finish record
-        and the server could not be read; else False.
+        True when any ``epNN/takes/take-epNN-tK-finish-vN.json`` exists, or the server's show
+        standing names a copy to post for any episode, or a downloaded copy the kit cannot
+        confirm; ``None`` when there is no finish record and the server could not be read;
+        else False.
     """
 
     desk = desk.expanduser().resolve()
@@ -182,7 +183,7 @@ def desk_has_finished_episodes(desk: Path) -> bool | None:
     copies = current_copy.show_copies(desk)
     if not copies.checked:
         return None
-    return bool(copies.by_episode)
+    return bool(copies.by_episode or copies.unconfirmed)
 
 
 def _legacy_desk(desk: Path) -> bool:

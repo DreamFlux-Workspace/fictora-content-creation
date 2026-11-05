@@ -26,12 +26,12 @@ from typing import Any, TextIO
 import httpx
 
 from creation.harness.http_util import api_error_text
+from creation.post.episode_name import saved_video
 from creation.post.server_finish import (
     ServerFinishError,
     _api,
     _body,
     _route_missing,
-    _saved_video,
     download_file,
 )
 
@@ -189,7 +189,7 @@ def pull_episodes(
                 )
                 continue
             folder = desk / f"ep{number:02d}" / "takes"
-            have = _saved_video(folder, number, url)
+            have = saved_video(folder, number, url)
             if have is not None:
                 results.append(
                     Pulled(number, f"ep {number}: already up to date", current=True)

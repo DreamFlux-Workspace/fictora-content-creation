@@ -1,10 +1,8 @@
 """`approve --gate pitch` on fictora-ops names fictora-produce; `--gate post` says there is no final step.
 
-Long Shadow (14 Oct 2026, L-20261014-18): a gate sent to the wrong command came back as
-argparse's bare "invalid choice". The pitch yes is fictora-produce's, and fictora-ops says so
-with the line to run. Since 6 Nov 2026 (fictora-drama #1407) there is no "this episode is
-final" yes: `--gate post` on either command says the newest copy is the one to post and
-records nothing.
+A gate sent to the wrong command must not come back as argparse's bare "invalid choice".
+The pitch yes is fictora-produce's, and fictora-ops says so with the line to run. `--gate post`
+on either command says the newest copy is the one to post and records nothing.
 """
 
 from __future__ import annotations

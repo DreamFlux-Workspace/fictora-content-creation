@@ -1,9 +1,8 @@
 """Which command records which gate's yes, and the message when the other one is used.
 
 The pitch yes (``--gate pitch``) is recorded by ``fictora-produce``; ``fictora-ops``
-names the line to run and records nothing. ``--gate post`` (the old "this episode is
-final" yes) is accepted by both only to say there is no such step since 6 Nov 2026
-(fictora-drama #1407): the newest copy saved is the one to post.
+names the line to run and records nothing. Both accept ``--gate post`` only to say there
+is no "this episode is final" step: the newest copy saved is the one to post.
 """
 
 from __future__ import annotations
@@ -12,15 +11,15 @@ import argparse
 import shlex
 from typing import Final
 
-#: The old episode-is-final gate: answered with :data:`NO_FINAL_STEP`.
+#: The episode-is-final gate: answered with :data:`NO_FINAL_STEP`.
 POST_GATE: Final = "post"
 #: The pitch-card gate: ``fictora-produce`` only.
 PITCH_GATE: Final = "pitch"
-#: What ``approve --gate post`` says now: nothing to approve, nothing recorded.
+#: What ``approve --gate post`` says: nothing to approve, nothing recorded.
 NO_FINAL_STEP: Final = (
-    'There is no "this episode is final" step any more. The newest copy saved for the episode '
-    "(the one finish downloads) is the copy to post on Instagram and TikTok. The status list shows it "
-    "for each episode. Nothing was recorded."
+    'There is no "this episode is final" step. The newest copy saved for the episode '
+    "is the copy to post on Instagram and TikTok: the copy the status list shows for each episode. "
+    "Nothing was recorded."
 )
 
 

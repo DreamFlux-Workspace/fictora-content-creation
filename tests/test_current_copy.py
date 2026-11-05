@@ -1,8 +1,8 @@
-"""The copy to post is read from the server's show standing (fictora-drama #1407; 6 Nov 2026).
+"""The copy to post is read from the server's show standing.
 
-There is no "this episode is final" step. Show standing names each episode's ``current_copy``
-and flags ``current_copy_unchecked``; a server without #1407 falls back to its old ``final``,
-else to the newest file ``finish`` downloaded.
+Show standing names each episode's ``current_copy`` and flags ``current_copy_unchecked``; a
+server that sends neither falls back to its ``final``, else to a downloaded file only when it
+provably comes from the cut the app plays.
 """
 
 from __future__ import annotations
@@ -33,6 +33,8 @@ BASE = "https://drama.example"
 SHA = "1a2b3c4d5e6f" + "0" * 52
 OLD_SHA = "9f8e7d6c5b4a" + "0" * 52
 URL = "https://media.example/ep01-v3.mp4"
+JOB = "job-playing"
+CHANGED = "2026-11-05T10:00:00+00:00"
 
 
 def _standing(monkeypatch: pytest.MonkeyPatch, **row: Any) -> list[httpx.Request]:
@@ -69,13 +71,11 @@ def _copy(version: int = 3, sha: str = SHA, url: str = URL) -> dict[str, Any]:
     }
 
 
-def _downloaded(desk: Path, url: str = URL) -> Path:
-    """A file ``finish`` downloaded, with the link it came from beside it."""
-
+def _downloaded(desk: Path, url: str = URL, **meta: Any) -> Path:
     path = next_episode_path(desk / "ep01" / "takes", desk, 1)
     path.write_bytes(b"server copy")
     path.with_suffix(".json").write_text(
-        json.dumps({"video_url": url}), encoding="utf-8"
+        json.dumps({"video_url": url, **meta}), encoding="utf-8"
     )
     return path
 
@@ -127,7 +127,10 @@ def test_a_copy_not_on_this_laptop_says_so(
     _every_take_kept(post_desk)
     _standing(monkeypatch, current_copy=_copy(), current_copy_unchecked=False)
 
-    assert _row(post_desk)["copy"] == "v3, file 1a2b3c4d5e6f, not on this laptop yet"
+    assert (
+        _row(post_desk)["copy"]
+        == "v3, file 1a2b3c4d5e6f, not on this laptop yet: run finish for this episode"
+    )
 
 
 def test_an_unchecked_copy_is_shown_with_a_plain_warning(
@@ -140,7 +143,7 @@ def test_an_unchecked_copy_is_shown_with_a_plain_warning(
     assert ops_main(["status", "--desk", str(post_desk), "--json"]) == 0
 
     out, err = capsys.readouterr()
-    assert json.loads(out)[0]["waiting"] == CopyStatus.UNCHECKED
+    assert json.loads(out)[0]["waiting"] == str(CopyStatus.UNCHECKED)
     warning = "the server could not check which video the app plays"
     assert warning in err and "Watch it before posting." in err
     queue = (post_desk / QUEUE_FILENAME).read_text(encoding="utf-8")
@@ -156,7 +159,7 @@ def test_a_new_server_with_no_copy_saved_waits_on_finish_and_ignores_the_desk(
 
     row = _row(post_desk)
 
-    assert (row["waiting"], row["copy"]) == (CopyStatus.WAITING, "")
+    assert (row["waiting"], row["copy"]) == (str(CopyStatus.WAITING), "")
 
 
 def test_an_old_server_falls_back_to_its_current_final(
@@ -176,25 +179,70 @@ def test_an_old_server_falls_back_to_its_current_final(
 
     row = _row(post_desk)
 
-    assert row["waiting"] == CopyStatus.DONE
+    assert row["waiting"] == str(CopyStatus.DONE)
     assert row["copy"] == f"file 1a2b3c4d5e6f, {watched.name}"
 
 
-def test_an_old_server_without_a_final_falls_back_to_the_newest_desk_file(
+def test_an_old_server_without_a_final_counts_a_file_proven_from_the_playing_cut(
     post_desk: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _every_take_kept(post_desk)
-    newest = _downloaded(post_desk)
-    _standing(monkeypatch)
+    proven = _downloaded(
+        post_desk, generation_job_id=JOB, done_at="2026-11-05T11:00:00+00:00"
+    )
+    _downloaded(post_desk, url="https://media.example/other.mp4")
+    _standing(monkeypatch, video_job_id=JOB, played_cut_changed_at=CHANGED)
 
     row = _row(post_desk)
-    copies = current_copy.show_copies(post_desk)
 
-    assert (row["waiting"], row["copy"]) == (CopyStatus.UNCHECKED, newest.name)
-    assert current_copy.copy_warnings(copies) == [
-        "Warning: episode 1: this server cannot say which copy is the one to post yet, so it is "
-        f"the newest file finished on this laptop ({newest.name}). Watch it before posting."
-    ]
+    assert (row["waiting"], row["copy"]) == (str(CopyStatus.DONE), proven.name)
+    assert current_copy.copy_warnings(current_copy.show_copies(post_desk)) == []
+    write_queue(post_desk)
+    assert "Open gates: 0." in (post_desk / QUEUE_FILENAME).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("meta", "row"),
+    [
+        ({}, {"video_job_id": JOB, "played_cut_changed_at": CHANGED}),
+        (
+            {"generation_job_id": "job-older", "done_at": "2026-11-05T11:00:00+00:00"},
+            {"video_job_id": JOB, "played_cut_changed_at": CHANGED},
+        ),
+        (
+            {"generation_job_id": JOB, "done_at": "2026-11-05T09:00:00+00:00"},
+            {"video_job_id": JOB, "played_cut_changed_at": CHANGED},
+        ),
+        (
+            {"generation_job_id": JOB, "done_at": "2026-11-05T11:00:00+00:00"},
+            {"video_job_id": JOB},
+        ),
+    ],
+    ids=["no-record", "older-run", "cut-changed-since", "change-time-unknown"],
+)
+def test_an_old_server_never_counts_an_unproven_laptop_file_as_done(
+    post_desk: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    meta: dict[str, Any],
+    row: dict[str, Any],
+) -> None:
+    _every_take_kept(post_desk)
+    _downloaded(post_desk, **meta)
+    _standing(monkeypatch, **row)
+
+    assert ops_main(["status", "--desk", str(post_desk), "--json"]) == 0
+
+    out, err = capsys.readouterr()
+    status = json.loads(out)[0]
+    assert (status["waiting"], status["copy"]) == (str(CopyStatus.UNCONFIRMED), "")
+    assert (
+        status["waiting"].startswith("can't confirm")
+        and "run finish for this episode" in status["waiting"]
+    )
+    assert "can't confirm the file on this laptop" in err
+    queue = (post_desk / QUEUE_FILENAME).read_text(encoding="utf-8")
+    assert "Open gates: 1." in queue and "| ep01 | done" not in queue
 
 
 def test_an_old_server_with_nothing_on_the_desk_waits_on_finish(
@@ -203,7 +251,7 @@ def test_an_old_server_with_nothing_on_the_desk_waits_on_finish(
     _every_take_kept(post_desk)
     _standing(monkeypatch)
 
-    assert _row(post_desk)["waiting"] == CopyStatus.WAITING
+    assert _row(post_desk)["waiting"] == str(CopyStatus.WAITING)
 
 
 def test_an_old_servers_final_of_an_older_cut_is_never_the_copy_to_post(
@@ -215,7 +263,7 @@ def test_an_old_servers_final_of_an_older_cut_is_never_the_copy_to_post(
 
     row = _row(post_desk)
 
-    assert (row["waiting"], row["copy"]) == (CopyStatus.WAITING, "")
+    assert (row["waiting"], row["copy"]) == (str(CopyStatus.WAITING), "")
 
 
 def test_an_unreachable_server_says_not_checked_everywhere_and_never_done(
@@ -236,11 +284,14 @@ def test_an_unreachable_server_says_not_checked_everywhere_and_never_done(
     assert ops_main(["status", "--desk", str(post_desk), "--json"]) == 0
 
     out, err = capsys.readouterr()
-    waiting = "finish (copy to post not checked: server said 401)"
+    waiting = "not checked: the kit's key was refused"
     assert json.loads(out)[0]["waiting"] == waiting
-    assert "Could not read the copies to post from the server (server said 401)" in err
+    assert (
+        "Not checked: could not read the copies to post from the server "
+        "(the kit's key was refused)" in err
+    )
     queue = (post_desk / QUEUE_FILENAME).read_text(encoding="utf-8")
-    assert f"| ep01 | {waiting} |" in queue and "| ep01 | done |" not in queue
+    assert f"| ep01 | {waiting} |" in queue and "Open gates: 1." in queue
 
 
 def test_captions_keep_the_continuing_style_when_the_server_cannot_be_read(
@@ -250,7 +301,7 @@ def test_captions_keep_the_continuing_style_when_the_server_cannot_be_read(
     monkeypatch.setattr(
         current_copy,
         "show_copies",
-        lambda desk, **_k: current_copy.not_checked("offline"),
+        lambda desk, **_k: current_copy.not_checked("the server didn't answer"),
     )
 
     assert desk_has_finished_episodes(post_desk) is None
@@ -266,7 +317,7 @@ def test_a_new_show_whose_copies_cannot_be_checked_saves_no_caption_style(
     monkeypatch.setattr(
         current_copy,
         "show_copies",
-        lambda desk, **_k: current_copy.not_checked("offline"),
+        lambda desk, **_k: current_copy.not_checked("the server didn't answer"),
     )
 
     assert caption_style_at_look(post_desk, out=sys.stdout) is None
@@ -280,6 +331,15 @@ def test_captions_count_a_copy_to_post_as_a_finished_episode(
     post_desk: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _standing(monkeypatch, current_copy=_copy(), current_copy_unchecked=False)
+
+    assert desk_has_finished_episodes(post_desk) is True
+
+
+def test_captions_count_an_unconfirmed_laptop_copy_as_a_finished_episode(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _downloaded(post_desk)
+    _standing(monkeypatch, video_job_id=JOB, played_cut_changed_at=CHANGED)
 
     assert desk_has_finished_episodes(post_desk) is True
 
@@ -322,12 +382,12 @@ def _loaders(
         json.JSONDecodeError("bad", "{", 0),
     ],
 )
-def test_a_kit_token_that_cannot_be_had_reads_as_no_kit_token(
+def test_a_kit_token_that_cannot_be_had_reads_as_no_kit_key(
     post_desk: Path, monkeypatch: pytest.MonkeyPatch, failure: BaseException
 ) -> None:
     _loaders(monkeypatch, full=failure)
 
-    assert real_show_copies(post_desk) == current_copy.not_checked("no kit token")
+    assert real_show_copies(post_desk) == current_copy.not_checked("the kit has no key")
 
 
 def test_the_copies_use_the_kits_own_credentials(
@@ -352,7 +412,7 @@ def test_a_queue_read_uses_only_the_env_token_never_railway(
     _loaders(monkeypatch, env="")
 
     assert real_show_copies(post_desk, env_token_only=True) == current_copy.not_checked(
-        "no kit token"
+        "the kit has no key"
     )
 
 
@@ -381,14 +441,21 @@ def _offline(request: httpx.Request) -> httpx.Response:
     raise httpx.ConnectError("down", request=request)
 
 
+def _timeout(request: httpx.Request) -> httpx.Response:
+    raise httpx.ReadTimeout("slow", request=request)
+
+
 @pytest.mark.parametrize(
     ("answer", "reason"),
     [
+        (lambda _r: httpx.Response(403, json={}), "the kit's key was refused"),
         (
             lambda _r: httpx.Response(404, json={"detail": "Not Found"}),
-            "server said 404",
+            "the server doesn't know this story",
         ),
-        (_offline, "offline"),
+        (lambda _r: httpx.Response(502, json={}), "the server had a problem"),
+        (_offline, "the server didn't answer"),
+        (_timeout, "the server didn't answer"),
     ],
 )
 def test_a_failed_read_names_its_cause(
@@ -403,10 +470,8 @@ def test_a_failed_read_names_its_cause(
     )
 
     assert copies == current_copy.not_checked(reason)
-    assert (
-        current_copy.copy_status(copies, 1)
-        == f"finish (copy to post not checked: {reason})"
-    )
+    status = current_copy.copy_status(copies, 1)
+    assert str(status) == f"not checked: {reason}" and not status.counts_done
 
 
 def test_a_gate_write_reads_the_copies_quickly_with_the_env_token_only(

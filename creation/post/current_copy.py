@@ -1,29 +1,28 @@
-"""Each episode's copy to post, as the server's show standing names it (fictora-drama #1407; 6 Nov 2026).
+"""Each episode's copy to post on Instagram and TikTok, as the server's show standing names it.
 
-There is no "this episode is final" step any more (founder, 6 Nov 2026). The newest copy saved
-from the video the app plays is the episode's current copy; the server owns it and the kit only
-reads it from ``GET /v1/spines/{spine_id}/standing``. Server-heavy rule (founder, 15 Oct 2026):
-the desk keeps nothing about it.
+The newest copy saved from the video the app plays is the episode's current copy. The server
+owns it and the kit only reads it from ``GET /v1/spines/{spine_id}/standing``; the desk keeps
+nothing about it.
 
 * ``current_copy`` names the copy; ``current_copy_unchecked`` says the server could not read the
   video the app plays, so the copy is only the newest one saved: watch it before posting.
-* A server without #1407 has neither. Its ``final`` field names the copy when ``current``; a final
-  that is not current is a copy of an older cut, so there is none until ``finish`` runs again. With
-  no final at all, the copy to post is the newest file ``finish`` downloaded, flagged as unchecked.
+* A server that sends neither is read by :func:`_legacy_copy`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from enum import StrEnum
+from datetime import datetime
+from enum import Enum, StrEnum, auto
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import httpx
 
 STANDING_ROUTE = "/v1/spines/{spine_id}/standing"
 TIMEOUT_SECONDS = 30.0
+NEXT_STEP = "run finish for this episode"
 
 
 class CopySource(StrEnum):
@@ -31,7 +30,7 @@ class CopySource(StrEnum):
 
     SERVER = "server"
     SERVER_UNCHECKED = "server-unchecked"
-    DESK_NEWEST = "desk-newest"
+    DESK_MATCHED = "desk-matched"
 
 
 @dataclass(frozen=True)
@@ -41,9 +40,9 @@ class CurrentCopy:
     Attributes
     ----------
     source
-        Where it came from; :attr:`unchecked` for the two that are only the newest copy.
+        Where it came from; :attr:`unchecked` when it is only the newest copy saved.
     content_sha256
-        The copy's digest; empty for the desk's newest file.
+        The copy's digest; empty for a file on this laptop matched to the playing cut.
     version
         The server's version number, when it said one.
     desk_file
@@ -59,7 +58,7 @@ class CurrentCopy:
     def unchecked(self) -> bool:
         """Whether it is only the newest copy, not one the server checked against the playing video."""
 
-        return self.source in (CopySource.SERVER_UNCHECKED, CopySource.DESK_NEWEST)
+        return self.source is CopySource.SERVER_UNCHECKED
 
     @property
     def label(self) -> str:
@@ -69,7 +68,9 @@ class CurrentCopy:
         if self.content_sha256:
             parts.append(f"file {self.content_sha256[:12]}")
         parts.append(
-            self.desk_file.name if self.desk_file else "not on this laptop yet"
+            self.desk_file.name
+            if self.desk_file
+            else f"not on this laptop yet: {NEXT_STEP}"
         )
         return ", ".join(parts)
 
@@ -82,11 +83,14 @@ class ShowCopies:
     ----------
     by_episode
         The copies by episode ordinal; empty when not checked.
+    unconfirmed
+        Episodes with a file on this laptop that cannot be shown to come from the cut the app plays.
     reason
-        Why it could not be read (``server said 401``, ``offline`` ...); empty when checked.
+        Why it could not be read (``the kit's key was refused`` ...); empty when checked.
     """
 
     by_episode: dict[int, CurrentCopy] = field(default_factory=dict)
+    unconfirmed: frozenset[int] = frozenset()
     reason: str = ""
 
     @property
@@ -102,15 +106,39 @@ def not_checked(reason: str) -> ShowCopies:
     return ShowCopies(reason=reason)
 
 
-class CopyStatus(StrEnum):
+@dataclass(frozen=True)
+class QueueStatus:
+    """What an episode waits on, as the operator reads it.
+
+    Attributes
+    ----------
+    text
+        The status as shown in the queue.
+    counts_done
+        Whether it closes the episode's gates (its copy to post is known).
+    """
+
+    text: str
+    counts_done: bool = False
+
+    def __str__(self) -> str:
+        return self.text
+
+
+class CopyStatus:
     """Where an episode stands once only its copy to post is left (when the server was read)."""
 
-    DONE = "done"
-    UNCHECKED = "done (watch the copy before posting)"
-    WAITING = "finish"
+    DONE: Final = QueueStatus("done", counts_done=True)
+    UNCHECKED: Final = QueueStatus(
+        "done (watch the copy before posting)", counts_done=True
+    )
+    WAITING: Final = QueueStatus("finish")
+    UNCONFIRMED: Final = QueueStatus(
+        f"can't confirm the copy, check with the server: {NEXT_STEP}"
+    )
 
 
-def copy_status(copies: ShowCopies, episode: int) -> str:
+def copy_status(copies: ShowCopies, episode: int) -> QueueStatus:
     """The queue status of an episode whose takes are all kept.
 
     Parameters
@@ -122,50 +150,53 @@ def copy_status(copies: ShowCopies, episode: int) -> str:
 
     Returns
     -------
-    str
+    QueueStatus
         Not checked (with the cause) when the server could not be read, else a :class:`CopyStatus`.
     """
 
     if not copies.checked:
-        return f"finish (copy to post not checked: {copies.reason})"
+        return QueueStatus(f"not checked: {copies.reason}")
+    if episode in copies.unconfirmed:
+        return CopyStatus.UNCONFIRMED
     copy = copies.by_episode.get(episode)
     if copy is None:
         return CopyStatus.WAITING
     return CopyStatus.UNCHECKED if copy.unchecked else CopyStatus.DONE
 
 
-def is_done(status: str) -> bool:
-    """Whether a queue status is done (an unchecked copy too: it carries a warning instead)."""
-
-    return status in (CopyStatus.DONE, CopyStatus.UNCHECKED)
-
-
 def unchecked_line(episode: int, copy: CurrentCopy) -> str:
     """The plain warning for a copy that is only the newest one saved."""
 
-    if copy.source is CopySource.DESK_NEWEST:
-        return (
-            f"Warning: episode {episode}: this server cannot say which copy is the one to post yet, "
-            f"so it is the newest file finished on this laptop ({copy.label}). Watch it before posting."
-        )
     return (
         f"Warning: episode {episode}: the server could not check which video the app plays, so the copy "
         f"to post ({copy.label}) is only the newest one saved. Watch it before posting."
     )
 
 
+def unconfirmed_line(episode: int) -> str:
+    """The plain warning for a file on this laptop that cannot be shown to be the copy to post."""
+
+    return (
+        f"Warning: episode {episode}: can't confirm the file on this laptop comes from the video the app "
+        f"plays now, so it is not the copy to post. Check with the server: {NEXT_STEP}."
+    )
+
+
 def copy_warnings(copies: ShowCopies) -> list[str]:
-    """The operator's warnings: the server not read, or a copy that is only the newest one saved."""
+    """The operator's warnings: the server not read, or a copy that is unchecked or unconfirmed."""
 
     if not copies.checked:
         return [
-            f"Could not read the copies to post from the server ({copies.reason}). Run status again."
+            f"Not checked: could not read the copies to post from the server ({copies.reason}). "
+            "Run status again."
         ]
-    return [
-        unchecked_line(episode, copy)
-        for episode, copy in sorted(copies.by_episode.items())
+    lines = [
+        (episode, unchecked_line(episode, copy))
+        for episode, copy in copies.by_episode.items()
         if copy.unchecked
     ]
+    lines += [(episode, unconfirmed_line(episode)) for episode in copies.unconfirmed]
+    return [line for _, line in sorted(lines)]
 
 
 def _version(raw: Any) -> int | None:
@@ -175,7 +206,7 @@ def _version(raw: Any) -> int | None:
 def _from_server(
     record: Mapping[str, Any], source: CopySource, folder: Path, episode: int
 ) -> CurrentCopy:
-    from creation.post.server_finish import _saved_video
+    from creation.post.episode_name import saved_video
 
     url = str(record.get("video_url") or "")
     return CurrentCopy(
@@ -184,46 +215,102 @@ def _from_server(
             record.get("content_sha256") or record.get("export_sha256") or ""
         ),
         version=_version(record.get("version")),
-        desk_file=_saved_video(folder, episode, url) if url else None,
+        desk_file=saved_video(folder, episode, url) if url else None,
     )
+
+
+def _when(raw: Any) -> datetime | None:
+    try:
+        moment = datetime.fromisoformat(str(raw))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else None
+
+
+def _from_playing_cut(meta: Mapping[str, Any], row: Mapping[str, Any]) -> bool:
+    job = row.get("video_job_id")
+    done = _when(meta.get("done_at"))
+    changed = _when(row.get("played_cut_changed_at"))
+    return (
+        bool(job)
+        and meta.get("generation_job_id") == job
+        and done is not None
+        and changed is not None
+        and done >= changed
+    )
+
+
+class _NoCopy(Enum):
+    NOT_SAVED = auto()
+    UNCONFIRMED = auto()
+
+
+def _final_copy(
+    final: Mapping[str, Any], folder: Path, episode: int
+) -> CurrentCopy | _NoCopy:
+    if final.get("current") is not True:
+        return _NoCopy.NOT_SAVED
+    return _from_server(final, CopySource.SERVER, folder, episode)
+
+
+def _desk_copy(
+    row: Mapping[str, Any], folder: Path, episode: int
+) -> CurrentCopy | _NoCopy:
+    from creation.post.episode_name import finished_files
+
+    files = finished_files(folder, episode)
+    matched = next((path for path, meta in files if _from_playing_cut(meta, row)), None)
+    if matched is not None:
+        return CurrentCopy(CopySource.DESK_MATCHED, desk_file=matched)
+    return _NoCopy.UNCONFIRMED if files else _NoCopy.NOT_SAVED
+
+
+def _legacy_copy(
+    row: Mapping[str, Any], folder: Path, episode: int
+) -> CurrentCopy | _NoCopy:
+    if row.get("video") != "finished":
+        return _NoCopy.NOT_SAVED
+    final = row.get("final")
+    if isinstance(final, dict):
+        return _final_copy(final, folder, episode)
+    return _desk_copy(row, folder, episode)
 
 
 def _episode_copy(
     row: Mapping[str, Any], desk: Path, episode: int
-) -> CurrentCopy | None:
-    from creation.post.episode_name import newest_episode_file
-
+) -> CurrentCopy | _NoCopy:
     folder = desk / f"ep{episode:02d}" / "takes"
+    if "current_copy_unchecked" not in row:
+        return _legacy_copy(row, folder, episode)
     current = row.get("current_copy")
-    if isinstance(current, dict):
-        unchecked = row.get("current_copy_unchecked") is True
-        return _from_server(
-            current,
-            CopySource.SERVER_UNCHECKED if unchecked else CopySource.SERVER,
-            folder,
-            episode,
-        )
-    if "current_copy_unchecked" in row or row.get("video") != "finished":
-        return None
-    final = row.get("final")
-    if isinstance(final, dict):
-        return (
-            _from_server(final, CopySource.SERVER, folder, episode)
-            if final.get("current") is True
-            else None
-        )
-    newest = newest_episode_file(folder, episode)
-    return CurrentCopy(CopySource.DESK_NEWEST, desk_file=newest) if newest else None
+    if not isinstance(current, dict):
+        return _NoCopy.NOT_SAVED
+    unchecked = row["current_copy_unchecked"] is True
+    return _from_server(
+        current,
+        CopySource.SERVER_UNCHECKED if unchecked else CopySource.SERVER,
+        folder,
+        episode,
+    )
 
 
-def _copies(standing: Any, desk: Path) -> dict[int, CurrentCopy]:
+def _copies(standing: Any, desk: Path) -> ShowCopies:
     rows = standing.get("episodes") if isinstance(standing, dict) else None
     found = {
         row["episode_ordinal"]: _episode_copy(row, desk, row["episode_ordinal"])
         for row in (rows if isinstance(rows, list) else [])
         if isinstance(row, dict) and isinstance(row.get("episode_ordinal"), int)
     }
-    return {episode: copy for episode, copy in found.items() if copy is not None}
+    return ShowCopies(
+        by_episode={
+            episode: copy
+            for episode, copy in found.items()
+            if isinstance(copy, CurrentCopy)
+        },
+        unconfirmed=frozenset(
+            episode for episode, copy in found.items() if copy is _NoCopy.UNCONFIRMED
+        ),
+    )
 
 
 class _NotChecked(Exception):
@@ -252,10 +339,18 @@ def _kit_api(desk: Path, *, env_token_only: bool) -> tuple[str, dict[str, str]]:
             else load_drama_api_credentials(root)
         )
     except (SystemExit, FileNotFoundError, ValueError):
-        raise _NotChecked("no kit token") from None
+        raise _NotChecked("the kit has no key") from None
     if not token:
-        raise _NotChecked("no kit token")
+        raise _NotChecked("the kit has no key")
     return base, api_headers(token, session_id)
+
+
+def _refusal(status_code: int) -> str:
+    if status_code in (401, 403):
+        return "the kit's key was refused"
+    if status_code == 404:
+        return "the server doesn't know this story"
+    return "the server had a problem"
 
 
 def show_copies(
@@ -307,14 +402,14 @@ def show_copies(
                 headers=dict(headers),
             )
     except httpx.HTTPError:
-        return not_checked("offline")
+        return not_checked("the server didn't answer")
     if not got.is_success:
-        return not_checked(f"server said {got.status_code}")
+        return not_checked(_refusal(got.status_code))
     try:
         standing = got.json()
     except ValueError:
         return not_checked("the server's answer could not be read")
-    return ShowCopies(by_episode=_copies(standing, desk))
+    return _copies(standing, desk)
 
 
 __all__ = [
@@ -325,8 +420,10 @@ __all__ = [
     "ShowCopies",
     "copy_status",
     "copy_warnings",
-    "is_done",
+    "NEXT_STEP",
+    "QueueStatus",
     "not_checked",
     "show_copies",
     "unchecked_line",
+    "unconfirmed_line",
 ]
