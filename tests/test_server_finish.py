@@ -1607,6 +1607,64 @@ def test_server_refusals_are_plain_next_steps_never_tracebacks(
     assert says in err and "Traceback" not in err
 
 
+@pytest.mark.parametrize(
+    "server_message",
+    [
+        "Editing a take isn't available right now. Nothing was changed.",
+        "テイクの編集は今は使えません。何も変更されていません。",
+        "지금은 테이크를 편집할 수 없어요. 아무것도 바뀌지 않았어요.",
+    ],
+)
+def test_a_refusal_that_already_says_nothing_changed_is_not_said_twice(
+    server_message: str,
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, _ = edit_server
+    server.answers.append(
+        (409, _envelope("take_post_edit_unavailable", server_message))
+    )
+
+    assert _finish(post_desk, "--take", "t2", "--mute", "1-2") == 2
+
+    err = capsys.readouterr().err
+    assert server_message in err
+    assert "charged" not in err
+
+
+@pytest.mark.parametrize(
+    ("server_message", "shown"),
+    [
+        (
+            "テイクの編集は今は使えません。",
+            "テイクの編集は今は使えません。 Nothing was changed or charged.",
+        ),
+        (
+            "Editing is off. Nothing was changed or charged.",
+            "Editing is off. Nothing was changed or charged.",
+        ),
+    ],
+)
+def test_a_refusal_in_another_wording_reads_once_and_cleanly(
+    server_message: str,
+    shown: str,
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, _ = edit_server
+    server.answers.append(
+        (409, _envelope("take_post_edit_unavailable", server_message))
+    )
+
+    assert _finish(post_desk, "--take", "t2", "--mute", "1-2") == 2
+
+    err = capsys.readouterr().err
+    assert shown in err
+    assert "。." not in err and err.count("Nothing was changed") == 1
+
+
 def test_a_refused_edit_does_not_send_the_re_voice(
     post_desk: Path, edit_server: tuple[EditServer, list[Any]]
 ) -> None:
