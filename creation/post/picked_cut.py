@@ -776,34 +776,25 @@ def _poll(
         attempt += 1
 
 
-def desk_cut_lines(
-    desk: Path,
-    episodes: Sequence[int],
-    *,
-    wait_seconds: float | None = None,
-    api: tuple[str, Mapping[str, str]] | None = None,
-    transport: httpx.BaseTransport | None = None,
-    **run_kwargs: Any,
-) -> tuple[bool, list[str]]:
-    """``join --desk D --episodes …``: a picked cut of the desk's named episodes, in that order.
+def desk_cut_command(desk: Path, args: Any) -> int:
+    """``join`` / ``finish --desk D --episodes …``: the same plan, print and go-ahead as ``cut``.
 
-    The server uses each episode as it holds it and its own suggested parts; nothing is asked. An
-    older server without the picked-cut route stops with the plain NOT DONE line; nothing is made.
+    The pick is the desk's named episodes, in that order, each as the server holds it. Returns the
+    exit code (0 done, 5 NOT DONE or no go-ahead, 2 bad ask).
     """
 
     from creation.post.desk import spine_id
 
     try:
-        spine = spine_id(desk.expanduser().resolve())
-        picks = [Pick(spine, int(n)) for n in episodes]
-        wait = wait_seconds if wait_seconds is not None else DEFAULT_WAIT_SECONDS
-        return True, run_cut(
-            picks, wait_seconds=wait, api=api, transport=transport, **run_kwargs
-        )
+        choice = choice_from_args(args)
+        try:
+            spine = spine_id(desk.expanduser().resolve())
+        except (ValueError, FileNotFoundError) as exc:
+            raise CutStop(f"NOT DONE: no series cut. {exc}") from exc
+        picks = [Pick(spine, int(n)) for n in args.episodes]
+        return _emit(args, True, _confirm_and_cut(picks, choice, args))
     except CutStop as stop:
-        return False, [stop.line]
-    except (ValueError, FileNotFoundError) as exc:
-        return False, [f"NOT DONE: no series cut. {exc}"]
+        return _emit(args, False, [stop.line], stop.code)
 
 
 def _ready_lines(body: Mapping[str, Any], picked: int, cut_id: str) -> list[str]:
@@ -852,7 +843,9 @@ def _asker(out: Any) -> Callable[[str], str]:
     return ask
 
 
-def _part_flags_given(args: Any) -> bool:
+def part_flags_given(args: Any) -> bool:
+    """Whether any of ``--parts``, ``--start-number``, ``--part-text`` or ``--yes`` was given."""
+
     return bool(
         args.parts is not None
         or args.start_number is not None
@@ -872,7 +865,7 @@ def cut_command(args: Any) -> int:
             or args.wait is not None
             or args.music_price
             or args.new_music
-            or _part_flags_given(args)
+            or part_flags_given(args)
         ):
             raise CutStop(
                 "Usage: cut --list takes only --show (and --json); drop --title, --wait, --music-price, "
@@ -914,26 +907,35 @@ def cut_command(args: Any) -> int:
                     2,
                 )
             return _emit(args, True, music_price(picks, title=args.title))
-        out = sys.stderr if getattr(args, "json", False) else sys.stdout
-        confirmed = confirm_parts(
-            picks,
-            choice,
-            title=args.title,
-            yes=args.yes,
-            ask=_asker(out),
-            say=lambda line: print(line, file=out, flush=True),
-        )
-        wait = args.wait if args.wait is not None else DEFAULT_WAIT_SECONDS
-        lines = run_cut(
-            picks,
-            title=args.title,
-            parts=confirmed,
-            wait_seconds=wait,
-            new_music=args.new_music,
-        )
-        return _emit(args, True, lines)
+        return _emit(args, True, _confirm_and_cut(picks, choice, args))
     except CutStop as stop:
         return _emit(args, False, [stop.line], stop.code)
+
+
+def _confirm_and_cut(picks: Sequence[Pick], choice: PartChoice, args: Any) -> list[str]:
+    """Print the planned parts, wait for go ahead (or ``--yes``), then make exactly those parts.
+
+    ``cut``, ``join --episodes`` and ``finish --episodes`` all go through here. With ``--json`` the
+    plan and the question go to stderr so stdout stays one JSON answer.
+    """
+
+    out = sys.stderr if getattr(args, "json", False) else sys.stdout
+    title = getattr(args, "title", None)
+    confirmed = confirm_parts(
+        picks,
+        choice,
+        title=title,
+        yes=args.yes,
+        ask=_asker(out),
+        say=lambda line: print(line, file=out, flush=True),
+    )
+    return run_cut(
+        picks,
+        title=title,
+        parts=confirmed,
+        wait_seconds=args.wait if args.wait is not None else DEFAULT_WAIT_SECONDS,
+        new_music=getattr(args, "new_music", False),
+    )
 
 
 def _emit(args: Any, ok: bool, lines: list[str], code: int = 0) -> int:

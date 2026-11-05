@@ -376,3 +376,112 @@ def test_a_server_that_cannot_plan_makes_nothing(
     assert cut_command(args(yes=True)) == 5
     assert server.creates() == []
     assert capsys.readouterr().err.strip() == NO_PLAN_ROUTE
+
+
+# --- join / finish --desk D --episodes: the same plan, print and go-ahead as cut ------------------------
+
+DESK_COMMANDS = pytest.mark.parametrize("command", ["join", "finish"])
+
+
+def desk_run(command: str, desk: Any, *extra: str) -> int:
+    from creation.cli_produce import main
+
+    return main([command, "--desk", str(desk), "--episodes", "2", "1", *extra])
+
+
+@DESK_COMMANDS
+def test_desk_episodes_print_every_part_before_anything_is_made(
+    command: str,
+    post_desk: Any,
+    server: PlanServer,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen_at_question: list[str] = []
+
+    def at_question() -> str:
+        seen_at_question.append(capsys.readouterr().out)
+        assert server.creates() == [], "the cut started before the human answered"
+        return "y"
+
+    monkeypatch.setattr("builtins.input", at_question)
+    assert desk_run(command, post_desk) == 0
+    printed = seen_at_question[0].splitlines()
+    assert printed[: len(TWO_PART_PRINTOUT)] == TWO_PART_PRINTOUT
+    assert printed[-1] == picked_cut.GO_AHEAD
+    made = server.creates()
+    assert len(made) == 1
+    assert made[0]["episodes"] == [
+        {"spine_id": "spine_test", "episode": 2},
+        {"spine_id": "spine_test", "episode": 1},
+    ]
+    assert (made[0]["part_count"], made[0]["start_number"]) == (2, 3)
+    assert not any(path.startswith("/v1/spines/") for _m, path, _b in server.seen)
+    out = capsys.readouterr().out
+    assert "https://media.example/p3.mp4" in out and "whole.mp4" not in out
+
+
+@DESK_COMMANDS
+def test_desk_episodes_no_makes_nothing(
+    command: str,
+    post_desk: Any,
+    server: PlanServer,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    answers(monkeypatch, "n")
+    assert desk_run(command, post_desk) == 5
+    assert server.creates() == [] and len(server.plans()) == 1
+    assert picked_cut.NOT_CONFIRMED in capsys.readouterr().err
+
+
+@DESK_COMMANDS
+def test_desk_episodes_yes_goes_ahead_with_the_settings_given(
+    command: str,
+    post_desk: Any,
+    server: PlanServer,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr("builtins.input", lambda: pytest.fail("a question was asked"))
+    extra = ("--yes", "--parts", "3", "--start-number", "7")
+    assert desk_run(command, post_desk, *extra, "--part-text", "8:ending=GONE") == 0
+    sent = {"part_count": 3, "start_number": 7, "texts": [{"number": 8, "ending_text": "GONE"}]}  # fmt: skip
+    assert {k: server.plans()[0][k] for k in sent} == sent
+    assert {k: server.creates()[0][k] for k in sent} == sent
+    assert 'Part 8 · about 0:48 · starts with "opening 8" · ends with "GONE"' in (
+        capsys.readouterr().out
+    )
+
+
+@DESK_COMMANDS
+def test_desk_episodes_on_a_server_that_cannot_plan_make_nothing(
+    command: str,
+    post_desk: Any,
+    server: PlanServer,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server.plan_missing = True
+    assert desk_run(command, post_desk, "--yes") == 5
+    assert server.creates() == []
+    assert NO_PLAN_ROUTE in capsys.readouterr().err
+
+
+@DESK_COMMANDS
+def test_part_settings_without_episodes_are_refused(
+    command: str,
+    post_desk: Any,
+    server: PlanServer,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from creation import cli_post
+    from creation.cli_produce import main
+
+    finished: list[Any] = []
+    monkeypatch.setattr(
+        cli_post, "run_server_finish", lambda *a, **k: finished.append(a)
+    )
+    assert main([command, "--desk", str(post_desk), "--yes"]) == 2
+    assert server.seen == [] and finished == []
+    assert "add --episodes" in capsys.readouterr().err
