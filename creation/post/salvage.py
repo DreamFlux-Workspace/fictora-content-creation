@@ -8,8 +8,6 @@ scratched when a free edit on this laptop would have saved them:
   could have reconsidered" (``trim --cut``, ``tempo --from --to``);
 - "cut the part where the male MC looked at himself" (``trim --cut``, or the
   handles ``trim --start/--end`` when it is at an end);
-- "scenes being out of order" (no free edit: inside one take, film that take
-  again; two swapped takes are the story's beat order, which the core team fixes);
 - "instead of the cut you could ... zoom into the stranger's face as he enters
   the doorway" (``zoom``: a punch-in hides a jump cut or crops a stray element);
 - "take 1 raw is decent at best, could be repurposed for some other scene"

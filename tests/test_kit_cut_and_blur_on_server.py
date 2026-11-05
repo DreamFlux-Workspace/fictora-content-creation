@@ -55,8 +55,6 @@ class Server:
         return [(r.url.path, json.loads(r.content)) for r in self.requests]
 
     def applied(self) -> list[tuple[str, dict[str, Any]]]:
-        """What was sent for real: the kit asks the price first, then applies."""
-
         return [
             (path, body)
             for path, body in self.sent()
@@ -64,8 +62,7 @@ class Server:
         ]
 
 
-@pytest.fixture
-def server(post_desk: Path, monkeypatch: pytest.MonkeyPatch) -> Server:
+def install_stand_in(monkeypatch: pytest.MonkeyPatch) -> Server:
     stand_in = Server()
     monkeypatch.setattr(
         server_finish, "_api", lambda desk: (BASE, {"Authorization": "Bearer t"})
@@ -82,6 +79,11 @@ def server(post_desk: Path, monkeypatch: pytest.MonkeyPatch) -> Server:
         lambda **kw: real(**{**kw, "transport": httpx.MockTransport(stand_in)}),
     )
     return stand_in
+
+
+@pytest.fixture
+def server(post_desk: Path, monkeypatch: pytest.MonkeyPatch) -> Server:
+    return install_stand_in(monkeypatch)
 
 
 def _files(desk: Path) -> set[Path]:
@@ -176,7 +178,7 @@ def test_a_preview_asks_the_quote_and_changes_nothing(
          "trim --cut is a take edit on the server now and edits no file: drop --take-file"),
         (["blur", "--episode", "1", "--take", "t2", "--take-file", "F.mp4", "--box", "0.1,0.1,0.2,0.2",
           "--from", "1", "--to", "2"], "blur is a take edit on the server now"),
-        (["trim", "--episode", "1", "--cut", "1-2"], "trim --cut edits one take on the server: add --episode N --take tK"),
+        (["trim", "--episode", "1", "--cut", "1-2"], "trim --cut edits one take on the server: add --take tK."),
         (["blur", "--take", "t2", "--box", "0.1,0.1,0.2,0.2", "--from", "1", "--to", "2"],
          "blur edits one take on the server"),
         (["blur", "--episode", "1", "--take", "t2", "--box", "77,410,307,137", "--from", "1", "--to", "2"],

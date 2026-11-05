@@ -1,5 +1,3 @@
-"""Small papercuts: UTF-8 output on any console."""
-
 from __future__ import annotations
 
 import io

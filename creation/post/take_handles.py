@@ -453,7 +453,7 @@ def apply_take_handles(
         The cut final and its record (``None`` when the window is the whole take), and the line to print.
     """
 
-    from creation.post.edit_commands import RecordCarry
+    from creation.post.record_carry import RecordCarry
     from creation.post.finish_record import _load
     from creation.post.lineage import record_edit
 

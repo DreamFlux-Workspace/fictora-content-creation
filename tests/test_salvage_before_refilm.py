@@ -1,6 +1,3 @@
-"""Salvage before re-filming: free edits first (trim, tempo, zoom), a reuse list, and the
-re-film price naming the free edit (Gallery Heiress review, 12 Oct 2026)."""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime

@@ -1080,8 +1080,6 @@ class EditServer:
         return [(r.url.path, json.loads(r.content)) for r in self.requests]
 
     def applied(self) -> list[tuple[str, dict[str, Any]]]:
-        """What was sent for real: the kit asks the price first, then applies."""
-
         return [
             (path, body)
             for path, body in self.sent()

@@ -2007,7 +2007,7 @@ def run_finish(
             # The server would not hold this start; holding it here would bring the guess back. Ask instead.
             ask = (
                 f"!! the server left {doubt.frames} possible board frame(s) at the start as filmed "
-                f"({doubt.reason}); not held. Look at the start: if it is the board, run "
+                f"({doubt.reason}); not held. Look at the start: if it is the board, "
                 f"set the take's start past it with `trim --episode {episode} --take {take_id} --start S`"
             )
             append_run_note(run_dir, f"Finish · deboard: {ask}")

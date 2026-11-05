@@ -1,21 +1,4 @@
-"""``fictora-produce`` take edit commands: trim, freeze, tempo, soften, blur, zoom (and ``deboard``, gone).
-
-Every one is a take edit on the server, and none edits a file on this laptop
-(server-heavy rule, 15 Oct 2026; gap 2 of the 5 Nov audit: every final video
-is made and saved on the server). ``trim --start/--end`` sets the take's
-handles (:mod:`creation.post.take_handles`), ``tempo`` its speed
-(:mod:`creation.post.take_tempo`); ``trim --cut``, ``freeze``, ``soften``,
-``blur`` and ``zoom`` go to the take's post edit (:mod:`creation.post.take_edit`).
-The server stores the edited take, records it on the episode and joins the
-episode again with it, and every later finish and join keeps it. Name the take
-with ``--episode N --take tK``; times are seconds on the take as filmed (take
-facts times).
-
-``deboard`` is gone: the server cuts the storyboard frames off the start of
-every take itself, and ``trim --start S`` holds a start it left as filmed.
-
-:class:`RecordCarry` is kept for the trim handles' finish record.
-"""
+"""``fictora-produce`` take edit commands: trim, freeze, tempo, soften, blur, zoom (and ``deboard``, gone)."""
 
 from __future__ import annotations
 
@@ -25,178 +8,31 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
 
-from creation.ops.folder import next_versioned_path
-from creation.post.edit import SLOW_TEMPO, ZOOM_FACTOR
-from creation.post.finish_record import (
-    RECORD_FILES,
-    FinishRecord,
-    carry_finish_record,
-)
 from creation.post.take_edit import (
     NOTHING_CHANGED,
     TakeEditRequest,
     TakeEditStop,
+    build_request,
     parse_blur_box,
     parse_center,
     parse_cut,
+    parse_voice_fx,
     run_take_edit,
 )
 
 EDIT_COMMANDS = frozenset(
     {"deboard", "trim", "freeze", "tempo", "soften", "blur", "zoom"}
 )
-#: Edits sent whole to the take's post edit on the server.
-SERVER_EDITS = frozenset({"freeze", "soften", "blur", "zoom"})
-#: Said for ``deboard``, which the server does itself.
 DEBOARD_GONE = (
     "deboard is gone: the server cuts the storyboard frames off the start of every take itself, before the take "
     "plays. When it left a possible board frame at the start as filmed (take facts board_frames.unsure) and you "
     "looked and saw the board, set where the take starts on the server: trim --episode N --take tK --start S. "
     "Nothing was changed."
 )
-#: Edits that leave the sound as it was: the record keeps the same pre-bed take.
-PICTURE_ONLY = frozenset({"freeze", "soften"})
-#: Name part of each edited record file: ``take-epNN-tK-<step>-<part>-vN.mp4``.
-COMPANION = {"pre_bed": "prebed", "master": "master", "final": "final"}
-
-Apply = Callable[[Path, Path], object]
-
-
-class RecordCarry:
-    """The finish record of the file being edited, and the edited copy of each of its files.
-
-    Parameters
-    ----------
-    desk
-        Series desk.
-    record
-        The record naming the edited file, or ``None`` (nothing is carried).
-    source
-        The file the operator named.
-    step
-        ``tempo``, ``freeze`` or ``soften``.
-    """
-
-    def __init__(
-        self, desk: Path, record: FinishRecord | None, source: Path, step: str
-    ) -> None:
-        self.desk = desk
-        self.record = record
-        self.source = source.resolve()
-        self.step = step
-        self.files: dict[str, Path | None] = {}
-        self.problem: str | None = None
-        #: What happened to the captions on the last :meth:`write` (``!!`` when they could not be carried).
-        self.caption_line: str | None = None
-        if record is not None:
-            self.problem = self._check()
-
-    def _inputs(self) -> dict[str, Path | None]:
-        assert self.record is not None
-        return {role: self.record.resolve(self.desk, role) for role in RECORD_FILES}
-
-    def _check(self) -> str | None:
-        for role, path in self._inputs().items():
-            if path is None and role == "pre_bed":
-                continue
-            if path is None or not path.is_file():
-                return f"the {COMPANION[role]} file its finish record names is gone ({path})"
-        return None
-
-    @property
-    def active(self) -> bool:
-        """A record was found and every file it names is on the desk."""
-
-        return self.record is not None and self.problem is None
-
-    def edit_companions(self, apply: Apply) -> None:
-        """Apply the edit to every record file except the one the operator named (written first)."""
-
-        if not self.active:
-            return
-        assert self.record is not None
-        takes = self.desk / f"ep{self.record.episode:02d}" / "takes"
-        base = f"take-ep{self.record.episode:02d}-{self.record.take_id}"
-        done: dict[Path, Path] = {}
-        for role, path in self._inputs().items():
-            if path is None:
-                self.files[role] = None
-                continue
-            resolved = path.resolve()
-            if role == "pre_bed" and self.step in PICTURE_ONLY:
-                self.files[role] = resolved
-                continue
-            if resolved == self.source:
-                continue
-            if resolved not in done:
-                out = next_versioned_path(
-                    takes, f"{base}-{self.step}-{COMPANION[role]}", ".mp4"
-                )
-                apply(resolved, out)
-                done[resolved] = out
-            self.files[role] = done[resolved]
-
-    def write(self, output: Path, edit: dict[str, Any]) -> Path | None:
-        """Write the carried record once the named file is edited into ``output``."""
-
-        if not self.active:
-            return None
-        assert self.record is not None
-        for role, path in self._inputs().items():
-            if path is not None and path.resolve() == self.source:
-                if role == "pre_bed" and self.step in PICTURE_ONLY:
-                    continue
-                self.files[role] = output
-        written = carry_finish_record(
-            self.desk, self.record, files=self.files, edit=edit
-        )
-        self.caption_line = self._carry_captions(edit)
-        return written
-
-    def _carry_captions(self, edit: dict[str, Any]) -> str | None:
-        """Carry the master's ``.ass`` onto the edited master, re-timed as the picture was (canary 7 Oct 2026).
-
-        Later steps read a take's captions beside the record's master;
-        without this an edit after finish left them uncaptioned.
-        """
-
-        from creation.post.edit_captions import captions_for_record, carry_ass
-
-        assert self.record is not None
-        before = self.record.resolve(self.desk, "master")
-        after = self.files.get("master")
-        if before is None or after is None or after.resolve() == before.resolve():
-            return None
-        source, notes = captions_for_record(self.desk, self.record)
-        if source is None:
-            if any(note.startswith("!!") for note in notes):
-                return "\n".join(notes)
-            return (
-                f"- Captions: none beside the master `{before.name}`, so none on `{after.name}` "
-                "(the take was finished without burned captions)"
-            )
-        carried = carry_ass(source, after.with_suffix(".ass"), [edit])
-        return "\n".join([*notes, carried.line])
-
-    def lines(self, record: Path | None) -> list[str]:
-        """What the operator is told about the record."""
-
-        if self.record is None:
-            return []
-        if record is None:
-            return [
-                f"- No finish record for the edited file: {self.problem}. `join` refuses it; run finish "
-                "again, then edit the new finished file."
-            ]
-        sound = (
-            "the sound before the bed is unchanged"
-            if self.step in PICTURE_ONLY
-            else "the take before the bed was edited the same way"
-        )
-        return [
-            f"- Record: `{record.name}` (what `join` reads; {sound}; the un-marked master too)",
-            *([self.caption_line] if self.caption_line else []),
-        ]
+#: The slow cut some shows use.
+SLOW_TEMPO = 0.9
+#: Default punch-in: the picture 15% closer (a crop of 1/1.15 of each side), enough to read as a new angle.
+ZOOM_FACTOR = 1.15
 
 
 def _take_args(parser: argparse.ArgumentParser, *, take_file_help: str) -> None:
@@ -230,7 +66,6 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Gone: the server cuts the storyboard frames off the start of every take itself. To hold a start "
         "it left as filmed, set the take's start with trim --start S.",
     )
-    # The old settings are still read, so an old command gets the answer, not a usage error.
     _take_args(gone, take_file_help=argparse.SUPPRESS)
     gone.add_argument("--board", default=None, help=argparse.SUPPRESS)
     gone.add_argument("--max-frames", default=None, help=argparse.SUPPRESS)
@@ -384,28 +219,16 @@ def add_edit_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     zoom.add_argument("--preview", action="store_true", help=preview_help)
 
 
-def _edit_request(args: argparse.Namespace) -> TakeEditRequest:
-    """The command's settings as the server's take edit fields (format only; the server checks the rest)."""
+def _trim_cut(args: argparse.Namespace) -> TakeEditRequest:
+    if args.start is not None or args.end is not None or args.reset:
+        raise TakeEditStop(
+            "trim --cut cuts a stretch out of the take; --start/--end/--reset move where it starts and "
+            f"ends. Run them as two commands. {NOTHING_CHANGED}"
+        )
+    return TakeEditRequest(trims=[parse_cut(args.cut)])
 
-    if args.command == "trim":
-        if args.start is not None or args.end is not None or args.reset:
-            raise TakeEditStop(
-                "trim --cut cuts a stretch out of the take; --start/--end/--reset move where it starts and "
-                f"ends. Run them as two commands. {NOTHING_CHANGED}"
-            )
-        return TakeEditRequest(trims=[parse_cut(args.cut)])
-    if args.command == "blur":
-        return TakeEditRequest(
-            blurs=[parse_blur_box(raw, start=args.start, end=args.end) for raw in args.boxes]
-        )  # fmt: skip
-    if args.command == "freeze":
-        return TakeEditRequest(
-            freeze_frames=[{"at_seconds": args.at, "hold_seconds": args.hold}]
-        )
-    if args.command == "soften":
-        return TakeEditRequest(
-            soften=[{"at_seconds": cut, "snap_to_cut": True} for cut in args.cut]
-        )
+
+def _zoom(args: argparse.Namespace) -> TakeEditRequest:
     zoom: dict[str, Any] = {
         "start_seconds": args.start,
         "end_seconds": args.end,
@@ -416,23 +239,60 @@ def _edit_request(args: argparse.Namespace) -> TakeEditRequest:
     return TakeEditRequest(zooms=[zoom])
 
 
-def send_server_edit(
-    args: argparse.Namespace,
-    request: Callable[[argparse.Namespace], TakeEditRequest],
-    out: TextIO,
-) -> int:
-    """Send one take edit to the server and print its answer; no file on this laptop is edited.
+#: Each take edit command's settings as the server's take edit fields (format only; the server checks the rest).
+POST_EDIT_REQUESTS: dict[str, Callable[[argparse.Namespace], TakeEditRequest]] = {
+    "trim": _trim_cut,
+    "blur": lambda args: TakeEditRequest(
+        blurs=[parse_blur_box(raw, start=args.start, end=args.end) for raw in args.boxes]
+    ),
+    "freeze": lambda args: TakeEditRequest(
+        freeze_frames=[{"at_seconds": args.at, "hold_seconds": args.hold}]
+    ),
+    "soften": lambda args: TakeEditRequest(
+        soften=[{"at_seconds": cut, "snap_to_cut": True} for cut in args.cut]
+    ),
+    "zoom": _zoom,
+    "voice-fx": lambda args: TakeEditRequest(
+        voice_fx=[parse_voice_fx(raw, preset=args.preset) for raw in args.span]
+    ),
+    "revoice": lambda args: build_request(
+        desk=args.desk.expanduser().resolve(), episode=args.episode, voices=[args.cast]
+    ),
+}  # fmt: skip
 
-    The server adds it to the take's current edit, re-joins the episode with it,
-    and keeps it in every later finish and join (kit #316 finishes from the
-    server's copy, so an edit made only on this laptop was lost).
+
+def _take_stop(args: argparse.Namespace, what: str) -> str | None:
+    """Why the command cannot name one take on the server (an old file flag, or a missing one), or ``None``."""
+
+    if getattr(args, "take_file", None) is not None:
+        flag = "--file" if args.command == "voice-fx" else "--take-file"
+        return (
+            f"{what} is a take edit on the server now and edits no file: drop {flag} and name the take "
+            "with --episode N --take tK. Times are seconds on the take as filmed (take facts times, the same "
+            f"as finish --mute), not on a finished file. {NOTHING_CHANGED}"
+        )
+    missing = [
+        flag
+        for flag, value in (
+            ("--desk D", args.desk),
+            ("--episode N", args.episode),
+            ("--take tK", args.take_id),
+        )
+        if value is None
+    ]
+    if missing:
+        return f"{what} edits one take on the server: add {' '.join(missing)}. {NOTHING_CHANGED}"
+    return None
+
+
+def send_server_edit(args: argparse.Namespace, out: TextIO) -> int:
+    """Send one take edit to the server and print its answer; no file on this laptop is edited.
 
     Parameters
     ----------
     args
-        Parsed namespace with ``desk``, ``episode``, ``take_id``, ``preview`` and the command's settings.
-    request
-        Turns the settings into the server's fields.
+        Parsed namespace whose ``command`` is in :data:`POST_EDIT_REQUESTS`, with ``desk``, ``episode``,
+        ``take_id``, ``preview`` and the command's settings.
     out
         Where the server's answer is printed.
 
@@ -444,31 +304,14 @@ def send_server_edit(
 
     what = args.command if args.command != "trim" else "trim --cut"
     try:
-        if getattr(args, "take_file", None) is not None:
-            flag = "--file" if args.command == "voice-fx" else "--take-file"
-            raise TakeEditStop(
-                f"{what} is a take edit on the server now and edits no file: drop {flag} and name the take "
-                "with --episode N --take tK. Times are seconds on the take as filmed (take facts times, the same "
-                f"as finish --mute), not on a finished file. {NOTHING_CHANGED}"
-            )
-        missing = [
-            flag
-            for flag, value in (
-                ("--desk D", args.desk),
-                ("--episode N", args.episode),
-                ("--take tK", args.take_id),
-            )
-            if value is None
-        ]
-        if missing:
-            raise TakeEditStop(
-                f"{what} edits one take on the server: add {' '.join(missing)}. {NOTHING_CHANGED}"
-            )
+        stop = _take_stop(args, what)
+        if stop is not None:
+            raise TakeEditStop(stop)
         lines = run_take_edit(
             args.desk,
             episode=args.episode,
             take_id=args.take_id,
-            request=request(args),
+            request=POST_EDIT_REQUESTS[args.command](args),
             preview=bool(getattr(args, "preview", False)),
             yes=bool(getattr(args, "yes", False)),
         )
@@ -498,7 +341,8 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
     Returns
     -------
     int
-        ``0``; ``2`` when the server refused the edit, or for ``deboard`` (gone).
+        ``0``; ``2`` when the take is not named on the server, the server refused the edit, or for
+        ``deboard`` (gone).
 
     Raises
     ------
@@ -510,22 +354,15 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
     if args.command == "deboard":
         print(DEBOARD_GONE, file=sys.stderr)
         return 2
-    if args.command in SERVER_EDITS or (
-        args.command == "trim" and args.cut is not None
+    if args.command in POST_EDIT_REQUESTS and (
+        args.command != "trim" or args.cut is not None
     ):
-        return send_server_edit(args, _edit_request, out)
-    desk = args.desk.expanduser().resolve()
-    if args.take_file is not None:
-        raise ValueError(
-            f"{args.command} is set on the server and edits no file: drop --take-file and name the take with "
-            "--episode N --take tK"
-        )
-    if args.take_id is None or args.episode is None:
-        print(
-            f"Stopped: {args.command} edits one take on the server: add --episode N --take tK. {NOTHING_CHANGED}",
-            file=sys.stderr,
-        )
+        return send_server_edit(args, out)
+    stop = _take_stop(args, args.command)
+    if stop is not None:
+        print(f"Stopped: {stop}", file=sys.stderr)
         return 2
+    desk = args.desk.expanduser().resolve()
     if args.command == "trim":
         if args.start is None and args.end is None and not args.reset:
             raise ValueError(
@@ -545,8 +382,6 @@ def dispatch_edit(args: argparse.Namespace, *, stream: TextIO | None = None) -> 
             out=out,
         )
     if args.command == "tempo":
-        # A take's tempo is set on the server: picture and sound change speed together and every
-        # time the take reports moves with it, so captions land on time (L-20261014-20).
         from creation.post.take_tempo import run_take_tempo
 
         return run_take_tempo(

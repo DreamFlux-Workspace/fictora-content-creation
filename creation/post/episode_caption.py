@@ -1,15 +1,4 @@
-"""``caption``: the server burns an episode's captions; nothing is burned on this laptop (5 Nov 2026).
-
-The kit used to burn captions on a take file here, so the server never had
-the captioned video. Now ``caption --episode N`` asks the server to caption
-the delivered episode (``PUT /v1/video-generations/{job}/episodes/{episode}/captions/enable``,
-for an episode delivered without captions): it transcribes the uncaptioned
-cut, burns the captions and delivers the new cut in place of the old one.
-``caption --retime`` asks it to join the episode again from its takes with
-freshly timed captions (``POST .../recaption``, core-team tokens only), for a
-cut whose burned captions are mistimed. The kit prints the server's answer and
-keeps nothing; a plain ``finish`` downloads the new cut.
-"""
+"""``caption``: the server burns an episode's captions; nothing is burned on this laptop."""
 
 from __future__ import annotations
 
@@ -25,11 +14,9 @@ from creation.harness.http_util import api_error_text
 
 ENABLE_ROUTE = "/v1/video-generations/{job_id}/episodes/{episode_id}/captions/enable"
 RECAPTION_ROUTE = "/v1/video-generations/{job_id}/episodes/{episode_id}/recaption"
-#: The server's caption recipe for each style the kit's ``caption-style`` saves.
 SERVER_STYLE = {"bold": "bold", "house": "house", "plain": "house"}
-#: Transcribing and burning a whole episode can take a few minutes.
 CAPTION_TIMEOUT_SECONDS = 600.0
-NOTHING_CHANGED = "The delivered episode was not changed."
+EPISODE_UNCHANGED = "The delivered episode was not changed."
 
 
 def server_style(local_style: str) -> str | None:
@@ -56,12 +43,12 @@ def _refusal(status: int, body: Any) -> str:
     error = body.get("error") if isinstance(body, dict) else None
     message = str(error.get("message") or "").strip() if isinstance(error, dict) else ""
     if status == 404 and isinstance(body, dict) and body.get("detail") == "Not Found":
-        return f"This server cannot caption an episode yet. Tell the core team. {NOTHING_CHANGED}"
+        return f"This server cannot caption an episode yet. Tell the core team. {EPISODE_UNCHANGED}"
     if status in (401, 403):
-        return f"The server refused (HTTP {status}): {message or api_error_text(body)[:300]} {NOTHING_CHANGED}"
+        return f"The server refused (HTTP {status}): {message or api_error_text(body)[:300]} {EPISODE_UNCHANGED}"
     if status >= 500:
         return f"The server is busy or restarting (HTTP {status}). Run the same command again in a few minutes."
-    return f"The server would not caption it (HTTP {status}): {message or api_error_text(body)[:300]} {NOTHING_CHANGED}"
+    return f"The server would not caption it (HTTP {status}): {message or api_error_text(body)[:300]} {EPISODE_UNCHANGED}"
 
 
 def send_caption(
@@ -117,7 +104,7 @@ def send_caption(
     except httpx.TransportError as exc:
         return (
             False,
-            f"Could not reach the server ({type(exc).__name__}). {NOTHING_CHANGED}",
+            f"Could not reach the server ({type(exc).__name__}). {EPISODE_UNCHANGED}",
         )
     try:
         body = response.json()
@@ -187,7 +174,7 @@ def run_caption(
         return 2
     try:
         base, headers = api if api is not None else _api(desk)
-    except SystemExit as exc:  # no kit token
+    except SystemExit as exc:
         print(f"Refused: {exc.code}", file=sys.stderr)
         return 2
     ok, line = send_caption(

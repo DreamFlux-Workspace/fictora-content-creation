@@ -148,7 +148,7 @@ def run_take_tempo(
     revert: bool,
     out: TextIO,
 ) -> int:
-    """Set, preview or revert a take's tempo on the server (the only place a take's speed changes).
+    """Set, preview or revert a take's tempo on the server.
 
     Parameters
     ----------

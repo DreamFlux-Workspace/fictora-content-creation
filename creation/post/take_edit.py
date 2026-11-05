@@ -35,8 +35,7 @@ Setting                            Server field
 
 Routes: ``POST /v1/video-generations/{job}/takes/{n}/post-edit`` (the edit),
 ``.../post-edit/quote`` and ``.../revoice`` with ``dry_run`` (``finish --preview``:
-the tokens, nothing changed). Without ``--yes`` the server quotes every edit first; one that costs
-tokens is sent only with ``--yes``, like ``music-note`` and ``film``. Times are seconds on the take as
+the tokens, nothing changed). Times are seconds on the take as
 the server delivered it. Every edit is sent with ``add_to_current_edit`` (fictora-drama
 #1193): the server adds it to the take's current edit, so an operator's
 earlier edits on the take are kept and only the new paid work is charged. A
@@ -47,6 +46,7 @@ replaced. A re-voice keeps the take's other edits either way.
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import uuid
@@ -81,7 +81,6 @@ _BOX = re.compile(
     rf"^{_DECIMAL},{_DECIMAL},{_DECIMAL},{_DECIMAL}(?:@\s*(\d+)\s*[xX]\s*(\d+)\s*)?$"
 )
 _POINT = re.compile(rf"^{_DECIMAL},{_DECIMAL}(?:@\s*(\d+)\s*[xX]\s*(\d+)\s*)?$")
-#: The server's edit fields, in the order an edit is reported, with how one and many of each read.
 EDIT_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("mutes", "muted stretch", "muted stretches"),
     ("dub_lines", "laid line", "laid lines"),
@@ -114,7 +113,6 @@ class TakeEditRequest:
     soften: list[dict[str, Any]] = field(default_factory=list)
     zooms: list[dict[str, Any]] = field(default_factory=list)
     voice_fx: list[dict[str, Any]] = field(default_factory=list)
-    #: cast_id -> the name the operator knows them by, in the order asked.
     revoice: dict[str, str] = field(default_factory=dict)
 
     def edit_body(self) -> dict[str, Any] | None:
@@ -391,8 +389,8 @@ def refusal_line(status: int, body: Any, *, take_id: str) -> str:
         )
     if code == "take_post_edit_in_progress":
         return (
-            f"An edit of {take_id} is still running on the server. Wait a minute, then run finish without "
-            "the edit settings to download the new cut. Nothing was charged twice."
+            f"An edit of {take_id} is still running on the server. Wait a minute, then run a plain finish "
+            "to download the new cut. Nothing was charged twice."
         )
     if code == "take_post_edit_unavailable":
         return f"{said or 'Editing a take is not available on this server right now.'} {NOTHING_CHANGED}"
@@ -489,8 +487,8 @@ def _post(
         response = client.post(url, headers=sent, json=dict(body))
     except httpx.TimeoutException:
         raise TakeEditStop(
-            "The server did not answer in time. The edit may still land: run finish without the edit "
-            "settings in a few minutes and look at the new cut before sending it again."
+            "The server did not answer in time. The edit may still land: run a plain finish "
+            "in a few minutes and look at the new cut before sending it again."
         ) from None
     except httpx.TransportError as exc:
         raise TakeEditStop(
@@ -510,8 +508,6 @@ def _counts(body: Mapping[str, Any]) -> str:
 
 
 def _whole_tokens(value: Any) -> int:
-    """The server's token count as a whole number; anything else is a plain stop, not a crash."""
-
     try:
         return int(value or 0)
     except (TypeError, ValueError):
@@ -554,31 +550,24 @@ def send_take_edit(
         price of an edit that costs tokens sent without ``yes``.
     """
 
-    if not preview and not yes:
-        quote, tokens = _send(
-            base_url=base_url,
-            headers=headers,
-            job_id=job_id,
-            take_index=take_index,
-            take_id=take_id,
-            request=request,
-            preview=True,
-            transport=transport,
-        )
-        if tokens > 0:
-            raise TakeEditStop(
-                f"{' '.join(quote[:-1])} Nothing was changed or charged; add --yes to apply."
-            )
-    return _send(
+    send = functools.partial(
+        _send,
         base_url=base_url,
         headers=headers,
         job_id=job_id,
         take_index=take_index,
         take_id=take_id,
         request=request,
-        preview=preview,
         transport=transport,
-    )[0]
+    )
+    if not preview and not yes:
+        quote, tokens = send(preview=True)
+        if tokens > 0:
+            raise TakeEditStop(
+                f"{' '.join(quote)} Nothing was changed or charged; add --yes to apply."
+            )
+    lines, _ = send(preview=preview)
+    return [*lines, PREVIEW_ONLY if preview else NEXT_STEP]
 
 
 def _send(
@@ -592,8 +581,6 @@ def _send(
     preview: bool,
     transport: httpx.BaseTransport | None,
 ) -> tuple[list[str], int]:
-    """One round trip to the server: the lines to print and the tokens it quoted or took."""
-
     spent = 0
     base = base_url.rstrip("/")
     lines: list[str] = []
@@ -664,7 +651,6 @@ def _send(
                 str(applied.get("episode_not_redelivered") or "")
                 or "The episode was put back together with the edit."
             )
-    lines.append(PREVIEW_ONLY if preview else NEXT_STEP)
     return lines, spent
 
 

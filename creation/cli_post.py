@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Iterable
 from typing import Any
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from creation.post.server_finish import (
     SERVER_FINISH_NOT_DONE,
     run_server_finish,
 )
+from creation.post.voice_fx import PRESET_NAMES as VOICE_FX_PRESETS
 
 POST_COMMANDS = (
     frozenset(
@@ -156,12 +158,13 @@ class _LaptopOnly(argparse.Action):
         setattr(namespace, self.dest, seen)
 
 
-#: Old laptop settings of ``caption`` and ``revoice``: refused by name (the reason is the sentence's second half).
-RETIRED_FLAG_HOMES: dict[str, dict[str, str]] = {
+_CAPTION_TIMING = "the server times each caption from the line's own sound"
+#: Old laptop settings of ``caption`` and ``revoice``, each with why it is refused.
+RETIRED_FLAG_REASONS: dict[str, dict[str, str]] = {
     "caption": {
-        "--line-start": "the server times each caption from the line's own sound",
-        "--line-end": "the server times each caption from the line's own sound",
-        "--words-json": "the server times each caption from the line's own sound",
+        "--line-start": _CAPTION_TIMING,
+        "--line-end": _CAPTION_TIMING,
+        "--words-json": _CAPTION_TIMING,
         "--caption-scale": "the server owns the size of the captions",
         "--no-open": "nothing is opened or burned on this laptop",
     },
@@ -173,10 +176,10 @@ RETIRED_FLAG_HOMES: dict[str, dict[str, str]] = {
 }
 
 
-def add_retired_flags(parser: argparse.ArgumentParser, command: str) -> None:
-    """Accept the old laptop settings of ``command`` so :func:`retired_refusal` can name them."""
+def _add_refused_flags(parser: argparse.ArgumentParser, flags: Iterable[str]) -> None:
+    """Accept each old setting into ``laptop_only``, so the command refuses it by name instead of a usage error."""
 
-    for flag in RETIRED_FLAG_HOMES[command]:
+    for flag in flags:
         parser.add_argument(
             flag,
             dest="laptop_only",
@@ -187,11 +190,17 @@ def add_retired_flags(parser: argparse.ArgumentParser, command: str) -> None:
         )
 
 
-def retired_refusal(command: str, flags: list[str]) -> str:
-    """One plain sentence naming the old settings given to ``command`` (exit 2, nothing done)."""
+def add_retired_flags(parser: argparse.ArgumentParser, command: str) -> None:
+    """Accept the old laptop settings of ``command`` so :func:`retired_refusal` can name them."""
 
-    homes = RETIRED_FLAG_HOMES[command]
-    reasons = list(dict.fromkeys(homes[flag] for flag in flags))
+    _add_refused_flags(parser, RETIRED_FLAG_REASONS[command])
+
+
+def retired_refusal(command: str, flags: list[str]) -> str:
+    """One plain sentence naming the old settings given to ``command``."""
+
+    known = RETIRED_FLAG_REASONS[command]
+    reasons = list(dict.fromkeys(known[flag] for flag in flags))
     return (
         f"Stopped: {command} no longer takes {', '.join(flags)} ({'; '.join(reasons)}). "
         "Run it again without them. Nothing was changed or charged."
@@ -240,15 +249,7 @@ def _add_server_finish_args(parser: argparse.ArgumentParser) -> None:
         help="Show the show's series cut instead (the server makes it from every finished episode; "
         "nothing is joined on this laptop).",
     )
-    for flag in LAPTOP_ONLY_FLAGS:
-        parser.add_argument(
-            flag,
-            dest="laptop_only",
-            action=_LaptopOnly,
-            nargs="*",
-            default=None,
-            help=argparse.SUPPRESS,
-        )
+    _add_refused_flags(parser, LAPTOP_ONLY_FLAGS)
 
 
 def laptop_only_refusal(
@@ -479,7 +480,6 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "come through an intercom, a phone or a radio. The server re-joins the episode and every later finish and "
         "join keeps it; no file on this laptop is edited.",
     )
-    # Not required here: an old command (--file, no --episode) gets the plain stop, not a usage error.
     fx.add_argument("--desk", type=Path, default=None)
     fx.add_argument("--episode", type=int, default=None)
     fx.add_argument("--take", dest="take_id", default=None, help=take_help)
@@ -491,7 +491,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         metavar="A-B",
         help="Seconds on the take as filmed, like 0-3.5. Repeat for every line the voice speaks.",
     )
-    fx.add_argument("--preset", required=True, choices=("intercom", "phone", "radio"))
+    fx.add_argument("--preset", required=True, choices=VOICE_FX_PRESETS)
     fx.add_argument(
         "--yes",
         action="store_true",
@@ -825,15 +825,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     join.add_argument(
         "--episode", type=int, default=None, help="Default: the desk's current episode."
     )
-    for flag in _JOIN_REFUSED_HOMES:
-        join.add_argument(
-            flag,
-            dest="laptop_only",
-            action=_LaptopOnly,
-            nargs="*",
-            default=None,
-            help=argparse.SUPPRESS,
-        )
+    _add_refused_flags(join, _JOIN_REFUSED_HOMES)
     _add_server_finish_args(join)
 
     cut = sub.add_parser(
@@ -1012,26 +1004,8 @@ def dispatch_post(args: argparse.Namespace) -> int:
             print(retired_refusal(args.command, old), file=sys.stderr)
             return 2
         from creation.post.edit_commands import send_server_edit
-        from creation.post.take_edit import (
-            TakeEditRequest,
-            build_request,
-            parse_voice_fx,
-        )
 
-        def request(parsed: argparse.Namespace) -> TakeEditRequest:
-            if parsed.command == "revoice":
-                return build_request(
-                    desk=parsed.desk.expanduser().resolve(),
-                    episode=parsed.episode,
-                    voices=[parsed.cast],
-                )
-            return TakeEditRequest(
-                voice_fx=[
-                    parse_voice_fx(raw, preset=parsed.preset) for raw in parsed.span
-                ]
-            )
-
-        return send_server_edit(args, request, sys.stdout)
+        return send_server_edit(args, sys.stdout)
     if args.command == "voice-line":
         run_voice_line(
             args.desk,

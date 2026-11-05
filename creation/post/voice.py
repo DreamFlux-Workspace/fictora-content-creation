@@ -20,10 +20,6 @@ on the cast card, and a take that is already filmed takes a new voice in post:
   that already holds the wording and the named voices makes a new reel for free.
 - ``voice --pick N`` (or ``--pick NAME``): ``POST .../voice-auditions/pick`` locks that candidate on the
   cast card and saves the spine again. Takes filmed from now on use it.
-- ``revoice`` (:mod:`creation.post.take_edit`): the server makes every line that
-  character says in a delivered take again in the locked voice, lays each where
-  the take put it with the take's own voice muted under it, keeps the take's other
-  edits and joins the episode again. Nothing on this laptop is edited.
 
 When a dub will not sit (lips visibly wrong, a shouted line), re-film only the
 takes that character speaks in, never the story.

@@ -1,12 +1,4 @@
-"""Picture measurements other kit steps share: the hard-cut trace and the blur box.
-
-The take edit commands (``freeze``, ``tempo``, ``soften``, ``zoom``, ``trim --cut``,
-``blur``) are take edits on the server (:mod:`creation.post.take_edit`,
-:mod:`creation.post.take_tempo`); nothing here is one of them.
-
-- :func:`measure_cuts` finds hard cuts with a scaled ``tblend`` difference trace
-  (H3 cell seams that ffmpeg scene detect misses), for review and the join.
-"""
+"""Picture measurements other kit steps share: the hard-cut trace and the blur box."""
 
 from __future__ import annotations
 
@@ -21,21 +13,12 @@ from creation.post.media import (
     probe_video,
 )
 
-# --- soften / cut trace -------------------------------------------------------------------------
-
 #: Mean luma on ``scale=16:28,tblend=difference`` that marks a cut (inclusive).
 FRAME_DIFF_CUT_THRESHOLD = 25.0
 #: Tiny analysis size of the frame-difference recipe.
 FRAME_DIFF_SCALE = "16:28"
 #: Ignore a second spike closer than this to the previous cut.
 FRAME_DIFF_MIN_GAP_SECONDS = 0.4
-
-# --- tempo --------------------------------------------------------------------------------------
-
-#: The slow cut some shows use.
-SLOW_TEMPO = 0.9
-#: Output frame rate after a tempo change.
-HOUSE_FPS = 24.0
 
 _PTS = re.compile(r"pts_time:(?P<time>[0-9.]+)")
 _YAVG = re.compile(r"lavfi\.signalstats\.YAVG=(?P<value>[0-9.]+)")
@@ -170,11 +153,3 @@ class BlurBox:
         """``x,y,w,h`` as the operator typed it."""
 
         return f"{self.x},{self.y},{self.w},{self.h}"
-
-
-# ================================================================================================
-# zoom default
-# ================================================================================================
-
-#: Default punch-in: the picture 15% closer (a crop of 1/1.15 of each side), enough to read as a new angle.
-ZOOM_FACTOR = 1.15

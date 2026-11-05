@@ -125,7 +125,6 @@ def test_a_server_without_the_route_is_refused_and_nothing_changes_here(
 
     api.routes[("POST", TEMPO)] = missing
 
-    # No local tempo: the take's speed changes only on the server.
     assert _tempo(desk, "--factor", "1.5") == 2
 
     assert "this server cannot change a take's speed yet" in capsys.readouterr().err

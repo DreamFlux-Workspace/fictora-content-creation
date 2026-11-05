@@ -62,5 +62,7 @@ def test_finish_does_not_auto_hold_an_unsure_start_and_says_how_to(
 
     step = next(s for s in result.steps if s.step == "deboard")
     assert step.status == "skipped" and step.output is None
-    assert REASON in step.detail and "--hold-unsure" in step.detail
+    assert (
+        REASON in step.detail and "trim --episode 1 --take t1 --start S" in step.detail
+    )
     assert not list((post_desk / "ep01" / "takes").glob("*deboard*"))

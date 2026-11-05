@@ -1,5 +1,3 @@
-"""The local deboard step of finish, the cut trace, and ``deboard`` as a command (gone) on tiny synthetic takes."""
-
 from __future__ import annotations
 
 import io
@@ -188,11 +186,6 @@ def test_finish_no_deboard_keeps_the_board_frames(post_desk: Path) -> None:
 
     assert result.steps[0].step == "deboard" and result.steps[0].status == "skipped"
     assert not (takes / "take-ep01-t1-deboard-v1.mp4").exists()
-
-
-# ================================================================================================
-# cut trace
-# ================================================================================================
 
 
 @needs_ffmpeg

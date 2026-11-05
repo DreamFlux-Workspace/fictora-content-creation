@@ -1,14 +1,3 @@
-"""freeze, soften, zoom, voice-fx, revoice and caption are made and saved on the server (5 Nov 2026).
-
-Gap 2 of the audit: these commands edited a file on the laptop, so the server
-never had the video the creator posted. Each now sends its edit to the server
-and prints the answer; no file on the desk is written. Every call goes to a
-stand-in server (``httpx.MockTransport``).
-"""
-
-# The stand-in server fixture is imported, so the tests that take it name it again.
-# ruff: noqa: F401, F811
-
 from __future__ import annotations
 
 import json
@@ -17,13 +6,24 @@ from typing import Any
 
 import httpx
 import pytest
-from test_kit_cut_and_blur_on_server import JOB, POST_EDIT, Server, _files, server
+from test_kit_cut_and_blur_on_server import (
+    JOB,
+    POST_EDIT,
+    Server,
+    _files,
+    install_stand_in,
+)
 
 from creation.cli_produce import main
 from creation.post import episode_caption, server_finish
 
 REVOICE = f"/v1/video-generations/{JOB}/takes/2/revoice"
 TAKE = ["--desk", "{desk}", "--episode", "1", "--take", "t2"]
+
+
+@pytest.fixture
+def server(post_desk: Path, monkeypatch: pytest.MonkeyPatch) -> Server:
+    return install_stand_in(monkeypatch)
 
 
 def _run(desk: Path, command: str, *settings: str) -> int:
@@ -185,7 +185,7 @@ def test_revoice_reads_the_cast_from_a_desk_written_with_a_tilde(
         (["tempo", "--desk", "{desk}", "--factor", "0.9"],
          "tempo edits one take on the server: add --episode N --take tK"),
         (["trim", "--desk", "{desk}", "--episode", "1", "--start", "0.5"],
-         "trim edits one take on the server: add --episode N --take tK"),
+         "trim edits one take on the server: add --take tK."),
     ],
 )  # fmt: skip
 def test_an_old_way_of_naming_the_take_is_one_plain_stop(
@@ -510,7 +510,7 @@ def test_a_price_that_is_not_a_number_is_a_plain_stop(
     capsys: pytest.CaptureFixture[str],
     command: tuple[str, ...],
 ) -> None:
-    server.quote_tokens = "three"  # type: ignore[assignment]
+    server.quote_tokens = "three"
 
     assert _run(post_desk, *command) == 2
 
