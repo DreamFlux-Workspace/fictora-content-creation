@@ -171,11 +171,11 @@ class _LaptopOnly(argparse.Action):
 
 
 def add_part_args(parser: argparse.ArgumentParser) -> None:
-    """The Instagram and TikTok part settings, the same on ``cut``, ``join --episodes`` and ``finish --episodes``."""
+    """The part settings, the same on ``cut``, ``join --episodes`` and ``finish --episodes``."""
 
     parser.add_argument(
         "--parts", type=int, default=None, metavar="N",
-        help="How many Instagram and TikTok parts (default: the server's suggestion).",
+        help="How many parts (default: the server's suggestion).",
     )  # fmt: skip
     parser.add_argument(
         "--start-number", type=int, default=None, metavar="N",
@@ -186,8 +186,12 @@ def add_part_args(parser: argparse.ArgumentParser) -> None:
         help="Change part N's opening or ending text: N:opening=TEXT or N:ending=TEXT (repeat).",
     )  # fmt: skip
     parser.add_argument(
+        "--change", default=None, metavar="WORDS",
+        help="What the human wants changed in the server's plan, in their words (as if typed at the question).",
+    )  # fmt: skip
+    parser.add_argument(
         "--yes", action="store_true",
-        help="The human already said go ahead to the printed parts: make them without asking.",
+        help="The human already said make it to the printed parts: make them without asking.",
     )  # fmt: skip
 
 
@@ -230,8 +234,8 @@ def _add_server_finish_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         nargs="+",
         default=None,
-        help="Make Instagram and TikTok parts of these episodes instead, in this order (2 or more). Every "
-        "planned part is printed and nothing is made until you say go ahead, as with cut; nothing is joined "
+        help="Make parts of these episodes instead, in this order (2 or more). Every "
+        "planned part is printed and nothing is made until you say make it, as with cut; nothing is joined "
         "on this laptop.",
     )
     add_part_args(parser)
@@ -818,9 +822,9 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     cut = sub.add_parser(
         "cut",
-        help="The server's punchy series cut as Instagram and TikTok parts (with covers and captions) from "
+        help="The server's punchy series cut as parts (with covers and captions) from "
         "episodes you pick, from any of the creator's shows (free). It prints every planned part and makes "
-        "nothing until you say go ahead. Nothing is cut on this laptop. "
+        "nothing until you say make it. Nothing is cut on this laptop. "
         f"Exits {SERVER_FINISH_NOT_DONE} (NOT DONE) when the server did not give the cut.",
     )
     cut.add_argument(
@@ -1125,7 +1129,7 @@ def _send_caption_labels(
 
 
 def _show_series_cut(desk: Path, args: argparse.Namespace) -> int:
-    """``--episodes``: the server's Instagram and TikTok parts of the desk's named episodes, shown first."""
+    """``--episodes``: the server's parts of the desk's named episodes, shown first."""
 
     from creation.post.picked_cut import MIN_PICKED, desk_cut_command
 
@@ -1258,7 +1262,7 @@ def _server_finish_command(args: argparse.Namespace) -> int:
 
     if part_flags_given(args):
         print(
-            "Stopped: --parts, --start-number, --part-text and --yes are for Instagram and TikTok parts; "
+            "Stopped: --parts, --start-number, --part-text, --change and --yes are for a punchy edit's parts; "
             "add --episodes N N ... (or use cut). Nothing was made or charged.",
             file=sys.stderr,
         )

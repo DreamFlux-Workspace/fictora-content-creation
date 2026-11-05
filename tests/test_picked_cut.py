@@ -281,11 +281,7 @@ def test_poll_retries_busy_and_dropped_connections_until_ready() -> None:
         sleep=waits.append,
         clock=lambda: 0.0,
     )
-    assert (
-        calls["n"] == 3
-        and waits == [2.0, 4.0]
-        and lines[1].startswith("Part 1 for Instagram and TikTok")
-    )
+    assert calls["n"] == 3 and waits == [2.0, 4.0] and lines[1].startswith("Part 1")
 
 
 def test_poll_gives_up_with_a_plain_line_at_the_deadline() -> None:
@@ -328,10 +324,14 @@ def test_show_alone_sends_every_episode_in_order_and_prints_the_cut(
         "title": "Exit",
         "part_count": 2,
         "start_number": 1,
+        "texts": [
+            {"number": 1, "opening_text": "o", "ending_text": "e"},
+            {"number": 2, "opening_text": "o", "ending_text": "e"},
+        ],
     }
     out = capsys.readouterr().out
     assert "all.mp4" not in out
-    assert "Part 1 for Instagram and TikTok: https://media.example/p1.mp4" in out
+    assert "Part 1: https://media.example/p1.mp4" in out
     assert (
         "Cover: https://media.example/p1.jpg" in out
         and "Post caption: He kept the lock." in out
@@ -412,7 +412,7 @@ def test_polls_until_ready_and_says_it_is_working() -> None:
     )
     assert any("Still making the cut" in line for line in said)
     assert said[0] == NEWEST_VERSION_NOTICE
-    assert lines[1] == "Part 1 for Instagram and TikTok: https://media.example/p1.mp4"
+    assert lines[1] == "Part 1: https://media.example/p1.mp4"
 
 
 def test_failed_cut_prints_the_servers_reason() -> None:
@@ -610,7 +610,7 @@ def test_failed_music_still_prints_the_edit_with_the_servers_words(
     assert cut_command(args(episodes=["sp_a:1", "sp_b:1"], new_music=True)) == 0
     out = capsys.readouterr().out
     assert "New music: The new music could not be made" in out
-    assert "Part 1 for Instagram and TikTok: https://media.example/p1.mp4" in out
+    assert "Part 1: https://media.example/p1.mp4" in out
 
 
 def test_music_not_offered_409_stops_plainly(

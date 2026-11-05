@@ -4,11 +4,10 @@ The picked episodes can come from any of the creator's shows (an operator who ma
 episode still gets one cut). The kit sends the pick and prints what the server made. Nothing is
 cut on this laptop, no state is kept, and the files stay on the server (links are printed).
 
-Parts only (founder, 5 Nov 2026): a punchy edit gives the creator Instagram and TikTok parts, never
-one whole video. Before anything is made the kit asks the server for the plan (how many parts, the
-number the first part carries, each part's opening and ending text), prints every part, and makes
-nothing until the human says go ahead. The human can change the count, the first number or any
-part's text; the server plans again and the kit prints it again.
+Parts only (founder, 5 Nov 2026): a punchy edit is split into parts, never one whole video. Before
+anything is made the kit asks the server for the plan, prints the server's own words and every part,
+and asks "Make it?". Anything else the human types goes back to the server as the change they want;
+the server plans again and the kit prints it again. Nothing is made until they say yes.
 
 Only what the server holds (5 Nov 2026): the edit is cut from each episode as the server keeps it.
 A video file on this laptop is never uploaded for an episode; a better take has to become that
@@ -26,7 +25,7 @@ import json
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -57,7 +56,7 @@ MIN_PICKED = 2
 POLL_RETRY_WAITS = (2.0, 4.0, 8.0, 15.0)
 #: ``--part-text N:<side>=TEXT`` side -> the field the server takes.
 TEXT_SIDES = {"opening": "opening_text", "ending": "ending_text"}
-GO_AHEAD = "Go ahead? [y/N/e=edit] "
+GO_AHEAD = "Make it? [y/N, or type what to change] "
 NEWEST_VERSION_NOTICE = (
     "Heads up: I'll make this edit from the episodes saved on our server. A version made on your "
     "computer, with your own captions or sound, is not used. To use a better take, make it that "
@@ -68,9 +67,9 @@ LOCAL_FILES_GONE = (
     "file from this computer. If an episode has a better take, make it that episode's take on the server "
     "first, then cut again. Nothing was made or uploaded."
 )
-NOT_CONFIRMED = "Stopped: nobody said go ahead, so nothing was made."
+NOT_CONFIRMED = "Stopped: nobody said make it, so nothing was made."
 NO_MUSIC_ROUTE = "NOT DONE: the server can't price new music for an edit yet. Tell the core team; nothing was made."
-NO_PLAN_ROUTE = "NOT DONE: the server can't plan the Instagram and TikTok parts yet. Tell the core team; nothing was made."
+NO_PLAN_ROUTE = "NOT DONE: the server can't plan the parts yet. Tell the core team; nothing was made."
 OLD_SERVER = (
     "NOT DONE: the server can't make a cut from picked episodes yet. "
     "Tell the core team; nothing was made."
@@ -90,12 +89,14 @@ class PartChoice:
     """What the human set for the parts; anything left ``None`` or out is the server's suggestion.
 
     ``texts`` maps a part's number as printed (``Part 4``) to the fields it overrides,
-    ``opening_text`` and/or ``ending_text``.
+    ``opening_text`` and/or ``ending_text``. ``change_request`` is what the human typed (or
+    ``--change``) for the server to change in its plan; only the plan route takes it.
     """
 
     part_count: int | None = None
     start_number: int | None = None
     texts: Mapping[int, Mapping[str, str]] = field(default_factory=dict)
+    change_request: str | None = None
 
     def body(self) -> dict[str, Any]:
         """The optional plan fields, as the plan and the cut both take them."""
@@ -109,6 +110,8 @@ class PartChoice:
             out["texts"] = [
                 {"number": n, **dict(self.texts[n])} for n in sorted(self.texts)
             ]
+        if self.change_request:
+            out["change_request"] = self.change_request
         return out
 
 
@@ -124,9 +127,9 @@ class CutStop(Exception):
 class PartTextTooLong(CutStop):
     """The server's 422: a part's opening or ending text won't fit. ``message`` is its plain words."""
 
-    def __init__(self, message: str, number: Any) -> None:
-        self.message = message or f"The text for part {number} is too long to fit."
-        self.number = number
+    def __init__(self, message: str, part: Any) -> None:
+        self.message = message or f"The text for part {part} is too long to fit."
+        self.part = part
         super().__init__(f"Stopped: {self.message} Nothing was made.", 2)
 
 
@@ -179,7 +182,7 @@ def parse_part_text(raw: str) -> tuple[int, str, str]:
 
 
 def choice_from_args(args: Any) -> PartChoice:
-    """The human's part settings from ``--parts``, ``--start-number`` and ``--part-text``."""
+    """The human's part settings from ``--parts``, ``--start-number``, ``--part-text`` and ``--change``."""
 
     for name, value in (
         ("--parts", args.parts),
@@ -191,7 +194,8 @@ def choice_from_args(args: Any) -> PartChoice:
     for raw in args.part_text or []:
         number, key, text = parse_part_text(raw)
         texts.setdefault(number, {})[key] = text
-    return PartChoice(args.parts, args.start_number, texts)
+    change = (getattr(args, "change", None) or "").strip() or None
+    return PartChoice(args.parts, args.start_number, texts, change)
 
 
 def select_show(
@@ -305,7 +309,7 @@ def _check(response: httpx.Response, *, what: str) -> Any:
         details = details if isinstance(details, dict) else {}
         raise PartTextTooLong(
             str(error.get("message") or "").strip(),
-            error.get("number", details.get("number")),
+            details.get("part"),
         )
     if (
         response.status_code == 409
@@ -380,7 +384,7 @@ def plan_parts(
     api: tuple[str, Mapping[str, str]] | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> Mapping[str, Any]:
-    """The server's plan for the Instagram and TikTok parts of this edit; nothing is made.
+    """The server's plan for the parts of this edit; nothing is made.
 
     Raises
     ------
@@ -410,13 +414,13 @@ def _clock(seconds: Any) -> str:
     return f"{total // 60}:{total % 60:02d}"
 
 
-def plan_lines(plan: Mapping[str, Any], choice: PartChoice) -> list[str]:
-    """Every planned part on its own line, then which values are the server's suggestions."""
+def plan_lines(plan: Mapping[str, Any]) -> list[str]:
+    """The server's own words for the plan, every planned part, then its question if it has one."""
 
     count, start = plan.get("part_count"), plan.get("start_number")
     lines = [
         str(plan.get("summary") or "").strip()
-        or f"The server plans {count} Instagram and TikTok part(s):"
+        or f"{count} parts, Part {start} onwards:"
     ]
     for p in plan.get("parts") or []:
         if isinstance(p, dict):
@@ -424,82 +428,25 @@ def plan_lines(plan: Mapping[str, Any], choice: PartChoice) -> list[str]:
                 f"Part {p.get('number')} · about {_clock(p.get('approx_seconds'))} · "
                 f'starts with "{p.get("opening_text") or ""}" · ends with "{p.get("ending_text") or ""}"'
             )
-    suggested_count = plan.get("suggested_part_count")
-    suggested_start = plan.get("suggested_start_number")
-    lines.append(
-        f"{count} part(s) is the server's suggestion."
-        if count == suggested_count
-        else f"{count} part(s) is your choice; the server suggested {suggested_count}."
-    )
-    lines.append(
-        f"Starting at Part {start} is the server's suggestion (it carries on from this creator's earlier "
-        "parts of the show)."
-        if start == suggested_start
-        else f"Starting at Part {start} is your choice; the server suggested Part {suggested_start}."
-    )
-    changed = [
-        f"Part {n} {side}"
-        for n in sorted(choice.texts)
-        for side, key in TEXT_SIDES.items()
-        if key in choice.texts[n]
-    ]
-    lines.append(
-        "Each opening and ending is the server's suggestion"
-        + (f", except the ones you changed: {', '.join(changed)}." if changed else ".")
-    )
+    clarify = str(plan.get("clarify") or "").strip()
+    if clarify:
+        lines.append(clarify)
     return lines
 
 
-def _ask_number(
-    ask: Callable[[str], str], say: Callable[[str], None], prompt: str, now: int
-) -> int:
-    while True:
-        raw = ask(f"{prompt} [{now}] ").strip()
-        if not raw:
-            return now
-        if raw.isdecimal() and int(raw) >= 1:
-            return int(raw)
-        say("Type a whole number, 1 or more, or press Enter to keep it.")
+def planned_choice(plan: Mapping[str, Any]) -> PartChoice:
+    """Exactly the parts this plan shows: its count, first number and every part's texts."""
 
-
-def edit_choice(
-    plan: Mapping[str, Any],
-    choice: PartChoice,
-    *,
-    ask: Callable[[str], str],
-    say: Callable[[str], None],
-) -> PartChoice:
-    """Ask for a new part count, first number and any part's texts (Enter keeps each).
-
-    Texts already set move with the parts when the first number changes, so they stay on the
-    same part.
-    """
-
-    count = _ask_number(ask, say, "How many parts?", int(plan["part_count"]))
-    old_start = int(plan["start_number"])
-    start = _ask_number(ask, say, "Number of the first part?", old_start)
-    shift = start - old_start
-    texts = {n + shift: dict(t) for n, t in choice.texts.items()}
-    shown = {
-        int(p["number"]) + shift: p
+    texts = {
+        int(p["number"]): {k: str(p[k]) for k in TEXT_SIDES.values() if p.get(k)}
         for p in plan.get("parts") or []
         if isinstance(p, dict) and str(p.get("number", "")).isdecimal()
     }
-    while True:
-        raw = ask(
-            "Change a part's opening or ending text? Type the part number, or press Enter to finish: "
-        ).strip()
-        if not raw:
-            return PartChoice(count, start, texts)
-        if not raw.isdecimal() or not start <= int(raw) < start + count:
-            say(f"Type a part number from {start} to {start + count - 1}.")
-            continue
-        n = int(raw)
-        for side, key in TEXT_SIDES.items():
-            now = texts.get(n, {}).get(key) or str(shown.get(n, {}).get(key) or "")
-            new = ask(f'Part {n} {side} (Enter keeps "{now}"): ').strip()
-            if new:
-                texts.setdefault(n, {})[key] = new
+    return PartChoice(
+        int(plan["part_count"]),
+        int(plan["start_number"]),
+        {n: t for n, t in texts.items() if t},
+    )
 
 
 def confirm_parts(
@@ -513,15 +460,16 @@ def confirm_parts(
     api: tuple[str, Mapping[str, str]] | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> PartChoice:
-    """Plan, print and ask until the human says go ahead; returns the plan the cut must make.
+    """Plan, print and ask "Make it?" until the human says yes; returns the parts the cut must make.
 
-    ``yes`` (``--yes``) takes the printed plan without asking. The returned choice pins the
-    printed count and first number, so the cut makes exactly what was shown.
+    Any other words the human types go back to the server as ``change_request`` and the new plan
+    is printed and asked again. ``yes`` (``--yes``) takes the printed plan without asking. The
+    returned choice pins the last printed plan, so the cut makes exactly what was shown.
 
     Raises
     ------
     CutStop
-        When nobody said go ahead, a text won't fit under ``yes``, or the server cannot plan.
+        When nobody said yes, a text won't fit under ``yes``, or the server cannot plan.
     """
 
     last: Mapping[str, Any] | None = None
@@ -532,30 +480,21 @@ def confirm_parts(
             if yes:
                 raise
             say(too_long.message)
-            if last is None:
-                last = plan_parts(
-                    picks,
-                    PartChoice(choice.part_count, choice.start_number),
-                    title=title,
-                    api=api,
-                    transport=transport,
-                )
-            choice = edit_choice(last, choice, ask=ask, say=say)
-            continue
+            choice = PartChoice(choice.part_count, choice.start_number)
+            plan = last or plan_parts(
+                picks, choice, title=title, api=api, transport=transport
+            )
         last = plan
-        for line in plan_lines(plan, choice):
+        for line in plan_lines(plan):
             say(line)
-        confirmed = PartChoice(
-            int(plan["part_count"]), int(plan["start_number"]), choice.texts
-        )
         if yes:
-            return confirmed
-        answer = ask(GO_AHEAD).strip().lower()
-        if answer in ("y", "yes"):
-            return confirmed
-        if answer not in ("e", "edit"):
+            return planned_choice(plan)
+        answer = ask(GO_AHEAD).strip()
+        if answer.lower() in ("y", "yes"):
+            return planned_choice(plan)
+        if answer.lower() in ("", "n", "no"):
             raise CutStop(NOT_CONFIRMED)
-        choice = edit_choice(plan, confirmed, ask=ask, say=say)
+        choice = replace(choice, change_request=answer)
 
 
 def run_cut(
@@ -716,10 +655,10 @@ def _poll(
 
 
 def desk_cut_command(desk: Path, args: Any) -> int:
-    """``join`` / ``finish --desk D --episodes …``: the same plan, print and go-ahead as ``cut``.
+    """``join`` / ``finish --desk D --episodes …``: the same plan, print and "Make it?" as ``cut``.
 
     The pick is the desk's named episodes, in that order, each as the server holds it. Returns the
-    exit code (0 done, 5 NOT DONE or no go-ahead, 2 bad ask).
+    exit code (0 done, 5 NOT DONE or no yes, 2 bad ask).
     """
 
     from creation.post.desk import spine_id
@@ -775,12 +714,13 @@ def _asker(out: Any) -> Callable[[str], str]:
 
 
 def part_flags_given(args: Any) -> bool:
-    """Whether any of ``--parts``, ``--start-number``, ``--part-text`` or ``--yes`` was given."""
+    """Whether any of ``--parts``, ``--start-number``, ``--part-text``, ``--change`` or ``--yes`` was given."""
 
     return bool(
         args.parts is not None
         or args.start_number is not None
         or args.part_text
+        or getattr(args, "change", None)
         or args.yes
     )
 
@@ -844,7 +784,7 @@ def cut_command(args: Any) -> int:
 
 
 def _confirm_and_cut(picks: Sequence[Pick], choice: PartChoice, args: Any) -> list[str]:
-    """Print the planned parts, wait for go ahead (or ``--yes``), then make exactly those parts.
+    """Print the planned parts, ask "Make it?" (or take ``--yes``), then make exactly those parts.
 
     ``cut``, ``join --episodes`` and ``finish --episodes`` all go through here. With ``--json`` the
     plan and the question go to stderr so stdout stays one JSON answer.
