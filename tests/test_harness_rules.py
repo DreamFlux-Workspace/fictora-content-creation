@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from creation.harness_rules import (
     adult_face_lines,
     film_stops,
@@ -366,3 +368,54 @@ def test_the_kit_keeps_no_copy_of_checks_the_server_owns() -> None:
 
     assert not hasattr(rules, "near_touch_line")
     assert not hasattr(rules, "word_age_lines")
+
+
+@pytest.mark.parametrize(
+    "ban",
+    [
+        "umbrella not touching Joon's face",
+        "umbrella tip not touching his cheek",
+        "the blade never touching her",
+        "umbrella not approaching his face",
+        "umbrella tip an inch clear of Joon, nowhere near his face",
+        "umbrella not near the window",
+    ],
+)
+def test_a_prop_contact_ban_does_not_forbid_the_hold(ban: str) -> None:
+    spine = _spine()
+    spine["frames"] = [
+        {
+            "frame_id": "frame_1",
+            "episode_id": "episode_02",
+            "visual_brief": {
+                "subject_blocking": "Mina holds the umbrella in her right hand",
+                "forbidden_elements": [ban],
+            },
+        }
+    ]
+    assert staging_contradiction_lines(spine, episode=2) == []
+
+
+@pytest.mark.parametrize(
+    "ban",
+    [
+        "no umbrella in her hands",
+        "she does not hold the umbrella",
+        "no one holding the umbrella",
+        "no hands touching the umbrella",
+        "no touching the umbrella",
+    ],
+)
+def test_a_real_hold_ban_is_still_named(ban: str) -> None:
+    spine = _spine()
+    spine["frames"] = [
+        {
+            "frame_id": "frame_1",
+            "episode_id": "episode_02",
+            "visual_brief": {
+                "subject_blocking": "Mina holds the umbrella in her right hand",
+                "forbidden_elements": [ban],
+            },
+        }
+    ]
+    assert len(staging_contradiction_lines(spine, episode=2)) == 1
