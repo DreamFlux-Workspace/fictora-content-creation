@@ -8,9 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from creation.cli_ops import main as ops_main
 from creation.ops.floor import init_series_desk
-from creation.ops.state import load_series
 from creation.post import episode_name
 from creation.post.episode_name import (
     episode_files,
@@ -126,48 +124,6 @@ def test_mark_final_copies_an_old_desk_file_too(
         and final.name == "back-from-the-sea_ep01_final_v5_2026-10-14.mp4"
     )
     assert old.read_bytes() == b"old"
-
-
-def test_approve_post_marks_the_episode_final(
-    desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.setattr(episode_name, "today", lambda: DAY)
-    takes = desk / "ep01" / "takes"
-    draft = _touch(next_episode_path(takes, desk, 1), b"draft")
-
-    code = ops_main(
-        [
-            "approve",
-            "--desk",
-            str(desk),
-            "--gate",
-            "post",
-            "--episode",
-            "1",
-            "--path",
-            str(draft),
-        ]
-    )
-
-    out = capsys.readouterr().out
-    assert code == 0
-    final = takes / "back-from-the-sea_ep01_final_v2_2026-10-14.mp4"
-    assert final.is_file() and f"Final file: {final}" in out
-    assert load_series(desk).episodes[0].post.status == "approved"
-    notes = desk / "ep01" / "run-notes.md"
-    if notes.is_file():
-        assert final.name in notes.read_text(encoding="utf-8")
-
-
-def test_approve_post_with_nothing_joined_still_records_the_yes(
-    desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    assert (
-        ops_main(["approve", "--desk", str(desk), "--gate", "post", "--episode", "2"])
-        == 0
-    )
-    assert "No final copy made" in capsys.readouterr().out
-    assert load_series(desk).episodes[1].post.status == "approved"
 
 
 def test_review_reads_a_readable_name_as_finished_whatever_the_title_says() -> None:

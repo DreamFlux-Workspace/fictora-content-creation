@@ -40,6 +40,8 @@ PREFLIGHT_GATE_OPEN = 3
 """A human gate is still open: nothing overrides it."""
 PREFLIGHT_WARNINGS = 4
 """Warnings are open and not confirmed with ``--proceed-anyway UNIT``."""
+FINAL_NOT_RECORDED = 6
+"""The server did not record the episode-is-final yes: nothing was written on the desk."""
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -151,8 +153,9 @@ def _add_floor_parsers(
 
     ap = sub.add_parser(
         "approve",
-        help="Record a human yes on a gate. --gate post (the episode is final) also copies the episode file "
-        "to <show>_epNN_final_vN_<date>.mp4 (--path FILE, default the newest joined file).",
+        help="Record a human yes on a gate. --gate post (the episode is final) records the file watched "
+        "(--path FILE, default the newest finished file) on the server, then copies it on the desk "
+        "to <show>_epNN_final_vN_<date>.mp4.",
     )
     ap.add_argument("--desk", type=Path, required=True)
     ap.add_argument(
@@ -441,37 +444,7 @@ def _dispatch_approve(args: argparse.Namespace) -> int:
         print(f"ep{args.episode:02d} script {record.status}")
         return 0
     if args.gate == "post":
-        from creation.post.episode_name import mark_final
-
-        record = approve_post(
-            args.desk,
-            episode=args.episode,
-            path=str(args.path) if args.path else None,
-        )
-        print(f"ep{args.episode:02d} post {record.status}")
-        # The human's "this episode is final": a copy named <show>_epNN_final_vN_<date>.mp4
-        # (founder, 14 Oct 2026). The file watched is left as it was.
-        final = mark_final(args.desk, args.episode, args.path)
-        if final is None:
-            print(
-                "No final copy made: no joined episode file on the desk"
-                + (f" and {args.path} is not an .mp4 file" if args.path else "")
-                + " (the yes is recorded)."
-            )
-            return 0
-        print(f"Final file: {final}")
-        notes_dir = args.desk / f"ep{args.episode:02d}"
-        if (notes_dir / "run-notes.md").is_file():
-            append_run_note(
-                notes_dir,
-                f"Episode marked final\nFinal file -> {final.name}"
-                + (
-                    f" (a copy of {args.path.name})"
-                    if args.path and args.path.name != final.name
-                    else ""
-                ),
-            )
-        return 0
+        return _approve_post(args.desk, args.episode, args.path)
     if args.take is None or args.path is None:
         raise ValueError("board approve needs --take and --path")
     record = approve_board(
@@ -483,6 +456,49 @@ def _dispatch_approve(args: argparse.Namespace) -> int:
         f"`fictora-produce approve --desk {args.desk} --gate board` (after a redraw on a desk past the "
         "board gate it approves again, $0)."
     )
+    return 0
+
+
+def _approve_post(desk: Path, episode: int, path: Path | None) -> int:
+    """The human's "this episode is final": recorded on the server first, then copied on the desk.
+
+    The server's record (which file, who, when) is the one that counts. Only after it said yes does
+    the desk get its convenience copies: the ``post`` gate in ``series.json`` and a file named
+    ``<show>_epNN_final_vN_<date>.mp4`` (founder, 14 Oct 2026). The file watched is left as it was.
+    """
+
+    from creation.post.episode_name import mark_final
+    from creation.post.final_approval import (
+        FinalNotRecorded,
+        approve_desk_final,
+        final_line,
+    )
+
+    try:
+        source, held = approve_desk_final(desk, episode, path)
+    except FinalNotRecorded as exc:
+        print(str(exc), file=sys.stderr)
+        return FINAL_NOT_RECORDED
+    print(final_line(episode, source, held))
+    record = approve_post(
+        desk,
+        episode=episode,
+        path=str(source),
+        at_utc=str(held.final.get("approved_at") or "") or None,
+        note=f"server final {str(held.final.get('export_sha256', ''))[:12]} (local copy; the server's record counts)",
+    )
+    print(f"ep{episode:02d} post {record.status} (desk copy of the server's record)")
+    final = mark_final(desk, episode, source)
+    if final is not None:
+        print(f"Final file (a desk convenience copy): {final}")
+        notes_dir = desk / f"ep{episode:02d}"
+        if (notes_dir / "run-notes.md").is_file():
+            append_run_note(
+                notes_dir,
+                "Episode marked final (recorded on the server)\n"
+                f"Final file -> {final.name}"
+                + (f" (a copy of {source.name})" if source.name != final.name else ""),
+            )
     return 0
 
 
