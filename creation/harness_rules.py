@@ -81,7 +81,14 @@ _FORBID_HOLD = re.compile(
     # "no one touching", "no hand touching", "anyone touching"). "No hook blade touching Ren's
     # body" is a contact rule between an object and a body (Iron Saint ep 2 frame 8, 16 Oct 2026).
     r"|\b(?:no|not|never|without|anyone)\s+(?:(?:one|anyone|someone|nobody|hands?|fingers?|palms?)\s+)?"
-    r"(?<!-)(?:touch|touches|touching)\b",
+    r"(?<!-)(?:touch|touches|touching)\b"
+    # A touch aimed at a person or a body part is a contact rule, not a hold ban:
+    # "umbrella not touching Joon's face" (Lost and Found Canary ep 2, 5 Nov 2026).
+    r"(?!\s+(?:(?:his|her|their|its|my|your|\w+['\u2019]s)\s+)?"
+    r"(?:him|her|them|face|faces|cheeks?|head|hair|skin|body|neck|lips?|mouth|eyes?|nose|"
+    r"chin|forehead|shoulders?|chest|arms?|back)\b)"
+    # "No umbrella in her hands" bans the hold without a hold verb.
+    r"|\bno\s+(?:[\w'\u2019-]+\s+){1,3}in\s+(?:(?:his|her|their|my|your|\w+['\u2019]s)\s+)?hands?\b",
     re.IGNORECASE,
 )
 _ADULT_AGE = re.compile(r"\b([1-9]\d)\b")
