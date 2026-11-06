@@ -23,6 +23,8 @@ import httpx
 STANDING_ROUTE = "/v1/spines/{spine_id}/standing"
 TIMEOUT_SECONDS = 30.0
 NEXT_STEP = "run finish for this episode"
+#: Older saved copies the server keeps besides the current one; the laptop is nudged to match.
+KEPT_PREVIOUS = 2
 
 
 class CopySource(StrEnum):
@@ -87,11 +89,15 @@ class ShowCopies:
         Episodes with a file on this laptop that cannot be shown to come from the cut the app plays.
     reason
         Why it could not be read (``the kit's key was refused`` ...); empty when checked.
+    old_files
+        Downloaded copies on this laptop older than the copy to post and the two before it. The
+        kit never deletes them; :func:`copy_warnings` suggests the operator does.
     """
 
     by_episode: dict[int, CurrentCopy] = field(default_factory=dict)
     unconfirmed: frozenset[int] = frozenset()
     reason: str = ""
+    old_files: tuple[Path, ...] = ()
 
     @property
     def checked(self) -> bool:
@@ -196,7 +202,40 @@ def copy_warnings(copies: ShowCopies) -> list[str]:
         if copy.unchecked
     ]
     lines += [(episode, unconfirmed_line(episode)) for episode in copies.unconfirmed]
-    return [line for _, line in sorted(lines)]
+    nudge = old_copies_line(copies.old_files)
+    return [line for _, line in sorted(lines)] + ([nudge] if nudge else [])
+
+
+def old_copies_line(files: tuple[Path, ...]) -> str:
+    """A plain nudge to delete old downloaded copies by hand; empty when there are none."""
+
+    if not files:
+        return ""
+    size = 0
+    for path in files:
+        try:
+            size += path.stat().st_size
+        except OSError:
+            continue
+    names = ", ".join(path.name for path in files)
+    return (
+        f"Tip: this laptop has {len(files)} old saved {'copy' if len(files) == 1 else 'copies'} "
+        f"({size / 1_000_000_000:.1f} GB) older than the copy to post and the {KEPT_PREVIOUS} before it. "
+        "The server keeps those three, so you can delete the old ones yourself: open each episode's "
+        f"takes folder in Finder and move these files (and the .json file beside each) to the Bin: {names}. "
+        "The kit never deletes them for you."
+    )
+
+
+def _old_local_copies(folder: Path, episode: int, copy: CurrentCopy) -> list[Path]:
+    from creation.post.episode_name import finished_files
+
+    others = [
+        path
+        for path, _meta in finished_files(folder, episode)
+        if path != copy.desk_file
+    ]
+    return others[KEPT_PREVIOUS:]
 
 
 def _version(raw: Any) -> int | None:
@@ -301,12 +340,20 @@ def _copies(standing: Any, desk: Path) -> ShowCopies:
         for row in (rows if isinstance(rows, list) else [])
         if isinstance(row, dict) and isinstance(row.get("episode_ordinal"), int)
     }
+    by_episode = {
+        episode: copy
+        for episode, copy in found.items()
+        if isinstance(copy, CurrentCopy)
+    }
     return ShowCopies(
-        by_episode={
-            episode: copy
-            for episode, copy in found.items()
-            if isinstance(copy, CurrentCopy)
-        },
+        by_episode=by_episode,
+        old_files=tuple(
+            path
+            for episode, copy in sorted(by_episode.items())
+            for path in _old_local_copies(
+                desk / f"ep{episode:02d}" / "takes", episode, copy
+            )
+        ),
         unconfirmed=frozenset(
             episode for episode, copy in found.items() if copy is _NoCopy.UNCONFIRMED
         ),
@@ -420,6 +467,8 @@ __all__ = [
     "ShowCopies",
     "copy_status",
     "copy_warnings",
+    "old_copies_line",
+    "KEPT_PREVIOUS",
     "NEXT_STEP",
     "QueueStatus",
     "not_checked",

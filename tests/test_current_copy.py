@@ -501,3 +501,93 @@ def test_a_new_desk_still_writes_the_post_gate_older_kits_need(
         "episodes"
     ][0]
     assert episode["post"]["status"] == "pending"
+
+
+def _old_downloads(desk: Path, count: int) -> list[Path]:
+    return [
+        _downloaded(desk, url=f"https://media.example/ep01-old-{n}.mp4")
+        for n in range(count)
+    ]
+
+
+def test_old_laptop_copies_past_the_two_kept_get_a_nudge_and_are_never_deleted(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _every_take_kept(post_desk)
+    old = _old_downloads(post_desk, 4)
+    current = _downloaded(post_desk)
+    _standing(monkeypatch, current_copy=_copy(), current_copy_unchecked=False)
+
+    assert ops_main(["status", "--desk", str(post_desk)]) == 0
+
+    _out, err = capsys.readouterr()
+    assert "this laptop has 2 old saved copies (0.0 GB)" in err
+    assert old[0].name in err and old[1].name in err
+    assert old[2].name not in err and old[3].name not in err and current.name not in err
+    assert "delete the old ones yourself" in err and "never deletes them" in err
+    assert all(
+        path.is_file() and path.with_suffix(".json").is_file()
+        for path in [*old, current]
+    )
+    assert "Tip: this laptop has 2 old saved copies" in (
+        post_desk / QUEUE_FILENAME
+    ).read_text(encoding="utf-8")
+
+
+def test_the_current_copy_and_two_older_laptop_copies_get_no_nudge(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _every_take_kept(post_desk)
+    _old_downloads(post_desk, 2)
+    _downloaded(post_desk)
+    _standing(monkeypatch, current_copy=_copy(), current_copy_unchecked=False)
+
+    copies = current_copy.show_copies(post_desk)
+
+    assert copies.old_files == ()
+    assert not any("old saved" in line for line in current_copy.copy_warnings(copies))
+
+
+def test_no_nudge_while_the_copy_to_post_is_unknown(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _every_take_kept(post_desk)
+    _old_downloads(post_desk, 5)
+    _standing(monkeypatch, current_copy_unchecked=False)
+
+    assert current_copy.show_copies(post_desk).old_files == ()
+
+
+def test_no_nudge_when_the_server_cannot_be_read(
+    post_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _old_downloads(post_desk, 5)
+    monkeypatch.setattr(
+        current_copy,
+        "show_copies",
+        lambda desk, **_k: real_show_copies(
+            desk,
+            api=(BASE, {"Authorization": "Bearer t"}),
+            transport=httpx.MockTransport(lambda r: httpx.Response(500)),
+        ),
+    )
+
+    assert current_copy.show_copies(post_desk).old_files == ()
+
+
+def test_the_kit_never_deletes_a_saved_copy() -> None:
+    root = Path(__file__).resolve().parents[1] / "creation"
+    for module in (
+        "post/current_copy.py",
+        "post/episode_name.py",
+        "post/server_finish.py",
+    ):
+        source = (root / module).read_text(encoding="utf-8")
+        for call in ("unlink(", "rmtree(", "os.remove(", "send2trash"):
+            if module == "post/server_finish.py" and call == "unlink(":
+                assert (
+                    source.count("unlink(") == 1
+                    and "part.unlink(missing_ok=True)" in source
+                )
+                continue
+            assert call not in source, f"{module} must not call {call}"
