@@ -58,6 +58,7 @@ from typing import Any
 import httpx
 
 from creation.harness.http_util import api_error_text
+from creation.post.server_finish import JOB_STATUS_ROUTE
 
 POST_EDIT_ROUTE = "/v1/video-generations/{job_id}/takes/{take_index}/post-edit"
 QUOTE_ROUTE = POST_EDIT_ROUTE + "/quote"
@@ -545,8 +546,6 @@ def _tokens(value: Any) -> str:
 def _edits_unavailable_sentence(
     client: httpx.Client, base: str, headers: Mapping[str, str], job_id: str
 ) -> str | None:
-    from creation.post.server_finish import JOB_STATUS_ROUTE
-
     try:
         response = client.get(
             base + JOB_STATUS_ROUTE.format(job_id=job_id), headers=dict(headers)
