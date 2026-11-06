@@ -1,8 +1,3 @@
-"""The server's plain refusals reach the operator as the server's own sentence (fictora-drama #1406, #1425, #1367).
-
-Every answer comes from a stand-in server (``httpx.MockTransport`` or ``FakeApi``).
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -161,9 +156,15 @@ def test_a_refusal_on_apply_after_a_good_plan_is_the_servers_sentence_only(
     desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
 ) -> None:
     plan = {
-        "spine_id": "sp1", "episode_id": "episode_01", "state": "planned", "reason": None,
-        "summary": "Quieter room.", "takes": [], "cost_usd": 0, "plan_id": "plan_a",
-    }  # fmt: skip
+        "spine_id": "sp1",
+        "episode_id": "episode_01",
+        "state": "planned",
+        "reason": None,
+        "summary": "Quieter room.",
+        "takes": [],
+        "cost_usd": 0,
+        "plan_id": "plan_a",
+    }
     api.routes[("POST", SOUND_ROUTE)] = lambda _m, _p, body: (
         plan if body["dry_run"] else _sound_409("episode_changed_since_finish", CHANGED)
     )
@@ -176,3 +177,14 @@ def test_a_refusal_on_apply_after_a_good_plan_is_the_servers_sentence_only(
     out = capsys.readouterr().out
     assert out.endswith(f"Cost: free\n{CHANGED}\n")
     assert "HTTP" not in out
+
+
+def test_an_unrelated_409_keeps_the_kits_framing(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    api.routes[("POST", SOUND_ROUTE)] = _sound_409("idempotency_conflict", "Busy.")
+
+    result = main(["sound-refresh", "--desk", str(desk), "--episode", "1"])
+
+    assert result == sound_refresh.NOT_APPLIED
+    assert "HTTP 409: Busy." in capsys.readouterr().out

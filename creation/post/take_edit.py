@@ -66,6 +66,8 @@ REVOICE_ROUTE = "/v1/video-generations/{job_id}/takes/{take_index}/revoice"
 ADD_TO_CURRENT_FIELD = "add_to_current_edit"
 #: The edit answers once its lines and sounds are made (the episode is rebuilt after, in the background).
 EDIT_TIMEOUT_SECONDS = 300.0
+#: The status read before an edit is only a courtesy: a slow server must not hold the edit.
+STATUS_TIMEOUT_SECONDS = 10.0
 #: Said after every edit the server took: the server re-joins the episode itself and keeps the edit.
 NEXT_STEP = (
     "No re-join to run: the server puts the episode back together with the edit, and every later join keeps it. "
@@ -132,8 +134,6 @@ class TakeEditRequest:
         return self.edit_body() is None and not self.revoice
 
     def only_trims(self) -> bool:
-        """Whether the request asks for nothing but trims, the one edit a Director cut shows."""
-
         return not self.revoice and not any(
             getattr(self, key) for key, _, _ in EDIT_FIELDS if key != "trims"
         )
@@ -545,11 +545,6 @@ def _tokens(value: Any) -> str:
 def _edits_unavailable_sentence(
     client: httpx.Client, base: str, headers: Mapping[str, str], job_id: str
 ) -> str | None:
-    """The server's ``take_edits_unavailable`` sentence from the run's status, or ``None``.
-
-    A failed read gives ``None``: the server still refuses the edit itself.
-    """
-
     from creation.post.server_finish import JOB_STATUS_ROUTE
 
     try:
@@ -590,7 +585,9 @@ def send_take_edit(
     """
 
     if not request.only_trims():
-        with httpx.Client(transport=transport, timeout=EDIT_TIMEOUT_SECONDS) as client:
+        with httpx.Client(
+            transport=transport, timeout=STATUS_TIMEOUT_SECONDS
+        ) as client:
             said = _edits_unavailable_sentence(
                 client, base_url.rstrip("/"), headers, job_id
             )
