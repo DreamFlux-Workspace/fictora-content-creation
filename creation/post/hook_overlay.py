@@ -81,8 +81,6 @@ HOOK_OUTLINE = 7
 HOOK_SHADOW = 3
 #: Smallest size a long hook line shrinks to before it wraps past two lines.
 HOOK_MIN_FONT_SIZE = 56
-#: Smallest size a single word wider than the room shrinks to, so it stays inside both margins
-#: (the server's ``HOOK_TITLE_LONG_WORD_MIN_FONT_SIZE``, fictora-drama #1428).
 HOOK_LONG_WORD_MIN_FONT_SIZE = 24
 #: Left margin on the 1080-wide canvas; the right margin also clears the rail.
 SIDE_MARGIN = 60
@@ -441,13 +439,17 @@ def _fit(text: str, size: int, room: float, floor: int) -> tuple[list[str], int]
     return lines, size if widest <= room else max(floor, int(size * room / widest))
 
 
+def _wrapped_by_word(text: str, size: int, room: float) -> list[str]:
+    rows: list[str] = []
+    for word in text.split():
+        if rows and text_width(f"{rows[-1]} {word}", size) <= room:
+            rows[-1] = f"{rows[-1]} {word}"
+        else:
+            rows.append(word)
+    return rows
+
+
 def _hook_floor(text: str, room: float, height: int) -> int:
-    """The smallest size a hook line may shrink to: 56, or less for a word that would overhang at 56.
-
-    Mirrors the server's ``episode_hook_title._smallest_size`` (fictora-drama #1428). CJK and
-    spaceless-script words are left out, as they are there.
-    """
-
     floor = _scaled(HOOK_MIN_FONT_SIZE, height)
     widest = max(
         (
@@ -549,6 +551,8 @@ def overlay_ass(
     lines, size = _fit(
         overlay.text, size, room, _hook_floor(overlay.text, room, height)
     )
+    if max(text_width(line, size) for line in lines) > room:
+        lines = _wrapped_by_word(overlay.text, size, room)
     fade_in, fade_out = HOOK_FADE_MS
     fade = f"\\fad({fade_in},{0 if overlay.on_cut else fade_out})"
     if overlay.placement == "lower":

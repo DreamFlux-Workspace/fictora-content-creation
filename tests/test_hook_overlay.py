@@ -155,17 +155,27 @@ def _drawn(text: str) -> tuple[int, list[str]]:
 
 
 def test_a_single_very_long_word_shrinks_to_sit_inside_both_margins() -> None:
-    room = W - round(60 * W / 1080) - (W - round(0.88 * W))
-    size, lines = _drawn("Pneumonoultramicroscopicsilicovolcanoconiosis")
-    assert 24 <= size < 56
-    assert max(text_width(line, size) for line in lines) <= room
+    left = round(60 * W / 1080)
+    right = W - round(0.88 * W) + left
+    room = W - left - right
+    for text in (
+        "Pneumonoultramicroscopicsilicovolcanoconiosis",
+        "He said Pneumonoultramicroscopicsilicovolcanoconiosis twice",
+    ):
+        size, lines = _drawn(text)
+        assert 24 <= size < 56
+        assert max(text_width(line, size) for line in lines) <= room
 
 
-def test_a_title_whose_words_fit_at_56_still_stops_shrinking_there() -> None:
-    size, lines = _drawn(
-        "She married the man who ruined her father and then forgot her name"
+def test_a_title_whose_words_fit_keeps_its_two_balanced_lines_and_size() -> None:
+    assert _drawn("She married the man who ruined her father") == (
+        88,
+        ["She married the man", "who ruined her father"],
     )
-    assert size == 56 and len(lines) == 2
+    assert _drawn("She married the man who ruined her father and forgot") == (
+        70,
+        ["She married the man who", "ruined her father and forgot"],
+    )
 
 
 def test_it_is_skipped_when_it_says_the_first_spoken_line() -> None:

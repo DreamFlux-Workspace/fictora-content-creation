@@ -1908,7 +1908,7 @@ def has_cjk(text: str) -> bool:
 
 
 def has_spaceless_script(text: str) -> bool:
-    """True when ``text`` has a Thai, Lao, Myanmar or Khmer character (words run together, no spaces)."""
+    """True when ``text`` has a Thai, Lao, Myanmar or Khmer character."""
 
     return bool(_SPACELESS_SCRIPTS.search(text))
 
