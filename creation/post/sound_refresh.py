@@ -125,15 +125,14 @@ def _deliver(
 ) -> tuple[Path | None, bool]:
     """The server's finished file on the desk: ``(path, downloaded_now)``; never over an existing file."""
 
-    from creation.post.episode_name import next_episode_path
+    from creation.post.episode_name import next_episode_path, saved_video
     from creation.post.server_finish import (
         ServerFinishError,
-        _saved_video,
         download_file,
     )
 
     folder = desk / f"ep{episode:02d}" / "takes"
-    have = _saved_video(folder, episode, url)
+    have = saved_video(folder, episode, url)
     if have is not None:
         return have, False
     try:

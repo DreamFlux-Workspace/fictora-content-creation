@@ -14,8 +14,13 @@ from creation.ops.folder import (
 )
 from creation.look_gate import record_look_approval
 from creation.ops.luma import measure_board_luma
-from creation.post import final_approval
-from creation.post.final_approval import PostStatus, ShowFinals, stale_final_line
+from creation.post import current_copy
+from creation.post.current_copy import (
+    QueueStatus,
+    ShowCopies,
+    copy_status,
+    copy_warnings,
+)
 from creation.ops.notes import ensure_run_notes
 from creation.ops.preflight import PreflightReport, evaluate_preflight
 from creation.ops.state import (
@@ -28,7 +33,6 @@ from creation.ops.state import (
     SpendEntry,
     SpokenLine,
     TakeState,
-    approved_on_desk_before_server,
     envelope_usd,
     episode_by_ordinal,
     load_series,
@@ -41,7 +45,7 @@ from creation.ops.state import (
 )
 
 
-#: Seconds a gate write's queue rewrite may wait on the server's finals.
+#: Seconds a gate write's queue rewrite may wait on the server's copies to post.
 QUEUE_READ_SECONDS = 5.0
 
 SHARED_SUBDIRS: tuple[str, ...] = (
@@ -645,32 +649,7 @@ def confirm_preflight(
     return evaluate_preflight(series, slot, take, desk=desk)
 
 
-def waiting_on(
-    series: SeriesState,
-    episode: EpisodeState,
-    *,
-    desk: Path,
-    finals: ShowFinals,
-) -> str:
-    """Return the next human or fix action for one episode.
-
-    Parameters
-    ----------
-    series
-        Series desk.
-    episode
-        Episode slot.
-    desk
-        Desk path for preflight.
-    finals
-        The show's finals from one read of the server's show standing.
-
-    Returns
-    -------
-    str
-        Queue token such as ``board:t1``, or :func:`post_status` once only its final is left.
-    """
-
+def _open_gate(series: SeriesState, episode: EpisodeState, *, desk: Path) -> str:
     if series.look.status != "approved":
         return "look"
     if series.plates.status != "approved":
@@ -692,58 +671,44 @@ def waiting_on(
         if take.filmed_count == 0 or take.verdict == "change":
             return f"cost-yes:{take.take_id}"
         return f"take-read:{take.take_id}"
-    return post_status(episode, finals)
+    return ""
 
 
-def post_status(episode: EpisodeState, finals: ShowFinals) -> str:
-    """Where an episode stands once only its final is left.
+def waiting_on(
+    series: SeriesState,
+    episode: EpisodeState,
+    *,
+    desk: Path,
+    copies: ShowCopies,
+) -> QueueStatus:
+    """Return the next human or fix action for one episode.
 
     Parameters
     ----------
+    series
+        Series desk.
     episode
         Episode slot.
-    finals
-        The show's finals from the server.
-
-    Returns
-    -------
-    str
-        Not checked (with the cause) when the server could not be read, else a
-        :class:`PostStatus`: done only for a current final on the server; older cut for one
-        that is not; a hint to approve on the server for a desk yes from before finals moved
-        there (read only, never done); else waiting.
-    """
-
-    if not finals.checked:
-        return finals.not_checked_status
-    final = finals.by_episode.get(episode.ordinal)
-    if final is not None:
-        return PostStatus.DONE if final.current else PostStatus.OLDER_CUT
-    if approved_on_desk_before_server(episode):
-        return PostStatus.DESK_ONLY
-    return PostStatus.WAITING
-
-
-def status_rows(desk: Path, finals: ShowFinals) -> list[dict[str, str]]:
-    """Return one status row per episode.
-
-    Parameters
-    ----------
     desk
-        Series desk.
-    finals
-        The show's finals from one read of the server's show standing (:func:`show_finals`).
+        Desk path for preflight.
+    copies
+        The show's copies to post from one read of the server's show standing.
 
     Returns
     -------
-    list[dict[str, str]]
-        Queue rows for humans and agents.
+    QueueStatus
+        A queue token such as ``board:t1``, or :func:`copy_status` once every take is kept.
     """
 
+    gate = _open_gate(series, episode, desk=desk)
+    return QueueStatus(gate) if gate else copy_status(copies, episode.ordinal)
+
+
+def _queue(desk: Path, copies: ShowCopies) -> list[tuple[QueueStatus, dict[str, str]]]:
     series = load_series(desk)
-    rows: list[dict[str, str]] = []
+    rows: list[tuple[QueueStatus, dict[str, str]]] = []
     for episode in series.episodes:
-        waiting = waiting_on(series, episode, desk=desk, finals=finals)
+        waiting = waiting_on(series, episode, desk=desk, copies=copies)
         first_open = next(
             (take.take_id for take in episode.takes if take.verdict != "use"),
             episode.takes[-1].take_id,
@@ -751,48 +716,46 @@ def status_rows(desk: Path, finals: ShowFinals) -> list[dict[str, str]]:
         report = evaluate_preflight(
             series, episode, take_by_id(episode, first_open), desk=desk
         )
+        copy = copies.by_episode.get(episode.ordinal)
         rows.append(
-            {
-                "episode": episode.slug,
-                "waiting": waiting,
-                "preflight": report.status(),
-                "spend": f"${episode.spend_usd:.2f}",
-                "envelope": f"${envelope_usd(series, episode):.2f}",
-            }
+            (
+                waiting,
+                {
+                    "episode": episode.slug,
+                    "waiting": str(waiting),
+                    "preflight": report.status(),
+                    "spend": f"${episode.spend_usd:.2f}",
+                    "envelope": f"${envelope_usd(series, episode):.2f}",
+                    "copy": copy.label if copy else "",
+                },
+            )
         )
     return rows
 
 
-def finals_warnings(finals: ShowFinals) -> list[str]:
-    """The operator's warnings about the show's finals: not checked, or a copy of an older cut.
+def status_rows(desk: Path, copies: ShowCopies) -> list[dict[str, str]]:
+    """Return one status row per episode.
 
     Parameters
     ----------
-    finals
-        The show's finals from the server.
+    desk
+        Series desk.
+    copies
+        The show's copies to post from one read of the server's show standing (:func:`show_copies`).
 
     Returns
     -------
-    list[str]
-        Plain lines; empty when the finals were read and every one is current.
+    list[dict[str, str]]
+        Queue rows for humans and agents; ``copy`` names the copy to post, empty when there is none.
     """
 
-    if not finals.checked:
-        return [
-            f"Could not read the finals from the server ({finals.reason}): episodes waiting on "
-            f"their final show '{finals.not_checked_status}'. Run status again."
-        ]
-    return [
-        stale_final_line(ordinal, final)
-        for ordinal, final in sorted(finals.by_episode.items())
-        if not final.current
-    ]
+    return [row for _, row in _queue(desk, copies)]
 
 
 def write_queue(
     desk: Path,
     series: SeriesState | None = None,
-    finals: ShowFinals | None = None,
+    copies: ShowCopies | None = None,
 ) -> Path:
     """Write QUEUE.md so a human can review every waiting gate.
 
@@ -802,8 +765,8 @@ def write_queue(
         Series desk.
     series
         Optional already-loaded desk.
-    finals
-        The show's finals when the command already read them; else they are read here.
+    copies
+        The show's copies to post when the command already read them; else they are read here.
 
     Returns
     -------
@@ -812,14 +775,14 @@ def write_queue(
     """
 
     current = series or load_series(desk)
-    finals = (
-        finals
-        if finals is not None
-        else final_approval.show_finals(
+    copies = (
+        copies
+        if copies is not None
+        else current_copy.show_copies(
             desk, timeout=QUEUE_READ_SECONDS, env_token_only=True
         )
     )
-    rows = status_rows(desk, finals)
+    queue = _queue(desk, copies)
     path = desk / QUEUE_FILENAME
     lines = [
         f"# {current.title} — review queue",
@@ -827,16 +790,16 @@ def write_queue(
         f"Band: {current.band}. Series spend: ${current.spend_usd:.2f}.",
         "Open the path. Say yes or say what is wrong. Silence is not consent.",
         "",
-        "| Episode | Waiting on | Preflight | Spend | Envelope |",
-        "| --- | --- | --- | --- | --- |",
+        "| Episode | Waiting on | Preflight | Spend | Envelope | Copy to post |",
+        "| --- | --- | --- | --- | --- | --- |",
     ]
-    for row in rows:
+    for _, row in queue:
         lines.append(
-            f"| {row['episode']} | {row['waiting']} | {row['preflight']} | {row['spend']} | {row['envelope']} |"
+            f"| {row['episode']} | {row['waiting']} | {row['preflight']} | {row['spend']} | {row['envelope']} | {row['copy']} |"
         )
-    waiting = [row for row in rows if row["waiting"] != PostStatus.DONE]
-    lines.extend(["", f"Open gates: {len(waiting)}.", ""])
-    lines.extend(finals_warnings(finals))
+    open_gates = sum(not status.counts_done for status, _ in queue)
+    lines.extend(["", f"Open gates: {open_gates}.", ""])
+    lines.extend(copy_warnings(copies))
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
 

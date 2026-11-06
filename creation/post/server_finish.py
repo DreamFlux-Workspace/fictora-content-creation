@@ -22,8 +22,8 @@ the kit only asks, waits and downloads.
 
 There is no laptop fallback: when the server cannot finish the episode the
 command stops with one plain line the operator can act on, and nothing is
-made on the laptop. ``fictora-ops approve --gate post`` still makes the
-``…_final_vN_…`` copy of the downloaded file.
+made on the laptop. The copy saved is the episode's copy to post on the
+server.
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ from urllib.parse import urlparse
 import httpx
 
 from creation.harness.http_util import api_error_text
+from creation.post.episode_name import saved_video, sidecar_path
 
 #: The server's route (fictora-drama #1166).
 POSTING_COPY_ROUTE = "/v1/spines/{spine_id}/episodes/{episode_id}/posting-copy"
@@ -591,32 +592,10 @@ def download_file(
     return dest
 
 
-def _sidecar(path: Path) -> Path:
-    return path.with_suffix(".json")
-
-
-def _read_json(path: Path) -> dict[str, Any] | None:
-    try:
-        body = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return body if isinstance(body, dict) else None
-
-
-def _saved_video(folder: Path, episode: int, video_url: str) -> Path | None:
-    """The episode file already downloaded for this exact server copy, if any."""
-
-    from creation.post.episode_name import episode_files
-
-    for path in reversed(episode_files(folder, episode)):
-        meta = _read_json(_sidecar(path))
-        if meta and meta.get("video_url") == video_url and path.is_file():
-            return path
-    return None
-
-
 def _write_sidecar(path: Path, body: Mapping[str, Any]) -> None:
-    _sidecar(path).write_text(json.dumps(dict(body), indent=2) + "\n", encoding="utf-8")
+    sidecar_path(path).write_text(
+        json.dumps(dict(body), indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def _desk_episode_id(desk: Path, episode: int) -> str:
@@ -861,7 +840,7 @@ def run_server_finish(
     cached = bool(body.get("cached"))
     notes: list[str] = []
     try:
-        video = _saved_video(folder, episode, video_url)
+        video = saved_video(folder, episode, video_url)
         reused = video is not None
         if video is None:
             say("Downloading the finished episode…")

@@ -9,11 +9,9 @@ from pathlib import Path
 import pytest
 
 from creation.ops.floor import init_series_desk
-from creation.post import episode_name
 from creation.post.episode_name import (
     episode_files,
     episode_number,
-    mark_final,
     next_episode_path,
     series_slug,
     slugify,
@@ -87,43 +85,6 @@ def test_an_old_desk_keeps_its_files_and_the_count_carries_on(desk: Path) -> Non
     assert episode_number("episode-ep01-join-sokii-v2.mp4") == 1
     assert episode_number(nxt.name) == 1
     assert episode_number("take-ep01-t1-sokii-v1.mp4") is None
-
-
-def test_mark_final_copies_to_a_new_final_name_and_leaves_the_draft(
-    desk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(episode_name, "today", lambda: DAY)
-    takes = desk / "ep01" / "takes"
-    assert mark_final(desk, 1) is None, "no episode file yet"
-    draft = _touch(next_episode_path(takes, desk, 1), b"draft")
-
-    final = mark_final(desk, 1)
-
-    assert (
-        final is not None
-        and final.name == "back-from-the-sea_ep01_final_v2_2026-10-14.mp4"
-    )
-    assert final.read_bytes() == b"draft" and draft.read_bytes() == b"draft"
-    assert mark_final(desk, 1, final) == final, "a final file is not copied again"
-    again = mark_final(desk, 1, draft)
-    assert again is not None and again.name.endswith("_final_v3_2026-10-14.mp4"), (
-        "never overwrites"
-    )
-
-
-def test_mark_final_copies_an_old_desk_file_too(
-    desk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(episode_name, "today", lambda: DAY)
-    old = _touch(desk / "ep01" / "takes" / "episode-ep01-join-sokii-v4.mp4", b"old")
-
-    final = mark_final(desk, 1)
-
-    assert (
-        final is not None
-        and final.name == "back-from-the-sea_ep01_final_v5_2026-10-14.mp4"
-    )
-    assert old.read_bytes() == b"old"
 
 
 def test_review_reads_a_readable_name_as_finished_whatever_the_title_says() -> None:

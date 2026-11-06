@@ -28,7 +28,7 @@ from creation.cli_post import (
     dispatch_post,
 )
 from creation.cli_text import HELP_SUFFIX, force_utf8_output, text_or_file
-from creation.gate_tools import POST_GATE, wrong_tool_for_gate
+from creation.gate_tools import NO_FINAL_STEP, POST_GATE
 from creation.episode_commands import (
     EPISODE_COMMANDS,
     add_episode_parsers,
@@ -67,6 +67,9 @@ from creation.recover import (
 )
 from creation.setup_check import run_setup_check
 from creation.shared_spine import shared_spine_refusal
+
+PRODUCE_GATES = ("pitch", "look", "plates", "script", "board")
+"""The gates fictora-produce records; ``post`` is accepted only to say there is no final step."""
 
 
 def _warn_if_no_local_ffmpeg() -> None:
@@ -274,15 +277,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     ap = sub.add_parser(
         "approve",
-        help="Human yes on the pitch, look, plates, script, or board (the desk's current episode). "
-        "The episode-is-final yes is `fictora-ops approve --gate post`.",
+        help="Human yes on the pitch, look, plates, script, or board (the desk's current episode).",
     )
     ap.add_argument("--desk", type=Path, required=True)
     ap.add_argument(
         "--gate",
         required=True,
-        # "post" is accepted only to say where it lives (Long Shadow, L-20261014-18).
-        choices=("pitch", "look", "plates", "script", "board", POST_GATE),
+        choices=(*PRODUCE_GATES, POST_GATE),
+        metavar="{" + ",".join(PRODUCE_GATES) + "}",
     )
     ap.add_argument(
         "--episode",
@@ -406,8 +408,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.command == "approve" and args.gate == POST_GATE:
-        print(wrong_tool_for_gate(args), file=sys.stderr)
-        return 2
+        print(NO_FINAL_STEP)
+        return 0
     desk_arg = getattr(args, "desk", None)
     if isinstance(desk_arg, Path) and not args.shared_spine_ok:
         refused = shared_spine_refusal(

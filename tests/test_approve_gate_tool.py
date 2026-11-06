@@ -1,13 +1,13 @@
-"""`approve --gate post` on fictora-produce (and `--gate pitch` on fictora-ops) names the right command.
+"""`approve --gate pitch` on fictora-ops names fictora-produce; `--gate post` says there is no final step.
 
-Long Shadow (14 Oct 2026, L-20261014-18): `approve --gate post` came back as
-argparse's bare "invalid choice". The episode-is-final yes is fictora-ops's;
-the pitch yes is fictora-produce's. Each says so, with the line to run, and
-records nothing.
+A gate sent to the wrong command must not come back as argparse's bare "invalid choice".
+The pitch yes is fictora-produce's, and fictora-ops says so with the line to run. `--gate post`
+on either command says the newest copy is the one to post and records nothing.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -15,46 +15,21 @@ import pytest
 from creation import cli_ops, cli_produce
 
 
-def test_produce_points_the_post_gate_to_fictora_ops(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("command", [cli_produce.main, cli_ops.main])
+def test_the_post_gate_says_there_is_no_final_step_and_records_nothing(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    command: Callable[[list[str]], int],
 ) -> None:
     desk = tmp_path / "long-shadow"
     desk.mkdir()
 
-    code = cli_produce.main(
-        [
-            "approve",
-            "--desk",
-            str(desk),
-            "--gate",
-            "post",
-            "--episode",
-            "2",
-            "--path",
-            "ep.mp4",
-        ]
-    )
+    code = command(["approve", "--desk", str(desk), "--gate", "post", "--episode", "2"])
 
-    err = capsys.readouterr().err
-    assert code == 2
-    assert "Nothing was recorded" in err
-    assert (
-        f"fictora-ops approve --desk {desk} --gate post --episode 2 --path ep.mp4"
-        in err
-    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert 'no "this episode is final" step' in out and "Nothing was recorded" in out
     assert list(desk.iterdir()) == []
-
-
-def test_produce_post_without_an_episode_shows_where_it_goes(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    code = cli_produce.main(["approve", "--desk", str(tmp_path), "--gate", "post"])
-
-    err = capsys.readouterr().err
-    assert code == 2
-    assert f"fictora-ops approve --desk {tmp_path} --gate post --episode N" in err
-    assert "N = the episode number" in err
-    assert "--path FILE" in err
 
 
 def test_ops_points_the_pitch_gate_to_fictora_produce(
@@ -85,10 +60,17 @@ def test_ops_pitch_pointer_pastes_as_is_without_an_episode(
     assert line == f"fictora-produce approve --desk {tmp_path} --gate pitch"
 
 
-def test_ops_help_does_not_offer_the_pitch_gate(
-    capsys: pytest.CaptureFixture[str],
+@pytest.mark.parametrize(
+    ("command", "gates"),
+    [
+        (cli_ops.main, "{look,plates,script,board}"),
+        (cli_produce.main, "{pitch,look,plates,script,board}"),
+    ],
+)
+def test_approve_help_offers_neither_the_post_gate_nor_the_other_commands_gate(
+    capsys: pytest.CaptureFixture[str], command: Callable[[list[str]], int], gates: str
 ) -> None:
     with pytest.raises(SystemExit):
-        cli_ops.main(["approve", "--help"])
+        command(["approve", "--help"])
     out = capsys.readouterr().out
-    assert "{look,plates,script,board,post}" in out and "pitch" not in out
+    assert gates in out and "post" not in out
