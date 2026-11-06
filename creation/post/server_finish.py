@@ -682,11 +682,7 @@ def opening_notes(
 
 
 def series_cut_file_lines(cut: Mapping[str, Any]) -> list[str]:
-    """The server's series cut as plain lines: each part, its cover and caption.
-
-    Parts only (founder, 5 Nov 2026): the whole combined video is never offered, even when the
-    server's record still names one.
-    """
+    """The server's series cut as plain lines: each part, its cover and caption."""
 
     lines: list[str] = []
     for part in cut.get("parts") or []:

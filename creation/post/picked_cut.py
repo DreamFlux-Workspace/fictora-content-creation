@@ -4,14 +4,14 @@ The picked episodes can come from any of the creator's shows (an operator who ma
 episode still gets one cut). The kit sends the pick and prints what the server made. Nothing is
 cut on this laptop, no state is kept, and the files stay on the server (links are printed).
 
-Parts only (founder, 5 Nov 2026): a punchy edit is split into parts and only the parts are made. Before
+A punchy edit is split into parts and only the parts are made. Before
 anything is made the kit asks the server for the plan and prints the server's own words, which end
 "Make it, or tell me what to change?", with the episodes each part plays. The server keeps every
 plan it answers under a plan id; anything else the human types goes back as the change they want,
 against that id, so each change keeps the ones before it, and their yes sends the id alone. The kit
 never sends a plan's fields back and keeps nothing: ``--plan ID`` carries the id between runs.
 
-Only what the server holds (5 Nov 2026): the edit is cut from each episode as the server keeps it.
+The edit is cut from each episode as the server keeps it.
 A video file on this laptop is never uploaded for an episode; a better take has to become that
 episode's take on the server first.
 
@@ -57,9 +57,7 @@ POLL_SECONDS = 5.0
 MIN_PICKED = 2
 #: Waits before asking again when a poll hits a busy answer or a dropped connection.
 POLL_RETRY_WAITS = (2.0, 4.0, 8.0, 15.0)
-#: ``--part-text N:<side>=TEXT`` side -> the field the server takes.
 TEXT_SIDES = {"opening": "opening_text", "ending": "ending_text"}
-#: The server's summary already ends "Make it, or tell me what to change?"; the kit only adds the answers.
 GO_AHEAD = "[y/N, or type what to change] "
 NEWEST_VERSION_NOTICE = (
     "Heads up: I'll make this edit from the episodes saved on our server. A version made on your "
@@ -190,7 +188,7 @@ def choice_from_args(args: Any) -> PartChoice:
         if value is not None and value < 1:
             raise CutStop(f"Stopped: {name} must be 1 or more. Nothing was made.", 2)
     texts: dict[int, dict[str, str]] = {}
-    for raw in args.part_text or []:
+    for raw in args.part_text:
         number, key, text = parse_part_text(raw)
         texts.setdefault(number, {})[key] = text
     change = (getattr(args, "change", None) or "").strip() or None
@@ -389,7 +387,9 @@ def _plan_body(
 
 
 def _planned(response: httpx.Response) -> Mapping[str, Any]:
-    if response.status_code in (404, 405) and _route_missing(_body(response)):
+    if response.status_code == 405 or (
+        response.status_code == 404 and _route_missing(_body(response))
+    ):
         raise CutStop(NO_PLAN_ROUTE)
     plan = _check(response, what="plan the parts")
     if not [p for p in plan.get("parts") or [] if isinstance(p, dict)] or not plan.get(
@@ -539,6 +539,8 @@ def confirm_parts(
     if plan_id is not None and choice.change_request:
         plan = change_plan(plan_id, choice.change_request, api=api, transport=transport)
     elif plan_id is not None:
+        if not yes:
+            raise CutStop(not_confirmed(plan_id))
         return plan_id
     else:
         assert picks is not None
@@ -554,10 +556,12 @@ def confirm_parts(
         for line in plan_lines(plan):
             say(line)
         shown = str(plan["plan_id"])
-        if yes:
+        if yes and not plan.get("clarify"):
             return shown
+        if yes:
+            raise CutStop(not_confirmed(shown))
         answer = ask(GO_AHEAD).strip()
-        if answer.lower() in ("y", "yes"):
+        if answer.lower() in ("y", "yes", "ok", "okay", "make it"):
             return shown
         if answer.lower() in ("", "n", "no"):
             raise CutStop(not_confirmed(shown))
@@ -898,7 +902,7 @@ def cut_command(args: Any) -> int:
                     "--start-number and --part-text are for a fresh plan. Nothing was made.",
                     2,
                 )
-            if not (args.change or args.yes):
+            if not ((args.change or "").strip() or args.yes):
                 raise CutStop(
                     'Stopped: --plan needs --change "WORDS" (the server changes that plan) or --yes (makes it). '
                     "Nothing was made.",

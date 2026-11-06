@@ -886,7 +886,6 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="With --list: only shows with this title. Alone: every delivered episode of every show with this "
         "title, oldest first (case does not matter).",
     )  # fmt: skip
-    # Removed 5 Nov 2026 (a laptop file never reached the episode); kept only to refuse in plain words.
     cut.add_argument("--file", action="append", default=[], help=argparse.SUPPRESS)
     add_part_args(cut)
     cut.add_argument(

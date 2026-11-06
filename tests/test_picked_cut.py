@@ -157,9 +157,7 @@ def args(**over: Any) -> SimpleNamespace:
         part_text=[],
         yes=True,
     )
-    base["yes"] = not over.get(
-        "list"
-    )  # a made cut has said go ahead; --list takes no --yes
+    base["yes"] = not over.get("list")
     return SimpleNamespace(**{**base, **over})
 
 

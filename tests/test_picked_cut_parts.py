@@ -34,13 +34,9 @@ CUT = {
         {"part": 4, "video_url": "https://media.example/p4.mp4"},
     ],
 }
-#: The fake server's reading of a typed change: these words split it into three parts.
 THREE_PARTS = "make it three parts"
-#: These words make the server ask back instead of planning anew.
 UNCLEAR = "different"
-#: A second change, read by the fake server only on top of the plan it is sent.
 END_FIVE = "end part 5 with she runs"
-#: These words ask for more parts than the edit can have: the server makes the most and says so.
 TOO_MANY = "9 parts please"
 MAX_PARTS = 4
 OUT_OF_RANGE = "This edit can have 1 to 4 parts. I made it 4."
@@ -58,6 +54,7 @@ class PlanServer:
     def __init__(self) -> None:
         self.seen: list[tuple[str, str, Any]] = []
         self.plan_missing = False
+        self.plan_missing_status = 404
         self.kept: dict[str, dict[str, Any]] = {}
 
     def plans(self) -> list[Any]:
@@ -76,7 +73,12 @@ class PlanServer:
         self.seen.append((request.method, request.url.path, body))
         if request.url.path == "/v1/series-cuts/plan":
             if self.plan_missing:
-                return httpx.Response(404, json={"detail": "Not Found"})
+                detail = (
+                    "Not Found"
+                    if self.plan_missing_status == 404
+                    else "Method Not Allowed"
+                )
+                return httpx.Response(self.plan_missing_status, json={"detail": detail})
             return self.plan(body)
         if change := CHANGE_PATH.match(request.url.path):
             kept = self.kept.get(change.group(1))
@@ -393,9 +395,6 @@ def test_first_settings_go_to_the_first_plan_only_and_make_sends_the_id(
     assert 'Part 6: starts "Back again", ends "Gone"' in capsys.readouterr().out
 
 
-# --- cut --plan ID: a plan from an earlier run, changed or made with nothing kept on this laptop --------
-
-
 def seeded(server: PlanServer) -> str:
     """A plan the server already kept from an earlier run (the kit printed its id and stopped)."""
 
@@ -441,6 +440,43 @@ def test_plan_flag_with_words_and_yes_changes_then_makes(
     )
     assert server.changes() == [(plan_id, {"change_request": THREE_PARTS})]
     assert server.creates() == [{"plan_id": "plan_2"}]
+
+
+def test_plan_flag_with_blank_words_and_no_yes_makes_nothing(
+    server: PlanServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan_id = seeded(server)
+    monkeypatch.setattr("builtins.input", lambda: pytest.fail("a question was asked"))
+    assert cut_command(args(episodes=None, plan=plan_id, change="   ")) == 2
+    assert server.changes() == [] and server.creates() == []
+
+
+def test_yes_does_not_make_a_changed_plan_the_server_answered_with_a_question(
+    server: PlanServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answers(monkeypatch)
+    assert cut_command(args(change=UNCLEAR, yes=True)) == 5
+    assert server.creates() == []
+
+
+@pytest.mark.parametrize("reply", ["ok", "make it", "Yes"])
+def test_plain_ways_of_saying_yes_make_the_plan(
+    server: PlanServer, monkeypatch: pytest.MonkeyPatch, reply: str
+) -> None:
+    answers(monkeypatch, reply)
+    assert cut_command(args()) == 0
+    assert server.changes() == [] and server.creates() == [{"plan_id": "plan_1"}]
+
+
+def test_a_405_from_an_older_server_says_it_cannot_plan_the_parts_yet(
+    server: PlanServer,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server.plan_missing, server.plan_missing_status = True, 405
+    answers(monkeypatch)
+    assert cut_command(args(yes=True)) == 5
+    assert picked_cut.NO_PLAN_ROUTE in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
@@ -515,7 +551,7 @@ def test_an_edit_that_is_not_ready_makes_nothing(
         }
         return httpx.Response(409, json={"error": error})
 
-    server.plan = not_ready  # type: ignore[method-assign]
+    monkeypatch.setattr(server, "plan", not_ready)
     assert cut_command(args(yes=True)) == 5
     assert server.creates() == []
     assert capsys.readouterr().err.strip() == (
@@ -596,8 +632,6 @@ def test_a_server_that_cannot_plan_makes_nothing(
     assert server.creates() == []
     assert capsys.readouterr().err.strip() == NO_PLAN_ROUTE
 
-
-# --- join / finish --desk D --episodes: the same plan, print and question as cut ------------------------
 
 DESK_COMMANDS = pytest.mark.parametrize("command", ["join", "finish"])
 
