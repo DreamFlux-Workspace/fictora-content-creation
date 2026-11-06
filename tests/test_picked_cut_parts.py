@@ -21,7 +21,6 @@ from creation.post import picked_cut
 from creation.post.picked_cut import (
     LOCAL_FILES_GONE,
     NO_PLAN_ROUTE,
-    PLAN_GONE,
     cut_command,
 )
 
@@ -42,6 +41,12 @@ MAX_PARTS = 4
 OUT_OF_RANGE = "This edit can have 1 to 4 parts. I made it 4."
 SHOWS = {"sp_a": "Dead Heat", "sp_b": "Low Tide"}
 CHANGE_PATH = re.compile(r"^/v1/series-cuts/plan/([^/]+)/change$")
+
+
+TAKEN = (
+    "Since this plan was made, more parts of this show were made, so its part numbers are taken. "
+    "Plan the edit again."
+)
 
 
 class PlanServer:
@@ -84,13 +89,13 @@ class PlanServer:
             kept = self.kept.get(change.group(1))
             if kept is None:
                 return httpx.Response(
-                    404, json={"code": "series_cut_plan_not_found", "message": "gone"}
+                    404, json={"code": "series_cut_plan_not_found", "message": TAKEN}
                 )
             return self.plan({**kept, "change_request": body["change_request"]})
         if request.method == "POST":
             if (body or {}).get("plan_id") not in self.kept:
                 return httpx.Response(
-                    404, json={"code": "series_cut_plan_not_found", "message": "gone"}
+                    404, json={"code": "series_cut_plan_not_found", "message": TAKEN}
                 )
             return httpx.Response(202, json={"series_cut_id": "c1"})
         return httpx.Response(200, json={"status": "ready", "series_cut": CUT})
@@ -504,7 +509,7 @@ def test_a_plan_the_server_no_longer_has_stops_plainly(
 ) -> None:
     assert cut_command(args(episodes=None, plan="plan_9", yes=True)) == 5
     assert server.creates() == [{"plan_id": "plan_9"}]
-    assert capsys.readouterr().err.strip() == PLAN_GONE
+    assert capsys.readouterr().err.strip() == f"NOT DONE: {TAKEN} Nothing was made."
     assert (
         cut_command(args(episodes=None, plan="plan_9", change=THREE_PARTS, yes=True))
         == 5

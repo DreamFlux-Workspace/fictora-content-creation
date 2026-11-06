@@ -70,11 +70,6 @@ LOCAL_FILES_GONE = (
     "first, then cut again. Nothing was made or uploaded."
 )
 NOT_CONFIRMED = "Stopped: nobody said make it, so nothing was made."
-PLAN_GONE = (
-    "NOT DONE: the server no longer has that plan, or it is out of date (parts of the show were made, an "
-    "episode was filmed again, or a name or hook changed since). Run cut again with the episodes to plan "
-    "afresh; nothing was made."
-)
 NO_MUSIC_ROUTE = "NOT DONE: the server can't price new music for an edit yet. Tell the core team; nothing was made."
 NO_PLAN_ROUTE = "NOT DONE: the server can't plan the parts yet. Tell the core team; nothing was made."
 OLD_SERVER = (
@@ -306,7 +301,9 @@ def _check(response: httpx.Response, *, what: str) -> Any:
     error = _error(body)
     message = str(error.get("message") or "").strip()
     if response.status_code == 404 and error.get("code") == "series_cut_plan_not_found":
-        raise CutStop(PLAN_GONE)
+        raise CutStop(
+            f"NOT DONE: {message or 'the server no longer has that plan.'} Nothing was made."
+        )
     if response.status_code == 409 and error.get("code") == "series_cut_not_ready":
         raise CutStop(
             f"NOT DONE: {message or 'the edit is not ready yet.'} Run the same command again later; nothing was made."
