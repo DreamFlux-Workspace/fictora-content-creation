@@ -389,9 +389,10 @@ def test_asks_for_no_music(note: str | None, silent: bool) -> None:
 
 @pytest.mark.parametrize(
     ("refinish_extra", "expected"),
-    [({"reason": "The trim is in the episode now, but the sound change is not."}, True),
-     ({}, False),
-     ({"reason": None}, False)],
+    [({"reason": "The trim is in the episode now, but the sound change is not.",
+       "video_url": "https://cdn.example/cut.mp4"}, True),
+     ({"video_url": "https://cdn.example/cut.mp4"}, False),
+     ({"reason": None, "video_url": "https://cdn.example/cut.mp4"}, False)],
 )  # fmt: skip
 def test_done_refinish_prints_the_servers_reason_only_when_sent(
     desk: Path,
@@ -412,4 +413,5 @@ def test_done_refinish_prints_the_servers_reason_only_when_sent(
     line = "The trim is in the episode now, but the sound change is not."
     assert (line in text) is expected
     assert ("the delivered cut changed" in text) is (not expected)
+    assert "Re-download it: https://cdn.example/cut.mp4" in text
     assert "None" not in text

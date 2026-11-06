@@ -456,14 +456,15 @@ def poll_refinish(
         label = labels.get(eid, eid)
         phase = state.get("state")
         if phase == "done":
-            if reason := state.get("reason"):
-                print(f"  {label}: {reason}", file=out)
-                continue
             url = state.get("video_url")
+            news = (
+                state.get("reason")
+                or "the delivered cut changed: it now has the new music."
+            )
             print(
-                f"  {label}: the delivered cut changed: it now has the new music. Re-download it"
+                f"  {label}: {news} Re-download it"
                 + (f": {url}" if url else "")
-                + " (any copy on this laptop or already posted has the old music).",
+                + " (any copy on this laptop or already posted is the old cut).",
                 file=out,
             )
         elif phase in IN_PROGRESS:
