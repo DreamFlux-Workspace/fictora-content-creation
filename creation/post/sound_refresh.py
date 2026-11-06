@@ -31,7 +31,6 @@ DEFAULT_WAIT_SECONDS = 900.0
 #: Exit code when the sound was not re-done (also: still running when ``--wait`` ran out).
 NOT_APPLIED = 2
 PLAN_CHANGED = "sound_refresh_plan_changed"
-PLAIN_REFUSALS = ("episode_changed_since_finish", "captions_off_after_change")
 
 OLDER_SERVER = "This server can't re-do sound yet. Nothing was changed."
 
@@ -65,14 +64,14 @@ def _error_text(status: int, body: Any) -> str:
 
 def _server_sentence(status: int, body: Any) -> str | None:
     error = body.get("error") if isinstance(body, Mapping) else None
-    message = error.get("message") if isinstance(error, Mapping) else None
-    if (
-        status == 409
-        and _error_code(body) in PLAIN_REFUSALS
-        and isinstance(message, str)
-        and message.strip()
+    if not isinstance(error, Mapping):
+        return None
+    for key in (
+        ("creator_message", "message") if status == 409 else ("creator_message",)
     ):
-        return message.strip()
+        said = error.get(key)
+        if isinstance(said, str) and said.strip():
+            return said.strip()
     return None
 
 

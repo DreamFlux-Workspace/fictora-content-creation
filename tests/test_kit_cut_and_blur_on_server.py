@@ -31,12 +31,10 @@ class Server:
         self.requests: list[httpx.Request] = []
         self.quote_tokens = quote_tokens
         self.status_body: dict[str, Any] = {}
-        self.status_reads: list[httpx.Request] = []
         self.refusal: tuple[int, dict[str, Any]] | None = None
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
-            self.status_reads.append(request)
             return httpx.Response(200, json=self.status_body)
         self.requests.append(request)
         if self.refusal is not None:

@@ -58,7 +58,6 @@ from typing import Any
 import httpx
 
 from creation.harness.http_util import api_error_text
-from creation.post.server_finish import JOB_STATUS_ROUTE
 
 POST_EDIT_ROUTE = "/v1/video-generations/{job_id}/takes/{take_index}/post-edit"
 QUOTE_ROUTE = POST_EDIT_ROUTE + "/quote"
@@ -67,8 +66,6 @@ REVOICE_ROUTE = "/v1/video-generations/{job_id}/takes/{take_index}/revoice"
 ADD_TO_CURRENT_FIELD = "add_to_current_edit"
 #: The edit answers once its lines and sounds are made (the episode is rebuilt after, in the background).
 EDIT_TIMEOUT_SECONDS = 300.0
-#: The status read before an edit is only a courtesy: a slow server must not hold the edit.
-STATUS_TIMEOUT_SECONDS = 10.0
 #: Said after every edit the server took: the server re-joins the episode itself and keeps the edit.
 NEXT_STEP = (
     "No re-join to run: the server puts the episode back together with the edit, and every later join keeps it. "
@@ -133,11 +130,6 @@ class TakeEditRequest:
         """Whether no edit setting was given."""
 
         return self.edit_body() is None and not self.revoice
-
-    def only_trims(self) -> bool:
-        return not self.revoice and not any(
-            getattr(self, key) for key, _, _ in EDIT_FIELDS if key != "trims"
-        )
 
 
 def _span(raw: str, flag: str) -> dict[str, Any]:
@@ -543,20 +535,6 @@ def _tokens(value: Any) -> str:
     )
 
 
-def _edits_unavailable_sentence(
-    client: httpx.Client, base: str, headers: Mapping[str, str], job_id: str
-) -> str | None:
-    try:
-        response = client.get(
-            base + JOB_STATUS_ROUTE.format(job_id=job_id), headers=dict(headers)
-        )
-        body = _body(response)
-    except httpx.HTTPError:
-        return None
-    said = body.get("take_edits_unavailable") if isinstance(body, dict) else None
-    return said.strip() if isinstance(said, str) and said.strip() else None
-
-
 def send_take_edit(
     *,
     base_url: str,
@@ -578,20 +556,9 @@ def send_take_edit(
     ------
     TakeEditStop
         With one plain line when the server refused or could not be reached, or with the
-        price of an edit that costs tokens sent without ``yes``. When the run's status says
-        take edits are unavailable and the request is more than trims, the line is the
-        server's own sentence and nothing else is sent.
+        price of an edit that costs tokens sent without ``yes``.
     """
 
-    if not request.only_trims():
-        with httpx.Client(
-            transport=transport, timeout=STATUS_TIMEOUT_SECONDS
-        ) as client:
-            said = _edits_unavailable_sentence(
-                client, base_url.rstrip("/"), headers, job_id
-            )
-        if said:
-            raise TakeEditStop(said)
     send = functools.partial(
         _send,
         base_url=base_url,

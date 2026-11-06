@@ -15,6 +15,10 @@ from creation.cli_produce import main
 from creation.post import sound_refresh
 
 DIRECTOR_CUT = "This episode plays a Director cut, which doesn't show take edits yet. Film the take again to change it."
+DIRECTOR_CUT_TAKE_EDITS = (
+    "This episode plays a Director cut, which shows a take's sound edits but not its picture edits. "
+    "Film the take again to change the picture."
+)
 JAPANESE = "この話はディレクターズカットで流れるため、テイクの編集はまだ反映されません。変えるにはテイクを撮り直してください。"
 CHANGED = "This episode has been updated since it was finished, so its sound can't be redone yet. Nothing was changed."
 CAPTIONS_OFF = "This episode has been updated since it was finished, so captions can't be turned off yet. Nothing was changed."
@@ -32,62 +36,36 @@ def _take_edit(desk: Path, command: str, *settings: str) -> int:
     )
 
 
-@pytest.mark.parametrize("sentence", [DIRECTOR_CUT, JAPANESE])
 @pytest.mark.parametrize(
-    ("command", "settings"),
+    "settings",
     [
-        ("freeze", ("--at", "1.5", "--hold", "0.6")),
-        ("blur", ("--box", "0.1,0.1,0.5,0.2", "--from", "1", "--to", "2")),
+        ("--mute", "1-2"),
+        ("--mute", "1-2", "--preview"),
     ],
 )
-def test_a_director_cut_stops_a_non_trim_edit_with_the_servers_sentence_before_any_edit_or_quote(
-    command: str,
-    settings: tuple[str, ...],
-    sentence: str,
-    post_desk: Path,
-    server: Server,
-    capsys: pytest.CaptureFixture[str],
+def test_a_director_cut_status_does_not_stop_a_sound_edit(
+    settings: tuple[str, ...], post_desk: Path, server: Server
 ) -> None:
-    server.status_body = {"status": "completed", "take_edits_unavailable": sentence}
+    server.status_body = {
+        "status": "completed",
+        "take_edits_unavailable": DIRECTOR_CUT_TAKE_EDITS,
+    }
 
-    code = _take_edit(post_desk, command, *settings)
+    code = main(
+        [
+            "finish",
+            "--desk",
+            str(post_desk),
+            "--episode",
+            "1",
+            "--take",
+            "t2",
+            *settings,
+        ]
+    )
 
-    assert code == 2
-    assert capsys.readouterr().err == f"Stopped: {sentence}\n"
-    assert server.requests == []
-    assert len(server.status_reads) == 1
-
-
-def test_a_director_cut_still_takes_a_trim(
-    post_desk: Path, server: Server, capsys: pytest.CaptureFixture[str]
-) -> None:
-    server.status_body = {"take_edits_unavailable": DIRECTOR_CUT}
-
-    assert _take_edit(post_desk, "trim", "--cut", "10.17-12.15") == 0
-
-    assert [path for path, _ in server.applied()] == [POST_EDIT]
-    assert "Stopped" not in capsys.readouterr().err
-
-
-def test_a_status_without_the_field_lets_the_edit_run(
-    post_desk: Path, server: Server
-) -> None:
-    server.status_body = {"status": "completed"}
-
-    assert _take_edit(post_desk, "freeze", "--at", "1.5", "--hold", "0.6") == 0
-
-    assert [path for path, _ in server.applied()] == [POST_EDIT]
-
-
-def test_a_preview_is_stopped_the_same_way(
-    post_desk: Path, server: Server, capsys: pytest.CaptureFixture[str]
-) -> None:
-    server.status_body = {"take_edits_unavailable": DIRECTOR_CUT}
-
-    code = _take_edit(post_desk, "freeze", "--at", "1.5", "--hold", "0.6", "--preview")
-
-    assert code == 2 and server.requests == []
-    assert capsys.readouterr().err == f"Stopped: {DIRECTOR_CUT}\n"
+    assert code == 0
+    assert [request.url.path for request in server.requests][-1].startswith(POST_EDIT)
 
 
 @pytest.mark.parametrize("sentence", [DIRECTOR_CUT, JAPANESE])
@@ -179,12 +157,38 @@ def test_a_refusal_on_apply_after_a_good_plan_is_the_servers_sentence_only(
     assert "HTTP" not in out
 
 
-def test_an_unrelated_409_keeps_the_kits_framing(
+def test_an_unknown_code_with_a_message_prints_the_message_plainly(
     desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    api.routes[("POST", SOUND_ROUTE)] = _sound_409("idempotency_conflict", "Busy.")
+    api.routes[("POST", SOUND_ROUTE)] = _sound_409("brand_new_code", "Wait a bit.")
 
     result = main(["sound-refresh", "--desk", str(desk), "--episode", "1"])
 
     assert result == sound_refresh.NOT_APPLIED
-    assert "HTTP 409: Busy." in capsys.readouterr().out
+    assert capsys.readouterr().out == "Wait a bit.\n"
+
+
+def test_a_creator_message_wins_on_any_status(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    api.routes[("POST", SOUND_ROUTE)] = (
+        422,
+        {"error": {"code": "x", "message": "raw", "creator_message": "Plain words."}},
+    )
+
+    assert main(["sound-refresh", "--desk", str(desk), "--episode", "1"]) == 2
+    assert capsys.readouterr().out == "Plain words.\n"
+
+
+def test_a_409_without_a_message_keeps_the_kits_framing(
+    desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    api.routes[("POST", SOUND_ROUTE)] = (
+        409,
+        {"error": {"code": "idempotency_conflict"}},
+    )
+
+    result = main(["sound-refresh", "--desk", str(desk), "--episode", "1"])
+
+    assert result == sound_refresh.NOT_APPLIED
+    assert "HTTP 409" in capsys.readouterr().out

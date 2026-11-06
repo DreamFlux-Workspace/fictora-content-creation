@@ -1044,17 +1044,11 @@ class EditServer:
         self.answers = list(answers)
         self.requests: list[httpx.Request] = []
         self.drop = drop
-        self.status_body: dict[str, Any] = {}
-        self.status_reads: list[httpx.Request] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
-        if self.drop:
-            self.requests.append(request)
-            raise httpx.ConnectError("no route to host", request=request)
-        if request.method == "GET":
-            self.status_reads.append(request)
-            return httpx.Response(200, json=self.status_body)
         self.requests.append(request)
+        if self.drop:
+            raise httpx.ConnectError("no route to host", request=request)
         if self.answers:
             status, body = self.answers.pop(0)
             return httpx.Response(status, json=body)
