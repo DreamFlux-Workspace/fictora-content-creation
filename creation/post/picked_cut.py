@@ -71,8 +71,9 @@ LOCAL_FILES_GONE = (
 )
 NOT_CONFIRMED = "Stopped: nobody said make it, so nothing was made."
 PLAN_GONE = (
-    "NOT DONE: the server no longer has that plan (it keeps a creator's newest 30). Run cut again with the "
-    "episodes to plan afresh; nothing was made."
+    "NOT DONE: the server no longer has that plan, or it is out of date (parts of the show were made, an "
+    "episode was filmed again, or a name or hook changed since). Run cut again with the episodes to plan "
+    "afresh; nothing was made."
 )
 NO_MUSIC_ROUTE = "NOT DONE: the server can't price new music for an edit yet. Tell the core team; nothing was made."
 NO_PLAN_ROUTE = "NOT DONE: the server can't plan the parts yet. Tell the core team; nothing was made."

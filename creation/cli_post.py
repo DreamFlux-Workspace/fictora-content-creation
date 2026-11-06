@@ -890,7 +890,8 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     add_part_args(cut)
     cut.add_argument(
         "--plan", default=None, metavar="PLAN_ID",
-        help="A plan id an earlier run printed (the server keeps a creator's newest 30): with --change WORDS the "
+        help="A plan id an earlier run printed (the server keeps a creator's newest 30, while nothing it was "
+        "planned on changed): with --change WORDS the "
         "server changes that plan and the kit prints the new one; with --yes it makes it as shown. No episodes, "
         "title or music flags: the plan already holds them. Nothing is kept on this computer.",
     )  # fmt: skip

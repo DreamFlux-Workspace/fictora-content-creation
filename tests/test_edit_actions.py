@@ -368,7 +368,7 @@ def test_save_asks_then_polls_the_same_file_and_downloads_it(tmp_path: Path) -> 
     saved = tmp_path / "lock-night-part-2-sokii.mp4"
     assert saved.read_bytes() == b"marked-video"
     assert lines[0] == (
-        f"Saved part 2 with the Sokii mark, with the edit's music, ready to post: {saved}"
+        f"Saved part 2 with the Sokii mark, with the edit's music, ready for Instagram and TikTok: {saved}"
     )
     assert "Note: Some episodes had no mark." in lines
 
