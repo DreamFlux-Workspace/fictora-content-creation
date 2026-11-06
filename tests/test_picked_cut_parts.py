@@ -769,6 +769,6 @@ def test_part_settings_without_episodes_are_refused(
     monkeypatch.setattr(
         cli_post, "run_server_finish", lambda *a, **k: finished.append(a)
     )
-    assert main([command, "--desk", str(post_desk), "--yes"]) == 2
+    assert main([command, "--desk", str(post_desk), "--parts", "3"]) == 2
     assert server.seen == [] and finished == []
     assert "add --episodes" in capsys.readouterr().err

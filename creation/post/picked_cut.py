@@ -876,14 +876,16 @@ def _asker(out: Any) -> Callable[[str], str]:
 
 
 def part_flags_given(args: Any) -> bool:
-    """Whether any of ``--parts``, ``--start-number``, ``--part-text``, ``--change`` or ``--yes`` was given."""
+    """Whether any of ``--parts``, ``--start-number``, ``--part-text`` or ``--change`` was given.
+
+    ``--yes`` is left out: on ``finish`` it also says yes to a paid take edit.
+    """
 
     return bool(
         args.parts is not None
         or args.start_number is not None
         or args.part_text
         or getattr(args, "change", None)
-        or args.yes
     )
 
 
@@ -899,6 +901,7 @@ def cut_command(args: Any) -> int:
             or args.music_price
             or args.new_music
             or part_flags_given(args)
+            or args.yes
         ):
             raise CutStop(
                 "Usage: cut --list takes only --show (and --json); drop --title, --wait, --music-price, "

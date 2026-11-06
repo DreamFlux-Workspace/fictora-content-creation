@@ -191,7 +191,9 @@ def add_part_args(parser: argparse.ArgumentParser) -> None:
     )  # fmt: skip
     parser.add_argument(
         "--yes", action="store_true",
-        help="The human already said make it to the printed parts: make them without asking.",
+        help="The human already said yes: make the printed parts without asking, or, with a paid take edit "
+        "on finish (--voice CHARACTER, --cue), spend the tokens. Without it the parts or the price are printed "
+        "and nothing is made, changed or charged.",
     )  # fmt: skip
 
 
@@ -840,11 +842,6 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="With take edits: ask the server what they would cost in tokens; nothing is changed or charged.",
     )  # fmt: skip
     fin.add_argument(
-        "--yes", action="store_true",
-        help="With a paid take edit (--voice CHARACTER, --cue): spend the tokens. Without it the server's price "
-        "is printed and nothing is changed.",
-    )  # fmt: skip
-    fin.add_argument(
         "--caption-label", action="append", default=[], metavar="TEXT@A-B",
         help="A caption with no spoken line under it: TEXT@A-B seconds on the --take as filmed (repeat). "
         "Saved on the server as the take's labels (its notes print), then the episode is finished.",
@@ -1292,7 +1289,7 @@ def _server_finish_command(args: argparse.Namespace) -> int:
 
     if part_flags_given(args):
         print(
-            "Stopped: --parts, --start-number, --part-text, --change and --yes are for a punchy edit's parts; "
+            "Stopped: --parts, --start-number, --part-text and --change are for a punchy edit's parts; "
             "add --episodes N N ... (or use cut). Nothing was made or charged.",
             file=sys.stderr,
         )
