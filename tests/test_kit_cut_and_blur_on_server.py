@@ -30,9 +30,15 @@ class Server:
     def __init__(self, quote_tokens: int = 0) -> None:
         self.requests: list[httpx.Request] = []
         self.quote_tokens = quote_tokens
+        self.status_body: dict[str, Any] = {}
+        self.refusal: tuple[int, dict[str, Any]] | None = None
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json=self.status_body)
         self.requests.append(request)
+        if self.refusal is not None:
+            return httpx.Response(self.refusal[0], json=self.refusal[1])
         if request.url.path.endswith("/revoice") and json.loads(request.content).get(
             "dry_run"
         ):
