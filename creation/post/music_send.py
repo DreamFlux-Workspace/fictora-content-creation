@@ -463,6 +463,8 @@ def poll_refinish(
                 + " (any copy on this laptop or already posted has the old music).",
                 file=out,
             )
+            if reason := state.get("reason"):
+                print(f"    {reason}", file=out)
         elif phase in IN_PROGRESS:
             print(
                 f"  {label}: still being put together again ({phase}); the old cut plays until it is done. "

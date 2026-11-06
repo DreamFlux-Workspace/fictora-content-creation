@@ -385,3 +385,30 @@ def test_an_episode_new_music_note_says_it_is_for_that_episode_only(
 )
 def test_asks_for_no_music(note: str | None, silent: bool) -> None:
     assert music_send.asks_for_no_music(note) is silent
+
+
+@pytest.mark.parametrize(
+    ("refinish_extra", "expected"),
+    [({"reason": "The trim is in the episode now, but the sound change is not."}, True),
+     ({}, False),
+     ({"reason": None}, False)],
+)  # fmt: skip
+def test_done_refinish_prints_the_servers_reason_only_when_sent(
+    desk: Path,
+    api: FakeApi,
+    capsys: pytest.CaptureFixture[str],
+    refinish_extra: dict[str, Any],
+    expected: bool,
+) -> None:
+    _route(api)
+    api.routes[("GET", FACTS)] = {
+        "take_facts": {"refinish": {"state": "done", "episode_id": "episode_01",
+                                    **refinish_extra}}
+    }  # fmt: skip
+
+    assert _note(desk, "calmer", "--yes") == 0
+
+    text = capsys.readouterr().out
+    line = "The trim is in the episode now, but the sound change is not."
+    assert (line in text) is expected
+    assert "None" not in text
