@@ -411,4 +411,5 @@ def test_done_refinish_prints_the_servers_reason_only_when_sent(
     text = capsys.readouterr().out
     line = "The trim is in the episode now, but the sound change is not."
     assert (line in text) is expected
+    assert ("the delivered cut changed" in text) is (not expected)
     assert "None" not in text

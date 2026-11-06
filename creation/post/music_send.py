@@ -456,6 +456,9 @@ def poll_refinish(
         label = labels.get(eid, eid)
         phase = state.get("state")
         if phase == "done":
+            if reason := state.get("reason"):
+                print(f"  {label}: {reason}", file=out)
+                continue
             url = state.get("video_url")
             print(
                 f"  {label}: the delivered cut changed: it now has the new music. Re-download it"
@@ -463,8 +466,6 @@ def poll_refinish(
                 + " (any copy on this laptop or already posted has the old music).",
                 file=out,
             )
-            if reason := state.get("reason"):
-                print(f"    {reason}", file=out)
         elif phase in IN_PROGRESS:
             print(
                 f"  {label}: still being put together again ({phase}); the old cut plays until it is done. "
