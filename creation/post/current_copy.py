@@ -23,8 +23,8 @@ import httpx
 STANDING_ROUTE = "/v1/spines/{spine_id}/standing"
 TIMEOUT_SECONDS = 30.0
 NEXT_STEP = "run finish for this episode"
-#: Older saved copies the server keeps besides the current one; the laptop is nudged to match.
-KEPT_PREVIOUS = 2
+#: Older downloads of an episode left alone on this laptop besides the copy to post.
+KEPT_ON_LAPTOP = 2
 
 
 class CopySource(StrEnum):
@@ -90,8 +90,7 @@ class ShowCopies:
     reason
         Why it could not be read (``the kit's key was refused`` ...); empty when checked.
     old_files
-        Downloaded copies on this laptop older than the copy to post and the two before it. The
-        kit never deletes them; :func:`copy_warnings` suggests the operator does.
+        Downloads on this laptop older than the copy to post and the two downloads before it.
     """
 
     by_episode: dict[int, CurrentCopy] = field(default_factory=dict)
@@ -217,13 +216,12 @@ def old_copies_line(files: tuple[Path, ...]) -> str:
             size += path.stat().st_size
         except OSError:
             continue
+    amount = f"{size / 1e9:.1f} GB" if size >= 1e8 else f"{size / 1e6:.1f} MB"
     names = ", ".join(path.name for path in files)
     return (
-        f"Tip: this laptop has {len(files)} old saved {'copy' if len(files) == 1 else 'copies'} "
-        f"({size / 1_000_000_000:.1f} GB) older than the copy to post and the {KEPT_PREVIOUS} before it. "
-        "The server keeps those three, so you can delete the old ones yourself: open each episode's "
-        f"takes folder in Finder and move these files (and the .json file beside each) to the Bin: {names}. "
-        "The kit never deletes them for you."
+        f"Tip: {len(files)} old downloaded {'copy' if len(files) == 1 else 'copies'} ({amount}) "
+        "can go. To free the space, open the episode's takes folder in Finder and move these, "
+        f"with the .json file beside each, to the Bin yourself: {names}."
     )
 
 
@@ -235,7 +233,7 @@ def _old_local_copies(folder: Path, episode: int, copy: CurrentCopy) -> list[Pat
         for path, _meta in finished_files(folder, episode)
         if path != copy.desk_file
     ]
-    return others[KEPT_PREVIOUS:]
+    return others[KEPT_ON_LAPTOP:]
 
 
 def _version(raw: Any) -> int | None:
@@ -468,7 +466,7 @@ __all__ = [
     "copy_status",
     "copy_warnings",
     "old_copies_line",
-    "KEPT_PREVIOUS",
+    "KEPT_ON_LAPTOP",
     "NEXT_STEP",
     "QueueStatus",
     "not_checked",
