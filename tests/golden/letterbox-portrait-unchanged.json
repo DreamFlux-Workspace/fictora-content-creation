@@ -208,10 +208,6 @@
   ],
   [
    "-hide_banner",
-   "-filters"
-  ],
-  [
-   "-hide_banner",
    "-nostats",
    "-i",
    "<root0>/ep01/takes/take-ep01-t1-raw-v1.mp4",
@@ -574,10 +570,6 @@
    "-f",
    "null",
    "-"
-  ],
-  [
-   "-hide_banner",
-   "-filters"
   ],
   [
    "-v",

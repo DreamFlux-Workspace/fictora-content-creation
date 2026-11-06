@@ -24,12 +24,19 @@ Setting                            Server field
 ``blur --box X,Y,W,H --from --to``  ``blurs[] {start_seconds, end_seconds, x, y, width, height}``:
                                    the box in fractions of the frame, or ``X,Y,W,H@WIDTHxHEIGHT`` in
                                    pixels of a frame grab that size
+``freeze --at A --hold H``         ``freeze_frames[] {at_seconds, hold_seconds}``
+``soften --cut T``                 ``soften[] {at_seconds, snap_to_cut: true}`` (the server moves it
+                                   onto a shot change within a quarter second)
+``zoom --from A --to B``           ``zooms[] {start_seconds, end_seconds, zoom, center_x, center_y}``:
+                                   the centre in fractions of the frame, or ``X,Y@WIDTHxHEIGHT``
+``voice-fx --range A-B --preset``  ``voice_fx[] {start_seconds, end_seconds, preset}``
+``revoice --cast CHARACTER``       ``POST .../takes/{n}/revoice {cast_id}``, as ``--voice CHARACTER``
 =================================  =================================================================
 
 Routes: ``POST /v1/video-generations/{job}/takes/{n}/post-edit`` (the edit),
 ``.../post-edit/quote`` and ``.../revoice`` with ``dry_run`` (``finish --preview``:
-the tokens, nothing changed). Times are seconds on the take as the server
-delivered it. Every edit is sent with ``add_to_current_edit`` (fictora-drama
+the tokens, nothing changed). Times are seconds on the take as
+the server delivered it. Every edit is sent with ``add_to_current_edit`` (fictora-drama
 #1193): the server adds it to the take's current edit, so an operator's
 earlier edits on the take are kept and only the new paid work is charged. A
 server older than that refuses the field (422); the kit then sends the edit
@@ -39,6 +46,7 @@ replaced. A re-voice keeps the take's other edits either way.
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import uuid
@@ -64,12 +72,26 @@ NEXT_STEP = (
     "To see it on this laptop, run a plain finish in a few minutes; it downloads the new cut."
 )
 NOTHING_CHANGED = "Nothing was changed or charged."
+PREVIEW_ONLY = "Preview only: nothing was changed or charged."
 
 _SPAN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*$")
 _NUMBER = re.compile(r"^\s*[+-]?\d+(?:\.\d+)?\s*$")
 _DECIMAL = r"\s*(\d+(?:\.\d+)?)\s*"
 _BOX = re.compile(
     rf"^{_DECIMAL},{_DECIMAL},{_DECIMAL},{_DECIMAL}(?:@\s*(\d+)\s*[xX]\s*(\d+)\s*)?$"
+)
+_POINT = re.compile(rf"^{_DECIMAL},{_DECIMAL}(?:@\s*(\d+)\s*[xX]\s*(\d+)\s*)?$")
+EDIT_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("mutes", "muted stretch", "muted stretches"),
+    ("dub_lines", "laid line", "laid lines"),
+    ("cues", "added sound", "added sounds"),
+    ("impact_hits", "hit", "hits"),
+    ("trims", "cut stretch", "cut stretches"),
+    ("blurs", "blurred box", "blurred boxes"),
+    ("freeze_frames", "freeze", "freezes"),
+    ("soften", "softened jump", "softened jumps"),
+    ("zooms", "zoom", "zooms"),
+    ("voice_fx", "voice effect", "voice effects"),
 )
 
 
@@ -87,22 +109,17 @@ class TakeEditRequest:
     impact_hits: list[dict[str, Any]] = field(default_factory=list)
     trims: list[dict[str, Any]] = field(default_factory=list)
     blurs: list[dict[str, Any]] = field(default_factory=list)
-    revoice: list[str] = field(default_factory=list)
+    freeze_frames: list[dict[str, Any]] = field(default_factory=list)
+    soften: list[dict[str, Any]] = field(default_factory=list)
+    zooms: list[dict[str, Any]] = field(default_factory=list)
+    voice_fx: list[dict[str, Any]] = field(default_factory=list)
+    revoice: dict[str, str] = field(default_factory=dict)
 
     def edit_body(self) -> dict[str, Any] | None:
         """The ``post-edit`` body, or ``None`` when only re-voices were asked."""
 
         body = {
-            key: value
-            for key, value in (
-                ("mutes", self.mutes),
-                ("dub_lines", self.dub_lines),
-                ("cues", self.cues),
-                ("impact_hits", self.impact_hits),
-                ("trims", self.trims),
-                ("blurs", self.blurs),
-            )
-            if value
+            key: getattr(self, key) for key, _, _ in EDIT_FIELDS if getattr(self, key)
         }
         if not body:
             return None
@@ -178,6 +195,43 @@ def parse_blur_box(raw: str, *, start: float, end: float) -> dict[str, Any]:
     }
 
 
+def parse_center(raw: str) -> tuple[float, float]:
+    """``zoom --center``: ``X,Y`` fractions of the frame, or ``X,Y@WIDTHxHEIGHT`` pixels of a frame grab.
+
+    Returns
+    -------
+    tuple[float, float]
+        The centre as fractions of the frame (the server checks it is inside).
+    """
+
+    match = _POINT.match(raw)
+    if match is None:
+        raise TakeEditStop(
+            f"zoom --center {raw!r}: write X,Y as fractions of the frame, like 0.5,0.4, or as pixels of a "
+            "frame grab with its size, like 384,560@768x1366"
+        )
+    x, y = float(match.group(1)), float(match.group(2))
+    if match.group(3) is not None:
+        width, height = int(match.group(3)), int(match.group(4))
+        if not width or not height:
+            raise TakeEditStop(
+                f"zoom --center {raw!r}: the frame size after @ must be more than 0"
+            )
+        x, y = x / width, y / height
+    elif max(x, y) > 1.0:
+        raise TakeEditStop(
+            f"zoom --center {raw!r}: these look like pixels; add the frame grab's size, like "
+            f"{raw.strip()}@768x1366, or write fractions of the frame (0 to 1)"
+        )
+    return round(x, 4), round(y, 4)
+
+
+def parse_voice_fx(raw: str, *, preset: str) -> dict[str, Any]:
+    """``voice-fx --range "1.2-3.0"`` -> one ``voice_fx`` item (the server checks overlaps)."""
+
+    return {**_span(raw, "voice-fx --range"), "preset": preset}
+
+
 def _at_and_level(raw: str, flag: str, shape: str) -> tuple[str, float, float | None]:
     """``WHAT@SECONDS[@DB]`` -> its three parts (``@DB`` optional)."""
 
@@ -201,7 +255,7 @@ def _saved_note(path: Path) -> Mapping[str, Any] | None:
 def parse_voice(
     raw: str, *, desk: Path, spine: Mapping[str, Any] | None
 ) -> tuple[str, Any]:
-    """One ``--voice`` value: ``("dub", line)`` for ``FILE@SECONDS[@DB]``, ``("revoice", cast_id)`` otherwise.
+    """One ``--voice`` value: ``("dub", line)`` for ``FILE@SECONDS[@DB]``, ``("revoice", (cast_id, name))`` otherwise.
 
     A dub line is a file ``voice-line`` made: the server already holds it, and
     its saved note names that copy and the line's words. A bare name re-voices
@@ -215,13 +269,14 @@ def parse_voice(
                 "--voice needs a character to re-voice, or FILE@SECONDS for one line"
             )
         if spine is None:
-            return "revoice", wanted
+            return "revoice", (wanted, wanted)
         from creation.post.desk import find_cast
 
         try:
-            return "revoice", str(find_cast(spine, wanted)["cast_id"])
+            card = find_cast(spine, wanted)
         except ValueError as exc:
             raise TakeEditStop(f"--voice {wanted!r}: {exc}") from None
+        return "revoice", (str(card["cast_id"]), str(card.get("name") or wanted))
     name, start, level = _at_and_level(
         raw, "--voice", "FILE@SECONDS[@DB] (a voice-line file) or a character's name"
     )
@@ -293,8 +348,9 @@ def build_request(
         kind, value = parse_voice(raw, desk=desk, spine=spine)
         if kind == "dub":
             request.dub_lines.append(value)
-        elif value not in request.revoice:
-            request.revoice.append(value)
+        else:
+            cast_id, name = value
+            request.revoice.setdefault(cast_id, name)
     request.cues = [parse_cue(raw, desk=desk) for raw in cues]
     for raw in impact_at:
         try:
@@ -325,7 +381,13 @@ def refusal_line(status: int, body: Any, *, take_id: str) -> str:
     """The server's refusal of a take edit as one plain line with the next step (never a traceback)."""
 
     code, message = _code_and_message(body)
-    said = f"{message.rstrip('.')}." if message else ""
+    said = (
+        message
+        if message.endswith("。")
+        else f"{message.rstrip('.')}."
+        if message
+        else ""
+    )
     if status == 404 and isinstance(body, dict) and body.get("detail") == "Not Found":
         return (
             "This server cannot edit a take yet (it needs the take-edit update). Tell the core team. "
@@ -333,11 +395,14 @@ def refusal_line(status: int, body: Any, *, take_id: str) -> str:
         )
     if code == "take_post_edit_in_progress":
         return (
-            f"An edit of {take_id} is still running on the server. Wait a minute, then run finish without "
-            "the edit settings to download the new cut. Nothing was charged twice."
+            f"An edit of {take_id} is still running on the server. Wait a minute, then run a plain finish "
+            "to download the new cut. Nothing was charged twice."
         )
     if code == "take_post_edit_unavailable":
-        return f"{said or 'Editing a take is not available on this server right now.'} {NOTHING_CHANGED}"
+        return (
+            message
+            or f"Editing a take is not available on this server right now. {NOTHING_CHANGED}"
+        )
     if code == "take_not_ready":
         return f"{take_id} has not been delivered yet. Wait until filming is complete, then run this again. {NOTHING_CHANGED}"
     if code == "take_revoice_unavailable":
@@ -407,11 +472,11 @@ def replaced_warning(take_id: str, *, preview: bool) -> str:
     if preview:
         return (
             f"Warning: this server is older and does not keep earlier edits. Sending this would replace "
-            f"every earlier edit on {take_id} (mutes, laid lines, sounds, hits, cuts, blurs) with only this one."
+            f"every earlier edit on {take_id} (mutes, laid lines, sounds, hits, cuts, blurs, freezes, softens, zooms, voice effects) with only this one."
         )
     return (
         f"Warning: this server is older and does not keep earlier edits, so every earlier edit on {take_id} "
-        "(mutes, laid lines, sounds, hits, cuts, blurs) was replaced by this one. To get them back, run finish once with "
+        "(mutes, laid lines, sounds, hits, cuts, blurs, freezes, softens, zooms, voice effects) was replaced by this one. To get them back, run finish once with "
         "all of them together."
     )
 
@@ -431,8 +496,8 @@ def _post(
         response = client.post(url, headers=sent, json=dict(body))
     except httpx.TimeoutException:
         raise TakeEditStop(
-            "The server did not answer in time. The edit may still land: run finish without the edit "
-            "settings in a few minutes and look at the new cut before sending it again."
+            "The server did not answer in time. The edit may still land: run a plain finish "
+            "in a few minutes and look at the new cut before sending it again."
         ) from None
     except httpx.TransportError as exc:
         raise TakeEditStop(
@@ -443,24 +508,26 @@ def _post(
 
 
 def _counts(body: Mapping[str, Any]) -> str:
-    named = (
-        ("mutes", "muted stretch", "muted stretches"),
-        ("dub_lines", "laid line", "laid lines"),
-        ("cues", "added sound", "added sounds"),
-        ("impact_hits", "hit", "hits"),
-        ("trims", "cut stretch", "cut stretches"),
-        ("blurs", "blurred box", "blurred boxes"),
-    )
     parts = []
-    for key, one, many in named:
+    for key, one, many in EDIT_FIELDS:
         count = len(body.get(key) or [])
         if count:
             parts.append(f"{count} {one if count == 1 else many}")
     return ", ".join(parts)
 
 
+def _whole_tokens(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        raise TakeEditStop(
+            f"the server sent a price that is not a number ({value!r}), so the edit is not trusted. "
+            f"{NOTHING_CHANGED} Try again in a minute, and tell the team if it keeps happening."
+        ) from None
+
+
 def _tokens(value: Any) -> str:
-    tokens = int(value or 0)
+    tokens = _whole_tokens(value)
     return (
         "free (0 tokens)"
         if tokens == 0
@@ -477,16 +544,53 @@ def send_take_edit(
     take_id: str,
     request: TakeEditRequest,
     preview: bool = False,
+    yes: bool = False,
     transport: httpx.BaseTransport | None = None,
 ) -> list[str]:
     """Send one take's edit (then any re-voices) and answer the server's words as lines to print.
 
+    Without ``yes`` the server is asked the price first (the quote, free). A quote of
+    more than 0 tokens stops there, like ``music-note`` and ``film``; a free edit applies.
+
     Raises
     ------
     TakeEditStop
-        With one plain line when the server refused or could not be reached.
+        With one plain line when the server refused or could not be reached, or with the
+        price of an edit that costs tokens sent without ``yes``.
     """
 
+    send = functools.partial(
+        _send,
+        base_url=base_url,
+        headers=headers,
+        job_id=job_id,
+        take_index=take_index,
+        take_id=take_id,
+        request=request,
+        transport=transport,
+    )
+    if not preview and not yes:
+        quote, tokens = send(preview=True)
+        if tokens > 0:
+            raise TakeEditStop(
+                f"{' '.join(quote)} Nothing was changed or charged; add --yes to apply."
+            )
+    lines, _ = send(preview=preview)
+    return [*lines, PREVIEW_ONLY if preview else NEXT_STEP]
+
+
+def _send(
+    *,
+    base_url: str,
+    headers: Mapping[str, str],
+    job_id: str,
+    take_index: int,
+    take_id: str,
+    request: TakeEditRequest,
+    preview: bool,
+    transport: httpx.BaseTransport | None,
+) -> tuple[list[str], int]:
+    spent = 0
     base = base_url.rstrip("/")
     lines: list[str] = []
     run = uuid.uuid4().hex[:12]
@@ -512,10 +616,10 @@ def send_take_edit(
                 raise TakeEditStop(refusal_line(status, answer, take_id=take_id))
             if replaced:
                 lines.append(replaced_warning(take_id, preview=preview))
+            spent += _whole_tokens(answer.get("tokens"))
             if preview:
                 lines.append(
-                    f"{take_id} edit ({_counts(edit)}) would cost {_tokens(answer.get('tokens'))}. "
-                    "Preview only: nothing was changed or charged."
+                    f"The {take_id} edit ({_counts(edit)}) would cost {_tokens(answer.get('tokens'))}."
                 )
             else:
                 lines.append(
@@ -526,7 +630,7 @@ def send_take_edit(
                     str(answer.get("episode_not_redelivered") or "")
                     or "The episode was put back together with the edit."
                 )
-        for cast_id in request.revoice:
+        for cast_id, name in request.revoice.items():
             body = {"cast_id": cast_id, "dry_run": preview}
             status, answer = _post(
                 client,
@@ -539,25 +643,24 @@ def send_take_edit(
                 raise TakeEditStop(refusal_line(status, answer, take_id=take_id))
             quote = answer.get("quote") if isinstance(answer.get("quote"), dict) else {}
             if preview:
+                spent += _whole_tokens(quote.get("tokens"))
                 lines.append(
-                    f"Re-voicing {cast_id} on {take_id} would cost {_tokens(quote.get('tokens'))}. "
-                    "Preview only: nothing was changed or charged."
+                    f"Re-voicing {name}'s lines in take {take_id} would cost {_tokens(quote.get('tokens'))}."
                 )
                 continue
             applied = (
                 answer.get("applied") if isinstance(answer.get("applied"), dict) else {}
             )
+            spent += _whole_tokens(applied.get("tokens", quote.get("tokens")))
             lines.append(
-                f"{cast_id}'s lines on {take_id} re-voiced on the server: "
+                f"{name}'s lines in take {take_id} re-voiced on the server: "
                 f"{_tokens(applied.get('tokens', quote.get('tokens')))}."
             )
             lines.append(
                 str(applied.get("episode_not_redelivered") or "")
                 or "The episode was put back together with the edit."
             )
-    if not preview:
-        lines.append(NEXT_STEP)
-    return lines
+    return lines, spent
 
 
 def run_take_edit(
@@ -567,6 +670,7 @@ def run_take_edit(
     take_id: str,
     request: TakeEditRequest,
     preview: bool = False,
+    yes: bool = False,
     api: tuple[str, Mapping[str, str]] | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> list[str]:
@@ -605,6 +709,7 @@ def run_take_edit(
         take_id=take_id,
         request=request,
         preview=preview,
+        yes=yes,
         transport=transport,
     )
 
@@ -616,10 +721,12 @@ __all__ = [
     "TakeEditStop",
     "build_request",
     "parse_blur_box",
+    "parse_center",
     "parse_cue",
     "parse_cut",
     "parse_mute",
     "parse_voice",
+    "parse_voice_fx",
     "refusal_line",
     "refuses_add_to_current",
     "replaced_warning",

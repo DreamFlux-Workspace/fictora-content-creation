@@ -27,16 +27,27 @@ SAVED = "The edit is saved. The episode is being put back together with it and p
 class Server:
     """Keeps every request; answers a post edit as taken and a quote as free."""
 
-    def __init__(self) -> None:
+    def __init__(self, quote_tokens: int = 0) -> None:
         self.requests: list[httpx.Request] = []
+        self.quote_tokens = quote_tokens
+        self.status_body: dict[str, Any] = {}
+        self.refusal: tuple[int, dict[str, Any]] | None = None
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json=self.status_body)
         self.requests.append(request)
+        if self.refusal is not None:
+            return httpx.Response(self.refusal[0], json=self.refusal[1])
+        if request.url.path.endswith("/revoice") and json.loads(request.content).get(
+            "dry_run"
+        ):
+            return httpx.Response(200, json={"quote": {"tokens": self.quote_tokens}})
         if request.url.path.endswith("/quote"):
             return httpx.Response(
                 200,
                 json={
-                    "tokens": 0,
+                    "tokens": self.quote_tokens,
                     "voiced_lines": 0,
                     "voiced_characters": 0,
                     "new_sounds": 0,
@@ -49,9 +60,15 @@ class Server:
     def sent(self) -> list[tuple[str, dict[str, Any]]]:
         return [(r.url.path, json.loads(r.content)) for r in self.requests]
 
+    def applied(self) -> list[tuple[str, dict[str, Any]]]:
+        return [
+            (path, body)
+            for path, body in self.sent()
+            if not path.endswith("/quote") and not body.get("dry_run")
+        ]
 
-@pytest.fixture
-def server(post_desk: Path, monkeypatch: pytest.MonkeyPatch) -> Server:
+
+def install_stand_in(monkeypatch: pytest.MonkeyPatch) -> Server:
     stand_in = Server()
     monkeypatch.setattr(
         server_finish, "_api", lambda desk: (BASE, {"Authorization": "Bearer t"})
@@ -68,6 +85,11 @@ def server(post_desk: Path, monkeypatch: pytest.MonkeyPatch) -> Server:
         lambda **kw: real(**{**kw, "transport": httpx.MockTransport(stand_in)}),
     )
     return stand_in
+
+
+@pytest.fixture
+def server(post_desk: Path, monkeypatch: pytest.MonkeyPatch) -> Server:
+    return install_stand_in(monkeypatch)
 
 
 def _files(desk: Path) -> set[Path]:
@@ -94,7 +116,7 @@ def test_a_cut_is_saved_on_the_server_and_no_file_on_the_desk_changes(
     )
 
     assert code == 0
-    assert server.sent() == [
+    assert server.applied() == [
         (
             POST_EDIT,
             {
@@ -103,7 +125,9 @@ def test_a_cut_is_saved_on_the_server_and_no_file_on_the_desk_changes(
             },
         )
     ]
-    assert server.requests[0].headers["Idempotency-Key"].startswith("kit-take-edit-t2-")
+    assert (
+        server.requests[-1].headers["Idempotency-Key"].startswith("kit-take-edit-t2-")
+    )
     assert _files(post_desk) == before, "the kit edits no file"
     out = capsys.readouterr().out
     assert "t2 edited on the server (1 cut stretch): free (0 tokens)." in out
@@ -123,7 +147,7 @@ def test_blur_boxes_go_as_fractions_of_the_frame_over_one_window(
                  "--from", "2.38", "--to", "6.62"])  # fmt: skip
 
     assert code == 0
-    assert server.sent() == [(POST_EDIT, {
+    assert server.applied() == [(POST_EDIT, {
         "blurs": [
             {"start_seconds": 2.38, "end_seconds": 6.62, "x": 0.1, "y": 0.25, "width": 0.4, "height": 0.1},
             {"start_seconds": 2.38, "end_seconds": 6.62, "x": 0.1003, "y": 0.3001, "width": 0.3997, "height": 0.1003},
@@ -146,10 +170,10 @@ def test_a_preview_asks_the_quote_and_changes_nothing(
     assert [path for path, _ in server.sent()] == [POST_EDIT + "/quote"]
     assert "Idempotency-Key" not in server.requests[0].headers
     out = capsys.readouterr().out
-    assert (
-        "would cost free (0 tokens). Preview only: nothing was changed or charged."
-        in out
-    )
+    assert out.splitlines()[-2:] == [
+        "The t2 edit (1 blurred box) would cost free (0 tokens).",
+        "Preview only: nothing was changed or charged.",
+    ]
     assert "No re-join to run" not in out
 
 
@@ -160,7 +184,7 @@ def test_a_preview_asks_the_quote_and_changes_nothing(
          "trim --cut is a take edit on the server now and edits no file: drop --take-file"),
         (["blur", "--episode", "1", "--take", "t2", "--take-file", "F.mp4", "--box", "0.1,0.1,0.2,0.2",
           "--from", "1", "--to", "2"], "blur is a take edit on the server now"),
-        (["trim", "--episode", "1", "--cut", "1-2"], "trim --cut edits one take on the server: add --episode N --take tK"),
+        (["trim", "--episode", "1", "--cut", "1-2"], "trim --cut edits one take on the server: add --take tK."),
         (["blur", "--take", "t2", "--box", "0.1,0.1,0.2,0.2", "--from", "1", "--to", "2"],
          "blur edits one take on the server"),
         (["blur", "--episode", "1", "--take", "t2", "--box", "77,410,307,137", "--from", "1", "--to", "2"],

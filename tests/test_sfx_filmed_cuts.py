@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 from conftest import make_take, make_tone, needs_ffmpeg
 
-from creation.cli_produce import main as produce_main
 from creation.post.finish import run_finish
 from creation.post.sfx import (
     SfxCue,
@@ -120,35 +119,6 @@ def test_finish_lays_the_cue_on_the_filmed_shot(post_desk: Path) -> None:
     assert measured == [raw.name]
     notes = (post_desk / "ep01" / "run-notes.md").read_text(encoding="utf-8")
     assert "cues follow the filmed cuts measured on `take-ep01-t1-raw-v1.mp4`" in notes
-
-
-@needs_ffmpeg
-def test_a_freeze_output_is_measured_on_its_raw_take(post_desk: Path) -> None:
-    raw = _desk_with_facts(post_desk)
-    assert (
-        produce_main(
-            ["freeze", "--desk", str(post_desk), "--at", "1.0", "--hold", "0.4"]
-        )
-        == 0
-    )
-    measured: list[str] = []
-
-    def cuts(take: Path) -> tuple[float, ...]:
-        measured.append(take.name)
-        return ()
-
-    result = run_finish(post_desk, take_file=post_desk / "ep01" / "takes" / "take-ep01-t1-freeze-v1.mp4",
-                        sfx_render=lambda cue, target: make_tone(target, seconds=cue.seconds, freq=300),
-                        facts_fetcher=lambda *a: None, cut_meter=cuts,
-                        stream=io.StringIO())  # fmt: skip
-
-    assert measured == [raw.name], (
-        "a freeze hold ends in a jump that would read as a cut"
-    )
-    sfx = next(s for s in result.steps if s.step == "sfx")
-    assert (
-        "a door slams @3.00s" in sfx.detail and "kept as planned: 2.50s" in sfx.detail
-    )
 
 
 @needs_ffmpeg

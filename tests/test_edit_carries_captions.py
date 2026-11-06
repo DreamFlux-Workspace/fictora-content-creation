@@ -10,9 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from conftest import needs_ffmpeg, shot_frames, write_frames
+from conftest import shot_frames, write_frames
 
-from creation.cli_produce import main
 from creation.post.edit_captions import captions_for_record, carry_ass
 from creation.post.finish_record import finish_records, write_finish_record
 from creation.post.master_captions import parse_ass_cues
@@ -184,25 +183,3 @@ def _finished(post_desk: Path) -> tuple[Path, Path]:
     write_finish_record(post_desk, episode=1, take_id="t1", complete=True, pre_bed=files["colour-v1"],
                         master=files["cap-v1"], final=files["sokii-v1"], bed=None, bed_db=-16.5, duck_db=None)  # fmt: skip
     return takes, files["sokii-v1"]
-
-
-@needs_ffmpeg
-def test_after_a_freeze_the_captions_are_found(
-    post_desk: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    takes, final = _finished(post_desk)
-
-    assert main(["freeze", "--desk", str(post_desk), "--take-file", str(final),
-                 "--at", "0.5", "--hold", "0.5"]) == 0  # fmt: skip
-
-    said = capsys.readouterr().out
-    carried = takes / "take-ep01-t1-freeze-master-v1.ass"
-    assert carried.is_file(), said
-    assert (
-        "- Captions: `take-ep01-t1-cap-v1.ass` -> `take-ep01-t1-freeze-master-v1.ass`"
-        in said
-    )
-    captions, _ = captions_for_record(post_desk, finish_records(post_desk, 1)[-1])
-    assert captions == carried and _times(carried) == _times(
-        takes / "take-ep01-t1-cap-v1.ass"
-    )

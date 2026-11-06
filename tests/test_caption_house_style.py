@@ -233,16 +233,6 @@ def test_finish_and_caption_take_caption_style(command: str) -> None:
     assert CAPTION_STYLES == ("bold", "subtle", "house", "plain", "none")
 
 
-def test_caption_none_burns_nothing(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from creation.cli_produce import main
-
-    assert main(["caption", "--desk", str(tmp_path), "--caption-style", "none"]) == 0
-    assert "nothing burned" in capsys.readouterr().out
-    assert not (tmp_path / "ep01").exists()
-
-
 def _tone_take(path: Path) -> None:
     subprocess.run(
         ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=192x336:d=4",

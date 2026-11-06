@@ -115,7 +115,7 @@ def test_a_tempo_is_set_on_the_server_and_the_new_take_and_facts_are_saved(
     assert "take-ep01-t1-raw-v9.mp4" in capsys.readouterr().out
 
 
-def test_a_server_without_the_route_is_left_to_the_local_edit_and_says_so(
+def test_a_server_without_the_route_is_refused_and_nothing_changes_here(
     desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _desk_with_take(desk)
@@ -125,12 +125,9 @@ def test_a_server_without_the_route_is_left_to_the_local_edit_and_says_so(
 
     api.routes[("POST", TEMPO)] = missing
 
-    # Falls through to the local edit, which here finds no raw take on the desk (and says so).
-    assert _tempo(desk, "--factor", "1.5") != 0
+    assert _tempo(desk, "--factor", "1.5") == 2
 
-    captured = capsys.readouterr()
-    assert "this server has no take tempo" in captured.out
-    assert "no raw take take-ep01-t1-raw-vN.mp4" in captured.err
+    assert "this server cannot change a take's speed yet" in capsys.readouterr().err
 
 
 def test_a_model_sound_take_is_sent_to_the_server_too(desk: Path, api: FakeApi) -> None:
@@ -235,12 +232,12 @@ def test_a_take_already_at_exactly_that_tempo_is_fetched_again_and_a_different_o
     assert _tempo(desk, "--factor", "1.25") == 2
 
 
-def test_a_take_with_no_video_job_on_the_desk_warns_before_the_local_edit(
+def test_a_take_with_no_video_job_on_the_desk_is_refused_without_a_call(
     desk: Path, api: FakeApi, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert _tempo(desk, "--factor", "1.5") != 0
+    assert _tempo(desk, "--factor", "1.5") == 2
 
-    assert "the desk has no video job for this take" in capsys.readouterr().out
+    assert "the server cannot find it to change its speed" in capsys.readouterr().err
     assert _posts(api) == []
 
 

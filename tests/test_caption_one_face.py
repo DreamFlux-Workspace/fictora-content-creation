@@ -265,14 +265,3 @@ def test_caption_scale_outside_its_range_stops_before_anything_is_burned() -> No
     for bad in (0.2, 2.5):
         with pytest.raises(ValueError, match="nothing was burned"):
             check_caption_scale(bad)
-
-
-def test_finish_and_caption_take_the_flag(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from creation import cli_produce
-
-    # finish no longer captions on the laptop (item 01 phase 4); caption keeps the flag.
-    with pytest.raises(SystemExit):
-        cli_produce.main(["caption", "--help"])
-    assert "--caption-scale" in capsys.readouterr().out

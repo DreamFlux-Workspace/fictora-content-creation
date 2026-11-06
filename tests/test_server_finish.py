@@ -949,7 +949,14 @@ EDIT_JOB = "job_video_1"
 class EditServer:
     """The stand-in take-edit routes: keeps every request, answers from a queue (default: taken)."""
 
-    def __init__(self, *answers: tuple[int, Any], drop: bool = False) -> None:
+    def __init__(
+        self,
+        *answers: tuple[int, Any],
+        drop: bool = False,
+        edit_tokens: int = 2,
+        revoice_tokens: int = 3,
+    ) -> None:
+        self.edit_tokens, self.revoice_tokens = edit_tokens, revoice_tokens
         self.answers = list(answers)
         self.requests: list[httpx.Request] = []
         self.drop = drop
@@ -966,7 +973,7 @@ class EditServer:
             return httpx.Response(
                 200,
                 json={
-                    "tokens": 2,
+                    "tokens": self.edit_tokens,
                     "voiced_lines": 0,
                     "voiced_characters": 0,
                     "new_sounds": 1,
@@ -976,7 +983,7 @@ class EditServer:
             dry = json.loads(request.content)["dry_run"]
             return httpx.Response(200, json={
                 "job_id": EDIT_JOB, "take_index": 2, "cast_id": "cast_aya", "edit": {},
-                "quote": {"tokens": 3}, "applied": None if dry else {
+                "quote": {"tokens": self.revoice_tokens}, "applied": None if dry else {
                     "tokens": 3, "episode_not_redelivered": "The edit is saved. The episode is being put "
                     "back together with it and plays the new cut soon."}})  # fmt: skip
         return httpx.Response(200, json={
@@ -987,6 +994,13 @@ class EditServer:
 
     def sent(self) -> list[tuple[str, dict[str, Any]]]:
         return [(r.url.path, json.loads(r.content)) for r in self.requests]
+
+    def applied(self) -> list[tuple[str, dict[str, Any]]]:
+        return [
+            (path, body)
+            for path, body in self.sent()
+            if not path.endswith("/quote") and not body.get("dry_run")
+        ]
 
 
 @pytest.fixture
@@ -1035,7 +1049,9 @@ def test_mute_goes_to_the_servers_post_edit_and_prints_its_answer(
 ) -> None:
     server, finished = edit_server
 
-    code = _finish(post_desk, "--take", "t2", "--mute", "1.2-2.0", "--mute", "4-4.5")
+    code = _finish(
+        post_desk, "--take", "t2", "--mute", "1.2-2.0", "--mute", "4-4.5", "--yes"
+    )
 
     assert code == 0 and finished == []
     assert server.sent() == [
@@ -1067,7 +1083,12 @@ def test_a_voice_line_file_is_laid_as_the_servers_copy(
     )
 
     code = _finish(
-        post_desk, "--take", "t2", "--voice", "ep01/voices/voice-ep01-aya-v1.mp3@3.5@-2"
+        post_desk,
+        "--take",
+        "t2",
+        "--voice",
+        "ep01/voices/voice-ep01-aya-v1.mp3@3.5@-2",
+        "--yes",
     )
 
     assert code == 0
@@ -1102,7 +1123,7 @@ def test_a_characters_name_re_voices_them_on_the_take(
 ) -> None:
     server, _ = edit_server
 
-    code = _finish(post_desk, "--take", "t2", "--voice", "Aya")
+    code = _finish(post_desk, "--take", "t2", "--voice", "Aya", "--yes")
 
     assert code == 0
     assert server.sent() == [(REVOICE_PATH, {"cast_id": "cast_aya", "dry_run": False})]
@@ -1112,7 +1133,7 @@ def test_a_characters_name_re_voices_them_on_the_take(
         .startswith("kit-take-revoice-t2-cast_aya-")
     )
     out = capsys.readouterr().out
-    assert "cast_aya's lines on t2 re-voiced on the server: 3 tokens." in out
+    assert "Aya's lines in take t2 re-voiced on the server: 3 tokens." in out
 
 
 def test_an_unknown_character_is_refused_with_the_cast(
@@ -1132,7 +1153,10 @@ def test_mute_and_re_voice_send_the_edit_first_then_the_re_voice(
 ) -> None:
     server, _ = edit_server
 
-    assert _finish(post_desk, "--take", "t2", "--mute", "0-1", "--voice", "Kenji") == 0
+    assert (
+        _finish(post_desk, "--take", "t2", "--mute", "0-1", "--voice", "Kenji", "--yes")
+        == 0
+    )
     assert [path for path, _ in server.sent()] == [POST_EDIT_PATH, REVOICE_PATH]
     assert server.sent()[1][1]["cast_id"] == "cast_kenji"
 
@@ -1152,7 +1176,7 @@ def test_cue_and_impact_at_map_to_their_fields(
     code = _finish(
         post_desk, "--take", "t2",
         "--cue", "low rumble@2.5", "--cue", "ep01/sfx/cue-gaan-sting-v1.mp3@4@-9",
-        "--impact-at", "1.25, 3:blast",
+        "--impact-at", "1.25, 3:blast", "--yes",
     )  # fmt: skip
 
     assert code == 0
@@ -1165,6 +1189,82 @@ def test_cue_and_impact_at_map_to_their_fields(
             "add_to_current_edit": True,
         }),
     ]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("extra", "sent", "says"),
+    [
+        (
+            ["--voice", "Aya"],
+            [(REVOICE_PATH, {"cast_id": "cast_aya", "dry_run": True})],
+            "Re-voicing Aya's lines in take t2 would cost 3 tokens.",
+        ),
+        (
+            ["--cue", "door slam@1"],
+            [(POST_EDIT_PATH + "/quote", {"cues": [{"sound": "door slam", "start_seconds": 1.0}],
+                                          "add_to_current_edit": True})],
+            "The t2 edit (1 added sound) would cost 2 tokens.",
+        ),
+    ],
+)  # fmt: skip
+def test_a_paid_take_edit_without_yes_prints_the_price_and_spends_nothing(
+    extra: list[str],
+    sent: list[tuple[str, dict[str, Any]]],
+    says: str,
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, finished = edit_server
+
+    assert _finish(post_desk, "--take", "t2", *extra) == 2
+
+    assert server.sent() == sent and finished == []
+    err = capsys.readouterr().err
+    assert says in err
+    assert "Nothing was changed or charged; add --yes to apply." in err
+
+
+def test_a_free_quote_applies_without_yes_after_asking_the_price_first(
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, _ = edit_server
+    server.edit_tokens = 0
+
+    assert _finish(post_desk, "--take", "t2", "--mute", "1-2") == 0
+
+    assert [path for path, _ in server.sent()] == [
+        POST_EDIT_PATH + "/quote",
+        POST_EDIT_PATH,
+    ]
+    assert "t2 edited on the server" in capsys.readouterr().out
+
+
+def test_a_quote_over_zero_tokens_stops_without_yes_even_for_a_mute(
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, _ = edit_server
+    server.edit_tokens = 1
+
+    assert _finish(post_desk, "--take", "t2", "--mute", "1-2") == 2
+
+    assert [path for path, _ in server.sent()] == [POST_EDIT_PATH + "/quote"]
+    assert "add --yes to apply" in capsys.readouterr().err
+
+
+def test_a_free_revoice_quote_applies_without_yes(
+    post_desk: Path, edit_server: tuple[EditServer, list[Any]]
+) -> None:
+    server, _ = edit_server
+    server.revoice_tokens = 0
+
+    assert _finish(post_desk, "--take", "t2", "--voice", "Aya") == 0
+
+    assert [body.get("dry_run") for _, body in server.sent()] == [True, False]
 
 
 def test_preview_asks_the_quote_and_the_dry_run_and_changes_nothing(
@@ -1212,7 +1312,7 @@ def test_every_take_edit_asks_the_server_to_keep_the_takes_earlier_edits(
 ) -> None:
     server, _ = edit_server
 
-    assert _finish(post_desk, "--take", "t2", "--impact-at", "2") == 0
+    assert _finish(post_desk, "--take", "t2", "--impact-at", "2", "--yes") == 0
 
     ((path, body),) = server.sent()
     assert path == POST_EDIT_PATH and body["add_to_current_edit"] is True
@@ -1228,7 +1328,7 @@ def test_an_older_server_gets_the_edit_once_more_without_the_field_and_a_plain_w
     server, _ = edit_server
     server.answers.append(OLD_SERVER_EXTRA_FIELD)
 
-    assert _finish(post_desk, "--take", "t2", "--mute", "1-2") == 0
+    assert _finish(post_desk, "--take", "t2", "--mute", "1-2", "--yes") == 0
 
     sent = server.sent()
     assert [path for path, _ in sent] == [POST_EDIT_PATH, POST_EDIT_PATH]
@@ -1388,7 +1488,7 @@ def _envelope(code: str, message: str) -> dict[str, Any]:
     [
         (409, _envelope("take_post_edit_in_progress", "running"), "still running on the server"),
         (409, _envelope("take_post_edit_unavailable", "Editing a take isn't available right now."),
-         "Editing a take isn't available right now. Nothing was changed or charged."),
+         "Editing a take isn't available right now."),
         (422, _envelope("take_not_ready", "Take 2 has not been delivered yet."), "t2 has not been delivered yet"),
         (422, _envelope("take_revoice_unavailable", "Aya has no line in this take."),
          "Aya has no line in this take. Film the take again"),
@@ -1423,13 +1523,66 @@ def test_server_refusals_are_plain_next_steps_never_tracebacks(
     assert says in err and "Traceback" not in err
 
 
+@pytest.mark.parametrize(
+    "server_message",
+    [
+        "Editing a take isn't available right now. Nothing was changed.",
+        "テイクの編集は今は使えません。何も変更されていません。",
+        "지금은 테이크를 편집할 수 없어요. 아무것도 바뀌지 않았어요.",
+    ],
+)
+def test_a_409_refusal_is_the_servers_sentence_as_it_is(
+    server_message: str,
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, _ = edit_server
+    server.answers.append(
+        (409, _envelope("take_post_edit_unavailable", server_message))
+    )
+
+    assert _finish(post_desk, "--take", "t2", "--mute", "1-2") == 2
+
+    err = capsys.readouterr().err
+    assert server_message in err
+    assert "charged" not in err
+
+
+@pytest.mark.parametrize(
+    "server_message",
+    [
+        "This episode plays a Director cut, which doesn't show take edits yet. Film the take again to change it.",
+        "テイクの編集は今は使えません。",
+        "Editing is off. Nothing was changed or charged.",
+    ],
+)
+def test_a_409_refusal_gets_nothing_added_to_the_servers_sentence(
+    server_message: str,
+    post_desk: Path,
+    edit_server: tuple[EditServer, list[Any]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, _ = edit_server
+    server.answers.append(
+        (409, _envelope("take_post_edit_unavailable", server_message))
+    )
+
+    assert _finish(post_desk, "--take", "t2", "--mute", "1-2") == 2
+
+    assert capsys.readouterr().err == f"Stopped: {server_message}\n"
+
+
 def test_a_refused_edit_does_not_send_the_re_voice(
     post_desk: Path, edit_server: tuple[EditServer, list[Any]]
 ) -> None:
     server, _ = edit_server
     server.answers.append((409, _envelope("take_post_edit_unavailable", "Not here.")))
 
-    assert _finish(post_desk, "--take", "t2", "--mute", "1-2", "--voice", "Aya") == 2
+    assert (
+        _finish(post_desk, "--take", "t2", "--mute", "1-2", "--voice", "Aya", "--yes")
+        == 2
+    )
     assert [path for path, _ in server.sent()] == [POST_EDIT_PATH]
 
 

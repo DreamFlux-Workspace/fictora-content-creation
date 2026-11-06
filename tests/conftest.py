@@ -358,6 +358,14 @@ def _house_face_installed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_show_finals_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from creation.post import final_approval
+
+    no_finals = final_approval.ShowFinals()
+    monkeypatch.setattr(final_approval, "show_finals", lambda desk, **_k: no_finals)
+
+
+@pytest.fixture(autouse=True)
 def _no_spine_read_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """finish and caption read the current spine from the server; tests stay offline and use the desk's copy.
 

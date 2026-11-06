@@ -278,20 +278,6 @@ def test_finish_never_mutes_or_replaces_the_locked_voices_without_the_flag(
     ], "refused before any step ran"  # fmt: skip
 
 
-def test_revoice_refuses_a_locked_voice_take_before_anything_is_spent(
-    post_desk: Path,
-) -> None:
-    from creation.post.voice import run_revoice
-
-    (post_desk / "ep01" / "api" / "take-facts-ep01-t1-v1.json").write_text(
-        json.dumps(facts_with(TARGET))
-    )
-    with pytest.raises(ValueError, match="revoice of ep01 t1 .*target_audio"):
-        run_revoice(
-            post_desk, cast="Kenji", take_file=Path("unused.mp4"), out=io.StringIO()
-        )
-
-
 # --- native takes and older servers: exactly as before --------------------------------------------------------
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Iterable
 from typing import Any
 from pathlib import Path
 
@@ -33,6 +34,7 @@ from creation.post.show_rename import (
     add_show_rename_parser,
     show_rename_command,
 )
+from creation.post.voice_fx import PRESET_NAMES as VOICE_FX_PRESETS
 
 POST_COMMANDS = (
     frozenset(
@@ -78,7 +80,7 @@ def _impact_hits(values: list[Any]) -> tuple[Any, ...]:
 
 
 def add_caption_style_arg(parser: argparse.ArgumentParser) -> None:
-    """``--caption-style bold|subtle|house|plain|none`` on ``finish`` and ``caption`` (default: the show's)."""
+    """``--caption-style bold|subtle|house|plain|none`` on ``caption`` (default: the show's)."""
 
     from creation.captions import CAPTION_STYLES
 
@@ -90,20 +92,6 @@ def add_caption_style_arg(parser: argparse.ArgumentParser) -> None:
         "default); subtle (or house, its older name): the yellow Arial Bold word flicker (a show with "
         "finished episodes keeps it); plain: white whole lines; none: no captions. Default: caption_style "
         "in the desk's production.config.json, else bold for a new show and subtle for a continuing one.",
-    )
-
-
-def add_caption_scale_arg(parser: argparse.ArgumentParser) -> None:
-    """``--caption-scale X`` on ``finish`` and ``caption``: the captions bigger or smaller, kit-placed."""
-
-    parser.add_argument(
-        "--caption-scale",
-        type=float,
-        default=1.0,
-        metavar="X",
-        help="Every caption line at the style's size times X (0.5-2; default 1, the house size). "
-        "The kit wraps and places the bigger lines itself (the hook card keeps its own size) and "
-        "the master's .ass keeps every line, so never re-burn captions by hand. 45 on a 1344-high take already IS the house 64 on 1920.",
     )
 
 
@@ -207,6 +195,55 @@ def add_part_args(parser: argparse.ArgumentParser) -> None:
     )  # fmt: skip
 
 
+_CAPTION_TIMING = "the server times each caption from the line's own sound"
+#: Old laptop settings of ``caption`` and ``revoice``, each with why it is refused.
+RETIRED_FLAG_REASONS: dict[str, dict[str, str]] = {
+    "caption": {
+        "--line-start": _CAPTION_TIMING,
+        "--line-end": _CAPTION_TIMING,
+        "--words-json": _CAPTION_TIMING,
+        "--caption-scale": "the server owns the size of the captions",
+        "--no-open": "nothing is opened or burned on this laptop",
+    },
+    "revoice": {
+        "--over-locked-voices": "the server always re-voices in the character's locked voice",
+        "--voice-db": "the server sets how loud the new lines are",
+        "--words-json": "the server times each line from its own sound",
+    },
+}
+
+
+def _add_refused_flags(parser: argparse.ArgumentParser, flags: Iterable[str]) -> None:
+    """Accept each old setting into ``laptop_only``, so the command refuses it by name instead of a usage error."""
+
+    for flag in flags:
+        parser.add_argument(
+            flag,
+            dest="laptop_only",
+            action=_LaptopOnly,
+            nargs="*",
+            default=None,
+            help=argparse.SUPPRESS,
+        )
+
+
+def add_retired_flags(parser: argparse.ArgumentParser, command: str) -> None:
+    """Accept the old laptop settings of ``command`` so :func:`retired_refusal` can name them."""
+
+    _add_refused_flags(parser, RETIRED_FLAG_REASONS[command])
+
+
+def retired_refusal(command: str, flags: list[str]) -> str:
+    """One plain sentence naming the old settings given to ``command``."""
+
+    known = RETIRED_FLAG_REASONS[command]
+    reasons = list(dict.fromkeys(known[flag] for flag in flags))
+    return (
+        f"Stopped: {command} no longer takes {', '.join(flags)} ({'; '.join(reasons)}). "
+        "Run it again without them. Nothing was changed or charged."
+    )
+
+
 def _add_server_finish_args(parser: argparse.ArgumentParser) -> None:
     """``--wait``, ``--json``, the hook line, and the old laptop settings (refused) on ``finish`` and ``join``."""
 
@@ -251,15 +288,7 @@ def _add_server_finish_args(parser: argparse.ArgumentParser) -> None:
         "on this laptop.",
     )
     add_part_args(parser)
-    for flag in LAPTOP_ONLY_FLAGS:
-        parser.add_argument(
-            flag,
-            dest="laptop_only",
-            action=_LaptopOnly,
-            nargs="*",
-            default=None,
-            help=argparse.SUPPRESS,
-        )
+    _add_refused_flags(parser, LAPTOP_ONLY_FLAGS)
 
 
 def laptop_only_refusal(
@@ -483,54 +512,63 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Save this style for the show (finish and caption read it).",
     )
 
+    take_help = "Take id, like t2."
     fx = sub.add_parser(
         "voice-fx",
-        help="Give a stretch of a take's voice a source (intercom, phone, radio): local ffmpeg, $0, a new file.",
+        help="A take edit on the server (with --episode N --take tK, free): make a stretch of the take's sound "
+        "come through an intercom, a phone or a radio. The server re-joins the episode and every later finish and "
+        "join keeps it; no file on this laptop is edited.",
     )
-    fx.add_argument(
-        "--file", type=Path, required=True, help="The take (or audio file) to treat."
-    )
+    fx.add_argument("--desk", type=Path, default=None)
+    fx.add_argument("--episode", type=int, default=None)
+    fx.add_argument("--take", dest="take_id", default=None, help=take_help)
     fx.add_argument(
         "--range",
         dest="span",
         action="append",
         required=True,
         metavar="A-B",
-        help="Seconds treated, like 0-3.5. Repeat for every line the voice speaks: one file.",
+        help="Seconds on the take as filmed, like 0-3.5. Repeat for every line the voice speaks.",
     )
-    fx.add_argument("--preset", required=True, choices=("intercom", "phone", "radio"))
+    fx.add_argument("--preset", required=True, choices=VOICE_FX_PRESETS)
     fx.add_argument(
-        "--desk", type=Path, default=None, help="Series desk, for a run note."
+        "--yes",
+        action="store_true",
+        help="Apply a priced edit. Without it a price the server quotes is printed and nothing is changed.",
     )
-    fx.add_argument("--episode", type=int, default=1)
+    fx.add_argument(
+        "--file", dest="take_file", type=Path, default=None, help=argparse.SUPPRESS
+    )
+    fx.add_argument(
+        "--preview",
+        action="store_true",
+        help="Ask the server what it would cost (free); nothing is changed.",
+    )
 
     revoice = sub.add_parser(
         "revoice",
-        help="Replace one character's lines on a filmed take with their locked (newly picked) voice: mute the "
-        "original, lay the new line in. Writes take-epNN-tK-revoice-vN.mp4. Then run finish --take-file on it.",
+        help="On the server: make every line one character says in a delivered take again in their locked voice "
+        "and lay each where the take put it, the take's own voice muted under it (paid in tokens; --preview "
+        "prices it, and without --yes it only prints the price). The take's other edits are kept and the server "
+        "re-joins the episode. Same as finish --take tK --voice CHARACTER. A take whose voices the video model "
+        "made cannot be re-voiced: film it again.",
     )
     revoice.add_argument("--desk", type=Path, required=True)
     revoice.add_argument("--cast", required=True, help="cast_id or name.")
-    revoice.add_argument("--episode", type=int, default=1)
-    revoice.add_argument("--take", dest="take_id", default="t1")
+    revoice.add_argument("--episode", type=int, default=None)
+    revoice.add_argument("--take", dest="take_id", default=None, help=take_help)
     revoice.add_argument(
-        "--take-file", type=Path, default=None, help="Default: the newest raw take."
-    )
-    revoice.add_argument(
-        "--words-json",
-        type=Path,
-        default=None,
-        help="Saved Whisper words; default: transcribe.",
-    )
-    revoice.add_argument(
-        "--voice-db", type=float, default=0.0, help="Gain on the new lines."
-    )
-    revoice.add_argument(
-        "--over-locked-voices",
+        "--preview",
         action="store_true",
-        help="Revoice a take whose sound is already the locked voices (take facts soundtrack target_audio): "
-        "only when a new voice was picked after it was filmed. Refused without it.",
+        help="Ask the server what it would cost; nothing is changed or charged.",
     )
+    revoice.add_argument(
+        "--yes",
+        action="store_true",
+        help="Spend the tokens. Without it the server's price is printed and nothing is changed.",
+    )
+    revoice.add_argument("--take-file", type=Path, default=None, help=argparse.SUPPRESS)
+    add_retired_flags(revoice, "revoice")
 
     line = sub.add_parser(
         "voice-line",
@@ -802,6 +840,11 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="With take edits: ask the server what they would cost in tokens; nothing is changed or charged.",
     )  # fmt: skip
     fin.add_argument(
+        "--yes", action="store_true",
+        help="With a paid take edit (--voice CHARACTER, --cue): spend the tokens. Without it the server's price "
+        "is printed and nothing is changed.",
+    )  # fmt: skip
+    fin.add_argument(
         "--caption-label", action="append", default=[], metavar="TEXT@A-B",
         help="A caption with no spoken line under it: TEXT@A-B seconds on the --take as filmed (repeat). "
         "Saved on the server as the take's labels (its notes print), then the episode is finished.",
@@ -821,15 +864,7 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     join.add_argument(
         "--episode", type=int, default=None, help="Default: the desk's current episode."
     )
-    for flag in _JOIN_REFUSED_HOMES:
-        join.add_argument(
-            flag,
-            dest="laptop_only",
-            action=_LaptopOnly,
-            nargs="*",
-            default=None,
-            help=argparse.SUPPRESS,
-        )
+    _add_refused_flags(join, _JOIN_REFUSED_HOMES)
     _add_server_finish_args(join)
 
     cut = sub.add_parser(
@@ -945,7 +980,7 @@ def dispatch_post(args: argparse.Namespace) -> int:
 
     from creation.post.bed import NO_MUSIC_RULE
     from creation.post.handmade import run_cue, run_voice_line
-    from creation.post.voice import run_revoice, run_voice_audition, run_voice_pick
+    from creation.post.voice import run_voice_audition, run_voice_pick
 
     if args.command == "voice":
         if args.keep_all or args.list:
@@ -1007,38 +1042,14 @@ def dispatch_post(args: argparse.Namespace) -> int:
 
         run_caption_style(args.desk, set_to=args.set_to)
         return 0
-    if args.command == "voice-fx":
-        from creation.ops.notes import append_run_note
-        from creation.post.voice_fx import apply_voice_fx
-        from creation.post.voice_fx import parse_range as parse_fx_span
+    if args.command in ("voice-fx", "revoice"):
+        old = list(getattr(args, "laptop_only", None) or [])
+        if old:
+            print(retired_refusal(args.command, old), file=sys.stderr)
+            return 2
+        from creation.post.edit_commands import send_server_edit
 
-        spans = [parse_fx_span(raw) for raw in args.span]
-        made = apply_voice_fx(
-            args.file.expanduser().resolve(), ranges=spans, preset=args.preset
-        )
-        if args.desk is not None:
-            run_dir = args.desk.expanduser().resolve() / f"ep{args.episode:02d}"
-            if (run_dir / "run-notes.md").is_file():
-                treated = ", ".join(f"{a:.2f}-{b:.2f}s" for a, b in sorted(spans))
-                append_run_note(
-                    run_dir,
-                    f"voice-fx {args.preset} on `{args.file.name}` {treated} -> `{made.name}`, $0.",
-                )
-        print(made)
-        print("Listen to it; then finish (or caption) with --take-file on it.")
-        return 0
-    if args.command == "revoice":
-        run_revoice(
-            args.desk,
-            cast=args.cast,
-            episode=args.episode,
-            take_id=args.take_id,
-            take_file=args.take_file,
-            words_json=args.words_json,
-            voice_db=args.voice_db,
-            over_locked_voices=args.over_locked_voices,
-        )
-        return 0
+        return send_server_edit(args, sys.stdout)
     if args.command == "voice-line":
         run_voice_line(
             args.desk,
@@ -1228,6 +1239,7 @@ def _send_take_edits(
             take_id=take_id,
             request=request,
             preview=bool(getattr(args, "preview", False)),
+            yes=bool(getattr(args, "yes", False)),
         )
     except TakeEditStop as exc:
         print(f"Stopped: {exc}", file=sys.stderr)

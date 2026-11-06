@@ -20,7 +20,7 @@ are unchanged here (the test voices start exactly on their windows). The join's 
 file has had its readable name since 14 Oct 2026 (``join-test_ep01_draft_v1_<date>.mp4``,
 the date pinned in the test); its commands are unchanged. Numbers measured from
 the test media may differ by a few milliseconds between ffmpeg builds
-(:data:`NUMBER_TOLERANCE`); everything else must match exactly. Regenerate only on purpose:
+(:data:`TIME_TOLERANCE`), so only times get that slack; everything else must match exactly. Regenerate only on purpose:
 ``UPDATE_GOLDEN=1 uv run pytest tests/test_letterbox_portrait_unchanged.py``.
 
 Re-recorded 25 Oct 2026 (kit #294) for the mark only: 3% in and the approved reels' size
@@ -34,14 +34,13 @@ import copy
 import io
 import json
 import os
-import re
 from datetime import date
 from pathlib import Path
 from typing import Any
 
 import pytest
 from conftest import make_take, needs_ffmpeg
-from test_hook_overlay_portrait_unchanged import REPO, _recording
+from test_hook_overlay_portrait_unchanged import REPO, _recording, _same
 from test_post_finish import FACTS, TWO_LINES, _board, fake_sfx
 from test_post_join import finished_take
 
@@ -59,32 +58,6 @@ LOCKED_LINES = [
 ]  # fmt: skip
 
 
-#: A number in an ffmpeg argument or a caption file.
-_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
-#: How far a number measured from the test media may differ between machines. The takes are encoded
-#: on the machine running the test, and another ffmpeg build gives a container a few milliseconds more
-#: (a 5 s take probes 5.013 s on CI's ubuntu ffmpeg, 5.000 s on a laptop), which moves every length,
-#: trim and seek computed from it. Anything the letterbox work could change on a portrait show (a
-#: step, a filter, an argument, a caption's place, colour, chunk or italics, a timing shift of a
-#: frame or more) still differs.
-NUMBER_TOLERANCE = 0.03
-
-
-def _same(got: Any, want: Any) -> bool:
-    """Equal, except numbers inside strings may differ by :data:`NUMBER_TOLERANCE`."""
-
-    if isinstance(got, list) and isinstance(want, list):
-        return len(got) == len(want) and all(_same(g, w) for g, w in zip(got, want))
-    if not isinstance(got, str) or not isinstance(want, str):
-        return got == want
-    if _NUMBER.sub("#", got) != _NUMBER.sub("#", want):
-        return False
-    return all(
-        abs(float(g) - float(w)) <= NUMBER_TOLERANCE
-        for g, w in zip(_NUMBER.findall(got), _NUMBER.findall(want))
-    )
-
-
 def _check(key: str, calls: list[Any]) -> None:
     golden: dict[str, Any] = json.loads(GOLDEN.read_text()) if GOLDEN.exists() else {}
     if os.environ.get("UPDATE_GOLDEN") == "1":
@@ -97,6 +70,18 @@ def _check(key: str, calls: list[Any]) -> None:
 
 def test_the_comparison_tolerates_media_timing_only() -> None:
     assert _same(["atrim=0:5.013", "-ss", "1.999"], ["atrim=0:5.000", "-ss", "2.000"])
+    assert _same(
+        ["Dialogue: 0,0:00:01.01,0:00:02.60,House"],
+        ["Dialogue: 0,0:00:01.00,0:00:02.60,House"],
+    )
+    assert not _same(["atrim=0:5.042"], ["atrim=0:5.000"]), (
+        "a one-frame shift is caught"
+    )
+    assert not _same(["volume=0.52"], ["volume=0.50"]), "a volume change is caught"
+    assert not _same(["amix=weights=1 0.98"], ["amix=weights=1 1"]), (
+        "a mix level is caught"
+    )
+    assert not _same(["-ar", "48001"], ["-ar", "48000"]), "only time flags get slack"
     assert not _same(["atrim=0:5.200"], ["atrim=0:5.000"]), (
         "a real timing shift is caught"
     )

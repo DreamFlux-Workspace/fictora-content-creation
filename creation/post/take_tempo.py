@@ -147,8 +147,8 @@ def run_take_tempo(
     preview: bool,
     revert: bool,
     out: TextIO,
-) -> int | None:
-    """Set, preview or revert a take's tempo on the server; ``None`` leaves it to the local edit.
+) -> int:
+    """Set, preview or revert a take's tempo on the server.
 
     Parameters
     ----------
@@ -171,10 +171,10 @@ def run_take_tempo(
 
     Returns
     -------
-    int | None
+    int
         ``0`` applied, previewed, reverted or already set at this speed; ``2``
-        refused; ``None`` when the server has no route or the desk cannot
-        place the take on its video job: run the local edit.
+        refused, including when the server has no tempo route or the desk
+        cannot place the take on its video job (nothing changes on this laptop).
     """
 
     from creation import episode_commands as ec
@@ -185,12 +185,11 @@ def run_take_tempo(
     where = take_coordinate(desk, episode, take_id)
     if where is None:
         print(
-            f"!! {label}: the desk has no video job for this take, so the server cannot change its speed: the "
-            "local tempo runs instead and the take facts keep their filmed times (captions after it are timed "
-            "on speech spans).",
-            file=out,
+            f"Refused: {label}: the desk has no filmed clip of this take, so the server cannot find it to change "
+            "its speed. Film it (or collect it) first. Nothing was changed.",
+            file=sys.stderr,
         )
-        return None
+        return 2
     body: dict[str, Any] = (
         {"revert": True} if revert else {"factor": factor, "dry_run": preview}
     )
@@ -214,12 +213,13 @@ def run_take_tempo(
             text = exc.code if isinstance(exc.code, str) else str(exc.code)
             code = _code(text)
             if code is None and re.search(r"HTTP (404|405)\b", text):
+                out.flush()
                 print(
-                    f"!! {label}: this server has no take tempo (fictora-drama tempo route not deployed): the local "
-                    "tempo speeds the take here and the take facts keep their filmed times.",
-                    file=out,
+                    f"Refused: {label}: this server cannot change a take's speed yet (it needs the take tempo "
+                    "update). Tell the core team. Nothing was changed.",
+                    file=sys.stderr,
                 )
-                return None
+                return 2
             if code == "take_tempo_already_set":
                 # Set earlier (an answer lost on the way?): bring the desk up to what the server plays.
                 print(f"{label}: {text.split(': ', 2)[-1]}", file=out)

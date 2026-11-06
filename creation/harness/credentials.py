@@ -11,6 +11,8 @@ from creation.harness.env import load_env_file
 
 DEFAULT_DRAMA_API = "https://fictora-drama-generation-prod-drama.up.railway.app"
 RAILWAY_DRAMA_SERVICE = "fictora-drama-generation"
+#: Seconds the Railway CLI may take to hand over the token.
+RAILWAY_TIMEOUT_SECONDS = 10.0
 
 
 def env_drama_api_credentials(
@@ -66,20 +68,27 @@ def load_drama_api_credentials(
     Raises
     ------
     SystemExit
-        When no token is available from env or Railway CLI.
+        When no token is available from env or Railway CLI (or the CLI took over
+        :data:`RAILWAY_TIMEOUT_SECONDS`).
     """
     base_url, token = env_drama_api_credentials(
         repo_root / ".env", *extra_env_files, default_base_url=default_base_url
     )
     if token:
         return base_url, token
-    completed = subprocess.run(
-        ["railway", "variables", "--service", RAILWAY_DRAMA_SERVICE, "--json"],
-        stdin=subprocess.DEVNULL,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        completed = subprocess.run(
+            ["railway", "variables", "--service", RAILWAY_DRAMA_SERVICE, "--json"],
+            stdin=subprocess.DEVNULL,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=RAILWAY_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        raise SystemExit(
+            "FICTORA_DRAMA_GENERATION_SERVICE_TOKEN must be set (the Railway CLI did not answer)"
+        ) from None
     if completed.returncode != 0:
         raise SystemExit("FICTORA_DRAMA_GENERATION_SERVICE_TOKEN must be set")
     raw = json.loads(completed.stdout)
