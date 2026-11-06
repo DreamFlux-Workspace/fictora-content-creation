@@ -2,12 +2,14 @@
 
 Founder, 5 Nov 2026: a punchy edit is parts only; every part is printed before anything is made.
 The kit prints the server's own words and asks one question; anything else the human types goes
-back to the server as the change they want, and the new plan is asked again.
+back to the server as the change they want, against the plan the server kept, and the new plan is
+asked again. Their yes sends the plan's id alone: the kit never sends a plan's fields back.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any
@@ -16,7 +18,12 @@ import httpx
 import pytest
 
 from creation.post import picked_cut
-from creation.post.picked_cut import LOCAL_FILES_GONE, NO_PLAN_ROUTE, cut_command
+from creation.post.picked_cut import (
+    LOCAL_FILES_GONE,
+    NO_PLAN_ROUTE,
+    PLAN_GONE,
+    cut_command,
+)
 
 API = ("https://drama.example", {"Authorization": "Bearer kit-token"})
 CUT = {
@@ -27,31 +34,39 @@ CUT = {
         {"part": 4, "video_url": "https://media.example/p4.mp4"},
     ],
 }
-TOO_LONG = "Part 4's ending is too long to fit on screen. Try 8 words or fewer."
 #: The fake server's reading of a typed change: these words split it into three parts.
 THREE_PARTS = "make it three parts"
 #: These words make the server ask back instead of planning anew.
 UNCLEAR = "different"
 #: A second change, read by the fake server only on top of the plan it is sent.
 END_FIVE = "end part 5 with she runs"
+#: These words ask for more parts than the edit can have: the server makes the most and says so.
+TOO_MANY = "9 parts please"
 MAX_PARTS = 4
-OUT_OF_RANGE = "This edit can have 1 to 4 parts."
-#: Where the fake server splits 2 and 3 parts; odd numbers so the kit can't have worked them out.
-SPLITS = {2: [51.3], 3: [51.3, 98.7]}
+OUT_OF_RANGE = "This edit can have 1 to 4 parts. I made it 4."
 SHOWS = {"sp_a": "Dead Heat", "sp_b": "Low Tide"}
+CHANGE_PATH = re.compile(r"^/v1/series-cuts/plan/([^/]+)/change$")
 
 
 class PlanServer:
-    """Plans 2 parts starting at Part 3 (this creator already posted Parts 1 and 2) unless told otherwise."""
+    """Plans 2 parts starting at Part 3 (this creator already posted Parts 1 and 2) unless told otherwise.
+
+    Every plan it answers is kept under ``plan_1``, ``plan_2``, ... with the count, numbers and texts
+    it showed; a change is applied over the kept plan, and make takes a kept plan's id alone.
+    """
 
     def __init__(self) -> None:
         self.seen: list[tuple[str, str, Any]] = []
         self.plan_missing = False
-        self.too_long_over = 1000
-        self.too_long_message = TOO_LONG
+        self.kept: dict[str, dict[str, Any]] = {}
 
     def plans(self) -> list[Any]:
-        return [b for m, p, b in self.seen if p == "/v1/series-cuts/plan"]
+        return [b for _m, p, b in self.seen if p == "/v1/series-cuts/plan"]
+
+    def changes(self) -> list[tuple[str, Any]]:
+        return [
+            (m.group(1), b) for _v, p, b in self.seen if (m := CHANGE_PATH.match(p))
+        ]
 
     def creates(self) -> list[Any]:
         return [b for m, p, b in self.seen if (m, p) == ("POST", "/v1/series-cuts")]
@@ -63,65 +78,40 @@ class PlanServer:
             if self.plan_missing:
                 return httpx.Response(404, json={"detail": "Not Found"})
             return self.plan(body)
+        if change := CHANGE_PATH.match(request.url.path):
+            kept = self.kept.get(change.group(1))
+            if kept is None:
+                return httpx.Response(
+                    404, json={"code": "series_cut_plan_not_found", "message": "gone"}
+                )
+            return self.plan({**kept, "change_request": body["change_request"]})
         if request.method == "POST":
+            if (body or {}).get("plan_id") not in self.kept:
+                return httpx.Response(
+                    404, json={"code": "series_cut_plan_not_found", "message": "gone"}
+                )
             return httpx.Response(202, json={"series_cut_id": "c1"})
         return httpx.Response(200, json={"status": "ready", "series_cut": CUT})
 
-    def plan(self, body: dict[str, Any]) -> httpx.Response:
-        change = body.get("change_request")
-        count = 3 if change == THREE_PARTS else body.get("part_count", 2)
-        start = body.get("start_number", 3)
-        if count > MAX_PARTS:
-            return httpx.Response(
-                422,
-                json={
-                    "error": {
-                        "code": "series_cut_parts_out_of_range",
-                        "message": OUT_OF_RANGE,
-                        "details": {
-                            "parts": count,
-                            "parts_max": MAX_PARTS,
-                            "parts_suggested": 2,
-                        },
-                    }
-                },
-            )
-        texts = {t["number"]: dict(t) for t in body.get("texts", [])}
+    def plan(self, asked: dict[str, Any]) -> httpx.Response:
+        change = asked.get("change_request")
+        count = asked.get("part_count", 2)
+        clarify = None
+        if change == THREE_PARTS:
+            count = 3
+        if change == TOO_MANY:
+            count, clarify = MAX_PARTS, OUT_OF_RANGE
+        if change == UNCLEAR:
+            clarify = "Different how: more parts, fewer, or other openings?"
+        start = asked.get("start_number", 3)
+        texts = {t["number"]: dict(t) for t in asked.get("texts", [])}
         if change == END_FIVE:
             texts.setdefault(5, {"number": 5})["ending_text"] = "she runs"
-        for n, t in texts.items():
-            if any(
-                len(t.get(k, "")) > self.too_long_over
-                for k in ("opening_text", "ending_text")
-            ):
-                side = (
-                    "opening"
-                    if len(t.get("opening_text", "")) > self.too_long_over
-                    else "ending"
-                )
-                return httpx.Response(
-                    422,
-                    json={
-                        "error": {
-                            "code": "part_text_too_long",
-                            "message": self.too_long_message,
-                            "part": n,
-                            "which": side,
-                            "details": {"part": n, "which": side},
-                        }
-                    },
-                )
         default = {
             3: ("Mira finds the key", "the door is already open"),
             4: ("Someone is inside", "she drops the key"),
             5: ("The lights go out", "he says her name"),
         }
-        sent = body.get("splits")
-        splits = (
-            sent
-            if sent is not None and count == body.get("part_count")
-            else SPLITS.get(count)
-        )
         parts = []
         for n in range(start, start + count):
             opening, ending = default.get(n, (f"opening {n}", f"ending {n}"))
@@ -148,19 +138,32 @@ class PlanServer:
             ),
             "Make it, or tell me what to change?",
         ]
+        plan_id = f"plan_{len(self.kept) + 1}"
+        self.kept[plan_id] = {
+            "episodes": asked.get("episodes"),
+            "title": asked.get("title"),
+            "part_count": count,
+            "start_number": start,
+            "texts": [
+                {
+                    "number": p["number"],
+                    "opening_text": p["opening_text"],
+                    "ending_text": p["ending_text"],
+                }
+                for p in parts
+            ],
+        }
         plan: dict[str, Any] = {
+            "plan_id": plan_id,
             "part_count": count,
             "suggested_part_count": 2,
             "max_part_count": MAX_PARTS,
             "start_number": start,
             "suggested_start_number": 3,
             "parts": parts,
-            "splits": splits,
             "summary": "\n".join(summary),
-            "clarify": None,
+            "clarify": clarify,
         }
-        if change == UNCLEAR:
-            plan["clarify"] = "Different how: more parts, fewer, or other openings?"
         return httpx.Response(200, json=plan)
 
 
@@ -180,7 +183,7 @@ def args(**over: Any) -> SimpleNamespace:
     base = dict(
         list=False, episodes=["sp_a:1", "sp_b:1"], show=None, title=None, wait=None, json=False,
         file=[], music_price=False, new_music=False, parts=None, start_number=None, part_text=[],
-        change=None, yes=False,
+        change=None, yes=False, plan=None,
     )  # fmt: skip
     return SimpleNamespace(**{**base, **over})
 
@@ -206,35 +209,38 @@ def screen(out: str) -> list[str]:
     return lines[: len(lines) - lines[::-1].index(picked_cut.GO_AHEAD)]
 
 
-TWO_PART_PRINTOUT = [
-    "I'll split this into 2 parts:",
-    'Part 3: starts "Mira finds the key", ends "the door is already open"',
-    'Part 4: starts "Someone is inside", ends "she drops the key"',
-    "Part 3 plays Dead Heat ep 1.",
-    "Part 4 plays Low Tide ep 1.",
-    "Make it, or tell me what to change?",
-    picked_cut.GO_AHEAD,
-]
-THREE_PART_PRINTOUT = [
-    "I'll split this into 3 parts:",
-    'Part 3: starts "Mira finds the key", ends "the door is already open"',
-    'Part 4: starts "Someone is inside", ends "she drops the key"',
-    'Part 5: starts "The lights go out", ends "he says her name"',
-    "Part 3 plays Dead Heat ep 1.",
-    "Part 4 plays Low Tide ep 1.",
-    "Part 5 plays Low Tide ep 1.",
-    "Make it, or tell me what to change?",
-    picked_cut.GO_AHEAD,
-]
+def two_parts(plan_id: str) -> list[str]:
+    return [
+        f"Plan id: {plan_id}",
+        "I'll split this into 2 parts:",
+        'Part 3: starts "Mira finds the key", ends "the door is already open"',
+        'Part 4: starts "Someone is inside", ends "she drops the key"',
+        "Part 3 plays Dead Heat ep 1.",
+        "Part 4 plays Low Tide ep 1.",
+        "Make it, or tell me what to change?",
+        picked_cut.GO_AHEAD,
+    ]
+
+
+def three_parts(plan_id: str) -> list[str]:
+    return [
+        f"Plan id: {plan_id}",
+        "I'll split this into 3 parts:",
+        'Part 3: starts "Mira finds the key", ends "the door is already open"',
+        'Part 4: starts "Someone is inside", ends "she drops the key"',
+        'Part 5: starts "The lights go out", ends "he says her name"',
+        "Part 3 plays Dead Heat ep 1.",
+        "Part 4 plays Low Tide ep 1.",
+        "Part 5 plays Low Tide ep 1.",
+        "Make it, or tell me what to change?",
+        picked_cut.GO_AHEAD,
+    ]
+
+
 EPISODES = [
     {"spine_id": "sp_a", "episode": 1},
     {"spine_id": "sp_b", "episode": 1},
 ]
-THREE_PART_TEXTS = [
-    {"number": 3, "opening_text": "Mira finds the key", "ending_text": "the door is already open"},
-    {"number": 4, "opening_text": "Someone is inside", "ending_text": "she drops the key"},
-    {"number": 5, "opening_text": "The lights go out", "ending_text": "he says her name"},
-]  # fmt: skip
 
 
 def test_the_servers_summary_and_every_part_are_printed_then_one_question(
@@ -251,132 +257,77 @@ def test_the_servers_summary_and_every_part_are_printed_then_one_question(
 
     monkeypatch.setattr("builtins.input", at_question)
     assert cut_command(args()) == 0
-    assert seen_at_question[0].splitlines() == TWO_PART_PRINTOUT
+    assert seen_at_question[0].splitlines() == two_parts("plan_1")
     assert seen_at_question[0].count("Make it") == 1, "asked twice"
 
 
-def test_typed_words_go_to_the_server_as_the_change_and_the_new_plan_is_asked_again(
+def test_typed_words_go_to_the_server_against_the_plan_shown_and_the_new_plan_is_asked_again(
     server: PlanServer,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     answers(monkeypatch, THREE_PARTS, "n")
     assert cut_command(args()) == 5
-    assert server.plans() == [
-        {"episodes": EPISODES, "title": None},
-        {
-            "episodes": EPISODES,
-            "title": None,
-            "part_count": 2,
-            "start_number": 3,
-            "texts": THREE_PART_TEXTS[:2],
-            "splits": SPLITS[2],
-            "change_request": THREE_PARTS,
-        },
-    ]
+    assert server.plans() == [{"episodes": EPISODES, "title": None}]
+    assert server.changes() == [("plan_1", {"change_request": THREE_PARTS})]
     assert server.creates() == []
-    assert screen(capsys.readouterr().out) == TWO_PART_PRINTOUT + THREE_PART_PRINTOUT
+    assert screen(capsys.readouterr().out) == two_parts("plan_1") + three_parts(
+        "plan_2"
+    )
 
 
-def test_a_second_change_keeps_the_first(
+def test_a_second_change_keeps_the_first_and_yes_makes_the_last_plan_by_its_id_alone(
     server: PlanServer,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     answers(monkeypatch, THREE_PARTS, END_FIVE, "y")
     assert cut_command(args()) == 0
-    texts = [*THREE_PART_TEXTS[:2], {**THREE_PART_TEXTS[2], "ending_text": "she runs"}]
-    assert server.plans()[2] == {
-        "episodes": EPISODES,
-        "title": None,
-        "part_count": 3,
-        "start_number": 3,
-        "texts": THREE_PART_TEXTS,
-        "splits": SPLITS[3],
-        "change_request": END_FIVE,
-    }
-    assert server.creates() == [
-        {
-            "episodes": EPISODES,
-            "title": None,
-            "part_count": 3,
-            "start_number": 3,
-            "texts": texts,
-            "splits": SPLITS[3],
-        }
+    assert server.changes() == [
+        ("plan_1", {"change_request": THREE_PARTS}),
+        ("plan_2", {"change_request": END_FIVE}),
     ]
+    assert server.creates() == [{"plan_id": "plan_3"}]
     printed = screen(capsys.readouterr().out)
-    assert printed[len(TWO_PART_PRINTOUT) + len(THREE_PART_PRINTOUT) :] == [
-        *THREE_PART_PRINTOUT[:3],
+    assert printed[len(two_parts("plan_1")) + len(three_parts("plan_2")) :] == [
+        *three_parts("plan_3")[:4],
         'Part 5: starts "The lights go out", ends "she runs"',
-        *THREE_PART_PRINTOUT[4:],
+        *three_parts("plan_3")[5:],
     ]
 
 
-def test_a_part_length_out_of_range_is_shown_plainly_and_the_last_plan_asked_again(
-    server: PlanServer,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    answers(monkeypatch, "make part 4 tiny", "y")
-    server_plan = server.plan
-
-    def too_short(body: dict[str, Any]) -> httpx.Response:
-        if body.get("change_request") == "make part 4 tiny":
-            refusal = {
-                "code": "part_length_out_of_range",
-                "message": "x",
-                "details": {"part": 4, "seconds": 21.4},
-            }
-            return httpx.Response(422, json={"error": refusal})
-        return server_plan(body)
-
-    server.plan = too_short  # type: ignore[method-assign]
-    assert cut_command(args()) == 0
-    assert screen(capsys.readouterr().out) == [
-        *TWO_PART_PRINTOUT,
-        "Part 4 would be 21.4 s; parts must be 35 to 68 s.",
-        *TWO_PART_PRINTOUT,
-    ]
-    assert [c["splits"] for c in server.creates()] == [SPLITS[2]]
-
-
-def test_yes_makes_exactly_the_last_plan_shown(
+def test_the_make_request_carries_the_plan_id_and_nothing_of_the_plan(
     server: PlanServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     answers(monkeypatch, THREE_PARTS, "y")
     assert cut_command(args()) == 0
-    assert server.creates() == [
-        {
-            "episodes": EPISODES,
-            "title": None,
-            "part_count": 3,
-            "start_number": 3,
-            "texts": THREE_PART_TEXTS,
-            "splits": SPLITS[3],
-        }
-    ]
-    assert not {"cover_url", "episodes", "start_s", "end_s"} & set(
-        server.creates()[0]["texts"][0]
-    )
+    (made,) = server.creates()
+    assert made == {"plan_id": "plan_2"} and set(made) == {"plan_id"}
 
 
-def test_the_servers_question_back_is_printed(
+def test_the_servers_question_back_or_what_it_did_instead_is_printed_above_the_plan(
     server: PlanServer,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    answers(monkeypatch, UNCLEAR, "")
+    answers(monkeypatch, UNCLEAR, TOO_MANY, "")
     assert cut_command(args()) == 5
     printed = screen(capsys.readouterr().out)
-    assert printed[len(TWO_PART_PRINTOUT) :] == [
+    after_first = printed[len(two_parts("plan_1")) :]
+    assert after_first[: len(two_parts("plan_2")) + 1] == [
         "Different how: more parts, fewer, or other openings?",
-        *TWO_PART_PRINTOUT,
+        *two_parts("plan_2"),
     ]
+    assert after_first[len(two_parts("plan_2")) + 1 :][:3] == [
+        OUT_OF_RANGE,
+        "Plan id: plan_3",
+        "I'll split this into 4 parts:",
+    ]
+    assert server.creates() == []
 
 
 @pytest.mark.parametrize("answer", ["n", "N", "", "no", "  "])
-def test_no_or_nothing_typed_makes_nothing(
+def test_no_or_nothing_typed_makes_nothing_and_says_how_to_pick_the_plan_up(
     server: PlanServer,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -385,7 +336,11 @@ def test_no_or_nothing_typed_makes_nothing(
     answers(monkeypatch, answer)
     assert cut_command(args()) == 5
     assert server.creates() == [] and len(server.plans()) == 1
-    assert picked_cut.NOT_CONFIRMED in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert picked_cut.NOT_CONFIRMED in err
+    assert (
+        "cut --plan plan_1 --yes" in err and 'cut --plan plan_1 --change "WORDS"' in err
+    )
 
 
 def test_no_keyboard_counts_as_no(
@@ -399,7 +354,7 @@ def test_no_keyboard_counts_as_no(
     assert server.creates() == []
 
 
-def test_change_flag_goes_to_the_plan_and_yes_makes_that_plan_without_asking(
+def test_change_flag_goes_to_the_first_plan_and_yes_makes_that_plan_without_asking(
     server: PlanServer,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -409,14 +364,11 @@ def test_change_flag_goes_to_the_plan_and_yes_makes_that_plan_without_asking(
     assert server.plans() == [
         {"episodes": EPISODES, "title": None, "change_request": THREE_PARTS}
     ]
-    assert [(c["part_count"], c["texts"]) for c in server.creates()] == [
-        (3, THREE_PART_TEXTS)
-    ]
-    assert "change_request" not in server.creates()[0]
-    assert THREE_PART_PRINTOUT[0] in capsys.readouterr().out
+    assert server.changes() == [] and server.creates() == [{"plan_id": "plan_1"}]
+    assert three_parts("plan_1")[1] in capsys.readouterr().out
 
 
-def test_flags_pass_through_to_the_plan_and_the_cut_without_asking(
+def test_first_settings_go_to_the_first_plan_only_and_make_sends_the_id(
     server: PlanServer,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -437,12 +389,90 @@ def test_flags_pass_through_to_the_plan_and_the_cut_without_asking(
         "texts": [{"number": 6, "opening_text": "Back again", "ending_text": "Gone"}],
     }
     assert {k: server.plans()[0][k] for k in wanted} == wanted
-    made = server.creates()[0]
-    assert (made["part_count"], made["start_number"]) == (3, 5)
-    assert {"number": 6, "opening_text": "Back again", "ending_text": "Gone"} in made[
-        "texts"
-    ]
+    assert server.creates() == [{"plan_id": "plan_1"}]
     assert 'Part 6: starts "Back again", ends "Gone"' in capsys.readouterr().out
+
+
+# --- cut --plan ID: a plan from an earlier run, changed or made with nothing kept on this laptop --------
+
+
+def seeded(server: PlanServer) -> str:
+    """A plan the server already kept from an earlier run (the kit printed its id and stopped)."""
+
+    server.plan({"episodes": EPISODES, "title": None})
+    return "plan_1"
+
+
+def test_plan_flag_with_words_changes_that_plan_and_asks_about_the_new_one(
+    server: PlanServer,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan_id = seeded(server)
+    answers(monkeypatch, "y")
+    assert cut_command(args(episodes=None, plan=plan_id, change=THREE_PARTS)) == 0
+    assert server.plans() == []
+    assert server.changes() == [(plan_id, {"change_request": THREE_PARTS})]
+    assert server.creates() == [{"plan_id": "plan_2"}]
+    assert screen(capsys.readouterr().out) == three_parts("plan_2")
+
+
+def test_plan_flag_with_yes_makes_that_plan_as_shown_without_a_question(
+    server: PlanServer,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan_id = seeded(server)
+    monkeypatch.setattr("builtins.input", lambda: pytest.fail("a question was asked"))
+    assert cut_command(args(episodes=None, plan=plan_id, yes=True)) == 0
+    assert server.plans() == [] and server.changes() == []
+    assert server.creates() == [{"plan_id": plan_id}]
+    assert "Part 3: https://media.example/p3.mp4" in capsys.readouterr().out
+
+
+def test_plan_flag_with_words_and_yes_changes_then_makes(
+    server: PlanServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan_id = seeded(server)
+    monkeypatch.setattr("builtins.input", lambda: pytest.fail("a question was asked"))
+    assert (
+        cut_command(args(episodes=None, plan=plan_id, change=THREE_PARTS, yes=True))
+        == 0
+    )
+    assert server.changes() == [(plan_id, {"change_request": THREE_PARTS})]
+    assert server.creates() == [{"plan_id": "plan_2"}]
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"episodes": None},
+        {"episodes": ["sp_a:1", "sp_b:1"], "yes": True},
+        {"episodes": None, "show": "Dead Heat", "yes": True},
+        {"episodes": None, "title": "X", "yes": True},
+        {"episodes": None, "new_music": True, "yes": True},
+        {"episodes": None, "parts": 3, "yes": True},
+        {"episodes": None, "part_text": ["3:ending=Gone"], "yes": True},
+    ],
+)
+def test_plan_flag_alone_or_with_fresh_plan_settings_is_refused_before_any_call(
+    server: PlanServer, capsys: pytest.CaptureFixture[str], over: dict[str, Any]
+) -> None:
+    assert cut_command(args(plan="plan_1", **over)) == 2
+    assert server.seen == []
+    assert "Stopped:" in capsys.readouterr().err
+
+
+def test_a_plan_the_server_no_longer_has_stops_plainly(
+    server: PlanServer, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert cut_command(args(episodes=None, plan="plan_9", yes=True)) == 5
+    assert server.creates() == [{"plan_id": "plan_9"}]
+    assert capsys.readouterr().err.strip() == PLAN_GONE
+    assert (
+        cut_command(args(episodes=None, plan="plan_9", change=THREE_PARTS, yes=True))
+        == 5
+    )
 
 
 def test_no_instagram_or_tiktok_in_anything_a_punchy_edit_prints(
@@ -473,95 +503,6 @@ def test_a_bad_part_text_is_refused_before_any_call(
     assert server.seen == []
 
 
-def test_too_long_text_is_shown_plainly_and_asked_again(
-    server: PlanServer,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    server.too_long_over = 20
-    answers(monkeypatch, "y")
-    long_ending = "4:ending=she drops the key and runs into the night"
-    assert cut_command(args(part_text=[long_ending])) == 0
-    assert screen(capsys.readouterr().out) == [TOO_LONG, *TWO_PART_PRINTOUT]
-    assert [c["texts"][1]["ending_text"] for c in server.creates()] == [
-        "she drops the key"
-    ]
-
-
-def test_too_long_without_words_names_the_part_from_the_error_details(
-    server: PlanServer, capsys: pytest.CaptureFixture[str]
-) -> None:
-    server.too_long_over = 20
-    server.too_long_message = ""
-    long_ending = "4:ending=she drops the key and runs into the night"
-    assert cut_command(args(part_text=[long_ending], yes=True)) == 2
-    assert capsys.readouterr().err.strip() == (
-        "Stopped: The text for part 4 is too long to fit. Nothing was made."
-    )
-
-
-def test_too_many_parts_typed_is_shown_plainly_and_the_last_plan_asked_again(
-    server: PlanServer,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    answers(monkeypatch, "9 parts please", "y")
-    server_plan = server.plan
-
-    def nine_parts(body: dict[str, Any]) -> httpx.Response:
-        if body.get("change_request") == "9 parts please":
-            body = {**body, "part_count": 9}
-        return server_plan(body)
-
-    server.plan = nine_parts  # type: ignore[method-assign]
-    assert cut_command(args()) == 0
-    assert screen(capsys.readouterr().out) == [
-        *TWO_PART_PRINTOUT,
-        OUT_OF_RANGE,
-        *TWO_PART_PRINTOUT,
-    ]
-    assert [c["part_count"] for c in server.creates()] == [2]
-
-
-def test_a_typed_change_the_text_cannot_fit_is_shown_plainly_and_the_last_plan_asked_again(
-    server: PlanServer,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    answers(monkeypatch, THREE_PARTS, "end part 4 with a very long sentence", "y")
-    server_plan = server.plan
-
-    def too_long(body: dict[str, Any]) -> httpx.Response:
-        if body.get("change_request") == "end part 4 with a very long sentence":
-            error = {
-                "code": "part_text_too_long",
-                "message": TOO_LONG,
-                "details": {"part": 4, "which": "ending"},
-            }
-            return httpx.Response(422, json={"error": error})
-        return server_plan(body)
-
-    server.plan = too_long  # type: ignore[method-assign]
-    assert cut_command(args()) == 0
-    assert screen(capsys.readouterr().out) == [
-        *TWO_PART_PRINTOUT,
-        *THREE_PART_PRINTOUT,
-        TOO_LONG,
-        *THREE_PART_PRINTOUT,
-    ]
-    assert [c["part_count"] for c in server.creates()] == [3]
-
-
-def test_too_many_parts_under_yes_stops_with_the_servers_words(
-    server: PlanServer, capsys: pytest.CaptureFixture[str]
-) -> None:
-    assert cut_command(args(parts=9, yes=True)) == 2
-    assert server.creates() == []
-    assert (
-        capsys.readouterr().err.strip() == f"Stopped: {OUT_OF_RANGE} Nothing was made."
-    )
-
-
 def test_an_edit_that_is_not_ready_makes_nothing(
     server: PlanServer,
     monkeypatch: pytest.MonkeyPatch,
@@ -582,22 +523,12 @@ def test_an_edit_that_is_not_ready_makes_nothing(
     )
 
 
-def test_new_music_goes_to_the_plan_and_the_cut(server: PlanServer) -> None:
+def test_new_music_goes_to_the_plan_and_make_sends_only_the_id(
+    server: PlanServer,
+) -> None:
     assert cut_command(args(new_music=True, yes=True)) == 0
     assert server.plans()[0]["new_music"] is True
-    assert server.creates()[0]["new_music"] is True
-
-
-def test_too_long_text_under_yes_stops_with_the_servers_words(
-    server: PlanServer, capsys: pytest.CaptureFixture[str]
-) -> None:
-    server.too_long_over = 20
-    assert (
-        cut_command(args(part_text=["4:ending=she drops the key and runs"], yes=True))
-        == 2
-    )
-    assert server.creates() == []
-    assert capsys.readouterr().err.strip() == f"Stopped: {TOO_LONG} Nothing was made."
+    assert server.creates() == [{"plan_id": "plan_1"}]
 
 
 def test_only_the_parts_are_offered_never_the_whole_video(
@@ -625,6 +556,7 @@ def test_cut_help_offers_no_whole_video_and_no_local_files(
         and "--part-text" in text
         and "--yes" in text
     )
+    assert "--plan PLAN_ID" in text
 
 
 @pytest.mark.parametrize(
@@ -693,14 +625,13 @@ def test_desk_episodes_print_every_part_before_anything_is_made(
 
     monkeypatch.setattr("builtins.input", at_question)
     assert desk_run(command, post_desk) == 0
-    assert seen_at_question[0].splitlines() == TWO_PART_PRINTOUT
-    made = server.creates()
-    assert len(made) == 1
-    assert made[0]["episodes"] == [
+    assert seen_at_question[0].splitlines() == two_parts("plan_1")
+    (planned,) = server.plans()
+    assert planned["episodes"] == [
         {"spine_id": "spine_test", "episode": 2},
         {"spine_id": "spine_test", "episode": 1},
     ]
-    assert (made[0]["part_count"], made[0]["start_number"]) == (2, 3)
+    assert server.creates() == [{"plan_id": "plan_1"}]
     assert not any(path.startswith("/v1/spines/") for _m, path, _b in server.seen)
     out = capsys.readouterr().out
     assert "https://media.example/p3.mp4" in out and "whole.mp4" not in out
@@ -733,11 +664,7 @@ def test_desk_episodes_yes_goes_ahead_with_the_settings_given(
     assert desk_run(command, post_desk, *extra, "--part-text", "8:ending=GONE") == 0
     sent = {"part_count": 3, "start_number": 7, "texts": [{"number": 8, "ending_text": "GONE"}]}  # fmt: skip
     assert {k: server.plans()[0][k] for k in sent} == sent
-    made = server.creates()[0]
-    assert (made["part_count"], made["start_number"]) == (3, 7)
-    assert {"number": 8, "opening_text": "opening 8", "ending_text": "GONE"} in made[
-        "texts"
-    ]
+    assert server.creates() == [{"plan_id": "plan_1"}]
     assert 'Part 8: starts "opening 8", ends "GONE"' in (capsys.readouterr().out)
 
 

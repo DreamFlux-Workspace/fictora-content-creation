@@ -15,9 +15,11 @@ from creation.post.picked_cut import (
     BEING_REMADE,
     NEWEST_VERSION_NOTICE,
     CutStop,
+    PartChoice,
     Pick,
     cut_command,
     parse_ref,
+    plan_parts,
     run_cut,
     select_show,
 )
@@ -111,6 +113,7 @@ def plan_answer(body: dict[str, Any]) -> dict[str, Any]:
 
     count, start = body.get("part_count", 2), body.get("start_number", 1)
     return {
+        "plan_id": "p1",
         "part_count": count,
         "suggested_part_count": 2,
         "start_number": start,
@@ -125,6 +128,10 @@ def plan_answer(body: dict[str, Any]) -> dict[str, Any]:
 
 def created(server: Server) -> tuple[str, str, Any]:
     return next(s for s in server.seen if s[:2] == ("POST", "/v1/series-cuts"))
+
+
+def planned(server: Server) -> tuple[str, str, Any]:
+    return next(s for s in server.seen if s[:2] == ("POST", "/v1/series-cuts/plan"))
 
 
 def transport(server: Server) -> httpx.MockTransport:
@@ -276,7 +283,8 @@ def test_poll_retries_busy_and_dropped_connections_until_ready() -> None:
 
     waits: list[float] = []
     lines = run_cut(
-        P2,
+        "p1",
+        picked=2,
         api=API,
         transport=httpx.MockTransport(flaky),
         sleep=waits.append,
@@ -294,7 +302,8 @@ def test_poll_gives_up_with_a_plain_line_at_the_deadline() -> None:
     now = [0.0]
     with pytest.raises(CutStop, match="busy or restarting"):
         run_cut(
-            P2,
+            "p1",
+            picked=2,
             wait_seconds=30,
             api=API,
             transport=httpx.MockTransport(down),
@@ -316,20 +325,15 @@ def test_show_alone_sends_every_episode_in_order_and_prints_the_cut(
     stand_in_api: Server, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert cut_command(args(show="Exit Strategy", title="Exit")) == 0
-    post = created(stand_in_api)
+    post = planned(stand_in_api)
     assert post[2] == {
         "episodes": [
             {"spine_id": "sp_a", "episode": 1},
             {"spine_id": "sp_b", "episode": 1},
         ],
         "title": "Exit",
-        "part_count": 2,
-        "start_number": 1,
-        "texts": [
-            {"number": 1, "opening_text": "o", "ending_text": "e"},
-            {"number": 2, "opening_text": "o", "ending_text": "e"},
-        ],
     }
+    assert created(stand_in_api)[2] == {"plan_id": "p1"}
     out = capsys.readouterr().out
     assert "all.mp4" not in out
     assert "Part 1: https://media.example/p1.mp4" in out
@@ -341,7 +345,7 @@ def test_show_alone_sends_every_episode_in_order_and_prints_the_cut(
 
 def test_episodes_are_sent_in_the_order_given(stand_in_api: Server) -> None:
     assert cut_command(args(episodes=["sp_b:1", "sp_a:1"])) == 0
-    post = created(stand_in_api)
+    post = planned(stand_in_api)
     assert [e["spine_id"] for e in post[2]["episodes"]] == ["sp_b", "sp_a"]
 
 
@@ -403,8 +407,7 @@ def test_polls_until_ready_and_says_it_is_working() -> None:
     )
     now = [0.0]
     said: list[str] = []
-    lines = run_cut(
-        P2, api=API, transport=transport(server),
+    lines = run_cut("p1", picked=2, api=API, transport=transport(server),
         sleep=lambda s: now.__setitem__(0, now[0] + 20), clock=lambda: now[0], progress=said.append,
     )  # fmt: skip
     assert (
@@ -419,7 +422,7 @@ def test_polls_until_ready_and_says_it_is_working() -> None:
 def test_failed_cut_prints_the_servers_reason_and_retry_by_id() -> None:
     server = Server(polls=[{"status": "failed", "reason": "episode 2 has no sound"}])
     with pytest.raises(CutStop, match="episode 2 has no sound") as stop:
-        run_cut(P2, api=API, transport=transport(server))
+        run_cut("p1", picked=2, api=API, transport=transport(server))
     assert stop.value.line.endswith("To try again, run: fictora-produce cut-retry c1")
 
 
@@ -428,7 +431,8 @@ def test_a_cut_being_made_again_says_so_once_on_the_cut_path() -> None:
     server = Server(polls=[remade, remade, {"status": "ready", "series_cut": CUT}])
     said: list[str] = []
     run_cut(
-        P2,
+        "p1",
+        picked=2,
         api=API,
         transport=transport(server),
         sleep=lambda s: None,
@@ -438,7 +442,7 @@ def test_a_cut_being_made_again_says_so_once_on_the_cut_path() -> None:
 
 
 def test_ready_cut_prints_its_id_for_rename_and_save() -> None:
-    lines = run_cut(P2, api=API, transport=transport(Server()))
+    lines = run_cut("p1", picked=2, api=API, transport=transport(Server()))
     assert lines[-1].startswith("Edit id: c1.")
     assert "cut-rename c1" in lines[-1] and "cut-save c1 --part N" in lines[-1]
 
@@ -446,7 +450,7 @@ def test_ready_cut_prints_its_id_for_rename_and_save() -> None:
 def test_failed_music_says_to_retry_the_same_edit_by_id() -> None:
     music = {"state": "failed", "message": "the music could not be made."}
     server = Server(polls=[{"status": "ready", "series_cut": CUT, "music": music}])
-    lines = run_cut(P2, api=API, transport=transport(server), new_music=True)
+    lines = run_cut("p1", picked=2, api=API, transport=transport(server))
     assert "To try again, run: fictora-produce cut-retry c1" in lines
 
 
@@ -455,7 +459,8 @@ def test_waiting_too_long_says_to_retry_the_same_edit_by_id() -> None:
     now = [0.0]
     with pytest.raises(CutStop, match="fictora-produce cut-retry c1"):
         run_cut(
-            P2,
+            "p1",
+            picked=2,
             wait_seconds=30,
             api=API,
             transport=transport(server),
@@ -469,7 +474,7 @@ def test_pick_size_and_duplicates_are_refused_before_sending(
     refs: list[Pick], stand_in_api: Server
 ) -> None:
     with pytest.raises(CutStop) as stop:
-        run_cut(refs, api=API, transport=transport(stand_in_api))
+        plan_parts(refs, PartChoice(), api=API, transport=transport(stand_in_api))
     assert stop.value.code == 2 and stand_in_api.seen == []
 
 
@@ -485,10 +490,13 @@ def test_cut_is_a_registered_command() -> None:
 
 
 def test_more_than_twenty_episodes_are_fine(stand_in_api: Server) -> None:
-    run_cut(
-        [Pick("a", i) for i in range(1, 31)], api=API, transport=transport(stand_in_api)
+    plan_parts(
+        [Pick("a", i) for i in range(1, 31)],
+        PartChoice(),
+        api=API,
+        transport=transport(stand_in_api),
     )
-    post = created(stand_in_api)
+    post = planned(stand_in_api)
     assert len(post[2]["episodes"]) == 30
 
 
@@ -501,15 +509,15 @@ def test_no_files_named_asks_nothing_and_sends_no_video_url(
     monkeypatch.setattr("sys.stdin", None)
     server = Server()
 
-    lines = run_cut(
+    plan = plan_parts(
         [Pick("sp_a", 1), Pick("sp_b", 1)],
+        PartChoice(),
         api=API,
         transport=transport(server),
-        sleep=lambda s: None,
     )
 
-    assert lines
-    post = created(server)
+    assert plan["parts"]
+    post = planned(server)
     assert all("video_url" not in e for e in post[2]["episodes"])
     assert not any(s[1].endswith("/uploads") or "upload" in s[1] for s in server.seen)
 
@@ -521,7 +529,8 @@ def test_no_files_named_tells_the_creator_once(monkeypatch: pytest.MonkeyPatch) 
     said: list[str] = []
 
     run_cut(
-        [Pick("sp_a", 1), Pick("sp_b", 1)],
+        "p1",
+        picked=2,
         api=API,
         transport=transport(Server()),
         sleep=lambda s: None,
@@ -595,7 +604,7 @@ def test_music_not_offered_says_why_in_plain_words(
 
 def test_default_cut_never_asks_for_new_music(stand_in_api: Server) -> None:
     assert cut_command(args(episodes=["sp_a:1", "sp_b:1"])) == 0
-    post = created(stand_in_api)
+    post = planned(stand_in_api)
     assert "new_music" not in post[2]
     assert not any(s[1].endswith("/music-offer") for s in stand_in_api.seen)
 
@@ -614,10 +623,11 @@ def test_new_music_passes_the_yes_and_prints_the_music_state(
         }
     ]
     assert cut_command(args(episodes=["sp_a:1", "sp_b:1"], new_music=True)) == 0
-    post = created(stand_in_api)
+    post = planned(stand_in_api)
     assert (
         post[2]["new_music"] is True and "music_quote" not in post[2]
     )  # Sokii pays: no price goes back
+    assert created(stand_in_api)[2] == {"plan_id": "p1"}
     assert "New music: New music is laid under the edit." in capsys.readouterr().out
 
 

@@ -187,7 +187,8 @@ def add_part_args(parser: argparse.ArgumentParser) -> None:
     )  # fmt: skip
     parser.add_argument(
         "--change", default=None, metavar="WORDS",
-        help="What the human wants changed in the server's plan, in their words (as if typed at the question).",
+        help="What the human wants changed in the server's plan, in their words (as if typed at the question); "
+        "with cut --plan ID, the change to that plan.",
     )  # fmt: skip
     parser.add_argument(
         "--yes", action="store_true",
@@ -888,6 +889,12 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     # Removed 5 Nov 2026 (a laptop file never reached the episode); kept only to refuse in plain words.
     cut.add_argument("--file", action="append", default=[], help=argparse.SUPPRESS)
     add_part_args(cut)
+    cut.add_argument(
+        "--plan", default=None, metavar="PLAN_ID",
+        help="A plan id an earlier run printed (the server keeps a creator's newest 30): with --change WORDS the "
+        "server changes that plan and the kit prints the new one; with --yes it makes it as shown. No episodes, "
+        "title or music flags: the plan already holds them. Nothing is kept on this computer.",
+    )  # fmt: skip
     cut.add_argument("--title", default=None, help="Optional name for the cut.")
     cut.add_argument(
         "--music-price", action="store_true",

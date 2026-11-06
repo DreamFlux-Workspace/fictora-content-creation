@@ -6,9 +6,10 @@ cut on this laptop, no state is kept, and the files stay on the server (links ar
 
 Parts only (founder, 5 Nov 2026): a punchy edit is split into parts and only the parts are made. Before
 anything is made the kit asks the server for the plan and prints the server's own words, which end
-"Make it, or tell me what to change?", with the episodes each part plays. Anything else the human
-types goes back to the server as the change they want, with the last plan as it was answered, so
-each change keeps the ones before it. Nothing is made until they say yes.
+"Make it, or tell me what to change?", with the episodes each part plays. The server keeps every
+plan it answers under a plan id; anything else the human types goes back as the change they want,
+against that id, so each change keeps the ones before it, and their yes sends the id alone. The kit
+never sends a plan's fields back and keeps nothing: ``--plan ID`` carries the id between runs.
 
 Only what the server holds (5 Nov 2026): the edit is cut from each episode as the server keeps it.
 A video file on this laptop is never uploaded for an episode; a better take has to become that
@@ -26,7 +27,7 @@ import json
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,7 @@ CUTS_ROUTE = "/v1/series-cuts"
 CUT_ROUTE = "/v1/series-cuts/{series_cut_id}"
 MUSIC_OFFER_ROUTE = "/v1/series-cuts/music-offer"
 PLAN_ROUTE = "/v1/series-cuts/plan"
+PLAN_CHANGE_ROUTE = "/v1/series-cuts/plan/{plan_id}/change"
 #: The server needs a session header; a pick spans desks, so the kit uses one fixed id.
 SESSION_ID = "kit-picked-series-cut"
 POLL_SECONDS = 5.0
@@ -70,6 +72,10 @@ LOCAL_FILES_GONE = (
     "first, then cut again. Nothing was made or uploaded."
 )
 NOT_CONFIRMED = "Stopped: nobody said make it, so nothing was made."
+PLAN_GONE = (
+    "NOT DONE: the server no longer has that plan (it keeps a creator's newest 30). Run cut again with the "
+    "episodes to plan afresh; nothing was made."
+)
 NO_MUSIC_ROUTE = "NOT DONE: the server can't price new music for an edit yet. Tell the core team; nothing was made."
 NO_PLAN_ROUTE = "NOT DONE: the server can't plan the parts yet. Tell the core team; nothing was made."
 OLD_SERVER = (
@@ -88,22 +94,20 @@ class Pick:
 
 @dataclass(frozen=True)
 class PartChoice:
-    """What the human set for the parts; anything left ``None`` or out is the server's suggestion.
+    """What the human set for the parts on the first plan; anything left ``None`` or out is the server's.
 
     ``texts`` maps a part's number as printed (``Part 4``) to the fields it overrides,
-    ``opening_text`` and/or ``ending_text``. ``splits`` is the last plan's own split points, sent
-    back as the server answered them and never worked out here. ``change_request`` is what the
-    human typed (or ``--change``) for the server to change in its plan; only the plan route takes it.
+    ``opening_text`` and/or ``ending_text``. ``change_request`` is what the human typed (or
+    ``--change``) for the server to change in its plan.
     """
 
     part_count: int | None = None
     start_number: int | None = None
     texts: Mapping[int, Mapping[str, str]] = field(default_factory=dict)
     change_request: str | None = None
-    splits: Sequence[float] | None = None
 
     def body(self) -> dict[str, Any]:
-        """The optional plan fields, as the plan and the cut both take them."""
+        """The first plan's optional fields."""
 
         out: dict[str, Any] = {}
         if self.part_count is not None:
@@ -114,8 +118,6 @@ class PartChoice:
             out["texts"] = [
                 {"number": n, **dict(self.texts[n])} for n in sorted(self.texts)
             ]
-        if self.splits is not None:
-            out["splits"] = list(self.splits)
         if self.change_request:
             out["change_request"] = self.change_request
         return out
@@ -128,30 +130,6 @@ class CutStop(Exception):
         super().__init__(line)
         self.line = line
         self.code = code
-
-
-class PlanRefused(CutStop):
-    """The server's 422 on a setting: a text won't fit, the part count or a part's length is out of range.
-
-    ``message`` is the plain words to show. ``setting`` names what to drop to plan again:
-    ``"texts"``, ``"part_count"`` or ``"splits"``.
-    """
-
-    def __init__(self, message: str, setting: str) -> None:
-        self.message = message
-        self.setting = setting
-        super().__init__(f"Stopped: {message} Nothing was made.", 2)
-
-    def without_it(self, choice: PartChoice) -> PartChoice:
-        """The human's settings minus the one the server refused (and minus the typed change)."""
-
-        if self.setting == "texts":
-            return PartChoice(
-                choice.part_count, choice.start_number, splits=choice.splits
-            )
-        if self.setting == "splits":
-            return PartChoice(choice.part_count, choice.start_number, choice.texts)
-        return PartChoice(None, choice.start_number, choice.texts)
 
 
 def parse_ref(raw: str) -> Pick:
@@ -327,29 +305,9 @@ def _check(response: httpx.Response, *, what: str) -> Any:
             + ". Finish it first, or leave it out of the pick. Nothing was made."
         )
     error = _error(body)
-    details = error.get("details")
-    details = details if isinstance(details, dict) else {}
     message = str(error.get("message") or "").strip()
-    if response.status_code == 422 and error.get("code") == "part_text_too_long":
-        part = details.get("part", error.get("part"))
-        raise PlanRefused(
-            message or f"The text for part {part} is too long to fit.", "texts"
-        )
-    if (
-        response.status_code == 422
-        and error.get("code") == "series_cut_parts_out_of_range"
-    ):
-        raise PlanRefused(
-            message
-            or f"This edit can have 1 to {details.get('parts_max')} parts "
-            f"(the server suggests {details.get('parts_suggested')}).",
-            "part_count",
-        )
-    if response.status_code == 422 and error.get("code") == "part_length_out_of_range":
-        which = f"Part {details.get('part')} would be {details.get('seconds')} s"
-        if "part" not in details or "seconds" not in details:
-            which = "A part would run too short or too long"
-        raise PlanRefused(f"{which}; parts must be 35 to 68 s.", "splits")
+    if response.status_code == 404 and error.get("code") == "series_cut_plan_not_found":
+        raise CutStop(PLAN_GONE)
     if response.status_code == 409 and error.get("code") == "series_cut_not_ready":
         raise CutStop(
             f"NOT DONE: {message or 'the edit is not ready yet.'} Run the same command again later; nothing was made."
@@ -419,15 +377,28 @@ def _entries(picks: Sequence[Pick]) -> list[dict[str, Any]]:
     return [{"spine_id": p.spine_id, "episode": p.episode} for p in picks]
 
 
-def _cut_body(
+def _plan_body(
     picks: Sequence[Pick], choice: PartChoice, *, title: str | None, new_music: bool
 ) -> dict[str, Any]:
-    """The body the plan and the cut both take (the cut ignores ``change_request``)."""
+    """The first plan's body: the picks, the title, the music yes and the human's first settings."""
 
     body: dict[str, Any] = {"episodes": _entries(picks), "title": title}
     if new_music:
         body["new_music"] = True
     return {**body, **choice.body()}
+
+
+def _planned(response: httpx.Response) -> Mapping[str, Any]:
+    if response.status_code in (404, 405) and _route_missing(_body(response)):
+        raise CutStop(NO_PLAN_ROUTE)
+    plan = _check(response, what="plan the parts")
+    if not [p for p in plan.get("parts") or [] if isinstance(p, dict)] or not plan.get(
+        "plan_id"
+    ):
+        raise CutStop(
+            "NOT DONE: the server planned no parts. Tell the core team; nothing was made."
+        )
+    return plan
 
 
 def plan_parts(
@@ -439,12 +410,10 @@ def plan_parts(
     api: tuple[str, Mapping[str, str]] | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> Mapping[str, Any]:
-    """The server's plan for the parts of this edit; nothing is made.
+    """The server's first plan for the parts of this edit, kept there under its ``plan_id``; nothing is made.
 
     Raises
     ------
-    PlanRefused
-        When a text the human set won't fit, or the part count they set is out of range.
     CutStop
         With the plain NOT DONE line when the server cannot plan.
     """
@@ -452,16 +421,29 @@ def plan_parts(
     _check_picks(picks)
     client, base, headers = _client(transport, api)
     with client:
-        body = _cut_body(picks, choice, title=title, new_music=new_music)
-        response = _post(client, base + PLAN_ROUTE, headers, body)
-        if response.status_code in (404, 405) and _route_missing(_body(response)):
-            raise CutStop(NO_PLAN_ROUTE)
-        plan = _check(response, what="plan the parts")
-    if not [p for p in plan.get("parts") or [] if isinstance(p, dict)]:
-        raise CutStop(
-            "NOT DONE: the server planned no parts. Tell the core team; nothing was made."
-        )
-    return plan
+        body = _plan_body(picks, choice, title=title, new_music=new_music)
+        return _planned(_post(client, base + PLAN_ROUTE, headers, body))
+
+
+def change_plan(
+    plan_id: str,
+    words: str,
+    *,
+    api: tuple[str, Mapping[str, str]] | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> Mapping[str, Any]:
+    """The human's words applied by the server over the plan it kept under ``plan_id``: a new plan, nothing made.
+
+    Raises
+    ------
+    CutStop
+        With the plain NOT DONE line when the server no longer has the plan or cannot plan.
+    """
+
+    client, base, headers = _client(transport, api)
+    with client:
+        url = base + PLAN_CHANGE_ROUTE.format(plan_id=plan_id)
+        return _planned(_post(client, url, headers, {"change_request": words}))
 
 
 def _clock(seconds: Any) -> str:
@@ -481,10 +463,20 @@ def plan_lines(plan: Mapping[str, Any]) -> list[str]:
     lines = summary.splitlines() if summary else _part_lines(plan)
     return [
         *([clarify] if clarify else []),
+        f"Plan id: {plan.get('plan_id')}",
         *lines[:-1],
         *_episode_lines(plan),
         *lines[-1:],
     ]
+
+
+def not_confirmed(plan_id: str) -> str:
+    """The stop line when nobody said make it, with how to pick the plan up again by its id."""
+
+    return (
+        f"{NOT_CONFIRMED} To change plan {plan_id}: fictora-produce cut --plan {plan_id} "
+        f'--change "WORDS". To make it: fictora-produce cut --plan {plan_id} --yes.'
+    )
 
 
 def _episode_lines(plan: Mapping[str, Any]) -> list[str]:
@@ -517,54 +509,40 @@ def _part_lines(plan: Mapping[str, Any]) -> list[str]:
     return [*lines, "Make it, or tell me what to change?"]
 
 
-def planned_choice(plan: Mapping[str, Any]) -> PartChoice:
-    """Exactly the parts this plan shows: its count, first number, every part's texts and its splits.
-
-    The plan's other part fields (``cover_url``, ``episodes``, ``start_s``, ``end_s``) are for
-    showing only: the server refuses them on a request.
-    """
-
-    texts = {
-        int(p["number"]): {k: str(p[k]) for k in TEXT_SIDES.values() if p.get(k)}
-        for p in plan.get("parts") or []
-        if isinstance(p, dict) and str(p.get("number", "")).isdecimal()
-    }
-    splits = plan.get("splits")
-    return PartChoice(
-        int(plan["part_count"]),
-        int(plan["start_number"]),
-        {n: t for n, t in texts.items() if t},
-        splits=list(splits) if isinstance(splits, list) else None,
-    )
-
-
 def confirm_parts(
-    picks: Sequence[Pick],
+    picks: Sequence[Pick] | None,
     choice: PartChoice,
     *,
     title: str | None = None,
     new_music: bool = False,
     yes: bool = False,
+    plan_id: str | None = None,
     ask: Callable[[str], str],
     say: Callable[[str], None],
     api: tuple[str, Mapping[str, str]] | None = None,
     transport: httpx.BaseTransport | None = None,
-) -> PartChoice:
-    """Plan, print and ask "Make it?" until the human says yes; returns the parts the cut must make.
+) -> str:
+    """Plan, print and ask "Make it?" until the human says yes; returns the id of the plan to make.
 
-    Any other words the human types go back to the server as ``change_request``, on top of the last
-    plan as it was answered, so a second change keeps the first; the new plan is printed and asked
-    again. ``yes`` (``--yes``) takes the printed plan without asking. The
-    returned choice pins the last printed plan, so the cut makes exactly what was shown.
+    ``plan_id`` picks up a plan a previous run printed (``--plan``): ``choice.change_request`` goes
+    to the server against it, and with ``yes`` alone that plan is made as it is. Without one the
+    picks are planned afresh with the human's first settings. Any other words the human types go to
+    the server against the last plan shown, so a second change keeps the first; the new plan is
+    printed and asked again. ``yes`` (``--yes``) takes the printed plan without asking.
 
     Raises
     ------
     CutStop
-        When nobody said yes, the server refuses a setting under ``yes``, or it cannot plan.
+        When nobody said yes, or the server cannot plan.
     """
 
-    def plan_for(choice: PartChoice) -> Mapping[str, Any]:
-        return plan_parts(
+    if plan_id is not None and choice.change_request:
+        plan = change_plan(plan_id, choice.change_request, api=api, transport=transport)
+    elif plan_id is not None:
+        return plan_id
+    else:
+        assert picks is not None
+        plan = plan_parts(
             picks,
             choice,
             title=title,
@@ -572,35 +550,24 @@ def confirm_parts(
             api=api,
             transport=transport,
         )
-
-    last: Mapping[str, Any] | None = None
     while True:
-        try:
-            plan = plan_for(choice)
-        except PlanRefused as refused:
-            if yes:
-                raise
-            say(refused.message)
-            choice = refused.without_it(choice)
-            plan = last or plan_for(choice)
-        last = plan
         for line in plan_lines(plan):
             say(line)
+        shown = str(plan["plan_id"])
         if yes:
-            return planned_choice(plan)
+            return shown
         answer = ask(GO_AHEAD).strip()
         if answer.lower() in ("y", "yes"):
-            return planned_choice(plan)
+            return shown
         if answer.lower() in ("", "n", "no"):
-            raise CutStop(NOT_CONFIRMED)
-        choice = replace(planned_choice(plan), change_request=answer)
+            raise CutStop(not_confirmed(shown))
+        plan = change_plan(shown, answer, api=api, transport=transport)
 
 
 def run_cut(
-    picks: Sequence[Pick],
+    plan_id: str,
     *,
-    title: str | None = None,
-    parts: PartChoice | None = None,
+    picked: int | None = None,
     wait_seconds: float = DEFAULT_WAIT_SECONDS,
     api: tuple[str, Mapping[str, str]] | None = None,
     transport: httpx.BaseTransport | None = None,
@@ -609,12 +576,11 @@ def run_cut(
     progress: Callable[[str], None] = lambda line: print(
         line, file=sys.stderr, flush=True
     ),
-    new_music: bool = False,
 ) -> list[str]:
-    """Ask the server for one cut from the picked episodes and return the lines to print.
+    """Have the server make the plan it kept under ``plan_id``, exactly as shown, and return the lines to print.
 
-    ``parts`` is the plan the human confirmed; the server makes exactly those parts.
-    ``new_music`` passes the human's yes to the question ``--music-price`` showed.
+    The body is the id alone: the picks, title, music yes and every part are the server's. ``picked``
+    is how many episodes the plan covers, for the printed lines (the answer's own count otherwise).
 
     Raises
     ------
@@ -622,12 +588,11 @@ def run_cut(
         With the plain NOT DONE line when the server did not give the cut.
     """
 
-    _check_picks(picks)
     client, base, headers = _client(transport, api)
     with client:
-        body = _cut_body(picks, parts or PartChoice(), title=title, new_music=new_music)
         made = _check(
-            _post(client, base + CUTS_ROUTE, headers, body), what="start the cut"
+            _post(client, base + CUTS_ROUTE, headers, {"plan_id": plan_id}),
+            what="start the cut",
         )
         cut_id = str(made.get("series_cut_id") or "")
         if not cut_id:
@@ -640,7 +605,7 @@ def run_cut(
             base,
             headers,
             cut_id,
-            picked=len(picks),
+            picked=picked,
             wait_seconds=wait_seconds,
             sleep=sleep,
             clock=clock,
@@ -878,7 +843,7 @@ def _asker(out: Any) -> Callable[[str], str]:
 def part_flags_given(args: Any) -> bool:
     """Whether any of ``--parts``, ``--start-number``, ``--part-text`` or ``--change`` was given.
 
-    ``--yes`` is left out: on ``finish`` it also says yes to a paid take edit.
+    ``--yes`` is left out: on ``finish`` it also says yes to a paid take edit. ``--plan`` is ``cut``'s alone.
     """
 
     return bool(
@@ -895,6 +860,7 @@ def cut_command(args: Any) -> int:
     try:
         if args.file:
             raise CutStop(LOCAL_FILES_GONE, 2)
+        plan_id = getattr(args, "plan", None)
         if args.list and (
             args.title
             or args.wait is not None
@@ -902,11 +868,44 @@ def cut_command(args: Any) -> int:
             or args.new_music
             or part_flags_given(args)
             or args.yes
+            or plan_id
         ):
             raise CutStop(
                 "Usage: cut --list takes only --show (and --json); drop --title, --wait, --music-price, "
-                "--new-music and the part settings. Nothing was made.",
+                "--new-music, --plan and the part settings. Nothing was made.",
                 2,
+            )
+        if plan_id:
+            if (
+                args.episodes
+                or args.show
+                or args.title
+                or args.music_price
+                or args.new_music
+            ):
+                raise CutStop(
+                    "Stopped: --plan names a plan the server already has; drop --episodes, --show, --title, "
+                    "--music-price and --new-music (plan afresh without --plan to change those). Nothing was made.",
+                    2,
+                )
+            if (
+                args.parts is not None
+                or args.start_number is not None
+                or args.part_text
+            ):
+                raise CutStop(
+                    'Stopped: with --plan, say the change in words (--change "...") or --yes; --parts, '
+                    "--start-number and --part-text are for a fresh plan. Nothing was made.",
+                    2,
+                )
+            if not (args.change or args.yes):
+                raise CutStop(
+                    'Stopped: --plan needs --change "WORDS" (the server changes that plan) or --yes (makes it). '
+                    "Nothing was made.",
+                    2,
+                )
+            return _emit(
+                args, True, _confirm_and_cut(None, choice_from_args(args), args)
             )
         if args.list:
             if args.episodes:
@@ -948,31 +947,30 @@ def cut_command(args: Any) -> int:
         return _emit(args, False, [stop.line], stop.code)
 
 
-def _confirm_and_cut(picks: Sequence[Pick], choice: PartChoice, args: Any) -> list[str]:
-    """Print the planned parts, ask "Make it?" (or take ``--yes``), then make exactly those parts.
+def _confirm_and_cut(
+    picks: Sequence[Pick] | None, choice: PartChoice, args: Any
+) -> list[str]:
+    """Print the planned parts, ask "Make it?" (or take ``--yes``), then have the server make that plan by its id.
 
-    ``cut``, ``join --episodes`` and ``finish --episodes`` all go through here. With ``--json`` the
-    plan and the question go to stderr so stdout stays one JSON answer.
+    ``cut``, ``join --episodes`` and ``finish --episodes`` all go through here; ``cut --plan ID`` comes
+    with no picks. With ``--json`` the plan and the question go to stderr so stdout stays one JSON answer.
     """
 
     out = sys.stderr if getattr(args, "json", False) else sys.stdout
-    title = getattr(args, "title", None)
-    new_music = getattr(args, "new_music", False)
-    confirmed = confirm_parts(
+    plan_id = confirm_parts(
         picks,
         choice,
-        title=title,
-        new_music=new_music,
+        title=getattr(args, "title", None),
+        new_music=getattr(args, "new_music", False),
         yes=args.yes,
+        plan_id=getattr(args, "plan", None),
         ask=_asker(out),
         say=lambda line: print(line, file=out, flush=True),
     )
     return run_cut(
-        picks,
-        title=title,
-        parts=confirmed,
+        plan_id,
+        picked=len(picks) if picks is not None else None,
         wait_seconds=args.wait if args.wait is not None else DEFAULT_WAIT_SECONDS,
-        new_music=new_music,
     )
 
 
