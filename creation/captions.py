@@ -1896,12 +1896,21 @@ def caption_margin_v(height: int) -> int:
 #: Kana, CJK ideographs and Hangul (and their punctuation): Arial has none of these glyphs.
 _CJK_CHARS = re.compile("[　-ヿ㐀-䶿一-鿿豈-﫿＀-￯ᄀ-ᇿ㄰-㆏가-힯]")
 _HANGUL = re.compile("[ᄀ-ᇿ㄰-㆏가-힯]")
+_SPACELESS_SCRIPTS = re.compile(
+    "[\u0e00-\u0eff\u1000-\u109f\u1780-\u17ff\u19e0-\u19ff\ua9e0-\ua9ff\uaa60-\uaa7f]"
+)
 
 
 def has_cjk(text: str) -> bool:
     """True when ``text`` has a Japanese, Chinese or Korean character (Arial cannot set it)."""
 
     return bool(_CJK_CHARS.search(text))
+
+
+def has_spaceless_script(text: str) -> bool:
+    """True when ``text`` has a Thai, Lao, Myanmar or Khmer character (words run together, no spaces)."""
+
+    return bool(_SPACELESS_SCRIPTS.search(text))
 
 
 def cjk_font_name(text: str, *, platform: str | None = None) -> str:

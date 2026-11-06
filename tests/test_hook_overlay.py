@@ -146,6 +146,28 @@ def test_it_leaves_on_the_first_cut_after_about_three_seconds_else_fades() -> No
     assert "\\fad(120,0)" in ass
 
 
+def _drawn(text: str) -> tuple[int, list[str]]:
+    ass = overlay_ass(HookOverlay("hook", text, "top", 0.0, 3.0), width=W, height=H)
+    size = re.search(r"\\fs(\d+)", ass)
+    body = re.search(r"\}([^}\n]*)\n$", ass)
+    assert body, ass
+    return (int(size.group(1)) if size else 88), body.group(1).split("\\N")
+
+
+def test_a_single_very_long_word_shrinks_to_sit_inside_both_margins() -> None:
+    room = W - round(60 * W / 1080) - (W - round(0.88 * W))
+    size, lines = _drawn("Pneumonoultramicroscopicsilicovolcanoconiosis")
+    assert 24 <= size < 56
+    assert max(text_width(line, size) for line in lines) <= room
+
+
+def test_a_title_whose_words_fit_at_56_still_stops_shrinking_there() -> None:
+    size, lines = _drawn(
+        "She married the man who ruined her father and then forgot her name"
+    )
+    assert size == 56 and len(lines) == 2
+
+
 def test_it_is_skipped_when_it_says_the_first_spoken_line() -> None:
     decision = decide(
         _spine({"kind": "custom", "text": "open the DOOR"}), 1, face_in_upper_band=None
