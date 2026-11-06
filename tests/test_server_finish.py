@@ -1044,11 +1044,17 @@ class EditServer:
         self.answers = list(answers)
         self.requests: list[httpx.Request] = []
         self.drop = drop
+        self.status_body: dict[str, Any] = {}
+        self.status_reads: list[httpx.Request] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
-        self.requests.append(request)
         if self.drop:
+            self.requests.append(request)
             raise httpx.ConnectError("no route to host", request=request)
+        if request.method == "GET":
+            self.status_reads.append(request)
+            return httpx.Response(200, json=self.status_body)
+        self.requests.append(request)
         if self.answers:
             status, body = self.answers.pop(0)
             return httpx.Response(status, json=body)
@@ -1572,7 +1578,7 @@ def _envelope(code: str, message: str) -> dict[str, Any]:
     [
         (409, _envelope("take_post_edit_in_progress", "running"), "still running on the server"),
         (409, _envelope("take_post_edit_unavailable", "Editing a take isn't available right now."),
-         "Editing a take isn't available right now. Nothing was changed or charged."),
+         "Editing a take isn't available right now."),
         (422, _envelope("take_not_ready", "Take 2 has not been delivered yet."), "t2 has not been delivered yet"),
         (422, _envelope("take_revoice_unavailable", "Aya has no line in this take."),
          "Aya has no line in this take. Film the take again"),
@@ -1615,7 +1621,7 @@ def test_server_refusals_are_plain_next_steps_never_tracebacks(
         "지금은 테이크를 편집할 수 없어요. 아무것도 바뀌지 않았어요.",
     ],
 )
-def test_a_refusal_that_already_says_nothing_changed_is_not_said_twice(
+def test_a_409_refusal_is_the_servers_sentence_as_it_is(
     server_message: str,
     post_desk: Path,
     edit_server: tuple[EditServer, list[Any]],
@@ -1634,21 +1640,15 @@ def test_a_refusal_that_already_says_nothing_changed_is_not_said_twice(
 
 
 @pytest.mark.parametrize(
-    ("server_message", "shown"),
+    "server_message",
     [
-        (
-            "テイクの編集は今は使えません。",
-            "テイクの編集は今は使えません。 Nothing was changed or charged.",
-        ),
-        (
-            "Editing is off. Nothing was changed or charged.",
-            "Editing is off. Nothing was changed or charged.",
-        ),
+        "This episode plays a Director cut, which doesn't show take edits yet. Film the take again to change it.",
+        "テイクの編集は今は使えません。",
+        "Editing is off. Nothing was changed or charged.",
     ],
 )
-def test_a_refusal_in_another_wording_reads_once_and_cleanly(
+def test_a_409_refusal_gets_nothing_added_to_the_servers_sentence(
     server_message: str,
-    shown: str,
     post_desk: Path,
     edit_server: tuple[EditServer, list[Any]],
     capsys: pytest.CaptureFixture[str],
@@ -1660,9 +1660,7 @@ def test_a_refusal_in_another_wording_reads_once_and_cleanly(
 
     assert _finish(post_desk, "--take", "t2", "--mute", "1-2") == 2
 
-    err = capsys.readouterr().err
-    assert shown in err
-    assert "。." not in err and err.count("Nothing was changed") == 1
+    assert capsys.readouterr().err == f"Stopped: {server_message}\n"
 
 
 def test_a_refused_edit_does_not_send_the_re_voice(

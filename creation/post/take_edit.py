@@ -72,11 +72,6 @@ NEXT_STEP = (
     "To see it on this laptop, run a plain finish in a few minutes; it downloads the new cut."
 )
 NOTHING_CHANGED = "Nothing was changed or charged."
-SERVER_SAYS_NOTHING_CHANGED = (
-    "Nothing was changed.",
-    "何も変更されていません。",
-    "아무것도 바뀌지 않았어요.",
-)
 PREVIEW_ONLY = "Preview only: nothing was changed or charged."
 
 _SPAN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*$")
@@ -135,6 +130,13 @@ class TakeEditRequest:
         """Whether no edit setting was given."""
 
         return self.edit_body() is None and not self.revoice
+
+    def only_trims(self) -> bool:
+        """Whether the request asks for nothing but trims, the one edit a Director cut shows."""
+
+        return not self.revoice and not any(
+            getattr(self, key) for key, _, _ in EDIT_FIELDS if key != "trims"
+        )
 
 
 def _span(raw: str, flag: str) -> dict[str, Any]:
@@ -404,9 +406,10 @@ def refusal_line(status: int, body: Any, *, take_id: str) -> str:
             "to download the new cut. Nothing was charged twice."
         )
     if code == "take_post_edit_unavailable":
-        if message.endswith((*SERVER_SAYS_NOTHING_CHANGED, NOTHING_CHANGED)):
-            return message
-        return f"{said or 'Editing a take is not available on this server right now.'} {NOTHING_CHANGED}"
+        return (
+            message
+            or f"Editing a take is not available on this server right now. {NOTHING_CHANGED}"
+        )
     if code == "take_not_ready":
         return f"{take_id} has not been delivered yet. Wait until filming is complete, then run this again. {NOTHING_CHANGED}"
     if code == "take_revoice_unavailable":
@@ -539,6 +542,27 @@ def _tokens(value: Any) -> str:
     )
 
 
+def _edits_unavailable_sentence(
+    client: httpx.Client, base: str, headers: Mapping[str, str], job_id: str
+) -> str | None:
+    """The server's ``take_edits_unavailable`` sentence from the run's status, or ``None``.
+
+    A failed read gives ``None``: the server still refuses the edit itself.
+    """
+
+    from creation.post.server_finish import JOB_STATUS_ROUTE
+
+    try:
+        response = client.get(
+            base + JOB_STATUS_ROUTE.format(job_id=job_id), headers=dict(headers)
+        )
+        body = _body(response)
+    except httpx.HTTPError:
+        return None
+    said = body.get("take_edits_unavailable") if isinstance(body, dict) else None
+    return said.strip() if isinstance(said, str) and said.strip() else None
+
+
 def send_take_edit(
     *,
     base_url: str,
@@ -560,9 +584,18 @@ def send_take_edit(
     ------
     TakeEditStop
         With one plain line when the server refused or could not be reached, or with the
-        price of an edit that costs tokens sent without ``yes``.
+        price of an edit that costs tokens sent without ``yes``. When the run's status says
+        take edits are unavailable and the request is more than trims, the line is the
+        server's own sentence and nothing else is sent.
     """
 
+    if not request.only_trims():
+        with httpx.Client(transport=transport, timeout=EDIT_TIMEOUT_SECONDS) as client:
+            said = _edits_unavailable_sentence(
+                client, base_url.rstrip("/"), headers, job_id
+            )
+        if said:
+            raise TakeEditStop(said)
     send = functools.partial(
         _send,
         base_url=base_url,

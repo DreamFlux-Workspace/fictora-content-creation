@@ -62,6 +62,16 @@ def _error_text(status: int, body: Any) -> str:
     return f"HTTP {status}: {body}"
 
 
+def _server_sentence(status: int, body: Any) -> str | None:
+    """The server's own sentence for a 409 refusal, shown as it is; ``None`` for anything else."""
+
+    error = body.get("error") if isinstance(body, Mapping) else None
+    message = error.get("message") if isinstance(error, Mapping) else None
+    if status == 409 and isinstance(message, str) and message.strip():
+        return message.strip()
+    return None
+
+
 def plan_lines(view: Mapping[str, Any], episode: int) -> list[str]:
     """The server's plan in plain words: the summary, each take, the cost."""
 
@@ -253,6 +263,9 @@ def run_sound_refresh(
         if status == 404 and not (isinstance(plan, Mapping) and plan.get("error")):
             print(OLDER_SERVER, file=out)
             return NOT_APPLIED
+        if said := _server_sentence(status, plan):
+            print(said, file=out)
+            return NOT_APPLIED
         if status >= 400 or not isinstance(plan, Mapping):
             print(
                 f"!! the server did not plan it ({_error_text(status, plan)}). Nothing was changed.",
@@ -307,6 +320,9 @@ def run_sound_refresh(
                 f"fictora-produce sound-refresh --desk {desk} --episode {episode} --yes",
                 file=out,
             )
+            return NOT_APPLIED
+        if said := _server_sentence(status, view):
+            print(said, file=out)
             return NOT_APPLIED
         if status >= 400 or not isinstance(view, Mapping):
             print(
