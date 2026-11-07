@@ -142,7 +142,10 @@ def _serve_redraw(api: FakeApi, notes: list[dict[str, Any]]) -> None:
 
     def add_note(_m: str, _p: str, body: dict[str, Any] | None) -> dict[str, Any]:
         _hana(api)["creator_notes"].append(
-            {"note_id": f"n{len(_hana(api)['creator_notes']) + 1}", "text": (body or {})["text"]}
+            {
+                "note_id": f"n{len(_hana(api)['creator_notes']) + 1}",
+                "text": (body or {})["text"],
+            }
         )
         return {"spine": api.spine_doc}
 
@@ -155,9 +158,16 @@ def _serve_redraw(api: FakeApi, notes: list[dict[str, Any]]) -> None:
 
 
 def _sheet_redraw(desk: Path) -> None:
-    oc.run_outfit_add(desk, cast="Hana", label="black gown", look=None, out=io.StringIO())
     oc.run_outfit_add(
-        desk, cast="Hana", label="black gown", look=None, confirm_spend=True, out=io.StringIO()
+        desk, cast="Hana", label="black gown", look=None, out=io.StringIO()
+    )
+    oc.run_outfit_add(
+        desk,
+        cast="Hana",
+        label="black gown",
+        look=None,
+        confirm_spend=True,
+        out=io.StringIO(),
     )
 
 
@@ -177,7 +187,15 @@ def _call_order(api: FakeApi) -> list[str]:
 def test_a_card_that_already_has_the_sheet_note_gets_no_second_note_and_the_redraw_runs(
     desk: Path, api: FakeApi
 ) -> None:
-    _setup(api, [{"note_id": "n1", "text": "  Show the outfit  \"BLACK gown\" on the sheet as its own figure. "}])
+    _setup(
+        api,
+        [
+            {
+                "note_id": "n1",
+                "text": '  Show the outfit  "BLACK gown" on the sheet as its own figure. ',
+            }
+        ],
+    )
     _sheet_redraw(desk)
     assert api.posted(NOTES) == []
     assert len(api.posted(REGENERATE)) == 1
@@ -209,7 +227,9 @@ def test_the_sheet_note_wording_is_the_servers_exact_wording(
 ) -> None:
     _setup(api, [])
     _sheet_redraw(desk)
-    assert _note_texts(api) == ['Show the outfit "black gown" on the sheet as its own figure.']
+    assert _note_texts(api) == [
+        'Show the outfit "black gown" on the sheet as its own figure.'
+    ]
 
 
 def test_an_already_answered_sheet_note_is_not_reposted_or_asked_about_and_the_redraw_runs(
