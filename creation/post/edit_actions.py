@@ -9,8 +9,8 @@ but the saved video.
   is not made again.
 * ``cut-retry ID`` runs the same edit again when it failed, stalled or its new music did not arrive, and
   waits for it. It never sends the picks again, so it never makes a second edit.
-* ``cut-save ID [--part N] [--no-music]`` saves the whole edit or one part with the Sokii mark, for
-  Instagram and TikTok. The edit the app plays stays unmarked.
+* ``cut-save ID --part N [--no-music]`` saves one part with the Sokii mark,
+  for Instagram and TikTok. The edit the app plays stays unmarked.
 """
 
 from __future__ import annotations
@@ -42,12 +42,13 @@ RETRY_ROUTE = "/v1/series-cuts/{series_cut_id}/retry"
 EXPORT_ROUTE = "/v1/series-cuts/{series_cut_id}/export"
 EXPORT_POLL_SECONDS = 4.0
 DEFAULT_SAVE_FOLDER = Path("~/Downloads")
+PART_REQUIRED = "Name the part to save: cut-save ID --part N."
 
 #: What the operator can do next, for each refusal the server names. The server's own words print first.
 NEXT_STEP = {
     "series_cut_not_found": "Check the edit id: cut prints it when the edit is made.",
     "series_cut_not_ready": "Run cut-retry with the same id to wait for it, then save it.",
-    "series_cut_part_not_found": "Use a part number that cut printed, or leave out --part for the whole edit.",
+    "series_cut_part_not_found": "Use a part number that cut printed.",
     "series_cut_no_music_copy": "Leave out --no-music to save it with its music.",
     "series_cut_remake_needed": (
         "Run cut-retry with the same id: the server makes it again with the same picks, name and music. "
@@ -120,6 +121,8 @@ def server_answer(
         or error.get("message")
         or ""
     ).strip()
+    if code == "series_cut_part_required":
+        raise CutStop(PART_REQUIRED, 2)
     if code in next_step and message:
         step = next_step[code]
         raise CutStop(
@@ -233,7 +236,7 @@ def retry_cut(
 def save_cut(
     cut_id: str,
     *,
-    part: int | None = None,
+    part: int,
     music: bool = True,
     folder: Path = DEFAULT_SAVE_FOLDER,
     wait_seconds: float = DEFAULT_WAIT_SECONDS,
@@ -246,7 +249,7 @@ def save_cut(
         line, file=sys.stderr, flush=True
     ),
 ) -> list[str]:
-    """Have the server make the Sokii-marked copy of the whole edit or one part, then download it.
+    """Have the server make the Sokii-marked copy of one part, then download it.
 
     Raises
     ------
@@ -258,9 +261,7 @@ def save_cut(
     nothing = "Nothing was saved."
     client, base_url, headers = picked_cut._client(transport, api)
     url = base_url + EXPORT_ROUTE.format(series_cut_id=cut_id)
-    query = {"music": "true" if music else "false"} | (
-        {"part": str(part)} if part is not None else {}
-    )
+    query = {"music": "true" if music else "false", "part": str(part)}
     read_url = str(httpx.URL(url, params=query))
 
     def check(response: httpx.Response) -> dict[str, Any]:
@@ -310,7 +311,7 @@ def _saved_lines(
     copy: Mapping[str, Any],
     folder: Path,
     *,
-    part: int | None,
+    part: int,
     media_transport: httpx.BaseTransport | None,
 ) -> list[str]:
     export_url = str(copy.get("export_url") or "")
@@ -329,10 +330,9 @@ def _saved_lines(
         )
     except ServerFinishError as exc:
         raise CutStop(f"NOT DONE: {exc}") from exc
-    what = "the whole edit" if part is None else f"part {part}"
     sound = "with the edit's music" if copy.get("music") else "with no added music"
     return [
-        f"Saved {what} with the Sokii mark, {sound}, ready for Instagram and TikTok: {dest}",
+        f"Saved part {part} with the Sokii mark, {sound}, ready for Instagram and TikTok: {dest}",
         f"Link: {export_url}",
         *(f"Note: {warning}" for warning in copy.get("warnings") or []),
     ]
@@ -382,7 +382,7 @@ def add_cut_action_parsers(
     save.add_argument("id", metavar="ID", help="The edit id cut printed.")
     save.add_argument(
         "--part", type=int, default=None, metavar="N",
-        help="Save this part (the numbers cut printed). Without it: the whole edit in one file.",
+        help="Save this part (the numbers cut printed). Required.",
     )  # fmt: skip
     save.add_argument(
         "--no-music", action="store_true",
@@ -417,7 +417,9 @@ def cut_action_command(args: Any) -> int:
         elif args.command == "cut-retry":
             lines = retry_cut(args.id, wait_seconds=wait)
         else:
-            if args.part is not None and args.part < 1:
+            if args.part is None:
+                raise CutStop(PART_REQUIRED, 2)
+            if args.part < 1:
                 raise CutStop("Stopped: --part starts at 1. Nothing was saved.", 2)
             lines = save_cut(
                 args.id,
