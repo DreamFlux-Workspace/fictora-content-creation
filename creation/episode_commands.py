@@ -6915,11 +6915,11 @@ def run_redraw_plate_with_note(
             if c["cast_id"] == named["cast_id"]
         )
         cast_id, name = str(card["cast_id"]), str(card.get("name") or card["cast_id"])
-        noted = [
+        noted = {
             _note_key(str(n.get("text") or ""))
             for n in card.get("creator_notes") or []
             if isinstance(n, Mapping)
-        ]
+        }
         if note is not None:
             if _note_key(note) in noted:
                 print(
@@ -6944,7 +6944,7 @@ def run_redraw_plate_with_note(
                 out=out,
             )
         digest = hashlib.sha256(
-            (_note_key(note) if note is not None else "\n".join(noted)).encode()
+            (_note_key(note) if note is not None else "\n".join(sorted(noted))).encode()
         ).hexdigest()[:10]
         if fresh:
             print(
