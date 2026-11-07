@@ -41,6 +41,7 @@ finding still prints with the other picture checks.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
@@ -667,10 +668,10 @@ def _sheet_note(name: str) -> str:
 
 
 def _card_has_outfit_note(card: Mapping[str, Any], name: str) -> bool:
-    key = name.strip().casefold()
+    text = _sheet_note(name)
+    note_id = "outfit_note_" + hashlib.sha256(name.strip().casefold().encode()).hexdigest()[:12]
     return any(
-        isinstance(n, Mapping)
-        and str(n.get("outfit_label") or "").strip().casefold() == key
+        isinstance(n, Mapping) and (n.get("text") == text or n.get("note_id") == note_id)
         for n in card.get("creator_notes") or []
     )
 

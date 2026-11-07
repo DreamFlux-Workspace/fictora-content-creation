@@ -7,6 +7,7 @@ every shot itself and kept the plan in a desk file the server never saw; the ser
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -167,16 +168,46 @@ def _hana_in(spine: dict[str, Any]) -> dict[str, Any]:
 def test_a_server_that_wrote_the_outfit_note_gets_no_note_from_the_kit(
     desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    owned = {"note_id": "n1", "text": SHEET_NOTE, "outfit_label": " Black Gown "}
+    owned = {"note_id": "n1", "text": SHEET_NOTE}
     assert _redraw_notes(desk, api, monkeypatch, [owned]) == [None]
 
 
 def test_a_server_without_the_outfit_note_gets_the_kit_note_before_the_spend(
     desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    other = {"note_id": "n2", "text": "keep her hair up", "outfit_label": "red dress"}
-    plain = {"note_id": "n3", "text": SHEET_NOTE}
-    assert _redraw_notes(desk, api, monkeypatch, [other, plain]) == [SHEET_NOTE]
+    other = {"note_id": "n2", "text": "keep her hair up"}
+    red = {"note_id": "n3", "text": SHEET_NOTE.replace("black gown", "red dress")}
+    assert _redraw_notes(desk, api, monkeypatch, [other, red]) == [SHEET_NOTE]
+
+
+def test_a_note_under_the_servers_fixed_id_counts_as_there(
+    desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixed = {"note_id": "outfit_note_" + hashlib.sha256(b"black gown").hexdigest()[:12], "text": "reworded"}
+    assert _redraw_notes(desk, api, monkeypatch, [fixed]) == [None]
+
+
+def test_running_twice_against_an_old_server_leaves_one_note(
+    desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent: list[Any] = []
+
+    def post_it(*a: Any, **k: Any) -> None:
+        sent.append(k["note"])
+        if k["note"] is not None:
+            _hana(api).setdefault("creator_notes", []).append(
+                {"note_id": f"n{len(sent)}", "text": k["note"]}
+            )
+
+    _serve(api, _drawn(_with_gown(_story(approved=True))))
+    monkeypatch.setattr(ec, "run_redraw_plate_with_note", post_it)
+    for _ in range(2):
+        oc.run_outfit_add(desk, cast="Hana", label="black gown", look=None, out=io.StringIO())
+        oc.run_outfit_add(
+            desk, cast="Hana", label="black gown", look=None, confirm_spend=True, out=io.StringIO()
+        )
+    assert sent == [SHEET_NOTE, None]
+    assert len(_hana(api)["creator_notes"]) == 1
 
 
 def test_add_and_wear_go_in_one_request_and_name_the_stale_boards(
