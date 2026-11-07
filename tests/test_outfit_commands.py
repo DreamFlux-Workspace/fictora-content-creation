@@ -22,6 +22,9 @@ from creation.production_state import load_production
 from creation.picture_checks import WRONG_OUTFIT_FIX, picture_check_lines
 from fake_api import FakeApi, serve_outfits
 
+SHEET_NOTE = 'Show the outfit "black gown" on the sheet as its own figure.'
+NOTES = "/v1/spines/sp1/cast/cast_hana/notes"
+REGENERATE = "/v1/spines/sp1/cast/cast_hana/regenerate"
 GOWN = "floor-length black silk evening gown, off-shoulder"
 
 
@@ -132,6 +135,116 @@ def test_confirm_spend_draws_only_after_the_price_was_shown(
     )
     assert drawn == ["cast_hana"]
     assert _posts(api) == []
+
+
+def _serve_redraw(api: FakeApi, notes: list[dict[str, Any]]) -> None:
+    _hana(api)["creator_notes"] = notes
+
+    def add_note(_m: str, _p: str, body: dict[str, Any] | None) -> dict[str, Any]:
+        _hana(api)["creator_notes"].append(
+            {
+                "note_id": f"n{len(_hana(api)['creator_notes']) + 1}",
+                "text": (body or {})["text"],
+            }
+        )
+        return {"spine": api.spine_doc}
+
+    def redraw(_m: str, _p: str, _b: dict[str, Any] | None) -> dict[str, Any]:
+        return {"job_id": "job_hana"}
+
+    api.routes[("POST", NOTES)] = add_note
+    api.routes[("POST", REGENERATE)] = redraw
+    api.jobs["job_hana"] = {"job_id": "job_hana", "status": "completed"}
+
+
+def _sheet_redraw(desk: Path) -> None:
+    oc.run_outfit_add(
+        desk, cast="Hana", label="black gown", look=None, out=io.StringIO()
+    )
+    oc.run_outfit_add(
+        desk,
+        cast="Hana",
+        label="black gown",
+        look=None,
+        confirm_spend=True,
+        out=io.StringIO(),
+    )
+
+
+def _setup(api: FakeApi, notes: list[dict[str, Any]]) -> None:
+    _serve(api, _drawn(_with_gown(_story(approved=True))))
+    _serve_redraw(api, notes)
+
+
+def _note_texts(api: FakeApi) -> list[str]:
+    return [str((b or {})["text"]) for b in api.posted(NOTES)]
+
+
+def _call_order(api: FakeApi) -> list[str]:
+    return [p for m, p, _, _ in api.calls if m == "POST" and p in (NOTES, REGENERATE)]
+
+
+def test_a_card_that_already_has_the_sheet_note_gets_no_second_note_and_the_redraw_runs(
+    desk: Path, api: FakeApi
+) -> None:
+    _setup(
+        api,
+        [
+            {
+                "note_id": "n1",
+                "text": '  Show the outfit  "BLACK gown" on the sheet as its own figure. ',
+            }
+        ],
+    )
+    _sheet_redraw(desk)
+    assert api.posted(NOTES) == []
+    assert len(api.posted(REGENERATE)) == 1
+    assert len(_hana(api)["creator_notes"]) == 1
+
+
+def test_a_card_without_the_sheet_note_gets_it_once_before_the_redraw(
+    desk: Path, api: FakeApi
+) -> None:
+    _setup(api, [{"note_id": "n0", "text": "keep her hair up"}])
+    _sheet_redraw(desk)
+    assert _note_texts(api) == [SHEET_NOTE]
+    assert _call_order(api) == [NOTES, REGENERATE]
+
+
+def test_running_the_sheet_redraw_twice_leaves_one_sheet_note_on_the_card(
+    desk: Path, api: FakeApi
+) -> None:
+    _setup(api, [])
+    _sheet_redraw(desk)
+    _sheet_redraw(desk)
+    assert _note_texts(api) == [SHEET_NOTE]
+    assert [n["text"] for n in _hana(api)["creator_notes"]] == [SHEET_NOTE]
+    assert len(api.posted(REGENERATE)) == 2
+
+
+def test_the_sheet_note_wording_is_the_servers_exact_wording(
+    desk: Path, api: FakeApi
+) -> None:
+    _setup(api, [])
+    _sheet_redraw(desk)
+    assert _note_texts(api) == [
+        'Show the outfit "black gown" on the sheet as its own figure.'
+    ]
+
+
+def test_an_already_answered_sheet_note_is_not_reposted_or_asked_about_and_the_redraw_runs(
+    desk: Path, api: FakeApi
+) -> None:
+    answered = {
+        "note_id": "n1",
+        "text": SHEET_NOTE,
+        "outfit_change": {"outfit": "black gown", "status": "from_now_on"},
+    }
+    _setup(api, [answered])
+    answer = f"{NOTES}/n1/outfit"
+    _sheet_redraw(desk)
+    assert api.posted(NOTES) == [] and api.posted(answer) == []
+    assert len(api.posted(REGENERATE)) == 1
 
 
 def test_add_and_wear_go_in_one_request_and_name_the_stale_boards(
