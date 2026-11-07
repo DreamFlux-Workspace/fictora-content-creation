@@ -6800,7 +6800,7 @@ def run_redraw_plate_with_note(
     desk: Path,
     *,
     cast: str,
-    note: str,
+    note: str | None,
     out: Any = None,
     fresh: bool = False,
     outfit: str | None = None,
@@ -6827,7 +6827,9 @@ def run_redraw_plate_with_note(
     cast
         ``cast_id`` or the character's name.
     note
-        The correction, in the creator's words.
+        The correction, in the creator's words. ``None`` redraws with the notes
+        already on the card and sends none (the outfit command: the server
+        keeps each outfit's own note).
     out
         Text stream.
     fresh
@@ -6856,15 +6858,16 @@ def run_redraw_plate_with_note(
     """
 
     out = out or sys.stdout
-    note = " ".join(note.split())
-    if not note:
-        raise CommandStopped(
-            "--note is required: what to change about this character, in your words"
-        )
-    try:
-        check_note_length(note, limit=CAST_NOTE_MAX, command="redraw-plate")
-    except ValueError as exc:
-        raise CommandStopped(str(exc)) from None
+    if note is not None:
+        note = " ".join(note.split())
+        if not note:
+            raise CommandStopped(
+                "--note is required: what to change about this character, in your words"
+            )
+        try:
+            check_note_length(note, limit=CAST_NOTE_MAX, command="redraw-plate")
+        except ValueError as exc:
+            raise CommandStopped(str(exc)) from None
     if outfit is not None and outfit not in note_outfit.OUTFIT_ANSWERS:
         raise CommandStopped(
             f"--outfit must be one of: {', '.join(note_outfit.OUTFIT_ANSWERS)}"
@@ -6912,34 +6915,37 @@ def run_redraw_plate_with_note(
             if c["cast_id"] == named["cast_id"]
         )
         cast_id, name = str(card["cast_id"]), str(card.get("name") or card["cast_id"])
-        noted = {
+        noted = [
             _note_key(str(n.get("text") or ""))
             for n in card.get("creator_notes") or []
             if isinstance(n, Mapping)
-        }
-        if _note_key(note) in noted:
-            print(
-                f"[plate] {name} already carries this note; not added again.",
-                file=sys.stderr,
+        ]
+        if note is not None:
+            if _note_key(note) in noted:
+                print(
+                    f"[plate] {name} already carries this note; not added again.",
+                    file=sys.stderr,
+                )
+            else:
+                _post_cast_note(run, state, spine, cast_id, note)
+                spine = run.spine(state.spine_id or "")
+            spine = _settle_note_outfit(
+                run,
+                state,
+                spine,
+                cast_id=cast_id,
+                name=name,
+                note=note,
+                outfit=outfit,
+                rerun=(
+                    f'fictora-produce redraw-plate --desk {desk} --cast "{name}" --note "{note}"'
+                    + (" --fresh" if fresh else "")
+                ),
+                out=out,
             )
-        else:
-            _post_cast_note(run, state, spine, cast_id, note)
-            spine = run.spine(state.spine_id or "")
-        spine = _settle_note_outfit(
-            run,
-            state,
-            spine,
-            cast_id=cast_id,
-            name=name,
-            note=note,
-            outfit=outfit,
-            rerun=(
-                f'fictora-produce redraw-plate --desk {desk} --cast "{name}" --note "{note}"'
-                + (" --fresh" if fresh else "")
-            ),
-            out=out,
-        )
-        digest = hashlib.sha256(_note_key(note).encode()).hexdigest()[:10]
+        digest = hashlib.sha256(
+            (_note_key(note) if note is not None else "\n".join(noted)).encode()
+        ).hexdigest()[:10]
         if fresh:
             print(
                 f"[plate] drawing {name} from scratch from their card (--fresh: the old plate is not a reference).",
@@ -7028,7 +7034,8 @@ def run_redraw_plate_with_note(
     _note(
         desk,
         ep,
-        f"plate redraw: {name} ({cast_id}) alone -> `{path.name}`, ${float(STILL_USD):.2f}. Note: {note}",
+        f"plate redraw: {name} ({cast_id}) alone -> `{path.name}`, ${float(STILL_USD):.2f}."
+        + (f" Note: {note}" if note is not None else ""),
     )
     print(str(path), file=out)
     print(f"contact sheet: {sheet}", file=out)

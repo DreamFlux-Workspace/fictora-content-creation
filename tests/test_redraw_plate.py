@@ -105,6 +105,21 @@ def test_redraw_plate_is_the_one_redraw_and_keeps_rens_number_past_a_voice_only_
     ]
 
 
+def test_redrawing_with_no_note_draws_from_the_card_and_sends_no_note(
+    desk: Path, api: FakeApi
+) -> None:
+    set_phase(desk, "wait_plates")
+    _serve_redraw(api)
+    ren = next(c for c in api.spine_doc["cast"] if c["cast_id"] == "cast_ren")
+    ren["creator_notes"] = [{"note_id": "outfit_note_1", "text": "Show the outfit."}]
+
+    path = ec.run_redraw_plate_with_note(desk, cast="Ren", note=None, out=io.StringIO())
+
+    assert path.name.startswith("plate-ep01-")
+    assert api.posted(NOTES) == []
+    assert len(api.posted(REGENERATE)) == 1
+
+
 def test_a_voice_only_character_has_no_plate_to_redraw(
     desk: Path, api: FakeApi
 ) -> None:

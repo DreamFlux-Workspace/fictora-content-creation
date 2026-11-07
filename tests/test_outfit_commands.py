@@ -103,8 +103,11 @@ def test_confirm_spend_draws_only_after_the_price_was_shown(
 ) -> None:
     _serve(api, _drawn(_with_gown(_story(approved=True))))
     drawn: list[str] = []
+    kwargs: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        ec, "run_redraw_plate_with_note", lambda *a, **k: drawn.append(k["cast"])
+        ec,
+        "run_redraw_plate_with_note",
+        lambda *a, **k: (drawn.append(k["cast"]), kwargs.append(k)),
     )
     out = io.StringIO()
 
@@ -132,6 +135,7 @@ def test_confirm_spend_draws_only_after_the_price_was_shown(
     )
     assert drawn == ["cast_hana"]
     assert _posts(api) == []
+    assert [k["note"] for k in kwargs] == [None]
 
 
 def test_add_and_wear_go_in_one_request_and_name_the_stale_boards(

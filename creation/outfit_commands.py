@@ -654,7 +654,7 @@ def run_outfit_change(
     plate = ec.run_redraw_plate_with_note(
         desk,
         cast=cast_id,
-        note=f'Show the outfit "{name}" on the sheet as its own figure.',
+        note=None,
         out=out,
     )
     _mark_priced(desk, key, on=False)
