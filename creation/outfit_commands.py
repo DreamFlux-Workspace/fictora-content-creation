@@ -41,7 +41,6 @@ finding still prints with the other picture checks.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import sys
@@ -650,30 +649,16 @@ def run_outfit_change(
                 "this desk. Nothing was sent or charged. Show the price above to the human, then run it again "
                 "on its own line."
             )
-        server_owns_note = _card_has_outfit_note(session.card, name)
     finally:
         session.close()
     plate = ec.run_redraw_plate_with_note(
         desk,
         cast=cast_id,
-        note=None if server_owns_note else _sheet_note(name),
+        note=f'Show the outfit "{name}" on the sheet as its own figure.',
         out=out,
     )
     _mark_priced(desk, key, on=False)
     return plate
-
-
-def _sheet_note(name: str) -> str:
-    return f'Show the outfit "{name}" on the sheet as its own figure.'
-
-
-def _card_has_outfit_note(card: Mapping[str, Any], name: str) -> bool:
-    text = _sheet_note(name)
-    note_id = "outfit_note_" + hashlib.sha256(name.strip().casefold().encode()).hexdigest()[:12]
-    return any(
-        isinstance(n, Mapping) and (n.get("text") == text or n.get("note_id") == note_id)
-        for n in card.get("creator_notes") or []
-    )
 
 
 def run_outfit_add(
