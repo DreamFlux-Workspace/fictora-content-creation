@@ -6828,8 +6828,7 @@ def run_redraw_plate_with_note(
         ``cast_id`` or the character's name.
     note
         The correction, in the creator's words. ``None`` redraws with the notes
-        already on the card and sends none (the outfit command: the server
-        keeps each outfit's own note).
+        already on the card and sends none.
     out
         Text stream.
     fresh

@@ -22,6 +22,7 @@ from creation.production_state import load_production
 from creation.picture_checks import WRONG_OUTFIT_FIX, picture_check_lines
 from fake_api import FakeApi, serve_outfits
 
+SHEET_NOTE = 'Show the outfit "black gown" on the sheet as its own figure.'
 GOWN = "floor-length black silk evening gown, off-shoulder"
 
 
@@ -102,12 +103,9 @@ def test_confirm_spend_draws_only_after_the_price_was_shown(
     desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _serve(api, _drawn(_with_gown(_story(approved=True))))
-    drawn: list[str] = []
     kwargs: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        ec,
-        "run_redraw_plate_with_note",
-        lambda *a, **k: (drawn.append(k["cast"]), kwargs.append(k)),
+        ec, "run_redraw_plate_with_note", lambda *a, **k: kwargs.append(k)
     )
     out = io.StringIO()
 
@@ -123,7 +121,7 @@ def test_confirm_spend_draws_only_after_the_price_was_shown(
             out=out,
         )
 
-    assert drawn == []
+    assert kwargs == []
     assert "No price shown for this redraw yet." in out.getvalue()
     oc.run_outfit_add(
         desk,
@@ -133,9 +131,52 @@ def test_confirm_spend_draws_only_after_the_price_was_shown(
         confirm_spend=True,
         out=io.StringIO(),
     )
-    assert drawn == ["cast_hana"]
+    assert [k["cast"] for k in kwargs] == ["cast_hana"]
+    assert [k["note"] for k in kwargs] == [SHEET_NOTE]
     assert _posts(api) == []
-    assert [k["note"] for k in kwargs] == [None]
+
+
+def _redraw_notes(
+    desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch, notes: list[Any]
+) -> list[Any]:
+    spine = _drawn(_with_gown(_story(approved=True)))
+    _hana_in(spine)["creator_notes"] = notes
+    _serve(api, spine)
+    sent: list[Any] = []
+    monkeypatch.setattr(
+        ec, "run_redraw_plate_with_note", lambda *a, **k: sent.append(k["note"])
+    )
+    oc.run_outfit_add(
+        desk, cast="Hana", label="black gown", look=None, out=io.StringIO()
+    )
+    oc.run_outfit_add(
+        desk,
+        cast="Hana",
+        label="black gown",
+        look=None,
+        confirm_spend=True,
+        out=io.StringIO(),
+    )
+    return sent
+
+
+def _hana_in(spine: dict[str, Any]) -> dict[str, Any]:
+    return next(c for c in spine["cast"] if c["cast_id"] == "cast_hana")
+
+
+def test_a_server_that_wrote_the_outfit_note_gets_no_note_from_the_kit(
+    desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owned = {"note_id": "n1", "text": SHEET_NOTE, "outfit_label": " Black Gown "}
+    assert _redraw_notes(desk, api, monkeypatch, [owned]) == [None]
+
+
+def test_a_server_without_the_outfit_note_gets_the_kit_note_before_the_spend(
+    desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    other = {"note_id": "n2", "text": "keep her hair up", "outfit_label": "red dress"}
+    plain = {"note_id": "n3", "text": SHEET_NOTE}
+    assert _redraw_notes(desk, api, monkeypatch, [other, plain]) == [SHEET_NOTE]
 
 
 def test_add_and_wear_go_in_one_request_and_name_the_stale_boards(

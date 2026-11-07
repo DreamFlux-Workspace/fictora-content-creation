@@ -649,16 +649,30 @@ def run_outfit_change(
                 "this desk. Nothing was sent or charged. Show the price above to the human, then run it again "
                 "on its own line."
             )
+        server_owns_note = _card_has_outfit_note(session.card, name)
     finally:
         session.close()
     plate = ec.run_redraw_plate_with_note(
         desk,
         cast=cast_id,
-        note=None,
+        note=None if server_owns_note else _sheet_note(name),
         out=out,
     )
     _mark_priced(desk, key, on=False)
     return plate
+
+
+def _sheet_note(name: str) -> str:
+    return f'Show the outfit "{name}" on the sheet as its own figure.'
+
+
+def _card_has_outfit_note(card: Mapping[str, Any], name: str) -> bool:
+    key = name.strip().casefold()
+    return any(
+        isinstance(n, Mapping)
+        and str(n.get("outfit_label") or "").strip().casefold() == key
+        for n in card.get("creator_notes") or []
+    )
 
 
 def run_outfit_add(
