@@ -23,6 +23,8 @@ from creation.picture_checks import WRONG_OUTFIT_FIX, picture_check_lines
 from fake_api import FakeApi, serve_outfits
 
 SHEET_NOTE = 'Show the outfit "black gown" on the sheet as its own figure.'
+NOTES = "/v1/spines/sp1/cast/cast_hana/notes"
+REGENERATE = "/v1/spines/sp1/cast/cast_hana/regenerate"
 GOWN = "floor-length black silk evening gown, off-shoulder"
 
 
@@ -135,13 +137,7 @@ def test_confirm_spend_draws_only_after_the_price_was_shown(
     assert _posts(api) == []
 
 
-NOTES = "/v1/spines/sp1/cast/cast_hana/notes"
-REGENERATE = "/v1/spines/sp1/cast/cast_hana/regenerate"
-
-
 def _serve_redraw(api: FakeApi, notes: list[dict[str, Any]]) -> None:
-    """The cast card holds ``notes``; the note route appends to it, the redraw route draws."""
-
     _hana(api)["creator_notes"] = notes
 
     def add_note(_m: str, _p: str, body: dict[str, Any] | None) -> dict[str, Any]:
@@ -216,7 +212,7 @@ def test_the_sheet_note_wording_is_the_servers_exact_wording(
     assert _note_texts(api) == ['Show the outfit "black gown" on the sheet as its own figure.']
 
 
-def test_a_sheet_note_the_server_already_answered_does_not_ask_post_again_or_block(
+def test_an_already_answered_sheet_note_is_not_reposted_or_asked_about_and_the_redraw_runs(
     desk: Path, api: FakeApi
 ) -> None:
     answered = {
@@ -226,12 +222,7 @@ def test_a_sheet_note_the_server_already_answered_does_not_ask_post_again_or_blo
     }
     _setup(api, [answered])
     answer = f"{NOTES}/n1/outfit"
-    api.routes[("POST", answer)] = lambda *_: pytest.fail("the kit must not answer a question")
-    out = io.StringIO()
-    oc.run_outfit_add(desk, cast="Hana", label="black gown", look=None, out=io.StringIO())
-    oc.run_outfit_add(
-        desk, cast="Hana", label="black gown", look=None, confirm_spend=True, out=out
-    )
+    _sheet_redraw(desk)
     assert api.posted(NOTES) == [] and api.posted(answer) == []
     assert len(api.posted(REGENERATE)) == 1
 
