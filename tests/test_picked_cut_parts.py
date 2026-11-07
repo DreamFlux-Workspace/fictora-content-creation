@@ -43,10 +43,7 @@ SHOWS = {"sp_a": "Dead Heat", "sp_b": "Low Tide"}
 CHANGE_PATH = re.compile(r"^/v1/series-cuts/plan/([^/]+)/change$")
 
 
-TAKEN = (
-    "Since this plan was made, more parts of this show were made, so its part numbers are taken. "
-    "Plan the edit again."
-)
+TAKEN = "<the server's own reason>"
 
 
 class PlanServer:

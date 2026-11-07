@@ -301,9 +301,8 @@ def _check(response: httpx.Response, *, what: str) -> Any:
     error = _error(body)
     message = str(error.get("message") or "").strip()
     if response.status_code == 404 and error.get("code") == "series_cut_plan_not_found":
-        raise CutStop(
-            f"NOT DONE: {message or 'the server no longer has that plan.'} Nothing was made."
-        )
+        said = message or "the server no longer has that plan."
+        raise CutStop(f"NOT DONE: {said} Nothing was made.")
     if response.status_code == 409 and error.get("code") == "series_cut_not_ready":
         raise CutStop(
             f"NOT DONE: {message or 'the edit is not ready yet.'} Run the same command again later; nothing was made."
