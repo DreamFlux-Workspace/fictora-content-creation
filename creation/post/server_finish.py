@@ -682,15 +682,13 @@ def opening_notes(
 
 
 def series_cut_file_lines(cut: Mapping[str, Any]) -> list[str]:
-    """The server's series cut record as plain lines: whole file, each part, its cover and caption."""
+    """The server's series cut as plain lines: each part, its cover and caption."""
 
-    lines = [f"Whole show: {cut.get('compilation_url')}"]
+    lines: list[str] = []
     for part in cut.get("parts") or []:
         if not isinstance(part, dict):
             continue
-        lines.append(
-            f"Part {part.get('part')} for Instagram and TikTok: {part.get('video_url')}"
-        )
+        lines.append(f"Part {part.get('part')}: {part.get('video_url')}")
         if part.get("cover_url"):
             lines.append(f"  Cover: {part['cover_url']}")
         if part.get("caption"):

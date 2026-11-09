@@ -170,6 +170,34 @@ class _LaptopOnly(argparse.Action):
         setattr(namespace, self.dest, seen)
 
 
+def add_part_args(parser: argparse.ArgumentParser) -> None:
+    """The part settings, the same on ``cut``, ``join --episodes`` and ``finish --episodes``."""
+
+    parser.add_argument(
+        "--parts", type=int, default=None, metavar="N",
+        help="How many parts (default: the server's suggestion).",
+    )  # fmt: skip
+    parser.add_argument(
+        "--start-number", type=int, default=None, metavar="N",
+        help="The number the first part carries (default: the server's, carrying on from the creator's earlier parts).",
+    )  # fmt: skip
+    parser.add_argument(
+        "--part-text", action="append", default=[], metavar="N:opening=TEXT",
+        help="Change part N's opening or ending text: N:opening=TEXT or N:ending=TEXT (repeat).",
+    )  # fmt: skip
+    parser.add_argument(
+        "--change", default=None, metavar="WORDS",
+        help="What the human wants changed in the server's plan, in their words (as if typed at the question); "
+        "with cut --plan ID, the change to that plan.",
+    )  # fmt: skip
+    parser.add_argument(
+        "--yes", action="store_true",
+        help="The human already said yes: make the printed parts without asking, or, with a paid take edit "
+        "on finish (--voice CHARACTER, --cue), spend the tokens. Without it the parts or the price are printed "
+        "and nothing is made, changed or charged.",
+    )  # fmt: skip
+
+
 _CAPTION_TIMING = "the server times each caption from the line's own sound"
 #: Old laptop settings of ``caption`` and ``revoice``, each with why it is refused.
 RETIRED_FLAG_REASONS: dict[str, dict[str, str]] = {
@@ -258,9 +286,11 @@ def _add_server_finish_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         nargs="+",
         default=None,
-        help="Show the show's series cut instead (the server makes it from every finished episode; "
-        "nothing is joined on this laptop).",
+        help="Make parts of these episodes instead, in this order (2 or more). Every "
+        "planned part is printed and nothing is made until you say make it, as with cut; nothing is joined "
+        "on this laptop.",
     )
+    add_part_args(parser)
     _add_refused_flags(parser, LAPTOP_ONLY_FLAGS)
 
 
@@ -813,11 +843,6 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="With take edits: ask the server what they would cost in tokens; nothing is changed or charged.",
     )  # fmt: skip
     fin.add_argument(
-        "--yes", action="store_true",
-        help="With a paid take edit (--voice CHARACTER, --cue): spend the tokens. Without it the server's price "
-        "is printed and nothing is changed.",
-    )  # fmt: skip
-    fin.add_argument(
         "--caption-label", action="append", default=[], metavar="TEXT@A-B",
         help="A caption with no spoken line under it: TEXT@A-B seconds on the --take as filmed (repeat). "
         "Saved on the server as the take's labels (its notes print), then the episode is finished.",
@@ -842,8 +867,9 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
 
     cut = sub.add_parser(
         "cut",
-        help="The server's punchy series cut (whole file, Instagram and TikTok parts, covers, captions) from "
-        "episodes you pick, from any of the creator's shows (free). Nothing is cut on this laptop. "
+        help="The server's punchy series cut as parts (with covers and captions) from "
+        "episodes you pick, from any of the creator's shows (free). It prints every planned part and makes "
+        "nothing until you say make it. Nothing is cut on this laptop. "
         f"Exits {SERVER_FINISH_NOT_DONE} (NOT DONE) when the server did not give the cut.",
     )
     cut.add_argument(
@@ -853,17 +879,20 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     cut.add_argument(
         "--episodes", nargs="+", default=None, metavar="REF",
-        help="Episodes in the order they should play (2 or more): <show id>:<n> or <desk folder>:<n>, add =FILE to use your own video file for that episode.",
+        help="Episodes in the order they should play (2 or more): <show id>:<n> or <desk folder>:<n>. Each is cut as the server holds it.",
     )  # fmt: skip
     cut.add_argument(
         "--show", default=None, metavar="TITLE",
         help="With --list: only shows with this title. Alone: every delivered episode of every show with this "
         "title, oldest first (case does not matter).",
     )  # fmt: skip
+    cut.add_argument("--file", action="append", default=[], help=argparse.SUPPRESS)
+    add_part_args(cut)
     cut.add_argument(
-        "--file", action="append", default=[], metavar="N=PATH",
-        help="With --show: use this video file for the Nth episode that plays (repeat). With --episodes, write "
-        "REF=FILE instead. The kit uploads the file; the server makes the cut.",
+        "--plan", default=None, metavar="PLAN_ID",
+        help="A plan id an earlier run printed: with --change WORDS the server changes that plan and the kit "
+        "prints the new one; with --yes it makes it as shown. No episodes, title or music flags: the plan "
+        "already holds them. Nothing is kept on this computer.",
     )  # fmt: skip
     cut.add_argument("--title", default=None, help="Optional name for the cut.")
     cut.add_argument(
@@ -1132,21 +1161,14 @@ def _send_caption_labels(
 
 
 def _show_series_cut(desk: Path, args: argparse.Namespace) -> int:
-    """``--episodes``: ask the server for a cut of the desk's named episodes and print it (no laptop join)."""
+    """``--episodes``: the server's parts of the desk's named episodes, shown first."""
 
-    from creation.post.picked_cut import MIN_PICKED, desk_cut_lines
+    from creation.post.picked_cut import MIN_PICKED, desk_cut_command
 
     if len(args.episodes) < MIN_PICKED:
         print("A series cut needs at least 2 episodes.", file=sys.stderr)
         return 2
-    ready, lines = desk_cut_lines(
-        desk, tuple(args.episodes), wait_seconds=getattr(args, "wait", None)
-    )
-    if args.json:
-        print(json.dumps({"ready": ready, "lines": lines}, indent=2))
-    else:
-        print("\n".join(lines))
-    return 0 if ready else SERVER_FINISH_NOT_DONE
+    return desk_cut_command(desk, args)
 
 
 #: ``finish`` settings that edit one take on the server (fictora-drama #1189 / #1190).
@@ -1269,6 +1291,15 @@ def _server_finish_command(args: argparse.Namespace) -> int:
             )
             return 2
         return _show_series_cut(desk, args)
+    from creation.post.picked_cut import part_flags_given
+
+    if part_flags_given(args):
+        print(
+            "Stopped: --parts, --start-number, --part-text and --change are for a punchy edit's parts; "
+            "add --episodes N N ... (or use cut). Nothing was made or charged.",
+            file=sys.stderr,
+        )
+        return 2
     if args.episode is None:
         args.episode = load_production(desk).episode_ordinal
     edits = _take_edit_settings(args)
