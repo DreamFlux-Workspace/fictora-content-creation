@@ -12,6 +12,9 @@ from test_redraw_plate_outfit_question import REGENERATE, _serve
 from test_rewrite_command import _rewritten, _serve_notes
 
 NOTICE = "Words written for Ren (under 18) were left out of the card."
+KANJI_NOTICE = (
+    "I left out a few words from your description of 花子, since 花子 is under 18."
+)
 
 
 def _ren(api: FakeApi) -> dict[str, Any]:
@@ -65,6 +68,13 @@ def test_the_name_leads_only_when_the_servers_words_lack_it() -> None:
         {"name": "Hana", "description_notice": "Some words were left out."},
         {"name": "Kai", "description_notice": ""},
         {"name": "Mio"},
+        {"name": "Al", "description_notice": "Also, some words were left out."},
+        {"name": "花子", "description_notice": KANJI_NOTICE},
     ]
 
-    assert description_notices(cards) == [NOTICE, "Hana: Some words were left out."]
+    assert description_notices(cards) == [
+        NOTICE,
+        "Hana: Some words were left out.",
+        "Al: Also, some words were left out.",
+        KANJI_NOTICE,
+    ]
