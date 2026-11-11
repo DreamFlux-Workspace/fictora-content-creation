@@ -65,6 +65,11 @@ def test_the_name_leads_only_when_the_servers_words_lack_it() -> None:
         {"name": "Hana", "description_notice": "Some words were left out."},
         {"name": "Kai", "description_notice": ""},
         {"name": "Mio"},
+        {"name": "Al", "description_notice": "Also, some words were left out."},
     ]
 
-    assert description_notices(cards) == [NOTICE, "Hana: Some words were left out."]
+    assert description_notices(cards) == [
+        NOTICE,
+        "Hana: Some words were left out.",
+        "Al: Also, some words were left out.",
+    ]
