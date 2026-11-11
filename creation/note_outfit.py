@@ -67,10 +67,8 @@ def description_notices(cards: Sequence[Any]) -> list[str]:
         if not isinstance(notice, str) or not notice.strip():
             continue
         name = str(card.get("name") or "").strip()
-        named = (
-            not name
-            or re.search(rf"(?<!\w){re.escape(name)}(?!\w)", notice, re.IGNORECASE)
-            is not None
+        named = not name or bool(
+            re.search(rf"(?<!\w){re.escape(name)}(?!\w)", notice, re.IGNORECASE)
         )
         lines.append(notice if named else f"{name}: {notice}")
     return lines
