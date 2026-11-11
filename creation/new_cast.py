@@ -295,11 +295,9 @@ def cast_stop_message(
 ) -> str:
     """The stop the plates step prints for characters left without a picture.
 
-    The server says why a picture did not draw (fictora-drama #1540): the
-    cast step marks that character's item failed and its ``failed_message``
-    gives the sentence. The kit passes those words through and offers no
-    redraw. Only a character with no picture and no failed item gets
-    :func:`no_picture_message`.
+    When the server says why a picture did not draw (fictora-drama #1540:
+    ``failed_message`` on the finished cast run), those are the words. Only a
+    missing picture with no ``failed_message`` gets :func:`no_picture_message`.
 
     Parameters
     ----------
@@ -313,25 +311,13 @@ def cast_stop_message(
     Returns
     -------
     str
-        The server's sentence for each picture it explained, then the
-        earlier-run message for the rest.
+        The server's ``failed_message``, else :func:`no_picture_message`.
     """
 
-    failed = {
-        str(item.get("label"))
-        for step in terminal.get("steps") or []
-        if isinstance(step, Mapping)
-        for item in step.get("items") or []
-        if isinstance(item, Mapping) and item.get("state") == "failed"
-    }
     server_said = terminal.get("failed_message")
-    unexplained = [pair for pair in missing if pair[1] not in failed]
-    if not server_said or len(unexplained) == len(missing):
-        return no_picture_message(missing, desk=desk)
-    lines = [str(server_said), "The plates step is not done."]
-    if unexplained:
-        lines.append(no_picture_message(unexplained, desk=desk))
-    return "\n".join(lines)
+    if server_said:
+        return str(server_said)
+    return no_picture_message(missing, desk=desk)
 
 
 __all__ = [

@@ -3,7 +3,7 @@
 fictora-drama #1540: one refused cast picture fails on its own, its item on
 the finished cast run is marked failed, ``failed_message`` says why and the
 other pictures are kept. #1543: a note asking a young character to look older
-carries the server's ``reply`` on the card. The kit passes those words through.
+carries the server's ``reply`` on the card.
 """
 
 from __future__ import annotations
