@@ -1,5 +1,3 @@
-"""The server's ``description_notice`` (fictora-drama #1559) is printed as sent after a rewrite and a plate note."""
-
 from __future__ import annotations
 
 import io
