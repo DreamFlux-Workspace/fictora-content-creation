@@ -63,6 +63,7 @@ from creation.harness.visual_first_ep1 import (
 )
 from creation.look_gate import look_gate_refusal
 from creation.narrator_cast import NarratorQuestionOpen, settle_narrators
+from creation.note_outfit import description_notices
 from creation.media_fetch import download_to_versioned
 from creation.ops.floor import (
     approve_board,
@@ -1885,6 +1886,9 @@ def run_step(
             if names:
                 _note(ep_dir, names)
                 gate += "\n" + names
+            for notice in description_notices(spine.get("cast") or []):
+                _note(ep_dir, notice)
+                gate += "\n" + notice
             # Free warnings before any picture is paid for (Three Payments Late).
             sided = one_sided_side_lines(spine)
             touches = touch_owner_heads_up(spine, episode=ep, desk=str(desk))
