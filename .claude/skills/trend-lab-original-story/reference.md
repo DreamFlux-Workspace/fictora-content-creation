@@ -36,6 +36,23 @@ Authorization: Bearer {TREND_LAB_RUN_TOKEN}
 
 When `output_path` is set, pull that object. When `failed` is true, read `error`. A **502** on the initial POST usually means the edge timed out while the worker was still starting the run; poll anyway before starting a new id.
 
+**From a brief (the worker writes the story)**
+
+```http
+POST {TREND_LAB_SERVE_URL}/runs
+Authorization: Bearer {TREND_LAB_RUN_TOKEN}
+Content-Type: application/json
+
+{
+  "run_id": "<12-char id>",
+  "brief": "<the human's words, unedited>",
+  "style_refs": ["style:<id>"],
+  "film": true
+}
+```
+
+`style_refs` is optional. The poll shows phase `story-write` while the worker writes. A brief cannot be combined with `story_json`, `story_file` or `continue_from`.
+
 **From a reference clip (structure → scaffold → same agent path)**
 
 ```http
@@ -74,7 +91,7 @@ No `output_path` after `finished` means the run held or failed (`failed` / `erro
 
 ```http
 POST {TREND_LAB_SERVE_URL}/runs
-{ "run_id": "<id A>", "story_json": "<StoryFile JSON string>", "film": false, "cast_only": true }
+{ "run_id": "<id A>", "brief": "<the human's words>", "film": false, "cast_only": true }
 ```
 
 Poll `GET /runs/<id A>` until `finished`. The snapshot carries `plates.cast`: `{ "kane": "https://…png", … }` (presigned, ~24h, newest version of each). Show them. After approval:
@@ -91,7 +108,7 @@ POST {TREND_LAB_SERVE_URL}/runs
 { "run_id": "<id C>", "continue_from": "<id B>", "film": true }
 ```
 
-Run C films those exact pictures and finishes; deliver `download_url`. Any step: add `story_json` when the story changed, and `redo_cast` / `redo_frames` (comma-separated ids) to redraw only those. `cast_only` cannot be combined with `film: true`; `continue_from` cannot be combined with `from_reference`.
+Run C films those exact pictures and finishes; deliver `download_url`. Any later step: add `story_json` (the previous run's story with only the asked-for change) when the story changed, and `redo_cast` / `redo_frames` (comma-separated ids) to redraw only those. `cast_only` cannot be combined with `film: true`; `continue_from` cannot be combined with `from_reference`.
 
 **Art style:** the worker appends the story's `style_line` to every picture prompt. For real people in a drawn style, write descriptions as "X drawn as a <style> character, recognisable as him", not "exactly as he looks", which pulls toward a photo.
 
@@ -99,11 +116,13 @@ Run C films those exact pictures and finishes; deliver `download_url`. Any step:
 
 | Field | Purpose |
 | --- | --- |
-| `style_line`, `setting_line` | Look and place |
-| `characters[]` | `id`, `description`, `look_hint`, `voice` |
+| `title` | Working name (required) |
+| `style_line`, `setting_line` | Look and place (required) |
+| `characters[]` | `id`, `display_name`, `description`, `look_hint` (all required), `voice` |
 | `frames[]` | Storyboard stills: `cast`, `action` |
 | `parts[]` | One Sume take each: `frames`, `duration_sec` (4–30), `shots` with `{spoken lines}` |
-| `title_lines[]`, `delivery_format` | Letterbox or portrait finish |
+| `title_lines[]` | Objects `{ "text": "…", "color": "yellow" }`, not plain strings |
+| `delivery_format` | Letterbox or portrait finish |
 | `video_model`, `resolution` | Default **seedance-2.5**, **480p** on the worker |
 
 ## Pull the final MP4
