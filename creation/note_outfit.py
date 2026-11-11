@@ -53,6 +53,25 @@ def note_reply(note: Mapping[str, Any] | None) -> str | None:
     return reply if isinstance(reply, str) and reply else None
 
 
+def description_notices(cards: Sequence[Any]) -> list[str]:
+    """The server's ``description_notice`` (#1559) on each card that carries one, as sent.
+
+    The character's name leads only when the server's words do not already name them.
+    """
+
+    lines: list[str] = []
+    for card in cards:
+        if not isinstance(card, Mapping):
+            continue
+        notice = card.get("description_notice")
+        if not isinstance(notice, str) or not notice.strip():
+            continue
+        name = str(card.get("name") or "").strip()
+        named = not name or name.casefold() in notice.casefold()
+        lines.append(notice if named else f"{name}: {notice}")
+    return lines
+
+
 def outfit_change(note: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
     """The note's ``outfit_change`` (#1156), or ``None`` (no outfit change, or an older server)."""
 
@@ -136,6 +155,7 @@ __all__ = [
     "OUTFIT_ANSWERS",
     "QUESTION_NOT_OPEN",
     "changed_line",
+    "description_notices",
     "episode_field_refused",
     "note_on_card",
     "note_reply",
