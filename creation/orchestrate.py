@@ -63,8 +63,8 @@ from creation.harness.visual_first_ep1 import (
 )
 from creation.look_gate import look_gate_refusal
 from creation.narrator_cast import NarratorQuestionOpen, settle_narrators
-from creation.note_outfit import description_notices
 from creation.media_fetch import download_to_versioned
+from creation.note_outfit import description_notices
 from creation.ops.floor import (
     approve_board,
     approve_series_gate,
