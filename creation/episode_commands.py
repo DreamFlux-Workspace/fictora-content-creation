@@ -6925,6 +6925,11 @@ def run_redraw_plate_with_note(
         else:
             _post_cast_note(run, state, spine, cast_id, note)
             spine = run.spine(state.spine_id or "")
+            reply = note_outfit.note_reply(
+                note_outfit.note_on_card(_cast_card(spine, cast_id), note)
+            )
+            if reply:
+                print(reply, file=out)
         spine = _settle_note_outfit(
             run,
             state,

@@ -7,7 +7,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, NamedTuple, Sequence
 
 from creation.harness.http_util import (
     HOSTED_POST_OFF_HINT,
@@ -522,6 +522,13 @@ def _cast_plates_present(spine: dict[str, Any]) -> bool:
     return all(str(row["cast_id"]) in ready_cast_ids for row in cast_rows)
 
 
+class CastEnrolment(NamedTuple):
+    """The story after a cast run and that run's finished job body."""
+
+    spine: dict[str, Any]
+    terminal: dict[str, Any]
+
+
 def enrol_cast(
     run: DramaApiRunSession,
     *,
@@ -533,8 +540,10 @@ def enrol_cast(
     tag: str = "ep1",
     max_attempts: int = 5,
     key_salt: str = "",
-) -> dict[str, Any]:
+) -> CastEnrolment:
     """Enrol cast plates and poll. Does not approve.
+
+    Returns the story and the finished cast run's job body.
 
     ``key_salt`` ends the key before the attempt suffix (``-o1a2b3c4d``): the
     plates step sets it when the pictures owed differ from a first run's, so a
@@ -564,7 +573,7 @@ def enrol_cast(
         run.save(f"06_{tag}_cast_terminal{suffix}.json", terminal)
         last_terminal = terminal
         if terminal.get("status") == "completed":
-            return run.spine(spine_id)
+            return CastEnrolment(run.spine(spine_id), terminal)
         if _terminal_error_code(terminal) == "plan_media_spine_version_stale":
             recovered = run.spine(spine_id)
             if _cast_plates_present(recovered):
@@ -573,7 +582,7 @@ def enrol_cast(
                     code="plan_media_spine_version_stale",
                     note="plates on spine",
                 )
-                return recovered
+                return CastEnrolment(recovered, terminal)
             if attempt + 1 < max_attempts:
                 run.emit(
                     "cast_retry",

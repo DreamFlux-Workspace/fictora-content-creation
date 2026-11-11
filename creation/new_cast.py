@@ -290,8 +290,39 @@ def no_picture_message(missing: list[tuple[str, str]], *, desk: str) -> str:
     )
 
 
+def cast_stop_message(
+    missing: list[tuple[str, str]], terminal: Mapping[str, Any], *, desk: str
+) -> str:
+    """The stop the plates step prints for characters left without a picture.
+
+    When the server says why a picture did not draw (fictora-drama #1540:
+    ``failed_message`` on the finished cast run), those are the words. Only a
+    missing picture with no ``failed_message`` gets :func:`no_picture_message`.
+
+    Parameters
+    ----------
+    missing
+        From :func:`cast_without_pictures`.
+    terminal
+        The finished cast run's job body.
+    desk
+        The desk path, for the commands it prints.
+
+    Returns
+    -------
+    str
+        The server's ``failed_message``, else :func:`no_picture_message`.
+    """
+
+    server_said = terminal.get("failed_message")
+    if server_said:
+        return str(server_said)
+    return no_picture_message(missing, desk=desk)
+
+
 __all__ = [
     "cast_owing_pictures",
+    "cast_stop_message",
     "pictures_waiting_for_yes",
     "server_pictures_owed",
     "cast_without_pictures",

@@ -39,7 +39,7 @@ from creation.new_cast import (
     cast_without_pictures,
     pictures_waiting_for_yes,
     server_pictures_owed,
-    no_picture_message,
+    cast_stop_message,
 )
 from creation.desk_media_urls import (
     board_urls_for_episode,
@@ -1951,7 +1951,7 @@ def run_step(
                     *(prop_id for prop_id, _ in objects_owed),
                 },
             )
-            stages.enrol_cast(
+            enrolment = stages.enrol_cast(
                 run,
                 spine_id=state.spine_id,
                 prompt=state.prompt,
@@ -1963,18 +1963,6 @@ def run_step(
             )
             plates_job_done(desk, state)
             spine = run.spine(state.spine_id)
-            # Every character this step owed must have come back with a
-            # picture; otherwise say so, not "Cast drawn" (L-20261008-17).
-            missing = cast_without_pictures(
-                spine,
-                owing
-                if owing is not None
-                else [str(row["cast_id"]) for row in drawn_cast_rows(spine)],
-            )
-            if missing:
-                stop = no_picture_message(missing, desk=str(desk))
-                _note(ep_dir, stop)
-                return StepResult(state.phase, stop, ())
             api_dir = api_dir_for_episode(desk, ep)
             (ep_dir / "plates").mkdir(parents=True, exist_ok=True)
             object_paths: list[str] = []
@@ -2012,6 +2000,18 @@ def run_step(
                     + (f" + object pictures x{drawn_objects}" if drawn_objects else ""),
                 )
             paths.extend(object_paths)
+            # Every character this step owed must have come back with a
+            # picture; otherwise say so, not "Cast drawn" (L-20261008-17).
+            missing = cast_without_pictures(
+                spine,
+                owing
+                if owing is not None
+                else [str(row["cast_id"]) for row in drawn_cast_rows(spine)],
+            )
+            if missing:
+                stop = cast_stop_message(missing, enrolment.terminal, desk=str(desk))
+                _note(ep_dir, stop)
+                return StepResult(state.phase, stop, ())
             state.phase = "wait_plates"
             state.drawing_estimates.pop(f"plates-ep{ep:02d}", None)
             save_production(desk, state)
