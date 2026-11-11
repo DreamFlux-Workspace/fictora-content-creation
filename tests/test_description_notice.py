@@ -78,3 +78,36 @@ def test_the_name_leads_only_when_the_servers_words_lack_it() -> None:
         "Al: Also, some words were left out.",
         KANJI_NOTICE,
     ]
+
+
+LEFT_OUT = "I left your note “make her 25” out of Ren's picture, since Ren is under 18."
+
+
+def test_a_note_the_picture_leaves_out_prints_beside_the_description_notice() -> None:
+    card = {"name": "Ren", "description_notice": NOTICE, "note_notice": LEFT_OUT}
+
+    assert description_notices([card]) == [NOTICE, LEFT_OUT]
+
+
+def test_a_note_notice_alone_prints_and_an_older_server_prints_nothing() -> None:
+    assert description_notices([{"name": "Ren", "note_notice": LEFT_OUT}]) == [LEFT_OUT]
+    assert description_notices([{"name": "Ren"}]) == []
+
+
+def test_a_plate_note_prints_the_left_out_line_on_that_card(
+    desk: Path, api: FakeApi
+) -> None:
+    set_phase(desk, "wait_plates")
+    plates = desk / "ep01" / "plates"
+    plates.mkdir(parents=True, exist_ok=True)
+    (plates / "plate-ep01-1-v1.png").write_bytes(png_bytes(200))
+    (plates / "plate-ep01-2-v1.png").write_bytes(png_bytes(60))
+    _serve(api)
+    _ren(api)["note_notice"] = LEFT_OUT
+    out = io.StringIO()
+
+    ec.run_redraw_plate_with_note(
+        desk, cast="Ren", note="Her braid is longer.", out=out
+    )
+
+    assert out.getvalue().count(LEFT_OUT) == 1

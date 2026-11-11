@@ -53,8 +53,13 @@ def note_reply(note: Mapping[str, Any] | None) -> str | None:
     return reply if isinstance(reply, str) and reply else None
 
 
+#: The server's lines on a cast card, as sent: words left out of a child's description (#1559), and
+#: notes a child's picture leaves out (drama #1579, worked out on every read, so it repeats while the note stays out).
+_NOTICE_FIELDS = ("description_notice", "note_notice")
+
+
 def description_notices(cards: Sequence[Any]) -> list[str]:
-    """The server's ``description_notice`` (#1559) on each card that carries one, as sent.
+    """The server's notices (``_NOTICE_FIELDS``) on each card that carries one, as sent.
 
     The character's name leads only when the server's words do not already name them.
     """
@@ -63,14 +68,15 @@ def description_notices(cards: Sequence[Any]) -> list[str]:
     for card in cards:
         if not isinstance(card, Mapping):
             continue
-        notice = card.get("description_notice")
-        if not isinstance(notice, str) or not notice.strip():
-            continue
         name = str(card.get("name") or "").strip()
-        named = not name or bool(
-            re.search(rf"(?<!\w){re.escape(name)}(?!\w)", notice, re.IGNORECASE)
-        )
-        lines.append(notice if named else f"{name}: {notice}")
+        for field in _NOTICE_FIELDS:
+            notice = card.get(field)
+            if not isinstance(notice, str) or not notice.strip():
+                continue
+            named = not name or bool(
+                re.search(rf"(?<!\w){re.escape(name)}(?!\w)", notice, re.IGNORECASE)
+            )
+            lines.append(notice if named else f"{name}: {notice}")
     return lines
 
 
