@@ -6,6 +6,7 @@ from typing import Any
 
 from conftest import set_phase
 from creation import episode_commands as ec
+from creation import orchestrate
 from creation.note_outfit import description_notices
 from fake_api import FakeApi, png_bytes
 from test_redraw_plate_outfit_question import REGENERATE, _serve
@@ -78,3 +79,25 @@ def test_the_name_leads_only_when_the_servers_words_lack_it() -> None:
         "Al: Also, some words were left out.",
         KANJI_NOTICE,
     ]
+
+
+def test_the_draft_step_prints_the_notice_and_notes_it(
+    desk: Path, api: FakeApi
+) -> None:
+    api.spine_doc = {
+        **api.spine_doc,
+        "episode_summaries": api.spine_doc["episode_summaries"][:1],
+    }
+    api.routes[("POST", "/v1/prompt-video-authoring-drafts")] = {
+        "plan_job_id": "job_plan",
+        "spine_id": "sp1",
+    }
+    api.jobs["job_plan"] = {"status": "completed", "result": {}}
+    _ren(api)["description_notice"] = NOTICE
+    set_phase(desk, "new", spine_id=None)
+
+    result = orchestrate.run_step(desk)
+
+    assert result.phase == "ready_cast_enrol"
+    assert result.message.count(NOTICE) == 1
+    assert NOTICE in (desk / "ep01" / "run-notes.md").read_text(encoding="utf-8")
