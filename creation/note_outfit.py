@@ -46,6 +46,13 @@ def note_on_card(card: Mapping[str, Any], text: str) -> Mapping[str, Any] | None
     return found[-1] if found else None
 
 
+def note_reply(note: Mapping[str, Any] | None) -> str | None:
+    """What the server said back to the creator about this note (an "older" look), or ``None``."""
+
+    reply = (note or {}).get("reply")
+    return reply if isinstance(reply, str) and reply else None
+
+
 def outfit_change(note: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
     """The note's ``outfit_change`` (#1156), or ``None`` (no outfit change, or an older server)."""
 
@@ -131,6 +138,7 @@ __all__ = [
     "changed_line",
     "episode_field_refused",
     "note_on_card",
+    "note_reply",
     "outfit_change",
     "question_text",
 ]
