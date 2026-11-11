@@ -1339,6 +1339,8 @@ def _show_authored(
     )
     for line in arrived:
         print(line, file=out)
+    for line in note_outfit.description_notices(spine.get("cast") or []):
+        print(line, file=out)
     # Nudges only (fictora-drama #538): the job's own list, else the spine's for this episode.
     notes = say_warnings(
         for_episode(
@@ -6930,6 +6932,8 @@ def run_redraw_plate_with_note(
             )
             if reply:
                 print(reply, file=out)
+        for line in note_outfit.description_notices([_cast_card(spine, cast_id)]):
+            print(line, file=out)
         spine = _settle_note_outfit(
             run,
             state,
