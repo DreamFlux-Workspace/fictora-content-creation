@@ -111,7 +111,16 @@ POST {TREND_LAB_SERVE_URL}/runs
 { "run_id": "<id C>", "continue_from": "<id B>", "film": true }
 ```
 
-Run C films those exact pictures and finishes; deliver `download_url`. Any later step: for a story.json run, add `story_json` (the previous run's story with only the asked-for change) when the story changed; for a brief run, send `frame_change` (the human's words, up to 2,000 characters) with `redo_frames` and `film: false`, and the worker rewrites only those frames and their parts' shots (a later film run names those parts in `redo_parts` if they were already filmed); a changed character look on a brief run starts again from Run A. Add `redo_cast` / `redo_frames` (comma-separated ids) to redraw only those. `cast_only` cannot be combined with `film: true`; `continue_from` cannot be combined with `from_reference`.
+Run C films those exact pictures and finishes; deliver `download_url`. Any later step: for a story.json run, add `story_json` (the previous run's story with only the asked-for change) when the story changed; for a brief run, send `frame_change` (the human's words, up to 2,000 characters) with `redo_frames` and `film: false`, and the worker rewrites only those frames and their parts' shots (see the example below); a changed character look on a brief run starts again from Run A. Add `redo_cast` / `redo_frames` (comma-separated ids) to redraw only those. `cast_only` cannot be combined with `film: true`; `continue_from` cannot be combined with `from_reference`.
+
+Changing one frame of a brief run (frame ids are the keys of `plates.storyboard`):
+
+```http
+POST {TREND_LAB_SERVE_URL}/runs
+{ "run_id": "<id D>", "continue_from": "<id B>", "film": false, "redo_frames": "p2_f3", "frame_change": "<the human's words>" }
+```
+
+Its poll has `changed_parts`, for example `[2]`. If that part was already filmed, the next film run sends `"redo_parts": "2"` (comma-separated part numbers) so it is filmed again.
 
 **Art style:** the worker appends the story's `style_line` to every picture prompt. For real people in a drawn style, write descriptions as "X drawn as a <style> character, recognisable as him", not "exactly as he looks", which pulls toward a photo.
 
