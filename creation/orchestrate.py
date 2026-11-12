@@ -61,6 +61,7 @@ from creation.harness.visual_first_ep1 import (
     approve_episode_boards,
     measure_board_exposure,
 )
+from creation.left_out import left_out_lines
 from creation.look_gate import look_gate_refusal
 from creation.narrator_cast import NarratorQuestionOpen, settle_narrators
 from creation.media_fetch import download_to_versioned
@@ -1886,7 +1887,10 @@ def run_step(
             if names:
                 _note(ep_dir, names)
                 gate += "\n" + names
-            for notice in description_notices(spine.get("cast") or []):
+            for notice in [
+                *description_notices(spine.get("cast") or []),
+                *left_out_lines(spine, episode_id_for(spine, ep)),
+            ]:
                 _note(ep_dir, notice)
                 gate += "\n" + notice
             # Free warnings before any picture is paid for (Three Payments Late).

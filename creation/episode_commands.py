@@ -118,6 +118,7 @@ from creation.opening_action import (
 )
 from creation.harness.visual_first_ep1 import reuse_generation_body
 from creation.stylised_only import photoreal_look_warning
+from creation.left_out import left_out_lines
 from creation.look_gate import (
     look_approved,
     look_frame_url,
@@ -1340,6 +1341,8 @@ def _show_authored(
     for line in arrived:
         print(line, file=out)
     for line in note_outfit.description_notices(spine.get("cast") or []):
+        print(line, file=out)
+    for line in left_out_lines(spine, episode_id):
         print(line, file=out)
     # Nudges only (fictora-drama #538): the job's own list, else the spine's for this episode.
     notes = say_warnings(
