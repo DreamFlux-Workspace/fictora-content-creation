@@ -8,8 +8,19 @@ from typing import Any
 KIT_CANNOT_ADD_BACK = "The kit can't add these back yet."
 
 
+def _episode_lines(records: Any, episode_id: str) -> list[str]:
+    lines: list[str] = []
+    for record in records or []:
+        if not isinstance(record, Mapping) or record.get("episode_id") != episode_id:
+            continue
+        line = record.get("line")
+        if isinstance(line, str) and line.strip():
+            lines.append(line)
+    return lines
+
+
 def left_out_lines(spine: Mapping[str, Any], episode_id: str) -> list[str]:
-    """The server's sentence for each thing it left out of one episode, then that the kit can't add it back.
+    """The server's sentence for each thing it left out of one episode, said as sent.
 
     Parameters
     ----------
@@ -21,15 +32,11 @@ def left_out_lines(spine: Mapping[str, Any], episode_id: str) -> list[str]:
     Returns
     -------
     list[str]
-        Each record's ``line`` as sent, then :data:`KIT_CANNOT_ADD_BACK`; empty when nothing was left out
-        or on an older server.
+        Each ``left_out_notes`` record's ``line`` (told once, never offered back), then each
+        ``left_out`` record's ``line`` followed by :data:`KIT_CANNOT_ADD_BACK`, since those offer it.
+        A record without a ``line`` (an older server) is not printed.
     """
 
-    lines: list[str] = []
-    for record in spine.get("left_out") or []:
-        if not isinstance(record, Mapping) or record.get("episode_id") != episode_id:
-            continue
-        line = record.get("line")
-        if isinstance(line, str) and line.strip():
-            lines.append(line)
-    return [*lines, KIT_CANNOT_ADD_BACK] if lines else []
+    told = _episode_lines(spine.get("left_out_notes"), episode_id)
+    offered = _episode_lines(spine.get("left_out"), episode_id)
+    return [*told, *offered, KIT_CANNOT_ADD_BACK] if offered else told
