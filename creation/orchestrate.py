@@ -143,6 +143,7 @@ from creation.spine_view import (
     board_inputs,
     episode_id_for,
     frames_by_set,
+    left_out_lines,
     named_cast_stop,
     frames_digest,
     script_lines,
@@ -1886,7 +1887,10 @@ def run_step(
             if names:
                 _note(ep_dir, names)
                 gate += "\n" + names
-            for notice in description_notices(spine.get("cast") or []):
+            for notice in [
+                *description_notices(spine.get("cast") or []),
+                *left_out_lines(spine, episode_id_for(spine, ep)),
+            ]:
                 _note(ep_dir, notice)
                 gate += "\n" + notice
             # Free warnings before any picture is paid for (Three Payments Late).

@@ -262,6 +262,7 @@ from creation.spine_view import (
     frames_by_set,
     named_cast_stop,
     heard_line_ids,
+    left_out_lines,
     shot_rows,
 )
 
@@ -1340,6 +1341,8 @@ def _show_authored(
     for line in arrived:
         print(line, file=out)
     for line in note_outfit.description_notices(spine.get("cast") or []):
+        print(line, file=out)
+    for line in left_out_lines(spine, episode_id):
         print(line, file=out)
     # Nudges only (fictora-drama #538): the job's own list, else the spine's for this episode.
     notes = say_warnings(
