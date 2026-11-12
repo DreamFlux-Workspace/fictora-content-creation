@@ -46,10 +46,13 @@ Content-Type: application/json
 {
   "run_id": "<12-char id>",
   "brief": "<the human's words, unedited>",
+  "image_model": "nano-banana-pro",
   "style_refs": ["style:<id>"],
   "film": true
 }
 ```
+
+`image_model` is the human's pick: `gpt-image-2.5-sunburst` (OpenAI, the default when left out) or `nano-banana-pro` (Google). It goes only with a `brief`; a story.json carries its own `image_model` and `edit_model`.
 
 `style_refs` is optional. The poll shows phase `story-write` while the worker writes. A brief cannot be combined with `story_json`, `story_file` or `continue_from`.
 

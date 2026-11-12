@@ -20,6 +20,12 @@ When the human describes the episode, `POST /runs` with `brief` set to their wor
 
 **You never write or rewrite the story.** Pass the brief exactly as the human wrote it: every name, real person, existing character, look, crest, colour and style note stays as they wrote it. Do not rename, soften, swap in originals, or drop details. In this lane the human owns those choices (founder, 11 Nov). If they attach style pictures, `PUT /uploads/style` each one and send the returned refs as `style_refs`. Do that on the same turn, then poll `GET /runs/{run_id}` until `finished`. Do not ask them to paste `docs/PIPELINE.md`, do not ask them to confirm the cost, and do not wait for a second yes. `film: true` is the spend.
 
+**Picture model: ask once, before the first run.** Unless the human already named one, ask which model should draw the character sheets and frames, and offer exactly these two:
+- **OpenAI** (`gpt-image-2.5-sunburst`): the worker's default.
+- **Google nano-banana-pro** (`nano-banana-pro`): less chance of hitting errors with real characters.
+
+Send their pick as `image_model` with the `brief`. With a story.json file, set the story's own `image_model` and `edit_model` instead. Runs that `continue_from` an earlier run keep its model, so don't ask again. This is the only question before submitting. If OpenAI refuses a picture, the run fails with a message naming nano-banana-pro: tell the human, and on their yes, start a new run with `image_model: "nano-banana-pro"`.
+
 Read [reference.md](reference.md) for the exact JSON, credentials, and how to pull the final.
 
 **Check the pictures first (when the human asks to see plates or storyboards before filming).** Three short runs, each a new run id, each waiting for the human's OK:
