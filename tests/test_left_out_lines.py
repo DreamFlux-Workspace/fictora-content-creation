@@ -6,7 +6,7 @@ from pathlib import Path
 from conftest import set_phase
 from creation import episode_commands as ec
 from creation import orchestrate
-from creation.spine_view import left_out_lines
+from creation.left_out import KIT_CANNOT_ADD_BACK, left_out_lines
 from fake_api import FakeApi
 from test_rewrite_command import _rewritten, _serve_notes
 
@@ -27,26 +27,27 @@ def _left_out(episode_id: str, line: str, reason: str = "") -> dict[str, str]:
     }
 
 
-def test_only_this_episodes_lines_print_with_the_operator_reason() -> None:
+def test_only_this_episodes_lines_print_as_sent_then_the_kit_says_it_cannot_add_back() -> (
+    None
+):
     spine = {
         "left_out": [
             _left_out(
                 "ep_02", BOX, reason="the box named a colour the look has no word for"
             ),
             _left_out("ep_02", SORA),
+            _left_out("ep_02", "   "),
             _left_out("episode_01", "Not this one."),
             "not a record",
         ]
     }
 
-    assert left_out_lines(spine, "ep_02") == [
-        f"{BOX} (the box named a colour the look has no word for)",
-        SORA,
-    ]
+    assert left_out_lines(spine, "ep_02") == [BOX, SORA, KIT_CANNOT_ADD_BACK]
 
 
-def test_an_older_server_prints_nothing() -> None:
+def test_nothing_left_out_or_an_older_server_prints_nothing() -> None:
     assert left_out_lines({}, "ep_02") == []
+    assert left_out_lines({"left_out": [_left_out("episode_01", BOX)]}, "ep_02") == []
 
 
 def test_a_rewrite_prints_what_was_left_out(desk: Path, api: FakeApi) -> None:

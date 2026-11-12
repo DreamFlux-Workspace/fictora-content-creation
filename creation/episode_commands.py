@@ -118,6 +118,7 @@ from creation.opening_action import (
 )
 from creation.harness.visual_first_ep1 import reuse_generation_body
 from creation.stylised_only import photoreal_look_warning
+from creation.left_out import left_out_lines
 from creation.look_gate import (
     look_approved,
     look_frame_url,
@@ -262,7 +263,6 @@ from creation.spine_view import (
     frames_by_set,
     named_cast_stop,
     heard_line_ids,
-    left_out_lines,
     shot_rows,
 )
 

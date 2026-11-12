@@ -61,6 +61,7 @@ from creation.harness.visual_first_ep1 import (
     approve_episode_boards,
     measure_board_exposure,
 )
+from creation.left_out import left_out_lines
 from creation.look_gate import look_gate_refusal
 from creation.narrator_cast import NarratorQuestionOpen, settle_narrators
 from creation.media_fetch import download_to_versioned
@@ -143,7 +144,6 @@ from creation.spine_view import (
     board_inputs,
     episode_id_for,
     frames_by_set,
-    left_out_lines,
     named_cast_stop,
     frames_digest,
     script_lines,

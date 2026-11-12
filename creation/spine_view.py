@@ -65,35 +65,6 @@ def episode_id_for(spine: Mapping[str, Any], ordinal: int) -> str:
     return episode_api_id(ordinal)
 
 
-def left_out_lines(spine: Mapping[str, Any], episode_id: str) -> list[str]:
-    """The server's sentence for each thing it left out of one episode (``spine.left_out``, #1615).
-
-    Parameters
-    ----------
-    spine
-        ``GET /v1/spines/{id}`` JSON.
-    episode_id
-        The episode's API id.
-
-    Returns
-    -------
-    list[str]
-        Each record's ``line`` as sent, with its operator ``reason`` in brackets when it has one;
-        empty on an older server.
-    """
-
-    lines: list[str] = []
-    for record in spine.get("left_out") or []:
-        if not isinstance(record, Mapping) or record.get("episode_id") != episode_id:
-            continue
-        line = str(record.get("line") or "").strip()
-        if not line:
-            continue
-        reason = str(record.get("reason") or "").strip()
-        lines.append(f"{line} ({reason})" if reason else line)
-    return lines
-
-
 def episode_summary(spine: Mapping[str, Any], ordinal: int) -> Mapping[str, Any]:
     """Return an episode's summary entry (empty when the spine has none).
 
@@ -2128,7 +2099,6 @@ __all__ = [
     "frames_digest",
     "heard_not_seen",
     "insert_run_lines",
-    "left_out_lines",
     "missing_expression_lines",
     "NamedCastMismatch",
     "episode_named_cast_mismatches",
