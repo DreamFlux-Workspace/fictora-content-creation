@@ -52,7 +52,7 @@ Content-Type: application/json
 }
 ```
 
-`image_model` is the human's pick: `gpt-image-2.5-sunburst` (OpenAI, the default when left out) or `nano-banana-pro` (Google). The worker accepts it only alongside a `brief`.
+`image_model` is the human's pick: `gpt-image-2.5-sunburst` (OpenAI, the default when left out) or `nano-banana-pro` (Google). The worker accepts it alongside a `brief`, or with `continue_from` to draw that run's new pictures with another model.
 
 `style_refs` is optional. The poll shows phase `story-write` while the worker writes. A brief cannot be combined with `story_json`, `story_file` or `continue_from`.
 
@@ -111,7 +111,16 @@ POST {TREND_LAB_SERVE_URL}/runs
 { "run_id": "<id C>", "continue_from": "<id B>", "film": true }
 ```
 
-Run C films those exact pictures and finishes; deliver `download_url`. Any later step: for a story.json run, add `story_json` (the previous run's story with only the asked-for change) when the story changed; a brief run's story is not returned, so a changed brief starts again from Run A, and `redo_cast` / `redo_frames` (comma-separated ids) to redraw only those. `cast_only` cannot be combined with `film: true`; `continue_from` cannot be combined with `from_reference`.
+Run C films those exact pictures and finishes; deliver `download_url`. Any later step: for a story.json run, add `story_json` (the previous run's story with only the asked-for change) when the story changed; for a brief run, send `frame_change` (the human's words, up to 2,000 characters) with `redo_frames` and `film: false`, and the worker rewrites only those frames and their parts' shots (see the example below); a changed character look on a brief run starts again from Run A. Add `redo_cast` / `redo_frames` (comma-separated ids) to redraw only those. `cast_only` cannot be combined with `film: true`; `continue_from` cannot be combined with `from_reference`.
+
+Changing one frame of a brief run (frame ids are the keys of `plates.storyboard`):
+
+```http
+POST {TREND_LAB_SERVE_URL}/runs
+{ "run_id": "<id D>", "continue_from": "<id B>", "film": false, "redo_frames": "p2_f3", "frame_change": "<the human's words>" }
+```
+
+Its poll has `changed_parts`, for example `[2]`. If that part was already filmed, the next film run sends `"redo_parts": "2"` (comma-separated part numbers) so it is filmed again.
 
 **Art style:** the worker appends the story's `style_line` to every picture prompt. For real people in a drawn style, write descriptions as "X drawn as a <style> character, recognisable as him", not "exactly as he looks", which pulls toward a photo.
 
