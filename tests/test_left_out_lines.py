@@ -15,6 +15,8 @@ SORA = (
     "I could only bring in two new characters at once, so Sora isn't in this episode."
 )
 
+LIMIT = "I left 'Level 2' out of this episode because a take can show only two status boxes."
+
 
 def _left_out(episode_id: str, line: str, reason: str = "") -> dict[str, str]:
     return {
@@ -43,9 +45,6 @@ def test_only_this_episodes_lines_print_as_sent_then_the_kit_says_it_cannot_add_
     }
 
     assert left_out_lines(spine, "ep_02") == [BOX, SORA, KIT_CANNOT_ADD_BACK]
-
-
-LIMIT = "I left 'Level 2' out of this episode because a take can show only two status boxes."
 
 
 def _note(episode_id: str, line: str | None) -> dict[str, object]:

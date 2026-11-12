@@ -1,14 +1,14 @@
-"""What the server left out of an episode (``spine.left_out``), said in the server's own words."""
+"""What the server left out of an episode (``spine.left_out`` and ``spine.left_out_notes``), in its own words."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 KIT_CANNOT_ADD_BACK = "The kit can't add these back yet."
 
 
-def _episode_lines(records: Any, episode_id: str) -> list[str]:
+def _episode_lines(records: Sequence[Any] | None, episode_id: str) -> list[str]:
     lines: list[str] = []
     for record in records or []:
         if not isinstance(record, Mapping) or record.get("episode_id") != episode_id:
@@ -20,7 +20,7 @@ def _episode_lines(records: Any, episode_id: str) -> list[str]:
 
 
 def left_out_lines(spine: Mapping[str, Any], episode_id: str) -> list[str]:
-    """The server's sentence for each thing it left out of one episode, said as sent.
+    """The server's sentence, as sent, for each note and each offered record it left out of one episode.
 
     Parameters
     ----------
@@ -39,4 +39,6 @@ def left_out_lines(spine: Mapping[str, Any], episode_id: str) -> list[str]:
 
     told = _episode_lines(spine.get("left_out_notes"), episode_id)
     offered = _episode_lines(spine.get("left_out"), episode_id)
-    return [*told, *offered, KIT_CANNOT_ADD_BACK] if offered else told
+    if not offered:
+        return told
+    return [*told, *offered, KIT_CANNOT_ADD_BACK]
