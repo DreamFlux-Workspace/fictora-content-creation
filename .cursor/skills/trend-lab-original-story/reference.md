@@ -52,7 +52,7 @@ Content-Type: application/json
 }
 ```
 
-`image_model` is the human's pick: `gpt-image-2.5-sunburst` (OpenAI, the default when left out) or `nano-banana-pro` (Google). It goes only with a `brief`; a story.json carries its own `image_model` and `edit_model`.
+`image_model` is the human's pick: `gpt-image-2.5-sunburst` (OpenAI, the default when left out) or `nano-banana-pro` (Google). The worker accepts it only alongside a `brief`.
 
 `style_refs` is optional. The poll shows phase `story-write` while the worker writes. A brief cannot be combined with `story_json`, `story_file` or `continue_from`.
 
@@ -111,7 +111,7 @@ POST {TREND_LAB_SERVE_URL}/runs
 { "run_id": "<id C>", "continue_from": "<id B>", "film": true }
 ```
 
-Run C films those exact pictures and finishes; deliver `download_url`. Any later step: add `story_json` (the previous run's story with only the asked-for change) when the story changed, and `redo_cast` / `redo_frames` (comma-separated ids) to redraw only those. `cast_only` cannot be combined with `film: true`; `continue_from` cannot be combined with `from_reference`.
+Run C films those exact pictures and finishes; deliver `download_url`. Any later step: for a story.json run, add `story_json` (the previous run's story with only the asked-for change) when the story changed; a brief run's story is not returned, so a changed brief starts again from Run A, and `redo_cast` / `redo_frames` (comma-separated ids) to redraw only those. `cast_only` cannot be combined with `film: true`; `continue_from` cannot be combined with `from_reference`.
 
 **Art style:** the worker appends the story's `style_line` to every picture prompt. For real people in a drawn style, write descriptions as "X drawn as a <style> character, recognisable as him", not "exactly as he looks", which pulls toward a photo.
 

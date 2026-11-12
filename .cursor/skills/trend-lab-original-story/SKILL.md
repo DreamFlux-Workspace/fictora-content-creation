@@ -2,7 +2,7 @@
 name: trend-lab-original-story
 description: >-
   Produces one finished short episode on the hosted fictora-trend-lab worker
-  (story or reference structure → draw → Sume film → drama finish). Use for
+  (brief, story or reference → draw → Sume film → drama finish). Use for
   trend-lab hosted episodes only—not fictora-produce desks or Fal reel clones.
 ---
 
@@ -18,13 +18,21 @@ The request body is already in [reference.md](reference.md). Send it to the host
 
 When the human describes the episode, `POST /runs` with `brief` set to their words, unedited, and `film: true`. The worker writes the story. When the human gives a reference MP4, `PUT` the bytes, then `POST /runs` with `from_reference: true`, `film: true`, `scaffold_generate: true`, and their `brief` if they described the characters. Only when they hand you a finished story.json file, send it as `story_json`.
 
-**You never write or rewrite the story.** Pass the brief exactly as the human wrote it: every name, real person, existing character, look, crest, colour and style note stays as they wrote it. Do not rename, soften, swap in originals, or drop details. In this lane the human owns those choices (founder, 11 Nov). If they attach style pictures, `PUT /uploads/style` each one and send the returned refs as `style_refs`. Do that on the same turn, then poll `GET /runs/{run_id}` until `finished`. Do not ask them to paste `docs/PIPELINE.md`, do not ask them to confirm the cost, and do not wait for a second yes. `film: true` is the spend.
+**You never write or rewrite the story.** Pass the brief exactly as the human wrote it: every name, real person, existing character, look, crest, colour and style note stays as they wrote it. Do not rename, soften, swap in originals, or drop details. In this lane the human owns those choices.
 
-**Picture model: ask once, before the first run.** Unless the human already named one, ask which model should draw the character sheets and frames, and offer exactly these two:
+If they attach style pictures, `PUT /uploads/style` each one and send the returned refs as `style_refs`.
+
+**Order:** ask the picture-model question below (when it applies), upload any style pictures, `POST /runs`, then poll `GET /runs/{run_id}` until `finished`. Do not ask them to paste `docs/PIPELINE.md` and do not ask them to confirm the cost. `film: true` is the spend. The picture-model question is not a cost check, and it is the only thing you ask before submitting.
+
+**Picture model: ask before a run that sends a `brief`.** Ask once per episode, before its first run, unless the human already named a model. Ask which model should draw the character sheets and frames, and offer exactly these two:
 - **OpenAI** (`gpt-image-2.5-sunburst`): the worker's default.
-- **Google nano-banana-pro** (`nano-banana-pro`): less chance of hitting errors with real characters.
+- **Google nano-banana-pro** (`nano-banana-pro`): say "less chance of hitting errors with real characters".
 
-Send their pick as `image_model` with the `brief`. With a story.json file, set the story's own `image_model` and `edit_model` instead. Runs that `continue_from` an earlier run keep its model, so don't ask again. This is the only question before submitting. If OpenAI refuses a picture, the run fails with a message naming nano-banana-pro: tell the human, and on their yes, start a new run with `image_model: "nano-banana-pro"`.
+- Send their pick as `image_model` in the same request as the `brief` (a reference run with a brief counts).
+- A reference MP4 with no brief has no `image_model`; it draws with OpenAI, so don't ask.
+- With a story.json file, set the story's own `image_model` and `edit_model` instead.
+- Runs that `continue_from` an earlier run keep its model; don't ask again.
+- If OpenAI refuses a picture, the run fails with a message naming nano-banana-pro. Tell the human; on their yes, start again from the brief: a fresh run (new id, no `continue_from`) with the same `brief` and `image_model: "nano-banana-pro"`. A continued run cannot change model, so every picture is redrawn.
 
 Read [reference.md](reference.md) for the exact JSON, credentials, and how to pull the final.
 
@@ -32,7 +40,7 @@ Read [reference.md](reference.md) for the exact JSON, credentials, and how to pu
 1. **Plates:** `brief` (or `story_json`), `film: false`, `cast_only: true`. Show every link in `plates.cast` (one character sheet per character) and stop.
 2. **Storyboards** (after plates are approved): `continue_from: <plates run>`, `film: false`. Show every link in `plates.storyboard` and stop.
 3. **Film** (after storyboards are approved): `continue_from: <storyboard run>`, `film: true`. Deliver the MP4.
-To change a picture at step 1 or 2, change only the description the human asked to change in the story from the previous run (keep every name and detail they gave), then rerun that step with a new id, `continue_from` the previous run, and `redo_cast` / `redo_frames` naming only what to redraw. Send `story_json` again whenever the story changed. A character who changes clothes for a big scene gets a second character id (for example `kane_tux`); each take allows at most 9 pictures (all character sheets plus that take's frames).
+To change a picture at step 1 or 2: if the run started from a story.json, change only the description the human asked to change, then rerun that step with a new id, `continue_from` the previous run, the new `story_json`, and `redo_cast` / `redo_frames` naming only what to redraw. If the run started from a brief, you can't see the story the worker wrote, so don't invent one: add the human's change, in their words, to the brief and start again from step 1 with a new id (all pictures are redrawn). Without a story change, `continue_from` plus `redo_cast` / `redo_frames` redraws as is. A character who changes clothes for a big scene gets a second character id (for example `kane_tux`); each take allows at most 9 pictures (all character sheets plus that take's frames).
 
 ## Two rules
 
@@ -53,7 +61,7 @@ OpenAI, Sume, drama finish, and R2 live on the **worker**. This checkout only ca
 ## Stage order
 
 ```
-1 Story (or reference) → 2 Submit hosted run → 3 Wait → 4 Deliver final MP4
+1 Brief, story or reference → 2 Submit hosted run → 3 Wait → 4 Deliver final MP4
 ```
 
 | Stage | You do | Human |
@@ -61,14 +69,14 @@ OpenAI, Sume, drama finish, and R2 live on the **worker**. This checkout only ca
 | **Story ready** | **A)** They describe the episode (send it as `brief`), **B)** they give a finished `story.json`, or **C)** they attach a **reference MP4** (plus a `brief` if they named characters) | Nothing else. Writing the story is the worker's job |
 | **Submit** | **Brief:** `POST /runs` with `brief`, `film: true`. **Story file:** `POST /runs` with `story_json`, `film: true`. **Reference:** `PUT /uploads/reference/{run_id}` then `POST /runs` with `from_reference: true`, `film: true`, `scaffold_generate: true` | URL + run token are already in env |
 | **Wait** | `POST /runs` returns **202**; poll `GET /runs/{run_id}` until `finished` (see [reference.md](reference.md)) | Several minutes for a one-part episode is normal |
-| **Deliver** | Ready when poll sets `finished` and **`download_url`**. Download that presigned HTTPS link ([reference.md](reference.md)). Name the episode from `story.json` / `title_lines` if the poll has no title. A reference clip keeps the shot timing; the picture and lines are a new story | Watches the final file |
+| **Deliver** | Ready when poll sets `finished` and **`download_url`**. Download that presigned HTTPS link ([reference.md](reference.md)). Name the episode from the poll's title, else the story's `title_lines`. A reference clip keeps the shot timing; the picture and lines are a new story | Watches the final file |
 
 **Filming:** Sume **Seedance** on the worker defaults to **480p** takes; the **delivered** letterbox file may be upscaled after drama finish.
 
 ## Never
 
 - Look for `trend-lab` on PATH or PyPI, or ask the human to paste a body from **fictora-trend-lab**.
-- Stop a finished-episode request to confirm spend. This lane films when they ask for the episode.
+- Stop a finished-episode request to confirm spend. This lane films when they ask for the episode (the picture-model pick is not a spend check).
 - Use **episode-production** / `fictora-produce` for this lane unless the human explicitly switches to a desk show.
 - Trace or Fal-clone the reference video into the take.
 - Copy reference dialogue or on-screen text into the story.
