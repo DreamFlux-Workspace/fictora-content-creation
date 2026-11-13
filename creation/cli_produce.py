@@ -122,6 +122,9 @@ def _start_replay(args: argparse.Namespace) -> int:
     except ReplayRefused as exc:
         print(f"Stopped: {exc}", file=sys.stderr)
         return 2
+    args.band = (
+        source.inputs.band
+    )  # a --delivery-format change takes the old story's band's take length
     config = merge_config_from_args(source.inputs.config, args)
     source = replace(source, inputs=replace(source.inputs, config=config))
     desk = start_replay(
@@ -636,6 +639,8 @@ def _run_command(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 2
+            # --band defaults to None only so --from-story can tell it was typed.
+            args.band = args.band or "15s"
             config = config_from_args(args)  # refused before the desk is made
             prompt = text_or_file(args.prompt, flag="--prompt")
             # Check the preset before anything lands on disk: a wrong id used to leave a
@@ -648,7 +653,7 @@ def _run_command(args: argparse.Namespace) -> int:
                 StoryInputs(
                     prompt=prompt,
                     preset=preset,
-                    band=args.band or "15s",
+                    band=args.band,
                     video_lane=video_lane,
                     config=config,
                 ),

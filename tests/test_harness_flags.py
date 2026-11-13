@@ -387,3 +387,36 @@ def test_the_pair_makes_a_base_desk_with_flags_off_and_a_head_desk_with_them_on(
     assert list(parent.iterdir()) and not [
         p for p in parent.iterdir() if p not in (base, head)
     ]
+
+
+@pytest.mark.parametrize(
+    ("band_args", "take_seconds"),
+    [([], 7), (["--band", "15s"], 7), (["--band", "30s"], 10)],
+)
+def test_a_plain_letterbox_start_keeps_the_15s_take_length_of_main(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    band_args: list[str],
+    take_seconds: int,
+) -> None:
+    monkeypatch.setattr(
+        cli_produce, "resolve_preset", lambda preset_id: (preset_id, "1")
+    )
+    code = cli_produce.main(
+        [
+            "start",
+            "--series",
+            "Boxed",
+            "--prompt",
+            "A door.",
+            "--parent",
+            str(tmp_path),
+            "--delivery-format",
+            "letterbox",
+            *band_args,
+        ]
+    )
+
+    assert code == 0
+    (desk,) = [p for p in tmp_path.iterdir() if p.is_dir()]
+    assert load_production_config(desk).clip_duration_seconds == take_seconds
