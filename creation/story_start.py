@@ -25,6 +25,7 @@ from typing import Any, TextIO
 from urllib.parse import quote
 
 from creation.attach_story import ATTACH_FILENAME, open_session
+from creation.captions import resolve_caption_style
 from creation.harness_flags import HarnessFlags, harness_flags_text, pair_arms
 from creation.ops.floor import init_series_desk
 from creation.ops.folder import run_folder_name
@@ -42,7 +43,6 @@ from creation.voice_mode import VOICE_MODES
 
 PAIR_FILENAME = "harness-pair.json"
 BANDS = ("15s", "30s", "60s")
-SHOW_CAPTION_STYLES = ("bold", "subtle", "plain")
 
 
 class ReplayRefused(RuntimeError):
@@ -259,8 +259,8 @@ def read_replay_source(
     except ValueError as exc:
         raise ReplayRefused(f"{exc}. Nothing was made.") from None
     voice_mode = spine.get("voice_mode")
-    # Finish reads the desk's caption style before the show's (resolve_caption_style).
-    caption_style = old.caption_style or _show_caption_style(spine)
+    # The style finish burned on the old story: the desk's, else finish's own fallback.
+    caption_style = old.caption_style or resolve_caption_style(desk)[0]
     config = ProductionConfig(
         clip_duration_seconds=old.clip_duration_seconds,
         caption_style=caption_style,
@@ -291,13 +291,6 @@ def read_replay_source(
         ),
         prompt_from=prompt_from,
     )
-
-
-def _show_caption_style(spine: Mapping[str, Any]) -> str | None:
-    if spine.get("captions_enabled") is False:
-        return "none"
-    choice = spine.get("caption_style_choice")
-    return choice if choice in SHOW_CAPTION_STYLES else None
 
 
 def _story_prompt(spine: Mapping[str, Any], local: str) -> tuple[str, str]:

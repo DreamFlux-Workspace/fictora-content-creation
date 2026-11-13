@@ -15,6 +15,8 @@ from typing import Any
 
 import pytest
 
+from creation.captions import resolve_caption_style
+
 from conftest import set_phase
 from creation import cli_produce, orchestrate, story_start
 from creation.harness.stages_gated import draft_brief_hash, draft_request_body
@@ -442,14 +444,16 @@ def test_a_replay_takes_voice_locale_and_caption_settings_from_the_spine_first(
     ).inputs.config
 
     assert (config.voice_mode, config.locale) == ("locked", "ja-JP")
-    assert (config.letterbox_caption_colour, config.caption_style) == ("white", "plain")
+    assert config.letterbox_caption_colour == "white"
+    assert config.caption_style == resolve_caption_style(old_desk)[0], (
+        "finish's own fallback"
+    )
 
     muted = story_start.read_replay_source(
         str(old_desk),
         parent=old_desk.parent,
         opener=_opener(_Reader({**OLD_STORY, "captions_enabled": False}), []),
     ).inputs.config
-    assert muted.caption_style == "none", "the show's captions were turned off"
     assert muted.voice_mode == "model", "no spine choice: the old desk's"
     assert muted.letterbox_caption_colour is None, "neither set one: finish's default"
 
@@ -608,11 +612,9 @@ def test_a_replay_keeps_the_desk_s_caption_style_and_turns_server_captions_off_f
     ).inputs.config
     assert kept.caption_style == "bold", "finish reads the desk's style first"
 
-    config.caption_style = None
+    config.caption_style = "none"
     save_production_config(old_desk, config)
     muted = story_start.read_replay_source(
-        str(old_desk),
-        parent=old_desk.parent,
-        opener=_opener(_Reader({**OLD_STORY, "captions_enabled": False}), []),
+        str(old_desk), parent=old_desk.parent, opener=_opener(_Reader(OLD_STORY), [])
     ).inputs.config
     assert (muted.caption_style, muted.api_captions) == ("none", False)
