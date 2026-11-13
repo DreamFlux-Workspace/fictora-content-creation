@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import io
 import json
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from creation.captions import resolve_caption_style
+from creation import captions
 
 from conftest import set_phase
 from creation import cli_produce, orchestrate, story_start
@@ -445,9 +445,7 @@ def test_a_replay_takes_voice_locale_and_caption_settings_from_the_spine_first(
 
     assert (config.voice_mode, config.locale) == ("locked", "ja-JP")
     assert config.letterbox_caption_colour == "white"
-    assert config.caption_style == resolve_caption_style(old_desk)[0], (
-        "finish's own fallback"
-    )
+    assert config.caption_style == captions.show_caption_style(old_desk)[0]
 
     muted = story_start.read_replay_source(
         str(old_desk),
@@ -618,3 +616,50 @@ def test_a_replay_keeps_the_desk_s_caption_style_and_turns_server_captions_off_f
         str(old_desk), parent=old_desk.parent, opener=_opener(_Reader(OLD_STORY), [])
     ).inputs.config
     assert (muted.caption_style, muted.api_captions) == ("none", False)
+
+
+def test_a_replay_saves_no_caption_style_when_the_old_show_s_finals_cannot_be_read(
+    old_desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = load_production_config(old_desk)
+    config.caption_style = None
+    save_production_config(old_desk, config)
+    monkeypatch.setattr(captions, "_legacy_desk", lambda desk: False)
+    monkeypatch.setattr(captions, "desk_has_finished_episodes", lambda desk: None)
+
+    replayed = story_start.read_replay_source(
+        str(old_desk), parent=old_desk.parent, opener=_opener(_Reader(OLD_STORY), [])
+    ).inputs.config
+
+    assert replayed.caption_style is None
+
+
+def test_a_half_pair_made_late_at_night_is_finished_the_next_utc_day(
+    old_desk: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = story_start.read_replay_source(
+        str(old_desk), parent=old_desk.parent, opener=_opener(_Reader(OLD_STORY), [])
+    )
+    parent = tmp_path / "pairs"
+    real = story_start.start_replay
+
+    def head_fails(source: Any, **kwargs: Any) -> Path:
+        if kwargs["series"].endswith("head"):
+            raise RuntimeError("bind failed")
+        return real(source, **kwargs)
+
+    pair = dict(source=source, parent=parent, series="Sokii", flag_names=[FLAG])
+    monkeypatch.setattr(story_start, "start_replay", head_fails)
+    with pytest.raises(RuntimeError):
+        story_start.start_harness_pair(
+            **pair, out=io.StringIO(), now=datetime(2026, 11, 13, 21, 30, tzinfo=UTC)
+        )
+    (base,) = list(parent.iterdir())
+    monkeypatch.setattr(story_start, "start_replay", real)
+
+    kept, _ = story_start.start_harness_pair(
+        **pair, out=io.StringIO(), now=datetime(2026, 11, 14, 1, 30, tzinfo=UTC)
+    )
+    assert kept == base

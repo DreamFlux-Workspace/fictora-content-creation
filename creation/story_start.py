@@ -25,7 +25,7 @@ from typing import Any, TextIO
 from urllib.parse import quote
 
 from creation.attach_story import ATTACH_FILENAME, open_session
-from creation.captions import resolve_caption_style
+from creation.captions import show_caption_style
 from creation.harness_flags import HarnessFlags, harness_flags_text, pair_arms
 from creation.ops.floor import init_series_desk
 from creation.ops.folder import run_folder_name
@@ -260,7 +260,9 @@ def read_replay_source(
         raise ReplayRefused(f"{exc}. Nothing was made.") from None
     voice_mode = spine.get("voice_mode")
     # The style finish burned on the old story: the desk's, else finish's own fallback.
-    caption_style = old.caption_style or resolve_caption_style(desk)[0]
+    # Unchecked (the server's finals could not be read) is a guess that must not be saved.
+    shown, shown_from = show_caption_style(desk)
+    caption_style = None if shown_from == "unchecked" else shown
     config = ProductionConfig(
         clip_duration_seconds=old.clip_duration_seconds,
         caption_style=caption_style,
@@ -437,8 +439,6 @@ def _unfinished_base(parent: Path, wanted: Mapping[str, Any]) -> Path | None:
             and record.get("source_spine_id") == wanted["source_spine_id"]
             and record.get("flags") == wanted["flags"]
             and record.get("series") == wanted["series"]
-            and str(record.get("created_at") or "")[:10]
-            == str(wanted["created_at"])[:10]
             and not _drafted(path.parent.parent)
         ):
             return path.parent.parent.resolve()
