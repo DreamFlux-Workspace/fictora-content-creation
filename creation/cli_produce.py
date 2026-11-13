@@ -122,9 +122,8 @@ def _start_replay(args: argparse.Namespace) -> int:
     except ReplayRefused as exc:
         print(f"Stopped: {exc}", file=sys.stderr)
         return 2
-    args.band = (
-        source.inputs.band
-    )  # a --delivery-format change takes the old story's band's take length
+    # A --delivery-format change takes the take length of the old story's band.
+    args.band = source.inputs.band
     config = merge_config_from_args(source.inputs.config, args)
     source = replace(source, inputs=replace(source.inputs, config=config))
     desk = start_replay(

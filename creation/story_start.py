@@ -4,7 +4,8 @@
 makes one for a NEW story with an old story's inputs: its brief (the spine's
 ``scene_prompt_text``, else its normalized prompt, else the old desk's local
 brief), art style preset and version, duration band, video lane, spoken
-language, delivery format and the old desk's caption and voice settings.
+language, locale, delivery format, voice mode and caption settings, each from
+the spine when it stores one, else from the old desk.
 ``harness-pair --from-story X --flag a`` makes two such desks, base with every
 named flag off and head with every named flag on, and records the pair on both.
 
@@ -23,12 +24,13 @@ from pathlib import Path
 from typing import Any, TextIO
 from urllib.parse import quote
 
-from creation.attach_story import open_session
+from creation.attach_story import ATTACH_FILENAME, open_session
 from creation.harness_flags import HarnessFlags, harness_flags_text, pair_arms
 from creation.ops.floor import init_series_desk
 from creation.ops.folder import run_folder_name
 from creation.ops.notes import append_run_note
 from creation.orchestrate import bind_desk, unbound_desk_recovery
+from creation.post.letterbox import resolve_caption_colour
 from creation.production_config import (
     ProductionConfig,
     load_production_config,
@@ -36,9 +38,11 @@ from creation.production_config import (
 )
 from creation.production_state import ProductionState, load_production, production_path
 from creation.rules_epoch import CURRENT_EPOCH
+from creation.voice_mode import VOICE_MODES
 
 PAIR_FILENAME = "harness-pair.json"
 BANDS = ("15s", "30s", "60s")
+SHOW_CAPTION_STYLES = ("bold", "subtle", "plain")
 
 
 class ReplayRefused(RuntimeError):
@@ -73,7 +77,7 @@ def start_new_desk(
     inputs: StoryInputs,
     *,
     episodes: int = 1,
-    prompt_arg: str,
+    prompt_arg: str | None,
 ) -> tuple[Path, ProductionState]:
     """Make and bind a new desk for a story that is not drafted yet. Spends nothing.
 
@@ -88,7 +92,8 @@ def start_new_desk(
     episodes
         Desk episode slots.
     prompt_arg
-        The ``--prompt`` as typed, for the recovery line when the desk already exists.
+        The ``--prompt`` as typed, for the ``bind`` recovery line. ``None`` for a replay, whose
+        recovery is to run the same command again.
 
     Returns
     -------
@@ -107,11 +112,7 @@ def start_new_desk(
         )
     except FileExistsError:
         desk = (parent.expanduser() / run_folder_name(series, date.today())).resolve()
-        raise FileExistsError(
-            unbound_desk_recovery(
-                desk, prompt_arg=prompt_arg, preset_id=inputs.preset[0]
-            )
-        ) from None
+        raise FileExistsError(_recovery(desk, inputs, prompt_arg)) from None
     try:
         state = bind_desk(
             desk,
@@ -121,42 +122,75 @@ def start_new_desk(
             preset=inputs.preset,
         )
     except (RuntimeError, ValueError, OSError):
-        print(
-            unbound_desk_recovery(
-                desk, prompt_arg=prompt_arg, preset_id=inputs.preset[0], just_made=True
-            ),
-            file=sys.stderr,
-        )
+        print(_recovery(desk, inputs, prompt_arg, just_made=True), file=sys.stderr)
         raise
     # A new desk runs the current rules (creation.rules_epoch); older desks keep theirs.
     save_production_config(desk, config)
     return desk, state
 
 
+def _recovery(
+    desk: Path, inputs: StoryInputs, prompt_arg: str | None, *, just_made: bool = False
+) -> str:
+    if prompt_arg is not None or production_path(desk).is_file():
+        return unbound_desk_recovery(
+            desk,
+            prompt_arg=prompt_arg or "",
+            preset_id=inputs.preset[0],
+            just_made=just_made,
+        )
+    why = (
+        "the desk was made but not bound"
+        if just_made
+        else "a desk with this name was made earlier but never bound"
+    )
+    return (
+        f"{why}: {desk}\nNothing was sent to the server for it. Remove that folder and run the "
+        "same command again, or give another --series."
+    )
+
+
 def find_source_desk(source: str, parent: Path) -> Path:
-    """Return the old story's desk: ``source`` itself when it is a desk, else the newest desk under ``parent`` on that story.
+    """Return the old story's desk: ``source`` itself when it is a desk, else the desk under ``parent`` that drafted it.
+
+    A desk made by ``start --spine-id`` (``api/attach.json``) only attached the
+    story, so the desk that drafted it wins over those.
 
     Raises
     ------
     ReplayRefused
-        No desk under ``parent`` holds that story id.
+        No desk under ``parent`` holds that story id, or more than one could be the one that drafted it.
     """
 
     path = Path(source).expanduser()
     if production_path(path.resolve()).is_file():
         return path.resolve()
     root = parent.expanduser()
-    matches = [
+    matches = sorted(
         candidate.parent
         for candidate in root.glob("*/production.json")
         if _spine_id_of(candidate) == source
-    ]
+    )
     if not matches:
         raise ReplayRefused(
             f"no desk under {root} holds story {source}. Pass the old story's desk folder, or "
             f"attach the story first (uv run fictora-produce start --spine-id {source}) and pass that desk."
         )
-    return max(matches, key=lambda desk: production_path(desk).stat().st_mtime)
+    drafted = [
+        desk for desk in matches if not (desk / "api" / ATTACH_FILENAME).is_file()
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(drafted) == 1:
+        return drafted[0]
+    listing = "\n".join(
+        f"  {desk}" + ("" if desk in drafted else " (attached with start --spine-id)")
+        for desk in matches
+    )
+    raise ReplayRefused(
+        f"{len(matches)} desks under {root} hold story {source}, and the one that drafted it cannot "
+        f"be told apart. Pass that desk's folder as --from-story:\n{listing}"
+    )
 
 
 def _spine_id_of(production_json: Path) -> str | None:
@@ -220,20 +254,27 @@ def read_replay_source(
     band = str(spine.get("duration_band") or state.band)
     language = str(spine.get("spoken_language") or "")
     old = load_production_config(desk)
+    try:
+        colour, colour_from = resolve_caption_colour(desk, spine)
+    except ValueError as exc:
+        raise ReplayRefused(f"{exc}. Nothing was made.") from None
+    voice_mode = spine.get("voice_mode")
     config = ProductionConfig(
         clip_duration_seconds=old.clip_duration_seconds,
-        caption_style=old.caption_style,
+        caption_style=_show_caption_style(spine) or old.caption_style,
         api_captions=old.api_captions,
-        locale=old.locale,
+        locale=str(spine.get("locale") or old.locale),
         spoken_language=None
         if not language or language.lower().startswith("en")
         else language,
         delivery_format="letterbox"
         if spine.get("delivery_format") == "letterbox"
         else None,
+        # The desk's override, not the spine's episode opening_action: that is the writer's output.
         opening_action=old.opening_action,
-        voice_mode=old.voice_mode,
-        letterbox_caption_colour=old.letterbox_caption_colour,
+        voice_mode=voice_mode if voice_mode in VOICE_MODES else old.voice_mode,
+        # Finish reads the desk's colour first, then the spine's (resolve_caption_colour).
+        letterbox_caption_colour=None if colour_from == "the default" else colour,
     )
     return ReplaySource(
         spine_id=state.spine_id,
@@ -248,6 +289,13 @@ def read_replay_source(
         ),
         prompt_from=prompt_from,
     )
+
+
+def _show_caption_style(spine: Mapping[str, Any]) -> str | None:
+    if spine.get("captions_enabled") is False:
+        return "none"
+    choice = spine.get("caption_style_choice")
+    return choice if choice in SHOW_CAPTION_STYLES else None
 
 
 def _story_prompt(spine: Mapping[str, Any], local: str) -> tuple[str, str]:
@@ -288,7 +336,7 @@ def start_replay(
     )
     for line in replay_lines(source, flags):
         print(line, file=out)
-    desk, _ = start_new_desk(parent, series, inputs, prompt_arg=f"@{source.desk}")
+    desk, _ = start_new_desk(parent, series, inputs, prompt_arg=None)
     append_run_note(
         desk,
         f"Replay of story {source.spine_id} (desk {source.desk}); harness flags: "
@@ -311,6 +359,10 @@ def start_harness_pair(
     Both desks get ``api/harness-pair.json`` naming the old story, the flags
     and both desks, so an export can label which arm is which. Spends nothing.
 
+    The base desk gets the record, with ``head`` null, before the head desk is
+    made. When the head desk fails, the same command run again finds that
+    unfinished base desk, keeps it and makes only the head desk.
+
     Returns
     -------
     tuple[Path, Path]
@@ -318,27 +370,73 @@ def start_harness_pair(
     """
 
     off, on = pair_arms(flag_names)
-    base = start_replay(
-        source, parent=parent, series=f"{series} base", flags=off, out=out
-    )
-    head = start_replay(
-        source, parent=parent, series=f"{series} head", flags=on, out=out
-    )
-    record = {
+    record: dict[str, Any] = {
         "source_spine_id": source.spine_id,
         "source_desk": str(source.desk),
         "flags": sorted(off),
         "harness_flag": sorted(off)[0] if len(off) == 1 else None,
-        "base": {"desk": str(base), "harness_flags": off},
-        "head": {"desk": str(head), "harness_flags": on},
+        "base": None,
+        "head": None,
         "created_at": (now or datetime.now(UTC)).isoformat(timespec="seconds"),
     }
-    for desk in (base, head):
-        (desk / "api").mkdir(parents=True, exist_ok=True)
-        (desk / "api" / PAIR_FILENAME).write_text(
-            json.dumps(record, indent=2) + "\n", encoding="utf-8"
+    base = _unfinished_base(parent, record)
+    if base is None:
+        base = start_replay(
+            source, parent=parent, series=f"{series} base", flags=off, out=out
         )
+        record["base"] = {"desk": str(base), "harness_flags": off}
+        _write_pair_record(base, record)
+    else:
+        print(f"Keeping the unfinished pair's base desk: {base}", file=out)
+        record = _pair_record(base) or record
+    try:
+        head = start_replay(
+            source, parent=parent, series=f"{series} head", flags=on, out=out
+        )
+    except BaseException:
+        print(
+            f"The head desk was not made. The base desk {base} is made (a new story, not drafted; "
+            f"nothing spent) and its api/{PAIR_FILENAME} says the pair is unfinished. To finish the "
+            "pair, run the same harness-pair command again: it keeps that base desk and makes only the "
+            f"head. To drop the pair instead, remove {base}.",
+            file=sys.stderr,
+        )
+        raise
+    record["head"] = {"desk": str(head), "harness_flags": on}
+    for desk in (base, head):
+        _write_pair_record(desk, record)
     return base, head
+
+
+def _pair_record(desk: Path) -> dict[str, Any] | None:
+    try:
+        raw = json.loads((desk / "api" / PAIR_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _write_pair_record(desk: Path, record: Mapping[str, Any]) -> None:
+    (desk / "api").mkdir(parents=True, exist_ok=True)
+    (desk / "api" / PAIR_FILENAME).write_text(
+        json.dumps(record, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def _unfinished_base(parent: Path, wanted: Mapping[str, Any]) -> Path | None:
+    """The base desk an earlier run of this same pair made before its head desk failed, if any."""
+
+    for path in sorted(parent.expanduser().glob(f"*/api/{PAIR_FILENAME}")):
+        record = _pair_record(path.parent.parent)
+        if (
+            record
+            and record.get("head") is None
+            and record.get("base")
+            and record.get("source_spine_id") == wanted["source_spine_id"]
+            and record.get("flags") == wanted["flags"]
+        ):
+            return path.parent.parent.resolve()
+    return None
 
 
 __all__ = [

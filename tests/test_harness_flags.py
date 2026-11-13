@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from creation import cli_produce, orchestrate, story_start
 from creation.harness.stages_gated import draft_brief_hash, draft_request_body
 from creation.harness_flags import HarnessFlagsRefused, parse_harness_flags
 from creation.opening_action import DRAFT_SCHEMA
+from creation.ops.folder import run_folder_name
 from creation.production_config import (
     ProductionConfig,
     load_production_config,
@@ -420,3 +422,133 @@ def test_a_plain_letterbox_start_keeps_the_15s_take_length_of_main(
     assert code == 0
     (desk,) = [p for p in tmp_path.iterdir() if p.is_dir()]
     assert load_production_config(desk).clip_duration_seconds == take_seconds
+
+
+def test_a_replay_takes_voice_locale_and_caption_settings_from_the_spine_first(
+    old_desk: Path,
+) -> None:
+    spine = {
+        **OLD_STORY,
+        "voice_mode": "locked",
+        "locale": "ja-JP",
+        "letterbox_caption_colour": "white",
+        "caption_style_choice": "plain",
+    }
+    config = story_start.read_replay_source(
+        str(old_desk), parent=old_desk.parent, opener=_opener(_Reader(spine), [])
+    ).inputs.config
+
+    assert (config.voice_mode, config.locale) == ("locked", "ja-JP")
+    assert (config.letterbox_caption_colour, config.caption_style) == ("white", "plain")
+
+    muted = story_start.read_replay_source(
+        str(old_desk),
+        parent=old_desk.parent,
+        opener=_opener(_Reader({**OLD_STORY, "captions_enabled": False}), []),
+    ).inputs.config
+    assert muted.caption_style == "none", "the show's captions were turned off"
+    assert muted.voice_mode == "model", "no spine choice: the old desk's"
+    assert muted.letterbox_caption_colour is None, "neither set one: finish's default"
+
+
+def test_a_replay_keeps_the_old_desk_s_caption_colour_as_finish_did(
+    old_desk: Path,
+) -> None:
+    config = load_production_config(old_desk)
+    config.letterbox_caption_colour = "yellow"
+    save_production_config(old_desk, config)
+    spine = {**OLD_STORY, "letterbox_caption_colour": "white"}
+
+    replayed = story_start.read_replay_source(
+        str(old_desk), parent=old_desk.parent, opener=_opener(_Reader(spine), [])
+    ).inputs.config
+
+    assert replayed.letterbox_caption_colour == "yellow"
+
+
+def _attach_desk_on_the_old_story(parent: Path) -> Path:
+    attached = parent / "2099-01-01-attached"
+    attached.mkdir()
+    state = load_production(next(parent.glob("*/production.json")).parent)
+    save_production(attached, state)
+    (attached / "api").mkdir()
+    (attached / "api" / "attach.json").write_text("{}", encoding="utf-8")
+    return attached
+
+
+def test_a_story_id_finds_the_desk_that_drafted_it_over_a_newer_attached_desk(
+    old_desk: Path,
+) -> None:
+    _attach_desk_on_the_old_story(old_desk.parent)
+
+    assert story_start.find_source_desk(OLD_SPINE, old_desk.parent) == old_desk
+
+
+def test_two_desks_that_could_have_drafted_the_story_are_listed_not_guessed(
+    old_desk: Path,
+) -> None:
+    other = old_desk.parent / "2099-01-02-copy"
+    other.mkdir()
+    save_production(other, load_production(old_desk))
+
+    with pytest.raises(story_start.ReplayRefused) as refused:
+        story_start.find_source_desk(OLD_SPINE, old_desk.parent)
+
+    assert str(old_desk) in str(refused.value) and str(other) in str(refused.value)
+    assert "--from-story" in str(refused.value)
+
+
+def test_a_replay_onto_an_unbound_desk_says_to_run_the_command_again(
+    old_desk: Path, tmp_path: Path
+) -> None:
+    source = story_start.read_replay_source(
+        str(old_desk), parent=old_desk.parent, opener=_opener(_Reader(OLD_STORY), [])
+    )
+    parent = tmp_path / "replays"
+    (parent / run_folder_name("Sokii replay", date.today())).mkdir(parents=True)
+
+    with pytest.raises(FileExistsError) as stopped:
+        story_start.start_replay(
+            source, parent=parent, series="Sokii replay", flags=None, out=io.StringIO()
+        )
+
+    assert "run the same command again" in str(stopped.value)
+    assert "@" not in str(stopped.value), "no --prompt @<folder> suggestion"
+
+
+def test_a_pair_whose_head_failed_is_recorded_and_the_same_command_finishes_it(
+    old_desk: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = story_start.read_replay_source(
+        str(old_desk), parent=old_desk.parent, opener=_opener(_Reader(OLD_STORY), [])
+    )
+    parent = tmp_path / "pairs"
+    real = story_start.start_replay
+
+    def head_fails(source: Any, **kwargs: Any) -> Path:
+        if kwargs["series"].endswith("head"):
+            raise RuntimeError("bind failed")
+        return real(source, **kwargs)
+
+    monkeypatch.setattr(story_start, "start_replay", head_fails)
+    pair = dict(source=source, parent=parent, series="Sokii", flag_names=[FLAG])
+    with pytest.raises(RuntimeError):
+        story_start.start_harness_pair(**pair, out=io.StringIO())
+
+    (base,) = list(parent.iterdir())
+    half = json.loads((base / "api" / story_start.PAIR_FILENAME).read_text("utf-8"))
+    assert half["head"] is None and half["base"]["desk"] == str(base)
+    assert "run the same harness-pair command again" in capsys.readouterr().err
+
+    monkeypatch.setattr(story_start, "start_replay", real)
+    kept, head = story_start.start_harness_pair(**pair, out=io.StringIO())
+
+    assert kept == base and sorted(parent.iterdir()) == sorted([base, head])
+    record = json.loads((base / "api" / story_start.PAIR_FILENAME).read_text("utf-8"))
+    assert record["head"] == {"desk": str(head), "harness_flags": {FLAG: True}}
+    assert record == json.loads(
+        (head / "api" / story_start.PAIR_FILENAME).read_text("utf-8")
+    )
