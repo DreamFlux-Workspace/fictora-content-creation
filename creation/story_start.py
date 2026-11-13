@@ -259,10 +259,12 @@ def read_replay_source(
     except ValueError as exc:
         raise ReplayRefused(f"{exc}. Nothing was made.") from None
     voice_mode = spine.get("voice_mode")
+    # Finish reads the desk's caption style before the show's (resolve_caption_style).
+    caption_style = old.caption_style or _show_caption_style(spine)
     config = ProductionConfig(
         clip_duration_seconds=old.clip_duration_seconds,
-        caption_style=_show_caption_style(spine) or old.caption_style,
-        api_captions=old.api_captions,
+        caption_style=caption_style,
+        api_captions=old.api_captions and caption_style != "none",
         locale=str(spine.get("locale") or old.locale),
         spoken_language=None
         if not language or language.lower().startswith("en")
@@ -373,6 +375,7 @@ def start_harness_pair(
     record: dict[str, Any] = {
         "source_spine_id": source.spine_id,
         "source_desk": str(source.desk),
+        "series": series,
         "flags": sorted(off),
         "harness_flag": sorted(off)[0] if len(off) == 1 else None,
         "base": None,
@@ -423,6 +426,12 @@ def _write_pair_record(desk: Path, record: Mapping[str, Any]) -> None:
     )
 
 
+def _drafted(desk: Path) -> bool:
+    """A desk whose story was already sent for drafting is no longer a fresh arm."""
+
+    return any(desk.rglob("01_draft_request.json"))
+
+
 def _unfinished_base(parent: Path, wanted: Mapping[str, Any]) -> Path | None:
     """The base desk an earlier run of this same pair made before its head desk failed, if any."""
 
@@ -434,6 +443,10 @@ def _unfinished_base(parent: Path, wanted: Mapping[str, Any]) -> Path | None:
             and record.get("base")
             and record.get("source_spine_id") == wanted["source_spine_id"]
             and record.get("flags") == wanted["flags"]
+            and record.get("series") == wanted["series"]
+            and str(record.get("created_at") or "")[:10]
+            == str(wanted["created_at"])[:10]
+            and not _drafted(path.parent.parent)
         ):
             return path.parent.parent.resolve()
     return None

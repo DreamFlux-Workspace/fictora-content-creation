@@ -427,6 +427,9 @@ def test_a_plain_letterbox_start_keeps_the_15s_take_length_of_main(
 def test_a_replay_takes_voice_locale_and_caption_settings_from_the_spine_first(
     old_desk: Path,
 ) -> None:
+    unstyled = load_production_config(old_desk)
+    unstyled.caption_style = None
+    save_production_config(old_desk, unstyled)
     spine = {
         **OLD_STORY,
         "voice_mode": "locked",
@@ -552,3 +555,64 @@ def test_a_pair_whose_head_failed_is_recorded_and_the_same_command_finishes_it(
     assert record == json.loads(
         (head / "api" / story_start.PAIR_FILENAME).read_text("utf-8")
     )
+
+
+def test_a_half_pair_is_only_finished_by_the_same_series_and_never_once_drafted(
+    old_desk: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = story_start.read_replay_source(
+        str(old_desk), parent=old_desk.parent, opener=_opener(_Reader(OLD_STORY), [])
+    )
+    parent = tmp_path / "pairs"
+    real = story_start.start_replay
+
+    def head_fails(source: Any, **kwargs: Any) -> Path:
+        if kwargs["series"].endswith("head"):
+            raise RuntimeError("bind failed")
+        return real(source, **kwargs)
+
+    monkeypatch.setattr(story_start, "start_replay", head_fails)
+    with pytest.raises(RuntimeError):
+        story_start.start_harness_pair(
+            source, parent=parent, series="Sokii", flag_names=[FLAG], out=io.StringIO()
+        )
+    (half,) = list(parent.iterdir())
+    monkeypatch.setattr(story_start, "start_replay", real)
+
+    other, _ = story_start.start_harness_pair(
+        source, parent=parent, series="Other", flag_names=[FLAG], out=io.StringIO()
+    )
+    assert other != half, "another series makes its own base"
+
+    (half / "runs" / "x").mkdir(parents=True)
+    (half / "runs" / "x" / "01_draft_request.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(FileExistsError):
+        story_start.start_harness_pair(
+            source, parent=parent, series="Sokii", flag_names=[FLAG], out=io.StringIO()
+        )
+    record = json.loads((half / "api" / story_start.PAIR_FILENAME).read_text("utf-8"))
+    assert record["head"] is None, "a drafted base is never adopted as a fresh arm"
+
+
+def test_a_replay_keeps_the_desk_s_caption_style_and_turns_server_captions_off_for_none(
+    old_desk: Path,
+) -> None:
+    config = load_production_config(old_desk)
+    config.caption_style = "bold"
+    save_production_config(old_desk, config)
+    spine = {**OLD_STORY, "caption_style_choice": "plain"}
+    kept = story_start.read_replay_source(
+        str(old_desk), parent=old_desk.parent, opener=_opener(_Reader(spine), [])
+    ).inputs.config
+    assert kept.caption_style == "bold", "finish reads the desk's style first"
+
+    config.caption_style = None
+    save_production_config(old_desk, config)
+    muted = story_start.read_replay_source(
+        str(old_desk),
+        parent=old_desk.parent,
+        opener=_opener(_Reader({**OLD_STORY, "captions_enabled": False}), []),
+    ).inputs.config
+    assert (muted.caption_style, muted.api_captions) == ("none", False)
