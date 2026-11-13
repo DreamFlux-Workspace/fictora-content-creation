@@ -75,6 +75,19 @@ def schema_takes_opening_action(openapi: Any, schema: str) -> bool | None:
         (the document could not be read or names no such request).
     """
 
+    return schema_takes_field(openapi, schema, "opening_action")
+
+
+def schema_takes_field(openapi: Any, schema: str, field: str) -> bool | None:
+    """Whether the deploy's ``/openapi.json`` lists ``field`` on the request ``schema``.
+
+    Returns
+    -------
+    bool | None
+        ``True`` / ``False`` when the schema is there, ``None`` when it is not
+        (the document could not be read or names no such request).
+    """
+
     if not isinstance(openapi, Mapping):
         return None
     schemas = (openapi.get("components") or {}).get("schemas") or {}
@@ -82,7 +95,7 @@ def schema_takes_opening_action(openapi: Any, schema: str) -> bool | None:
         return None
     for name, body in schemas.items():
         if str(name).endswith(schema) and isinstance(body, Mapping):
-            return "opening_action" in (body.get("properties") or {})
+            return field in (body.get("properties") or {})
     return None
 
 
@@ -122,5 +135,6 @@ __all__ = [
     "OpeningActionRefused",
     "clean_opening_action",
     "require_opening_action_support",
+    "schema_takes_field",
     "schema_takes_opening_action",
 ]

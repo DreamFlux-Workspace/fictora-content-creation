@@ -43,6 +43,10 @@ class ProductionConfig:
     #: on the DRAFT as ``opening_action`` (:mod:`creation.opening_action`). ``None`` (the default) sends
     #: nothing: the server's writer picks the opening action itself. Never ask the human for one.
     opening_action: str | None = None
+    #: The drama server's per-story harness flags, ``{name: on}``, from ``start --harness-flag NAME=on|off``
+    #: (:mod:`creation.harness_flags`). Sent on the DRAFT as ``harness_flags``; the server pins them on the
+    #: story. ``None`` (the default) sends nothing: the server's defaults apply.
+    harness_flags: dict[str, bool] | None = None
     #: Whose voices the show's takes speak in, chosen at ``start --voice-mode``: ``locked`` (each
     #: character's locked voice, filmed as a dialogue track) or ``model`` (the video model's own voices
     #: from the cast descriptions). Sent to the server once the story exists, and only while the server

@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 import sys
-from dataclasses import asdict
-from datetime import date
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Sequence
 
 from creation.captions import find_ffmpeg
 from creation.cli_config import (
+    DEFAULT_PRESET_ID,
     DEFAULT_VIDEO_LANE,
     add_production_config_args,
     bound_preset_and_lane,
@@ -28,6 +29,7 @@ from creation.cli_post import (
     dispatch_post,
 )
 from creation.cli_text import HELP_SUFFIX, force_utf8_output, text_or_file
+from creation.harness_flags import harness_flags_text
 from creation.gate_tools import POST_GATE, wrong_tool_for_gate
 from creation.episode_commands import (
     EPISODE_COMMANDS,
@@ -38,8 +40,7 @@ from creation.episode_commands import (
 from creation.line_fit import add_line_fit_parser, dispatch_line_fit
 from creation.narrator_cast import add_narrator_answer_args, interactive_ask
 from creation.plan_prompt import narrator_warning
-from creation.ops.floor import init_series_desk
-from creation.ops.folder import DEFAULT_RUN_PARENT, run_folder_name
+from creation.ops.folder import DEFAULT_RUN_PARENT
 from creation.orchestrate import (
     approve_gate,
     bind_desk,
@@ -48,9 +49,9 @@ from creation.orchestrate import (
     resolve_video_lane,
     run_step,
     status_message,
-    unbound_desk_recovery,
 )
 from creation.production_config import load_production_config, save_production_config
+from creation.production_state import ProductionState, load_production
 from creation.rules_epoch import (
     CURRENT_EPOCH,
     EPOCH_CHOICES,
@@ -67,6 +68,14 @@ from creation.recover import (
 )
 from creation.setup_check import run_setup_check
 from creation.shared_spine import shared_spine_refusal
+from creation.story_start import (
+    ReplayRefused,
+    StoryInputs,
+    read_replay_source,
+    start_harness_pair,
+    start_new_desk,
+    start_replay,
+)
 
 
 def _warn_if_no_local_ffmpeg() -> None:
@@ -76,6 +85,80 @@ def _warn_if_no_local_ffmpeg() -> None:
         find_ffmpeg()
     except RuntimeError as exc:
         print(f"WARNING: {exc}", file=sys.stderr)
+
+
+def _print_started(desk: Path, prompt: str, state: ProductionState) -> None:
+    print(desk)
+    _warn_if_no_local_ffmpeg()
+    narration = narrator_warning(prompt, desk=desk)
+    if narration:
+        print(narration, file=sys.stderr)
+    flags = load_production_config(desk).harness_flags
+    if flags:
+        print(
+            f"Harness flags (sent on this story's draft): {harness_flags_text(flags)}"
+        )
+    print(f"bound session_id={state.session_id} phase={state.phase}")
+    print("Next: uv run fictora-produce step --desk", desk)
+
+
+_REPLAY_EXCLUSIVE = ("prompt", "spine_id", "preset_id", "band", "video_lane")
+
+
+def _start_replay(args: argparse.Namespace) -> int:
+    given = [
+        f"--{name.replace('_', '-')}"
+        for name in _REPLAY_EXCLUSIVE
+        if getattr(args, name)
+    ]
+    if given:
+        print(
+            f"Stopped: --from-story replays the old story's own inputs; leave out {', '.join(given)}.",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        source = read_replay_source(args.from_story, parent=args.parent)
+    except ReplayRefused as exc:
+        print(f"Stopped: {exc}", file=sys.stderr)
+        return 2
+    # A --delivery-format change takes the take length of the old story's band.
+    args.band = source.inputs.band
+    config = merge_config_from_args(source.inputs.config, args)
+    source = replace(source, inputs=replace(source.inputs, config=config))
+    desk = start_replay(
+        source,
+        parent=args.parent,
+        series=args.series or f"{source.title} replay",
+        flags=config.harness_flags,
+        out=sys.stdout,
+    )
+    _print_started(desk, source.inputs.prompt, load_production(desk))
+    return 0
+
+
+def _start_harness_pair(args: argparse.Namespace) -> int:
+    try:
+        source = read_replay_source(args.from_story, parent=args.parent)
+    except ReplayRefused as exc:
+        print(f"Stopped: {exc}", file=sys.stderr)
+        return 2
+    base, head = start_harness_pair(
+        source,
+        parent=args.parent,
+        series=args.series or source.title,
+        flag_names=args.flags,
+        out=sys.stdout,
+    )
+    print(f"base (flags off): {base}")
+    print(f"head (flags on):  {head}")
+    print("Both are new stories, not drafted yet. Draft each (authoring, no filming):")
+    for desk in (base, head):
+        print(f"  uv run fictora-produce step --desk {shlex.quote(str(desk))}")
+    print(
+        "Then take both through the same gates; filming still needs the human's yes and --confirm-spend."
+    )
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -107,7 +190,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Attach an existing server story (e.g. one made in the app) to a new desk instead of "
         "making a new story. The owner is unchanged. Find the id with: fictora-produce stories --title T",
     )
-    start.add_argument("--band", default="15s", choices=("15s", "30s", "60s"))
+    start.add_argument(
+        "--from-story",
+        default=None,
+        help="Replay an old story as a NEW story: its brief, art style and version, band, video lane, "
+        "language, format and desk settings. Give its desk folder or its spine id (looked for under "
+        "--parent). Not with --prompt, --spine-id, --preset-id, --band or --video-lane. Spends nothing.",
+    )
+    start.add_argument(
+        "--band", default=None, choices=("15s", "30s", "60s"), help="Default 15s."
+    )
     start.add_argument(
         "--episodes",
         type=int,
@@ -117,9 +209,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     start.add_argument("--parent", type=Path, default=DEFAULT_RUN_PARENT)
     start.add_argument(
         "--preset-id",
-        default="modern-dark-fantasy",
+        default=None,
         help="Published art-style preset (list them: fictora-produce presets). "
-        "Checked before the desk is made.",
+        f"Checked before the desk is made. Default: {DEFAULT_PRESET_ID}.",
     )
     start.add_argument(
         "--video-lane",
@@ -129,6 +221,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         "story keeps its own.",
     )
     add_production_config_args(start)
+
+    pair = sub.add_parser(
+        "harness-pair",
+        help="Replay an old story as two NEW stories for a blind eval: base with every --flag off, head "
+        "with every --flag on. Makes two desks; spends nothing.",
+    )
+    pair.add_argument(
+        "--from-story", required=True, help="The old story's desk folder or spine id."
+    )
+    pair.add_argument(
+        "--flag",
+        dest="flags",
+        action="append",
+        required=True,
+        help="A drama-server harness flag name (repeatable).",
+    )
+    pair.add_argument(
+        "--series",
+        default=None,
+        help="Desk name stem; the desks end in 'base' and 'head'. Default: the old story's title.",
+    )
+    pair.add_argument("--parent", type=Path, default=DEFAULT_RUN_PARENT)
 
     stories = sub.add_parser(
         "stories", help="Find server stories by title (read only, spends nothing)."
@@ -512,66 +626,40 @@ def _run_command(args: argparse.Namespace) -> int:
                 print(f"Stopped: {exc}", file=sys.stderr)
                 return 2
             return 0
+        if args.command == "start" and args.from_story:
+            return _start_replay(args)
+        if args.command == "harness-pair":
+            return _start_harness_pair(args)
         if args.command == "start":
             if not args.series or not args.prompt:
                 print(
-                    "Stopped: start needs --series and --prompt (or --spine-id to attach a story).",
+                    "Stopped: start needs --series and --prompt (or --spine-id to attach a story, "
+                    "or --from-story to replay one).",
                     file=sys.stderr,
                 )
                 return 2
+            # --band defaults to None only so --from-story can tell it was typed.
+            args.band = args.band or "15s"
             config = config_from_args(args)  # refused before the desk is made
             prompt = text_or_file(args.prompt, flag="--prompt")
             # Check the preset before anything lands on disk: a wrong id used to leave a
             # half-made desk that the next start refused (L-20260930-13).
-            preset = resolve_preset(args.preset_id)
+            preset = resolve_preset(args.preset_id or DEFAULT_PRESET_ID)
             video_lane = resolve_video_lane(args.video_lane) or DEFAULT_VIDEO_LANE
-            try:
-                desk = init_series_desk(
-                    args.parent,
-                    args.series,
-                    band=args.band,
-                    episode_count=args.episodes,
-                    letterbox=config.delivery_format == "letterbox",
-                )
-            except FileExistsError:
-                desk = (
-                    args.parent.expanduser()
-                    / run_folder_name(args.series, date.today())
-                ).resolve()
-                raise FileExistsError(
-                    unbound_desk_recovery(
-                        desk, prompt_arg=args.prompt, preset_id=preset[0]
-                    )
-                ) from None
-            try:
-                state = bind_desk(
-                    desk,
+            desk, state = start_new_desk(
+                args.parent,
+                args.series,
+                StoryInputs(
                     prompt=prompt,
-                    preset_id=args.preset_id,
-                    video_lane=video_lane,
                     preset=preset,
-                )
-            except (RuntimeError, ValueError, OSError):
-                print(
-                    unbound_desk_recovery(
-                        desk,
-                        prompt_arg=args.prompt,
-                        preset_id=preset[0],
-                        just_made=True,
-                    ),
-                    file=sys.stderr,
-                )
-                raise
-            # A new desk runs the current rules (creation.rules_epoch); older desks keep theirs.
-            config.rules_epoch = CURRENT_EPOCH
-            save_production_config(desk, config)
-            print(desk)
-            _warn_if_no_local_ffmpeg()
-            narration = narrator_warning(prompt, desk=desk)
-            if narration:
-                print(narration, file=sys.stderr)
-            print(f"bound session_id={state.session_id} phase={state.phase}")
-            print("Next: uv run fictora-produce step --desk", desk)
+                    band=args.band,
+                    video_lane=video_lane,
+                    config=config,
+                ),
+                episodes=args.episodes,
+                prompt_arg=args.prompt,
+            )
+            _print_started(desk, prompt, state)
             return 0
         if args.command == "bind":
             prompt = text_or_file(args.prompt, flag="--prompt")

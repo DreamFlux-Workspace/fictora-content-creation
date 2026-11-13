@@ -17,6 +17,12 @@ from creation.harness.http_util import (
     server_already_retried,
 )
 from creation import stylised_only
+from creation.harness_flags import (
+    HarnessFlagsRefused,
+    harness_flags_refusal,
+    harness_flags_text,
+    require_harness_flags_support,
+)
 from creation.harness.video_enrol_errors import server_refused_episode_ordinal_field
 from creation.desk_media_urls import drawn_cast_rows
 from creation.film_spend import quote_line, read_kit_spend
@@ -88,6 +94,7 @@ def draft_request_body(
     locale: str = "en-US",
     delivery_format: str | None = None,
     opening_action: str | None = None,
+    harness_flags: Mapping[str, bool] | None = None,
 ) -> dict[str, Any]:
     """Build the ``POST /v1/prompt-video-authoring-drafts`` body: episode 1 alone, arc at episode 2.
 
@@ -111,6 +118,9 @@ def draft_request_body(
     opening_action
         How episode 1's first shot moves, in the human's words; sent as ``opening_action``.
         ``None`` sends nothing, so the body and its brief hash are unchanged.
+    harness_flags
+        The server's per-story harness flags, ``{name: on}`` (:mod:`creation.harness_flags`); sent as
+        ``harness_flags``. ``None`` or empty sends nothing, so the body and its brief hash are unchanged.
 
     Returns
     -------
@@ -135,6 +145,8 @@ def draft_request_body(
         body["delivery_format"] = "letterbox"
     if opening_action:
         body["opening_action"] = opening_action
+    if harness_flags:
+        body["harness_flags"] = dict(sorted(harness_flags.items()))
     body["outline_mode"] = EP1_ALONE_OUTLINE_MODE
     return body
 
@@ -151,6 +163,7 @@ def start_draft(
     locale: str = "en-US",
     delivery_format: str | None = None,
     opening_action: str | None = None,
+    harness_flags: Mapping[str, bool] | None = None,
     deadline_seconds: float = 1800.0,
     accept_notices: Sequence[str] = (),
     desk: str = "<desk>",
@@ -185,6 +198,9 @@ def start_draft(
     opening_action
         As :func:`draft_request_body`. Checked against the deploy's ``/openapi.json`` first: a
         server without the field stops the draft before anything is sent.
+    harness_flags
+        As :func:`draft_request_body`, printed before the draft and checked against
+        ``/openapi.json`` the same way.
     deadline_seconds
         Plan poll cap.
     accept_notices
@@ -241,11 +257,20 @@ def start_draft(
         locale=locale,
         delivery_format=delivery_format,
         opening_action=opening_action,
+        harness_flags=harness_flags,
     )
     if opening_action:
         try:
             require_opening_action_support(run, DRAFT_SCHEMA, label="draft")
         except OpeningActionRefused as exc:
+            raise SystemExit(str(exc)) from exc
+    if harness_flags:
+        print(
+            f"Harness flags on this story's draft: {harness_flags_text(harness_flags)}"
+        )
+        try:
+            require_harness_flags_support(run)
+        except HarnessFlagsRefused as exc:
             raise SystemExit(str(exc)) from exc
     run.save("01_draft_request.json", body)
 
@@ -453,6 +478,11 @@ def _post_draft(
         )
     if 200 <= status < 300 and isinstance(answer, dict):
         return answer
+    refusal = harness_flags_refusal(
+        status, answer, body.get("harness_flags") or {}, api_error_text(answer)
+    )
+    if body.get("harness_flags") and refusal:
+        raise SystemExit(refusal)
     raise SystemExit(f"HTTP {status} POST {_DRAFT_ROUTE}: {api_error_text(answer)}")
 
 

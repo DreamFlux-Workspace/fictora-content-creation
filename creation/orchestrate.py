@@ -1797,6 +1797,7 @@ def run_step(
                     locale=cfg.locale,
                     delivery_format=cfg.delivery_format,
                     opening_action=cfg.opening_action,
+                    harness_flags=cfg.harness_flags,
                     deadline_seconds=cfg.poll_plan_deadline_seconds,
                     accept_notices=accept_notices,
                     desk=str(desk),

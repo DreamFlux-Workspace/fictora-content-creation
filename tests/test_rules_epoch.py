@@ -125,7 +125,7 @@ def test_other_config_writes_keep_the_stamp(tmp_path: Path) -> None:
 def test_start_stamps_a_new_desk_and_bind_keeps_a_desks_epoch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from creation import cli_produce
+    from creation import cli_produce, story_start
     from creation.production_state import ProductionState
 
     def bind(desk: Path, **_: Any) -> ProductionState:
@@ -137,6 +137,7 @@ def test_start_stamps_a_new_desk_and_bind_keeps_a_desks_epoch(
         cli_produce, "resolve_preset", lambda preset_id: (preset_id, "1")
     )
     monkeypatch.setattr(cli_produce, "bind_desk", bind)
+    monkeypatch.setattr(story_start, "bind_desk", bind)
     code = cli_produce.main(
         ["start", "--series", "Fresh", "--prompt", "A door.", "--parent", str(tmp_path)]
     )
