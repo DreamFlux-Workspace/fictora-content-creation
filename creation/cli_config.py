@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 
+from creation.harness_flags import parse_harness_flags
 from creation.opening_action import clean_opening_action
 from creation.ops.state import LETTERBOX_TAKE_SECONDS_FOR_BAND
 from creation.production_config import ProductionConfig
@@ -44,6 +45,17 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
         help="Override only, set on the draft: how episode 1's first shot moves, in the human's words "
         '("she kicks the door open"; 200 characters at most). Default: none, and the server\'s writer picks '
         "the opening action itself; never ask the human for one.",
+    )
+    parser.add_argument(
+        "--harness-flag",
+        dest="harness_flags",
+        action="append",
+        default=None,
+        metavar="NAME=on|off",
+        help="Operator only, set on the draft: turn one of the drama server's harness flags on or off for "
+        "this story (repeatable). Kept in production.config.json, so a resumed step sends the same draft. "
+        "List the flags in fictora-drama: uv run python scripts/harness_flags.py. Default: none, the "
+        "server's defaults.",
     )
     parser.add_argument(
         "--voice-mode",
@@ -125,6 +137,7 @@ def config_from_args(args: argparse.Namespace) -> ProductionConfig:
             str(args.voice_mode) if getattr(args, "voice_mode", None) else None
         ),
         opening_action=clean_opening_action(getattr(args, "opening_action", None)),
+        harness_flags=parse_harness_flags(getattr(args, "harness_flags", None)),
         caption_style=style,
         api_captions=args.api_captions is not False,
         fallback_estimate_usd=(
@@ -156,6 +169,8 @@ def merge_config_from_args(
         merged.voice_mode = fresh.voice_mode
     if getattr(args, "opening_action", None):
         merged.opening_action = fresh.opening_action
+    if getattr(args, "harness_flags", None):
+        merged.harness_flags = fresh.harness_flags
     format_changed = bool(getattr(args, "delivery_format", None)) and (
         fresh.delivery_format != saved.delivery_format
     )
