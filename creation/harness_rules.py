@@ -830,8 +830,8 @@ def adult_face_lines(spine: Mapping[str, Any]) -> list[str]:
     """Warn when a stated adult age has no adult face words.
 
     A stated age without adult features is drawn young. The note that holds
-    names the face: adult face at their stated age, adult proportions, no
-    blush at rest. A look note does not hold. This does not stop the plates.
+    names the face: narrow face, no blush. A look note does not hold. This
+    does not stop the plates.
 
     Parameters
     ----------
@@ -856,8 +856,7 @@ def adult_face_lines(spine: Mapping[str, Any]) -> list[str]:
         name = str(card.get("name") or card.get("cast_id") or "the character")
         lines.append(
             f"{name} is {age} and can be drawn young. "
-            "Name adult features in the brief before the plate: "
-            "adult face at their stated age, adult proportions, no blush at rest. "
+            "Name adult features in the brief before the plate: narrow face, no blush. "
             "A look note does not hold."
         )
     return lines

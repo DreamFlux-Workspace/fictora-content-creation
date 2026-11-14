@@ -213,10 +213,8 @@ def test_an_adult_age_without_adult_features_is_named() -> None:
     assert adult_face_lines(spine) == []
     spine["cast"][0]["visual_brief"] = "Koharu, 29, soft smile"
     lines = adult_face_lines(spine)
-    assert len(lines) == 1 and "adult face at their stated age" in lines[0]
-    spine["cast"][0]["visual_brief"] = (
-        "Koharu, 29, adult face at their stated age, adult proportions, no blush at rest"
-    )
+    assert len(lines) == 1 and "narrow face" in lines[0]
+    spine["cast"][0]["visual_brief"] = "Koharu, 29, narrow face, no blush"
     assert adult_face_lines(spine) == []
 
 
