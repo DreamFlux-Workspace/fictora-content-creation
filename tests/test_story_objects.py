@@ -1,4 +1,4 @@
-"""Story objects keep one look: the plates gate draws and shows their picture (fictora-drama story_props, 9 Oct 2026).
+"""Story objects keep one look: the server draws their picture, a cast run with the cast (fictora-drama story_props, #1716).
 
 Hanakaze's carved 営業中 sign came back as a painted pink sakura on a board. The
 server gives the objects a story turns on a prop card and ONE picture, drawn
@@ -88,7 +88,7 @@ def test_author_says_which_objects_the_episode_added() -> None:
     lines = new_objects_notice(new_objects({"props": []}, {"props": [SIGN]}))
     assert len(lines) == 1
     assert "story object added: wooden 営業中 sign (prop_wooden_sign)" in lines[0]
-    assert "~$0.30, once" in lines[0]
+    assert "no yes needed" in lines[0]
 
 
 def _episode_two_with_sign(desk: Path, api: FakeApi) -> None:
@@ -125,7 +125,7 @@ def test_the_plates_step_draws_the_owed_object_saves_it_and_books_one_picture(
     )
 
 
-def test_the_script_yes_routes_an_owed_object_picture_through_plates(
+def test_an_owed_object_picture_never_holds_the_script_yes_before_boards(
     desk: Path, api: FakeApi
 ) -> None:
     api.routes[("POST", "/v1/spines/sp1/pilot-episodes/2/author")] = {
@@ -140,12 +140,8 @@ def test_the_script_yes_routes_an_owed_object_picture_through_plates(
 
     scripted = orchestrate.approve_gate(desk, gate="script")
 
-    assert load_production(desk).phase == "ready_cast_enrol"
-    assert (
-        "Story object(s) wooden 営業中 sign need a picture before boards"
-        in scripted.message
-    )
-    assert "(~$0.30)" in scripted.message
+    assert load_production(desk).phase == "ready_boards_enrol"
+    assert "wooden 営業中 sign" not in scripted.message
 
 
 def test_author_prints_the_objects_the_episode_added(desk: Path, api: FakeApi) -> None:

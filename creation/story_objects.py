@@ -326,15 +326,15 @@ def new_objects_notice(
         if prop_id in suggested:
             lines.append(
                 f"story object suggested: {name} ({prop_id}). Nothing is drawn or paid unless the human "
-                f'says yes. Keep it: `fictora-produce keep-prop --desk {desk} --prop "{name}"` (free; its '
-                f"picture is then drawn at the plates gate, $0.30, once). Not needed: "
+                f'says yes. Keep it: `fictora-produce keep-prop --desk {desk} --prop "{name}"` (free; the '
+                f"server then draws its picture once, no yes needed). Not needed: "
                 f'`fictora-produce remove-prop --desk {desk} --prop "{name}"` (free). Left alone, boards draw '
                 "it from the story's words."
             )
         else:
             lines.append(
-                f"story object added: {name} ({prop_id}) — one picture is drawn at the plates gate (~$0.30, once) "
-                "and every board and take from this episode on keeps to it; approve it with `approve --gate plates`"
+                f"story object added: {name} ({prop_id}) — the server draws its picture once, from the storyboard "
+                "that first shows it, with no yes needed; every later board and take keeps to it"
             )
     return lines
 
