@@ -3,20 +3,19 @@
 fictora-drama ``story_props`` (founder-approved 9 Oct 2026): Hanakaze's carved
 営業中 sign came back as a painted pink sakura on a board, because nothing held
 its look. The server now gives the objects a story turns on (at most three an
-episode) a prop card when the episode is written, draws ONE picture per object
-in the same step as the cast plates (one still each, never per take), and,
-once approved, every board and take from that episode on keeps to it. The
-plates gate's approval (``cast/approve``) approves the object pictures too.
+episode) a prop card when the episode is written and draws ONE picture per
+object (fictora-drama #1716: kept with no ask, drawn as the storyboard run's
+last step from its storyboard cell, or with the cast when a cast picture run
+comes first), and every board and take from then on keeps to it. A first
+picture lands approved; a redraw waits for ``approve --gate plates``.
 
-The kit says which objects an episode added right after ``author``, draws an
-owed object picture at the plates gate (from episode 2 the episode routes
-through it again, as for a new character), and saves the pictures next to the
-plates so the human sees them before ``approve --gate plates``. A server
-without the feature sends no ``props``: nothing changes.
+The kit says which objects an episode added right after ``author``; an object
+never routes an episode through the plates gate. A plates step the cast needs
+anyway prices the objects that run draws. A server without the feature sends
+no ``props``: nothing changes.
 
-An object the server only suggests (``proposed: true`` on the card, fictora-drama
-"props held for a yes", 15 Oct 2026) is never drawn, priced or held for: it is
-not owed a picture and does not route the episode through the plates gate.
+An object the server only suggested before 14 Nov 2026 (``proposed: true`` on
+the card) is never priced or held for by the kit.
 The kit reads the server's mark and never keeps its own list: ``author`` and
 ``props`` say it is waiting, ``keep-prop`` is the yes (free), ``remove-prop``
 the no (free).
@@ -84,7 +83,7 @@ def _shown_by(card: Mapping[str, Any], episode: int) -> bool:
 
 
 def objects_to_draw(spine: Mapping[str, Any], *, episode: int) -> list[tuple[str, str]]:
-    """Story objects used by ``episode`` with no current picture: the plates step draws them.
+    """Story objects used by ``episode`` with no current picture: a cast picture run draws them with the cast.
 
     Parameters
     ----------
@@ -116,7 +115,7 @@ def objects_to_draw(spine: Mapping[str, Any], *, episode: int) -> list[tuple[str
 def objects_owing_approval(
     spine: Mapping[str, Any], *, episode: int
 ) -> list[tuple[str, str]]:
-    """Story objects used by ``episode`` without an approved, current picture (to draw or to approve).
+    """Story objects used by ``episode`` without an approved, current picture (owed, or a redraw waiting for a yes).
 
     Parameters
     ----------
@@ -326,15 +325,15 @@ def new_objects_notice(
         if prop_id in suggested:
             lines.append(
                 f"story object suggested: {name} ({prop_id}). Nothing is drawn or paid unless the human "
-                f'says yes. Keep it: `fictora-produce keep-prop --desk {desk} --prop "{name}"` (free; its '
-                f"picture is then drawn at the plates gate, $0.30, once). Not needed: "
+                f'says yes. Keep it: `fictora-produce keep-prop --desk {desk} --prop "{name}"` (free; the '
+                f"server then draws its picture once). Not needed: "
                 f'`fictora-produce remove-prop --desk {desk} --prop "{name}"` (free). Left alone, boards draw '
                 "it from the story's words."
             )
         else:
             lines.append(
-                f"story object added: {name} ({prop_id}) — one picture is drawn at the plates gate (~$0.30, once) "
-                "and every board and take from this episode on keeps to it; approve it with `approve --gate plates`"
+                f"story object added: {name} ({prop_id}) — the server draws its picture once, from the storyboard "
+                "that first shows it, with no yes needed; every later board and take keeps to it"
             )
     return lines
 

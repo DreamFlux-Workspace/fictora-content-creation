@@ -29,8 +29,8 @@ desk with a versioned name, and never approves (the human's yes goes through
 - ``plates``: retired (was ``plates --cast NAME --cause``); prints a pointer to ``redraw-plate --note`` and sends nothing.
 - ``redraw-plate --cast X --note "..."``: note one character, then redraw only their plate (one still).
 - ``props`` / ``keep-prop --prop X`` / ``redraw-prop --prop X --note "..."`` / ``remove-prop --prop X``: the
-  story's objects (:mod:`creation.prop_commands`): list free, keep one the server suggested (free; its picture is
-  drawn at the next plates step), redraw one picture ($0.30 each drawn; asks first, draws on ``--confirm-spend``),
+  story's objects (:mod:`creation.prop_commands`): list free, keep one the server suggested (free; the server then
+  draws its picture once), redraw one picture ($0.30 each drawn; asks first, draws on ``--confirm-spend``),
   remove free.
 - ``check-lines``: were the approved lines in the take's instructions, which shot and board row each fell in,
   and is its on-screen speaker in that row (take facts and board frames, never the prompt)?
@@ -9031,8 +9031,8 @@ def add_episode_parsers(
     prop_keep = sub.add_parser(
         "keep-prop",
         help=(
-            "Say yes to a story object the server suggested. Free; its picture is drawn at the next plates step "
-            "($0.30, once). Until then nothing is drawn or paid for it."
+            "Say yes to a story object the server suggested. Free; the server then draws its picture once "
+            "(after the storyboards, or with the cast). Until then nothing is drawn or paid for it."
         ),
     )
     prop_keep.add_argument("--desk", type=Path, required=True)
