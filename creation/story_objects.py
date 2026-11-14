@@ -43,6 +43,10 @@ def _cards(spine: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     ]
 
 
+#: New objects a storyboard run may draw after its boards (fictora-drama ``story_props.MAX_NEW_PROPS_PER_EPISODE``).
+NEW_OBJECTS_PER_EPISODE = 3
+
+
 def is_suggested(card: Mapping[str, Any]) -> bool:
     """Whether the server only suggested this object and is waiting for the human's yes (``proposed``)."""
 
@@ -340,6 +344,7 @@ def new_objects_notice(
 
 __all__ = [
     "ANY_EPISODE",
+    "NEW_OBJECTS_PER_EPISODE",
     "cast_owing_plates",
     "is_suggested",
     "new_objects",
