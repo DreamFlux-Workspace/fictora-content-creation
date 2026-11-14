@@ -158,3 +158,43 @@ def test_author_prints_the_objects_the_episode_added(desk: Path, api: FakeApi) -
     ec.run_author(desk, episode=2, out=out)
 
     assert "story object added: wooden 営業中 sign (prop_wooden_sign)" in out.getvalue()
+
+
+def test_a_first_object_picture_lands_approved_and_is_still_saved_for_the_human(
+    desk: Path, api: FakeApi
+) -> None:
+    _episode_two_with_sign(desk, api)
+
+    def enrol(_m: str, _p: str, _body: dict[str, Any] | None) -> dict[str, Any]:
+        api.spine_doc["media_assets"].append(_picture(review_state="approved"))
+        return {"job_id": "job_cast"}
+
+    api.routes[("POST", CAST)] = enrol
+
+    result = orchestrate.run_step(desk, confirm_spend=True)
+
+    assert any("object-wooden" in path for path in result.paths)
+
+
+def test_an_object_picture_the_storyboards_drew_is_saved_once(
+    desk: Path, api: FakeApi
+) -> None:
+    spine = {"props": [SIGN], "media_assets": [_picture(review_state="approved")]}
+
+    first = orchestrate.save_new_object_pictures(desk, spine, episode=2)
+    again = orchestrate.save_new_object_pictures(desk, spine, episode=2)
+
+    assert [path.parent.name for path in first] == ["plates"]
+    assert "object-wooden" in first[0].name
+    assert again == []
+
+
+def test_the_boards_price_lists_the_object_pictures_the_run_may_draw(
+    desk: Path, api: FakeApi
+) -> None:
+    set_phase(desk, "ready_boards_enrol")
+
+    result = orchestrate.run_step(desk)
+
+    assert "Nothing drawn yet" in result.message
+    assert "up to 3 new story object picture(s)" in result.message

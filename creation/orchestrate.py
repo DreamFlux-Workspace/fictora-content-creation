@@ -29,6 +29,7 @@ from creation.authoring_warnings import authoring_warnings, for_episode, warning
 from creation.brief_lines import brief_vs_spine_lines
 from creation.story_objects import (
     cast_owing_plates,
+    NEW_OBJECTS_PER_EPISODE,
     object_picture_urls,
     objects_owing_approval,
     objects_to_draw,
@@ -1549,6 +1550,50 @@ def plates_job_done(desk: Path, state: ProductionState) -> None:
     save_production(desk, state)
 
 
+def save_new_object_pictures(
+    desk: Path, spine: Mapping[str, Any], *, episode: int
+) -> list[Path]:
+    """Save each current object picture the desk has no copy of yet next to this episode's plates, to look at.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    spine
+        Spine JSON after the step that may have drawn objects.
+    episode
+        The episode whose ``plates/`` folder receives them.
+
+    Returns
+    -------
+    list[Path]
+        The files saved; a failed download is noted and the step goes on (the next step tries again).
+    """
+
+    new = [
+        (stem, url)
+        for stem, url in object_picture_urls(spine)
+        if not any(found.parent.name == "plates" for found in desk.rglob(f"{stem}-ep*"))
+    ]
+    if not new:
+        return []
+    plates = _episode_dir(desk, episode) / "plates"
+    plates.mkdir(parents=True, exist_ok=True)
+    saved: list[Path] = []
+    try:
+        with httpx.Client(timeout=120.0) as fetch:
+            for stem, url in new:
+                saved.append(
+                    download_to_versioned(fetch, url, plates, f"{stem}-ep{episode:02d}")
+                )
+    except httpx.HTTPError as exc:
+        _note(
+            _episode_dir(desk, episode),
+            f"!! object picture not saved on the desk ({exc}); the next step tries again",
+        )
+    return saved
+
+
 def drawing_spend_stop(
     desk: Path,
     state: ProductionState,
@@ -1606,7 +1651,9 @@ def drawing_spend_stop(
     what = (
         f"{count} character picture(s)"
         if kind == "plates"
-        else f"{count} storyboard(s), one a take"
+        else f"{count} storyboard(s), one a take; then the server draws up to {NEW_OBJECTS_PER_EPISODE} "
+        f"new story object picture(s), only if the episode brings new ones (up to "
+        f"${float(STILL_USD) * NEW_OBJECTS_PER_EPISODE:.2f} more)"
     )
     return StepResult(
         state.phase,
@@ -2008,6 +2055,9 @@ def run_step(
                     unit=f"plates x{len(paths)}"
                     + (f" + object pictures x{drawn_objects}" if drawn_objects else ""),
                 )
+            object_paths.extend(
+                str(path) for path in save_new_object_pictures(desk, spine, episode=ep)
+            )
             paths.extend(object_paths)
             # Every character this step owed must have come back with a
             # picture; otherwise say so, not "Cast drawn" (L-20261008-17).
@@ -2174,6 +2224,10 @@ def run_step(
                     f"the boards job completed but the spine has no board for {episode_id_for(spine, ep)}"
                 )
             paths.extend(str(path) for _, path in made)
+            # The run draws the episode's new story objects after its boards (fictora-drama #1716).
+            paths.extend(
+                str(path) for path in save_new_object_pictures(desk, spine, episode=ep)
+            )
             report = board_report(
                 desk,
                 run,
