@@ -122,7 +122,9 @@ def test_a_drawn_picture_waiting_for_its_yes_asks_for_the_plates_yes(
     assert api.posted(ENROL) == []
 
 
-def test_a_story_object_never_stops_the_boards(desk: Path, api: FakeApi) -> None:
+def test_a_story_object_an_older_server_still_lists_never_stops_the_boards(
+    desk: Path, api: FakeApi
+) -> None:
     api.spine_doc["cast_pictures_owed"] = []
     api.spine_doc["object_pictures_owed"] = [
         {"prop_id": "prop_plate", "name": "cracked white plate"}
@@ -131,8 +133,10 @@ def test_a_story_object_never_stops_the_boards(desk: Path, api: FakeApi) -> None
 
     result = orchestrate.run_step(desk)
 
+    assert result.phase == "ready_boards_enrol"
     assert "Stopped before the boards" not in result.message
     assert "cracked white plate" not in result.message
+    assert "Nothing drawn yet" in result.message
 
 
 def test_an_older_server_without_the_field_keeps_the_kits_own_read(

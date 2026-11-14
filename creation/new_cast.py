@@ -99,9 +99,6 @@ def server_pictures_owed(
 def pictures_waiting_for_yes(spine: Mapping[str, Any]) -> list[tuple[str, str]]:
     """Characters the server says are drawn and only wait for the plates yes before boards.
 
-    A story object never holds the boards (fictora-drama #1716): its first
-    picture lands approved, so it is not listed here.
-
     Parameters
     ----------
     spine

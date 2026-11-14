@@ -3402,8 +3402,6 @@ def approve_gate(
             save_spine_snapshot(desk, ep, spine)
             record = record_script_gate(desk, episode=ep)
             owing = cast_owing_pictures(spine, episode=ep) if ep >= 2 else []
-            # A story object never holds the boards: the storyboard run draws it
-            # from its own boards (fictora-drama #1716).
             if owing:
                 # Boards are drawn from the characters' pictures; the server
                 # refuses them (cast_not_approved) until a newcomer's is approved.

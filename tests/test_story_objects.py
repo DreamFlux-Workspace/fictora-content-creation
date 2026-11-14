@@ -1,4 +1,4 @@
-"""Story objects keep one look: the server draws their picture, a cast run with the cast (fictora-drama story_props, #1716).
+"""Story objects keep one look: the server draws their picture, a cast run with the cast.
 
 Hanakaze's carved 営業中 sign came back as a painted pink sakura on a board. The
 server gives the objects a story turns on a prop card and ONE picture, drawn
