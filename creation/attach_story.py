@@ -327,6 +327,8 @@ def attach_story(
     opener: Callable[[str, Path], Any] | None = None,
     today: date | None = None,
     out: TextIO | None = None,
+    config: ProductionConfig | None = None,
+    announce: bool = True,
 ) -> AttachResult:
     """Make a new desk for an existing server story (``start --spine-id``). Spends nothing.
 
@@ -354,6 +356,11 @@ def attach_story(
         Desk date (tests).
     out
         Where the summary is printed.
+    config
+        The desk's ``production.config.json``; ``None`` builds it from the story (its caption
+        look, language, format and rules). ``fork`` passes the source desk's.
+    announce
+        Print the summary and note it in ``run-notes.md``; ``fork`` says its own.
 
     Returns
     -------
@@ -393,7 +400,11 @@ def attach_story(
         listed = True
         owner_kind = str(body.get("owner_kind") or "")
         spine = session.get(f"/v1/spines/{quote(spine_id, safe='')}")
-        caption_style, caption_source = _caption_look(session, spine_id, spine)
+        caption_style, caption_source = (
+            (config.caption_style or "", "the given config")
+            if config is not None
+            else _caption_look(session, spine_id, spine)
+        )
         title = str(spine.get("title") or "").strip() or spine_id
         name = (series or title).strip()
         desk = parent / run_folder_name(name, stamp)
@@ -405,7 +416,7 @@ def attach_story(
         if band not in BANDS:
             band = "15s"
         episode = last_written_episode(spine)
-        config = _config_from_spine(spine, caption_style)
+        config = config or _config_from_spine(spine, caption_style)
         desk = init_series_desk(
             parent,
             name,
@@ -452,6 +463,14 @@ def attach_story(
     finally:
         session.client.close()
     language = str(spine.get("spoken_language") or "en-US")
+    if not announce:
+        return AttachResult(
+            desk=desk,
+            spine_id=spine_id,
+            session_id=session_id,
+            episode=episode,
+            lines=[],
+        )
     lines = [
         str(desk),
         f'Attached story {spine_id} "{title}" (owner: {owner_kind or "unknown"}; the owner is unchanged, '

@@ -2260,7 +2260,8 @@ def run_step(
         if state.phase == "complete":
             return StepResult(
                 state.phase,
-                f"Episode {ep} already complete. video={state.last_delivery_url}",
+                f"Episode {ep} already complete. video={state.last_delivery_url}. Next episode: "
+                f'fictora-produce author --desk {desk} --episode {ep + 1} --line "…"',
                 (),
             )
 
