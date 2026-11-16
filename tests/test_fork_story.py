@@ -6,6 +6,7 @@ and episode 1 were approved, with other harness flags. Nothing here calls the re
 
 from __future__ import annotations
 
+import importlib
 import io
 import json
 from pathlib import Path
@@ -200,6 +201,69 @@ def test_a_rerun_after_the_desk_failed_resends_the_same_key(
     assert load_production(result.desk).spine_id == result.spine_id
 
 
+def test_a_rerun_after_the_fork_record_failed_reuses_the_desk_already_made(
+    source: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = ForkServer()
+    real_write = fork_story._write_json
+
+    def full_disk(path: Path, record: Any) -> None:
+        if path.name == FORK_FILENAME:
+            raise OSError("disk full")
+        real_write(path, record)
+
+    monkeypatch.setattr(fork_story, "_write_json", full_disk)
+    with pytest.raises(ForkRefused, match="Run the same command again"):
+        _fork(source, server, {"tighter_hooks": True})
+    monkeypatch.undo()
+
+    result, _ = _fork(source, server, {"tighter_hooks": True})
+
+    keys = [key for _, key in server.sent("/forks")]
+    assert len(keys) == 2 and keys[0] == keys[1]
+    assert len(server.sent("/collaborators")) == 1
+    assert (result.desk / "api" / FORK_FILENAME).is_file()
+    assert load_production(result.desk).spine_id == result.spine_id
+
+
+def test_a_desk_that_fails_half_made_is_removed_so_the_rerun_can_make_it(
+    source: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = ForkServer()
+
+    def broken(*_a: Any, **_k: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(
+        importlib.import_module("creation.attach_story"), "save_production", broken
+    )
+    with pytest.raises(ForkRefused):
+        _fork(source, server, {"tighter_hooks": True})
+    monkeypatch.undo()
+    assert server.sent("/collaborators") and any(
+        method == "DELETE" for method, *_ in server.calls
+    )
+
+    result, _ = _fork(source, server, {"tighter_hooks": True})
+
+    assert load_production(result.desk).spine_id == result.spine_id
+
+
+def test_an_unread_caption_look_stops_before_the_fork_is_sent(
+    source: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = ForkServer()
+    save_production_config(source, ProductionConfig(caption_style=None))
+    monkeypatch.setattr(
+        fork_story, "show_caption_style", lambda _desk: ("subtle", "unchecked")
+    )
+
+    with pytest.raises(ForkRefused, match="caption look"):
+        _fork(source, server, {"tighter_hooks": True})
+
+    assert server.sent("/forks") == []
+
+
 def test_the_same_flags_on_another_series_is_another_fork(source: Path) -> None:
     server = ForkServer()
 
@@ -300,8 +364,10 @@ def test_arms_parse_explicit_specs_and_refuse_bad_ones() -> None:
     assert arm_roles(arms) == {"mix": None, "on": "head"}
     with pytest.raises(HarnessFlagsRefused, match="needs at least one --flag"):
         parse_arms(["off:all-off"], [])
-    with pytest.raises(HarnessFlagsRefused, match="given twice"):
+    with pytest.raises(HarnessFlagsRefused, match="same desk folder"):
         parse_arms(["x:all-on", "x:all-off"], ["a"])
+    with pytest.raises(HarnessFlagsRefused, match="same desk folder"):
+        parse_arms(["Off 2:all-off", "off-2:all-off"], ["a"])
     with pytest.raises(HarnessFlagsRefused, match="NAME:all-off"):
         parse_arms(["off"], ["a"])
 

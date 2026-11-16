@@ -22,6 +22,7 @@ Commands: ``fictora-produce stories --title T`` (read only),
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 import uuid
 from collections.abc import Callable, Mapping
@@ -460,6 +461,11 @@ def attach_story(
         (desk / "api" / ATTACH_FILENAME).write_text(
             json.dumps(record, indent=2) + "\n", encoding="utf-8"
         )
+    except BaseException:
+        # No half-made desk is left: its folder would block the same command run again.
+        session.delete_optional(collaborators_path(spine_id, session_id))
+        shutil.rmtree(desk, ignore_errors=True)
+        raise
     finally:
         session.client.close()
     language = str(spine.get("spoken_language") or "en-US")

@@ -41,6 +41,7 @@ from typing import Any, TextIO
 from urllib.parse import quote
 
 from creation.attach_story import (
+    ATTACH_FILENAME,
     AttachRefused,
     _error_code,
     _error_text,
@@ -55,6 +56,7 @@ from creation.harness_flags import (
     harness_flags_text,
     parse_harness_flags,
 )
+from creation.ops.folder import slugify_series
 from creation.ops.notes import append_run_note
 from creation.production_config import ProductionConfig, load_production_config
 from creation.production_state import load_production
@@ -168,6 +170,15 @@ def _desk_on(desk: str | None, spine_id: str | None) -> Path | None:
     return None
 
 
+def _attached_desk(parent: Path, spine_id: str) -> Path | None:
+    """A desk under ``parent`` already attached to ``spine_id`` (an earlier run stopped after making it)."""
+
+    for desk in sorted(parent.iterdir()) if parent.is_dir() else []:
+        if (desk / "api" / ATTACH_FILENAME).is_file() and _desk_on(str(desk), spine_id):
+            return desk
+    return None
+
+
 def fork_refusal(status: int, body: Any, *, spine_id: str) -> str:
     """Return the stop line for a fork the server did not make.
 
@@ -206,7 +217,14 @@ def _fork_config(source: Path) -> ProductionConfig:
     caption_style = config.caption_style
     if not caption_style:
         shown, shown_from = show_caption_style(source)
-        caption_style = None if shown_from == "unchecked" else shown
+        if shown_from == "unchecked":
+            # Each fork desk would pick its own later, and the arms could differ.
+            raise ForkRefused(
+                f"the caption look of {source} could not be read from the server, so the forks "
+                "could be captioned differently. Set it on the source first "
+                f"(`fictora-produce caption-style --desk {source} --set ...`). Nothing was sent."
+            )
+        caption_style = shown
     # The flags live on the fork's spine; the fork desk never drafts, so it sends none.
     return replace(
         config,
@@ -278,6 +296,7 @@ def fork_desk(
             file=out,
         )
         return ForkResult(found, str(row["spine_id"]), flags, series, made_now=False)
+    config = _fork_config(source)
     body = {"harness_flags": dict(flags) if flags else None}
     stamp = (now or datetime.now(UTC)).isoformat(timespec="seconds")
     # Saved before the send, so a lost answer still leaves the key on the source desk.
@@ -307,22 +326,7 @@ def fork_desk(
     fork_id = str(answer["spine_id"])
     row["spine_id"] = fork_id
     _save_fork_row(source, row)
-    try:
-        attached = attach_story(
-            fork_id,
-            parent=parent or source.parent,
-            series=series,
-            video_lane=state.video_lane,
-            opener=opener,
-            config=_fork_config(source),
-            announce=False,
-        )
-    except (AttachRefused, OSError, ValueError) as exc:
-        raise ForkRefused(
-            f"Story {state.spine_id} was forked as {fork_id} (nothing drawn or charged), but its desk "
-            f"was not made: {exc}\nRun the same command again: the same key answers the same fork."
-        ) from exc
-    desk = attached.desk
+    home = (parent or source.parent).expanduser().resolve()
     record = {
         "source_desk": str(source),
         "source_spine_id": state.spine_id,
@@ -334,9 +338,29 @@ def fork_desk(
         "idempotency_key": key,
         "created_at": row["created_at"],
     }
-    _write_json(desk / "api" / FORK_FILENAME, record)
-    row["desk"] = str(desk)
-    _save_fork_row(source, row)
+    try:
+        desk = (
+            _attached_desk(home, fork_id)
+            or attach_story(
+                fork_id,
+                parent=home,
+                series=series,
+                video_lane=state.video_lane,
+                opener=opener,
+                config=config,
+                announce=False,
+            ).desk
+        )
+        _write_json(desk / "api" / FORK_FILENAME, record)
+        row["desk"] = str(desk)
+        _save_fork_row(source, row)
+    except (AttachRefused, OSError, ValueError) as exc:
+        raise ForkRefused(
+            f"Story {state.spine_id} was forked as {fork_id} (nothing drawn or charged), but its desk "
+            f"was not made: {exc}\nRun the same command again: the same key answers the same fork, "
+            "and a desk already made on it is reused. If a folder of that name belongs to another "
+            "story, move it away first."
+        ) from exc
     on = answer.get("harness_flags")
     lines = [
         str(desk),
@@ -386,9 +410,15 @@ def parse_arms(values: Sequence[str], flag_names: Sequence[str]) -> list[ForkArm
             raise HarnessFlagsRefused(
                 f"--arm {raw!r}: use NAME:all-off, NAME:all-on or NAME:flag=on,flag=off"
             )
-        if any(arm.name == name for arm in arms):
+        try:
+            slug = slugify_series(name)
+        except ValueError:
             raise HarnessFlagsRefused(
-                f"--arm {name} is given twice; name each arm once"
+                f"--arm {raw!r}: the arm name needs letters or digits"
+            ) from None
+        if any(slugify_series(arm.name) == slug for arm in arms):
+            raise HarnessFlagsRefused(
+                f"--arm {name} names the same desk folder as another arm; name each arm differently"
             )
         if spec in (ALL_OFF, ALL_ON):
             words = [
