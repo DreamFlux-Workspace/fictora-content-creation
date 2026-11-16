@@ -158,3 +158,86 @@ def test_author_prints_the_objects_the_episode_added(desk: Path, api: FakeApi) -
     ec.run_author(desk, episode=2, out=out)
 
     assert "story object added: wooden 営業中 sign (prop_wooden_sign)" in out.getvalue()
+
+
+def test_a_first_object_picture_lands_approved_and_is_still_saved_for_the_human(
+    desk: Path, api: FakeApi
+) -> None:
+    _episode_two_with_sign(desk, api)
+
+    def enrol(_m: str, _p: str, _body: dict[str, Any] | None) -> dict[str, Any]:
+        api.spine_doc["media_assets"].append(_picture(review_state="approved"))
+        return {"job_id": "job_cast"}
+
+    api.routes[("POST", CAST)] = enrol
+
+    result = orchestrate.run_step(desk, confirm_spend=True)
+
+    assert any("object-wooden" in path for path in result.paths)
+
+
+def test_an_object_picture_the_storyboards_drew_is_saved_once(
+    desk: Path, api: FakeApi
+) -> None:
+    spine = {"props": [SIGN], "media_assets": [_picture(review_state="approved")]}
+
+    first = orchestrate.save_new_object_pictures(desk, spine, episode=2)
+    again = orchestrate.save_new_object_pictures(desk, spine, episode=2)
+
+    assert [path.parent.name for path in first] == ["plates"]
+    assert "object-wooden" in first[0].name
+    assert again == []
+
+
+def test_the_boards_price_lists_the_object_pictures_the_run_may_draw(
+    desk: Path, api: FakeApi
+) -> None:
+    set_phase(desk, "ready_boards_enrol")
+
+    result = orchestrate.run_step(desk)
+
+    assert "Nothing drawn yet" in result.message
+    assert (
+        "a picture of each new story object the episode brings, if any ($0.30 each)"
+        in result.message
+    )
+
+
+def test_a_picture_named_like_another_object_is_still_saved(
+    desk: Path, api: FakeApi
+) -> None:
+    key = {**SIGN, "prop_id": "prop_key", "name": "key"}
+    epoch = {**SIGN, "prop_id": "prop_key_epoch", "name": "key epoch"}
+    spine = {
+        "props": [key, epoch],
+        "media_assets": [
+            _picture(relation_id="prop_key_epoch", review_state="approved"),
+        ],
+    }
+    orchestrate.save_new_object_pictures(desk, spine, episode=2)
+    spine["media_assets"].append(
+        _picture(relation_id="prop_key", review_state="approved")
+    )
+
+    saved = orchestrate.save_new_object_pictures(desk, spine, episode=3)
+
+    assert [path.name for path in saved] == ["object-key-ep03-v1.png"]
+
+
+def test_an_object_picture_that_cannot_be_saved_never_fails_the_step(
+    desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spine = {"props": [SIGN], "media_assets": [_picture(review_state="approved")]}
+    (desk / "ep02").mkdir(parents=True, exist_ok=True)
+    (desk / "ep02" / "run-notes.md").write_text("")
+
+    def disk_full(*_args: Any, **_kw: Any) -> Path:
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(orchestrate, "download_to_versioned", disk_full)
+
+    assert orchestrate.save_new_object_pictures(desk, spine, episode=2) == []
+    assert (
+        "object-wooden-sign picture not saved"
+        in (desk / "ep02" / "run-notes.md").read_text()
+    )

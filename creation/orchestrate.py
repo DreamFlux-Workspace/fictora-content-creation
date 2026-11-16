@@ -10,6 +10,7 @@ with its lines waiting at the script gate; the rest of the loop is the same.
 
 from __future__ import annotations
 
+import glob
 import json
 import re
 import shlex
@@ -1549,6 +1550,53 @@ def plates_job_done(desk: Path, state: ProductionState) -> None:
     save_production(desk, state)
 
 
+def save_new_object_pictures(
+    desk: Path, spine: Mapping[str, Any], *, episode: int
+) -> list[Path]:
+    """Save each current object picture the desk has no copy of yet next to this episode's plates, to look at.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    spine
+        Spine JSON after the step that may have drawn objects.
+    episode
+        The episode whose ``plates/`` folder receives them.
+
+    Returns
+    -------
+    list[Path]
+        The files saved. A picture that could not be saved is noted and skipped; it stays on the server.
+    """
+
+    new = [
+        (stem, url)
+        for stem, url in object_picture_urls(spine)
+        if not any(
+            desk.glob(f"ep[0-9][0-9]/plates/{glob.escape(stem)}-ep[0-9][0-9]-v*")
+        )
+    ]
+    if not new:
+        return []
+    plates = _episode_dir(desk, episode) / "plates"
+    saved: list[Path] = []
+    with httpx.Client(timeout=120.0) as fetch:
+        for stem, url in new:
+            try:
+                plates.mkdir(parents=True, exist_ok=True)
+                saved.append(
+                    download_to_versioned(fetch, url, plates, f"{stem}-ep{episode:02d}")
+                )
+            except (httpx.HTTPError, OSError) as exc:
+                _note(
+                    _episode_dir(desk, episode),
+                    f"!! {stem} picture not saved on the desk ({exc}); it is on the server, "
+                    "and the next cast or storyboard step saves it",
+                )
+    return saved
+
+
 def drawing_spend_stop(
     desk: Path,
     state: ProductionState,
@@ -1606,7 +1654,8 @@ def drawing_spend_stop(
     what = (
         f"{count} character picture(s)"
         if kind == "plates"
-        else f"{count} storyboard(s), one a take"
+        else f"{count} storyboard(s), one a take; then the server draws a picture of each new "
+        f"story object the episode brings, if any (${float(STILL_USD):.2f} each)"
     )
     return StepResult(
         state.phase,
@@ -2008,6 +2057,9 @@ def run_step(
                     unit=f"plates x{len(paths)}"
                     + (f" + object pictures x{drawn_objects}" if drawn_objects else ""),
                 )
+            object_paths.extend(
+                str(path) for path in save_new_object_pictures(desk, spine, episode=ep)
+            )
             paths.extend(object_paths)
             # Every character this step owed must have come back with a
             # picture; otherwise say so, not "Cast drawn" (L-20261008-17).
@@ -2174,6 +2226,9 @@ def run_step(
                     f"the boards job completed but the spine has no board for {episode_id_for(spine, ep)}"
                 )
             paths.extend(str(path) for _, path in made)
+            paths.extend(
+                str(path) for path in save_new_object_pictures(desk, spine, episode=ep)
+            )
             report = board_report(
                 desk,
                 run,
