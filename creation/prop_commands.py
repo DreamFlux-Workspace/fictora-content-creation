@@ -12,7 +12,7 @@ drawn. These commands do it in one go, never touching the desk's phase:
   (suggested / none / drawn / stale-redraw-asked / approved) and the local file.
 - ``keep-prop --prop NAME``: free. The yes to an object the server only
   suggested (``proposed``, fictora-drama 15 Oct 2026): until then nothing is
-  drawn, priced or paid for it. Once kept, the next plates step draws it.
+  drawn, priced or paid for it. Once kept, the server draws it once.
 - ``redraw-prop --prop NAME --note "..."``: records the note on the object
   (free; skipped when that note is already there) and runs one picture job
   (``cast/enrol``) under a key of its own per note. The server draws only what
@@ -228,8 +228,8 @@ def run_props(desk: Path, *, out: Any = None) -> list[dict[str, str]]:
     if any(row["picture"] == "suggested" for row in rows):
         print(
             "picture: suggested = the server suggested this object; nothing is drawn or paid unless the human "
-            f"says yes. Keep it: fictora-produce keep-prop --desk {desk} --prop NAME (free; drawn at the next "
-            "plates step, $0.30 once) | not needed: remove-prop (free).",
+            f"says yes. Keep it: fictora-produce keep-prop --desk {desk} --prop NAME (free; the server "
+            "then draws its picture once) | not needed: remove-prop (free).",
             file=out,
         )
     print(
@@ -244,7 +244,7 @@ def run_props(desk: Path, *, out: Any = None) -> list[dict[str, str]]:
 
 
 def run_keep_prop(desk: Path, *, prop: str, out: Any = None) -> Mapping[str, Any]:
-    """Say yes to one story object the server suggested. Free; the next plates step draws its picture.
+    """Say yes to one story object the server suggested. Free; the server then draws its picture once.
 
     Sends ``POST /v1/spines/{id}/props/{prop_id}/keep`` (no body, a key of its
     own). The server holds the suggestion and says what drawing it costs
@@ -320,8 +320,8 @@ def run_keep_prop(desk: Path, *, prop: str, out: Any = None) -> Mapping[str, Any
         f"object kept: {name} ({prop_id}), $0 now; its picture is owed (${usd:.2f}).",
     )
     print(
-        f"{name} ({prop_id}) is kept. Free; nothing was drawn. Its picture (${usd:.2f}, once) is drawn at the "
-        "next plates step, which prices it first; approve it with the cast: `approve --gate plates`.",
+        f"{name} ({prop_id}) is kept. Free; nothing was drawn. The server draws its picture once "
+        f"(about ${usd:.2f}): after the next storyboards, or with the cast if a cast picture run comes first.",
         file=out,
     )
     return spine
@@ -580,7 +580,7 @@ def run_redraw_prop(
     else:
         print(
             f"!! The cast and objects need the human's yes again: the new picture of {name} is not approved, "
-            f"and boards refuse an unapproved object. Show {path.name}, then: "
+            f"and until then boards are drawn without its picture. Show {path.name}, then: "
             f"fictora-produce approve --desk {desk} --gate plates --again --path {path} "
             "($0, draws nothing). Boards drawn before now still show the old object; redraw-board the takes it is in.",
             file=out,

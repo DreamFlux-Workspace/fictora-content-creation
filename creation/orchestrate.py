@@ -3402,29 +3402,16 @@ def approve_gate(
             save_spine_snapshot(desk, ep, spine)
             record = record_script_gate(desk, episode=ep)
             owing = cast_owing_pictures(spine, episode=ep) if ep >= 2 else []
-            # A story object whose picture is owed or waits for its yes holds the
-            # boards the same way (fictora-drama story_props).
-            objects = objects_owing_approval(spine, episode=ep) if ep >= 2 else []
-            if owing or objects:
+            if owing:
                 # Boards are drawn from the characters' pictures; the server
                 # refuses them (cast_not_approved) until a newcomer's is approved.
                 state.phase = "ready_cast_enrol"
                 save_production(desk, state)
-                parts = []
-                if owing:
-                    parts.append(
-                        f"New character(s) {', '.join(name for _, name in owing)}"
-                    )
-                if objects:
-                    parts.append(
-                        f"story object(s) {', '.join(name for _, name in objects)}"
-                    )
-                drawn = len(owing) + len(objects_to_draw(spine, episode=ep))
-                who = " and ".join(parts)
+                names = ", ".join(name for _, name in owing)
                 return StepResult(
                     state.phase,
-                    f"Episode {ep} script approved on the API. {who[0].upper()}{who[1:]} need a picture before "
-                    f"boards: `fictora-produce step` draws it (~${float(STILL_USD) * drawn:.2f}), then "
+                    f"Episode {ep} script approved on the API. New character(s) {names} need a picture before "
+                    f"boards: `fictora-produce step` draws it (~${float(STILL_USD) * len(owing):.2f}), then "
                     "the human approves it with `fictora-produce approve --gate plates`.",
                     (),
                 )
