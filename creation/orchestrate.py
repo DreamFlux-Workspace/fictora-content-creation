@@ -10,6 +10,7 @@ with its lines waiting at the script gate; the rest of the loop is the same.
 
 from __future__ import annotations
 
+import glob
 import json
 import re
 import shlex
@@ -29,7 +30,6 @@ from creation.authoring_warnings import authoring_warnings, for_episode, warning
 from creation.brief_lines import brief_vs_spine_lines
 from creation.story_objects import (
     cast_owing_plates,
-    NEW_OBJECTS_PER_EPISODE,
     object_picture_urls,
     objects_owing_approval,
     objects_to_draw,
@@ -1567,30 +1567,33 @@ def save_new_object_pictures(
     Returns
     -------
     list[Path]
-        The files saved; a failed download is noted and the step goes on (the next step tries again).
+        The files saved. A picture that could not be saved is noted and skipped; it stays on the server.
     """
 
     new = [
         (stem, url)
         for stem, url in object_picture_urls(spine)
-        if not any(found.parent.name == "plates" for found in desk.rglob(f"{stem}-ep*"))
+        if not any(
+            desk.glob(f"ep[0-9][0-9]/plates/{glob.escape(stem)}-ep[0-9][0-9]-v*")
+        )
     ]
     if not new:
         return []
     plates = _episode_dir(desk, episode) / "plates"
-    plates.mkdir(parents=True, exist_ok=True)
     saved: list[Path] = []
-    try:
-        with httpx.Client(timeout=120.0) as fetch:
-            for stem, url in new:
+    with httpx.Client(timeout=120.0) as fetch:
+        for stem, url in new:
+            try:
+                plates.mkdir(parents=True, exist_ok=True)
                 saved.append(
                     download_to_versioned(fetch, url, plates, f"{stem}-ep{episode:02d}")
                 )
-    except httpx.HTTPError as exc:
-        _note(
-            _episode_dir(desk, episode),
-            f"!! object picture not saved on the desk ({exc}); the next step tries again",
-        )
+            except (httpx.HTTPError, OSError) as exc:
+                _note(
+                    _episode_dir(desk, episode),
+                    f"!! {stem} picture not saved on the desk ({exc}); it is on the server, "
+                    "and the next cast or storyboard step saves it",
+                )
     return saved
 
 
@@ -1651,9 +1654,8 @@ def drawing_spend_stop(
     what = (
         f"{count} character picture(s)"
         if kind == "plates"
-        else f"{count} storyboard(s), one a take; then the server draws up to {NEW_OBJECTS_PER_EPISODE} "
-        f"new story object picture(s), only if the episode brings new ones (up to "
-        f"${float(STILL_USD) * NEW_OBJECTS_PER_EPISODE:.2f} more)"
+        else f"{count} storyboard(s), one a take; then the server draws a picture of each new "
+        f"story object the episode brings, if any (${float(STILL_USD):.2f} each)"
     )
     return StepResult(
         state.phase,
@@ -2224,7 +2226,6 @@ def run_step(
                     f"the boards job completed but the spine has no board for {episode_id_for(spine, ep)}"
                 )
             paths.extend(str(path) for _, path in made)
-            # The run draws the episode's new story objects after its boards (fictora-drama #1716).
             paths.extend(
                 str(path) for path in save_new_object_pictures(desk, spine, episode=ep)
             )

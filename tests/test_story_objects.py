@@ -197,4 +197,47 @@ def test_the_boards_price_lists_the_object_pictures_the_run_may_draw(
     result = orchestrate.run_step(desk)
 
     assert "Nothing drawn yet" in result.message
-    assert "up to 3 new story object picture(s)" in result.message
+    assert (
+        "a picture of each new story object the episode brings, if any ($0.30 each)"
+        in result.message
+    )
+
+
+def test_a_picture_named_like_another_object_is_still_saved(
+    desk: Path, api: FakeApi
+) -> None:
+    key = {**SIGN, "prop_id": "prop_key", "name": "key"}
+    epoch = {**SIGN, "prop_id": "prop_key_epoch", "name": "key epoch"}
+    spine = {
+        "props": [key, epoch],
+        "media_assets": [
+            _picture(relation_id="prop_key_epoch", review_state="approved"),
+        ],
+    }
+    orchestrate.save_new_object_pictures(desk, spine, episode=2)
+    spine["media_assets"].append(
+        _picture(relation_id="prop_key", review_state="approved")
+    )
+
+    saved = orchestrate.save_new_object_pictures(desk, spine, episode=3)
+
+    assert [path.name for path in saved] == ["object-key-ep03-v1.png"]
+
+
+def test_an_object_picture_that_cannot_be_saved_never_fails_the_step(
+    desk: Path, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spine = {"props": [SIGN], "media_assets": [_picture(review_state="approved")]}
+    (desk / "ep02").mkdir(parents=True, exist_ok=True)
+    (desk / "ep02" / "run-notes.md").write_text("")
+
+    def disk_full(*_args: Any, **_kw: Any) -> Path:
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(orchestrate, "download_to_versioned", disk_full)
+
+    assert orchestrate.save_new_object_pictures(desk, spine, episode=2) == []
+    assert (
+        "object-wooden-sign picture not saved"
+        in (desk / "ep02" / "run-notes.md").read_text()
+    )
