@@ -161,6 +161,43 @@ def _start_harness_pair(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fork(args: argparse.Namespace) -> int:
+    from creation.fork_story import ForkRefused, fork_desk, fork_set, parse_arms
+    from creation.harness_flags import HarnessFlagsRefused, parse_harness_flags
+
+    try:
+        if args.command == "fork":
+            fork_desk(
+                args.desk,
+                flags=parse_harness_flags(args.harness_flags),
+                series=args.series,
+                parent=args.parent,
+            )
+            return 0
+        record = fork_set(
+            args.desk,
+            arms=parse_arms(args.arms, args.flags),
+            series=args.series,
+            parent=args.parent,
+        )
+    except (ForkRefused, HarnessFlagsRefused) as exc:
+        message = str(exc)
+        print(
+            message if message.startswith("Stopped") else f"Stopped: {message}",
+            file=sys.stderr,
+        )
+        return 2
+    print(
+        "Write episode 2 on each arm with the same --line, then step each through the same gates:"
+    )
+    for arm in record["arms"]:
+        print(
+            f"  uv run fictora-produce author --desk {shlex.quote(arm['desk'])} --episode 2 "
+            '--line "…" --keep-voices'
+        )
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Dispatch fictora-produce commands."""
 
@@ -243,6 +280,60 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Desk name stem; the desks end in 'base' and 'head'. Default: the old story's title.",
     )
     pair.add_argument("--parent", type=Path, default=DEFAULT_RUN_PARENT)
+
+    fork = sub.add_parser(
+        "fork",
+        help="Fork the desk's story (look, cast and episode 1 approved) into a copy with other harness "
+        "flags, on a new desk that films like the source. Spends nothing; next is author --episode 2.",
+    )
+    fork.add_argument(
+        "--desk",
+        type=Path,
+        required=True,
+        help="The source desk (its session owns the story).",
+    )
+    fork.add_argument(
+        "--harness-flag",
+        dest="harness_flags",
+        action="append",
+        default=None,
+        metavar="NAME=on|off",
+        help="An override on the source story's flags (repeatable). None keeps the source's flags.",
+    )
+    fork.add_argument(
+        "--series",
+        required=True,
+        help="The fork desk's name (part of the idempotency key).",
+    )
+    fork.add_argument(
+        "--parent", type=Path, default=None, help="Default: the source desk's folder."
+    )
+
+    fork_arms = sub.add_parser(
+        "fork-set",
+        help="Fork the desk's story once per --arm (e.g. off:all-off on:all-on off2:all-off) and write "
+        "api/fork-set.json with each arm's blind-eval role. Spends nothing.",
+    )
+    fork_arms.add_argument("--desk", type=Path, required=True, help="The source desk.")
+    fork_arms.add_argument(
+        "--flag",
+        dest="flags",
+        action="append",
+        default=[],
+        help="A harness flag name that all-off / all-on arms set (repeatable).",
+    )
+    fork_arms.add_argument(
+        "--arm",
+        dest="arms",
+        action="append",
+        required=True,
+        metavar="NAME:all-off|all-on|flag=on,flag=off",
+        help="One fork (repeatable). Its desk is named '<series> <NAME>'.",
+    )
+    fork_arms.add_argument("--series", required=True, help="Desk name stem.")
+    fork_arms.add_argument(
+        "--parent", type=Path, default=None, help="Default: the source desk's folder."
+    )
 
     stories = sub.add_parser(
         "stories", help="Find server stories by title (read only, spends nothing)."
@@ -626,6 +717,8 @@ def _run_command(args: argparse.Namespace) -> int:
                 print(f"Stopped: {exc}", file=sys.stderr)
                 return 2
             return 0
+        if args.command in ("fork", "fork-set"):
+            return _fork(args)
         if args.command == "start" and args.from_story:
             return _start_replay(args)
         if args.command == "harness-pair":
