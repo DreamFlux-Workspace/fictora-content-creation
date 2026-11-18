@@ -363,6 +363,13 @@ def take_clip(desk: Path, episode: int, take_id: str) -> dict[str, Any] | None:
     else the ``N``-th clip (the way ``film`` collected it).
     """
 
+    found = _take_in_records(desk, episode, take_id)
+    return dict(found[1]) if found else None
+
+
+def _take_in_records(
+    desk: Path, episode: int, take_id: str
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
     found = saved_spine(desk, episode)
     wanted = episode_id_for(found[0], episode) if found else f"episode_{episode:02d}"
     index = int(take_id.lstrip("t") or 1)
@@ -371,10 +378,25 @@ def take_clip(desk: Path, episode: int, take_id: str) -> dict[str, Any] | None:
         clips = episode_clips(raw, episode_id=wanted)
         for clip in clips:
             if clip.get("set_index") == index:
-                return dict(clip)
+                return raw, clip
         if 0 < index <= len(clips) and clips[index - 1].get("set_index") is None:
-            return dict(clips[index - 1])
+            return raw, clips[index - 1]
     return None
+
+
+def take_run(desk: Path, episode: int, take_id: str) -> tuple[str, int] | None:
+    """The film run that made the take and the take's ``take_index`` on that run's take strip.
+
+    The run is the clip record's ``coordinator_job_id``; its clips are in the run's
+    ``depends_on`` order, which is the order of the server's take cards.
+    """
+
+    found = _take_in_records(desk, episode, take_id)
+    if found is None or not found[0].get("coordinator_job_id"):
+        return None
+    raw, clip = found
+    clips = raw.get("clips") or []
+    return str(raw["coordinator_job_id"]), clips.index(clip) + 1
 
 
 def take_job_id(desk: Path, episode: int, take_id: str) -> str | None:

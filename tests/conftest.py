@@ -366,6 +366,21 @@ def _no_show_finals_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_take_card_read_by_default(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """review reads the take's line check from the server; tests stay offline unless marked ``real_take_card``."""
+
+    if request.node.get_closest_marker("real_take_card") is not None:
+        return
+    from creation.post import review
+
+    monkeypatch.setattr(
+        review, "server_take_card", lambda *_a: (None, "not read offline")
+    )
+
+
+@pytest.fixture(autouse=True)
 def _no_spine_read_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """finish and caption read the current spine from the server; tests stay offline and use the desk's copy.
 

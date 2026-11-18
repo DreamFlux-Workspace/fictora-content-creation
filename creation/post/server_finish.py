@@ -103,17 +103,22 @@ def _take_label(take: Mapping[str, Any]) -> str:
 WORD_FINDING_KINDS = frozenset({"missing", "wrong", "repeated", "extra", "unclear"})
 
 
-def _finding_words(finding: Mapping[str, Any]) -> str:
-    """One finding in plain words: the server's message for a kind that is not about the words
-    (``speaker_not_on_screen``, ``wrong_shot``, …); script and heard only for a word check without one."""
+def finding_words(finding: Mapping[str, Any]) -> str:
+    """One finding in plain words, with where to listen: the server's message for a kind that is not
+    about the words (``speaker_not_on_screen``, ``wrong_shot``, …); script and heard only for a word
+    check without one."""
 
     kind = str(finding.get("kind") or "line")
     message = str(finding.get("message") or "").strip()
     if kind not in WORD_FINDING_KINDS:
-        return message or f'{kind}: line "{finding.get("line", "")}"'
-    return message or (
-        f'{kind}: script "{finding.get("line", "")}", heard "{finding.get("heard", "")}"'
-    )
+        words = message or f'{kind}: line "{finding.get("line", "")}"'
+    else:
+        words = message or (
+            f'{kind}: script "{finding.get("line", "")}", heard "{finding.get("heard", "")}"'
+        )
+    if finding.get("listen_start_seconds") is None:
+        return words
+    return f"{words} (at {float(finding['listen_start_seconds']):.1f} s)"
 
 
 def line_findings_text(takes: list[dict[str, Any]], *, episode: int) -> str:
@@ -130,11 +135,7 @@ def line_findings_text(takes: list[dict[str, Any]], *, episode: int) -> str:
         for finding in take.get("findings") or []:
             if not isinstance(finding, Mapping):
                 continue
-            words = _finding_words(finding)
-            window = ""
-            if finding.get("listen_start_seconds") is not None:
-                window = f" (at {float(finding['listen_start_seconds']):.1f} s)"
-            rows.append(f"  {label}: {words}{window}")
+            rows.append(f"  {label}: {finding_words(finding)}")
     labels = sorted({_take_label(take) for take in takes})
     rows.append(
         f"To keep it as it is: run finish again with --keep-line-findings {labels[0] if len(labels) == 1 else 'all'}. "
