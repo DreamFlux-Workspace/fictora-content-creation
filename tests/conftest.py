@@ -366,6 +366,13 @@ def _no_show_finals_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_continue_read_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from creation import story_continue
+
+    monkeypatch.setattr(story_continue, "read_continue", lambda desk, **_k: None)
+
+
+@pytest.fixture(autouse=True)
 def _no_take_card_read_by_default(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:

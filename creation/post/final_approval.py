@@ -188,13 +188,35 @@ def _finals(got: httpx.Response) -> dict[int, ServerFinal]:
     }
 
 
-class _NotChecked(Exception):
+class NotChecked(Exception):
+    """The kit cannot ask the server: ``reason`` says why in a few words."""
+
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
 
 
-def _kit_api(desk: Path, *, env_token_only: bool) -> tuple[str, dict[str, str]]:
+def kit_api(desk: Path, *, env_token_only: bool) -> tuple[str, dict[str, str]]:
+    """The kit's drama API base URL and headers on the desk's session.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    env_token_only
+        Take the kit's token only from its ``.env``/environment, never from the Railway CLI.
+
+    Returns
+    -------
+    tuple[str, dict[str, str]]
+        ``(base_url, headers)``.
+
+    Raises
+    ------
+    NotChecked
+        When the desk has no kit session or the kit has no token.
+    """
+
     from creation.harness.credentials import (
         env_drama_api_credentials,
         load_drama_api_credentials,
@@ -205,7 +227,7 @@ def _kit_api(desk: Path, *, env_token_only: bool) -> tuple[str, dict[str, str]]:
     try:
         session_id = load_production(desk).session_id
     except (ValueError, OSError):
-        raise _NotChecked("no kit session on the desk") from None
+        raise NotChecked("no kit session on the desk") from None
     root = Path(__file__).resolve().parents[2]
     try:
         base, token = (
@@ -214,9 +236,9 @@ def _kit_api(desk: Path, *, env_token_only: bool) -> tuple[str, dict[str, str]]:
             else load_drama_api_credentials(root)
         )
     except (SystemExit, FileNotFoundError, ValueError):
-        raise _NotChecked("no kit token") from None
+        raise NotChecked("no kit token") from None
     if not token:
-        raise _NotChecked("no kit token")
+        raise NotChecked("no kit token")
     return base, api_headers(token, session_id)
 
 
@@ -258,9 +280,9 @@ def show_finals(
         return not_checked("no story on the desk yet")
     try:
         base, headers = (
-            api if api is not None else _kit_api(desk, env_token_only=env_token_only)
+            api if api is not None else kit_api(desk, env_token_only=env_token_only)
         )
-    except _NotChecked as exc:
+    except NotChecked as exc:
         return not_checked(exc.reason)
     try:
         with httpx.Client(transport=transport, timeout=timeout) as client:
