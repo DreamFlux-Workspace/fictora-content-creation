@@ -305,6 +305,7 @@ def _dispatch(args: argparse.Namespace) -> int:
         print(episode.slug)
         return 0
     if args.command == "status":
+        from creation import story_continue
         from creation.post import final_approval
 
         finals = final_approval.show_finals(args.desk)
@@ -312,13 +313,19 @@ def _dispatch(args: argparse.Namespace) -> int:
         write_queue(args.desk, finals=finals)
         for warning in finals_warnings(finals):
             print(warning, file=sys.stderr)
+        target = story_continue.read_continue(args.desk)
+        if target is not None:
+            for row in rows:
+                if row["episode"] == f"ep{target.episode_ordinal:02d}":
+                    row["next"] = target.line
         if args.json:
             print(json.dumps(rows))
         else:
             for row in rows:
+                nxt = f"  next: {row['next']}" if "next" in row else ""
                 print(
                     f"{row['episode']}  waiting={row['waiting']}  "
-                    f"preflight={row['preflight']}  {row['spend']} of {row['envelope']}"
+                    f"preflight={row['preflight']}  {row['spend']} of {row['envelope']}{nxt}"
                 )
         return 0
     if args.command == "set-lines":
