@@ -32,7 +32,7 @@ command exits 0 whatever it finds.
 5. **Lines** - :func:`creation.episode_commands.run_check_lines` (were the
    approved lines in the take's instructions, from the take facts), and the
    server's line check of the take (its card on the film run,
-   :func:`server_take_card`): every line heard as written, or each finding
+   :func:`creation.post.server_finish.server_take_card`): every line heard as written, or each finding
    with where to listen. The kit never judges the words itself. The
    ``check-lines`` output is folded in as it prints it (each line's shot and
    board row; an ``!!`` on-screen speaker out of frame marks the section ⚠).
@@ -82,7 +82,6 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
-import httpx
 import numpy as np
 import numpy.typing as npt
 from PIL import Image
@@ -1108,7 +1107,7 @@ def lines_section(
 ) -> Section:
     """The line check from the take facts (``check-lines``) and the server's verdict on the lines heard.
 
-    ``card`` is the take's card on its film run (:func:`server_take_card`); ``card_missing`` says why
+    ``card`` is the take's card on its film run (:func:`creation.post.server_finish.server_take_card`); ``card_missing`` says why
     there is none.
 
     A line the take was not asked for but ``finish --voice`` laid in by hand
@@ -1232,11 +1231,9 @@ def _heard_rows(
     if card is None:
         return [f"heard: not read ({missing})"], None, False
     check = card.get("line_check")
-    if check is None:
+    if check not in ("clean", "found", "not_run"):
         return (
-            [
-                "heard: the server did not check the words (no lines, or a locked-voice take)"
-            ],
+            ["heard: the server gave no line check for this take"],
             None,
             False,
         )
@@ -1248,16 +1245,24 @@ def _heard_rows(
             [],
             True,
         )
-    findings = [
-        dict(f) for f in card.get("line_findings") or [] if isinstance(f, Mapping)
-    ]
-    if not findings:
+    if check == "clean":
         return (
             [
                 "heard: every line heard as written, on its shot (the server's line check)"
             ],
             [],
             False,
+        )
+    findings = [
+        dict(f) for f in card.get("line_findings") or [] if isinstance(f, Mapping)
+    ]
+    if not findings:
+        return (
+            [
+                "heard: the server found lines to check but sent none; listen to every line"
+            ],
+            [],
+            True,
         )
     rows = [
         f"heard: the server's line check found {len(findings)} thing(s) to listen to"
@@ -1266,45 +1271,6 @@ def _heard_rows(
     if card.get("listen_url"):
         rows.append(f"  listen: {card['listen_url']}")
     return rows, findings, True
-
-
-TakeCardReader = Callable[[Path, int, str], tuple[dict[str, Any] | None, str]]
-"""``(desk, episode, take_id) -> (card, why not)``: the take's card on its film run."""
-
-
-def server_take_card(
-    desk: Path, episode: int, take_id: str
-) -> tuple[dict[str, Any] | None, str]:
-    """The take's card on its film run's take strip (``GET /v1/video-generations/{id}``), or why it was not read."""
-
-    from creation.post.desk import open_api, take_run
-    from creation.post.server_finish import JOB_STATUS_ROUTE
-
-    found = take_run(desk, episode, take_id)
-    if found is None:
-        return None, "no film run for this take on the desk"
-    job_id, take_index = found
-    try:
-        run = open_api(desk, episode)
-        try:
-            status, body = run.get_optional(JOB_STATUS_ROUTE.format(job_id=job_id))
-        finally:
-            run.client.close()
-    except (SystemExit, httpx.HTTPError, OSError, ValueError) as exc:
-        return None, f"the server was not reached: {exc}"
-    if not 200 <= status < 300 or not isinstance(body, dict):
-        return None, f"the server answered {status} for run `{job_id}`"
-    card = next(
-        (
-            c
-            for c in body.get("takes") or []
-            if isinstance(c, dict) and c.get("take_index") == take_index
-        ),
-        None,
-    )
-    if card is None:
-        return None, f"run `{job_id}` has no card for take {take_index} yet"
-    return card, ""
 
 
 _WORDS_VERSION = re.compile(r"-(?:raw-)?v(\d+)-.*words")
@@ -1402,7 +1368,7 @@ def take_words(
     :func:`creation.post.lineage.raw_take_behind`):
 
     - when the kit saved where it came from (:data:`WORDS_SOURCE_KEY`, written by
-      ``review --transcribe``), only when that is this raw take's content (its
+      :func:`server_transcript`), only when that is this raw take's content (its
       sha256) and, when both are known, the take's current stored URL;
     - else when its name carries that take's version (``take-ep01-t1-v3-words-…``,
       ``…-raw-v3-words-…``);
@@ -1762,7 +1728,7 @@ def server_transcript(
         raise ValueError(
             f"no stored URL for ep{episode:02d} {take_id} in api/ (17_raw_scene_clips.json or film-*-raw-scene-clips.json) "
             "to transcribe "
-            "(this kit never uploads local files); pass --words-json"
+            "(this kit never uploads local files)"
         )
     found = take_lines(desk, episode, take_id)
     language = found[1] if found else "en"
@@ -1923,7 +1889,8 @@ def review_take(
     take_id: str = "t1",
     take_file: Path | None = None,
     board: Path | None = None,
-    take_card: TakeCardReader | None = None,
+    take_card: Callable[[Path, int, str], tuple[dict[str, Any] | None, str]]
+    | None = None,
     text_ocr: Any = None,
     face_detector: Any = "local",
 ) -> TakeReview:
@@ -1941,7 +1908,7 @@ def review_take(
     board
         Board image; default the take's approved board on the desk.
     take_card
-        Reads the take's card on its film run (the server's line check); default :func:`server_take_card`.
+        Reads the take's card on its film run (the server's line check); default :func:`creation.post.server_finish.server_take_card`.
     text_ocr
         The text check's OCR, injected for tests (default the ``tesseract`` command).
     face_detector
@@ -1991,7 +1958,6 @@ def review_take(
         # A file finish cut to its trim handles: the facts' times minus start_s (fictora-drama #563).
         facts = facts_on_handled_file(facts, handled_record.edits)  # type: ignore[assignment]
     if "reel" in steps:
-        # The take's line check does not say what the reel plays: its plan lists the lines it keeps.
         card, card_missing = (
             None,
             (
@@ -2000,7 +1966,11 @@ def review_take(
             ),
         )
     else:
-        card, card_missing = (take_card or server_take_card)(desk, episode, take_id)
+        from creation.post import server_finish
+
+        card, card_missing = (take_card or server_finish.server_take_card)(
+            desk, episode, take_id
+        )
     loud = loudness_section(take, kind, has_audio=info.has_audio)
     board_sec, head = board_section(
         take, board_path, fps=fps, deboarded=bool(steps & set(DEBOARDED_STEPS)),

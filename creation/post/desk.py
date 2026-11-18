@@ -16,6 +16,9 @@ from creation.production_state import load_production
 from creation.spine_view import episode_id_for
 
 
+_WAN_SHOT = re.compile(r"_set\d+_beat\d+$")
+
+
 def open_api(desk: Path, episode: int) -> DramaApiRunSession:
     """An API session on the desk's ``session_id``, saving JSON under ``epNN/api``.
 
@@ -385,18 +388,29 @@ def _take_in_records(
 
 
 def take_run(desk: Path, episode: int, take_id: str) -> tuple[str, int] | None:
-    """The film run that made the take and the take's ``take_index`` on that run's take strip.
+    """The film run that made the take and the take's ``take_index`` among that run's take cards.
 
-    The run is the clip record's ``coordinator_job_id``; its clips are in the run's
-    ``depends_on`` order, which is the order of the server's take cards.
+    The run is the clip record's ``coordinator_job_id``. Its clips are in the run's
+    ``depends_on`` order, and the server numbers its cards by each take's first clip:
+    the shots of one Wan take (``…_setNN_beatNN``, one episode and board) share a card, every other
+    clip has its own.
     """
 
     found = _take_in_records(desk, episode, take_id)
     if found is None or not found[0].get("coordinator_job_id"):
         return None
     raw, clip = found
-    clips = raw.get("clips") or []
-    return str(raw["coordinator_job_id"]), clips.index(clip) + 1
+    takes: dict[object, int] = {}
+    for position, each in enumerate(raw.get("clips") or []):
+        key = (
+            (each.get("episode_id"), each.get("set_index"))
+            if _WAN_SHOT.search(str(each.get("relation_id") or ""))
+            else position
+        )
+        number = takes.setdefault(key, len(takes) + 1)
+        if each is clip:
+            return str(raw["coordinator_job_id"]), number
+    return None
 
 
 def take_job_id(desk: Path, episode: int, take_id: str) -> str | None:

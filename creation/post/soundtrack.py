@@ -514,7 +514,7 @@ def misplaced_lines(
     soundtrack
         The take's soundtrack.
     words_json
-        A saved transcript of this take (``review --transcribe``); never made here.
+        A saved transcript of this take; never made here.
     texts
         ``line_id`` to the words heard (``spoken_text`` or ``text``).
     slack

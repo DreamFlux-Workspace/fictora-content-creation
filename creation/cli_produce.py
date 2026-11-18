@@ -618,7 +618,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         refused = shared_spine_refusal(
             args.command,
             desk_arg,
-            transcribe=bool(getattr(args, "transcribe", False)),
             sends=args.command in ("music-note", "rescore-music", "sound-refresh")
             and bool(getattr(args, "yes", False)),
         )

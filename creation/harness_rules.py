@@ -458,7 +458,7 @@ def late_opening_line(rows: Sequence[str], *, take_id: str) -> str | None:
             return None
         return (
             f"!! the first line starts at {start:.2f}s. The hook wants it by {FIRST_LINE_BY_SECONDS:.1f}s. "
-            "review --transcribe, then trim the head of take 1."
+            "Listen to the opening, then trim the head of take 1."
         )
     return None
 

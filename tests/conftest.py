@@ -373,10 +373,10 @@ def _no_take_card_read_by_default(
 
     if request.node.get_closest_marker("real_take_card") is not None:
         return
-    from creation.post import review
+    from creation.post import server_finish
 
     monkeypatch.setattr(
-        review, "server_take_card", lambda *_a: (None, "not read offline")
+        server_finish, "server_take_card", lambda *_a: (None, "not read offline")
     )
 
 

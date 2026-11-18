@@ -638,7 +638,7 @@ def check_take_lines(
     ):
         check.unread = (
             f"the transcript has no {language} words (it was made in another language), so the lines "
-            "were not compared; make one in the show's language: review --transcribe"
+            "were not compared"
         )
         return check
     norm_words = tuple(

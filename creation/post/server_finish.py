@@ -145,6 +145,43 @@ def line_findings_text(takes: list[dict[str, Any]], *, episode: int) -> str:
     return "\n".join(rows)
 
 
+def server_take_card(
+    desk: Path, episode: int, take_id: str
+) -> tuple[dict[str, Any] | None, str]:
+    """The take's card on its film run's take strip (``GET /v1/video-generations/{id}``), or why it was not read.
+
+    Never raises: ``review`` always exits 0.
+    """
+
+    from creation.post.desk import open_api, take_run
+
+    try:
+        found = take_run(desk, episode, take_id)
+        if found is None:
+            return None, "no film run for this take on the desk"
+        job_id, take_index = found
+        run = open_api(desk, episode)
+        try:
+            status, body = run.get_optional(JOB_STATUS_ROUTE.format(job_id=job_id))
+        finally:
+            run.client.close()
+    except (SystemExit, Exception) as exc:
+        return None, f"the server was not reached: {exc}"
+    if not 200 <= status < 300 or not isinstance(body, dict):
+        return None, f"the server answered {status} for run `{job_id}`"
+    card = next(
+        (
+            c
+            for c in body.get("takes") or []
+            if isinstance(c, dict) and c.get("take_index") == take_index
+        ),
+        None,
+    )
+    if card is None:
+        return None, f"run `{job_id}` has no card for take {take_index} yet"
+    return card, ""
+
+
 def _open_takes(body: Any) -> list[dict[str, Any]] | None:
     """The takes in a ``take_line_findings_open`` refusal, else ``None``."""
 

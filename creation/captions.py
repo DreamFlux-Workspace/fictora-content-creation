@@ -852,8 +852,7 @@ def extra_speech_warning(
         f"EXTRA SPEECH: {span_count} speech stretch(es) for {line_count} line(s); not captioned: "
         f"{listed}. Lines are placed on speech stretches in order, so if any stretch before one of "
         "these is speech that is not in the script (a mumble, a line the take made up), every later "
-        "caption is on the wrong words. Watch the captions. Fix: a transcript of the take "
-        "(`review --transcribe`; captions then follow the words), `finish --mute A-B` for stray "
+        "caption is on the wrong words. Watch the captions. Fix: `finish --mute A-B` for stray "
         "speech, or --line-start / --line-end per line"
     )
 

@@ -467,51 +467,103 @@ def test_a_take_the_server_could_not_transcribe_says_listen(desk: Path) -> None:
     assert "listen to every line" in "\n".join(lines.lines())
 
 
-def test_a_locked_voice_take_says_the_server_did_not_check_the_words(
+def test_a_take_without_a_line_check_says_so(
     desk: Path,
 ) -> None:
     takes = _desk_ready(desk, facts=_facts(()))
     take = write_frames(takes / "take-ep01-t1-raw-v1.mp4", _clean())
     lines = _section(review_take(desk, take_file=take, take_card=_card(None)), "Lines")
     assert lines.status == OK
-    assert "the server did not check the words" in "\n".join(lines.lines())
+    assert "the server gave no line check for this take" in "\n".join(lines.lines())
+
+
+def _clip_record(desk: Path, clips: list[dict[str, Any]]) -> None:
+    (desk / "ep01" / "api" / "17_raw_scene_clips.json").write_text(
+        json.dumps({"coordinator_job_id": "job_video_1", "coordinator_status": "completed", "clips": clips}),
+        encoding="utf-8",
+    )  # fmt: skip
+
+
+def _read_cards(
+    monkeypatch: pytest.MonkeyPatch, cards: list[dict[str, Any]]
+) -> list[str]:
+    from types import SimpleNamespace
+
+    from creation.post import desk as desk_module
+
+    asked: list[str] = []
+
+    def get_optional(path: str) -> tuple[int, Any]:
+        asked.append(path)
+        return 200, {"takes": cards}
+
+    run = SimpleNamespace(
+        get_optional=get_optional, client=SimpleNamespace(close=lambda: None)
+    )
+    monkeypatch.setattr(desk_module, "open_api", lambda *_a: run)
+    return asked
 
 
 @pytest.mark.real_take_card
 def test_the_card_is_read_at_the_takes_place_on_its_film_run(
     desk: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from creation.post import desk as desk_module
-    from creation.post.review import server_take_card
+    from creation.post.server_finish import server_take_card
 
     _desk_ready(desk)
-    (desk / "ep01" / "api" / "17_raw_scene_clips.json").write_text(
-        json.dumps({"coordinator_job_id": "job_video_1", "coordinator_status": "completed", "clips": [
-            {"job_id": "job_take_t2", "url": "https://media.test/t2.mp4", "set_index": 2, "episode_id": "episode_01"},
-            {"job_id": "job_take_t1", "url": "https://media.test/t1.mp4", "set_index": 1, "episode_id": "episode_01"},
-        ]}),
-        encoding="utf-8",
-    )  # fmt: skip
-    asked: list[str] = []
-
-    class Run:
-        class client:
-            @staticmethod
-            def close() -> None:
-                pass
-
-        @staticmethod
-        def get_optional(path: str) -> tuple[int, Any]:
-            asked.append(path)
-            return 200, {"takes": [{"take_index": 1, "line_check": "clean"},
-                                   {"take_index": 2, "line_check": "found"}]}  # fmt: skip
-
-    monkeypatch.setattr(desk_module, "open_api", lambda *_a: Run)
+    _clip_record(desk, [
+        {"job_id": "job_take_t2", "url": "https://media.test/t2.mp4", "set_index": 2, "episode_id": "episode_01"},
+        {"job_id": "job_take_t1", "url": "https://media.test/t1.mp4", "set_index": 1, "episode_id": "episode_01"},
+    ])  # fmt: skip
+    asked = _read_cards(
+        monkeypatch,
+        [
+            {"take_index": 1, "line_check": "clean"},
+            {"take_index": 2, "line_check": "found"},
+        ],
+    )
 
     card, why = server_take_card(desk, 1, "t1")
 
     assert asked == ["/v1/video-generations/job_video_1"]
     assert card == {"take_index": 2, "line_check": "found"} and why == ""
+
+
+@pytest.mark.real_take_card
+def test_the_shots_of_a_wan_take_share_one_card(
+    desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from creation.post.server_finish import server_take_card
+
+    _desk_ready(desk)
+    _clip_record(desk, [
+        {"job_id": "s1", "url": "https://media.test/s1.mp4", "relation_id": "episode_01_set01_beat01", "set_index": 1, "episode_id": "episode_01"},
+        {"job_id": "s2", "url": "https://media.test/s2.mp4", "relation_id": "episode_01_set01_beat02", "set_index": 1, "episode_id": "episode_01"},
+        {"job_id": "s3", "url": "https://media.test/s3.mp4", "relation_id": "episode_01_set02_beat03", "set_index": 2, "episode_id": "episode_01"},
+    ])  # fmt: skip
+    _read_cards(
+        monkeypatch,
+        [
+            {"take_index": 1, "line_check": "clean"},
+            {"take_index": 2, "line_check": "found"},
+        ],
+    )
+
+    card, _why = server_take_card(desk, 1, "t2")
+
+    assert card == {"take_index": 2, "line_check": "found"}
+
+
+@pytest.mark.real_take_card
+def test_a_take_with_no_film_run_on_the_desk_is_not_read(desk: Path) -> None:
+    from creation.post.server_finish import server_take_card
+
+    _desk_ready(desk)
+
+    assert server_take_card(desk, 1, "t1") == (
+        None,
+        "no film run for this take on the desk",
+    )
 
 
 def test_line_windows_says_how_each_line_was_matched() -> None:

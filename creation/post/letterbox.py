@@ -665,8 +665,7 @@ def voice_end_spans(
     "Three Payments Late" captions stayed about a second past it). Two
     sources, best first:
 
-    * ``words``: a transcript of this take (``review --transcribe``, saved on
-      the desk): the line ends at the last word heard inside its window.
+    * ``words``: a transcript of this take (saved on the desk): the line ends at the last word heard inside its window.
     * the take's own sound (the dialogue track the video was filmed to): the
       last 0.05 s inside the window louder than both the window's loudest
       minus 20 dB and the level of the gap next to the line plus 3 dB. A line
