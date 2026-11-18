@@ -35,7 +35,7 @@ def add_review_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
     review = sub.add_parser(
         "review",
         help="Free, local, numbers-only read of one take (raw or finished): loudness, hard cuts vs the take "
-        "facts, frozen/stacked frames, board frames anywhere, drawn text (subtitles the video burned in; needs tesseract), lines asked and heard, people per shot (take facts; counted "
+        "facts, frozen/stacked frames, board frames anywhere, drawn text (subtitles the video burned in; needs tesseract), lines asked and the server's line check, people per shot (take facts; counted "
         "by eye), and on a finished file the "
         "caption safe zones (zone sheet for the face check). Each section ✓/⚠ with its threshold; always exits 0.",
     )
@@ -52,14 +52,6 @@ def add_review_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
         default=None,
         help="Default: the take's approved board on the desk.",
     )
-    review.add_argument(
-        "--words-json", type=Path, default=None,
-        help="A saved Whisper transcript of the take; default: the newest take-epNN-tK-*words-vN.json on the desk.",
-    )  # fmt: skip
-    review.add_argument(
-        "--transcribe", action="store_true",
-        help="When no transcript is saved, ask the server for one from the take's stored URL (a few cents).",
-    )  # fmt: skip
     review.add_argument(
         "--json", action="store_true", help="Print the review as JSON on stdout."
     )
@@ -167,8 +159,6 @@ def dispatch_review(args: argparse.Namespace, *, stream: TextIO | None = None) -
         take_id=args.take_id,
         take_file=args.take_file,
         board=args.board,
-        words_json=args.words_json.expanduser().resolve() if args.words_json else None,
-        transcribe=args.transcribe,
     )
     run_dir = desk / f"ep{args.episode:02d}"
     reels = (desk / "reels").resolve()

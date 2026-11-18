@@ -14,7 +14,6 @@ from creation.harness_rules import (
     locked_camera_line,
     mouth_sound_note,
     opening_sound_line,
-    short_line_hold,
     staging_contradiction_lines,
     seam_fix_line,
     thought_short_of_cut,
@@ -172,13 +171,6 @@ def test_a_hand_over_the_hook_stops_and_a_later_gasp_does_not() -> None:
     spine["beats"][0]["reaction_kind"] = None
     spine["beats"][1]["motion_intent"] = "Sota puts a hand over his mouth"
     assert hook_mouth_stop(spine, episode=1) is None
-
-
-def test_a_short_line_held_for_seconds_is_named() -> None:
-    assert short_line_hold("A fox.", start=2.8, end=10.4) is not None
-    assert "line-start" in (short_line_hold("여우", start=8.6, end=16.2) or "")
-    assert short_line_hold("여우", start=8.6, end=10.4) is None
-    assert short_line_hold("Holding my hand now?", start=1.0, end=8.0) is None
 
 
 def test_a_hold_that_is_also_forbidden_is_named() -> None:

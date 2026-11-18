@@ -16,6 +16,9 @@ from creation.production_state import load_production
 from creation.spine_view import episode_id_for
 
 
+_WAN_SHOT = re.compile(r"_set\d+_beat\d+$")
+
+
 def open_api(desk: Path, episode: int) -> DramaApiRunSession:
     """An API session on the desk's ``session_id``, saving JSON under ``epNN/api``.
 
@@ -363,6 +366,13 @@ def take_clip(desk: Path, episode: int, take_id: str) -> dict[str, Any] | None:
     else the ``N``-th clip (the way ``film`` collected it).
     """
 
+    found = _take_in_records(desk, episode, take_id)
+    return dict(found[1]) if found else None
+
+
+def _take_in_records(
+    desk: Path, episode: int, take_id: str
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
     found = saved_spine(desk, episode)
     wanted = episode_id_for(found[0], episode) if found else f"episode_{episode:02d}"
     index = int(take_id.lstrip("t") or 1)
@@ -371,9 +381,35 @@ def take_clip(desk: Path, episode: int, take_id: str) -> dict[str, Any] | None:
         clips = episode_clips(raw, episode_id=wanted)
         for clip in clips:
             if clip.get("set_index") == index:
-                return dict(clip)
+                return raw, clip
         if 0 < index <= len(clips) and clips[index - 1].get("set_index") is None:
-            return dict(clips[index - 1])
+            return raw, clips[index - 1]
+    return None
+
+
+def take_run(desk: Path, episode: int, take_id: str) -> tuple[str, int] | None:
+    """The film run that made the take and the take's ``take_index`` among that run's take cards.
+
+    The run is the clip record's ``coordinator_job_id``. Its clips are in the run's
+    ``depends_on`` order, and the server numbers its cards by each take's first clip:
+    the shots of one Wan take (``…_setNN_beatNN``, one episode and board) share a card, every other
+    clip has its own.
+    """
+
+    found = _take_in_records(desk, episode, take_id)
+    if found is None or not found[0].get("coordinator_job_id"):
+        return None
+    raw, clip = found
+    takes: dict[object, int] = {}
+    for position, each in enumerate(raw.get("clips") or []):
+        key = (
+            (each.get("episode_id"), each.get("set_index"))
+            if _WAN_SHOT.search(str(each.get("relation_id") or ""))
+            else position
+        )
+        number = takes.setdefault(key, len(takes) + 1)
+        if each is clip:
+            return str(raw["coordinator_job_id"]), number
     return None
 
 

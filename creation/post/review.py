@@ -30,11 +30,10 @@ command exits 0 whatever it finds.
    saves a crop sheet (``takes/text-check-epNN-tK-vN.png``) of what it found.
    Without tesseract the section says the check was skipped.
 5. **Lines** - :func:`creation.episode_commands.run_check_lines` (were the
-   approved lines in the take's instructions, from the take facts), and when a
-   Whisper transcript is on the desk (``--words-json``, a saved
-   ``take-…-words-vN.json``, or ``--transcribe``) which approved lines were
-   heard, matched by :func:`creation.post.whisper.line_windows`. A Japanese
-   line matched on the server's readings is reported ``(by sound, NN%)``. The
+   approved lines in the take's instructions, from the take facts), and the
+   server's line check of the take (its card on the film run,
+   :func:`creation.post.server_finish.server_take_card`): every line heard as written, or each finding
+   with where to listen. The kit never judges the words itself. The
    ``check-lines`` output is folded in as it prints it (each line's shot and
    board row; an ``!!`` on-screen speaker out of frame marks the section ⚠).
    Take 1's first line starting after 0.5 s is flagged the same way: trim the head.
@@ -64,9 +63,8 @@ says ``letterbox``) the opening, frames, cuts, board and ending checks read only
 (y 555-1365 on 1080x1920, :func:`picture_crop`): the black bands, the title and the band captions
 are never measured as picture. A portrait take reads exactly as before.
 
-It writes nothing but an optional transcript and the text check's crop sheet.
-Everything is local and free except ``--transcribe``, which asks the server for
-a Whisper transcript of the take's stored URL (a few cents; nothing is uploaded).
+It writes nothing but the text check's crop sheet. It is free: the only server
+call reads the take's card on its film run.
 The compiled prompt is never read. The internal kit's per-row forbidden-elements
 checklist is not here: it needs the server's image-compile rules.
 """
@@ -107,7 +105,7 @@ from creation.post.media import (
     probe_video,
 )
 from creation.post.mix import LUFS_BAND, TARGET_LUFS
-from creation.harness_rules import late_opening_line, short_line_hold
+from creation.harness_rules import late_opening_line
 
 #: Below this a take is effectively silent: it needs cues (internal kit).
 SILENT_BELOW_LUFS = -30.0
@@ -125,8 +123,6 @@ DUCK_RELEASE_SECONDS = 0.6
 CUT_MATCH_SECONDS = 0.5
 #: Two hard cuts closer than this are a flash or a stutter (a shot a few frames long), not two shots.
 CLOSE_CUT_SECONDS = 0.25
-#: A line with fewer words than this is never a re-film call on the transcript alone ("check by ear").
-SHORT_LINE_WORDS = 3
 
 #: Frozen / stacked analysis: 8 fps at 96x168 (internal kit's stack score).
 STACK_FPS = 8.0
@@ -1105,11 +1101,14 @@ def lines_section(
     *,
     episode: int,
     take_id: str,
-    words_json: Path | None,
-    words_note: str | None = None,
+    card: Mapping[str, Any] | None,
+    card_missing: str = "",
     hand_voices: tuple[dict[str, Any], ...] = (),
 ) -> Section:
-    """The line check from the take facts (``check-lines``) and, with a transcript, which lines were heard.
+    """The line check from the take facts (``check-lines``) and the server's verdict on the lines heard.
+
+    ``card`` is the take's card on its film run (:func:`creation.post.server_finish.server_take_card`); ``card_missing`` says why
+    there is none.
 
     A line the take was not asked for but ``finish --voice`` laid in by hand
     (the finish record's ``hand_voices``) counts as on the take.
@@ -1117,7 +1116,7 @@ def lines_section(
 
     from creation.episode_commands import CommandStopped, run_check_lines
 
-    threshold = "asked: every approved line in the take facts; heard: ≥ 60% of a line's words in order (names by sound); under 3 words: check by ear"
+    threshold = "asked: every approved line in the take facts; heard: the server's line check of the take (by sound)"
     details: list[str] = []
     data: dict[str, Any] = {"asked_missing": None, "heard": None}
     faults = False
@@ -1148,11 +1147,7 @@ def lines_section(
             data["check_lines_flags"] = flagged
             faults = faults or missing > 0 or flagged > 0
     details += asked_rows
-    heard_rows, heard_data, heard_faults = _heard_rows(
-        desk, episode=episode, take_id=take_id, words_json=words_json
-    )
-    if words_note:
-        details.append(words_note)
+    heard_rows, heard_data, heard_faults = _heard_rows(card, card_missing)
     details += heard_rows
     if heard_data is not None:
         measured = True
@@ -1229,66 +1224,53 @@ def take_lines(
 
 
 def _heard_rows(
-    desk: Path, *, episode: int, take_id: str, words_json: Path | None
+    card: Mapping[str, Any] | None, missing: str
 ) -> tuple[list[str], list[dict[str, Any]] | None, bool]:
-    from creation.post.whisper import line_windows, load_words, word_count
+    from creation.post.server_finish import finding_words
 
-    if words_json is None:
-        why = "no transcript on the desk; pass --words-json F, or --transcribe for a few cents"
-        return [f"heard: not read ({why})"], None, False
-    found = take_lines(desk, episode, take_id)
-    if found is None:
+    if card is None:
+        return [f"heard: not read ({missing})"], None, False
+    check = card.get("line_check")
+    if check not in ("clean", "found", "not_run"):
         return (
-            ["heard: not read (no spine snapshot on the desk; run `spine --refresh`)"],
+            ["heard: the server gave no line check for this take"],
             None,
             False,
         )
-    lines, _language = found
-    if not lines:
-        return [f"heard: no approved lines for {take_id} (a wordless take)"], [], False
-    windows = line_windows(
-        load_words(words_json),
-        tuple(line["performed"] for line in lines),
-        alternates=tuple((line["text"], line["spoken_text"]) for line in lines),
-    )
-    heard = [w for w in windows if w.start is not None]
-    rows = [
-        f"heard: {len(heard)} of {len(lines)} approved line(s) in `{words_json.name}`"
+    if check == "not_run":
+        return (
+            [
+                "heard: the server could not make a transcript of this take; listen to every line"
+            ],
+            [],
+            True,
+        )
+    if check == "clean":
+        return (
+            [
+                "heard: every line heard as written, on its shot (the server's line check)"
+            ],
+            [],
+            False,
+        )
+    findings = [
+        dict(f) for f in card.get("line_findings") or [] if isinstance(f, Mapping)
     ]
-    data: list[dict[str, Any]] = []
-    long_hold = False
-    for window in windows:
-        how = {
-            "sound": " (by sound, {:.0%})",
-            "shape": " (by reading shape, {:.0%})",
-        }.get(window.by, "")
-        how = how.format(window.ratio)
-        short = word_count(window.line) < SHORT_LINE_WORDS
-        if (window.start is None or window.end is None) and short:
-            # A transcript often misses or misspells a line this short: never a re-film call on its own.
-            rows.append(
-                f"  {window.index + 1}. CHECK BY EAR  {window.line!r}: under {SHORT_LINE_WORDS} words, "
-                "the transcript did not find it; listen to the take before deciding (never re-film on this alone)"
-            )
-        elif window.start is None or window.end is None:
-            rows.append(
-                f"  {window.index + 1}. MISSING  {window.line!r}: the one real re-film (name the cause)"
-            )
-        else:
-            when = f"{window.start:.2f}-{window.end:.2f}s"
-            rows.append(
-                f"  {window.index + 1}. {when}  {window.line!r}  {window.ratio:.0%}{how}"
-            )
-            held = short_line_hold(
-                window.line, start=float(window.start), end=float(window.end)
-            )
-            if held:
-                rows.append(f"  {held}")
-                long_hold = True
-        data.append({"line": window.index + 1, "text": window.line, "start": window.start, "end": window.end,
-                     "ratio": window.ratio, "by": window.by,
-                     "check_by_ear": window.start is None and short})  # fmt: skip
-    return rows, data, len(heard) < len(lines) or long_hold
+    if not findings:
+        return (
+            [
+                "heard: the server found lines to check but sent none; listen to every line"
+            ],
+            [],
+            True,
+        )
+    rows = [
+        f"heard: the server's line check found {len(findings)} thing(s) to listen to"
+    ]
+    rows += [f"  {finding_words(finding)}" for finding in findings]
+    if card.get("listen_url"):
+        rows.append(f"  listen: {card['listen_url']}")
+    return rows, findings, True
 
 
 _WORDS_VERSION = re.compile(r"-(?:raw-)?v(\d+)-.*words")
@@ -1386,7 +1368,7 @@ def take_words(
     :func:`creation.post.lineage.raw_take_behind`):
 
     - when the kit saved where it came from (:data:`WORDS_SOURCE_KEY`, written by
-      ``review --transcribe``), only when that is this raw take's content (its
+      :func:`server_transcript`), only when that is this raw take's content (its
       sha256) and, when both are known, the take's current stored URL;
     - else when its name carries that take's version (``take-ep01-t1-v3-words-…``,
       ``…-raw-v3-words-…``);
@@ -1459,17 +1441,6 @@ def take_words(
             f"the only transcript, `{newest.name}`, is of {whose}, not `{raw.name}` (re-filmed since)"
         )
     return None, f"no transcript of `{raw.name}`"
-
-
-def words_belong_note(words: Path, raw: Path | None, *, made: bool = False) -> str:
-    """One line naming the transcript and the take version it belongs to, for the Lines section."""
-
-    how = "transcript made on the server from the stored take" if made else "transcript"
-    if raw is None:
-        return f"{how}: `{words.name}`"
-    version = raw_version(raw)
-    of = f"take v{version}, `{raw.name}`" if version is not None else f"`{raw.name}`"
-    return f"{how}: `{words.name}` (of {of})"
 
 
 # --- 6. Safe zones (finished takes) -----------------------------------------------------------------------
@@ -1722,10 +1693,6 @@ def default_take(desk: Path, episode: int, take_id: str) -> tuple[Path, str]:
     ), "the newest raw take: no finished file yet"
 
 
-Transcribe = Callable[[Path, int, str], Path]
-"""``(desk, episode, take_id) -> saved words JSON``: a transcript made on the server."""
-
-
 def server_transcript(
     desk: Path, episode: int, take_id: str, *, take: Path | None = None
 ) -> Path:
@@ -1761,7 +1728,7 @@ def server_transcript(
         raise ValueError(
             f"no stored URL for ep{episode:02d} {take_id} in api/ (17_raw_scene_clips.json or film-*-raw-scene-clips.json) "
             "to transcribe "
-            "(this kit never uploads local files); pass --words-json"
+            "(this kit never uploads local files)"
         )
     found = take_lines(desk, episode, take_id)
     language = found[1] if found else "en"
@@ -1922,9 +1889,8 @@ def review_take(
     take_id: str = "t1",
     take_file: Path | None = None,
     board: Path | None = None,
-    words_json: Path | None = None,
-    transcribe: bool = False,
-    transcriber: Transcribe | None = None,
+    take_card: Callable[[Path, int, str], tuple[dict[str, Any] | None, str]]
+    | None = None,
     text_ocr: Any = None,
     face_detector: Any = "local",
 ) -> TakeReview:
@@ -1941,12 +1907,8 @@ def review_take(
         else the newest raw take).
     board
         Board image; default the take's approved board on the desk.
-    words_json
-        A saved Whisper transcript; default the newest one saved for this take.
-    transcribe
-        Ask the server for a transcript when none is saved (a few cents).
-    transcriber
-        Injected for tests.
+    take_card
+        Reads the take's card on its film run (the server's line check); default :func:`creation.post.server_finish.server_take_card`.
     text_ocr
         The text check's OCR, injected for tests (default the ``tesseract`` command).
     face_detector
@@ -1995,34 +1957,20 @@ def review_take(
 
         # A file finish cut to its trim handles: the facts' times minus start_s (fictora-drama #563).
         facts = facts_on_handled_file(facts, handled_record.edits)  # type: ignore[assignment]
-    words_note = None
     if "reel" in steps:
-        # A transcript of the take does not say what the reel plays: its plan lists the lines it keeps.
-        words_json, transcribe = None, False
-        words_note = (
-            "the reel is cut and reordered from the take: lines heard are checked on the take's own review; "
-            "the reel plan (reels/reel-plan-epNN-vN.json) lists which lines it keeps"
+        card, card_missing = (
+            None,
+            (
+                "the reel is cut and reordered from the take: lines heard are checked on the take's own review; "
+                "the reel plan (reels/reel-plan-epNN-vN.json) lists which lines it keeps"
+            ),
         )
-    elif words_json is None:
-        # Only a transcript of this exact take: after a re-film the old take's words are another take's.
-        raw = raw_take_of(desk, take)
-        if raw is None:
-            words_json, why = saved_words(desk, episode, take_id), ""
-        else:
-            words_json, why = take_words(desk, episode, take_id, take)
-        if words_json is not None:
-            words_note = words_belong_note(words_json, raw)
-            if raw is None:
-                words_note += " (the desk has no record of the raw take behind this file: check it is this take's)"
-        elif transcribe:
-            words_json = (
-                transcriber(desk, episode, take_id)
-                if transcriber is not None
-                else server_transcript(desk, episode, take_id, take=take)
-            )
-            words_note = words_belong_note(words_json, raw, made=True)
-        elif why:
-            words_note = f"saved transcript not used: {why}; `--transcribe` makes one of this take (a few cents)"
+    else:
+        from creation.post import server_finish
+
+        card, card_missing = (take_card or server_finish.server_take_card)(
+            desk, episode, take_id
+        )
     loud = loudness_section(take, kind, has_audio=info.has_audio)
     board_sec, head = board_section(
         take, board_path, fps=fps, deboarded=bool(steps & set(DEBOARDED_STEPS)),
@@ -2087,8 +2035,8 @@ def review_take(
         desk,
         episode=episode,
         take_id=take_id,
-        words_json=words_json,
-        words_note=words_note,
+        card=card,
+        card_missing=card_missing,
         hand_voices=record.hand_voices if record is not None else (),
     )
     found = saved_spine(desk, episode)

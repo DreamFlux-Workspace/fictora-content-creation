@@ -35,9 +35,6 @@ _HAND_OVER_MOUTH = re.compile(
 _LOCKED_CAMERA = re.compile(r"locked|hold|static|still", re.IGNORECASE)
 _LINE_START = re.compile(r"\((\d+(?:\.\d+)?)\s*[–-]")
 
-#: A one- or two-word line held longer than this was stretched by the transcript.
-SHORT_LINE_HOLD_SECONDS = 3.0
-
 _HOLD = re.compile(
     r"\b(?:hold|holds|holding|grip|grips|gripping|catch|catches|grasp|grasps)\b",
     re.IGNORECASE,
@@ -461,7 +458,7 @@ def late_opening_line(rows: Sequence[str], *, take_id: str) -> str | None:
             return None
         return (
             f"!! the first line starts at {start:.2f}s. The hook wants it by {FIRST_LINE_BY_SECONDS:.1f}s. "
-            "review --transcribe, then trim the head of take 1."
+            "Listen to the opening, then trim the head of take 1."
         )
     return None
 
@@ -620,39 +617,6 @@ def locked_camera_line(spine: Mapping[str, Any], *, episode: int) -> str | None:
         'edit --beat N --shot "size|subject|camera|angle". '
         "A push-in on the first frame is the close-up hook. "
         "Speaking rows only take locked, dolly, pan, tilt or handheld."
-    )
-
-
-def short_line_hold(text: str, *, start: float, end: float) -> str | None:
-    """Flag a one- or two-word line whose caption window is too long.
-
-    A short line the transcript misses gets the whole following speech stretch,
-    so the caption stays up for several seconds. Set the window by hand.
-
-    Parameters
-    ----------
-    text
-        The line as timed.
-    start
-        Window start, in seconds.
-    end
-        Window end, in seconds.
-
-    Returns
-    -------
-    str | None
-        The warning, or ``None`` when the line is longer or the window is short.
-    """
-
-    words = re.findall(r"\w+", text, flags=re.UNICODE)
-    if len(words) == 0 or len(words) > 2:
-        return None
-    held = end - start
-    if held <= SHORT_LINE_HOLD_SECONDS:
-        return None
-    return (
-        f"!! a {len(words)}-word line is held {held:.1f}s. "
-        "The transcript stretched it. Set the caption with finish --line-start and --line-end."
     )
 
 

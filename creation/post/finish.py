@@ -55,7 +55,7 @@ sound only. ``fictora-produce finish`` finishes it on this laptop:
 5. ``captions``  - house captions (English), timed on the take before the mix.
    On a show spoken in another language (whole English lines) each line is
    timed on the words a transcript of the take heard for it: the saved
-   ``take-epNN-tK-*words-vN.json`` (``review --transcribe``), else one made on
+   ``take-epNN-tK-*words-vN.json``, else one made on
    the server from the take's stored URL (``/v1/transcripts``, a few cents).
    A ``--take-file`` made from the newest raw take only by edits that keep
    its sound timeline (``freeze``, ``soften``, ``blur``, ``deboard``, ``colour``; followed

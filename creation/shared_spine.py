@@ -85,7 +85,7 @@ def desks_sharing_spine(
 
 
 def shared_spine_refusal(
-    command: str, desk: Path, *, transcribe: bool = False, sends: bool = False
+    command: str, desk: Path, *, sends: bool = False
 ) -> str | None:
     """Why ``command`` must not run on ``desk``, or ``None`` when it may.
 
@@ -95,8 +95,6 @@ def shared_spine_refusal(
         The subcommand.
     desk
         Its ``--desk``.
-    transcribe
-        ``review --transcribe`` (a paid read).
     sends
         This run changes or spends on the server story although its command is
         otherwise read-or-local (``music-note --yes``, ``rescore-music --yes``).
@@ -107,7 +105,7 @@ def shared_spine_refusal(
         The refusal naming the other desks, or ``None``.
     """
 
-    if command in READ_OR_LOCAL_COMMANDS and not transcribe and not sends:
+    if command in READ_OR_LOCAL_COMMANDS and not sends:
         return None
     others = desks_sharing_spine(desk)
     if not others:

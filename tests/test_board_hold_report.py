@@ -191,8 +191,7 @@ def test_review_original_flag_reports_what_it_fetched(
     out = io.StringIO()
 
     code = dispatch_review(
-        Namespace(desk=post_desk, episode=1, take_id="t1", take_file=None, board=None, words_json=None,
-                  transcribe=False, json=False, original=True),
+        Namespace(desk=post_desk, episode=1, take_id="t1", take_file=None, board=None, json=False, original=True),
         stream=out,
     )  # fmt: skip
 

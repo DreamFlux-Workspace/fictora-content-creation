@@ -5,7 +5,6 @@ Each section must find the fault planted in a clip and stay quiet on a clean one
 
 from __future__ import annotations
 
-import copy
 import json
 import subprocess
 from pathlib import Path
@@ -372,62 +371,57 @@ def test_a_take_with_no_board_frame_reads_clean(desk: Path) -> None:
 # --- 5. Lines --------------------------------------------------------------------------------------------
 
 
-def _words(
-    path: Path,
-    words: list[tuple[str, float, float]],
-    readings: list[str | None] | None = None,
-) -> Path:
-    rows = []
-    for index, (word, start, end) in enumerate(words):
-        row: dict[str, Any] = {"word": word, "start": start, "end": end}
-        if readings and readings[index] is not None:
-            row["reading"] = readings[index]
-        rows.append(row)
-    path.write_text(json.dumps({"words": rows}, ensure_ascii=False), encoding="utf-8")
-    return path
+def _card(check: str | None, findings: list[dict[str, Any]] | None = None) -> Any:
+    card: dict[str, Any] = {"take_index": 1, "line_check": check}
+    if findings:
+        card["line_findings"] = findings
+        card["listen_url"] = "https://media.test/t1.mp4"
+    return lambda *_a: (card, "")
 
 
 def test_lines_asked_and_heard_read_clean(desk: Path) -> None:
     takes = _desk_ready(desk, facts=_facts(()))
     take = write_frames(takes / "take-ep01-t1-raw-v1.mp4", _clean())
-    _words(takes / "take-ep01-t1-review-words-v1.json",
-           [("We're", 0.2, 0.4), ("closed.", 0.4, 0.8), ("Not", 1.5, 1.7), ("for", 1.7, 1.8), ("me.", 1.8, 2.0)])  # fmt: skip
 
-    lines = _section(review_take(desk, take_file=take), "Lines")
+    lines = _section(
+        review_take(desk, take_file=take, take_card=_card("clean")), "Lines"
+    )
 
     assert lines.status == OK, lines.lines()
     assert "2 of 2 approved lines asked" in lines.summary
-    assert "heard: 2 of 2" in "\n".join(lines.lines())
+    assert "every line heard as written" in "\n".join(lines.lines())
 
 
 def test_a_line_not_heard_and_a_line_not_asked_are_flagged(desk: Path) -> None:
     takes = _desk_ready(desk, facts=_facts((), asked=(1, 0)))
     take = write_frames(takes / "take-ep01-t1-raw-v1.mp4", _clean())
-    words = _words(
-        takes / "take-ep01-t1-review-words-v1.json",
-        [("We're", 0.2, 0.4), ("closed.", 0.4, 0.8)],
-    )
+    missing = {"kind": "missing", "line": "Not for me.", "message": 'Ren\'s line "Not for me." was not heard.',
+               "listen_start_seconds": 1.4}  # fmt: skip
 
-    lines = _section(review_take(desk, take_file=take, words_json=words), "Lines")
+    lines = _section(
+        review_take(desk, take_file=take, take_card=_card("found", [missing])), "Lines"
+    )
 
     text = "\n".join(lines.lines())
     assert lines.status == WARN
     assert "line 2 ('Not for me.') was not in the take's instructions" in text
-    assert "2. MISSING  'Not for me.'" in text
+    assert 'Ren\'s line "Not for me." was not heard. (at 1.4 s)' in text
+    assert "listen: https://media.test/t1.mp4" in text
     assert lines.data["asked_missing"] == 1
+    assert lines.data["heard"][0]["kind"] == "missing"
 
 
 def test_a_line_heard_but_never_asked_for_is_still_flagged(desk: Path) -> None:
     takes = _desk_ready(desk, facts=_facts((), asked=(1, 0)))
     take = write_frames(takes / "take-ep01-t1-raw-v1.mp4", _clean())
-    words = _words(takes / "take-ep01-t1-review-words-v1.json",
-                   [("We're", 0.2, 0.4), ("closed.", 0.4, 0.8), ("Not", 1.5, 1.7), ("for", 1.7, 1.8), ("me.", 1.8, 2.0)])  # fmt: skip
 
-    lines = _section(review_take(desk, take_file=take, words_json=words), "Lines")
+    lines = _section(
+        review_take(desk, take_file=take, take_card=_card("clean")), "Lines"
+    )
 
     assert lines.status == WARN
     assert "1 of 2 approved lines asked" in lines.summary
-    assert "heard: 2 of 2" in "\n".join(lines.lines())
+    assert "every line heard as written" in "\n".join(lines.lines())
 
 
 def test_a_line_laid_by_hand_with_finish_voice_counts_as_on_the_take(
@@ -454,134 +448,122 @@ def test_a_line_laid_by_hand_with_finish_voice_counts_as_on_the_take(
     assert "was not in the take's instructions" not in text
 
 
-def test_without_a_transcript_the_heard_check_says_how_to_get_one(desk: Path) -> None:
+def test_without_the_servers_card_the_heard_check_says_why(desk: Path) -> None:
     takes = _desk_ready(desk, facts=_facts(()))
     take = write_frames(takes / "take-ep01-t1-raw-v1.mp4", _clean())
     lines = _section(review_take(desk, take_file=take), "Lines")
     assert lines.status == OK
-    assert "--transcribe" in "\n".join(lines.lines())
+    assert "heard: not read (not read offline)" in "\n".join(lines.lines())
     assert lines.data["heard"] is None
 
 
-def test_transcribe_asks_the_injected_server_only_when_no_transcript_is_saved(
-    desk: Path,
-) -> None:
+def test_a_take_the_server_could_not_transcribe_says_listen(desk: Path) -> None:
     takes = _desk_ready(desk, facts=_facts(()))
     take = write_frames(takes / "take-ep01-t1-raw-v1.mp4", _clean())
-    calls: list[tuple[int, str]] = []
-
-    def fake(desk_: Path, episode: int, take_id: str) -> Path:
-        calls.append((episode, take_id))
-        return _words(
-            takes / "take-ep01-t1-review-words-v1.json",
-            [("We're", 0.2, 0.4), ("closed.", 0.4, 0.8)],
-        )
-
-    first = _section(
-        review_take(desk, take_file=take, transcribe=True, transcriber=fake), "Lines"
-    )
-    again = _section(
-        review_take(desk, take_file=take, transcribe=True, transcriber=fake), "Lines"
-    )
-
-    assert calls == [(1, "t1")]
-    assert "transcript made on the server" in "\n".join(first.lines())
-    assert first.status == WARN and again.status == WARN  # line 2 was not heard
-
-
-def test_transcribe_after_a_refilm_makes_a_new_transcript_of_the_new_take(
-    desk: Path,
-) -> None:
-    """A re-filmed take never reads the old take's transcript (line checks ran on the wrong take)."""
-
-    import os
-
-    takes = _desk_ready(desk, facts=_facts(()))
-    old_take = write_frames(takes / "take-ep01-t1-raw-v1.mp4", _clean())
-    os.utime(old_take, (100, 100))
-    old_words = _words(
-        takes / "take-ep01-t1-review-words-v1.json",
-        [("We're", 0.2, 0.4), ("closed.", 0.4, 0.8), ("Not", 1.5, 1.7), ("for", 1.7, 1.8), ("me.", 1.8, 2.0)],
-    )  # fmt: skip
-    os.utime(old_words, (200, 200))
-    new_take = write_frames(takes / "take-ep01-t1-raw-v2.mp4", _clean(start=5))
-    os.utime(new_take, (300, 300))
-    calls: list[str] = []
-
-    def fake(desk_: Path, episode: int, take_id: str) -> Path:
-        calls.append(take_id)
-        return _words(
-            takes / "take-ep01-t1-raw-v2-review-words-v1.json",
-            [("We're", 0.2, 0.4), ("closed.", 0.4, 0.8)],
-        )
-
     lines = _section(
-        review_take(desk, take_file=new_take, transcribe=True, transcriber=fake),
-        "Lines",
+        review_take(desk, take_file=take, take_card=_card("not_run")), "Lines"
     )
-    text = "\n".join(lines.lines())
-
-    assert calls == ["t1"], "the old take's transcript was reused"
-    assert "take-ep01-t1-raw-v2-review-words-v1.json" in text
-    assert "of take v2, `take-ep01-t1-raw-v2.mp4`" in text
-    assert (
-        lines.data["heard"] is not None and lines.status == WARN
-    )  # line 2 not heard on v2
-
-    again = _section(
-        review_take(desk, take_file=new_take, transcribe=True, transcriber=fake),
-        "Lines",
-    )
-    assert calls == ["t1"], "an unchanged take keeps its transcript"
-    assert "of take v2" in "\n".join(again.lines())
+    assert lines.status == WARN
+    assert "listen to every line" in "\n".join(lines.lines())
 
 
-def test_without_transcribe_an_old_takes_transcript_is_named_not_used(
+def test_a_take_without_a_line_check_says_so(
     desk: Path,
 ) -> None:
-    import os
-
     takes = _desk_ready(desk, facts=_facts(()))
-    os.utime(write_frames(takes / "take-ep01-t1-raw-v1.mp4", _clean()), (100, 100))
-    os.utime(
-        _words(takes / "take-ep01-t1-v1-words-v1.json", [("We're", 0.2, 0.4)]),
-        (200, 200),
-    )
-    new_take = write_frames(takes / "take-ep01-t1-raw-v2.mp4", _clean(start=5))
-
-    lines = _section(review_take(desk, take_file=new_take), "Lines")
-    text = "\n".join(lines.lines())
-
-    assert lines.data["heard"] is None
-    assert (
-        "take-ep01-t1-v1-words-v1.json" in text
-        and "take v1" in text
-        and "--transcribe" in text
-    )
-
-
-def test_a_japanese_line_heard_on_the_server_readings_says_by_sound(desk: Path) -> None:
-    spine = copy.deepcopy(spine_fixture(spoken_language="ja-JP"))
-    first = spine["beats"][0]["dialogue_lines"][0]
-    first.update({"text": "笑顔で", "spoken_text": "えがおで"})
-    spine["beats"][0]["dialogue_lines"] = [first]
-    takes = _desk_ready(
-        desk,
-        spine=spine,
-        facts={"shots": [], "lines": [{"line_id": first["line_id"], "count": 1}]},
-    )
     take = write_frames(takes / "take-ep01-t1-raw-v1.mp4", _clean())
-    _words(
-        takes / "take-ep01-t1-review-words-v1.json",
-        [("笑顔", 0.3, 0.7), ("で", 0.7, 0.9)],
-        ["エガオ", "デ"],
+    lines = _section(review_take(desk, take_file=take, take_card=_card(None)), "Lines")
+    assert lines.status == OK
+    assert "the server gave no line check for this take" in "\n".join(lines.lines())
+
+
+def _clip_record(desk: Path, clips: list[dict[str, Any]]) -> None:
+    (desk / "ep01" / "api" / "17_raw_scene_clips.json").write_text(
+        json.dumps({"coordinator_job_id": "job_video_1", "coordinator_status": "completed", "clips": clips}),
+        encoding="utf-8",
+    )  # fmt: skip
+
+
+def _read_cards(
+    monkeypatch: pytest.MonkeyPatch, cards: list[dict[str, Any]]
+) -> list[str]:
+    from types import SimpleNamespace
+
+    from creation.post import desk as desk_module
+
+    asked: list[str] = []
+
+    def get_optional(path: str) -> tuple[int, Any]:
+        asked.append(path)
+        return 200, {"takes": cards}
+
+    run = SimpleNamespace(
+        get_optional=get_optional, client=SimpleNamespace(close=lambda: None)
+    )
+    monkeypatch.setattr(desk_module, "open_api", lambda *_a: run)
+    return asked
+
+
+@pytest.mark.real_take_card
+def test_the_card_is_read_at_the_takes_place_on_its_film_run(
+    desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from creation.post.server_finish import server_take_card
+
+    _desk_ready(desk)
+    _clip_record(desk, [
+        {"job_id": "job_take_t2", "url": "https://media.test/t2.mp4", "set_index": 2, "episode_id": "episode_01"},
+        {"job_id": "job_take_t1", "url": "https://media.test/t1.mp4", "set_index": 1, "episode_id": "episode_01"},
+    ])  # fmt: skip
+    asked = _read_cards(
+        monkeypatch,
+        [
+            {"take_index": 1, "line_check": "clean"},
+            {"take_index": 2, "line_check": "found"},
+        ],
     )
 
-    lines = _section(review_take(desk, take_file=take), "Lines")
+    card, why = server_take_card(desk, 1, "t1")
 
-    assert lines.status == OK, lines.lines()
-    assert "(by sound, 100%)" in "\n".join(lines.lines())
-    assert lines.data["heard"][0]["by"] == "sound"
+    assert asked == ["/v1/video-generations/job_video_1"]
+    assert card == {"take_index": 2, "line_check": "found"} and why == ""
+
+
+@pytest.mark.real_take_card
+def test_the_shots_of_a_wan_take_share_one_card(
+    desk: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from creation.post.server_finish import server_take_card
+
+    _desk_ready(desk)
+    _clip_record(desk, [
+        {"job_id": "s1", "url": "https://media.test/s1.mp4", "relation_id": "episode_01_set01_beat01", "set_index": 1, "episode_id": "episode_01"},
+        {"job_id": "s2", "url": "https://media.test/s2.mp4", "relation_id": "episode_01_set01_beat02", "set_index": 1, "episode_id": "episode_01"},
+        {"job_id": "s3", "url": "https://media.test/s3.mp4", "relation_id": "episode_01_set02_beat03", "set_index": 2, "episode_id": "episode_01"},
+    ])  # fmt: skip
+    _read_cards(
+        monkeypatch,
+        [
+            {"take_index": 1, "line_check": "clean"},
+            {"take_index": 2, "line_check": "found"},
+        ],
+    )
+
+    card, _why = server_take_card(desk, 1, "t2")
+
+    assert card == {"take_index": 2, "line_check": "found"}
+
+
+@pytest.mark.real_take_card
+def test_a_take_with_no_film_run_on_the_desk_is_not_read(desk: Path) -> None:
+    from creation.post.server_finish import server_take_card
+
+    _desk_ready(desk)
+
+    assert server_take_card(desk, 1, "t1") == (
+        None,
+        "no film run for this take on the desk",
+    )
 
 
 def test_line_windows_says_how_each_line_was_matched() -> None:
@@ -806,26 +788,6 @@ def test_review_on_facts_without_head_counts_says_so_in_one_line(desk: Path) -> 
 
     assert people.details == []
     assert "the server didn't send head counts" in people.summary
-
-
-def test_a_short_line_not_heard_says_check_by_ear_never_re_film(desk: Path) -> None:
-    """L-20261001-16: a transcript misses short lines; under three words is never a re-film call."""
-
-    takes = _desk_ready(desk, facts=_facts(()))
-    take = write_frames(takes / "take-ep01-t1-raw-v1.mp4", _clean())
-    words = _words(
-        takes / "take-ep01-t1-review-words-v1.json",
-        [("Not", 1.5, 1.7), ("for", 1.7, 1.8), ("me.", 1.8, 2.0)],
-    )
-
-    lines = _section(review_take(desk, take_file=take, words_json=words), "Lines")
-
-    text = "\n".join(lines.lines())
-    assert '1. CHECK BY EAR  "We\'re closed."' in text, text
-    assert 'MISSING  "We\'re closed."' not in text
-    row = next(r for r in text.splitlines() if "CHECK BY EAR" in r)
-    assert "re-film" not in row.replace("never re-film", ""), row
-    assert lines.data["heard"][0]["check_by_ear"] is True
 
 
 def test_close_cuts_names_two_hard_cuts_within_a_quarter_second() -> None:

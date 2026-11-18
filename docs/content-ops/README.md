@@ -100,7 +100,7 @@ Every `CONFIRM` line in the plan (a gate the old desk never recorded, an unfinis
 | `approve --gate look\|plates\|script\|board` | `P approve --desk D --gate look\|plates\|script\|board` (look: pins the frame and records the yes; the others send the API approval); `O approve` records a desk-only yes (post; look without a pin) |
 | `set-lines`; a line PATCH (was a deviation) | `O set-lines` (desk only); `P line` (server and desk together, also `--add`, `--remove`, `--new-voice`) |
 | `edit`, `spine --refresh`, `arc`, `author`, `memory`, `voice`, `revoice`, `voice-line` | `P` with the same name |
-| `review --take … --whisper` | `P review --desk D --episode N --take tK [--transcribe]`; `P check-lines` for the line check alone |
+| `review --take … --whisper` | `P review --desk D --episode N --take tK` (the server's line check); `P check-lines` for the lines asked alone |
 | `sfx`, `mix`, `captions`, `colour-match`, `watermark` | `P finish` runs them all; `--sfx-adjust`, `--no-colour-match`, `--colour-strength`, `--watermark-y` change one step; `P caption` burns captions alone on a raw take |
 | `finish … --voice/--mute/--cue` | `P finish … --voice FILE@S[@DB] --mute A-B --cue FILE@S[@DB]` (same idea) |
 | `cue --name N --text "…" --seconds S` | `P cue --desk D --episode N --description "…" [--seconds S]` |

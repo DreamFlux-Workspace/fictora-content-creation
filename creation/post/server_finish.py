@@ -103,17 +103,22 @@ def _take_label(take: Mapping[str, Any]) -> str:
 WORD_FINDING_KINDS = frozenset({"missing", "wrong", "repeated", "extra", "unclear"})
 
 
-def _finding_words(finding: Mapping[str, Any]) -> str:
-    """One finding in plain words: the server's message for a kind that is not about the words
-    (``speaker_not_on_screen``, ``wrong_shot``, …); script and heard only for a word check without one."""
+def finding_words(finding: Mapping[str, Any]) -> str:
+    """One finding in plain words, with where to listen: the server's message for a kind that is not
+    about the words (``speaker_not_on_screen``, ``wrong_shot``, …); script and heard only for a word
+    check without one."""
 
     kind = str(finding.get("kind") or "line")
     message = str(finding.get("message") or "").strip()
     if kind not in WORD_FINDING_KINDS:
-        return message or f'{kind}: line "{finding.get("line", "")}"'
-    return message or (
-        f'{kind}: script "{finding.get("line", "")}", heard "{finding.get("heard", "")}"'
-    )
+        words = message or f'{kind}: line "{finding.get("line", "")}"'
+    else:
+        words = message or (
+            f'{kind}: script "{finding.get("line", "")}", heard "{finding.get("heard", "")}"'
+        )
+    if finding.get("listen_start_seconds") is None:
+        return words
+    return f"{words} (at {float(finding['listen_start_seconds']):.1f} s)"
 
 
 def line_findings_text(takes: list[dict[str, Any]], *, episode: int) -> str:
@@ -130,11 +135,7 @@ def line_findings_text(takes: list[dict[str, Any]], *, episode: int) -> str:
         for finding in take.get("findings") or []:
             if not isinstance(finding, Mapping):
                 continue
-            words = _finding_words(finding)
-            window = ""
-            if finding.get("listen_start_seconds") is not None:
-                window = f" (at {float(finding['listen_start_seconds']):.1f} s)"
-            rows.append(f"  {label}: {words}{window}")
+            rows.append(f"  {label}: {finding_words(finding)}")
     labels = sorted({_take_label(take) for take in takes})
     rows.append(
         f"To keep it as it is: run finish again with --keep-line-findings {labels[0] if len(labels) == 1 else 'all'}. "
@@ -142,6 +143,43 @@ def line_findings_text(takes: list[dict[str, Any]], *, episode: int) -> str:
         "(priced first)."
     )
     return "\n".join(rows)
+
+
+def server_take_card(
+    desk: Path, episode: int, take_id: str
+) -> tuple[dict[str, Any] | None, str]:
+    """The take's card on its film run's take strip (``GET /v1/video-generations/{id}``), or why it was not read.
+
+    Never raises: ``review`` always exits 0.
+    """
+
+    from creation.post.desk import open_api, take_run
+
+    try:
+        found = take_run(desk, episode, take_id)
+        if found is None:
+            return None, "no film run for this take on the desk"
+        job_id, take_index = found
+        run = open_api(desk, episode)
+        try:
+            status, body = run.get_optional(JOB_STATUS_ROUTE.format(job_id=job_id))
+        finally:
+            run.client.close()
+    except (SystemExit, Exception) as exc:
+        return None, f"the server was not reached: {exc}"
+    if not 200 <= status < 300 or not isinstance(body, dict):
+        return None, f"the server answered {status} for run `{job_id}`"
+    card = next(
+        (
+            c
+            for c in body.get("takes") or []
+            if isinstance(c, dict) and c.get("take_index") == take_index
+        ),
+        None,
+    )
+    if card is None:
+        return None, f"run `{job_id}` has no card for take {take_index} yet"
+    return card, ""
 
 
 def _open_takes(body: Any) -> list[dict[str, Any]] | None:
