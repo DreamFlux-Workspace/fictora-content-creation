@@ -53,6 +53,8 @@ from creation.captions import (
     HOUSE_CANVAS_HEIGHT,
     _ass_escape,
     _ass_time,
+    has_cjk,
+    has_spaceless_script,
     text_width,
 )
 from creation.post.watermark import fallback_mark_place, mark_place
@@ -79,6 +81,7 @@ HOOK_OUTLINE = 7
 HOOK_SHADOW = 3
 #: Smallest size a long hook line shrinks to before it wraps past two lines.
 HOOK_MIN_FONT_SIZE = 56
+HOOK_LONG_WORD_MIN_FONT_SIZE = 24
 #: Left margin on the 1080-wide canvas; the right margin also clears the rail.
 SIDE_MARGIN = 60
 #: Title bar: band height (fraction of frame height) and its two text sizes on 1920.
@@ -436,6 +439,33 @@ def _fit(text: str, size: int, room: float, floor: int) -> tuple[list[str], int]
     return lines, size if widest <= room else max(floor, int(size * room / widest))
 
 
+def _wrapped_by_word(text: str, size: int, room: float) -> list[str]:
+    rows: list[str] = []
+    for word in text.split():
+        if rows and text_width(f"{rows[-1]} {word}", size) <= room:
+            rows[-1] = f"{rows[-1]} {word}"
+        else:
+            rows.append(word)
+    return rows
+
+
+def _hook_floor(text: str, room: float, height: int) -> int:
+    floor = _scaled(HOOK_MIN_FONT_SIZE, height)
+    widest = max(
+        (
+            text_width(word, floor)
+            for word in text.split()
+            if not has_cjk(word) and not has_spaceless_script(word)
+        ),
+        default=0,
+    )
+    if widest <= room:
+        return floor
+    return max(
+        _scaled(HOOK_LONG_WORD_MIN_FONT_SIZE, height), int(floor * room / widest)
+    )
+
+
 def overlay_ass(
     overlay: HookOverlay,
     *,
@@ -518,7 +548,11 @@ def overlay_ass(
         )
         return header + "".join(events)
     size = _scaled(HOOK_FONT_SIZE, height)
-    lines, size = _fit(overlay.text, size, room, _scaled(HOOK_MIN_FONT_SIZE, height))
+    lines, size = _fit(
+        overlay.text, size, room, _hook_floor(overlay.text, room, height)
+    )
+    if max(text_width(line, size) for line in lines) > room:
+        lines = _wrapped_by_word(overlay.text, size, room)
     fade_in, fade_out = HOOK_FADE_MS
     fade = f"\\fad({fade_in},{0 if overlay.on_cut else fade_out})"
     if overlay.placement == "lower":
