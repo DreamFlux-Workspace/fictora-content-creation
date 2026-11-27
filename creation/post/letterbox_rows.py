@@ -1,4 +1,4 @@
-"""The letterbox caption rows for each picture shape, read from the server once per desk and process.
+"""The letterbox layout for each picture shape, read from the server once per desk and process.
 
 With no desk, an older server or no connection, the kit's own copy in
 :mod:`creation.post.delivery_geometry` is used and a ``NOTE`` says so.
@@ -22,13 +22,24 @@ from creation.post.delivery_geometry import (
 )
 
 LETTERBOX_LAYOUTS_ROUTE = "/v1/letterbox/layouts"
-ROW_KEYS = ("caption_top", "caption_highest_top", "caption_bottom_limit")
+#: What the kit reads from each layout: the picture, the title anchor, the mark and the caption rows.
+#: A server that sends fewer (an older #1854) is treated as having none.
+LAYOUT_KEYS = (
+    "picture_y",
+    "picture_height",
+    "title_bottom",
+    "mark_x",
+    "mark_y",
+    "caption_top",
+    "caption_highest_top",
+    "caption_bottom_limit",
+)
 
 _read: dict[Path, dict[str, dict[str, int]] | None] = {}
 
 
 def server_rows(picture: Picture, desk: Path | None) -> dict[str, int] | None:
-    """The server's caption rows for one picture shape, or ``None`` (no desk, older server, no connection).
+    """The server's layout for one picture shape, or ``None`` (no desk, older server, no connection).
 
     Parameters
     ----------
@@ -40,7 +51,7 @@ def server_rows(picture: Picture, desk: Path | None) -> dict[str, int] | None:
     Returns
     -------
     dict[str, int] | None
-        :data:`ROW_KEYS` on a 1080x1920 canvas.
+        :data:`LAYOUT_KEYS` on a 1080x1920 canvas.
     """
 
     from creation.caption_server import _OVERRIDE
@@ -65,7 +76,7 @@ def letterbox_layout(
     picture: Picture = "4:3",
     desk: Path | None = None,
 ) -> LetterboxLayout:
-    """:func:`creation.post.delivery_geometry.layout` with the server's caption rows when it has them.
+    """:func:`creation.post.delivery_geometry.layout` with the server's numbers when it has them.
 
     Parameters
     ----------
@@ -110,18 +121,18 @@ def _layouts(answer: Any) -> dict[str, dict[str, int]] | None:
     for entry in entries:
         if not isinstance(entry, Mapping):
             continue
-        values = [entry.get(key) for key in ROW_KEYS]
+        values = [entry.get(key) for key in LAYOUT_KEYS]
         if all(isinstance(v, int) and not isinstance(v, bool) for v in values):
-            found[str(entry.get("master_aspect"))] = dict(zip(ROW_KEYS, values))
+            found[str(entry.get("master_aspect"))] = dict(zip(LAYOUT_KEYS, values))
     return found or None
 
 
 def _fallback(why: str) -> None:
     print(
-        f"NOTE: {why}; the letterbox captions use the kit's copy of the server's rows",
+        f"NOTE: {why}; the letterbox picture, title, mark and captions use the kit's copy of the server's layout",
         file=sys.stderr,
     )
     return None
 
 
-__all__ = ["LETTERBOX_LAYOUTS_ROUTE", "letterbox_layout", "server_rows"]
+__all__ = ["LAYOUT_KEYS", "LETTERBOX_LAYOUTS_ROUTE", "letterbox_layout", "server_rows"]

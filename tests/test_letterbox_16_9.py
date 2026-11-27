@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import io
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -33,18 +34,17 @@ def test_a_4_3_picture_keeps_every_row() -> None:
     )
 
 
-def test_a_16_9_picture_sits_under_the_same_top_with_its_captions_202_px_higher() -> (
-    None
-):
+def test_the_kits_16_9_copy_is_the_servers_block_96_rows_lower() -> None:
     four_three, wide = layout(), layout(picture="16:9")
 
-    assert wide.picture == Box(0, 555, 1080, 608)
-    assert (wide.caption.y, wide.caption.bottom, wide.caption_highest_top) == (
-        1205,
-        1334,
-        1183,
+    assert wide.picture == Box(0, 651, 1080, 608)
+    assert (wide.caption.y, wide.caption_highest_top, wide.caption.bottom) == (
+        1301,
+        1279,
+        1430,
     )
-    assert (wide.title, wide.mark) == (four_three.title, four_three.mark)
+    assert wide.title == replace(four_three.title, y=four_three.title.y + 96)
+    assert wide.mark == (four_three.mark[0], four_three.mark[1] + 96)
 
 
 def test_another_picture_shape_has_no_layout() -> None:
@@ -93,40 +93,54 @@ def test_a_landscape_show_has_no_title_card(hook_desk: tuple[Path, dict]) -> Non
     assert api.gets == [] and api.sent == []
 
 
-def test_the_caption_rows_are_the_servers_when_it_serves_them() -> None:
+SERVED_16_9 = {
+    "master_aspect": "16:9",
+    "canvas_width": 1080,
+    "canvas_height": 1920,
+    "picture_y": 700,
+    "picture_height": 608,
+    "title_bottom": 600,
+    "title_bottom_under_mark": 664,
+    "mark_x": 40,
+    "mark_y": 730,
+    "caption_top": 1350,
+    "caption_highest_top": 1328,
+    "caption_bottom_limit": 1479,
+    "recap_top": 1338,
+}
+
+
+def test_every_16_9_place_is_the_servers_when_it_serves_them() -> None:
     from creation.caption_server import server_override
     from creation.post.letterbox_rows import letterbox_layout
 
-    served = {
-        "caption_top": 1200,
-        "caption_highest_top": 1180,
-        "caption_bottom_limit": 1330,
-    }
     asked: list[str] = []
 
     def answer(path: str, body: dict) -> tuple[int, object]:
         asked.append(path)
-        four_three = {
-            "caption_top": 1407,
-            "caption_highest_top": 1385,
-            "caption_bottom_limit": 1536,
-        }
-        return 200, {
-            "layouts": [
-                {"master_aspect": "4:3", "picture_height": 810, **four_three},
-                {"master_aspect": "16:9", "picture_height": 608, **served},
-            ]
-        }
+        return 200, {"layouts": [SERVED_16_9]}
 
     with server_override(answer):
         place = letterbox_layout(picture="16:9")
 
     assert asked == ["/v1/letterbox/layouts"]
+    assert place.picture == Box(0, 700, 1080, 608)
+    assert place.mark == (40, 730)
+    assert place.title.bottom == layout().title.bottom + 600 - 448
     assert (place.caption.y, place.caption_highest_top, place.caption.bottom) == (
-        1200,
-        1180,
-        1330,
+        1350,
+        1328,
+        1479,
     )
+
+
+def test_a_layout_missing_a_place_is_an_older_server() -> None:
+    from creation.caption_server import server_override
+    from creation.post.letterbox_rows import letterbox_layout
+
+    partial = {k: v for k, v in SERVED_16_9.items() if k not in ("mark_x", "mark_y")}
+    with server_override(lambda path, body: (200, {"layouts": [partial]})):
+        assert letterbox_layout(picture="16:9") == layout(picture="16:9")
 
 
 def test_an_older_server_leaves_the_kits_copy() -> None:
@@ -299,3 +313,34 @@ def test_a_wide_take_is_laid_out_by_the_kit_not_the_9_16_server() -> None:
 
     assert wide == build_ass(cues, width=854, height=480, style="subtle")
     assert tall == "SERVER" and len(sent) == 1
+
+
+def test_a_16_9_mark_and_title_follow_the_servers_layout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    import creation.post.letterbox as lb
+    import creation.post.watermark as wm
+    from creation.caption_server import server_override
+    from creation.post.watermark import LetterboxPlace
+
+    ran: list[list[str]] = []
+    monkeypatch.setattr(
+        lb, "probe_video",
+        lambda _v: SimpleNamespace(width=1080, height=1920, has_audio=False, duration_seconds=2.0),
+    )  # fmt: skip
+    monkeypatch.setattr(lb, "run_ffmpeg", lambda args: ran.append(args))
+    monkeypatch.setattr(
+        wm, "server_letterbox_place", lambda *a, **k: LetterboxPlace(32, 584)
+    )
+
+    with server_override(lambda path, body: (200, {"layouts": [SERVED_16_9]})):
+        lb.mark_and_title(
+            tmp_path / "in.mp4", tmp_path / "a.mp4", title=None, picture="16:9"
+        )
+        lb.mark_and_title(tmp_path / "in.mp4", tmp_path / "b.mp4", title=None)
+
+    wide, four_three = (args[args.index("-filter_complex") + 1] for args in ran)
+    assert "overlay=40:730" in wide
+    assert "overlay=32:584" in four_three

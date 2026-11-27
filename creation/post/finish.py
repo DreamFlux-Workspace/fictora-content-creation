@@ -954,7 +954,7 @@ def _opening_lines(
         reading = measure_opening(
             final, detector=detector_for(desk, episode), head_count_face=head_face,
             silent_open=silent, where=f"ep{episode:02d} {take_id}",
-            crop=letterbox_picture_crop(picture) if picture else None,
+            crop=letterbox_picture_crop(picture, desk) if picture else None,
         )  # fmt: skip
     except MediaToolError as exc:
         return [f"⚠ opening not measured ({str(exc)[:160]})"]
@@ -1062,12 +1062,14 @@ def _cut_held_head(
     return HandleCut(done.final, done.record, f"{why}; {done.note}")
 
 
-def letterbox_picture_crop(picture: Picture) -> tuple[int, int, int, int]:
+def letterbox_picture_crop(
+    picture: Picture, desk: Path | None
+) -> tuple[int, int, int, int]:
     """``(x, y, width, height)`` of the ``picture`` (4:3 or 16:9) on the letterbox canvas (what the opening checks measure)."""
 
-    from creation.post.delivery_geometry import layout
+    from creation.post.letterbox_rows import letterbox_layout
 
-    pic = layout(picture=picture).picture
+    pic = letterbox_layout(picture=picture, desk=desk).picture
     return (pic.x, pic.y, pic.width, pic.height)
 
 
@@ -1913,13 +1915,13 @@ def run_finish(
         if no_panels:
             panels_note = "turned off (--no-panels)"
         else:
-            from creation.post.delivery_geometry import layout as _panel_layout
+            from creation.post.letterbox_rows import letterbox_layout
             from creation.post.system_panels import CANVAS as _PANEL_CANVAS
             from creation.spine_view import episode_id_for
 
             lengths, _ = take_lengths(desk, episode, take_id, source=source)
             if letterbox:
-                _pic = _panel_layout(picture=picture or "4:3").picture
+                _pic = letterbox_layout(picture=picture or "4:3", desk=desk).picture
                 panel_size = _PANEL_CANVAS
                 panel_picture: tuple[int, int, int, int] | None = (
                     _pic.x, _pic.y, _pic.width, _pic.height,
@@ -3461,7 +3463,7 @@ def run_finish(
 
     def do_letterbox(take: Path) -> StepReport:
         canvas = lb.pad_to_canvas(
-            take, next_versioned_path(takes, f"{base}-letterbox", ".mp4")
+            take, next_versioned_path(takes, f"{base}-letterbox", ".mp4"), desk=desk
         )
         detail = (
             f"the {picture} picture on the 1080x1920 black canvas; "
@@ -3512,7 +3514,7 @@ def run_finish(
             marked, fitted = lb.mark_and_title(
                 take, next_versioned_path(takes, f"{base}-sokii", ".mp4"), title=title,
                 ass_path=next_versioned_path(takes, f"{base}-title", ".ass"),
-                desk=desk, episode=episode,
+                desk=desk, episode=episode, picture=picture or "4:3",
             )  # fmt: skip
             record_state["master"] = take
             words = (

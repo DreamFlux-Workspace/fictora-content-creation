@@ -12,7 +12,7 @@ What ``finish`` and ``join`` make for such a show (positions in
 2026-10-06; fictora-drama's letterbox delivery uses the same numbers):
 
 * **Canvas.** 1080x1920, pure black; a 4:3 picture scaled to 1080x810 at
-  y 555-1365, a 16:9 one to 1080x608 at y 555-1163 (captions 202 px higher). ``finish`` puts the picture on the canvas right after
+  y 555-1365, a 16:9 one where the server's 16:9 layout puts it (1080x608 at y 651-1259 today). ``finish`` puts the picture on the canvas right after
   the mix (:func:`pad_to_canvas`); the takes before it stay on the desk.
 * **Captions** in the band under the picture, burned on the canvas by the
   captions step (``caption_take(layout="letterbox")``): Arial Bold (ASS 62),
@@ -61,10 +61,13 @@ from creation.post.delivery_geometry import (
     DEFAULT_CAPTION_COLOUR,
     TITLE_HOOK_COLOUR,
     TITLE_SETUP_COLOUR,
+    SERVER_TITLE_BOTTOM,
     LetterboxLayout,
+    Picture,
     layout,
     picture_shape,
 )
+from creation.post.letterbox_rows import letterbox_layout
 from creation.post.hook_overlay import delivery_format
 from creation.post.media import probe_video, run_ffmpeg
 from creation.post.watermark import MARK, MARK_ALPHA, MARK_WIDTH_FRACTION
@@ -352,10 +355,6 @@ def _block_height(place: LetterboxLayout, size: int, lines: int) -> float:
     return (lines - 1) * place.title_pitch(size) + cap
 
 
-#: The server's title anchor before 24 Oct 2026 on a 1920-high canvas (its ASS ``\\pos`` y, bottom aligned).
-SERVER_TITLE_BOTTOM = 448
-
-
 def under_server_anchor(
     place: LetterboxLayout, title_bottom: int | None, height: int
 ) -> LetterboxLayout:
@@ -424,6 +423,7 @@ def fit_title(
 def title_ass(
     block: TitleBlock, *, width: int = CANVAS_WIDTH, height: int = CANVAS_HEIGHT,
     duration: float | None = None, title_bottom: int | None = None, four_line_size: int | None = None,
+    place: LetterboxLayout | None = None,
 ) -> tuple[str, FittedTitle]:  # fmt: skip
     """The ASS that draws the title block on the canvas for the whole video, and how it was fitted.
 
@@ -435,9 +435,10 @@ def title_ass(
     ``title_bottom`` is the server's anchor for the block (``POST /v1/mark/placement``; 512 under the
     mark for a show stamped ``letterbox_part_titles``): the block moves down by its distance from the
     old anchor (448 on 1920). ``four_line_size`` caps a four-line block's size. ``None``: as before.
+    ``place`` is the picture shape's layout (default the 4:3 one).
     """
 
-    place = under_server_anchor(layout(width, height), title_bottom, height)
+    place = under_server_anchor(place or layout(width, height), title_bottom, height)
     # The words as the server draws them, no em or en dash (creation.on_screen_text).
     setup, hook = drawn_texts([block.setup, block.hook], kind="title")
     block = replace(block, setup=setup, hook=hook)
@@ -484,7 +485,7 @@ def _esc(path: Path) -> str:
     return str(path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
 
 
-def pad_to_canvas(take: Path, out: Path) -> Path:
+def pad_to_canvas(take: Path, out: Path, *, desk: Path | None = None) -> Path:
     """Put a 4:3 or 16:9 take on the 1080x1920 black canvas at its letterbox place (sound copied).
 
     Raises
@@ -496,7 +497,8 @@ def pad_to_canvas(take: Path, out: Path) -> Path:
     if out.exists():
         raise FileExistsError(f"{out} exists; local post never overwrites")
     info = probe_video(take)
-    pic = layout(picture=picture_shape(info.width, info.height) or "4:3").picture
+    shape = picture_shape(info.width, info.height) or "4:3"
+    pic = letterbox_layout(picture=shape, desk=desk).picture
     args = ["-i", str(take), "-vf",
             f"scale={pic.width}:{pic.height}:flags=lanczos,setsar=1,"
             f"pad={CANVAS_WIDTH}:{CANVAS_HEIGHT}:{pic.x}:{pic.y}:color={CANVAS_COLOUR}",
@@ -531,6 +533,7 @@ def mark_and_title(
     mark: Path = MARK,
     desk: Path | None = None,
     episode: int = 1,
+    picture: Picture = "4:3",
 ) -> tuple[Path, FittedTitle | None]:
     """Put the Sokii mark on the picture and the title block above it, in one pass (sound copied).
 
@@ -549,6 +552,9 @@ def mark_and_title(
     desk, episode
         Reach the server for the mark's place (``POST /v1/mark/placement``);
         without them, or on an older server, the layout's own place.
+    picture
+        The picture's shape. A 16:9 picture's mark and title sit where the server's 16:9 layout
+        puts them (``GET /v1/letterbox/layouts``); the mark placement answers for 4:3.
 
     Returns
     -------
@@ -568,7 +574,7 @@ def mark_and_title(
     if out.exists():
         raise FileExistsError(f"{out} exists; local post never overwrites")
     info = probe_video(video)
-    place = layout(info.width, info.height)
+    place = letterbox_layout(info.width, info.height, picture=picture, desk=desk)
     from creation.post.watermark import server_letterbox_place
 
     server = server_letterbox_place(
@@ -578,7 +584,9 @@ def mark_and_title(
         episode=episode,
         spine_id=_desk_spine_id(desk),
     )
-    x, y = (server.x, server.y) if server is not None else place.mark
+    x, y = (
+        (server.x, server.y) if server is not None and picture == "4:3" else place.mark
+    )
     fitted: FittedTitle | None = None
     first = "[0:v]null[t]"
     scratch: Path | None = None
@@ -587,6 +595,7 @@ def mark_and_title(
             title, width=info.width, height=info.height, duration=info.duration_seconds,
             title_bottom=server.title_bottom if server is not None else None,
             four_line_size=server.title_four_line_size if server is not None else None,
+            place=place,
         )  # fmt: skip
         ass = ass_path or out.with_name(f"{out.stem}-title.ass")
         ass.write_text(text, encoding="utf-8")
