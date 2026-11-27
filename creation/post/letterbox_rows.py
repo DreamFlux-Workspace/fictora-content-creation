@@ -1,7 +1,8 @@
 """The letterbox layout for each picture shape, read from the server once per desk and process.
 
-With no desk, an older server or no connection, the kit's own copy in
-:mod:`creation.post.delivery_geometry` is used and a ``NOTE`` says so.
+With no desk, an older server or no connection, a 4:3 picture uses the kit's own copy in
+:mod:`creation.post.delivery_geometry` (a ``NOTE`` says so); a 16:9 picture is refused, as only the
+server lays it out.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from creation.post.delivery_geometry import (
 )
 
 LETTERBOX_LAYOUTS_ROUTE = "/v1/letterbox/layouts"
+LAYOUT_REFUSAL = "Sokii's server didn't answer the layout; try again"
 #: What the kit reads from each layout: the picture, the title anchor, the mark and the caption rows.
 #: A server that sends fewer (an older #1854) is treated as having none.
 LAYOUT_KEYS = (
@@ -36,6 +38,10 @@ LAYOUT_KEYS = (
 )
 
 _read: dict[Path, dict[str, dict[str, int]] | None] = {}
+
+
+class LayoutUnavailable(RuntimeError):
+    """The server laid out no letterbox for a picture shape only it lays out (16:9)."""
 
 
 def server_layout(picture: Picture, desk: Path | None) -> dict[str, int] | None:
@@ -85,15 +91,23 @@ def letterbox_layout(
     picture
         ``4:3`` or ``16:9``.
     desk
-        The desk whose API session asks; ``None`` uses the kit's copy.
+        The desk whose API session asks; ``None`` uses the kit's copy (4:3 only).
 
     Returns
     -------
     LetterboxLayout
         The layout.
+
+    Raises
+    ------
+    LayoutUnavailable
+        For a 16:9 picture the server sent no layout for.
     """
 
-    return layout(width, height, picture=picture, rows=server_layout(picture, desk))
+    rows = server_layout(picture, desk)
+    if rows is None and picture != "4:3":
+        raise LayoutUnavailable(LAYOUT_REFUSAL)
+    return layout(width, height, picture=picture, rows=rows)
 
 
 def _ask(desk: Path) -> dict[str, dict[str, int]] | None:
@@ -129,7 +143,7 @@ def _layouts(answer: Any) -> dict[str, dict[str, int]] | None:
 
 def _fallback(why: str) -> None:
     print(
-        f"NOTE: {why}; the letterbox uses the kit's copy of the server's layout",
+        f"NOTE: {why}; a 4:3 letterbox uses the kit's copy of the server's layout",
         file=sys.stderr,
     )
     return None
@@ -137,6 +151,8 @@ def _fallback(why: str) -> None:
 
 __all__ = [
     "LAYOUT_KEYS",
+    "LAYOUT_REFUSAL",
+    "LayoutUnavailable",
     "LETTERBOX_LAYOUTS_ROUTE",
     "letterbox_layout",
     "server_layout",

@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 import io
 import json
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -33,17 +32,9 @@ def test_a_4_3_picture_keeps_every_row() -> None:
     )
 
 
-def test_the_kits_16_9_copy_is_the_servers_block_96_rows_lower() -> None:
-    four_three, wide = layout(), layout(picture="16:9")
-
-    assert wide.picture == Box(0, 651, 1080, 608)
-    assert (wide.caption.y, wide.caption_highest_top, wide.caption.bottom) == (
-        1301,
-        1279,
-        1430,
-    )
-    assert wide.title == replace(four_three.title, y=four_three.title.y + 96)
-    assert wide.mark == (four_three.mark[0], four_three.mark[1] + 96)
+def test_the_kit_has_no_16_9_layout_of_its_own() -> None:
+    with pytest.raises(ValueError, match="server"):
+        layout(picture="16:9")
 
 
 def test_another_picture_shape_has_no_layout() -> None:
@@ -133,19 +124,28 @@ def test_every_16_9_place_is_the_servers_when_it_serves_them() -> None:
     )
 
 
-def test_a_layout_missing_a_place_is_an_older_server() -> None:
+def test_a_layout_missing_a_place_is_refused() -> None:
     from creation.caption_server import server_override
-    from creation.post.letterbox_rows import letterbox_layout
+    from creation.post.letterbox_rows import LayoutUnavailable, letterbox_layout
 
     partial = {k: v for k, v in SERVED_16_9.items() if k not in ("mark_x", "mark_y")}
     with server_override(lambda path, body: (200, {"layouts": [partial]})):
-        assert letterbox_layout(picture="16:9") == layout(picture="16:9")
+        with pytest.raises(
+            LayoutUnavailable, match="didn't answer the layout; try again"
+        ):
+            letterbox_layout(picture="16:9")
 
 
-def test_an_older_server_leaves_the_kits_copy() -> None:
-    from creation.post.letterbox_rows import letterbox_layout
+def test_with_no_server_a_16_9_letterbox_is_refused_and_a_4_3_keeps_the_kits_copy() -> (
+    None
+):
+    from creation.post.letterbox_rows import LayoutUnavailable, letterbox_layout
 
-    assert letterbox_layout(picture="16:9") == layout(picture="16:9")
+    with pytest.raises(
+        LayoutUnavailable, match="Sokii's server didn't answer the layout; try again"
+    ):
+        letterbox_layout(picture="16:9")
+    assert letterbox_layout(picture="4:3") == layout()
 
 
 class CopyApi:
@@ -239,20 +239,10 @@ def _style(ass: str, name: str) -> list[str]:
     return line.split(",")
 
 
-def test_a_wide_frame_is_captioned_top_anchored_at_80_percent() -> None:
-    long_line = (
-        "I paid every bill in this house for three years and you never once asked"
-    )
-
-    house = build_ass([Cue(0.0, 2.0, long_line)], width=854, height=480)
-    bold = build_ass(
-        [Cue(0.0, 2.0, "Never once.")], width=854, height=480, style="bold"
-    )
-
-    fields = [_style(house, "House")[i] for i in (2, 16, 17, 18, 19, 20, 21)]
-    assert fields == ["28", "2", "1", "8", "47", "47", "384"]
-    assert _style(bold, "House")[2] == "28"
-    assert "\\N" in house.splitlines()[-1]
+@pytest.mark.parametrize("style", ["house", "bold", "plain"])
+def test_the_kit_lays_out_no_wide_frame_itself(style: str) -> None:
+    with pytest.raises(ValueError, match="laid out by Sokii's server only"):
+        build_ass([Cue(0.0, 2.0, "Never once.")], width=854, height=480, style=style)
 
 
 def test_a_tall_frame_keeps_the_portrait_canvas() -> None:
@@ -262,7 +252,7 @@ def test_a_tall_frame_keeps_the_portrait_canvas() -> None:
 
 
 @needs_ffmpeg
-def test_finish_on_a_landscape_show_burns_captions_on_the_wide_picture(
+def test_finish_on_a_landscape_show_with_no_server_answer_refuses_its_captions(
     post_desk: Path,
 ) -> None:
     from test_post_finish import FACTS, _board, fake_sfx
@@ -286,36 +276,88 @@ def test_finish_on_a_landscape_show_burns_captions_on_the_wide_picture(
                         cut_meter=lambda _take: (2.5,), stream=out)  # fmt: skip
 
     captions = next(step for step in result.steps if step.step == "captions")
-    assert captions.status == "ran", out.getvalue()
-    ass = next(iter((post_desk / "ep01" / "takes").glob("take-ep01-t1-cap-v*.ass")))
-    text = ass.read_text(encoding="utf-8")
-    assert "PlayResX: 854\nPlayResY: 480" in text
-    assert ",8,47,47,384," in text, text
+    assert captions.status == "failed", out.getvalue()
+    assert "Sokii's server didn't answer the layout; try again" in captions.detail
+    assert not list((post_desk / "ep01" / "takes").glob("take-ep01-t1-cap-v*"))
 
 
-def test_a_wide_take_asks_the_server_and_falls_back_to_the_same_layout() -> None:
+def test_a_wide_take_burns_the_servers_layout_as_sent() -> None:
     from creation.caption_server import server_override
     from creation.captions import portrait_caption_ass
 
     sent: list[dict] = []
+    served_ass = "[Script Info]\n; the server's wide layout\n"
 
     def server(path: str, body: dict) -> tuple[int, object]:
         sent.append(body)
-        return 200, {"ass": wide_served, "cues": [], "findings": []}
+        return 200, {"ass": served_ass, "cues": [], "findings": []}
 
-    cues = [Cue(0.0, 1.0, "Wait.")]
-    wide_served = build_ass(cues, width=854, height=480, style="subtle") + "; served"
     with server_override(server):
         served = portrait_caption_ass(
-            cues, width=854, height=480, style="subtle", whole_lines=False
+            [Cue(0.0, 1.0, "Wait.")],
+            width=854,
+            height=480,
+            style="subtle",
+            whole_lines=False,
         )
-    fallback = portrait_caption_ass(
-        cues, width=854, height=480, style="subtle", whole_lines=False
-    )
 
-    assert served == wide_served
+    assert served == served_ass
     assert (sent[0]["width"], sent[0]["height"]) == (854, 480)
-    assert fallback == build_ass(cues, width=854, height=480, style="subtle")
+
+
+def test_a_wide_take_with_no_server_answer_is_refused_in_plain_words(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from creation.captions import portrait_caption_ass
+
+    with pytest.raises(ValueError) as refused:
+        portrait_caption_ass(
+            [Cue(0.0, 1.0, "Wait.")],
+            width=854,
+            height=480,
+            style="subtle",
+            whole_lines=False,
+        )
+
+    assert str(refused.value) == "Sokii's server didn't answer the layout; try again"
+    assert "laid its captions out" not in capsys.readouterr().err
+
+
+def test_a_wide_take_with_a_caption_scale_is_refused_before_asking() -> None:
+    from creation.caption_server import server_override
+    from creation.captions import portrait_caption_ass
+
+    asked: list[str] = []
+    with server_override(lambda path, body: (asked.append(path), (500, {}))[1]):
+        with pytest.raises(ValueError, match="--caption-scale"):
+            portrait_caption_ass(
+                [Cue(0.0, 1.0, "Wait.")], width=854, height=480, style="subtle",
+                whole_lines=False, size_scale=1.2,
+            )  # fmt: skip
+
+    assert asked == []
+
+
+@needs_ffmpeg
+def test_finish_on_a_16_9_letterbox_take_with_no_server_layout_stops_before_making_anything(
+    post_desk: Path,
+) -> None:
+    from test_letterbox_deliverable import _letterbox_desk
+    from test_post_finish import _board, fake_sfx
+
+    from creation.post.finish import run_finish
+    from creation.post.letterbox_rows import LayoutUnavailable
+
+    _letterbox_desk(post_desk)
+    takes = post_desk / "ep01" / "takes"
+    make_take(takes / "take-ep01-t1-raw-v1.mp4", size="1280x720")
+    _board(post_desk)
+
+    with pytest.raises(LayoutUnavailable, match="didn't answer the layout; try again"):
+        run_finish(post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
+                   cut_meter=lambda _take: (2.5,), stream=io.StringIO())  # fmt: skip
+
+    assert [p.name for p in takes.iterdir()] == ["take-ep01-t1-raw-v1.mp4"]
 
 
 def test_a_16_9_mark_and_title_follow_the_servers_layout(
@@ -416,21 +458,3 @@ def test_saving_from_a_server_without_the_letterboxed_export_says_older_deploy(
     )
 
     assert code == 2 and "older deploy" in out.getvalue()
-
-
-def test_a_wide_take_laid_out_for_9_16_by_an_older_server_is_laid_out_by_the_kit() -> (
-    None
-):
-    from creation.caption_server import server_override
-    from creation.captions import portrait_caption_ass
-
-    cues = [Cue(0.0, 1.0, "Wait.")]
-    portrait_shaped = build_ass(cues, width=480, height=854, style="subtle")
-    with server_override(
-        lambda path, body: (200, {"ass": portrait_shaped, "cues": [], "findings": []})
-    ):
-        text = portrait_caption_ass(
-            cues, width=854, height=480, style="subtle", whole_lines=False
-        )
-
-    assert text == build_ass(cues, width=854, height=480, style="subtle")

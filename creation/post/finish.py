@@ -1548,6 +1548,8 @@ def run_finish(
         When a mute, voice or cue cannot go on the
         take (outside it, silent), or the voices of a locked-voice take would be
         changed without ``over_locked_voices``; checked before any step runs.
+    creation.post.letterbox_rows.LayoutUnavailable
+        When the server sent no layout for a 16:9 letterbox take; nothing is made.
     """
 
     out = stream or sys.stderr
@@ -1880,6 +1882,10 @@ def run_finish(
         info = probe_video(source)
         if lb.is_letterbox_take(spine, (info.width, info.height)):
             picture = picture_shape(info.width, info.height)
+    if picture == "16:9":
+        from creation.post.letterbox_rows import letterbox_layout
+
+        letterbox_layout(picture=picture, desk=desk)
     letterbox = picture is not None
     if caption_colour is not None and not letterbox:
         raise ValueError(
