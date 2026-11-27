@@ -10,3 +10,6 @@ __pycache__/
 e2e-runs/
 docs/Content-Producer-Setup-Handout.html
 docs/content-ops/Content-Operator-Guide.html
+
+# YouTube trope scan output (youtube-trope-scan skill)
+outputs/youtube_native_traction/

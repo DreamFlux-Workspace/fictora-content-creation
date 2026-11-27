@@ -1,0 +1,26 @@
+{
+  "jp": [
+    {"group": "manga_video", "text": "漫画動画"},
+    {"group": "manga_video", "text": "スカッと 漫画"},
+    {"group": "voice_comic", "text": "ボイスコミック"},
+    {"group": "isekai", "text": "異世界アニメ"},
+    {"group": "isekai", "text": "異世界漫画"},
+    {"group": "villainess_romance", "text": "悪役令嬢 漫画"},
+    {"group": "revenge", "text": "ざまぁ 漫画"},
+    {"group": "ai_anime", "text": "AIアニメ"},
+    {"group": "original_anime", "text": "オリジナルアニメ"},
+    {"group": "original_anime", "text": "自主制作アニメ"}
+  ],
+  "kr": [
+    {"group": "story_toon", "text": "썰툰"},
+    {"group": "story_toon", "text": "영상툰"},
+    {"group": "story_toon", "text": "사이다 썰툰"},
+    {"group": "motion_webtoon", "text": "모션 웹툰"},
+    {"group": "motion_webtoon", "text": "웹툰 더빙"},
+    {"group": "romance_fantasy", "text": "로판 애니"},
+    {"group": "regression_revenge", "text": "회귀 애니"},
+    {"group": "horror", "text": "공포 썰툰"},
+    {"group": "ai_anime", "text": "AI 애니메이션"},
+    {"group": "original_anime", "text": "창작 애니메이션"}
+  ]
+}
