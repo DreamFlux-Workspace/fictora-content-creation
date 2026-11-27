@@ -2,8 +2,7 @@
 
 Founder decisions of 6 Oct 2026 (compared with the "Not Home" reference
 episode and the hand-built "Three Payments Late" file). Only a show whose
-``delivery_format`` is ``letterbox`` AND whose take is really 4:3 or 16:9 (new
-shows since 27 Nov 2026) goes through
+``delivery_format`` is ``letterbox`` AND whose take is really 4:3 or 16:9 goes through
 this module; a portrait show, and a letterbox show filmed portrait (the
 title-bar path in :mod:`creation.post.hook_overlay`), are untouched
 (``tests/test_letterbox_portrait_unchanged.py``).

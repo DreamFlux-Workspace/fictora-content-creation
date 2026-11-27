@@ -33,13 +33,8 @@ from creation.post.watermark import MARK_X_FRACTION
 CANVAS_WIDTH = 1080
 CANVAS_HEIGHT = 1920
 CANVAS_COLOUR = "black"
-#: The picture shapes a letterbox show films. A 4:3 take is scaled to 1080x810 and centred (y 555-1365).
-#: A 16:9 take (founder, 27 Nov 2026) is 1080x608 under the same top, so the title and the mark sit as
-#: on 4:3. Its caption rows are the server's (:mod:`creation.post.letterbox_rows`); without a server
-#: they rise with the picture's bottom (202 px on 1920), as fictora-drama ``LETTERBOX_LAYOUT_16_9`` does.
 Picture = Literal["4:3", "16:9"]
 PICTURE_RATIOS: dict[Picture, tuple[int, int]] = {"4:3": (4, 3), "16:9": (16, 9)}
-#: A take within this much of a shape's width-to-height ratio is that shape.
 ASPECT_TOLERANCE = 0.04
 
 
@@ -324,7 +319,7 @@ def layout(
     width, height
         The canvas.
     picture
-        The take's shape: ``4:3`` (every letterbox show before 27 Nov 2026) or ``16:9``.
+        The take's shape: ``4:3`` or ``16:9``.
     rows
         The server's caption rows for that shape on 1080x1920 (``caption_top``,
         ``caption_highest_top``, ``caption_bottom_limit``: :func:`creation.post.letterbox_rows.server_rows`);

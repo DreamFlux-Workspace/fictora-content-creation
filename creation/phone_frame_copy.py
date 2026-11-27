@@ -4,9 +4,6 @@ A landscape show (founder, 27 Nov 2026) is delivered 16:9 with nothing on the pi
 creator wants a phone-frame copy, the server makes it from the finished episode (nothing is
 filmed again). The kit sends the creator's title and caption choices as given and prints the
 server's answer; which shows may have one, and what an unset choice means, is the server's call.
-
-Needs fictora-drama's letterboxed-copy route live (drama branch feat/letterboxed-copy): until
-then the route answers 404 and the kit says so.
 """
 
 from __future__ import annotations
@@ -18,11 +15,9 @@ from typing import Any, TextIO
 
 from creation.harness.http_util import api_error_text
 
-#: The server's route (POST asks for the copy).
 PHONE_FRAME_COPY_ROUTE = (
     "/v1/video-generations/{job_id}/episodes/{episode_id}/letterboxed-copy"
 )
-#: 404 codes the route answers on purpose; any other 404 means the server predates it.
 _KNOWN_NOT_FOUND = frozenset({"episode_not_found", "job_not_found", "spine_not_found"})
 _TAKEN = "The server took the ask for a phone-frame copy."
 

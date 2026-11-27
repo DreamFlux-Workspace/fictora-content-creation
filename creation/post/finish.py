@@ -1873,7 +1873,6 @@ def run_finish(
         override=hook_line or (picked or {}).get("text") or None,
         off=no_hook_line or (picked or {}).get("kind") == "off", position=hook_line_position,
     )  # fmt: skip
-    # A letterbox show's 4:3 or 16:9 take: the kit builds its 9:16 file (lb); anything else finishes as before.
     picture: Picture | None = None
     if delivery_format(spine) == "letterbox":
         info = probe_video(source)
@@ -1920,7 +1919,6 @@ def run_finish(
 
             lengths, _ = take_lengths(desk, episode, take_id, source=source)
             if letterbox:
-                # Drawn on the 9:16 canvas the picture is put on, kept on the picture.
                 _pic = _panel_layout(picture=picture or "4:3").picture
                 panel_size = _PANEL_CANVAS
                 panel_picture: tuple[int, int, int, int] | None = (

@@ -1,9 +1,4 @@
-"""New letterbox shows film 16:9 (founder, 27 Nov 2026); landscape shows carry no words on the picture.
-
-The 16:9 picture sits 1080x608 under the 4:3 picture's top (y 555), so the title and the
-mark stay where they are and the caption rows rise with the picture's bottom (202 px):
-fictora-drama ``delivery_geometry.LETTERBOX_LAYOUT_16_9``. A 4:3 show is unchanged.
-"""
+"""New letterbox shows film 16:9; landscape shows carry no words on the picture."""
 
 from __future__ import annotations
 

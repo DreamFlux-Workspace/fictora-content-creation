@@ -131,7 +131,7 @@ def _args(*flags: str) -> argparse.Namespace:
 def test_a_new_letterbox_or_landscape_start_films_15_second_takes(
     delivery: str,
 ) -> None:
-    """New letterbox and landscape shows film 16:9 in the usual 15 s takes (27 Nov 2026)."""
+    """New letterbox and landscape shows film 16:9 in the usual 15 s takes."""
 
     args = _args("--delivery-format", delivery)
     assert config_from_args(args).clip_duration_seconds == 15

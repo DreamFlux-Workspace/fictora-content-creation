@@ -92,9 +92,6 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
-#: Take length when ``--clip-seconds`` is not given. A new letterbox or landscape show films 16:9 at
-#: this length too; an older 4:3 show's shorter takes come from its spine
-#: (:func:`creation.orchestrate.sync_desk_to_spine_takes`).
 DEFAULT_CLIP_SECONDS = 15
 
 

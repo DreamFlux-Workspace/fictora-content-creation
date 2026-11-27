@@ -65,8 +65,6 @@ class FinishRecord:
     missing: tuple[str, ...] = ()
     #: The letterbox captions' colour (``yellow`` / ``white``); ``None`` on a portrait take.
     caption_colour: str | None = None
-    #: A letterbox take's picture shape as written; ``None`` on a portrait take and on a letterbox
-    #: record from before 27 Nov 2026. Read it through :attr:`letterbox_picture`.
     picture_aspect: str | None = None
     #: The thoughts ``finish`` played in black and white on this take, from the server's thoughts route
     #: (``{"spans": [[start, end], ...], "filter": "hue=s='...'"}``, on the take as filmed); ``None``

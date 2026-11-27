@@ -19,10 +19,6 @@ GateStatus = Literal["pending", "approved", "rejected"]
 TakeVerdict = Literal["pending", "use", "change"]
 
 TAKES_FOR_BAND: dict[str, int] = {"15s": 1, "30s": 2, "60s": 4}
-#: Takes per band on an older 4:3 letterbox story: one per 10 s, rounded up
-#: (fictora-drama #604, #617). 30 s is three 10-second takes, 60 s six, and
-#: 15 s two 7-second takes (a 14 s episode). New letterbox shows film 16:9 in
-#: the usual 15 s takes (27 Nov 2026).
 FOUR_THREE_TAKES_FOR_BAND: dict[str, int] = {"15s": 2, "30s": 3, "60s": 6}
 #: Preflight warns (never blocks) past this multiple of the envelope.
 ENVELOPE_STOP_MULTIPLIER = 2.0

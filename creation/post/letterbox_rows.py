@@ -1,9 +1,6 @@
-"""The letterbox caption rows for each picture shape, read from the server (server-heavy rule, 15 Oct 2026).
+"""The letterbox caption rows for each picture shape, read from the server once per desk and process.
 
-fictora-drama owns where the captions sit under a 4:3 or 16:9 picture and
-serves the numbers (``GET /v1/letterbox/layouts``, drama PR #1854); the kit's
-local letterbox finish reads them here, once per desk and process. With no
-desk, an older server or no connection, the kit's own copy in
+With no desk, an older server or no connection, the kit's own copy in
 :mod:`creation.post.delivery_geometry` is used and a ``NOTE`` says so.
 """
 
@@ -24,9 +21,7 @@ from creation.post.delivery_geometry import (
     layout,
 )
 
-#: The server's route (GET, every picture shape).
 LETTERBOX_LAYOUTS_ROUTE = "/v1/letterbox/layouts"
-#: The numbers the kit takes from each layout (1080x1920 pixels).
 ROW_KEYS = ("caption_top", "caption_highest_top", "caption_bottom_limit")
 
 _read: dict[Path, dict[str, dict[str, int]] | None] = {}
@@ -52,7 +47,6 @@ def server_rows(picture: Picture, desk: Path | None) -> dict[str, int] | None:
 
     override = _OVERRIDE.get()
     if override is not None:
-        # Tests answer the server's routes (``creation.caption_server.server_override``); never cached.
         status, answer = override(LETTERBOX_LAYOUTS_ROUTE, {})
         layouts = _layouts(answer) if 200 <= status < 300 else None
     elif desk is None:
