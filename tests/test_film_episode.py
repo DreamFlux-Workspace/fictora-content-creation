@@ -1018,6 +1018,63 @@ def test_a_wan_film_files_each_shot_under_its_take_and_books_the_servers_price(
     assert "t2 (Take 2 · shot 3 of 3)" in text
 
 
+def _wan_film_one_clip_per_take(api: FakeApi) -> None:
+    """The same episode filmed as Wan films it since 27 Nov 2026: one 15 s clip per take (``_setNN``)."""
+
+    video_job = WAN_FILM["video_job_id"]
+    first_shots = WAN_FILM["parent"]["depends_on"][::3]
+    api.routes[("POST", VIDEO)] = {"job_id": video_job}
+    api.routes[("GET", f"/v1/jobs/{video_job}")] = {
+        **WAN_FILM["parent"],
+        "depends_on": first_shots,
+    }
+    for take, job_id in enumerate(first_shots, start=1):
+        child = json.loads(json.dumps(WAN_FILM["children"][job_id]))
+        child["relation"]["id"] = f"storyboard_sequence_episode_01_set{take:02d}"
+        api.routes[("GET", f"/v1/jobs/{job_id}")] = child
+        api.routes[("GET", f"/v1/jobs/{job_id}/take-facts")] = {
+            "take_facts": {
+                "job_id": job_id,
+                "endpoint_id": "kie/wan/3-0-video",
+                "lane": "kie/wan/3-0-video",
+                "resolution": "480P",
+                "duration_seconds": 15.0,
+                "usd": 0.6,
+            }
+        }
+
+
+def test_a_wan_take_filmed_as_one_clip_files_as_the_take_itself(
+    desk30: Path, api30: FakeApi
+) -> None:
+    api30.routes[("POST", ESTIMATE)] = {
+        "cost_estimate": {"total_usd": "1.20", "takes": 2}
+    }
+    run_film(desk30, episode=1)
+    _wan_film_one_clip_per_take(api30)
+
+    text = run_film(desk30, episode=1, confirm_spend=True)
+
+    assert "Not filed" not in text
+    assert "Filmed episode 1: 2 take(s), $1.20 booked" in text
+    t1, t2 = episode_by_ordinal(load_series(desk30), 1).takes
+    assert (t1.filmed_count, t2.filmed_count) == (1, 1)
+    booked = [
+        (entry.take_id, entry.usd, entry.unit)
+        for entry in load_series(desk30).spend_log
+        if entry.job_id
+    ]
+    assert booked == [("t1", 0.6, "take 15s"), ("t2", 0.6, "take 15s")]
+    takes = sorted(
+        path.name for path in (desk30 / "ep01" / "takes").glob("take-ep01-*-raw*")
+    )
+    assert takes == ["take-ep01-t1-raw-v1.mp4", "take-ep01-t2-raw-v1.mp4"]
+    assert (
+        "  t1: take job `job_video_scene_208a3d7e3e73ecd6a8ddcfda` (as the server priced it, $0.60)"
+        in text
+    )
+
+
 @pytest.mark.parametrize(
     ("relation_id", "take"),
     [

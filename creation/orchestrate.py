@@ -2370,7 +2370,7 @@ class CollectedTakes:
     #: Clips of this episode the kit could not tie to a take (no take number and no request that names
     #: one): not downloaded, not booked, no facts saved; never filed under a guessed take.
     unplaced: list[str] = field(default_factory=list)
-    #: The desk takes the clips were filed under, once each, in order (a Wan take is several shot clips).
+    #: The desk takes the clips were filed under, once each, in order (an older Wan take is several shot clips).
     takes: list[str] = field(default_factory=list)
 
 
@@ -2386,7 +2386,7 @@ def take_for_clip(
     """The desk take a filmed clip belongs to, by explicit identity only, or ``None`` and why.
 
     1. The clip's take number from the server (``set_index``, from ``relation.id`` ``..._setNN``;
-       a Wan shot's ``..._setNN_beatNN`` names its take, so a take's shots all file under it).
+       an older Wan shot's ``..._setNN_beatNN`` names its take, so a take's shots all file under it).
     2. Without one: the film request, when it asked for exactly one take and one clip came back.
     3. Without one: a whole-episode film whose job returned exactly the episode's takes and
        nothing else, none numbered: the server numbers takes by their place in the job's
@@ -2561,8 +2561,9 @@ def collect_takes(
                 f"take job `{clip.get('job_id')}` ({clip.get('url')}): {why}"
             )
             continue
-        # A Wan take comes back as one clip per shot, all numbered with the take (``_setNN_beatNN``):
-        # each is kept as shot N of its take, in the server's order. Any other take is one clip.
+        # An older Wan take came back as one clip per shot, all numbered with the take (``_setNN_beatNN``):
+        # each is kept as shot N of its take, in the server's order. Any other take, a Wan take filmed
+        # since 27 Nov 2026 included, is one clip.
         shot = filed.count(take_id) + 1 if shots_of[clip.get("set_index")] > 1 else None
         first_of_take = take_id not in filed
         filed.append(take_id)
@@ -2586,7 +2587,7 @@ def collect_takes(
             )
             continue
         facts = fetch_take_facts(run, str(clip["job_id"]), spine_id=state.spine_id)
-        # A Wan shot prints the server's "Take 1 · shot 2 of 3" beside its desk take.
+        # An older Wan shot prints the server's "Take 1 · shot 2 of 3" beside its desk take.
         head = take_head(take_id, facts)
         priced: tuple[float, str] | None = None
         if facts is not None:

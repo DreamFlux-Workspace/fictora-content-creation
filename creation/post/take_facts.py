@@ -529,7 +529,7 @@ def shot_label(shot: Mapping[str, Any], position: int) -> str:
 
 
 def take_head(take_id: str, facts: Mapping[str, Any] | None) -> str:
-    """``t1 (Take 1 · shot 2 of 3)`` for a Wan shot, ``t1`` for any other take.
+    """``t1 (Take 1 · shot 2 of 3)`` for an older Wan shot, ``t1`` for any other take.
 
     The words are the server's (take facts ``shot_label``, fictora-drama #1266), shown as sent.
     """
