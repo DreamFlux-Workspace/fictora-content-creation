@@ -45,10 +45,11 @@ uv run fictora-produce start \
   --prompt "Premise, cast, set, visual lock, one 15s horror beat…" \
   --band 15s \
   --preset-id modern-dark-fantasy \
-  --video-lane minimax-h3 \
   --clip-seconds 15 \
   --caption-style house
 ```
+
+Leave out `--video-lane` and the server picks the video model (Wan today). Pass `--video-lane minimax-h3` only to film the show on H3 on purpose: a show keeps its model once its first take is filmed, so changing later means a new show.
 
 There is no cut tempo, pace or music blend choice: the server decides camera and pace, and uses the genre's default music blend (founder, 24 Oct 2026).
 
