@@ -362,7 +362,11 @@ def under_server_anchor(
 
     if title_bottom is None:
         return place
-    delta = title_bottom - round(SERVER_TITLE_BOTTOM * height / CANVAS_HEIGHT)
+    if title_bottom < place.title_anchor:
+        title_bottom += place.title_anchor - round(
+            SERVER_TITLE_BOTTOM * height / CANVAS_HEIGHT
+        )
+    delta = title_bottom - place.title_anchor
     if delta == 0:
         return place
     box = place.title
@@ -434,7 +438,7 @@ def title_ass(
 
     ``title_bottom`` is the server's anchor for the block (``POST /v1/mark/placement``; 512 under the
     mark for a show stamped ``letterbox_part_titles``): the block moves down by its distance from the
-    old anchor (448 on 1920). ``four_line_size`` caps a four-line block's size. ``None``: as before.
+    picture shape's own anchor (``place.title_anchor``). ``four_line_size`` caps a four-line block's size. ``None``: as before.
     ``place`` is the picture shape's layout (default the 4:3 one).
     """
 

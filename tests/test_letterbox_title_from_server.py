@@ -11,8 +11,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import pytest
+
 from creation.caption_server import server_override
-from creation.post.delivery_geometry import layout
+from creation.post.delivery_geometry import LetterboxLayout, layout
 from creation.post.letterbox import TitleBlock, title_ass, under_server_anchor
 from creation.post.watermark import MARK_PLACEMENT_ROUTE, server_letterbox_place
 
@@ -97,3 +99,71 @@ def test_four_lines_under_the_mark_step_down_to_the_servers_size() -> None:
     under, fitted = title_ass(block, title_bottom=512, four_line_size=52)
     assert len(fitted.setup) + len(fitted.hook) == 4
     assert _size(under) <= 52
+
+
+DROP_16_9 = 96
+UNDER_MARK = 64
+SERVED_16_9_ROWS = {
+    "picture_y": 651,
+    "picture_height": 608,
+    "title_bottom": 448 + DROP_16_9,
+    "mark_x": 32,
+    "mark_y": 679,
+    "caption_top": 1301,
+    "caption_highest_top": 1279,
+    "caption_bottom_limit": 1430,
+}
+
+
+@pytest.mark.parametrize(
+    ("place", "drop"),
+    [
+        (layout(), 0),
+        (layout(picture="16:9"), DROP_16_9),
+        (layout(picture="16:9", rows=SERVED_16_9_ROWS), DROP_16_9),
+    ],
+    ids=["4:3", "16:9 kit copy", "16:9 served layout"],
+)
+@pytest.mark.parametrize(
+    ("answer", "under_mark"),
+    [
+        (None, 0),
+        (448, 0),
+        (448 + UNDER_MARK, UNDER_MARK),
+        (448 + DROP_16_9, 0),
+        (448 + DROP_16_9 + UNDER_MARK, UNDER_MARK),
+    ],
+    ids=[
+        "no answer",
+        "older server",
+        "older server under the mark",
+        "drop-aware server",
+        "drop-aware server under the mark",
+    ],
+)
+def test_the_title_drops_once_whichever_scale_the_mark_answer_is_on(
+    place: LetterboxLayout, drop: int, answer: int | None, under_mark: int
+) -> None:
+    if drop == 0 and answer is not None and answer > 448 + UNDER_MARK:
+        pytest.skip("a 4:3 show never gets a 16:9 answer")
+    block = TitleBlock("Three Payments Late \u00b7 Part 2", HOOK)
+    four_three, _ = title_ass(block)
+    drawn, _ = title_ass(block, title_bottom=answer, place=place)
+
+    assert [y + drop + under_mark for _x, y in _positions(four_three)] == [
+        y for _x, y in _positions(drawn)
+    ]
+
+
+def test_a_16_9_title_drops_once_on_a_canvas_whose_rows_round_unevenly() -> None:
+    width, height = 1079, 1918
+    scaled = lambda rows: round(rows * height / 1920)  # noqa: E731
+    block = TitleBlock("Three Payments Late · Part 2", HOOK)
+    wide = layout(width, height, picture="16:9")
+    alone, _ = title_ass(block, width=width, height=height, place=wide)
+    answered, _ = title_ass(
+        block, width=width, height=height, place=wide,
+        title_bottom=scaled(448 + DROP_16_9),
+    )  # fmt: skip
+
+    assert _positions(answered) == _positions(alone)
