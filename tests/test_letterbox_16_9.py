@@ -186,9 +186,11 @@ def test_a_phone_frame_copy_sends_only_the_choices_made(filmed: Path) -> None:
     code = run_phone_frame_copy(filmed, episode=1, body=body, out=out, api=api)
 
     assert code == 0
-    assert out.getvalue().strip() == (
+    made, save = out.getvalue().splitlines()
+    assert made == (
         "The server made the phone-frame copy (without captions): https://media.example/copy.mp4"
     )
+    assert "Instagram and TikTok" in save and "--save" in save
     assert api.sent == [
         (
             "/v1/video-generations/job_video_1/episodes/episode_01/letterboxed-copy",
@@ -344,3 +346,52 @@ def test_a_16_9_mark_and_title_follow_the_servers_layout(
     wide, four_three = (args[args.index("-filter_complex") + 1] for args in ran)
     assert "overlay=40:730" in wide
     assert "overlay=32:584" in four_three
+
+
+def test_the_copy_to_post_is_the_servers_marked_export(filmed: Path) -> None:
+    import httpx
+
+    from creation.phone_frame_copy import run_save_phone_frame_copy
+
+    marked = "https://media.example/exports/ep01-letterboxed-marked.mp4"
+    api = CopyApi((200, {"export_url": marked, "version": "letterboxed_copy"}))
+    fetched: list[str] = []
+
+    def serve(request: httpx.Request) -> httpx.Response:
+        fetched.append(str(request.url))
+        return httpx.Response(200, content=b"marked-mp4")
+
+    out = io.StringIO()
+    code = run_save_phone_frame_copy(
+        filmed, episode=1, out=out, api=api, transport=httpx.MockTransport(serve)
+    )
+
+    assert code == 0, out.getvalue()
+    assert api.sent == [
+        (
+            "/v1/video-generations/job_video_1/episodes/episode_01/export",
+            {"version": "letterboxed_copy"},
+        )
+    ]
+    assert fetched == [marked]
+    (saved,) = (filmed / "ep01" / "takes").glob("phone-frame-ep01*.mp4")
+    assert saved.read_bytes() == b"marked-mp4"
+    assert "Instagram and TikTok" in out.getvalue()
+
+
+def test_saving_before_the_copy_is_made_says_the_servers_reason(filmed: Path) -> None:
+    from creation.phone_frame_copy import run_save_phone_frame_copy
+
+    refused = {
+        "error": {
+            "code": "letterboxed_copy_not_made",
+            "message": "Make the copy first.",
+        }
+    }
+    out = io.StringIO()
+
+    code = run_save_phone_frame_copy(
+        filmed, episode=1, out=out, api=CopyApi((409, refused))
+    )
+
+    assert code == 2 and "Make the copy first." in out.getvalue()

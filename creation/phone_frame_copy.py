@@ -19,7 +19,14 @@ from creation.harness.http_util import api_error_text
 PHONE_FRAME_COPY_ROUTE = (
     "/v1/video-generations/{job_id}/episodes/{episode_id}/letterboxed-copy"
 )
+#: The marked copy for Instagram and TikTok: the episode export, asked for the letterboxed copy.
+EXPORT_ROUTE = "/v1/video-generations/{job_id}/episodes/{episode_id}/export"
+EXPORT_VERSION = "letterboxed_copy"
 _MADE = "The server made the phone-frame copy"
+_POST_WITH_SAVE = (
+    "That link is the in-app copy. To post it on Instagram and TikTok, save the marked copy: "
+    "phone-frame-copy --desk {desk} --episode {episode} --save"
+)
 
 
 def copy_request(
@@ -84,11 +91,98 @@ def run_phone_frame_copy(
         ``0`` when the server took the ask, ``2`` when nothing was sent or the server refused.
     """
 
+    desk = desk.expanduser().resolve()
+    answer = _ask(
+        desk, episode, PHONE_FRAME_COPY_ROUTE, body, out=out, api=api,
+        idempotency_key=f"kit-phone-frame-copy-{uuid.uuid4().hex}",
+    )  # fmt: skip
+    if answer is None:
+        return 2
+    print(_made_line(answer), file=out)
+    print(_POST_WITH_SAVE.format(desk=desk, episode=episode), file=out)
+    return 0
+
+
+def run_save_phone_frame_copy(
+    desk: Path,
+    *,
+    episode: int,
+    out: TextIO = sys.stdout,
+    api: Any = None,
+    transport: Any = None,
+) -> int:
+    """``phone-frame-copy --save``: download the marked copy to post on Instagram and TikTok.
+
+    The server's export of the episode's letterboxed copy (``version: letterboxed_copy``), with the
+    Sokii mark as every posted file carries it; the in-app link is not the file to post.
+
+    Parameters
+    ----------
+    desk
+        Series desk.
+    episode
+        Episode ordinal.
+    out
+        Where the result is printed.
+    api
+        Drama API session with ``post_optional`` (default: the desk's).
+    transport
+        HTTP transport for the download (tests fake the server with it).
+
+    Returns
+    -------
+    int
+        ``0`` when the file is on the desk, ``2`` when the server refused or the download failed.
+    """
+
+    from creation.ops.folder import next_versioned_path
+    from creation.post.server_finish import ServerFinishError, download_file
+
+    desk = desk.expanduser().resolve()
+    answer = _ask(
+        desk, episode, EXPORT_ROUTE, {"version": EXPORT_VERSION}, out=out, api=api
+    )
+    if answer is None:
+        return 2
+    url = answer.get("export_url") if isinstance(answer, Mapping) else None
+    if not isinstance(url, str) or not url:
+        print("Stopped: the server's answer named no file to save.", file=out)
+        return 2
+    takes = desk / f"ep{episode:02d}" / "takes"
+    takes.mkdir(parents=True, exist_ok=True)
+    try:
+        saved = download_file(
+            url, next_versioned_path(takes, f"phone-frame-ep{episode:02d}", ".mp4"),
+            transport=transport, kind="phone-frame copy",
+            meta={"episode": episode, "export_url": url, "version": EXPORT_VERSION},
+            again="phone-frame-copy --save",
+        )  # fmt: skip
+    except ServerFinishError as exc:
+        print(f"Stopped: {exc}", file=out)
+        return 2
+    print(
+        f"Saved the phone-frame copy with the Sokii mark: {saved}. Post this file on Instagram and TikTok.",
+        file=out,
+    )
+    return 0
+
+
+def _ask(
+    desk: Path,
+    episode: int,
+    route: str,
+    body: dict[str, Any],
+    *,
+    out: TextIO,
+    api: Any,
+    idempotency_key: str | None = None,
+) -> Any:
+    """POST ``body`` to the episode's ``route``; the answer, or ``None`` after printing why not."""
+
     from creation.post.desk import open_api
     from creation.post.server_finish import _desk_episode_id
     from creation.post.take_handles import take_coordinate
 
-    desk = desk.expanduser().resolve()
     where = take_coordinate(desk, episode, "t1")
     if where is None:
         print(
@@ -96,33 +190,30 @@ def run_phone_frame_copy(
             "Nothing was sent.",
             file=out,
         )
-        return 2
-    path = PHONE_FRAME_COPY_ROUTE.format(
+        return None
+    path = route.format(
         job_id=where.video_job_id, episode_id=_desk_episode_id(desk, episode)
     )
     run = api if api is not None else open_api(desk, episode)
     try:
-        status, answer = run.post_optional(
-            path, body, idempotency_key=f"kit-phone-frame-copy-{uuid.uuid4().hex}"
-        )
+        status, answer = run.post_optional(path, body, idempotency_key=idempotency_key)
     finally:
         if api is None:
             run.client.close()
-    if status in (404, 405) and _error_code(answer) is None:
+    if status in (404, 405, 422) and _error_code(answer) is None:
         print(
-            "Stopped: this Drama API cannot make a phone-frame copy yet (an older deploy). "
+            "Stopped: this Drama API has no phone-frame copy yet (an older deploy). "
             "Nothing was made or charged.",
             file=out,
         )
-        return 2
+        return None
     if not 200 <= status < 300:
         print(
             f"The server refused the phone-frame copy (HTTP {status}): {api_error_text(answer)}",
             file=out,
         )
-        return 2
-    print(_made_line(answer), file=out)
-    return 0
+        return None
+    return answer
 
 
 def _made_line(answer: Any) -> str:
@@ -142,4 +233,10 @@ def _error_code(answer: Any) -> str | None:
     return None
 
 
-__all__ = ["PHONE_FRAME_COPY_ROUTE", "copy_request", "run_phone_frame_copy"]
+__all__ = [
+    "EXPORT_ROUTE",
+    "PHONE_FRAME_COPY_ROUTE",
+    "copy_request",
+    "run_phone_frame_copy",
+    "run_save_phone_frame_copy",
+]

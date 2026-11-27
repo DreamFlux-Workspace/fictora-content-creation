@@ -479,6 +479,11 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Captions under the picture (--no-captions: none).",
     )  # fmt: skip
     copy.add_argument("--caption-colour", choices=("yellow", "white"), default=None)
+    copy.add_argument(
+        "--save", action="store_true",
+        help="Save the marked copy to post on Instagram and TikTok (the server's export of the copy made "
+        "before); the title and caption flags are not used.",
+    )  # fmt: skip
 
     voice_mode = sub.add_parser(
         "voice-mode",
@@ -1047,8 +1052,14 @@ def dispatch_post(args: argparse.Namespace) -> int:
             title=args.title, no_title=args.no_title,
         )  # fmt: skip
     if args.command == "phone-frame-copy":
-        from creation.phone_frame_copy import copy_request, run_phone_frame_copy
+        from creation.phone_frame_copy import (
+            copy_request,
+            run_phone_frame_copy,
+            run_save_phone_frame_copy,
+        )
 
+        if args.save:
+            return run_save_phone_frame_copy(args.desk, episode=args.episode)
         return run_phone_frame_copy(
             args.desk, episode=args.episode,
             body=copy_request(
