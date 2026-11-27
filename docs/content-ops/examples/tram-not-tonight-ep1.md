@@ -10,7 +10,6 @@ uv run fictora-produce start \
   --prompt "Vertical 15s modern dark fantasy. Empty late-night tram car: rain streaking the windows, fluorescent lights flickering, wet reflections on plastic seats. Episode 1 beat: tired night-shift nurse Mara (on screen, alone in the car) notices a folded paper left on the seat beside her; she looks at it but does NOT open or read it. One quiet spoken line from Mara: \"Not tonight.\" Season bible: at least two named characters — Mara (nurse, on screen) and a second character (e.g. tram driver or unseen passenger) who can stay off-screen or voice-only in ep1. No gore, no jump scares; moody restraint." \
   --band 15s \
   --preset-id modern-dark-fantasy \
-  --video-lane minimax-h3 \
   --draft-episodes 4 \
   --clip-seconds 15 \
   --caption-style house

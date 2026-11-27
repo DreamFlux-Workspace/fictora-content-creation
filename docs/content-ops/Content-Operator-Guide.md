@@ -130,7 +130,6 @@ uv run fictora-produce start \
   --prompt "Premise…" \
   --band 15s \
   --preset-id modern-dark-fantasy \
-  --video-lane minimax-h3 \
   --clip-seconds 15 \
   --caption-style house
 
