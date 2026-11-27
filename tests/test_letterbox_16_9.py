@@ -13,7 +13,6 @@ from conftest import make_take, needs_ffmpeg
 from tests import test_hook_line_command as _hook_line_tests
 from tests.test_letterbox_title_card_kit import CardApi
 
-from creation.caption_bold import build_bold_ass
 from creation.captions import Cue, build_ass
 from creation.hook_line import run_hook_line
 from creation.phone_frame_copy import copy_request, run_phone_frame_copy
@@ -240,19 +239,19 @@ def _style(ass: str, name: str) -> list[str]:
     return line.split(",")
 
 
-def test_a_wide_frame_is_captioned_on_the_side_turned_canvas() -> None:
+def test_a_wide_frame_falls_back_to_the_servers_wide_layout() -> None:
     long_line = (
         "I paid every bill in this house for three years and you never once asked"
     )
 
     house = build_ass([Cue(0.0, 2.0, long_line)], width=854, height=480)
-    bold = build_bold_ass([Cue(0.0, 2.0, "Never once.")], width=854, height=480)
-
-    size, margin_l, margin_r, margin_v = (
-        _style(house, "House")[i] for i in (2, 19, 20, 21)
+    bold = build_ass(
+        [Cue(0.0, 2.0, "Never once.")], width=854, height=480, style="bold"
     )
-    assert (size, margin_l, margin_r, margin_v) == ("28", "128", "128", "48")
-    assert (_style(bold, "Bold")[2], _style(bold, "Bold")[21]) == ("41", "48")
+
+    fields = [_style(house, "House")[i] for i in (2, 16, 17, 18, 19, 20, 21)]
+    assert fields == ["28", "2", "1", "8", "47", "47", "384"]
+    assert _style(bold, "House")[2] == "28"
     assert "\\N" in house.splitlines()[-1]
 
 
@@ -291,30 +290,31 @@ def test_finish_on_a_landscape_show_burns_captions_on_the_wide_picture(
     ass = next(iter((post_desk / "ep01" / "takes").glob("take-ep01-t1-cap-v*.ass")))
     text = ass.read_text(encoding="utf-8")
     assert "PlayResX: 854\nPlayResY: 480" in text
-    assert ",128,128,48," in text, text
+    assert ",8,47,47,384," in text, text
 
 
-def test_a_wide_take_is_laid_out_by_the_kit_not_the_9_16_server() -> None:
+def test_a_wide_take_asks_the_server_and_falls_back_to_the_same_layout() -> None:
     from creation.caption_server import server_override
     from creation.captions import portrait_caption_ass
 
-    sent: list[str] = []
+    sent: list[dict] = []
 
     def server(path: str, body: dict) -> tuple[int, object]:
-        sent.append(path)
+        sent.append(body)
         return 200, {"ass": "SERVER", "cues": [], "findings": []}
 
     cues = [Cue(0.0, 1.0, "Wait.")]
     with server_override(server):
-        wide = portrait_caption_ass(
+        served = portrait_caption_ass(
             cues, width=854, height=480, style="subtle", whole_lines=False
         )
-        tall = portrait_caption_ass(
-            cues, width=192, height=336, style="subtle", whole_lines=False
-        )
+    older = portrait_caption_ass(
+        cues, width=854, height=480, style="subtle", whole_lines=False
+    )
 
-    assert wide == build_ass(cues, width=854, height=480, style="subtle")
-    assert tall == "SERVER" and len(sent) == 1
+    assert served == "SERVER"
+    assert (sent[0]["width"], sent[0]["height"]) == (854, 480)
+    assert older == build_ass(cues, width=854, height=480, style="subtle")
 
 
 def test_a_16_9_mark_and_title_follow_the_servers_layout(

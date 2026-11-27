@@ -105,12 +105,11 @@ HOUSE_CANVAS_WIDTH = 1080
 HOUSE_SIDE_MARGIN = 60
 #: Bottom edge of the caption text, as a fraction of frame height (social safe zones).
 CAPTION_BOTTOM_FRACTION = 0.62
-#: A landscape show's wide frame is captioned on the house canvas turned on its side (1920x1080).
-WIDE_CANVAS_HEIGHT = 1080
-WIDE_SIDE_MARGIN_FRACTION = 0.15
-WIDE_CAPTION_BOTTOM_FRACTION = 0.90
-#: Where a wide frame's caption block must stay (two lines above that bottom edge).
-WIDE_CAPTION_BAND = (0.70, 0.92)
+#: A landscape show's wide frame, as the server lays it out (fictora-drama #1854,
+#: ``delivery_geometry.caption_space``): the type measured against the frame's long side (64 on a
+#: 1920-wide frame), the house look only, each caption's top 80% of the way down.
+WIDE_CANVAS_WIDTH = 1920
+WIDE_CAPTION_TOP_FRACTION = 0.80
 #: The caption block must stay inside this band of the frame height.
 CAPTION_BAND = (0.55, 0.70)
 #: A caption wraps onto at most this many lines (balanced), never more.
@@ -316,11 +315,11 @@ def is_wide(width: int | None, height: int | None) -> bool:
 
 
 def canvas_scale(height: int, width: int | None = None) -> float:
-    """The frame against the house canvas: by height, on the side-turned canvas when ``width`` is wide."""
+    """The frame against the house canvas: by height, by the long side when ``width`` is wide."""
 
-    return height / (
-        WIDE_CANVAS_HEIGHT if is_wide(width, height) else HOUSE_CANVAS_HEIGHT
-    )
+    if width is not None and is_wide(width, height):
+        return width / WIDE_CANVAS_WIDTH
+    return height / HOUSE_CANVAS_HEIGHT
 
 
 def house_font_size(height: int, width: int | None = None) -> int:
@@ -329,11 +328,9 @@ def house_font_size(height: int, width: int | None = None) -> int:
     return max(8, round(HOUSE_FONT_SIZE * canvas_scale(height, width)))
 
 
-def side_margin(width: int, height: int | None = None) -> int:
+def side_margin(width: int) -> int:
     """Left and right ASS margin on a frame ``width`` px wide (60 on 1080)."""
 
-    if is_wide(width, height):
-        return round(width * WIDE_SIDE_MARGIN_FRACTION)
     return max(1, round(HOUSE_SIDE_MARGIN * width / HOUSE_CANVAS_WIDTH))
 
 
@@ -1913,18 +1910,10 @@ def _ass_escape(text: str) -> str:
     )
 
 
-def bottom_margin(height: int, width: int | None, fraction: float) -> int:
-    """Bottom margin that puts a caption's bottom edge at ``fraction`` of a tall frame's height."""
-
-    if is_wide(width, height):
-        fraction = WIDE_CAPTION_BOTTOM_FRACTION
-    return round(height * (1.0 - fraction))
-
-
-def caption_margin_v(height: int, width: int | None = None) -> int:
+def caption_margin_v(height: int) -> int:
     """Bottom margin that puts the caption's bottom edge at 62% of the frame height."""
 
-    return bottom_margin(height, width, CAPTION_BOTTOM_FRACTION)
+    return round(height * (1.0 - CAPTION_BOTTOM_FRACTION))
 
 
 #: Kana, CJK ideographs and Hangul (and their punctuation): Arial has none of these glyphs.
@@ -2222,14 +2211,15 @@ def build_ass(
     """
 
     style = canonical_caption_style(style)
-    if style == "bold" and band is None:
+    wide = band is None and is_wide(width, height)
+    if style == "bold" and band is None and not wide:
         from creation.caption_bold import build_bold_ass
 
         return build_bold_ass(
             cues, width=width, height=height, platform=platform, size_scale=size_scale
         )
     if style == "bold":
-        style = "house"  # a letterbox band keeps its own layout
+        style = "house"  # a letterbox band and a wide frame keep the house look
     if style not in ("house", "plain"):
         raise ValueError(
             f"caption style {style!r} draws no captions; use bold, subtle (house) or plain"
@@ -2241,8 +2231,12 @@ def build_ass(
     ]
     scale = canvas_scale(height, width) * size_scale
     size = max(8, round(house_font_size(height, width) * size_scale))
-    margin_v = caption_margin_v(height, width)
-    margin_x = side_margin(width, height)
+    align, margin_v = (
+        (8, round(height * WIDE_CAPTION_TOP_FRACTION))
+        if wide
+        else (2, caption_margin_v(height))
+    )
+    margin_x = side_margin(width)
     margin_l, margin_r = margin_x, margin_x
     if band is not None:
         if size_scale != 1.0:
@@ -2257,7 +2251,9 @@ def build_ass(
     colour = colour or (PLAIN_COLOUR if style == "plain" else PRIMARY_COLOUR)
     main = "Plain" if style == "plain" else "House"
     tail = f"{OUTLINE_COLOUR},{SHADOW_COLOUR}"
-    place = f"100,100,0,0,1,{outline},{shadow},2,{margin_l},{margin_r},{margin_v},1"
+    place = (
+        f"100,100,0,0,1,{outline},{shadow},{align},{margin_l},{margin_r},{margin_v},1"
+    )
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -2281,9 +2277,7 @@ def build_ass(
         + (
             _letterbox_caption_text(c, band, width, platform=platform)
             if band is not None
-            else _caption_text(
-                c, size, width, platform=platform, room=width - 2 * margin_x
-            )
+            else _caption_text(c, size, width, platform=platform)
         )
         + "\n"
         for c in cues
@@ -2339,12 +2333,6 @@ def portrait_caption_ass(
         note(
             f"--caption-scale {size_scale:g}: the server lays out the house size only, "
             "so the kit laid these captions out itself"
-        )
-    elif is_wide(width, height):
-        # The server's layout route places captions for a 9:16 frame only (27 Nov 2026).
-        note(
-            f"a {width}x{height} landscape take: the server lays out 9:16 frames only, "
-            "so the kit laid these captions out for the wide frame itself"
         )
     else:
         text, findings = server_caption_ass(

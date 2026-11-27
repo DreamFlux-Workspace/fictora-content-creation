@@ -1454,16 +1454,15 @@ def safe_zones_section(take: Path) -> Section:
     sampled for the zone sheet and its JSON beside the take. No caption is found by colour.
     """
 
-    from creation.captions import CAPTION_BAND, WIDE_CAPTION_BAND, is_wide
+    from creation.captions import CAPTION_BAND, is_wide
     from creation.post.safe_zones import run_review
 
     report = run_review(None, take_file=take, out=StringIO())
     info = probe_video(take)
     if is_wide(info.width, info.height):
-        low, high = WIDE_CAPTION_BAND
         threshold = (
-            f"caption box inside {low:.0%}-{high:.0%} of the height of the wide frame, for every cue "
-            "of the burned caption file (the kit's reading); faces by eye on the zone sheet"
+            "a wide frame has no covered zones and no caption band, so no caption position is checked; "
+            "faces by eye on the zone sheet"
         )
     else:
         low, high = CAPTION_BAND

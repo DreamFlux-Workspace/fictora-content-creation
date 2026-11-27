@@ -47,7 +47,7 @@ from PIL import Image, ImageDraw
 
 from creation.post.delivery_geometry import Picture
 
-from creation.captions import CAPTION_BAND, WIDE_CAPTION_BAND, is_wide, text_width
+from creation.captions import CAPTION_BAND, is_wide, text_width
 from creation.ops.folder import next_versioned_path
 from creation.post.media import ffmpeg_bin, probe_video
 
@@ -476,14 +476,11 @@ def check_safe_zones(
         low = place.caption_highest_top / info.height
         high = place.caption.bottom / info.height
         band_name = "the letterbox band under the picture"
-    elif is_wide(info.width, info.height):
-        low, high = WIDE_CAPTION_BAND
-        band_name = "the caption band at the bottom of the wide frame"
     cues: list[LayoutCue] = []
     checked_by: str | None = None
     warnings: list[str] = []
     answer: dict[str, Any] | None = None
-    # The server checks 9:16 frames only; the kit reads a landscape take's file itself.
+    # A wide frame has no covered zones and no caption band (fictora-drama #1854): nothing to check.
     wide = picture is None and is_wide(info.width, info.height)
     if layout is not None:
         if not wide:
@@ -524,7 +521,7 @@ def check_safe_zones(
             off = [
                 (c.start, c.end, c.text)
                 for c in cues
-                if not (low - 0.01 <= c.box[1] and c.box[3] <= high + 0.01)
+                if not wide and not (low - 0.01 <= c.box[1] and c.box[3] <= high + 0.01)
             ]
             if off:
                 warnings.append(
@@ -537,7 +534,7 @@ def check_safe_zones(
         image = grab_frame(video, seconds)
         showing = next((c for c in cues if c.start <= seconds < c.end), None)
         box = showing.box if showing is not None else None
-        if showing is None:
+        if showing is None or wide:
             outside = False
         elif showing.in_band is not None:
             outside = not is_letterbox and not showing.in_band
