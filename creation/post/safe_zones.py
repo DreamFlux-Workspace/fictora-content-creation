@@ -45,6 +45,8 @@ from typing import Any, TextIO
 
 from PIL import Image, ImageDraw
 
+from creation.post.delivery_geometry import Picture
+
 from creation.captions import CAPTION_BAND, text_width
 from creation.ops.folder import next_versioned_path
 from creation.post.media import ffmpeg_bin, probe_video
@@ -337,7 +339,7 @@ def zone_sheet(
     return out
 
 
-def letterbox_file(video: Path, *, desk: Path | None = None) -> str | None:
+def letterbox_picture_of(video: Path, *, desk: Path | None = None) -> Picture | None:
     """The picture shape (``4:3`` or ``16:9``) when ``video`` is a letterbox show's 9:16 file, else ``None``.
 
     A finish record names it (or, for a joined episode, its takes' records) as ``letterbox``, or it is a
@@ -360,7 +362,7 @@ def letterbox_file(video: Path, *, desk: Path | None = None) -> str | None:
             return None
         if not isinstance(body, dict) or body.get("letterbox") is not True:
             return None
-        return str(body.get("picture_aspect") or "4:3")
+        return "16:9" if body.get("picture_aspect") == "16:9" else "4:3"
     if desk is None:
         desk = next(
             (p for p in resolved.parents if (p / "series.json").is_file()), None
@@ -376,9 +378,7 @@ def letterbox_file(video: Path, *, desk: Path | None = None) -> str | None:
         record = (
             latest_finish_record(desk, episode, "t1") if episode is not None else None
         )
-    if record is None or not record.letterbox:
-        return None
-    return record.picture_aspect or "4:3"
+    return record.letterbox_picture if record is not None else None
 
 
 def _desk_of(video: Path) -> Path | None:
@@ -445,7 +445,7 @@ def check_safe_zones(
     layout
         The burned caption file (:func:`burned_caption_file` finds it by default).
     letterbox
-        A letterbox show's 9:16 file (default: :func:`letterbox_file`, which also gives its picture shape).
+        A letterbox show's 9:16 file (default: :func:`letterbox_picture_of`).
     desk
         The series desk whose API session asks the server (default: the
         nearest folder above ``video`` with a ``series.json``).
@@ -461,7 +461,7 @@ def check_safe_zones(
 
     info = probe_video(video)
     layout = layout or burned_caption_file(video)
-    picture = letterbox_file(video)
+    picture = letterbox_picture_of(video)
     if letterbox is not None:
         picture = (picture or "4:3") if letterbox else None
     is_letterbox = picture is not None

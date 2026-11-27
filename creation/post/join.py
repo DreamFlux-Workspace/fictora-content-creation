@@ -1358,7 +1358,7 @@ def edge_notes(
     if letterbox:
         from creation.post.delivery_geometry import layout
 
-        pic = layout(picture=first.record.picture_aspect or "4:3").picture
+        pic = layout(picture=first.record.letterbox_picture or "4:3").picture
         crop = (pic.x, pic.y, pic.width, pic.height)
     silent, head_face = opening_context(desk, first.episode, first.take_id)
     reading = measure_opening(
@@ -1488,7 +1488,7 @@ def _fix_seams(
         if part.record.letterbox:
             from creation.post.delivery_geometry import layout
 
-            pic = layout(picture=part.record.picture_aspect or "4:3").picture
+            pic = layout(picture=part.record.letterbox_picture or "4:3").picture
             crop = (pic.x, pic.y, pic.width, pic.height)
         try:
             cuts = measure_cuts(part.picture, crop=crop)

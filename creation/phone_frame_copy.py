@@ -2,11 +2,11 @@
 
 A landscape show (founder, 27 Nov 2026) is delivered 16:9 with nothing on the picture. When the
 creator wants a phone-frame copy, the server makes it from the finished episode (nothing is
-filmed again) and asks for the title and captions itself. The kit only sends the ask and prints
-the server's answer as sent; which shows may have one is the server's call.
+filmed again). The kit sends the creator's title and caption choices as given and prints the
+server's answer; which shows may have one, and what an unset choice means, is the server's call.
 
-Needs fictora-drama's letterboxed-copy route (the 16:9 frames finish PR) live: until then the
-route answers 404 and the kit says so.
+Needs fictora-drama's letterboxed-copy route live (drama branch feat/letterboxed-copy): until
+then the route answers 404 and the kit says so.
 """
 
 from __future__ import annotations
@@ -14,27 +14,59 @@ from __future__ import annotations
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Protocol, TextIO
+from typing import Any, TextIO
 
 from creation.harness.http_util import api_error_text
-from creation.post.desk import open_api, spine_body, spine_id
-from creation.spine_view import episode_id_for
 
 #: The server's route (POST asks for the copy).
-PHONE_FRAME_COPY_ROUTE = "/v1/spines/{spine_id}/episodes/{episode_id}/letterboxed-copy"
+PHONE_FRAME_COPY_ROUTE = (
+    "/v1/video-generations/{job_id}/episodes/{episode_id}/letterboxed-copy"
+)
 #: 404 codes the route answers on purpose; any other 404 means the server predates it.
-_KNOWN_NOT_FOUND = frozenset({"episode_not_found", "spine_not_found"})
+_KNOWN_NOT_FOUND = frozenset({"episode_not_found", "job_not_found", "spine_not_found"})
 _TAKEN = "The server took the ask for a phone-frame copy."
 
 
-class _Api(Protocol):
-    def spine(self, spine_id: str) -> dict[str, Any]: ...
+def copy_request(
+    *,
+    setup_line: str | None = None,
+    hook_line: str | None = None,
+    captions: bool | None = None,
+    caption_colour: str | None = None,
+) -> dict[str, Any]:
+    """The request body: only the choices the operator made; the server fills the rest.
 
-    def post_optional(self, path: str, body: dict[str, Any]) -> tuple[int, Any]: ...
+    Parameters
+    ----------
+    setup_line, hook_line
+        The title's white and yellow lines.
+    captions
+        Captions under the picture, or none.
+    caption_colour
+        ``yellow`` or ``white``.
+
+    Returns
+    -------
+    dict[str, Any]
+        The JSON body.
+    """
+
+    chosen = {
+        "setup_line": setup_line,
+        "hook_line": hook_line,
+        "captions": captions,
+        "caption_colour": caption_colour,
+    }
+    return {key: value for key, value in chosen.items() if value is not None}
 
 
 def run_phone_frame_copy(
-    desk: Path, *, episode: int, out: TextIO = sys.stdout, api: _Api | None = None
+    desk: Path,
+    *,
+    episode: int,
+    body: dict[str, Any],
+    out: TextIO = sys.stdout,
+    api: Any = None,
 ) -> int:
     """``phone-frame-copy --desk D --episode N``: ask the server for the episode's 9:16 copy.
 
@@ -44,61 +76,66 @@ def run_phone_frame_copy(
         Series desk.
     episode
         Episode ordinal.
+    body
+        :func:`copy_request`.
     out
         Where the server's answer is printed.
     api
-        Drama API session (default: the desk's).
+        Drama API session with ``post_optional`` (default: the desk's).
 
     Returns
     -------
     int
-        ``0`` when the server took the ask, ``2`` when it refused or predates the route.
+        ``0`` when the server took the ask, ``2`` when nothing was sent or the server refused.
     """
 
-    session = open_api(desk, episode) if api is None else None
-    run: _Api = api if api is not None else session  # type: ignore[assignment]
-    try:
-        spine = spine_body(run.spine(spine_id(desk)))
-        path = PHONE_FRAME_COPY_ROUTE.format(
-            spine_id=spine_id(desk), episode_id=episode_id_for(spine, episode)
+    from creation.post.desk import open_api
+    from creation.post.server_finish import _desk_episode_id
+    from creation.post.take_handles import take_coordinate
+
+    desk = desk.expanduser().resolve()
+    where = take_coordinate(desk, episode, "t1")
+    if where is None:
+        print(
+            f"Stopped: the desk has no filmed episode {episode}, so the server cannot find it. "
+            "Nothing was sent.",
+            file=out,
         )
-        status, answer = run.post_optional(path, {})
-        if status in (404, 405) and _code(answer) not in _KNOWN_NOT_FOUND:
-            print(
-                "Stopped: this Drama API cannot make a phone-frame copy yet (an older deploy). "
-                "Nothing was made or charged.",
-                file=out,
-            )
-            return 2
-        if not 200 <= status < 300:
-            print(
-                f"The server refused the phone-frame copy (HTTP {status}): {api_error_text(answer)}",
-                file=out,
-            )
-            return 2
-        print(_answer_text(answer), file=out)
-        return 0
+        return 2
+    path = PHONE_FRAME_COPY_ROUTE.format(
+        job_id=where.video_job_id, episode_id=_desk_episode_id(desk, episode)
+    )
+    run = api if api is not None else open_api(desk, episode)
+    try:
+        status, answer = run.post_optional(path, body)
     finally:
-        close = getattr(session, "close", None)
-        if callable(close):
-            close()
+        if api is None:
+            run.client.close()
+    if status in (404, 405) and _error_code(answer) not in _KNOWN_NOT_FOUND:
+        print(
+            "Stopped: this Drama API cannot make a phone-frame copy yet (an older deploy). "
+            "Nothing was made or charged.",
+            file=out,
+        )
+        return 2
+    if not 200 <= status < 300:
+        print(
+            f"The server refused the phone-frame copy (HTTP {status}): {api_error_text(answer)}",
+            file=out,
+        )
+        return 2
+    line = answer.get("line") if isinstance(answer, Mapping) else None
+    print(line.strip() if isinstance(line, str) and line.strip() else _TAKEN, file=out)
+    return 0
 
 
-def _code(answer: Any) -> str | None:
-    detail = answer.get("detail") if isinstance(answer, Mapping) else None
-    code = (detail if isinstance(detail, Mapping) else answer or {}).get("code")
-    return str(code) if code else None
-
-
-def _answer_text(answer: Any) -> str:
+def _error_code(answer: Any) -> str | None:
     if not isinstance(answer, Mapping):
-        return _TAKEN
-    words = [
-        str(answer[key]).strip()
-        for key in ("line", "message", "question")
-        if isinstance(answer.get(key), str) and answer[key].strip()
-    ]
-    return "\n".join(words) or _TAKEN
+        return None
+    for holder in (answer.get("error"), answer.get("detail"), answer):
+        if isinstance(holder, Mapping) and holder.get("code"):
+            return str(holder["code"])
+    return None
 
 
-__all__ = ["PHONE_FRAME_COPY_ROUTE", "run_phone_frame_copy"]
+__all__ = ["PHONE_FRAME_COPY_ROUTE", "copy_request", "run_phone_frame_copy"]

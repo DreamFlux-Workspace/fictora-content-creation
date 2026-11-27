@@ -13,6 +13,7 @@ from test_post_finish import FACTS, TWO_LINES, _board, fake_sfx
 
 from creation.captions import CAPTION_BAND, text_width
 from creation.post import hook_overlay as hk
+from creation.post.delivery_geometry import picture_shape
 from creation.post.finish import run_finish
 from creation.post.hook_overlay import (
     HookOverlay,
@@ -219,7 +220,7 @@ def test_a_landscape_show_reads_as_landscape() -> None:
 
 def test_only_4_3_and_16_9_pictures_are_letterbox_takes() -> None:
     assert [
-        hk.letterbox_picture(*size)
+        picture_shape(*size)
         for size in ((1440, 1080), (854, 480), (1280, 720), (1080, 1920), (1000, 1000))
     ] == ["4:3", "16:9", "16:9", None, None]
 

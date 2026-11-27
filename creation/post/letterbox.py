@@ -64,8 +64,9 @@ from creation.post.delivery_geometry import (
     TITLE_SETUP_COLOUR,
     LetterboxLayout,
     layout,
+    picture_shape,
 )
-from creation.post.hook_overlay import delivery_format, letterbox_picture
+from creation.post.hook_overlay import delivery_format
 from creation.post.media import probe_video, run_ffmpeg
 from creation.post.watermark import MARK, MARK_ALPHA, MARK_WIDTH_FRACTION
 
@@ -95,9 +96,7 @@ _NOT_DRAWN = re.compile(
 def is_letterbox_take(spine: Mapping[str, Any] | None, size: tuple[int, int]) -> bool:
     """True for a letterbox show's real 4:3 or 16:9 take (the only cases this module builds for)."""
 
-    return (
-        delivery_format(spine) == "letterbox" and letterbox_picture(*size) is not None
-    )
+    return delivery_format(spine) == "letterbox" and picture_shape(*size) is not None
 
 
 # --- caption colour ---------------------------------------------------------------------------------
@@ -498,7 +497,7 @@ def pad_to_canvas(take: Path, out: Path) -> Path:
     if out.exists():
         raise FileExistsError(f"{out} exists; local post never overwrites")
     info = probe_video(take)
-    pic = layout(picture=letterbox_picture(info.width, info.height) or "4:3").picture
+    pic = layout(picture=picture_shape(info.width, info.height) or "4:3").picture
     args = ["-i", str(take), "-vf",
             f"scale={pic.width}:{pic.height}:flags=lanczos,setsar=1,"
             f"pad={CANVAS_WIDTH}:{CANVAS_HEIGHT}:{pic.x}:{pic.y}:color={CANVAS_COLOUR}",

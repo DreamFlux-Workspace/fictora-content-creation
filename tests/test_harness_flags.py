@@ -395,9 +395,9 @@ def test_the_pair_makes_a_base_desk_with_flags_off_and_a_head_desk_with_them_on(
 
 @pytest.mark.parametrize(
     ("band_args", "take_seconds"),
-    [([], 7), (["--band", "15s"], 7), (["--band", "30s"], 10)],
+    [([], 15), (["--band", "15s"], 15), (["--band", "30s"], 15)],
 )
-def test_a_plain_letterbox_start_keeps_the_15s_take_length_of_main(
+def test_a_plain_letterbox_start_films_15_second_takes_at_every_band(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     band_args: list[str],

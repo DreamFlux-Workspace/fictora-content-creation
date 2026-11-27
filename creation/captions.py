@@ -71,6 +71,8 @@ show is captioned exactly as before.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import functools
 import json
 import os
@@ -84,6 +86,9 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
+
+if TYPE_CHECKING:
+    from creation.post.delivery_geometry import Picture
 
 from creation.on_screen_text import drawn_texts
 from creation.rules_epoch import under_desk_rules
@@ -2046,7 +2051,7 @@ class LetterboxBand:
 
 
 def letterbox_band(
-    width: int, height: int, *, picture: str = "4:3", desk: Path | None = None
+    width: int, height: int, *, picture: Picture = "4:3", desk: Path | None = None
 ) -> LetterboxBand:
     """The caption band under the ``picture`` (4:3 or 16:9) on a ``width`` x ``height`` letterbox canvas.
 
@@ -3081,7 +3086,7 @@ def caption_take(
     laid_lines: Sequence[tuple[CaptionLine, Span]] = (),
     layout: str = "portrait",
     caption_colour: str | None = None,
-    picture: str = "4:3",
+    picture: Picture = "4:3",
     italic_overrides: Mapping[str, bool] | None = None,
     line_spans_after_words: bool = False,
     voice_floors: Mapping[str, float] | None = None,

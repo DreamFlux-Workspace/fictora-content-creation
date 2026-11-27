@@ -55,6 +55,7 @@ from creation.captions import (
     _ass_time,
     text_width,
 )
+from creation.post.delivery_geometry import picture_shape
 from creation.post.watermark import fallback_mark_place, mark_place
 
 #: Seconds the hook line aims to stay on screen.
@@ -85,12 +86,11 @@ SIDE_MARGIN = 60
 BAR_HEIGHT = 0.12
 BAR_TITLE_SIZE = 44
 BAR_LINE_SIZE = 60
-#: A take whose picture is one of these shapes, within the tolerance, is a real letterbox take.
-LETTERBOX_PICTURES: dict[str, float] = {"4:3": 4 / 3, "16:9": 16 / 9}
-ASPECT_TOLERANCE = 0.04
-
 DeliveryFormat = Literal["portrait", "letterbox", "landscape"]
-_FORMATS: frozenset[str] = frozenset(("letterbox", "landscape"))
+_FORMATS: dict[str, DeliveryFormat] = {
+    "letterbox": "letterbox",
+    "landscape": "landscape",
+}
 Placement = Literal["top", "lower", "bar"]
 #: ``(video, start_s, end_s)`` -> a face sits in the upper band there (True / False), or None when unknown.
 FaceInUpperBand = Callable[[Path, float, float], "bool | None"]
@@ -119,7 +119,7 @@ def delivery_format(spine: Mapping[str, Any] | None) -> DeliveryFormat:
             )
             name = value.strip().casefold() if isinstance(value, str) else ""
             if name in _FORMATS:
-                return name  # type: ignore[return-value]
+                return _FORMATS[name]
     return "portrait"
 
 
@@ -301,21 +301,6 @@ def clear_of_captions(
     return overlay
 
 
-def letterbox_picture(width: int, height: int) -> str | None:
-    """``4:3`` or ``16:9`` when the picture is that shape (within ``ASPECT_TOLERANCE``), else ``None``."""
-
-    if height <= 0:
-        return None
-    return next(
-        (
-            name
-            for name, ratio in LETTERBOX_PICTURES.items()
-            if abs(width / height - ratio) <= ASPECT_TOLERANCE
-        ),
-        None,
-    )
-
-
 def decide(
     spine: Mapping[str, Any] | None,
     episode: int,
@@ -379,10 +364,11 @@ def decide(
     )
     source = "--hook-line" if override and override.strip() else "spine"
     if fmt == "letterbox":
-        if size is not None and letterbox_picture(*size):
+        shape = picture_shape(*size) if size is not None else None
+        if shape is not None:
             return HookDecision(
                 None,
-                f"letterbox show on a {letterbox_picture(*size)} take: the letterbox band carries the title",
+                f"letterbox show on a {shape} take: the letterbox band carries the title",
             )
         summary = _summary(spine, episode) if isinstance(spine, Mapping) else {}
         title_line = (
@@ -602,7 +588,6 @@ __all__ = [
     "delivery_format",
     "first_spoken_line",
     "hook_end",
-    "letterbox_picture",
     "overlay_ass",
     "same_words",
     "selected_hook_line",

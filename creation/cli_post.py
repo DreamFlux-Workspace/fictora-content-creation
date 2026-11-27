@@ -468,10 +468,17 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     copy = sub.add_parser(
         "phone-frame-copy",
         help="A landscape episode's 9:16 copy with a title and captions, made by the server from the "
-        "finished episode (nothing is filmed again). The server asks for the title and captions.",
+        "finished episode (nothing is filmed again). Choices left out are the server's.",
     )
     copy.add_argument("--desk", type=Path, required=True)
     copy.add_argument("--episode", type=int, required=True)
+    copy.add_argument("--setup-line", default=None, help="The title's white line.")
+    copy.add_argument("--hook-line", default=None, help="The title's yellow line.")
+    copy.add_argument(
+        "--captions", action=argparse.BooleanOptionalAction, default=None,
+        help="Captions under the picture (--no-captions: none).",
+    )  # fmt: skip
+    copy.add_argument("--caption-colour", choices=("yellow", "white"), default=None)
 
     voice_mode = sub.add_parser(
         "voice-mode",
@@ -1040,9 +1047,15 @@ def dispatch_post(args: argparse.Namespace) -> int:
             title=args.title, no_title=args.no_title,
         )  # fmt: skip
     if args.command == "phone-frame-copy":
-        from creation.phone_frame_copy import run_phone_frame_copy
+        from creation.phone_frame_copy import copy_request, run_phone_frame_copy
 
-        return run_phone_frame_copy(args.desk, episode=args.episode)
+        return run_phone_frame_copy(
+            args.desk, episode=args.episode,
+            body=copy_request(
+                setup_line=args.setup_line, hook_line=args.hook_line,
+                captions=args.captions, caption_colour=args.caption_colour,
+            ),
+        )  # fmt: skip
     if args.command == "voice-mode":
         from creation.voice_mode import run_voice_mode
 

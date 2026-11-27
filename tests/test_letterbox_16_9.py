@@ -16,10 +16,10 @@ from tests import test_hook_line_command as _hook_line_tests
 from tests.test_letterbox_title_card_kit import CardApi
 
 from creation.hook_line import run_hook_line
-from creation.phone_frame_copy import run_phone_frame_copy
+from creation.phone_frame_copy import copy_request, run_phone_frame_copy
 from creation.post.delivery_geometry import Box, layout
 from creation.post.finish_record import write_finish_record
-from creation.post.safe_zones import letterbox_file
+from creation.post.safe_zones import letterbox_picture_of
 
 hook_desk = _hook_line_tests.hook_desk
 
@@ -71,16 +71,16 @@ def test_a_finish_record_names_its_picture_shape(tmp_path: Path) -> None:
         tmp_path,
         {"letterbox": True, "caption_colour": "yellow", "picture_aspect": "16:9"},
     )
-    assert letterbox_file(final, desk=tmp_path) == "16:9"
+    assert letterbox_picture_of(final, desk=tmp_path) == "16:9"
 
 
 def test_an_older_letterbox_record_is_4_3(tmp_path: Path) -> None:
     final = _record(tmp_path, {"letterbox": True, "caption_colour": "yellow"})
-    assert letterbox_file(final, desk=tmp_path) == "4:3"
+    assert letterbox_picture_of(final, desk=tmp_path) == "4:3"
 
 
 def test_a_portrait_record_is_not_letterbox(tmp_path: Path) -> None:
-    assert letterbox_file(_record(tmp_path, None), desk=tmp_path) is None
+    assert letterbox_picture_of(_record(tmp_path, None), desk=tmp_path) is None
 
 
 def test_a_landscape_show_has_no_title_card(hook_desk: tuple[Path, dict]) -> None:
@@ -92,53 +92,6 @@ def test_a_landscape_show_has_no_title_card(hook_desk: tuple[Path, dict]) -> Non
         run_hook_line(desk, episode=1, titles=True, out=io.StringIO(), api=api)
 
     assert api.gets == [] and api.sent == []
-
-
-class CopyApi:
-    def __init__(self, spine: dict, answer: tuple[int, object]) -> None:
-        self.stored, self.answer = spine, answer
-        self.posted: list[str] = []
-
-    def spine(self, spine_id: str) -> dict:
-        return copy.deepcopy(self.stored)
-
-    def post_optional(self, path: str, body: dict) -> tuple[int, object]:
-        self.posted.append(path)
-        return self.answer
-
-
-def _copy(
-    desk: Path, spine: dict, answer: tuple[int, object]
-) -> tuple[int, str, CopyApi]:
-    api = CopyApi(spine, answer)
-    out = io.StringIO()
-    code = run_phone_frame_copy(desk, episode=1, out=out, api=api)
-    return code, out.getvalue(), api
-
-
-def test_a_landscape_episode_asks_the_server_for_its_phone_frame_copy(
-    hook_desk: tuple[Path, dict],
-) -> None:
-    desk, spine = hook_desk
-    landscape = {**spine, "delivery_format": "landscape"}
-
-    code, text, api = _copy(
-        desk, landscape, (202, {"line": "Pick a title for the copy."})
-    )
-
-    assert code == 0 and text.strip() == "Pick a title for the copy."
-    assert api.posted == ["/v1/spines/spine_test/episodes/episode_01/letterboxed-copy"]
-
-
-def test_an_older_server_without_the_route_makes_nothing(
-    hook_desk: tuple[Path, dict],
-) -> None:
-    desk, spine = hook_desk
-    landscape = {**spine, "delivery_format": "landscape"}
-
-    code, text, _api = _copy(desk, landscape, (404, {"detail": "Not Found"}))
-
-    assert code == 2 and "older deploy" in text
 
 
 def test_the_caption_rows_are_the_servers_when_it_serves_them() -> None:
@@ -154,12 +107,22 @@ def test_the_caption_rows_are_the_servers_when_it_serves_them() -> None:
 
     def answer(path: str, body: dict) -> tuple[int, object]:
         asked.append(path)
-        return 200, {"master_aspect": "16:9", **served}
+        four_three = {
+            "caption_top": 1407,
+            "caption_highest_top": 1385,
+            "caption_bottom_limit": 1536,
+        }
+        return 200, {
+            "layouts": [
+                {"master_aspect": "4:3", "picture_height": 810, **four_three},
+                {"master_aspect": "16:9", "picture_height": 608, **served},
+            ]
+        }
 
     with server_override(answer):
         place = letterbox_layout(picture="16:9")
 
-    assert asked == ["/v1/letterbox-layout?master_aspect=16%3A9"]
+    assert asked == ["/v1/letterbox/layouts"]
     assert (place.caption.y, place.caption_highest_top, place.caption.bottom) == (
         1200,
         1180,
@@ -171,3 +134,66 @@ def test_an_older_server_leaves_the_kits_copy() -> None:
     from creation.post.letterbox_rows import letterbox_layout
 
     assert letterbox_layout(picture="16:9") == layout(picture="16:9")
+
+
+class CopyApi:
+    def __init__(self, answer: tuple[int, object]) -> None:
+        self.answer = answer
+        self.sent: list[tuple[str, dict]] = []
+
+    def post_optional(self, path: str, body: dict) -> tuple[int, object]:
+        self.sent.append((path, body))
+        return self.answer
+
+
+@pytest.fixture
+def filmed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    from creation.post import server_finish, take_handles
+
+    monkeypatch.setattr(
+        take_handles, "take_coordinate",
+        lambda desk, episode, take_id: take_handles.TakeCoordinate("job_video_1", 1, "job_take_1"),
+    )  # fmt: skip
+    monkeypatch.setattr(
+        server_finish, "_desk_episode_id", lambda desk, episode: "episode_01"
+    )
+    return tmp_path
+
+
+def test_a_phone_frame_copy_sends_only_the_choices_made(filmed: Path) -> None:
+    api = CopyApi((202, {"line": "Making the phone-frame copy."}))
+    out = io.StringIO()
+    body = copy_request(setup_line="Three Payments Late", captions=False)
+
+    code = run_phone_frame_copy(filmed, episode=1, body=body, out=out, api=api)
+
+    assert code == 0 and out.getvalue().strip() == "Making the phone-frame copy."
+    assert api.sent == [
+        (
+            "/v1/video-generations/job_video_1/episodes/episode_01/letterboxed-copy",
+            {"setup_line": "Three Payments Late", "captions": False},
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("answer", "says"),
+    [
+        ((404, {"detail": "Not Found"}), "older deploy"),
+        ((404, "Not Found"), "older deploy"),
+        (
+            (404, {"error": {"code": "episode_not_found", "message": "No episode 1."}}),
+            "refused",
+        ),
+    ],
+)
+def test_a_refusal_or_an_older_server_makes_nothing(
+    filmed: Path, answer: tuple[int, object], says: str
+) -> None:
+    out = io.StringIO()
+
+    code = run_phone_frame_copy(
+        filmed, episode=1, body={}, out=out, api=CopyApi(answer)
+    )
+
+    assert code == 2 and says in out.getvalue()

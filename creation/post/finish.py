@@ -248,10 +248,10 @@ from creation.post.hook_overlay import (
     clear_of_captions,
     decide,
     delivery_format,
-    letterbox_picture,
     selected_hook_line,
 )
 from creation.post import letterbox as lb
+from creation.post.delivery_geometry import Picture, picture_shape
 from creation.post.system_panels import (
     NO_PANELS,
     PanelLayer,
@@ -934,7 +934,12 @@ def take_inner_voice(
 
 
 def _opening_lines(
-    desk: Path, episode: int, take_id: str, final: Path, *, picture: str | None = None
+    desk: Path,
+    episode: int,
+    take_id: str,
+    final: Path,
+    *,
+    picture: Picture | None = None,
 ) -> list[str]:
     """``⚠`` lines for how the finished first take opens (:mod:`creation.post.opening`).
 
@@ -1057,7 +1062,7 @@ def _cut_held_head(
     return HandleCut(done.final, done.record, f"{why}; {done.note}")
 
 
-def letterbox_picture_crop(picture: str) -> tuple[int, int, int, int]:
+def letterbox_picture_crop(picture: Picture) -> tuple[int, int, int, int]:
     """``(x, y, width, height)`` of the ``picture`` (4:3 or 16:9) on the letterbox canvas (what the opening checks measure)."""
 
     from creation.post.delivery_geometry import layout
@@ -1869,11 +1874,11 @@ def run_finish(
         off=no_hook_line or (picked or {}).get("kind") == "off", position=hook_line_position,
     )  # fmt: skip
     # A letterbox show's 4:3 or 16:9 take: the kit builds its 9:16 file (lb); anything else finishes as before.
-    picture: str | None = None
+    picture: Picture | None = None
     if delivery_format(spine) == "letterbox":
         info = probe_video(source)
         if lb.is_letterbox_take(spine, (info.width, info.height)):
-            picture = letterbox_picture(info.width, info.height)
+            picture = picture_shape(info.width, info.height)
     letterbox = picture is not None
     if caption_colour is not None and not letterbox:
         raise ValueError(
@@ -1915,8 +1920,8 @@ def run_finish(
 
             lengths, _ = take_lengths(desk, episode, take_id, source=source)
             if letterbox:
-                # Drawn on the 9:16 canvas the 4:3 picture is put on, kept on the picture.
-                _pic = _panel_layout().picture
+                # Drawn on the 9:16 canvas the picture is put on, kept on the picture.
+                _pic = _panel_layout(picture=picture or "4:3").picture
                 panel_size = _PANEL_CANVAS
                 panel_picture: tuple[int, int, int, int] | None = (
                     _pic.x, _pic.y, _pic.width, _pic.height,
@@ -3342,7 +3347,7 @@ def run_finish(
                 voice_floors=floors or None,
                 italic_overrides=overrides,
                 **(
-                    {"layout": "letterbox", "caption_colour": colour_name, "picture": picture or "4:3"}
+                    {"layout": "letterbox", "caption_colour": colour_name, "picture": picture}
                     if letterbox
                     else {}
                 ),

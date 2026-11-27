@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from creation.ops.folder import next_versioned_path
+from creation.post.delivery_geometry import Picture
 
 RECORD_KIND = "fictora-finish-record"
 
@@ -64,13 +65,21 @@ class FinishRecord:
     missing: tuple[str, ...] = ()
     #: The letterbox captions' colour (``yellow`` / ``white``); ``None`` on a portrait take.
     caption_colour: str | None = None
-    #: A letterbox take's picture shape (``4:3`` or ``16:9``); ``None`` on a portrait take and on a
-    #: letterbox record from before 27 Nov 2026, whose picture is 4:3.
+    #: A letterbox take's picture shape as written; ``None`` on a portrait take and on a letterbox
+    #: record from before 27 Nov 2026. Read it through :attr:`letterbox_picture`.
     picture_aspect: str | None = None
     #: The thoughts ``finish`` played in black and white on this take, from the server's thoughts route
     #: (``{"spans": [[start, end], ...], "filter": "hue=s='...'"}``, on the take as filmed); ``None``
     #: when none was greyed, and on every record from before 24 Oct 2026.
     thought_grey: dict[str, Any] | None = None
+
+    @property
+    def letterbox_picture(self) -> Picture | None:
+        """The letterbox picture's shape (``4:3`` on a record from before 16:9), else ``None``."""
+
+        if not self.letterbox:
+            return None
+        return "16:9" if self.picture_aspect == "16:9" else "4:3"
 
     def resolve(self, desk: Path, name: str) -> Path | None:
         """Absolute path of one stored file (``pre_bed``, ``master``, ``final``, ``bed``)."""

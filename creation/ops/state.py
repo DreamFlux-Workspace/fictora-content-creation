@@ -23,7 +23,7 @@ TAKES_FOR_BAND: dict[str, int] = {"15s": 1, "30s": 2, "60s": 4}
 #: (fictora-drama #604, #617). 30 s is three 10-second takes, 60 s six, and
 #: 15 s two 7-second takes (a 14 s episode). New letterbox shows film 16:9 in
 #: the usual 15 s takes (27 Nov 2026).
-LETTERBOX_TAKES_FOR_BAND: dict[str, int] = {"15s": 2, "30s": 3, "60s": 6}
+FOUR_THREE_TAKES_FOR_BAND: dict[str, int] = {"15s": 2, "30s": 3, "60s": 6}
 #: Preflight warns (never blocks) past this multiple of the envelope.
 ENVELOPE_STOP_MULTIPLIER = 2.0
 #: Warn-only spend envelopes. One source: ``creation.prices`` (sized for R2V; Turbo takes sit inside them).
@@ -367,7 +367,7 @@ def take_ids_for_band(band: str, *, four_three: bool = False) -> list[str]:
         ``15s``, ``30s``, or ``60s``.
     four_three
         True for a desk on a story pinned to 4:3 boards: 10-second takes
-        (``LETTERBOX_TAKES_FOR_BAND``). The spine has the last word
+        (``FOUR_THREE_TAKES_FOR_BAND``). The spine has the last word
         (:func:`sync_take_slots_to_spine`).
 
     Returns
@@ -381,7 +381,7 @@ def take_ids_for_band(band: str, *, four_three: bool = False) -> list[str]:
         When ``band`` is not a known duration band.
     """
 
-    count = (LETTERBOX_TAKES_FOR_BAND if four_three else TAKES_FOR_BAND).get(band)
+    count = (FOUR_THREE_TAKES_FOR_BAND if four_three else TAKES_FOR_BAND).get(band)
     if count is None:
         raise ValueError(f"band must be 15s, 30s, or 60s; got {band!r}")
     return [f"t{index}" for index in range(1, count + 1)]

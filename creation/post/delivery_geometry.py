@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Literal
 
 # The mark's fallback x (one copy, the server's number, kept in watermark).
 from creation.post.watermark import MARK_X_FRACTION
@@ -36,7 +37,27 @@ CANVAS_COLOUR = "black"
 #: A 16:9 take (founder, 27 Nov 2026) is 1080x608 under the same top, so the title and the mark sit as
 #: on 4:3. Its caption rows are the server's (:mod:`creation.post.letterbox_rows`); without a server
 #: they rise with the picture's bottom (202 px on 1920), as fictora-drama ``LETTERBOX_LAYOUT_16_9`` does.
-PICTURE_RATIOS: dict[str, tuple[int, int]] = {"4:3": (4, 3), "16:9": (16, 9)}
+Picture = Literal["4:3", "16:9"]
+PICTURE_RATIOS: dict[Picture, tuple[int, int]] = {"4:3": (4, 3), "16:9": (16, 9)}
+#: A take within this much of a shape's width-to-height ratio is that shape.
+ASPECT_TOLERANCE = 0.04
+
+
+def picture_shape(width: int, height: int) -> Picture | None:
+    """``4:3`` or ``16:9`` when a ``width`` x ``height`` picture is that shape (within the tolerance), else ``None``."""
+
+    if height <= 0:
+        return None
+    return next(
+        (
+            name
+            for name, (ratio_w, ratio_h) in PICTURE_RATIOS.items()
+            if abs(width / height - ratio_w / ratio_h) <= ASPECT_TOLERANCE
+        ),
+        None,
+    )
+
+
 #: The Sokii mark image (``assets/sokii-mark-word.png``, the cat and "sokii" as the app's header logo, 27 Oct
 #: 2026), as far in from the left as on a portrait copy (``watermark.MARK_X_FRACTION``, 3% in, since
 #: fictora-drama #1133: 32 on 1080). The server decides its place and size (``POST /v1/mark/placement``);
@@ -293,7 +314,7 @@ def layout(
     width: int = CANVAS_WIDTH,
     height: int = CANVAS_HEIGHT,
     *,
-    picture: str = "4:3",
+    picture: Picture = "4:3",
     rows: Mapping[str, int] | None = None,
 ) -> LetterboxLayout:
     """The letterbox layout on a ``width`` x ``height`` canvas (1080x1920 for the deliverable).
@@ -323,7 +344,7 @@ def layout(
     def x(value: float) -> int:
         return round(value * width / CANVAS_WIDTH)
 
-    def fitted(shape: str) -> tuple[int, int]:
+    def fitted(shape: Picture) -> tuple[int, int]:
         ratio_w, ratio_h = PICTURE_RATIOS[shape]
         scale = min(width / ratio_w, height / ratio_h)
         return round(ratio_w * scale), round(ratio_h * scale)
@@ -393,6 +414,8 @@ __all__ = [
     "Box",
     "LetterboxLayout",
     "PICTURE_RATIOS",
+    "Picture",
+    "picture_shape",
     "ARIAL_BOLD_ADVANCES",
     "arial_bold_width",
     "caption_colour_code",
