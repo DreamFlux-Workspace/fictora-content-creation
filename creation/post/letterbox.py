@@ -358,11 +358,20 @@ def _block_height(place: LetterboxLayout, size: int, lines: int) -> float:
 def under_server_anchor(
     place: LetterboxLayout, title_bottom: int | None, height: int
 ) -> LetterboxLayout:
-    """The layout with its title box moved down to the server's anchor (``None``: unchanged)."""
+    """The layout with its title box moved down to the server's anchor (``None``: unchanged).
+
+    The mark placement's ``title_bottom`` is measured from the picture shape's own anchor
+    (``place.title_anchor``) when it reaches it (fictora-drama #1860 adds the 16:9 drop), else from
+    the 4:3 anchor (an older server answers 448, or 512 under the mark, for every shape), so a
+    16:9 title drops once and only the under-the-mark step is added.
+    """
 
     if title_bottom is None:
         return place
-    delta = title_bottom - round(SERVER_TITLE_BOTTOM * height / CANVAS_HEIGHT)
+    four_three = round(SERVER_TITLE_BOTTOM * height / CANVAS_HEIGHT)
+    delta = title_bottom - (
+        place.title_anchor if title_bottom >= place.title_anchor else four_three
+    )
     if delta == 0:
         return place
     box = place.title

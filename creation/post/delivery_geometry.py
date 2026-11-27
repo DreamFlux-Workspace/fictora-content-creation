@@ -275,7 +275,8 @@ class LetterboxLayout:
     line's baseline (y 435), its top is under the mark. ``caption`` runs from
     the caption line box's top (its ink top at y 1417) down to the chrome
     floor (y 1536), x 60-950; ``caption_highest_top`` is as high as a two-line
-    caption's box may move.
+    caption's box may move. ``title_anchor`` is the server's title anchor for
+    this picture shape (its ASS ``\\pos`` y: 448 on 1920 at 4:3).
     """
 
     canvas: Box
@@ -287,6 +288,7 @@ class LetterboxLayout:
     title_sizes: tuple[int, ...]
     caption_size: int
     caption_min_size: int
+    title_anchor: int
 
     def title_pitch(self, size: int) -> float:
         """Baseline to baseline of two title lines at ``size`` (63 at 62)."""
@@ -388,7 +390,7 @@ def layout(
     )
     return LetterboxLayout(
         Box(0, 0, width, height), picture_box, title, caption, highest, mark,
-        sizes, caption_size, y(CAPTION_MIN_SIZE),
+        sizes, caption_size, y(CAPTION_MIN_SIZE), y(SERVER_TITLE_BOTTOM) + title_drop,
     )  # fmt: skip
 
 
