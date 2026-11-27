@@ -105,9 +105,6 @@ HOUSE_CANVAS_WIDTH = 1080
 HOUSE_SIDE_MARGIN = 60
 #: Bottom edge of the caption text, as a fraction of frame height (social safe zones).
 CAPTION_BOTTOM_FRACTION = 0.62
-#: What a landscape take's captions say when the server laid out none (only the server lays out a
-#: wide frame).
-WIDE_LAYOUT_REFUSAL = "Sokii's server didn't answer the layout; try again"
 #: The caption block must stay inside this band of the frame height.
 CAPTION_BAND = (0.55, 0.70)
 #: A caption wraps onto at most this many lines (balanced), never more.
@@ -2212,7 +2209,7 @@ def build_ass(
             cues, width=width, height=height, platform=platform, size_scale=size_scale
         )
     if style == "bold":
-        style = "house"  # a letterbox band keeps its own layout
+        style = "house"
     if style not in ("house", "plain"):
         raise ValueError(
             f"caption style {style!r} draws no captions; use bold, subtle (house) or plain"
@@ -2323,12 +2320,12 @@ def portrait_caption_ass(
 
     style = canonical_caption_style(style)
     wide = is_wide(width, height)
-    if wide and size_scale != 1.0:
-        raise ValueError(
-            f"--caption-scale {size_scale:g}: Sokii's server lays out a landscape take's captions "
-            "at the house size only; drop --caption-scale"
-        )
     if size_scale != 1.0:
+        if wide:
+            raise ValueError(
+                f"--caption-scale {size_scale:g}: Sokii's server lays out a landscape take's "
+                "captions at the house size only; drop --caption-scale"
+            )
         note(
             f"--caption-scale {size_scale:g}: the server lays out the house size only, "
             "so the kit laid these captions out itself"
@@ -2343,7 +2340,9 @@ def portrait_caption_ass(
                 print(f"WARNING server caption check: {finding}", file=sys.stderr)
             return text
         if wide:
-            raise ValueError(WIDE_LAYOUT_REFUSAL)
+            from creation.post.letterbox_rows import LAYOUT_REFUSAL, LayoutUnavailable
+
+            raise LayoutUnavailable(LAYOUT_REFUSAL)
     return build_ass(
         cues, width=width, height=height, style=style, size_scale=size_scale
     )

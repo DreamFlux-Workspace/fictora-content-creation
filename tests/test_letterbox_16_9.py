@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import io
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from creation.hook_line import run_hook_line
 from creation.phone_frame_copy import copy_request, run_phone_frame_copy
 from creation.post.delivery_geometry import Box, layout
 from creation.post.finish_record import write_finish_record
+from creation.post.letterbox_rows import LAYOUT_REFUSAL, LayoutUnavailable
 from creation.post.safe_zones import letterbox_picture_of
 
 hook_desk = _hook_line_tests.hook_desk
@@ -126,24 +128,20 @@ def test_every_16_9_place_is_the_servers_when_it_serves_them() -> None:
 
 def test_a_layout_missing_a_place_is_refused() -> None:
     from creation.caption_server import server_override
-    from creation.post.letterbox_rows import LayoutUnavailable, letterbox_layout
+    from creation.post.letterbox_rows import letterbox_layout
 
     partial = {k: v for k, v in SERVED_16_9.items() if k not in ("mark_x", "mark_y")}
     with server_override(lambda path, body: (200, {"layouts": [partial]})):
-        with pytest.raises(
-            LayoutUnavailable, match="didn't answer the layout; try again"
-        ):
+        with pytest.raises(LayoutUnavailable, match=re.escape(LAYOUT_REFUSAL)):
             letterbox_layout(picture="16:9")
 
 
 def test_with_no_server_a_16_9_letterbox_is_refused_and_a_4_3_keeps_the_kits_copy() -> (
     None
 ):
-    from creation.post.letterbox_rows import LayoutUnavailable, letterbox_layout
+    from creation.post.letterbox_rows import letterbox_layout
 
-    with pytest.raises(
-        LayoutUnavailable, match="Sokii's server didn't answer the layout; try again"
-    ):
+    with pytest.raises(LayoutUnavailable, match=re.escape(LAYOUT_REFUSAL)):
         letterbox_layout(picture="16:9")
     assert letterbox_layout(picture="4:3") == layout()
 
@@ -277,7 +275,7 @@ def test_finish_on_a_landscape_show_with_no_server_answer_refuses_its_captions(
 
     captions = next(step for step in result.steps if step.step == "captions")
     assert captions.status == "failed", out.getvalue()
-    assert "Sokii's server didn't answer the layout; try again" in captions.detail
+    assert LAYOUT_REFUSAL in captions.detail
     assert not list((post_desk / "ep01" / "takes").glob("take-ep01-t1-cap-v*"))
 
 
@@ -310,7 +308,7 @@ def test_a_wide_take_with_no_server_answer_is_refused_in_plain_words(
 ) -> None:
     from creation.captions import portrait_caption_ass
 
-    with pytest.raises(ValueError) as refused:
+    with pytest.raises(LayoutUnavailable) as refused:
         portrait_caption_ass(
             [Cue(0.0, 1.0, "Wait.")],
             width=854,
@@ -319,7 +317,7 @@ def test_a_wide_take_with_no_server_answer_is_refused_in_plain_words(
             whole_lines=False,
         )
 
-    assert str(refused.value) == "Sokii's server didn't answer the layout; try again"
+    assert str(refused.value) == LAYOUT_REFUSAL
     assert "laid its captions out" not in capsys.readouterr().err
 
 
@@ -346,14 +344,13 @@ def test_finish_on_a_16_9_letterbox_take_with_no_server_layout_stops_before_maki
     from test_post_finish import _board, fake_sfx
 
     from creation.post.finish import run_finish
-    from creation.post.letterbox_rows import LayoutUnavailable
 
     _letterbox_desk(post_desk)
     takes = post_desk / "ep01" / "takes"
     make_take(takes / "take-ep01-t1-raw-v1.mp4", size="1280x720")
     _board(post_desk)
 
-    with pytest.raises(LayoutUnavailable, match="didn't answer the layout; try again"):
+    with pytest.raises(LayoutUnavailable, match=re.escape(LAYOUT_REFUSAL)):
         run_finish(post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
                    cut_meter=lambda _take: (2.5,), stream=io.StringIO())  # fmt: skip
 

@@ -341,7 +341,7 @@ def layout(
     Raises
     ------
     ValueError
-        For a shape other than 4:3 or 16:9, or a 16:9 picture without ``rows``.
+        For any picture but 4:3 without ``rows``.
     """
 
     def y(value: float) -> int:
@@ -350,13 +350,6 @@ def layout(
     def x(value: float) -> int:
         return round(value * width / CANVAS_WIDTH)
 
-    def fitted(shape: Picture) -> tuple[int, int]:
-        ratio_w, ratio_h = PICTURE_RATIOS[shape]
-        scale = min(width / ratio_w, height / ratio_h)
-        return round(ratio_w * scale), round(ratio_h * scale)
-
-    if picture not in PICTURE_RATIOS:
-        raise ValueError(f"no letterbox layout for a {picture} picture")
     caption_size = y(CAPTION_SIZE)
     if rows is not None:
         anchor_rows = rows["title_bottom"]
@@ -368,13 +361,17 @@ def layout(
         floor, highest = y(rows["caption_bottom_limit"]), y(rows["caption_highest_top"])
     elif picture == "4:3":
         anchor_rows, title_drop = SERVER_TITLE_BOTTOM, 0
-        picture_w, picture_h = fitted(picture)
+        ratio_w, ratio_h = PICTURE_RATIOS["4:3"]
+        scale = min(width / ratio_w, height / ratio_h)
+        picture_w, picture_h = round(ratio_w * scale), round(ratio_h * scale)
         picture_top = (height - picture_h) // 2
         mark = (round(width * MARK_X_FRACTION), picture_top + y(MARK_PICTURE_INSET))
         caption_top = round(y(CAPTION_INK_TOP) - ink_offset(caption_size))
         floor, highest = y(CAPTION_FLOOR), y(CAPTION_HIGHEST_TOP)
     else:
-        raise ValueError(f"a {picture} letterbox is laid out by Sokii's server only")
+        raise ValueError(
+            f"the kit has no letterbox layout for a {picture} picture: Sokii's server lays it out"
+        )
     picture_box = Box((width - picture_w) // 2, picture_top, picture_w, picture_h)
     title_top = y(MARK_Y) + y(MARK_HEIGHT + MARK_TITLE_GAP) + title_drop
     title_w = x(TITLE_WIDTH)

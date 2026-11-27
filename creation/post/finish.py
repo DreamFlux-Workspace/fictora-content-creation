@@ -1883,9 +1883,14 @@ def run_finish(
         if lb.is_letterbox_take(spine, (info.width, info.height)):
             picture = picture_shape(info.width, info.height)
     if picture == "16:9":
-        from creation.post.letterbox_rows import letterbox_layout
+        from creation.post.letterbox_rows import (
+            LAYOUT_REFUSAL,
+            LayoutUnavailable,
+            server_layout,
+        )
 
-        letterbox_layout(picture=picture, desk=desk)
+        if server_layout(picture, desk) is None:
+            raise LayoutUnavailable(LAYOUT_REFUSAL)
     letterbox = picture is not None
     if caption_colour is not None and not letterbox:
         raise ValueError(

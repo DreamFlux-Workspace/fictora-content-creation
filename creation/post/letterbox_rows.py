@@ -25,7 +25,7 @@ from creation.post.delivery_geometry import (
 LETTERBOX_LAYOUTS_ROUTE = "/v1/letterbox/layouts"
 LAYOUT_REFUSAL = "Sokii's server didn't answer the layout; try again"
 #: What the kit reads from each layout: the picture, the title anchor, the mark and the caption rows.
-#: A server that sends fewer (an older #1854) is treated as having none.
+#: A server that sends fewer (an older #1854) is treated as having none: a 16:9 picture is refused.
 LAYOUT_KEYS = (
     "picture_y",
     "picture_height",
@@ -40,12 +40,12 @@ LAYOUT_KEYS = (
 _read: dict[Path, dict[str, dict[str, int]] | None] = {}
 
 
-class LayoutUnavailable(RuntimeError):
-    """The server laid out no letterbox for a picture shape only it lays out (16:9)."""
+class LayoutUnavailable(ValueError):
+    """The server laid out nothing for a frame only it lays out (a 16:9 letterbox, a landscape take)."""
 
 
 def server_layout(picture: Picture, desk: Path | None) -> dict[str, int] | None:
-    """The server's layout for one picture shape, or ``None`` (no desk, older server, no connection).
+    """The server's layout for one picture shape, or ``None`` (no desk, older server, no connection: 4:3 then uses the kit's copy, 16:9 is refused).
 
     Parameters
     ----------
@@ -105,7 +105,7 @@ def letterbox_layout(
     """
 
     rows = server_layout(picture, desk)
-    if rows is None and picture != "4:3":
+    if rows is None and picture == "16:9":
         raise LayoutUnavailable(LAYOUT_REFUSAL)
     return layout(width, height, picture=picture, rows=rows)
 
@@ -143,7 +143,7 @@ def _layouts(answer: Any) -> dict[str, dict[str, int]] | None:
 
 def _fallback(why: str) -> None:
     print(
-        f"NOTE: {why}; a 4:3 letterbox uses the kit's copy of the server's layout",
+        f"NOTE: {why}; a 4:3 letterbox uses the kit's copy of the server's layout, a 16:9 one stops",
         file=sys.stderr,
     )
     return None
