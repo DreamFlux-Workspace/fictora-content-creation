@@ -1,6 +1,6 @@
 """A landscape episode's phone-frame copy: the 16:9 film in the 9:16 frame, with a title and captions.
 
-A landscape show (founder, 27 Nov 2026) is delivered 16:9 with nothing on the picture. When the
+A landscape show (founder, 27 Nov 2026) is delivered 16:9 with no title on the picture. When the
 creator wants a phone-frame copy, the server makes it from the finished episode (nothing is
 filmed again). The kit sends the creator's title and caption choices as given and prints the
 server's answer; which shows may have one, and what an unset choice means, is the server's call.

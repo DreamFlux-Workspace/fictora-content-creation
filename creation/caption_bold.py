@@ -46,7 +46,6 @@ from creation.captions import (
     _NEVER_END_ON,
     _PHRASE_END,
     FONT_NAME,
-    HOUSE_CANVAS_HEIGHT,
     ITALIC_BOLD_FLAG,
     ITALIC_FONT_NAME,
     LAST_WORD_HOLD_SECONDS,
@@ -58,6 +57,8 @@ from creation.captions import (
     Cue,
     _ass_escape,
     _ass_time,
+    bottom_margin,
+    canvas_scale,
     cjk_font_name,
     has_cjk,
     italic_size,
@@ -108,16 +109,16 @@ EMPHASIS_SKIP = frozenset(
 _DASH_ONLY = re.compile(r"^[\-‒–—―⸺⸻]+$")
 
 
-def bold_font_size(height: int) -> int:
+def bold_font_size(height: int, width: int | None = None) -> int:
     """ASS ``Fontsize`` of a Bold caption on a frame ``height`` px high (92 on 1920, 64 on 1344)."""
 
-    return max(8, round(BOLD_FONT_SIZE * height / HOUSE_CANVAS_HEIGHT))
+    return max(8, round(BOLD_FONT_SIZE * canvas_scale(height, width)))
 
 
-def bold_margin_v(height: int) -> int:
+def bold_margin_v(height: int, width: int | None = None) -> int:
     """Bottom margin that puts the chunk's bottom edge at 76% of the frame height."""
 
-    return round(height * (1.0 - BOLD_BOTTOM_FRACTION))
+    return bottom_margin(height, width, BOLD_BOTTOM_FRACTION)
 
 
 def word_key(word: str) -> str:
@@ -540,12 +541,14 @@ def bold_from_flicker(cues: Sequence[Cue]) -> list[Cue]:
     return out
 
 
-def _event_text(cue: Cue, size: int, width: int, *, platform: str | None) -> str:
+def _event_text(
+    cue: Cue, size: int, width: int, *, platform: str | None, margin_x: int
+) -> str:
     """One Bold cue's ASS text: the whole chunk laid out, unsaid words transparent, one word yellow."""
 
     words = (cue.chunk or cue.text).split()
     shown = cue.shown or len(words)
-    room = width - 2 * side_margin(width)
+    room = width - 2 * margin_x
     chunk = " ".join(words)
     tags = ""
     if len(words) <= BOLD_MAX_WORDS:
@@ -553,7 +556,7 @@ def _event_text(cue: Cue, size: int, width: int, *, platform: str | None) -> str
         drawn = text_width(chunk, size)
         fit = size if drawn <= room else max(8, int(size * room / drawn))
     else:
-        lines, fit = wrap_caption(chunk, size, width)
+        lines, fit = wrap_caption(chunk, size, width, room=room)
         rows, at = [], 0
         for row in lines:
             count = len(row.split())
@@ -602,13 +605,13 @@ def build_bold_ass(
 
     if any(not (c.chunk and c.shown) for c in cues):
         cues = bold_from_flicker(cues)
-    scale = height / HOUSE_CANVAS_HEIGHT * size_scale
-    size = max(8, round(bold_font_size(height) * size_scale))
-    margin_x = side_margin(width)
+    scale = canvas_scale(height, width) * size_scale
+    size = max(8, round(bold_font_size(height, width) * size_scale))
+    margin_x = side_margin(width, height)
     outline = max(1, round(BOLD_OUTLINE * scale))
     shadow = max(1, round(BOLD_SHADOW * scale))
     tail = f"{OUTLINE_COLOUR},{BOLD_SHADOW_COLOUR}"
-    place = f"100,100,0,0,1,{outline},{shadow},2,{margin_x},{margin_x},{bold_margin_v(height)},1"
+    place = f"100,100,0,0,1,{outline},{shadow},2,{margin_x},{margin_x},{bold_margin_v(height, width)},1"
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -629,7 +632,7 @@ def build_bold_ass(
     )
     events = "".join(
         f"Dialogue: 0,{_ass_time(c.start)},{_ass_time(c.end)},{'Italic' if c.italic else 'Bold'},,0,0,0,,"
-        + _event_text(c, size, width, platform=platform)
+        + _event_text(c, size, width, platform=platform, margin_x=margin_x)
         + "\n"
         for c in cues
     )

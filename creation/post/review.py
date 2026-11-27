@@ -1454,16 +1454,24 @@ def safe_zones_section(take: Path) -> Section:
     sampled for the zone sheet and its JSON beside the take. No caption is found by colour.
     """
 
-    from creation.captions import CAPTION_BAND
+    from creation.captions import CAPTION_BAND, WIDE_CAPTION_BAND, is_wide
     from creation.post.safe_zones import run_review
 
     report = run_review(None, take_file=take, out=StringIO())
-    low, high = CAPTION_BAND
-    threshold = (
-        f"caption box clear of the top 8%, bottom 20% and right rail, inside {low:.0%}-{high:.0%} of the height, "
-        "for every cue of the burned caption file (the server's check); faces by eye on the "
-        "zone sheet (no face detector)"
-    )
+    info = probe_video(take)
+    if is_wide(info.width, info.height):
+        low, high = WIDE_CAPTION_BAND
+        threshold = (
+            f"caption box inside {low:.0%}-{high:.0%} of the height of the wide frame, for every cue "
+            "of the burned caption file (the kit's reading); faces by eye on the zone sheet"
+        )
+    else:
+        low, high = CAPTION_BAND
+        threshold = (
+            f"caption box clear of the top 8%, bottom 20% and right rail, inside {low:.0%}-{high:.0%} of the height, "
+            "for every cue of the burned caption file (the server's check); faces by eye on the "
+            "zone sheet (no face detector)"
+        )
     found = [
         w
         for w in report.warnings

@@ -35,8 +35,8 @@ def add_production_config_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         choices=("portrait", "letterbox", "landscape"),
         help="Set on the draft: letterbox films a 16:9 picture shown in the 9:16 frame with a title band "
-        "above and captions below; landscape films 16:9 and delivers it 16:9, with no title and no "
-        "captions (a letterboxed copy can be made later). Default: portrait.",
+        "above and captions below; landscape films 16:9 and delivers it 16:9, with no title and its "
+        "captions along the bottom (a letterboxed copy can be made later). Default: portrait.",
     )
     parser.add_argument(
         "--opening-action",

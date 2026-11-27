@@ -47,7 +47,7 @@ from PIL import Image, ImageDraw
 
 from creation.post.delivery_geometry import Picture
 
-from creation.captions import CAPTION_BAND, text_width
+from creation.captions import CAPTION_BAND, WIDE_CAPTION_BAND, is_wide, text_width
 from creation.ops.folder import next_versioned_path
 from creation.post.media import ffmpeg_bin, probe_video
 
@@ -476,17 +476,23 @@ def check_safe_zones(
         low = place.caption_highest_top / info.height
         high = place.caption.bottom / info.height
         band_name = "the letterbox band under the picture"
+    elif is_wide(info.width, info.height):
+        low, high = WIDE_CAPTION_BAND
+        band_name = "the caption band at the bottom of the wide frame"
     cues: list[LayoutCue] = []
     checked_by: str | None = None
     warnings: list[str] = []
     answer: dict[str, Any] | None = None
+    # The server checks 9:16 frames only; the kit reads a landscape take's file itself.
+    wide = picture is None and is_wide(info.width, info.height)
     if layout is not None:
-        answer = server_safe_area_check(
-            layout.read_text(encoding="utf-8"),
-            letterbox=is_letterbox,
-            desk=desk or _desk_of(video),
-            episode=episode_number(video.name) or 1,
-        )
+        if not wide:
+            answer = server_safe_area_check(
+                layout.read_text(encoding="utf-8"),
+                letterbox=is_letterbox,
+                desk=desk or _desk_of(video),
+                episode=episode_number(video.name) or 1,
+            )
         if answer is not None:
             checked_by, cues = "server", _server_cues(answer)
             by_kind: dict[tuple[str, str | None], list[tuple[float, float, str]]] = {}
@@ -508,7 +514,7 @@ def check_safe_zones(
         else:
             checked_by = "kit"
             cues = caption_layout(layout, width=info.width, height=info.height)
-            for name in ZONES:
+            for name in () if wide else ZONES:
                 hits = [(c.start, c.end, c.text) for c in cues if name in c.zones]
                 if hits:
                     warnings.append(
@@ -544,7 +550,7 @@ def check_safe_zones(
             FrameCheck(
                 seconds,
                 box,
-                zones_entered(box) if box else [],
+                zones_entered(box) if box and not wide else [],
                 outside,
                 "layout" if checked_by == "kit" else "server",
             )

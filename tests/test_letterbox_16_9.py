@@ -12,7 +12,8 @@ from conftest import make_take, needs_ffmpeg
 from tests import test_hook_line_command as _hook_line_tests
 from tests.test_letterbox_title_card_kit import CardApi
 
-from creation.captions import resolve_caption_style
+from creation.caption_bold import build_bold_ass
+from creation.captions import Cue, build_ass
 from creation.hook_line import run_hook_line
 from creation.phone_frame_copy import copy_request, run_phone_frame_copy
 from creation.post.delivery_geometry import Box, layout
@@ -218,35 +219,37 @@ def test_a_refusal_or_an_older_server_makes_nothing(
     assert code == 2 and says in out.getvalue()
 
 
-@pytest.mark.parametrize(
-    "spine",
-    [
-        {"delivery_format": "landscape"},
-        {"delivery_format": "landscape", "captions_enabled": False},
-        {"delivery": {"delivery_format": "landscape"}, "caption_style_choice": "none"},
-    ],
-)
-def test_a_show_the_server_keeps_caption_free_burns_none(
-    tmp_path: Path, spine: dict
-) -> None:
-    assert resolve_caption_style(tmp_path, spine=spine) == ("none", "")
-    style, note = resolve_caption_style(tmp_path, "bold", spine=spine)
-    assert style == "none" and "phone-frame copy" in note
+def _style(ass: str, name: str) -> list[str]:
+    line = next(row for row in ass.splitlines() if row.startswith(f"Style: {name},"))
+    return line.split(",")
 
 
-def test_a_landscape_desk_without_a_spine_burns_none(tmp_path: Path) -> None:
-    from creation.production_config import ProductionConfig, save_production_config
+def test_a_wide_frame_is_captioned_on_the_side_turned_canvas() -> None:
+    long_line = (
+        "I paid every bill in this house for three years and you never once asked"
+    )
 
-    save_production_config(tmp_path, ProductionConfig(delivery_format="landscape"))
-    assert resolve_caption_style(tmp_path) == ("none", "")
-    portrait = {"delivery_format": "portrait"}
-    assert resolve_caption_style(tmp_path, spine=portrait)[0] != "none"
-    save_production_config(tmp_path, ProductionConfig(delivery_format="letterbox"))
-    assert resolve_caption_style(tmp_path)[0] != "none"
+    house = build_ass([Cue(0.0, 2.0, long_line)], width=854, height=480)
+    bold = build_bold_ass([Cue(0.0, 2.0, "Never once.")], width=854, height=480)
+
+    size, margin_l, margin_r, margin_v = (
+        _style(house, "House")[i] for i in (2, 19, 20, 21)
+    )
+    assert (size, margin_l, margin_r, margin_v) == ("28", "128", "128", "48")
+    assert (_style(bold, "Bold")[2], _style(bold, "Bold")[21]) == ("41", "48")
+    assert "\\N" in house.splitlines()[-1]
+
+
+def test_a_tall_frame_keeps_the_portrait_canvas() -> None:
+    house = build_ass([Cue(0.0, 1.0, "Wait.")], width=1080, height=1920)
+
+    assert [_style(house, "House")[i] for i in (2, 19, 21)] == ["64", "60", "730"]
 
 
 @needs_ffmpeg
-def test_finish_on_a_landscape_show_burns_no_captions(post_desk: Path) -> None:
+def test_finish_on_a_landscape_show_burns_captions_on_the_wide_picture(
+    post_desk: Path,
+) -> None:
     from test_post_finish import FACTS, _board, fake_sfx
 
     from creation.post.finish import run_finish
@@ -256,7 +259,11 @@ def test_finish_on_a_landscape_show_burns_no_captions(post_desk: Path) -> None:
     spine["delivery_format"] = "landscape"
     (api / "03_spine.json").write_text(json.dumps(spine), encoding="utf-8")
     (api / "take-facts-ep01-t1-v1.json").write_text(json.dumps(FACTS))
-    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4")
+    make_take(
+        post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4",
+        tones=((1.0, 2.0, 440), (3.2, 4.0, 880)),
+        size="854x480",
+    )
     _board(post_desk)
     out = io.StringIO()
 
@@ -264,18 +271,31 @@ def test_finish_on_a_landscape_show_burns_no_captions(post_desk: Path) -> None:
                         cut_meter=lambda _take: (2.5,), stream=out)  # fmt: skip
 
     captions = next(step for step in result.steps if step.step == "captions")
-    assert captions.status == "skipped", out.getvalue()
-    assert not list((post_desk / "ep01" / "takes").glob("take-ep01-t1-cap-v*"))
+    assert captions.status == "ran", out.getvalue()
+    ass = next(iter((post_desk / "ep01" / "takes").glob("take-ep01-t1-cap-v*.ass")))
+    text = ass.read_text(encoding="utf-8")
+    assert "PlayResX: 854\nPlayResY: 480" in text
+    assert ",128,128,48," in text, text
 
 
-@pytest.mark.parametrize("shape", ["portrait", "letterbox"])
-def test_captions_off_on_a_non_landscape_spine_keeps_the_flag(
-    tmp_path: Path, shape: str
-) -> None:
-    spine = {
-        "delivery_format": shape,
-        "captions_enabled": False,
-        "caption_style_choice": "none",
-    }
+def test_a_wide_take_is_laid_out_by_the_kit_not_the_9_16_server() -> None:
+    from creation.caption_server import server_override
+    from creation.captions import portrait_caption_ass
 
-    assert resolve_caption_style(tmp_path, "bold", spine=spine) == ("bold", "")
+    sent: list[str] = []
+
+    def server(path: str, body: dict) -> tuple[int, object]:
+        sent.append(path)
+        return 200, {"ass": "SERVER", "cues": [], "findings": []}
+
+    cues = [Cue(0.0, 1.0, "Wait.")]
+    with server_override(server):
+        wide = portrait_caption_ass(
+            cues, width=854, height=480, style="subtle", whole_lines=False
+        )
+        tall = portrait_caption_ass(
+            cues, width=192, height=336, style="subtle", whole_lines=False
+        )
+
+    assert wide == build_ass(cues, width=854, height=480, style="subtle")
+    assert tall == "SERVER" and len(sent) == 1

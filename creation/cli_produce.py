@@ -880,12 +880,8 @@ def _run_command(args: argparse.Namespace) -> int:
                 return 2
             from creation.post.episode_caption import run_caption
 
-            from creation.post.desk import saved_spine
-
-            caption_desk = args.desk.expanduser().resolve()
-            found = saved_spine(caption_desk, args.episode)
             style, style_note = resolve_caption_style(
-                caption_desk, args.caption_style, spine=found[0] if found else None
+                args.desk.expanduser().resolve(), args.caption_style
             )
             if style_note:
                 print(f"note: {style_note}")

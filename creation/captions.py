@@ -105,6 +105,12 @@ HOUSE_CANVAS_WIDTH = 1080
 HOUSE_SIDE_MARGIN = 60
 #: Bottom edge of the caption text, as a fraction of frame height (social safe zones).
 CAPTION_BOTTOM_FRACTION = 0.62
+#: A landscape show's wide frame is captioned on the house canvas turned on its side (1920x1080).
+WIDE_CANVAS_HEIGHT = 1080
+WIDE_SIDE_MARGIN_FRACTION = 0.15
+WIDE_CAPTION_BOTTOM_FRACTION = 0.90
+#: Where a wide frame's caption block must stay (two lines above that bottom edge).
+WIDE_CAPTION_BAND = (0.70, 0.92)
 #: The caption block must stay inside this band of the frame height.
 CAPTION_BAND = (0.55, 0.70)
 #: A caption wraps onto at most this many lines (balanced), never more.
@@ -240,30 +246,8 @@ def show_caption_style(desk: Path) -> tuple[str, str]:
     return NEW_SHOW_CAPTION_STYLE, "new"
 
 
-def show_captions_off(desk: Path, spine: Mapping[str, Any] | None = None) -> bool:
-    """Whether this is a landscape show, which the server delivers with nothing on the picture.
-
-    The spine's ``delivery_format`` decides when it names one; otherwise the desk's
-    ``production.config.json`` does.
-    """
-
-    from creation.post.hook_overlay import delivery_format
-    from creation.production_config import load_production_config
-
-    if isinstance(spine, Mapping):
-        shown = delivery_format(spine)
-        if shown != "portrait" or spine.get("delivery_format"):
-            return shown == "landscape"
-    configured = load_production_config(desk).delivery_format or ""
-    return configured.strip().casefold() == "landscape"
-
-
-def resolve_caption_style(
-    desk: Path, given: str | None = None, *, spine: Mapping[str, Any] | None = None
-) -> tuple[str, str]:
-    """The caption style to burn: ``none`` on a show the server keeps caption-free
-    (:func:`show_captions_off`), else ``given`` (the command's flag), else the show's
-    (:func:`show_caption_style`).
+def resolve_caption_style(desk: Path, given: str | None = None) -> tuple[str, str]:
+    """The caption style to burn: ``given`` (the command's flag), else the show's (:func:`show_caption_style`).
 
     Parameters
     ----------
@@ -271,8 +255,6 @@ def resolve_caption_style(
         Series desk (its ``production.config.json`` ``caption_style``).
     given
         ``--caption-style`` on ``finish`` / ``caption`` / ``reel``; ``None`` reads the desk.
-    spine
-        The show's spine, when loaded.
 
     Returns
     -------
@@ -280,8 +262,7 @@ def resolve_caption_style(
         The builders' style (``bold``, ``house`` for ``subtle``, ``plain`` or
         ``none``), and ``""`` or a note when the desk's value is not a local
         style (a server recipe set for ``--api-captions``, such as
-        ``viral_karaoke``): those desks are captioned as a show with no choice is. On a
-        caption-free show the note says a given style was skipped.
+        ``viral_karaoke``): those desks are captioned as a show with no choice is.
 
     Raises
     ------
@@ -289,18 +270,11 @@ def resolve_caption_style(
         When ``given`` is not one of :data:`CAPTION_STYLES`.
     """
 
-    if given is not None and given not in CAPTION_STYLES:
-        raise ValueError(
-            f"--caption-style {given!r}: choose one of {', '.join(CAPTION_STYLES)}"
-        )
-    if show_captions_off(desk, spine):
-        if given in (None, "none"):
-            return "none", ""
-        return "none", (
-            f"--caption-style {given} skipped: this show plays with nothing on the picture; "
-            "ask for a phone-frame copy to get captions"
-        )
     if given is not None:
+        if given not in CAPTION_STYLES:
+            raise ValueError(
+                f"--caption-style {given!r}: choose one of {', '.join(CAPTION_STYLES)}"
+            )
         return canonical_caption_style(given), ""
     configured, source = show_caption_style(desk)
     if configured in CAPTION_STYLES:
@@ -335,15 +309,31 @@ def check_caption_scale(scale: float) -> float:
     return scale
 
 
-def house_font_size(height: int) -> int:
-    """ASS ``Fontsize`` of the house caption on a frame ``height`` px high (64 on 1920, 45 on 1344)."""
+def is_wide(width: int | None, height: int | None) -> bool:
+    """Whether the frame is wider than tall (a landscape show's take)."""
 
-    return max(8, round(HOUSE_FONT_SIZE * height / HOUSE_CANVAS_HEIGHT))
+    return width is not None and height is not None and width > height
 
 
-def side_margin(width: int) -> int:
+def canvas_scale(height: int, width: int | None = None) -> float:
+    """The frame against the house canvas: by height, on the side-turned canvas when ``width`` is wide."""
+
+    return height / (
+        WIDE_CANVAS_HEIGHT if is_wide(width, height) else HOUSE_CANVAS_HEIGHT
+    )
+
+
+def house_font_size(height: int, width: int | None = None) -> int:
+    """ASS ``Fontsize`` of the house caption on a frame ``height`` px high (64 on 1920, 45 on 1344, 28 on 854x480)."""
+
+    return max(8, round(HOUSE_FONT_SIZE * canvas_scale(height, width)))
+
+
+def side_margin(width: int, height: int | None = None) -> int:
     """Left and right ASS margin on a frame ``width`` px wide (60 on 1080)."""
 
+    if is_wide(width, height):
+        return round(width * WIDE_SIDE_MARGIN_FRACTION)
     return max(1, round(HOUSE_SIDE_MARGIN * width / HOUSE_CANVAS_WIDTH))
 
 
@@ -1923,10 +1913,18 @@ def _ass_escape(text: str) -> str:
     )
 
 
-def caption_margin_v(height: int) -> int:
+def bottom_margin(height: int, width: int | None, fraction: float) -> int:
+    """Bottom margin that puts a caption's bottom edge at ``fraction`` of a tall frame's height."""
+
+    if is_wide(width, height):
+        fraction = WIDE_CAPTION_BOTTOM_FRACTION
+    return round(height * (1.0 - fraction))
+
+
+def caption_margin_v(height: int, width: int | None = None) -> int:
     """Bottom margin that puts the caption's bottom edge at 62% of the frame height."""
 
-    return round(height * (1.0 - CAPTION_BOTTOM_FRACTION))
+    return bottom_margin(height, width, CAPTION_BOTTOM_FRACTION)
 
 
 #: Kana, CJK ideographs and Hangul (and their punctuation): Arial has none of these glyphs.
@@ -2241,10 +2239,10 @@ def build_ass(
         replace(c, text=text)
         for c, text in zip(cues, drawn_texts([c.text for c in cues]), strict=True)
     ]
-    scale = height / HOUSE_CANVAS_HEIGHT * size_scale
-    size = max(8, round(house_font_size(height) * size_scale))
-    margin_v = caption_margin_v(height)
-    margin_x = side_margin(width)
+    scale = canvas_scale(height, width) * size_scale
+    size = max(8, round(house_font_size(height, width) * size_scale))
+    margin_v = caption_margin_v(height, width)
+    margin_x = side_margin(width, height)
     margin_l, margin_r = margin_x, margin_x
     if band is not None:
         if size_scale != 1.0:
@@ -2283,7 +2281,9 @@ def build_ass(
         + (
             _letterbox_caption_text(c, band, width, platform=platform)
             if band is not None
-            else _caption_text(c, size, width, platform=platform)
+            else _caption_text(
+                c, size, width, platform=platform, room=width - 2 * margin_x
+            )
         )
         + "\n"
         for c in cues
@@ -2339,6 +2339,12 @@ def portrait_caption_ass(
         note(
             f"--caption-scale {size_scale:g}: the server lays out the house size only, "
             "so the kit laid these captions out itself"
+        )
+    elif is_wide(width, height):
+        # The server's layout route places captions for a 9:16 frame only (27 Nov 2026).
+        note(
+            f"a {width}x{height} landscape take: the server lays out 9:16 frames only, "
+            "so the kit laid these captions out for the wide frame itself"
         )
     else:
         text, findings = server_caption_ass(
