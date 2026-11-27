@@ -208,6 +208,22 @@ def test_a_real_four_three_take_defers_to_the_servers_letterbox() -> None:
     assert decision.overlay is None and "4:3" in (decision.skipped or "")
 
 
+def test_a_16_9_take_on_a_letterbox_show_gets_its_title_in_the_band() -> None:
+    decision = decide(_spine(ON, delivery_format="letterbox"), 1, size=(854, 480))
+    assert decision.overlay is None and "16:9" in (decision.skipped or "")
+
+
+def test_a_landscape_show_reads_as_landscape() -> None:
+    assert delivery_format(_spine(ON, delivery_format="landscape")) == "landscape"
+
+
+def test_only_4_3_and_16_9_pictures_are_letterbox_takes() -> None:
+    assert [
+        hk.letterbox_picture(*size)
+        for size in ((1440, 1080), (854, 480), (1280, 720), (1080, 1920), (1000, 1000))
+    ] == ["4:3", "16:9", "16:9", None, None]
+
+
 # --- end to end: the finish step ---------------------------------------
 
 

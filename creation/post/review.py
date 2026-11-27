@@ -1859,16 +1859,17 @@ def picture_crop(
     A file is letterbox when its finish record (or a joined episode's takes'
     records) or its reel plan says so (:func:`creation.post.safe_zones.letterbox_file`):
     nothing is measured to decide, so a portrait take reads exactly as before.
-    The picture is the 4:3 take on the canvas, y 555-1365 on 1080x1920
+    The picture is the 4:3 or 16:9 take on the canvas (y 555-1365 or 555-1163 on 1080x1920)
     (:mod:`creation.post.delivery_geometry`).
     """
 
     from creation.post.delivery_geometry import layout
     from creation.post.safe_zones import letterbox_file
 
-    if not letterbox_file(take, desk=desk):
+    picture = letterbox_file(take, desk=desk)
+    if picture is None:
         return None
-    pic = layout(width, height).picture
+    pic = layout(width, height, picture=picture).picture
     return (pic.x, pic.y, pic.width, pic.height)
 
 

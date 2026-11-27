@@ -1,8 +1,9 @@
-"""A letterbox show's 9:16 deliverable: the 4:3 picture on black, the title block, the mark, band captions.
+"""A letterbox show's 9:16 deliverable: the 4:3 or 16:9 picture on black, the title block, the mark, band captions.
 
 Founder decisions of 6 Oct 2026 (compared with the "Not Home" reference
 episode and the hand-built "Three Payments Late" file). Only a show whose
-``delivery_format`` is ``letterbox`` AND whose take is really 4:3 goes through
+``delivery_format`` is ``letterbox`` AND whose take is really 4:3 or 16:9 (new
+shows since 27 Nov 2026) goes through
 this module; a portrait show, and a letterbox show filmed portrait (the
 title-bar path in :mod:`creation.post.hook_overlay`), are untouched
 (``tests/test_letterbox_portrait_unchanged.py``).
@@ -11,9 +12,9 @@ What ``finish`` and ``join`` make for such a show (positions in
 :mod:`creation.post.delivery_geometry`: the "Not Home" reference, user decision
 2026-10-06; fictora-drama's letterbox delivery uses the same numbers):
 
-* **Canvas.** 1080x1920, pure black; the 4:3 picture scaled to 1080x810 and
-  centred (y 555-1365). ``finish`` puts the picture on the canvas right after
-  the mix (:func:`pad_to_canvas`); the 4:3 takes before it stay on the desk.
+* **Canvas.** 1080x1920, pure black; a 4:3 picture scaled to 1080x810 at
+  y 555-1365, a 16:9 one to 1080x608 at y 555-1163 (captions 202 px higher). ``finish`` puts the picture on the canvas right after
+  the mix (:func:`pad_to_canvas`); the takes before it stay on the desk.
 * **Captions** in the band under the picture, burned on the canvas by the
   captions step (``caption_take(layout="letterbox")``): Arial Bold (ASS 62),
   ink top y 1417, centred on the frame unless its right edge would cross x 950
@@ -64,7 +65,7 @@ from creation.post.delivery_geometry import (
     LetterboxLayout,
     layout,
 )
-from creation.post.hook_overlay import delivery_format, is_four_three
+from creation.post.hook_overlay import delivery_format, letterbox_picture
 from creation.post.media import probe_video, run_ffmpeg
 from creation.post.watermark import MARK, MARK_ALPHA, MARK_WIDTH_FRACTION
 
@@ -92,9 +93,11 @@ _NOT_DRAWN = re.compile(
 
 
 def is_letterbox_take(spine: Mapping[str, Any] | None, size: tuple[int, int]) -> bool:
-    """True for a letterbox show's real 4:3 take (the only case this module builds for)."""
+    """True for a letterbox show's real 4:3 or 16:9 take (the only cases this module builds for)."""
 
-    return delivery_format(spine) == "letterbox" and is_four_three(*size)
+    return (
+        delivery_format(spine) == "letterbox" and letterbox_picture(*size) is not None
+    )
 
 
 # --- caption colour ---------------------------------------------------------------------------------
@@ -484,7 +487,7 @@ def _esc(path: Path) -> str:
 
 
 def pad_to_canvas(take: Path, out: Path) -> Path:
-    """Put a 4:3 take on the 1080x1920 black canvas: scaled to 1080x810, centred (sound copied).
+    """Put a 4:3 or 16:9 take on the 1080x1920 black canvas at its letterbox place (sound copied).
 
     Raises
     ------
@@ -494,9 +497,8 @@ def pad_to_canvas(take: Path, out: Path) -> Path:
 
     if out.exists():
         raise FileExistsError(f"{out} exists; local post never overwrites")
-    place = layout()
-    pic = place.picture
     info = probe_video(take)
+    pic = layout(picture=letterbox_picture(info.width, info.height) or "4:3").picture
     args = ["-i", str(take), "-vf",
             f"scale={pic.width}:{pic.height}:flags=lanczos,setsar=1,"
             f"pad={CANVAS_WIDTH}:{CANVAS_HEIGHT}:{pic.x}:{pic.y}:color={CANVAS_COLOUR}",

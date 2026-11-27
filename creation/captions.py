@@ -2045,16 +2045,18 @@ class LetterboxBand:
     step: int = 2
 
 
-def letterbox_band(width: int, height: int) -> LetterboxBand:
-    """The caption band under the picture on a ``width`` x ``height`` letterbox canvas.
+def letterbox_band(
+    width: int, height: int, *, picture: str = "4:3", desk: Path | None = None
+) -> LetterboxBand:
+    """The caption band under the ``picture`` (4:3 or 16:9) on a ``width`` x ``height`` letterbox canvas.
 
     The one place ``finish`` (:func:`caption_take`) and ``reel`` read it from
     (:mod:`creation.post.delivery_geometry`).
     """
 
-    from creation.post.delivery_geometry import layout as letterbox_layout
+    from creation.post.letterbox_rows import letterbox_layout
 
-    place = letterbox_layout(width, height)
+    place = letterbox_layout(width, height, picture=picture, desk=desk)
     return LetterboxBand(
         place.caption.x, place.caption.right, place.caption.y,
         place.caption_highest_top, place.caption.bottom,
@@ -3079,6 +3081,7 @@ def caption_take(
     laid_lines: Sequence[tuple[CaptionLine, Span]] = (),
     layout: str = "portrait",
     caption_colour: str | None = None,
+    picture: str = "4:3",
     italic_overrides: Mapping[str, bool] | None = None,
     line_spans_after_words: bool = False,
     voice_floors: Mapping[str, float] | None = None,
@@ -3158,6 +3161,8 @@ def caption_take(
         phrase chunking (:func:`phrase_cues`).
     caption_colour
         Letterbox only: ``yellow`` (default) or ``white``.
+    picture
+        Letterbox only: the take's shape, ``4:3`` or ``16:9`` (its caption band sits under it).
     italic_overrides
         ``line_id`` to italic or not, decided by the caller from what the take
         draws (a stale ``off_screen`` flag on a speaker the take shows). Lines
@@ -3356,7 +3361,7 @@ def caption_take(
 
         text = build_ass(
             cues, width=width, height=height, style=style,
-            band=letterbox_band(width, height), size_scale=caption_scale,
+            band=letterbox_band(width, height, picture=picture, desk=desk), size_scale=caption_scale,
             colour=caption_colour_code(caption_colour)
             if caption_colour or style != "plain"
             else None,

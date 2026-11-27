@@ -337,11 +337,13 @@ def zone_sheet(
     return out
 
 
-def letterbox_file(video: Path, *, desk: Path | None = None) -> bool:
-    """True when ``video`` is a letterbox show's 9:16 file: a finish record names it (or, for a joined
-    episode, its takes' records) as ``letterbox``, or it is a reel whose plan says ``letterbox``.
+def letterbox_file(video: Path, *, desk: Path | None = None) -> str | None:
+    """The picture shape (``4:3`` or ``16:9``) when ``video`` is a letterbox show's 9:16 file, else ``None``.
 
-    ``desk`` is the series desk (default: the nearest folder above ``video`` with a ``series.json``).
+    A finish record names it (or, for a joined episode, its takes' records) as ``letterbox``, or it is a
+    reel whose plan says ``letterbox``. A record or plan from before 16:9 pictures (27 Nov 2026) names
+    no shape: its picture is 4:3. ``desk`` is the series desk (default: the nearest folder above
+    ``video`` with a ``series.json``).
     """
 
     from creation.post.finish_record import latest_finish_record, record_for_file
@@ -351,29 +353,32 @@ def letterbox_file(video: Path, *, desk: Path | None = None) -> bool:
     if reel:
         plan = resolved.with_name(f"reel-plan-{reel.group(1)}.json")
         if not plan.is_file():
-            return False
+            return None
         try:
             body = json.loads(plan.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return False
-        return isinstance(body, dict) and body.get("letterbox") is True
+            return None
+        if not isinstance(body, dict) or body.get("letterbox") is not True:
+            return None
+        return str(body.get("picture_aspect") or "4:3")
     if desk is None:
         desk = next(
             (p for p in resolved.parents if (p / "series.json").is_file()), None
         )
     if desk is None:
-        return False
+        return None
     record = record_for_file(desk, resolved)
-    if record is not None:
-        return record.letterbox
-    from creation.post.episode_name import episode_number
+    if record is None:
+        from creation.post.episode_name import episode_number
 
-    joined = re.match(r"episode-ep(\d+)-join", resolved.name)
-    episode = int(joined.group(1)) if joined else episode_number(resolved.name)
-    if episode is not None:
-        first = latest_finish_record(desk, episode, "t1")
-        return bool(first and first.letterbox)
-    return False
+        joined = re.match(r"episode-ep(\d+)-join", resolved.name)
+        episode = int(joined.group(1)) if joined else episode_number(resolved.name)
+        record = (
+            latest_finish_record(desk, episode, "t1") if episode is not None else None
+        )
+    if record is None or not record.letterbox:
+        return None
+    return record.picture_aspect or "4:3"
 
 
 def _desk_of(video: Path) -> Path | None:
@@ -440,7 +445,7 @@ def check_safe_zones(
     layout
         The burned caption file (:func:`burned_caption_file` finds it by default).
     letterbox
-        A letterbox show's 9:16 file (default: :func:`letterbox_file`).
+        A letterbox show's 9:16 file (default: :func:`letterbox_file`, which also gives its picture shape).
     desk
         The series desk whose API session asks the server (default: the
         nearest folder above ``video`` with a ``series.json``).
@@ -456,13 +461,18 @@ def check_safe_zones(
 
     info = probe_video(video)
     layout = layout or burned_caption_file(video)
-    is_letterbox = letterbox if letterbox is not None else letterbox_file(video)
+    picture = letterbox_file(video)
+    if letterbox is not None:
+        picture = (picture or "4:3") if letterbox else None
+    is_letterbox = picture is not None
     low, high = CAPTION_BAND
     band_name = "the caption band"
-    if is_letterbox:
-        from creation.post.delivery_geometry import layout as letterbox_layout
+    if picture is not None:
+        from creation.post.letterbox_rows import letterbox_layout
 
-        place = letterbox_layout(info.width, info.height)
+        place = letterbox_layout(
+            info.width, info.height, picture=picture, desk=desk or _desk_of(video)
+        )
         low = place.caption_highest_top / info.height
         high = place.caption.bottom / info.height
         band_name = "the letterbox band under the picture"

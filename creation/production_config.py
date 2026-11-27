@@ -35,9 +35,10 @@ class ProductionConfig:
     locale: str = "en-US"
     #: Language the cast speaks when not English: ``ja`` / ``ko`` (or ``ja-JP`` / ``ko-KR``). Captions stay English.
     spoken_language: str | None = None
-    #: ``letterbox`` asks the server, at draft time, for a 4:3 picture in a 9:16 frame with a title
-    #: band above and a caption band below (fictora-drama #595). The server decides the board aspect
-    #: only at admission, so it must be on the draft. ``None`` (or ``portrait``) sends nothing: portrait.
+    #: ``letterbox`` asks the server, at draft time, for a 16:9 picture in a 9:16 frame with a title
+    #: band above and captions below; ``landscape`` for a 16:9 film delivered 16:9, with no title and
+    #: no captions. The server pins the board aspect at admission, so it must be on the draft. ``None``
+    #: (or ``portrait``) sends nothing: portrait. Older letterbox shows keep their 4:3 picture.
     delivery_format: str | None = None
     #: An OVERRIDE of episode 1's opening action, in the human's words ("she kicks the door open"), sent
     #: on the DRAFT as ``opening_action`` (:mod:`creation.opening_action`). ``None`` (the default) sends

@@ -248,6 +248,7 @@ from creation.post.hook_overlay import (
     clear_of_captions,
     decide,
     delivery_format,
+    letterbox_picture,
     selected_hook_line,
 )
 from creation.post import letterbox as lb
@@ -933,7 +934,7 @@ def take_inner_voice(
 
 
 def _opening_lines(
-    desk: Path, episode: int, take_id: str, final: Path, *, letterbox: bool = False
+    desk: Path, episode: int, take_id: str, final: Path, *, picture: str | None = None
 ) -> list[str]:
     """``⚠`` lines for how the finished first take opens (:mod:`creation.post.opening`).
 
@@ -948,7 +949,7 @@ def _opening_lines(
         reading = measure_opening(
             final, detector=detector_for(desk, episode), head_count_face=head_face,
             silent_open=silent, where=f"ep{episode:02d} {take_id}",
-            crop=letterbox_picture_crop() if letterbox else None,
+            crop=letterbox_picture_crop(picture) if picture else None,
         )  # fmt: skip
     except MediaToolError as exc:
         return [f"⚠ opening not measured ({str(exc)[:160]})"]
@@ -1056,12 +1057,12 @@ def _cut_held_head(
     return HandleCut(done.final, done.record, f"{why}; {done.note}")
 
 
-def letterbox_picture_crop() -> tuple[int, int, int, int]:
-    """``(x, y, width, height)`` of the picture on the letterbox canvas (what the opening checks measure)."""
+def letterbox_picture_crop(picture: str) -> tuple[int, int, int, int]:
+    """``(x, y, width, height)`` of the ``picture`` (4:3 or 16:9) on the letterbox canvas (what the opening checks measure)."""
 
     from creation.post.delivery_geometry import layout
 
-    pic = layout().picture
+    pic = layout(picture=picture).picture
     return (pic.x, pic.y, pic.width, pic.height)
 
 
@@ -1867,14 +1868,16 @@ def run_finish(
         override=hook_line or (picked or {}).get("text") or None,
         off=no_hook_line or (picked or {}).get("kind") == "off", position=hook_line_position,
     )  # fmt: skip
-    # A letterbox show's 4:3 take: the kit builds its 9:16 file (lb); anything else finishes as before.
-    letterbox = False
+    # A letterbox show's 4:3 or 16:9 take: the kit builds its 9:16 file (lb); anything else finishes as before.
+    picture: str | None = None
     if delivery_format(spine) == "letterbox":
         info = probe_video(source)
-        letterbox = lb.is_letterbox_take(spine, (info.width, info.height))
+        if lb.is_letterbox_take(spine, (info.width, info.height)):
+            picture = letterbox_picture(info.width, info.height)
+    letterbox = picture is not None
     if caption_colour is not None and not letterbox:
         raise ValueError(
-            "--caption-colour is for a letterbox show's 4:3 take (its captions sit under the picture); "
+            "--caption-colour is for a letterbox show's 4:3 or 16:9 take (its captions sit under the picture); "
             "a portrait take is captioned in the house colours (--caption-style plain is white)"
         )
     title: lb.TitleBlock | None = None
@@ -3339,7 +3342,7 @@ def run_finish(
                 voice_floors=floors or None,
                 italic_overrides=overrides,
                 **(
-                    {"layout": "letterbox", "caption_colour": colour_name}
+                    {"layout": "letterbox", "caption_colour": colour_name, "picture": picture or "4:3"}
                     if letterbox
                     else {}
                 ),
@@ -3458,8 +3461,8 @@ def run_finish(
             take, next_versioned_path(takes, f"{base}-letterbox", ".mp4")
         )
         detail = (
-            "the 4:3 picture on the 1080x1920 black canvas (1080x810, y 555-1365); "
-            f"the 4:3 take stays as `{take.name}`"
+            f"the {picture} picture on the 1080x1920 black canvas; "
+            f"the {picture} take stays as `{take.name}`"
         )
         append_run_note(run_dir, f"Letterbox -> `{canvas.name}`: {detail}")
         return StepReport("letterbox", "ran", detail, canvas)
@@ -3705,7 +3708,8 @@ def run_finish(
              **({"spoken_text": cue.spoken_text} if cue.spoken_text else {})}
             for cue, line, seconds in thought_state["laid"]
         ],
-        letterbox={"letterbox": True, "caption_colour": colour_name} if letterbox else None,
+        letterbox={"letterbox": True, "caption_colour": colour_name, "picture_aspect": picture}
+        if picture else None,
         cover=record_state["cover"],
         thought_grey=grey_state["record"] if result._ran(THOUGHT_GREY_STEP) else None,
     )  # fmt: skip
@@ -3757,7 +3761,7 @@ def run_finish(
         # Every episode's first take opens the episode: its first second, as finished (warnings only).
         at = 3 if handles_note else 2
         summary[at:at] = _opening_lines(
-            desk, episode, take_id, result.final, letterbox=letterbox
+            desk, episode, take_id, result.final, picture=picture
         )
     append_run_note(
         run_dir,

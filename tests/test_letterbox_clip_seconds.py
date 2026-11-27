@@ -1,4 +1,4 @@
-"""Default take length of a letterbox desk follows the server (fictora-drama #617)."""
+"""Default take length: 15 s for every new show; an older 4:3 show's shorter takes come from its spine."""
 
 from __future__ import annotations
 
@@ -15,19 +15,10 @@ def _args(**kw: object) -> argparse.Namespace:
     return argparse.Namespace(**base)
 
 
-@pytest.mark.parametrize(("band", "seconds"), [("15s", 7), ("30s", 10), ("60s", 10)])
-def test_a_letterbox_desk_films_the_servers_take_length(
-    band: str, seconds: int
-) -> None:
-    assert (
-        default_clip_seconds(_args(delivery_format="letterbox", band=band)) == seconds
-    )
-
-
 @pytest.mark.parametrize("band", ["15s", "30s", "60s"])
-def test_a_portrait_desk_keeps_15_second_takes(band: str) -> None:
-    """Guard: portrait is unchanged."""
-    assert default_clip_seconds(_args(band=band)) == 15
+@pytest.mark.parametrize("delivery", [None, "portrait", "letterbox", "landscape"])
+def test_a_new_desk_films_15_second_takes(band: str, delivery: str | None) -> None:
+    assert default_clip_seconds(_args(delivery_format=delivery, band=band)) == 15
 
 
 def test_clip_seconds_given_wins() -> None:

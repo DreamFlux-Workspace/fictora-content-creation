@@ -63,7 +63,7 @@ def init_series_desk(
     day: date | None = None,
     continuing: bool = False,
     templates_dir: Path | None = None,
-    letterbox: bool = False,
+    four_three: bool = False,
 ) -> Path:
     """Create a series desk with parallel episode slots.
 
@@ -83,9 +83,9 @@ def init_series_desk(
         True when plates already exist from a prior series desk.
     templates_dir
         Optional template override.
-    letterbox
-        True for a ``--delivery-format letterbox`` desk: 10-second take slots
-        (three at 30 s). The spine corrects the count once it exists.
+    four_three
+        True for a desk on a story pinned to 4:3 boards (an older letterbox show): 10-second take
+        slots (three at 30 s). The spine corrects the count once it exists.
 
     Returns
     -------
@@ -116,7 +116,7 @@ def init_series_desk(
         stamp.isoformat(),
         episode_count=episode_count,
         continuing=continuing,
-        letterbox=letterbox,
+        four_three=four_three,
     )
     for episode in series.episodes:
         _create_episode_folder(

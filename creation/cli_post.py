@@ -44,6 +44,7 @@ POST_COMMANDS = (
             "music-lock",
             "caption-style",
             "hook-line",
+            "phone-frame-copy",
             "voice-fx",
             "revoice",
             "voice-line",
@@ -463,6 +464,14 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         action="store_true",
         help="No white title line on this letterbox episode (the yellow line stays).",
     )
+
+    copy = sub.add_parser(
+        "phone-frame-copy",
+        help="A landscape episode's 9:16 copy with a title and captions, made by the server from the "
+        "finished episode (nothing is filmed again). The server asks for the title and captions.",
+    )
+    copy.add_argument("--desk", type=Path, required=True)
+    copy.add_argument("--episode", type=int, required=True)
 
     voice_mode = sub.add_parser(
         "voice-mode",
@@ -1030,6 +1039,10 @@ def dispatch_post(args: argparse.Namespace) -> int:
             default_setup_line=args.default_setup_line, titles=args.titles,
             title=args.title, no_title=args.no_title,
         )  # fmt: skip
+    if args.command == "phone-frame-copy":
+        from creation.phone_frame_copy import run_phone_frame_copy
+
+        return run_phone_frame_copy(args.desk, episode=args.episode)
     if args.command == "voice-mode":
         from creation.voice_mode import run_voice_mode
 

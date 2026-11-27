@@ -1354,12 +1354,12 @@ def edge_notes(
     )
 
     crop: tuple[int, int, int, int] | None = None
+    first = parts[0]
     if letterbox:
         from creation.post.delivery_geometry import layout
 
-        pic = layout().picture
+        pic = layout(picture=first.record.picture_aspect or "4:3").picture
         crop = (pic.x, pic.y, pic.width, pic.height)
-    first = parts[0]
     silent, head_face = opening_context(desk, first.episode, first.take_id)
     reading = measure_opening(
         master, detector=detector_for(desk, first.episode), head_count_face=head_face,
@@ -1488,7 +1488,7 @@ def _fix_seams(
         if part.record.letterbox:
             from creation.post.delivery_geometry import layout
 
-            pic = layout().picture
+            pic = layout(picture=part.record.picture_aspect or "4:3").picture
             crop = (pic.x, pic.y, pic.width, pic.height)
         try:
             cuts = measure_cuts(part.picture, crop=crop)
