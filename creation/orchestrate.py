@@ -2561,8 +2561,6 @@ def collect_takes(
                 f"take job `{clip.get('job_id')}` ({clip.get('url')}): {why}"
             )
             continue
-        # A Wan take comes back as one clip per shot, all numbered with the take (``_setNN_beatNN``):
-        # each is kept as shot N of its take, in the server's order. Any other take is one clip.
         shot = filed.count(take_id) + 1 if shots_of[clip.get("set_index")] > 1 else None
         first_of_take = take_id not in filed
         filed.append(take_id)

@@ -31,8 +31,6 @@ from creation.harness.http_util import (
 )
 from creation.harness.session import DramaApiRunSession
 
-#: A take's scene id ends ``_setNN``; a Wan shot's ends ``_setNN_beatNN`` (one shot per beat, the
-#: server's ``wan_shot_scene_id``): its take is still ``NN`` (fictora-drama ``scene_take_number``).
 _SET_SUFFIX = re.compile(r"_set(\d+)(?:_beat\d+)?$")
 _FAILED = frozenset({"failed", "cancelled"})
 

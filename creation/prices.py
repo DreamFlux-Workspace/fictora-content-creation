@@ -431,7 +431,6 @@ def take_facts_usd(facts: dict, *, on: date) -> tuple[float, str] | None:
 
     server_usd = facts.get("usd")
     if isinstance(server_usd, (int, float)) and not isinstance(server_usd, bool):
-        # The server's own price for this filmed call (a Wan shot, fictora-drama take facts ``usd``).
         return float(server_usd), "as the server priced it"
     endpoint = str(facts.get("endpoint_id") or "")
     resolution = str(facts.get("resolution") or "")
