@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import copy
 import io
+import json
 from pathlib import Path
 
 import pytest
+from conftest import make_take, needs_ffmpeg
 from tests import test_hook_line_command as _hook_line_tests
 from tests.test_letterbox_title_card_kit import CardApi
 
+from creation.captions import resolve_caption_style
 from creation.hook_line import run_hook_line
 from creation.phone_frame_copy import copy_request, run_phone_frame_copy
 from creation.post.delivery_geometry import Box, layout
@@ -135,9 +138,13 @@ class CopyApi:
     def __init__(self, answer: tuple[int, object]) -> None:
         self.answer = answer
         self.sent: list[tuple[str, dict]] = []
+        self.keys: list[str | None] = []
 
-    def post_optional(self, path: str, body: dict) -> tuple[int, object]:
+    def post_optional(
+        self, path: str, body: dict, *, idempotency_key: str | None = None
+    ) -> tuple[int, object]:
         self.sent.append((path, body))
+        self.keys.append(idempotency_key)
         return self.answer
 
 
@@ -156,19 +163,24 @@ def filmed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
 
 def test_a_phone_frame_copy_sends_only_the_choices_made(filmed: Path) -> None:
-    api = CopyApi((202, {"line": "Making the phone-frame copy."}))
+    made = {"video_url": "https://media.example/copy.mp4", "captions": False}
+    api = CopyApi((200, {"letterboxed_copy": made}))
     out = io.StringIO()
     body = copy_request(setup_line="Three Payments Late", captions=False)
 
     code = run_phone_frame_copy(filmed, episode=1, body=body, out=out, api=api)
 
-    assert code == 0 and out.getvalue().strip() == "Making the phone-frame copy."
+    assert code == 0
+    assert out.getvalue().strip() == (
+        "The server made the phone-frame copy (without captions): https://media.example/copy.mp4"
+    )
     assert api.sent == [
         (
             "/v1/video-generations/job_video_1/episodes/episode_01/letterboxed-copy",
             {"setup_line": "Three Payments Late", "captions": False},
         )
     ]
+    assert api.keys[0]
 
 
 @pytest.mark.parametrize(
@@ -178,7 +190,19 @@ def test_a_phone_frame_copy_sends_only_the_choices_made(filmed: Path) -> None:
         ((404, "Not Found"), "older deploy"),
         (
             (404, {"error": {"code": "episode_not_found", "message": "No episode 1."}}),
-            "refused",
+            "No episode 1.",
+        ),
+        (
+            (
+                404,
+                {
+                    "error": {
+                        "code": "episode_video_not_delivered",
+                        "message": "Episode 1 is not delivered yet.",
+                    }
+                },
+            ),
+            "Episode 1 is not delivered yet.",
         ),
     ],
 )
@@ -192,3 +216,53 @@ def test_a_refusal_or_an_older_server_makes_nothing(
     )
 
     assert code == 2 and says in out.getvalue()
+
+
+@pytest.mark.parametrize(
+    "spine",
+    [
+        {"delivery_format": "landscape"},
+        {"delivery_format": "portrait", "captions_enabled": False},
+        {"caption_style_choice": "none"},
+    ],
+)
+def test_a_show_the_server_keeps_caption_free_burns_none(
+    tmp_path: Path, spine: dict
+) -> None:
+    assert resolve_caption_style(tmp_path, spine=spine) == ("none", "")
+    style, note = resolve_caption_style(tmp_path, "bold", spine=spine)
+    assert style == "none" and "phone-frame copy" in note
+
+
+def test_a_landscape_desk_without_a_spine_burns_none(tmp_path: Path) -> None:
+    from creation.production_config import ProductionConfig, save_production_config
+
+    save_production_config(tmp_path, ProductionConfig(delivery_format="landscape"))
+    assert resolve_caption_style(tmp_path) == ("none", "")
+    portrait = {"delivery_format": "portrait"}
+    assert resolve_caption_style(tmp_path, spine=portrait)[0] != "none"
+    save_production_config(tmp_path, ProductionConfig(delivery_format="letterbox"))
+    assert resolve_caption_style(tmp_path)[0] != "none"
+
+
+@needs_ffmpeg
+def test_finish_on_a_landscape_show_burns_no_captions(post_desk: Path) -> None:
+    from test_post_finish import FACTS, _board, fake_sfx
+
+    from creation.post.finish import run_finish
+
+    api = post_desk / "ep01" / "api"
+    spine = json.loads((api / "03_spine.json").read_text(encoding="utf-8"))
+    spine["delivery_format"] = "landscape"
+    (api / "03_spine.json").write_text(json.dumps(spine), encoding="utf-8")
+    (api / "take-facts-ep01-t1-v1.json").write_text(json.dumps(FACTS))
+    make_take(post_desk / "ep01" / "takes" / "take-ep01-t1-raw-v1.mp4")
+    _board(post_desk)
+    out = io.StringIO()
+
+    result = run_finish(post_desk, sfx_render=fake_sfx([]), facts_fetcher=lambda *a: None,
+                        cut_meter=lambda _take: (2.5,), stream=out)  # fmt: skip
+
+    captions = next(step for step in result.steps if step.step == "captions")
+    assert captions.status == "skipped", out.getvalue()
+    assert not list((post_desk / "ep01" / "takes").glob("take-ep01-t1-cap-v*"))

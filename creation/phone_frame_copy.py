@@ -9,6 +9,7 @@ server's answer; which shows may have one, and what an unset choice means, is th
 from __future__ import annotations
 
 import sys
+import uuid
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TextIO
@@ -18,8 +19,7 @@ from creation.harness.http_util import api_error_text
 PHONE_FRAME_COPY_ROUTE = (
     "/v1/video-generations/{job_id}/episodes/{episode_id}/letterboxed-copy"
 )
-_KNOWN_NOT_FOUND = frozenset({"episode_not_found", "job_not_found", "spine_not_found"})
-_TAKEN = "The server took the ask for a phone-frame copy."
+_MADE = "The server made the phone-frame copy"
 
 
 def copy_request(
@@ -102,11 +102,13 @@ def run_phone_frame_copy(
     )
     run = api if api is not None else open_api(desk, episode)
     try:
-        status, answer = run.post_optional(path, body)
+        status, answer = run.post_optional(
+            path, body, idempotency_key=f"kit-phone-frame-copy-{uuid.uuid4().hex}"
+        )
     finally:
         if api is None:
             run.client.close()
-    if status in (404, 405) and _error_code(answer) not in _KNOWN_NOT_FOUND:
+    if status in (404, 405) and _error_code(answer) is None:
         print(
             "Stopped: this Drama API cannot make a phone-frame copy yet (an older deploy). "
             "Nothing was made or charged.",
@@ -119,9 +121,16 @@ def run_phone_frame_copy(
             file=out,
         )
         return 2
-    line = answer.get("line") if isinstance(answer, Mapping) else None
-    print(line.strip() if isinstance(line, str) and line.strip() else _TAKEN, file=out)
+    print(_made_line(answer), file=out)
     return 0
+
+
+def _made_line(answer: Any) -> str:
+    copy = answer.get("letterboxed_copy") if isinstance(answer, Mapping) else None
+    url = copy.get("video_url") if isinstance(copy, Mapping) else None
+    if not url:
+        return f"{_MADE}."
+    return f"{_MADE} ({'with' if copy.get('captions') else 'without'} captions): {url}"
 
 
 def _error_code(answer: Any) -> str | None:

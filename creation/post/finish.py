@@ -1565,7 +1565,9 @@ def run_finish(
             file=out,
             flush=True,
         )
-    style, style_note = resolve_caption_style(desk, caption_style)
+    found_spine = saved_spine(desk, episode)
+    spine = found_spine[0] if found_spine else None
+    style, style_note = resolve_caption_style(desk, caption_style, spine=spine)
     check_caption_scale(caption_scale)
     run_dir = desk / f"ep{episode:02d}"
     source = (
@@ -1699,8 +1701,6 @@ def run_finish(
                 locked_voice_refusal(soundtrack, what) + " (given: carrying on)",
                 file=out,
             )
-    found_spine = saved_spine(desk, episode)
-    spine = found_spine[0] if found_spine else None
     # Caption labels live on the server (D2, 21 Oct 2026): any given are saved there first, then the
     # take burns the labels the server keeps (a re-finish keeps them too).
     from creation.post.caption_labels import finish_caption_labels

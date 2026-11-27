@@ -240,8 +240,31 @@ def show_caption_style(desk: Path) -> tuple[str, str]:
     return NEW_SHOW_CAPTION_STYLE, "new"
 
 
-def resolve_caption_style(desk: Path, given: str | None = None) -> tuple[str, str]:
-    """The caption style to burn: ``given`` (the command's flag), else the show's (:func:`show_caption_style`).
+def show_captions_off(desk: Path, spine: Mapping[str, Any] | None = None) -> bool:
+    """Whether the server keeps this show caption-free (a landscape show); an older server only marks ``delivery_format: landscape``."""
+
+    from creation.post.hook_overlay import delivery_format
+    from creation.production_config import load_production_config
+
+    if isinstance(spine, Mapping):
+        if (
+            spine.get("captions_enabled") is False
+            or spine.get("caption_style_choice") == "none"
+        ):
+            return True
+        shown = delivery_format(spine)
+        if shown != "portrait" or spine.get("delivery_format"):
+            return shown == "landscape"
+    configured = load_production_config(desk).delivery_format or ""
+    return configured.strip().casefold() == "landscape"
+
+
+def resolve_caption_style(
+    desk: Path, given: str | None = None, *, spine: Mapping[str, Any] | None = None
+) -> tuple[str, str]:
+    """The caption style to burn: ``none`` on a show the server keeps caption-free
+    (:func:`show_captions_off`), else ``given`` (the command's flag), else the show's
+    (:func:`show_caption_style`).
 
     Parameters
     ----------
@@ -249,6 +272,8 @@ def resolve_caption_style(desk: Path, given: str | None = None) -> tuple[str, st
         Series desk (its ``production.config.json`` ``caption_style``).
     given
         ``--caption-style`` on ``finish`` / ``caption`` / ``reel``; ``None`` reads the desk.
+    spine
+        The show's spine, when loaded.
 
     Returns
     -------
@@ -256,7 +281,8 @@ def resolve_caption_style(desk: Path, given: str | None = None) -> tuple[str, st
         The builders' style (``bold``, ``house`` for ``subtle``, ``plain`` or
         ``none``), and ``""`` or a note when the desk's value is not a local
         style (a server recipe set for ``--api-captions``, such as
-        ``viral_karaoke``): those desks are captioned as a show with no choice is.
+        ``viral_karaoke``): those desks are captioned as a show with no choice is. On a
+        caption-free show the note says a given style was skipped.
 
     Raises
     ------
@@ -264,11 +290,18 @@ def resolve_caption_style(desk: Path, given: str | None = None) -> tuple[str, st
         When ``given`` is not one of :data:`CAPTION_STYLES`.
     """
 
+    if given is not None and given not in CAPTION_STYLES:
+        raise ValueError(
+            f"--caption-style {given!r}: choose one of {', '.join(CAPTION_STYLES)}"
+        )
+    if show_captions_off(desk, spine):
+        if given in (None, "none"):
+            return "none", ""
+        return "none", (
+            f"--caption-style {given} skipped: this show plays with nothing on the picture; "
+            "ask for a phone-frame copy to get captions"
+        )
     if given is not None:
-        if given not in CAPTION_STYLES:
-            raise ValueError(
-                f"--caption-style {given!r}: choose one of {', '.join(CAPTION_STYLES)}"
-            )
         return canonical_caption_style(given), ""
     configured, source = show_caption_style(desk)
     if configured in CAPTION_STYLES:
