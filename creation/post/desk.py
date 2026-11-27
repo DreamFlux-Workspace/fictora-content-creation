@@ -16,7 +16,7 @@ from creation.production_state import load_production
 from creation.spine_view import episode_id_for
 
 
-_WAN_SHOT = re.compile(r"_set\d+_beat\d+$")
+_PER_BEAT_WAN_SHOT = re.compile(r"_set\d+_beat\d+$")
 
 
 def open_api(desk: Path, episode: int) -> DramaApiRunSession:
@@ -404,7 +404,7 @@ def take_run(desk: Path, episode: int, take_id: str) -> tuple[str, int] | None:
     for position, each in enumerate(raw.get("clips") or []):
         key = (
             (each.get("episode_id"), each.get("set_index"))
-            if _WAN_SHOT.search(str(each.get("relation_id") or ""))
+            if _PER_BEAT_WAN_SHOT.search(str(each.get("relation_id") or ""))
             else position
         )
         number = takes.setdefault(key, len(takes) + 1)
