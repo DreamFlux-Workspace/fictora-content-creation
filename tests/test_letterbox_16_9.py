@@ -395,3 +395,23 @@ def test_saving_before_the_copy_is_made_says_the_servers_reason(filmed: Path) ->
     )
 
     assert code == 2 and "Make the copy first." in out.getvalue()
+
+
+def test_saving_from_a_server_without_the_letterboxed_export_says_older_deploy(
+    filmed: Path,
+) -> None:
+    from creation.phone_frame_copy import run_save_phone_frame_copy
+
+    older = {
+        "error": {
+            "code": "invalid_request",
+            "message": "version: Input should be 'delivered' or 'with_score'",
+        }
+    }
+    out = io.StringIO()
+
+    code = run_save_phone_frame_copy(
+        filmed, episode=1, out=out, api=CopyApi((422, older))
+    )
+
+    assert code == 2 and "older deploy" in out.getvalue()

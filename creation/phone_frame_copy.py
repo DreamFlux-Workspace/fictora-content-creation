@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -19,7 +19,7 @@ from creation.harness.http_util import api_error_text
 PHONE_FRAME_COPY_ROUTE = (
     "/v1/video-generations/{job_id}/episodes/{episode_id}/letterboxed-copy"
 )
-#: The marked copy for Instagram and TikTok: the episode export, asked for the letterboxed copy.
+#: The marked copy for Instagram and TikTok: the episode export.
 EXPORT_ROUTE = "/v1/video-generations/{job_id}/episodes/{episode_id}/export"
 EXPORT_VERSION = "letterboxed_copy"
 _MADE = "The server made the phone-frame copy"
@@ -140,8 +140,9 @@ def run_save_phone_frame_copy(
 
     desk = desk.expanduser().resolve()
     answer = _ask(
-        desk, episode, EXPORT_ROUTE, {"version": EXPORT_VERSION}, out=out, api=api
-    )
+        desk, episode, EXPORT_ROUTE, {"version": EXPORT_VERSION}, out=out, api=api,
+        older=_no_letterboxed_export,
+    )  # fmt: skip
     if answer is None:
         return 2
     url = answer.get("export_url") if isinstance(answer, Mapping) else None
@@ -155,7 +156,7 @@ def run_save_phone_frame_copy(
             url, next_versioned_path(takes, f"phone-frame-ep{episode:02d}", ".mp4"),
             transport=transport, kind="phone-frame copy",
             meta={"episode": episode, "export_url": url, "version": EXPORT_VERSION},
-            again="phone-frame-copy --save",
+            again=f"phone-frame-copy --desk {desk} --episode {episode} --save",
         )  # fmt: skip
     except ServerFinishError as exc:
         print(f"Stopped: {exc}", file=out)
@@ -176,8 +177,12 @@ def _ask(
     out: TextIO,
     api: Any,
     idempotency_key: str | None = None,
+    older: Callable[[int, Any], bool] | None = None,
 ) -> Any:
-    """POST ``body`` to the episode's ``route``; the answer, or ``None`` after printing why not."""
+    """POST ``body`` to the episode's ``route``; the answer, or ``None`` after printing why not.
+
+    ``older`` tells a server without the route from a refusal (default :func:`_no_route`).
+    """
 
     from creation.post.desk import open_api
     from creation.post.server_finish import _desk_episode_id
@@ -200,7 +205,7 @@ def _ask(
     finally:
         if api is None:
             run.client.close()
-    if status in (404, 405, 422) and _error_code(answer) is None:
+    if (older or _no_route)(status, answer):
         print(
             "Stopped: this Drama API has no phone-frame copy yet (an older deploy). "
             "Nothing was made or charged.",
@@ -214,6 +219,20 @@ def _ask(
         )
         return None
     return answer
+
+
+def _no_route(status: int, answer: Any) -> bool:
+    return status in (404, 405) and _error_code(answer) is None
+
+
+def _no_letterboxed_export(status: int, answer: Any) -> bool:
+    """A server whose export knows no ``letterboxed_copy`` version refuses the field as invalid."""
+
+    return _no_route(status, answer) or (
+        status == 422
+        and _error_code(answer) in (None, "invalid_request")
+        and "version" in api_error_text(answer)
+    )
 
 
 def _made_line(answer: Any) -> str:
