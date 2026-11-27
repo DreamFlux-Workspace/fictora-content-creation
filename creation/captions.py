@@ -241,17 +241,16 @@ def show_caption_style(desk: Path) -> tuple[str, str]:
 
 
 def show_captions_off(desk: Path, spine: Mapping[str, Any] | None = None) -> bool:
-    """Whether the server keeps this show caption-free (a landscape show); an older server only marks ``delivery_format: landscape``."""
+    """Whether this is a landscape show, which the server delivers with nothing on the picture.
+
+    The spine's ``delivery_format`` decides when it names one; otherwise the desk's
+    ``production.config.json`` does.
+    """
 
     from creation.post.hook_overlay import delivery_format
     from creation.production_config import load_production_config
 
     if isinstance(spine, Mapping):
-        if (
-            spine.get("captions_enabled") is False
-            or spine.get("caption_style_choice") == "none"
-        ):
-            return True
         shown = delivery_format(spine)
         if shown != "portrait" or spine.get("delivery_format"):
             return shown == "landscape"

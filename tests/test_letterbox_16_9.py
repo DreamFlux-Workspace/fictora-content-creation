@@ -222,8 +222,8 @@ def test_a_refusal_or_an_older_server_makes_nothing(
     "spine",
     [
         {"delivery_format": "landscape"},
-        {"delivery_format": "portrait", "captions_enabled": False},
-        {"caption_style_choice": "none"},
+        {"delivery_format": "landscape", "captions_enabled": False},
+        {"delivery": {"delivery_format": "landscape"}, "caption_style_choice": "none"},
     ],
 )
 def test_a_show_the_server_keeps_caption_free_burns_none(
@@ -266,3 +266,16 @@ def test_finish_on_a_landscape_show_burns_no_captions(post_desk: Path) -> None:
     captions = next(step for step in result.steps if step.step == "captions")
     assert captions.status == "skipped", out.getvalue()
     assert not list((post_desk / "ep01" / "takes").glob("take-ep01-t1-cap-v*"))
+
+
+@pytest.mark.parametrize("shape", ["portrait", "letterbox"])
+def test_captions_off_on_a_non_landscape_spine_keeps_the_flag(
+    tmp_path: Path, shape: str
+) -> None:
+    spine = {
+        "delivery_format": shape,
+        "captions_enabled": False,
+        "caption_style_choice": "none",
+    }
+
+    assert resolve_caption_style(tmp_path, "bold", spine=spine) == ("bold", "")
