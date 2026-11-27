@@ -1479,7 +1479,11 @@ def safe_zones_section(take: Path) -> Section:
     notes = [w for w in report.warnings if w not in found]
     captioned = sum(1 for frame in report.frames if frame.caption is not None)
     summary = f"{captioned} of {len(report.frames)} sampled frame(s) show a caption" + (
-        f": {len(found)} finding(s)" if found else ", all clear of the covered zones"
+        f": {len(found)} finding(s)"
+        if found
+        else ", none checked on a wide frame"
+        if is_wide(info.width, info.height)
+        else ", all clear of the covered zones"
     )
     details = [
         *(w.removeprefix("!! ") for w in found),

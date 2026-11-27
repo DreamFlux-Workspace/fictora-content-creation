@@ -482,6 +482,8 @@ def check_safe_zones(
     answer: dict[str, Any] | None = None
     # A wide frame has no covered zones and no caption band (fictora-drama #1854): nothing to check.
     wide = picture is None and is_wide(info.width, info.height)
+    if wide:
+        low, high = 0.0, 1.0
     if layout is not None:
         if not wide:
             answer = server_safe_area_check(
@@ -521,7 +523,7 @@ def check_safe_zones(
             off = [
                 (c.start, c.end, c.text)
                 for c in cues
-                if not wide and not (low - 0.01 <= c.box[1] and c.box[3] <= high + 0.01)
+                if not (low - 0.01 <= c.box[1] and c.box[3] <= high + 0.01)
             ]
             if off:
                 warnings.append(
@@ -534,7 +536,7 @@ def check_safe_zones(
         image = grab_frame(video, seconds)
         showing = next((c for c in cues if c.start <= seconds < c.end), None)
         box = showing.box if showing is not None else None
-        if showing is None or wide:
+        if showing is None:
             outside = False
         elif showing.in_band is not None:
             outside = not is_letterbox and not showing.in_band

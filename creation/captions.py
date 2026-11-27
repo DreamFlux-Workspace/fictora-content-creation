@@ -2219,7 +2219,7 @@ def build_ass(
             cues, width=width, height=height, platform=platform, size_scale=size_scale
         )
     if style == "bold":
-        style = "house"  # a letterbox band and a wide frame keep the house look
+        style = "house"
     if style not in ("house", "plain"):
         raise ValueError(
             f"caption style {style!r} draws no captions; use bold, subtle (house) or plain"
@@ -2339,12 +2339,26 @@ def portrait_caption_ass(
             cues, width=width, height=height, style=style, whole_lines=whole_lines,
             desk=desk, episode=episode,
         )  # fmt: skip
-        if text is not None:
+        if text is not None and is_wide(width, height) and not _top_anchored(text):
+            note(
+                f"the server laid this {width}x{height} landscape take out for a 9:16 frame "
+                "(an older deploy), so the kit laid its captions out for the wide frame itself"
+            )
+        elif text is not None:
             for finding in findings:
                 print(f"WARNING server caption check: {finding}", file=sys.stderr)
             return text
     return build_ass(
         cues, width=width, height=height, style=style, size_scale=size_scale
+    )
+
+
+def _top_anchored(ass: str) -> bool:
+    """Whether every style in ``ass`` hangs from the top (ASS alignment 8), as a wide frame's do."""
+
+    styles = [row.split(",") for row in ass.splitlines() if row.startswith("Style:")]
+    return bool(styles) and all(
+        len(row) > 18 and row[18].strip() == "8" for row in styles
     )
 
 

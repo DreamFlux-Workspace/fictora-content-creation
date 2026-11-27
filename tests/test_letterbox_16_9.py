@@ -239,7 +239,7 @@ def _style(ass: str, name: str) -> list[str]:
     return line.split(",")
 
 
-def test_a_wide_frame_falls_back_to_the_servers_wide_layout() -> None:
+def test_a_wide_frame_is_captioned_top_anchored_at_80_percent() -> None:
     long_line = (
         "I paid every bill in this house for three years and you never once asked"
     )
@@ -301,20 +301,21 @@ def test_a_wide_take_asks_the_server_and_falls_back_to_the_same_layout() -> None
 
     def server(path: str, body: dict) -> tuple[int, object]:
         sent.append(body)
-        return 200, {"ass": "SERVER", "cues": [], "findings": []}
+        return 200, {"ass": wide_served, "cues": [], "findings": []}
 
     cues = [Cue(0.0, 1.0, "Wait.")]
+    wide_served = build_ass(cues, width=854, height=480, style="subtle") + "; served"
     with server_override(server):
         served = portrait_caption_ass(
             cues, width=854, height=480, style="subtle", whole_lines=False
         )
-    older = portrait_caption_ass(
+    fallback = portrait_caption_ass(
         cues, width=854, height=480, style="subtle", whole_lines=False
     )
 
-    assert served == "SERVER"
+    assert served == wide_served
     assert (sent[0]["width"], sent[0]["height"]) == (854, 480)
-    assert older == build_ass(cues, width=854, height=480, style="subtle")
+    assert fallback == build_ass(cues, width=854, height=480, style="subtle")
 
 
 def test_a_16_9_mark_and_title_follow_the_servers_layout(
@@ -415,3 +416,21 @@ def test_saving_from_a_server_without_the_letterboxed_export_says_older_deploy(
     )
 
     assert code == 2 and "older deploy" in out.getvalue()
+
+
+def test_a_wide_take_laid_out_for_9_16_by_an_older_server_is_laid_out_by_the_kit() -> (
+    None
+):
+    from creation.caption_server import server_override
+    from creation.captions import portrait_caption_ass
+
+    cues = [Cue(0.0, 1.0, "Wait.")]
+    portrait_shaped = build_ass(cues, width=480, height=854, style="subtle")
+    with server_override(
+        lambda path, body: (200, {"ass": portrait_shaped, "cues": [], "findings": []})
+    ):
+        text = portrait_caption_ass(
+            cues, width=854, height=480, style="subtle", whole_lines=False
+        )
+
+    assert text == build_ass(cues, width=854, height=480, style="subtle")
