@@ -1,0 +1,18 @@
+{
+  "jp": [
+    {"group": "ai_drama", "text": "AIドラマ", "match": ["AIドラマ", "AIショートドラマ", "AI生成", "生成AI", "AI制作", "AIで作"]},
+    {"group": "ai_drama", "text": "AIショートドラマ", "match": ["AIショートドラマ", "AIドラマ", "AI生成", "生成AI", "AI制作"]},
+    {"group": "short_drama", "text": "ショートドラマ", "match": ["ショートドラマ", "縦型ドラマ", "短編ドラマ", "ミニドラマ", "ショートフィルム"]},
+    {"group": "short_drama", "text": "縦型ドラマ", "match": ["縦型ドラマ", "縦型ショートドラマ", "ショートドラマ", "縦型"]},
+    {"group": "ai_anime", "text": "AIアニメ", "match": ["AIアニメ", "AI生成", "生成AI", "AI制作", "AIで作"]},
+    {"group": "original_anime", "text": "オリジナルアニメ", "match": ["オリジナルアニメ", "自主制作アニメ", "自主制作", "個人制作", "インディーアニメ"]}
+  ],
+  "kr": [
+    {"group": "ai_drama", "text": "AI 드라마", "match": ["AI 드라마", "AI 숏드라마", "AI 생성", "생성형 AI", "AI로 만든", "AI 제작"]},
+    {"group": "ai_drama", "text": "AI 숏드라마", "match": ["AI 숏드라마", "AI 드라마", "AI 숏폼", "AI 생성", "생성형 AI"]},
+    {"group": "short_drama", "text": "숏드라마", "match": ["숏드라마", "숏폼 드라마", "세로 드라마", "미니 드라마", "쇼츠 드라마"]},
+    {"group": "short_drama", "text": "숏폼 드라마", "match": ["숏폼 드라마", "숏드라마", "세로 드라마", "숏폼"]},
+    {"group": "web_drama", "text": "웹드라마", "match": ["웹드라마", "웹드"]},
+    {"group": "ai_anime", "text": "AI 애니메이션", "match": ["AI 애니메이션", "AI 애니", "AI 생성", "생성형 AI", "AI로 만든"]}
+  ]
+}

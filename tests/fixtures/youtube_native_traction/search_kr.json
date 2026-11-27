@@ -1,0 +1,213 @@
+{
+ "contents": {
+  "twoColumnSearchResultsRenderer": {
+   "primaryContents": {
+    "sectionListRenderer": {
+     "contents": [
+      {
+       "itemSectionRenderer": {
+        "contents": [
+         {
+          "videoRenderer": {
+           "videoId": "XdZw5TZq1Z8",
+           "title": {
+            "runs": [
+             {
+              "text": "[Full Video] News 9: KOSPI Plunges Over 6% Again… \"Government Intervention in Jensen Huang's Retu..."
+             }
+            ],
+            "accessibility": {
+             "accessibilityData": {
+              "label": "[Full Video] News 9: KOSPI Plunges Over 6% Again… \"Government Intervention in Jensen Huang's Retu... 46분"
+             }
+            }
+           },
+           "ownerText": {
+            "runs": [
+             {
+              "text": "KBS News"
+             }
+            ]
+           },
+           "publishedTimeText": {
+            "simpleText": "스트리밍 시간: 23시간 전"
+           },
+           "viewCountText": {
+            "simpleText": "조회수 105,283회"
+           },
+           "lengthText": {
+            "accessibility": {
+             "accessibilityData": {
+              "label": "46분 19초"
+             }
+            },
+            "simpleText": "46:19"
+           }
+          }
+         },
+         {
+          "videoRenderer": {
+           "videoId": "AzozQ8HyohM",
+           "title": {
+            "runs": [
+             {
+              "text": "Today's Morning Top News Headlines | 11/26/2026 | SP | INC | BJP | Rahul | Akhilesh | Azam | Imran"
+             }
+            ],
+            "accessibility": {
+             "accessibilityData": {
+              "label": "Today's Morning Top News Headlines | 11/26/2026 | SP | INC | BJP | Rahul | Akhilesh | Azam | Imran 1분 5초"
+             }
+            }
+           },
+           "ownerText": {
+            "runs": [
+             {
+              "text": "News 24"
+             }
+            ]
+           },
+           "publishedTimeText": {
+            "simpleText": "10시간 전"
+           },
+           "viewCountText": {
+            "simpleText": "조회수 40,044회"
+           },
+           "lengthText": {
+            "accessibility": {
+             "accessibilityData": {
+              "label": "1분 5초"
+             }
+            },
+            "simpleText": "1:05"
+           }
+          }
+         },
+         {
+          "videoRenderer": {
+           "videoId": "V475uVBnfa0",
+           "title": {
+            "runs": [
+             {
+              "text": "Aaj Ki Taja Khabar LIVE: आज की ताजा 100 बड़ी खबरें | Headline | 100 News | 26 November | Breaking"
+             }
+            ],
+            "accessibility": {
+             "accessibilityData": {
+              "label": "Aaj Ki Taja Khabar LIVE: आज की ताजा 100 बड़ी खबरें | Headline | 100 News | 26 November | Breaking"
+             }
+            }
+           },
+           "ownerText": {
+            "runs": [
+             {
+              "text": "ABP NEWS"
+             }
+            ]
+           },
+           "viewCountText": {
+            "runs": [
+             {
+              "text": "1,047"
+             },
+             {
+              "text": "명 시청 중"
+             }
+            ]
+           }
+          }
+         },
+         {
+          "videoRenderer": {
+           "videoId": "EB2q5yjdbZo",
+           "title": {
+            "runs": [
+             {
+              "text": "[뉴스 '꾹'] '클럽' 폭죽 열차 '페라리' 턱.. 조폭 끼고 '허세' 부린 최후 (2026.11.25/MBC뉴스)"
+             }
+            ],
+            "accessibility": {
+             "accessibilityData": {
+              "label": "[뉴스 '꾹'] '클럽' 폭죽 열차 '페라리' 턱.. 조폭 끼고 '허세' 부린 최후 (2026.11.25/MBC뉴스) 3분 30초"
+             }
+            }
+           },
+           "ownerText": {
+            "runs": [
+             {
+              "text": "MBCNEWS"
+             }
+            ]
+           },
+           "publishedTimeText": {
+            "simpleText": "1일 전"
+           },
+           "viewCountText": {
+            "simpleText": "조회수 1,003,735회"
+           },
+           "lengthText": {
+            "accessibility": {
+             "accessibilityData": {
+              "label": "3분 30초"
+             }
+            },
+            "simpleText": "3:30"
+           }
+          }
+         },
+         {
+          "videoRenderer": {
+           "videoId": "x3GgnZAHV68",
+           "title": {
+            "runs": [
+             {
+              "text": "'AI Assistants' on Call 24/7…Shaking Up the Platform Industry / K-VINA News"
+             }
+            ],
+            "accessibility": {
+             "accessibilityData": {
+              "label": "'AI Assistants' on Call 24/7…Shaking Up the Platform Industry / K-VINA News 3분 8초"
+             }
+            }
+           },
+           "ownerText": {
+            "runs": [
+             {
+              "text": "한국경제TV뉴스"
+             }
+            ]
+           },
+           "publishedTimeText": {
+            "simpleText": "2일 전"
+           },
+           "viewCountText": {
+            "simpleText": "조회수 1,115,019회"
+           },
+           "lengthText": {
+            "accessibility": {
+             "accessibilityData": {
+              "label": "3분 8초"
+             }
+            },
+            "simpleText": "3:08"
+           }
+          }
+         }
+        ]
+       }
+      },
+      {
+       "continuationItemRenderer": {
+        "continuationEndpoint": {
+         "continuationCommand": {
+          "token": "EpUDEgRuZXdzGowDRWdRSUJCQUJTQlNDQVF0WVpGcDNOVlJhY1RGYU9JSUJDMEY2YjNwUk9FaDViMmhOZ2dFTFZqUTNOWFZXUW01bVlUQ0NBUXQwTUdWdWFrc3hRVmxETUlJQkMwMXhNalZHU0ROM1MzVmpnZ0VMWlV0S00wcDVOaTFvY0RDQ0FRdEJURnBIYkdobFdWVTBNSUlCQzBWQ01uRTFlV3BrWWxwdmdnRUxVMU14VjFkaVZVVlRWMUdDQVF0TU56UmZPRFoyVTNSU1k0SUJDMlZvUkRVNWNEQmhSVWc0Z2dFTGRtTTNSekZNU0d0alFVbUNBUXRtUzNkWVEyeFJhMTh4TklJQkMwOUNiRXh1WW1aa2RGRkZnZ0VMVEhwNGVqVlJVMlk0VkRpQ0FRdElPREIzUm01eVR6VXRPSUlCQzA5NWNubEtibTVaZW1nNGdnRUxlRE5IWjI1YVFVaFdOamlDQVF0S01HOVFZVmx6WW1SQk5JSUJDMU5RWDA1eGQwWnJUemhyc2dFR0NnUUlGQkFDGIHg6BgiC3NlYXJjaC1mZWVk"
+         }
+        }
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}

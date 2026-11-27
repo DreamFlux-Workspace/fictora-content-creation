@@ -55,6 +55,8 @@ Read `.cursor/skills/episode-production/SKILL.md` before desk production work.
 
 For **one hosted episode** (finished MP4 on Railway **trend-lab**, not a desk show), read `.cursor/skills/trend-lab-original-story/SKILL.md` and drive the worker API from this kit — same pattern as episode-production, different lane.
 
+To choose a trope for a new show (the Trend-to-Story gap method on Japanese and Korean YouTube), read `.claude/skills/youtube-trope-scan/SKILL.md`.
+
 ## Quality
 
 When editing Python in `creation/`, use numpydoc on public callables and run:
