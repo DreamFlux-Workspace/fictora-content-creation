@@ -275,8 +275,9 @@ class LetterboxLayout:
     line's baseline (y 435), its top is under the mark. ``caption`` runs from
     the caption line box's top (its ink top at y 1417) down to the chrome
     floor (y 1536), x 60-950; ``caption_highest_top`` is as high as a two-line
-    caption's box may move. ``title_anchor`` is the server's title anchor for
-    this picture shape (its ASS ``\\pos`` y: 448 on 1920 at 4:3).
+    caption's box may move. ``title_anchor`` is the bottom of this picture
+    shape's title block as the server anchors it (its ASS ``\\pos`` y; 448 on
+    1920 at 4:3, 544 at 16:9).
     """
 
     canvas: Box
@@ -360,6 +361,7 @@ def layout(
     four_three_top = (height - four_three_h) // 2
     caption_size = y(CAPTION_SIZE)
     if rows is not None:
+        anchor_rows = rows["title_bottom"]
         picture_w, picture_h = width, x(rows["picture_height"])
         picture_top = y(rows["picture_y"])
         mark = (x(rows["mark_x"]), y(rows["mark_y"]))
@@ -369,6 +371,9 @@ def layout(
     else:
         picture_w, picture_h = fitted(picture)
         title_drop = 0 if picture == "4:3" else y(FALLBACK_16_9_DROP)
+        anchor_rows = SERVER_TITLE_BOTTOM + (
+            0 if picture == "4:3" else FALLBACK_16_9_DROP
+        )
         picture_top = four_three_top + title_drop
         mark = (round(width * MARK_X_FRACTION), picture_top + y(MARK_PICTURE_INSET))
         gap = (four_three_top + four_three_h) - (picture_top + picture_h)
@@ -390,7 +395,7 @@ def layout(
     )
     return LetterboxLayout(
         Box(0, 0, width, height), picture_box, title, caption, highest, mark,
-        sizes, caption_size, y(CAPTION_MIN_SIZE), y(SERVER_TITLE_BOTTOM) + title_drop,
+        sizes, caption_size, y(CAPTION_MIN_SIZE), y(anchor_rows),
     )  # fmt: skip
 
 
