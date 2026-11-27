@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from creation.ops.folder import next_versioned_path
+from creation.post.delivery_geometry import Picture
 
 RECORD_KIND = "fictora-finish-record"
 
@@ -64,10 +65,19 @@ class FinishRecord:
     missing: tuple[str, ...] = ()
     #: The letterbox captions' colour (``yellow`` / ``white``); ``None`` on a portrait take.
     caption_colour: str | None = None
+    picture_aspect: str | None = None
     #: The thoughts ``finish`` played in black and white on this take, from the server's thoughts route
     #: (``{"spans": [[start, end], ...], "filter": "hue=s='...'"}``, on the take as filmed); ``None``
     #: when none was greyed, and on every record from before 24 Oct 2026.
     thought_grey: dict[str, Any] | None = None
+
+    @property
+    def letterbox_picture(self) -> Picture | None:
+        """The letterbox picture's shape (``4:3`` on a record from before 16:9), else ``None``."""
+
+        if not self.letterbox:
+            return None
+        return "16:9" if self.picture_aspect == "16:9" else "4:3"
 
     def resolve(self, desk: Path, name: str) -> Path | None:
         """Absolute path of one stored file (``pre_bed``, ``master``, ``final``, ``bed``)."""
@@ -146,7 +156,7 @@ def write_finish_record(
         What a NOT DONE take lacks; written only when the take is not complete
         (a complete take's record is unchanged).
     letterbox
-        A letterbox take's ``{"letterbox": True, "caption_colour": ...}``,
+        A letterbox take's ``{"letterbox": True, "caption_colour": ..., "picture_aspect": ...}``,
         written into the record; ``None`` (every portrait take) writes the
         record exactly as before.
     cover
@@ -319,7 +329,11 @@ def carry_finish_record(
         hand_voices=record.hand_voices,
         music_in_take=record.music_in_take,
         letterbox=(
-            {"letterbox": True, "caption_colour": record.caption_colour}
+            {
+                "letterbox": True,
+                "caption_colour": record.caption_colour,
+                "picture_aspect": record.picture_aspect,
+            }
             if record.letterbox
             else None
         ),

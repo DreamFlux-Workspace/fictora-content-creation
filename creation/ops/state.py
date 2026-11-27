@@ -19,15 +19,7 @@ GateStatus = Literal["pending", "approved", "rejected"]
 TakeVerdict = Literal["pending", "use", "change"]
 
 TAKES_FOR_BAND: dict[str, int] = {"15s": 1, "30s": 2, "60s": 4}
-#: Takes per band on a letterbox (4:3) story: one per 10 s, rounded up
-#: (fictora-drama #604, #617). 30 s is three 10-second takes, 60 s six, and
-#: 15 s two 7-second takes (a 14 s episode).
-LETTERBOX_TAKES_FOR_BAND: dict[str, int] = {"15s": 2, "30s": 3, "60s": 6}
-#: Seconds one letterbox (4:3) take films on the server, per band: episode
-#: length over take count, rounded down (``storyboard_take_seconds``).
-LETTERBOX_TAKE_SECONDS_FOR_BAND: dict[str, int] = {"15s": 7, "30s": 10, "60s": 10}
-#: Seconds one letterbox (4:3) take films at 30 s and 60 s.
-LETTERBOX_TAKE_SECONDS = 10
+FOUR_THREE_TAKES_FOR_BAND: dict[str, int] = {"15s": 2, "30s": 3, "60s": 6}
 #: Preflight warns (never blocks) past this multiple of the envelope.
 ENVELOPE_STOP_MULTIPLIER = 2.0
 #: Warn-only spend envelopes. One source: ``creation.prices`` (sized for R2V; Turbo takes sit inside them).
@@ -362,18 +354,17 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def take_ids_for_band(band: str, *, letterbox: bool = False) -> list[str]:
+def take_ids_for_band(band: str, *, four_three: bool = False) -> list[str]:
     """Return take ids for a duration band.
 
     Parameters
     ----------
     band
         ``15s``, ``30s``, or ``60s``.
-    letterbox
-        True for a desk started ``--delivery-format letterbox``: 10-second
-        takes (``LETTERBOX_TAKES_FOR_BAND``). The spine has the last word
-        (:func:`sync_take_slots_to_spine`): a server with real 4:3 takes off
-        boards a letterbox show portrait.
+    four_three
+        True for a desk on a story pinned to 4:3 boards: 10-second takes
+        (``FOUR_THREE_TAKES_FOR_BAND``). The spine has the last word
+        (:func:`sync_take_slots_to_spine`).
 
     Returns
     -------
@@ -386,7 +377,7 @@ def take_ids_for_band(band: str, *, letterbox: bool = False) -> list[str]:
         When ``band`` is not a known duration band.
     """
 
-    count = (LETTERBOX_TAKES_FOR_BAND if letterbox else TAKES_FOR_BAND).get(band)
+    count = (FOUR_THREE_TAKES_FOR_BAND if four_three else TAKES_FOR_BAND).get(band)
     if count is None:
         raise ValueError(f"band must be 15s, 30s, or 60s; got {band!r}")
     return [f"t{index}" for index in range(1, count + 1)]
@@ -425,7 +416,7 @@ def empty_gate() -> GateRecord:
     return GateRecord()
 
 
-def new_episode(ordinal: int, band: str, *, letterbox: bool = False) -> EpisodeState:
+def new_episode(ordinal: int, band: str, *, four_three: bool = False) -> EpisodeState:
     """Return a blank episode slot for a band.
 
     Parameters
@@ -434,8 +425,8 @@ def new_episode(ordinal: int, band: str, *, letterbox: bool = False) -> EpisodeS
         1-based episode number.
     band
         Duration band.
-    letterbox
-        True for a letterbox desk (10-second takes, 7-second at 15 s; see :func:`take_ids_for_band`).
+    four_three
+        True for a 4:3 story's desk (10-second takes, 7-second at 15 s; see :func:`take_ids_for_band`).
 
     Returns
     -------
@@ -448,7 +439,7 @@ def new_episode(ordinal: int, band: str, *, letterbox: bool = False) -> EpisodeS
         slug=f"ep{ordinal:02d}",
         takes=[
             TakeState(take_id=take_id)
-            for take_id in take_ids_for_band(band, letterbox=letterbox)
+            for take_id in take_ids_for_band(band, four_three=four_three)
         ],
     )
 
@@ -461,7 +452,7 @@ def new_series(
     *,
     episode_count: int,
     continuing: bool = False,
-    letterbox: bool = False,
+    four_three: bool = False,
 ) -> SeriesState:
     """Return a new series desk with ``episode_count`` slots.
 
@@ -479,8 +470,8 @@ def new_series(
         How many episode slots to open.
     continuing
         True when this desk reuses an existing cast.
-    letterbox
-        True for a letterbox desk: 10-second take slots.
+    four_three
+        True for a 4:3 story's desk: 10-second take slots.
 
     Returns
     -------
@@ -506,7 +497,7 @@ def new_series(
         plates=empty_gate(),
         spend_usd=0.0,
         episodes=[
-            new_episode(index, band, letterbox=letterbox)
+            new_episode(index, band, four_three=four_three)
             for index in range(1, episode_count + 1)
         ],
     )
@@ -631,7 +622,7 @@ def spine_take_seconds(spine: dict[str, Any], band: str) -> int | None:
     -------
     int | None
         The band's seconds over the spine's take count on a ``board_aspect``
-        ``4:3`` story (10 for every new letterbox story); ``None`` on portrait,
+        ``4:3`` story (10 for an older letterbox story); ``None`` on any other,
         where the desk's own ``--clip-seconds`` stands.
     """
 

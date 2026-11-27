@@ -17,11 +17,11 @@ Founder decisions of 5 Oct 2026 (fictora-drama ``episode_openings``):
   first cut after ~3 s (2.5-4 s), else with a quick fade at 3 s. It is skipped
   when it says the same words as the episode's first spoken line.
 * **title_bar** (only when the show's ``delivery_format`` is ``letterbox``).
-  While 4:3 takes are not available yet, a solid band runs across the top,
+  On a letterbox show filmed portrait, a solid band runs across the top,
   just below the Sokii mark, for the whole video on the full portrait picture,
   with the series title and the hook line (or a creator-set ``title_line``).
-  Captions are untouched. A take that really is 4:3 gets nothing here: the
-  server's letterbox delivery already puts the title in its band.
+  Captions are untouched. A take that really is 4:3 or 16:9 gets nothing here:
+  the letterbox delivery puts the title in its band.
 
 With no hook line (or ``--no-hook-line``) on a portrait show nothing is drawn
 and finish runs exactly the commands they always ran
@@ -30,7 +30,7 @@ and finish runs exactly the commands they always ran
 Assumptions and dependencies:
 
 * ``delivery_format`` is read from the spine's top level (``portrait`` |
-  ``letterbox``), else from a ``delivery`` or ``show`` object; absent means
+  ``letterbox`` | ``landscape``), else from a ``delivery`` or ``show`` object; absent means
   portrait. Another session adds the field server-side.
 * The face signal is the small :data:`FaceInUpperBand` interface. The default
   is :func:`creation.post.faces.upper_band_face` (anime and real face
@@ -55,6 +55,7 @@ from creation.captions import (
     _ass_time,
     text_width,
 )
+from creation.post.delivery_geometry import picture_shape
 from creation.post.watermark import fallback_mark_place, mark_place
 
 #: Seconds the hook line aims to stay on screen.
@@ -85,11 +86,11 @@ SIDE_MARGIN = 60
 BAR_HEIGHT = 0.12
 BAR_TITLE_SIZE = 44
 BAR_LINE_SIZE = 60
-#: A take whose picture is 4:3 within this tolerance is a real letterbox take.
-FOUR_THREE = 4 / 3
-ASPECT_TOLERANCE = 0.04
-
-DeliveryFormat = Literal["portrait", "letterbox"]
+DeliveryFormat = Literal["portrait", "letterbox", "landscape"]
+_FORMATS: dict[str, DeliveryFormat] = {
+    "letterbox": "letterbox",
+    "landscape": "landscape",
+}
 Placement = Literal["top", "lower", "bar"]
 #: ``(video, start_s, end_s)`` -> a face sits in the upper band there (True / False), or None when unknown.
 FaceInUpperBand = Callable[[Path, float, float], "bool | None"]
@@ -107,7 +108,7 @@ def same_words(left: str, right: str) -> bool:
 
 
 def delivery_format(spine: Mapping[str, Any] | None) -> DeliveryFormat:
-    """The show's delivery format: ``letterbox`` only when the spine says so, else ``portrait``."""
+    """The show's delivery format: ``letterbox`` or ``landscape`` only when the spine says so, else ``portrait``."""
 
     if not isinstance(spine, Mapping):
         return "portrait"
@@ -116,8 +117,9 @@ def delivery_format(spine: Mapping[str, Any] | None) -> DeliveryFormat:
             value = holder.get("delivery_format") or (
                 holder.get("format") if holder is not spine else None
             )
-            if isinstance(value, str) and value.strip().casefold() == "letterbox":
-                return "letterbox"
+            name = value.strip().casefold() if isinstance(value, str) else ""
+            if name in _FORMATS:
+                return _FORMATS[name]
     return "portrait"
 
 
@@ -299,12 +301,6 @@ def clear_of_captions(
     return overlay
 
 
-def is_four_three(width: int, height: int) -> bool:
-    """True when the picture is 4:3 (within ``ASPECT_TOLERANCE``)."""
-
-    return height > 0 and abs(width / height - FOUR_THREE) <= ASPECT_TOLERANCE
-
-
 def decide(
     spine: Mapping[str, Any] | None,
     episode: int,
@@ -339,7 +335,8 @@ def decide(
     duration
         Video length.
     size
-        ``(width, height)`` of the video; a 4:3 take on a letterbox show is left to the server.
+        ``(width, height)`` of the video; a 4:3 or 16:9 take on a letterbox show gets its title in
+        the letterbox band, not here.
     video
         The video, for the face check.
     face_in_upper_band
@@ -367,10 +364,11 @@ def decide(
     )
     source = "--hook-line" if override and override.strip() else "spine"
     if fmt == "letterbox":
-        if size is not None and is_four_three(*size):
+        shape = picture_shape(*size) if size is not None else None
+        if shape is not None:
             return HookDecision(
                 None,
-                "letterbox show on a 4:3 take: the server's letterbox delivery carries the title",
+                f"letterbox show on a {shape} take: the letterbox band carries the title",
             )
         summary = _summary(spine, episode) if isinstance(spine, Mapping) else {}
         title_line = (
@@ -590,7 +588,6 @@ __all__ = [
     "delivery_format",
     "first_spoken_line",
     "hook_end",
-    "is_four_three",
     "overlay_ass",
     "same_words",
     "selected_hook_line",

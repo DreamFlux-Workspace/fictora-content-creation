@@ -259,11 +259,10 @@ def gate_hook_line_lines(
             f"`fictora-produce hook-line --desk {desk} --episode {episode} --list` once the outline exists"
         ]
     options, selected = hook_line_options(body, episode)
-    where = (
-        "title band, the whole episode"
-        if delivery_format(body) == "letterbox"
-        else "on screen over the first ~3 s"
-    )
+    where = {
+        "letterbox": "title band, the whole episode",
+        "landscape": "not drawn (a landscape show has no words on the picture)",
+    }.get(delivery_format(body), "on screen over the first ~3 s")
     picked = desk_hook_line(desk, episode)
     style = ""
     if picked is not None:
@@ -769,6 +768,13 @@ def _run_title_card(
     run: _Api = api if api is not None else session  # type: ignore[assignment]
     try:
         spine = _read_spine(run, desk, episode)
+        from creation.post.hook_overlay import delivery_format
+
+        if delivery_format(spine_body(spine)) == "landscape":
+            raise ValueError(
+                "a landscape show has no title on its episodes. For a 9:16 copy with a title and "
+                "captions, ask for a phone-frame copy"
+            )
         card = read_title_card(run, spine, episode)
         if titles:
             for row in title_card_lines(card):

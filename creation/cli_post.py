@@ -44,6 +44,7 @@ POST_COMMANDS = (
             "music-lock",
             "caption-style",
             "hook-line",
+            "phone-frame-copy",
             "voice-fx",
             "revoice",
             "voice-line",
@@ -463,6 +464,26 @@ def add_post_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         action="store_true",
         help="No white title line on this letterbox episode (the yellow line stays).",
     )
+
+    copy = sub.add_parser(
+        "phone-frame-copy",
+        help="A landscape episode's 9:16 copy with a title and captions, made by the server from the "
+        "finished episode (nothing is filmed again). Choices left out are the server's.",
+    )
+    copy.add_argument("--desk", type=Path, required=True)
+    copy.add_argument("--episode", type=int, required=True)
+    copy.add_argument("--setup-line", default=None, help="The title's white line.")
+    copy.add_argument("--hook-line", default=None, help="The title's yellow line.")
+    copy.add_argument(
+        "--captions", action=argparse.BooleanOptionalAction, default=None,
+        help="Captions under the picture (--no-captions: none).",
+    )  # fmt: skip
+    copy.add_argument("--caption-colour", choices=("yellow", "white"), default=None)
+    copy.add_argument(
+        "--save", action="store_true",
+        help="Save the marked copy to post on Instagram and TikTok (the server's export of the copy made "
+        "before); the title and caption flags are not used.",
+    )  # fmt: skip
 
     voice_mode = sub.add_parser(
         "voice-mode",
@@ -1029,6 +1050,22 @@ def dispatch_post(args: argparse.Namespace) -> int:
             text=args.text, off=args.off, setup_line=args.setup_line,
             default_setup_line=args.default_setup_line, titles=args.titles,
             title=args.title, no_title=args.no_title,
+        )  # fmt: skip
+    if args.command == "phone-frame-copy":
+        from creation.phone_frame_copy import (
+            copy_request,
+            run_phone_frame_copy,
+            run_save_phone_frame_copy,
+        )
+
+        if args.save:
+            return run_save_phone_frame_copy(args.desk, episode=args.episode)
+        return run_phone_frame_copy(
+            args.desk, episode=args.episode,
+            body=copy_request(
+                setup_line=args.setup_line, hook_line=args.hook_line,
+                captions=args.captions, caption_colour=args.caption_colour,
+            ),
         )  # fmt: skip
     if args.command == "voice-mode":
         from creation.voice_mode import run_voice_mode

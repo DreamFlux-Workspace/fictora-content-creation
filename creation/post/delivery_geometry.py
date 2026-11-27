@@ -1,4 +1,4 @@
-"""Where the 4:3 picture, the title and the captions sit in a letterbox show's 9:16 file.
+"""Where the picture (4:3 or 16:9), the title and the captions sit in a letterbox show's 9:16 file.
 
 The layout matches the "Not Home" reference (user decision 2026-10-06);
 fictora-drama letterbox delivery uses the same numbers. Change them only
@@ -21,7 +21,9 @@ canvas of another size scales them by height (and the x positions by width).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Literal
 
 # The mark's fallback x (one copy, the server's number, kept in watermark).
 from creation.post.watermark import MARK_X_FRACTION
@@ -31,8 +33,26 @@ from creation.post.watermark import MARK_X_FRACTION
 CANVAS_WIDTH = 1080
 CANVAS_HEIGHT = 1920
 CANVAS_COLOUR = "black"
-#: A letterbox take is filmed 4:3: scaled to 1080x810 and centred, y 555-1365.
-MASTER_RATIO = (4, 3)
+Picture = Literal["4:3", "16:9"]
+PICTURE_RATIOS: dict[Picture, tuple[int, int]] = {"4:3": (4, 3), "16:9": (16, 9)}
+ASPECT_TOLERANCE = 0.04
+
+
+def picture_shape(width: int, height: int) -> Picture | None:
+    """``4:3`` or ``16:9`` when a ``width`` x ``height`` picture is that shape (within the tolerance), else ``None``."""
+
+    if height <= 0:
+        return None
+    return next(
+        (
+            name
+            for name, (ratio_w, ratio_h) in PICTURE_RATIOS.items()
+            if abs(width / height - ratio_w / ratio_h) <= ASPECT_TOLERANCE
+        ),
+        None,
+    )
+
+
 #: The Sokii mark image (``assets/sokii-mark-word.png``, the cat and "sokii" as the app's header logo, 27 Oct
 #: 2026), as far in from the left as on a portrait copy (``watermark.MARK_X_FRACTION``, 3% in, since
 #: fictora-drama #1133: 32 on 1080). The server decides its place and size (``POST /v1/mark/placement``);
@@ -46,6 +66,14 @@ MARK_Y = 173
 #: The mark image's height; the title's ink never rises above it plus this gap.
 MARK_HEIGHT = 63
 MARK_TITLE_GAP = 20
+#: The server's title anchor on 1080x1920 for a 4:3 picture (its ASS ``\\pos`` y, bottom aligned). A
+#: layout from the server (``GET /v1/letterbox/layouts``) moves the title block by its own
+#: ``title_bottom``'s distance from this one.
+SERVER_TITLE_BOTTOM = 448
+#: Fallback only, for a server without ``GET /v1/letterbox/layouts``: a 16:9 picture's whole block
+#: (title, mark, picture) sits this many rows lower than the 4:3 one (fictora-drama #1854, founder,
+#: 27 Nov 2026), and its caption rows hang from the picture's bottom edge as the 4:3 ones do.
+FALLBACK_16_9_DROP = 96
 #: Title block: ASS size 62 (Not Home's 56 px Arial Bold), stepping down 2 at a time to a 52 floor (then
 #: fewer words); each part (setup line white, hook line yellow) on at most two lines; centred; the last
 #: line's baseline at y 435 (the block grows upward); lines 63 px apart at 62 (the pitch scales with the
@@ -285,14 +313,32 @@ def ink_offset(size: int) -> float:
     )
 
 
-def layout(width: int = CANVAS_WIDTH, height: int = CANVAS_HEIGHT) -> LetterboxLayout:
+def layout(
+    width: int = CANVAS_WIDTH,
+    height: int = CANVAS_HEIGHT,
+    *,
+    picture: Picture = "4:3",
+    rows: Mapping[str, int] | None = None,
+) -> LetterboxLayout:
     """The letterbox layout on a ``width`` x ``height`` canvas (1080x1920 for the deliverable).
+
+    Parameters
+    ----------
+    width, height
+        The canvas.
+    picture
+        The take's shape: ``4:3`` or ``16:9``.
+    rows
+        The server's layout for that shape on 1080x1920 (:data:`creation.post.letterbox_rows.LAYOUT_KEYS`:
+        :func:`creation.post.letterbox_rows.server_layout`); ``None`` uses the kit's copy.
 
     Returns
     -------
     LetterboxLayout
-        Picture 1080x810 at y 555-1365; last title baseline y 435; caption box from y 1407 (ink top 1417),
-        x 60-950, above y 1536; mark placed at (32, 583), inside the picture, on 1080x1920.
+        On 1080x1920 at 4:3: picture 1080x810 at y 555-1365; last title baseline y 435; caption box from
+        y 1407 (ink top 1417), x 60-950, above y 1536; mark placed at (32, 583), inside the picture. The
+        kit's copy at 16:9: the block 96 rows lower (picture 1080x608 at y 651-1259, mark and title with
+        it) and the caption rows 106 px higher, as they hang from the picture's bottom edge.
     """
 
     def y(value: float) -> int:
@@ -301,30 +347,47 @@ def layout(width: int = CANVAS_WIDTH, height: int = CANVAS_HEIGHT) -> LetterboxL
     def x(value: float) -> int:
         return round(value * width / CANVAS_WIDTH)
 
-    ratio_w, ratio_h = MASTER_RATIO
-    scale = min(width / ratio_w, height / ratio_h)
-    picture_w, picture_h = round(ratio_w * scale), round(ratio_h * scale)
-    picture = Box(
-        (width - picture_w) // 2, (height - picture_h) // 2, picture_w, picture_h
-    )
-    mark = (round(width * MARK_X_FRACTION), picture.y + y(MARK_PICTURE_INSET))
-    title_top = y(MARK_Y) + y(MARK_HEIGHT + MARK_TITLE_GAP)
+    def fitted(shape: Picture) -> tuple[int, int]:
+        ratio_w, ratio_h = PICTURE_RATIOS[shape]
+        scale = min(width / ratio_w, height / ratio_h)
+        return round(ratio_w * scale), round(ratio_h * scale)
+
+    if picture not in PICTURE_RATIOS:
+        raise ValueError(f"no letterbox layout for a {picture} picture")
+    four_three_h = fitted("4:3")[1]
+    four_three_top = (height - four_three_h) // 2
+    caption_size = y(CAPTION_SIZE)
+    if rows is not None:
+        picture_w, picture_h = width, x(rows["picture_height"])
+        picture_top = y(rows["picture_y"])
+        mark = (x(rows["mark_x"]), y(rows["mark_y"]))
+        title_drop = y(rows["title_bottom"] - SERVER_TITLE_BOTTOM)
+        caption_top = y(rows["caption_top"])
+        floor, highest = y(rows["caption_bottom_limit"]), y(rows["caption_highest_top"])
+    else:
+        picture_w, picture_h = fitted(picture)
+        title_drop = 0 if picture == "4:3" else y(FALLBACK_16_9_DROP)
+        picture_top = four_three_top + title_drop
+        mark = (round(width * MARK_X_FRACTION), picture_top + y(MARK_PICTURE_INSET))
+        gap = (four_three_top + four_three_h) - (picture_top + picture_h)
+        rise = round(gap * CANVAS_HEIGHT / height) if height else 0
+        caption_top = round(y(CAPTION_INK_TOP - rise) - ink_offset(caption_size))
+        floor, highest = y(CAPTION_FLOOR - rise), y(CAPTION_HIGHEST_TOP - rise)
+    picture_box = Box((width - picture_w) // 2, picture_top, picture_w, picture_h)
+    title_top = y(MARK_Y) + y(MARK_HEIGHT + MARK_TITLE_GAP) + title_drop
     title_w = x(TITLE_WIDTH)
     title = Box(
         (width - title_w) // 2, title_top, title_w,
-        max(0, y(TITLE_LAST_BASELINE) - title_top),
+        max(0, y(TITLE_LAST_BASELINE) + title_drop - title_top),
     )  # fmt: skip
-    caption_size = y(CAPTION_SIZE)
-    caption_top = round(y(CAPTION_INK_TOP) - ink_offset(caption_size))
     caption = Box(
-        x(CAPTION_LEFT), caption_top, x(CAPTION_RIGHT) - x(CAPTION_LEFT),
-        y(CAPTION_FLOOR) - caption_top,
+        x(CAPTION_LEFT), caption_top, x(CAPTION_RIGHT) - x(CAPTION_LEFT), floor - caption_top,
     )  # fmt: skip
     sizes = tuple(
         y(size) for size in range(TITLE_SIZE, TITLE_MIN_SIZE - 1, -TITLE_SIZE_STEP)
     )
     return LetterboxLayout(
-        Box(0, 0, width, height), picture, title, caption, y(CAPTION_HIGHEST_TOP), mark,
+        Box(0, 0, width, height), picture_box, title, caption, highest, mark,
         sizes, caption_size, y(CAPTION_MIN_SIZE),
     )  # fmt: skip
 
@@ -359,6 +422,9 @@ __all__ = [
     "DEFAULT_CAPTION_COLOUR",
     "Box",
     "LetterboxLayout",
+    "PICTURE_RATIOS",
+    "Picture",
+    "picture_shape",
     "ARIAL_BOLD_ADVANCES",
     "arial_bold_width",
     "caption_colour_code",

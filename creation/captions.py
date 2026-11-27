@@ -71,6 +71,8 @@ show is captioned exactly as before.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import functools
 import json
 import os
@@ -84,6 +86,9 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
+
+if TYPE_CHECKING:
+    from creation.post.delivery_geometry import Picture
 
 from creation.on_screen_text import drawn_texts
 from creation.rules_epoch import under_desk_rules
@@ -100,6 +105,11 @@ HOUSE_CANVAS_WIDTH = 1080
 HOUSE_SIDE_MARGIN = 60
 #: Bottom edge of the caption text, as a fraction of frame height (social safe zones).
 CAPTION_BOTTOM_FRACTION = 0.62
+#: A landscape show's wide frame, as the server lays it out (fictora-drama #1854,
+#: ``delivery_geometry.caption_space``): the type measured against the frame's long side (64 on a
+#: 1920-wide frame), the house look only, each caption's top 80% of the way down.
+WIDE_CANVAS_WIDTH = 1920
+WIDE_CAPTION_TOP_FRACTION = 0.80
 #: The caption block must stay inside this band of the frame height.
 CAPTION_BAND = (0.55, 0.70)
 #: A caption wraps onto at most this many lines (balanced), never more.
@@ -298,10 +308,24 @@ def check_caption_scale(scale: float) -> float:
     return scale
 
 
-def house_font_size(height: int) -> int:
-    """ASS ``Fontsize`` of the house caption on a frame ``height`` px high (64 on 1920, 45 on 1344)."""
+def is_wide(width: int | None, height: int | None) -> bool:
+    """Whether the frame is wider than tall (a landscape show's take)."""
 
-    return max(8, round(HOUSE_FONT_SIZE * height / HOUSE_CANVAS_HEIGHT))
+    return width is not None and height is not None and width > height
+
+
+def canvas_scale(height: int, width: int | None = None) -> float:
+    """The frame against the house canvas: by height, by the long side when ``width`` is wide."""
+
+    if width is not None and is_wide(width, height):
+        return width / WIDE_CANVAS_WIDTH
+    return height / HOUSE_CANVAS_HEIGHT
+
+
+def house_font_size(height: int, width: int | None = None) -> int:
+    """ASS ``Fontsize`` of the house caption on a frame ``height`` px high (64 on 1920, 45 on 1344, 28 on 854x480)."""
+
+    return max(8, round(HOUSE_FONT_SIZE * canvas_scale(height, width)))
 
 
 def side_margin(width: int) -> int:
@@ -2045,16 +2069,18 @@ class LetterboxBand:
     step: int = 2
 
 
-def letterbox_band(width: int, height: int) -> LetterboxBand:
-    """The caption band under the picture on a ``width`` x ``height`` letterbox canvas.
+def letterbox_band(
+    width: int, height: int, *, picture: Picture = "4:3", desk: Path | None = None
+) -> LetterboxBand:
+    """The caption band under the ``picture`` (4:3 or 16:9) on a ``width`` x ``height`` letterbox canvas.
 
     The one place ``finish`` (:func:`caption_take`) and ``reel`` read it from
     (:mod:`creation.post.delivery_geometry`).
     """
 
-    from creation.post.delivery_geometry import layout as letterbox_layout
+    from creation.post.letterbox_rows import letterbox_layout
 
-    place = letterbox_layout(width, height)
+    place = letterbox_layout(width, height, picture=picture, desk=desk)
     return LetterboxBand(
         place.caption.x, place.caption.right, place.caption.y,
         place.caption_highest_top, place.caption.bottom,
@@ -2185,14 +2211,15 @@ def build_ass(
     """
 
     style = canonical_caption_style(style)
-    if style == "bold" and band is None:
+    wide = band is None and is_wide(width, height)
+    if style == "bold" and band is None and not wide:
         from creation.caption_bold import build_bold_ass
 
         return build_bold_ass(
             cues, width=width, height=height, platform=platform, size_scale=size_scale
         )
     if style == "bold":
-        style = "house"  # a letterbox band keeps its own layout
+        style = "house"
     if style not in ("house", "plain"):
         raise ValueError(
             f"caption style {style!r} draws no captions; use bold, subtle (house) or plain"
@@ -2202,9 +2229,13 @@ def build_ass(
         replace(c, text=text)
         for c, text in zip(cues, drawn_texts([c.text for c in cues]), strict=True)
     ]
-    scale = height / HOUSE_CANVAS_HEIGHT * size_scale
-    size = max(8, round(house_font_size(height) * size_scale))
-    margin_v = caption_margin_v(height)
+    scale = canvas_scale(height, width) * size_scale
+    size = max(8, round(house_font_size(height, width) * size_scale))
+    align, margin_v = (
+        (8, round(height * WIDE_CAPTION_TOP_FRACTION))
+        if wide
+        else (2, caption_margin_v(height))
+    )
     margin_x = side_margin(width)
     margin_l, margin_r = margin_x, margin_x
     if band is not None:
@@ -2220,7 +2251,9 @@ def build_ass(
     colour = colour or (PLAIN_COLOUR if style == "plain" else PRIMARY_COLOUR)
     main = "Plain" if style == "plain" else "House"
     tail = f"{OUTLINE_COLOUR},{SHADOW_COLOUR}"
-    place = f"100,100,0,0,1,{outline},{shadow},2,{margin_l},{margin_r},{margin_v},1"
+    place = (
+        f"100,100,0,0,1,{outline},{shadow},{align},{margin_l},{margin_r},{margin_v},1"
+    )
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -2306,12 +2339,26 @@ def portrait_caption_ass(
             cues, width=width, height=height, style=style, whole_lines=whole_lines,
             desk=desk, episode=episode,
         )  # fmt: skip
-        if text is not None:
+        if text is not None and is_wide(width, height) and not _top_anchored(text):
+            note(
+                f"the server laid this {width}x{height} landscape take out for a 9:16 frame "
+                "(an older deploy), so the kit laid its captions out for the wide frame itself"
+            )
+        elif text is not None:
             for finding in findings:
                 print(f"WARNING server caption check: {finding}", file=sys.stderr)
             return text
     return build_ass(
         cues, width=width, height=height, style=style, size_scale=size_scale
+    )
+
+
+def _top_anchored(ass: str) -> bool:
+    """Whether every style in ``ass`` hangs from the top (ASS alignment 8), as a wide frame's do."""
+
+    styles = [row.split(",") for row in ass.splitlines() if row.startswith("Style:")]
+    return bool(styles) and all(
+        len(row) > 18 and row[18].strip() == "8" for row in styles
     )
 
 
@@ -3079,6 +3126,7 @@ def caption_take(
     laid_lines: Sequence[tuple[CaptionLine, Span]] = (),
     layout: str = "portrait",
     caption_colour: str | None = None,
+    picture: Picture = "4:3",
     italic_overrides: Mapping[str, bool] | None = None,
     line_spans_after_words: bool = False,
     voice_floors: Mapping[str, float] | None = None,
@@ -3158,6 +3206,8 @@ def caption_take(
         phrase chunking (:func:`phrase_cues`).
     caption_colour
         Letterbox only: ``yellow`` (default) or ``white``.
+    picture
+        Letterbox only: the take's shape, ``4:3`` or ``16:9`` (its caption band sits under it).
     italic_overrides
         ``line_id`` to italic or not, decided by the caller from what the take
         draws (a stale ``off_screen`` flag on a speaker the take shows). Lines
@@ -3356,7 +3406,7 @@ def caption_take(
 
         text = build_ass(
             cues, width=width, height=height, style=style,
-            band=letterbox_band(width, height), size_scale=caption_scale,
+            band=letterbox_band(width, height, picture=picture, desk=desk), size_scale=caption_scale,
             colour=caption_colour_code(caption_colour)
             if caption_colour or style != "plain"
             else None,

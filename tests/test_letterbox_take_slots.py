@@ -42,15 +42,15 @@ def _spine(pattern: list[int], *, board_aspect: str | None = "4:3") -> dict[str,
     return body
 
 
-def _desk(tmp_path: Path, band: str, *, letterbox: bool) -> Path:
+def _desk(tmp_path: Path, band: str, *, four_three: bool) -> Path:
     return init_series_desk(
-        tmp_path, "Lock the Door", band=band, episode_count=1, letterbox=letterbox
+        tmp_path, "Lock the Door", band=band, episode_count=1, four_three=four_three
     )
 
 
 @pytest.mark.parametrize(("band", "count"), [("15s", 2), ("30s", 3), ("60s", 6)])
-def test_a_letterbox_desk_opens_one_slot_per_10_seconds(band: str, count: int) -> None:
-    assert take_ids_for_band(band, letterbox=True) == [
+def test_a_4_3_desk_opens_one_slot_per_10_seconds(band: str, count: int) -> None:
+    assert take_ids_for_band(band, four_three=True) == [
         f"t{n}" for n in range(1, count + 1)
     ]
 
@@ -60,11 +60,11 @@ def test_a_portrait_desk_keeps_its_15_second_slots(band: str, count: int) -> Non
     """Guard: portrait slot counts are unchanged."""
 
     assert take_ids_for_band(band) == [f"t{n}" for n in range(1, count + 1)]
-    assert take_ids_for_band(band, letterbox=False) == take_ids_for_band(band)
+    assert take_ids_for_band(band, four_three=False) == take_ids_for_band(band)
 
 
-def test_start_letterbox_opens_three_slots_at_30_seconds(tmp_path: Path) -> None:
-    desk = _desk(tmp_path, "30s", letterbox=True)
+def test_a_4_3_desk_opens_three_slots_at_30_seconds(tmp_path: Path) -> None:
+    desk = _desk(tmp_path, "30s", four_three=True)
     assert [take.take_id for take in load_series(desk).episodes[0].takes] == [
         "t1",
         "t2",
@@ -74,7 +74,7 @@ def test_start_letterbox_opens_three_slots_at_30_seconds(tmp_path: Path) -> None
 
 def test_the_spine_adds_the_slots_a_letterbox_story_films(tmp_path: Path) -> None:
     series = load_series(
-        _desk(tmp_path, "30s", letterbox=False)
+        _desk(tmp_path, "30s", four_three=False)
     )  # opened as portrait: t1, t2
     notes = sync_take_slots_to_spine(series, _spine([2, 2, 2]))
     assert [take.take_id for take in series.episodes[0].takes] == ["t1", "t2", "t3"]
@@ -83,13 +83,13 @@ def test_the_spine_adds_the_slots_a_letterbox_story_films(tmp_path: Path) -> Non
 
 def test_the_spine_drops_empty_slots_the_story_does_not_film(tmp_path: Path) -> None:
     # A letterbox start on a server with real 4:3 takes off: the story stays portrait.
-    series = load_series(_desk(tmp_path, "30s", letterbox=True))
+    series = load_series(_desk(tmp_path, "30s", four_three=True))
     sync_take_slots_to_spine(series, _spine([3, 3], board_aspect=None))
     assert [take.take_id for take in series.episodes[0].takes] == ["t1", "t2"]
 
 
 def test_a_slot_holding_work_is_never_dropped(tmp_path: Path) -> None:
-    series = load_series(_desk(tmp_path, "30s", letterbox=True))
+    series = load_series(_desk(tmp_path, "30s", four_three=True))
     series.episodes[0].takes[2] = TakeState(take_id="t3", filmed_count=1)
     notes = sync_take_slots_to_spine(series, _spine([3, 3], board_aspect=None))
     assert len(series.episodes[0].takes) == 3
@@ -97,7 +97,7 @@ def test_a_slot_holding_work_is_never_dropped(tmp_path: Path) -> None:
 
 
 def test_a_spine_without_a_pattern_changes_nothing(tmp_path: Path) -> None:
-    series = load_series(_desk(tmp_path, "30s", letterbox=False))
+    series = load_series(_desk(tmp_path, "30s", four_three=False))
     assert sync_take_slots_to_spine(series, {"spine_id": "sp1"}) == []
     assert len(series.episodes[0].takes) == 2
 
@@ -127,11 +127,14 @@ def _args(*flags: str) -> argparse.Namespace:
     return parser.parse_args(list(flags))
 
 
-def test_a_letterbox_start_defaults_to_10_second_takes() -> None:
-    assert (
-        config_from_args(_args("--delivery-format", "letterbox")).clip_duration_seconds
-        == 10
-    )
+@pytest.mark.parametrize("delivery", ["letterbox", "landscape"])
+def test_a_new_letterbox_or_landscape_start_films_15_second_takes(
+    delivery: str,
+) -> None:
+    """New letterbox and landscape shows film 16:9 in the usual 15 s takes."""
+
+    args = _args("--delivery-format", delivery)
+    assert config_from_args(args).clip_duration_seconds == 15
 
 
 def test_portrait_still_defaults_to_15_and_an_explicit_length_wins() -> None:
@@ -151,7 +154,7 @@ def test_portrait_still_defaults_to_15_and_an_explicit_length_wins() -> None:
 def test_saving_a_letterbox_spine_sets_the_slots_and_the_take_length(
     tmp_path: Path,
 ) -> None:
-    desk = _desk(tmp_path, "60s", letterbox=False)
+    desk = _desk(tmp_path, "60s", four_three=False)
     save_production_config(
         desk, ProductionConfig(clip_duration_seconds=15, delivery_format="letterbox")
     )
@@ -164,10 +167,25 @@ def test_saving_a_letterbox_spine_sets_the_slots_and_the_take_length(
     assert load_production_config(desk).clip_duration_seconds == 10
 
 
+def test_saving_a_16_9_letterbox_spine_keeps_15_second_takes(tmp_path: Path) -> None:
+    desk = _desk(tmp_path, "30s", four_three=False)
+    save_production_config(
+        desk, ProductionConfig(clip_duration_seconds=15, delivery_format="letterbox")
+    )
+
+    orchestrate.save_spine_snapshot(desk, 1, _spine([3, 3], board_aspect="16:9"))
+
+    assert [take.take_id for take in load_series(desk).episodes[0].takes] == [
+        "t1",
+        "t2",
+    ]
+    assert load_production_config(desk).clip_duration_seconds == 15
+
+
 def test_saving_a_portrait_spine_leaves_the_desk_alone(tmp_path: Path) -> None:
     """Guard: a portrait desk's slots and take length never move."""
 
-    desk = _desk(tmp_path, "30s", letterbox=False)
+    desk = _desk(tmp_path, "30s", four_three=False)
     save_production_config(desk, ProductionConfig(clip_duration_seconds=15))
     before = (desk / "series.json").read_text(encoding="utf-8")
 
@@ -180,7 +198,7 @@ def test_saving_a_portrait_spine_leaves_the_desk_alone(tmp_path: Path) -> None:
 def test_a_letterbox_episode_estimate_prices_three_10_second_takes(
     tmp_path: Path,
 ) -> None:
-    desk = _desk(tmp_path, "30s", letterbox=True)
+    desk = _desk(tmp_path, "30s", four_three=True)
     save_production_config(desk, ProductionConfig(delivery_format="letterbox"))
     orchestrate.save_spine_snapshot(desk, 1, _spine([2, 2, 2]))
     state = ensure_production(desk, prompt="p", preset_id="x", preset_version="1")

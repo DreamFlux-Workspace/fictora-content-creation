@@ -1354,12 +1354,13 @@ def edge_notes(
     )
 
     crop: tuple[int, int, int, int] | None = None
-    if letterbox:
-        from creation.post.delivery_geometry import layout
-
-        pic = layout().picture
-        crop = (pic.x, pic.y, pic.width, pic.height)
     first = parts[0]
+    if letterbox:
+        from creation.post.letterbox_rows import letterbox_layout
+
+        picture = first.record.letterbox_picture or "4:3"
+        pic = letterbox_layout(picture=picture, desk=desk).picture
+        crop = (pic.x, pic.y, pic.width, pic.height)
     silent, head_face = opening_context(desk, first.episode, first.take_id)
     reading = measure_opening(
         master, detector=detector_for(desk, first.episode), head_count_face=head_face,
@@ -1486,9 +1487,10 @@ def _fix_seams(
         part = parts[index]
         crop = None
         if part.record.letterbox:
-            from creation.post.delivery_geometry import layout
+            from creation.post.letterbox_rows import letterbox_layout
 
-            pic = layout().picture
+            picture = part.record.letterbox_picture or "4:3"
+            pic = letterbox_layout(picture=picture, desk=desk).picture
             crop = (pic.x, pic.y, pic.width, pic.height)
         try:
             cuts = measure_cuts(part.picture, crop=crop)
@@ -1973,6 +1975,7 @@ def run_join(
                 video, out, title=title,
                 ass_path=next_versioned_path(folder, f"{stem}-title", ".ass"),
                 desk=desk, episode=episode_set[0],
+                picture=parts[0].record.letterbox_picture or "4:3",
             )  # fmt: skip
             result.notes.append(
                 "letterbox: Sokii mark top left on the picture; "

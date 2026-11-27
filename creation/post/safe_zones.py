@@ -45,7 +45,9 @@ from typing import Any, TextIO
 
 from PIL import Image, ImageDraw
 
-from creation.captions import CAPTION_BAND, text_width
+from creation.post.delivery_geometry import Picture
+
+from creation.captions import CAPTION_BAND, is_wide, text_width
 from creation.ops.folder import next_versioned_path
 from creation.post.media import ffmpeg_bin, probe_video
 
@@ -337,11 +339,13 @@ def zone_sheet(
     return out
 
 
-def letterbox_file(video: Path, *, desk: Path | None = None) -> bool:
-    """True when ``video`` is a letterbox show's 9:16 file: a finish record names it (or, for a joined
-    episode, its takes' records) as ``letterbox``, or it is a reel whose plan says ``letterbox``.
+def letterbox_picture_of(video: Path, *, desk: Path | None = None) -> Picture | None:
+    """The picture shape (``4:3`` or ``16:9``) when ``video`` is a letterbox show's 9:16 file, else ``None``.
 
-    ``desk`` is the series desk (default: the nearest folder above ``video`` with a ``series.json``).
+    A finish record names it (or, for a joined episode, its takes' records) as ``letterbox``, or it is a
+    reel whose plan says ``letterbox``. A record or plan from before 16:9 pictures (27 Nov 2026) names
+    no shape: its picture is 4:3. ``desk`` is the series desk (default: the nearest folder above
+    ``video`` with a ``series.json``).
     """
 
     from creation.post.finish_record import latest_finish_record, record_for_file
@@ -351,29 +355,30 @@ def letterbox_file(video: Path, *, desk: Path | None = None) -> bool:
     if reel:
         plan = resolved.with_name(f"reel-plan-{reel.group(1)}.json")
         if not plan.is_file():
-            return False
+            return None
         try:
             body = json.loads(plan.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return False
-        return isinstance(body, dict) and body.get("letterbox") is True
+            return None
+        if not isinstance(body, dict) or body.get("letterbox") is not True:
+            return None
+        return "16:9" if body.get("picture_aspect") == "16:9" else "4:3"
     if desk is None:
         desk = next(
             (p for p in resolved.parents if (p / "series.json").is_file()), None
         )
     if desk is None:
-        return False
+        return None
     record = record_for_file(desk, resolved)
-    if record is not None:
-        return record.letterbox
-    from creation.post.episode_name import episode_number
+    if record is None:
+        from creation.post.episode_name import episode_number
 
-    joined = re.match(r"episode-ep(\d+)-join", resolved.name)
-    episode = int(joined.group(1)) if joined else episode_number(resolved.name)
-    if episode is not None:
-        first = latest_finish_record(desk, episode, "t1")
-        return bool(first and first.letterbox)
-    return False
+        joined = re.match(r"episode-ep(\d+)-join", resolved.name)
+        episode = int(joined.group(1)) if joined else episode_number(resolved.name)
+        record = (
+            latest_finish_record(desk, episode, "t1") if episode is not None else None
+        )
+    return record.letterbox_picture if record is not None else None
 
 
 def _desk_of(video: Path) -> Path | None:
@@ -440,7 +445,7 @@ def check_safe_zones(
     layout
         The burned caption file (:func:`burned_caption_file` finds it by default).
     letterbox
-        A letterbox show's 9:16 file (default: :func:`letterbox_file`).
+        A letterbox show's 9:16 file (default: :func:`letterbox_picture_of`).
     desk
         The series desk whose API session asks the server (default: the
         nearest folder above ``video`` with a ``series.json``).
@@ -456,13 +461,18 @@ def check_safe_zones(
 
     info = probe_video(video)
     layout = layout or burned_caption_file(video)
-    is_letterbox = letterbox if letterbox is not None else letterbox_file(video)
+    picture = letterbox_picture_of(video)
+    if letterbox is not None:
+        picture = (picture or "4:3") if letterbox else None
+    is_letterbox = picture is not None
     low, high = CAPTION_BAND
     band_name = "the caption band"
-    if is_letterbox:
-        from creation.post.delivery_geometry import layout as letterbox_layout
+    if picture is not None:
+        from creation.post.letterbox_rows import letterbox_layout
 
-        place = letterbox_layout(info.width, info.height)
+        place = letterbox_layout(
+            info.width, info.height, picture=picture, desk=desk or _desk_of(video)
+        )
         low = place.caption_highest_top / info.height
         high = place.caption.bottom / info.height
         band_name = "the letterbox band under the picture"
@@ -470,13 +480,18 @@ def check_safe_zones(
     checked_by: str | None = None
     warnings: list[str] = []
     answer: dict[str, Any] | None = None
+    # A wide frame has no covered zones and no caption band (fictora-drama #1854): nothing to check.
+    wide = picture is None and is_wide(info.width, info.height)
+    if wide:
+        low, high = 0.0, 1.0
     if layout is not None:
-        answer = server_safe_area_check(
-            layout.read_text(encoding="utf-8"),
-            letterbox=is_letterbox,
-            desk=desk or _desk_of(video),
-            episode=episode_number(video.name) or 1,
-        )
+        if not wide:
+            answer = server_safe_area_check(
+                layout.read_text(encoding="utf-8"),
+                letterbox=is_letterbox,
+                desk=desk or _desk_of(video),
+                episode=episode_number(video.name) or 1,
+            )
         if answer is not None:
             checked_by, cues = "server", _server_cues(answer)
             by_kind: dict[tuple[str, str | None], list[tuple[float, float, str]]] = {}
@@ -498,7 +513,7 @@ def check_safe_zones(
         else:
             checked_by = "kit"
             cues = caption_layout(layout, width=info.width, height=info.height)
-            for name in ZONES:
+            for name in () if wide else ZONES:
                 hits = [(c.start, c.end, c.text) for c in cues if name in c.zones]
                 if hits:
                     warnings.append(
@@ -534,7 +549,7 @@ def check_safe_zones(
             FrameCheck(
                 seconds,
                 box,
-                zones_entered(box) if box else [],
+                zones_entered(box) if box and not wide else [],
                 outside,
                 "layout" if checked_by == "kit" else "server",
             )

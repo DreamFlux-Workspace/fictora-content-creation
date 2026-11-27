@@ -108,7 +108,6 @@ def start_new_desk(
             series,
             band=inputs.band,  # type: ignore[arg-type]
             episode_count=episodes,
-            letterbox=config.delivery_format == "letterbox",
         )
     except FileExistsError:
         desk = (parent.expanduser() / run_folder_name(series, date.today())).resolve()
@@ -271,8 +270,8 @@ def read_replay_source(
         spoken_language=None
         if not language or language.lower().startswith("en")
         else language,
-        delivery_format="letterbox"
-        if spine.get("delivery_format") == "letterbox"
+        delivery_format=str(spine["delivery_format"])
+        if spine.get("delivery_format") in ("letterbox", "landscape")
         else None,
         # The desk's override, not the spine's episode opening_action: that is the writer's output.
         opening_action=old.opening_action,

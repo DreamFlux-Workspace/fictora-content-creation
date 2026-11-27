@@ -24,6 +24,13 @@ def test_a_letterbox_draft_carries_the_delivery_format() -> None:
     assert body["delivery_format"] == "letterbox"
 
 
+def test_a_landscape_draft_carries_the_delivery_format() -> None:
+    body = draft_request_body(
+        prompt="p", preset_id="x", preset_version="1", delivery_format="landscape"
+    )
+    assert body["delivery_format"] == "landscape"
+
+
 def test_a_portrait_draft_is_byte_for_byte_the_old_body() -> None:
     old = draft_request_body(prompt="p", preset_id="x", preset_version="1")
     for portrait in (None, "portrait"):

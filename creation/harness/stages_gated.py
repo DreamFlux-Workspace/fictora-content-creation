@@ -113,8 +113,8 @@ def draft_request_body(
     locale
         Draft locale.
     delivery_format
-        ``letterbox`` is sent as the show's ``delivery_format``. Portrait (``None`` or
-        ``portrait``) sends nothing, so a portrait body and its brief hash are unchanged.
+        ``letterbox`` or ``landscape`` is sent as the show's ``delivery_format``. Portrait (``None``
+        or ``portrait``) sends nothing, so a portrait body and its brief hash are unchanged.
     opening_action
         How episode 1's first shot moves, in the human's words; sent as ``opening_action``.
         ``None`` sends nothing, so the body and its brief hash are unchanged.
@@ -141,8 +141,8 @@ def draft_request_body(
         body["model_overrides"] = {"video": video_lane}
     if spoken_language:
         body["spoken_language"] = spoken_language_tag(spoken_language)
-    if delivery_format == "letterbox":
-        body["delivery_format"] = "letterbox"
+    if delivery_format in ("letterbox", "landscape"):
+        body["delivery_format"] = delivery_format
     if opening_action:
         body["opening_action"] = opening_action
     if harness_flags:

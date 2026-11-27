@@ -1454,16 +1454,23 @@ def safe_zones_section(take: Path) -> Section:
     sampled for the zone sheet and its JSON beside the take. No caption is found by colour.
     """
 
-    from creation.captions import CAPTION_BAND
+    from creation.captions import CAPTION_BAND, is_wide
     from creation.post.safe_zones import run_review
 
     report = run_review(None, take_file=take, out=StringIO())
-    low, high = CAPTION_BAND
-    threshold = (
-        f"caption box clear of the top 8%, bottom 20% and right rail, inside {low:.0%}-{high:.0%} of the height, "
-        "for every cue of the burned caption file (the server's check); faces by eye on the "
-        "zone sheet (no face detector)"
-    )
+    info = probe_video(take)
+    if is_wide(info.width, info.height):
+        threshold = (
+            "a wide frame has no covered zones and no caption band, so no caption position is checked; "
+            "faces by eye on the zone sheet"
+        )
+    else:
+        low, high = CAPTION_BAND
+        threshold = (
+            f"caption box clear of the top 8%, bottom 20% and right rail, inside {low:.0%}-{high:.0%} of the height, "
+            "for every cue of the burned caption file (the server's check); faces by eye on the "
+            "zone sheet (no face detector)"
+        )
     found = [
         w
         for w in report.warnings
@@ -1472,7 +1479,11 @@ def safe_zones_section(take: Path) -> Section:
     notes = [w for w in report.warnings if w not in found]
     captioned = sum(1 for frame in report.frames if frame.caption is not None)
     summary = f"{captioned} of {len(report.frames)} sampled frame(s) show a caption" + (
-        f": {len(found)} finding(s)" if found else ", all clear of the covered zones"
+        f": {len(found)} finding(s)"
+        if found
+        else ", none checked on a wide frame"
+        if is_wide(info.width, info.height)
+        else ", all clear of the covered zones"
     )
     details = [
         *(w.removeprefix("!! ") for w in found),
@@ -1857,18 +1868,19 @@ def picture_crop(
     """``(x, y, width, height)`` of the picture on a letterbox show's 9:16 file, else ``None``.
 
     A file is letterbox when its finish record (or a joined episode's takes'
-    records) or its reel plan says so (:func:`creation.post.safe_zones.letterbox_file`):
+    records) or its reel plan says so (:func:`creation.post.safe_zones.letterbox_picture_of`):
     nothing is measured to decide, so a portrait take reads exactly as before.
-    The picture is the 4:3 take on the canvas, y 555-1365 on 1080x1920
+    The picture is the 4:3 or 16:9 take on the canvas (y 555-1365 at 4:3, where the server's 16:9 layout puts it at 16:9)
     (:mod:`creation.post.delivery_geometry`).
     """
 
-    from creation.post.delivery_geometry import layout
-    from creation.post.safe_zones import letterbox_file
+    from creation.post.letterbox_rows import letterbox_layout
+    from creation.post.safe_zones import letterbox_picture_of
 
-    if not letterbox_file(take, desk=desk):
+    picture = letterbox_picture_of(take, desk=desk)
+    if picture is None:
         return None
-    pic = layout(width, height).picture
+    pic = letterbox_layout(width, height, picture=picture, desk=desk).picture
     return (pic.x, pic.y, pic.width, pic.height)
 
 

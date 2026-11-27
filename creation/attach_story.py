@@ -310,8 +310,8 @@ def _config_from_spine(
     config.spoken_language = (
         None if not language or language.lower().startswith("en") else language
     )
-    if spine.get("delivery_format") == "letterbox":
-        config.delivery_format = "letterbox"
+    if spine.get("delivery_format") in ("letterbox", "landscape"):
+        config.delivery_format = str(spine["delivery_format"])
     config.rules_epoch = desk_rules_epoch(spine)
     boundary = spine.get("continuing_fixes_from_episode")
     if config.rules_epoch == LEGACY and isinstance(boundary, int):
@@ -425,7 +425,7 @@ def attach_story(
             episode_count=max(episode, 1),
             day=stamp,
             continuing=True,
-            letterbox=config.delivery_format == "letterbox",
+            four_three=spine.get("board_aspect") == "4:3",
         )
     except BaseException:
         if listed:
