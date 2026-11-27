@@ -250,7 +250,7 @@ def test_a_tall_frame_keeps_the_portrait_canvas() -> None:
 
 
 @needs_ffmpeg
-def test_finish_on_a_landscape_show_with_no_server_answer_refuses_its_captions(
+def test_finish_on_a_landscape_show_with_no_server_answer_skips_its_captions_and_flags_them(
     post_desk: Path,
 ) -> None:
     from test_post_finish import FACTS, _board, fake_sfx
@@ -274,8 +274,11 @@ def test_finish_on_a_landscape_show_with_no_server_answer_refuses_its_captions(
                         cut_meter=lambda _take: (2.5,), stream=out)  # fmt: skip
 
     captions = next(step for step in result.steps if step.step == "captions")
-    assert captions.status == "failed", out.getvalue()
-    assert LAYOUT_REFUSAL in captions.detail
+    assert captions.status == "skipped", out.getvalue()
+    assert captions.detail == (
+        "!! captions not burned: Sokii's server didn't lay them out; run captions again later"
+    )
+    assert result.final is not None and result.final.is_file()
     assert not list((post_desk / "ep01" / "takes").glob("take-ep01-t1-cap-v*"))
 
 
@@ -319,6 +322,30 @@ def test_a_wide_take_with_no_server_answer_is_refused_in_plain_words(
 
     assert str(refused.value) == LAYOUT_REFUSAL
     assert "laid its captions out" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("cues", "why"),
+    [
+        ([], "no captions to lay out"),
+        (
+            [Cue(n * 0.1, n * 0.1 + 0.05, f"w{n}") for n in range(2001)],
+            "too many caption pieces for one take (2001); split the take",
+        ),
+    ],
+    ids=["no cues", "too many pieces"],
+)
+def test_a_wide_take_the_server_was_never_asked_about_says_why(
+    cues: list[Cue], why: str
+) -> None:
+    from creation.captions import portrait_caption_ass
+
+    with pytest.raises(LayoutUnavailable) as refused:
+        portrait_caption_ass(
+            cues, width=854, height=480, style="subtle", whole_lines=True
+        )
+
+    assert str(refused.value) == why
 
 
 def test_a_wide_take_with_a_caption_scale_is_refused_before_asking() -> None:

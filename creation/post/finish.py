@@ -197,6 +197,7 @@ from creation.harness.raw_video import fetch_take_facts
 from creation.ops.floor import record_spend
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
+from creation.post.letterbox_rows import LAYOUT_REFUSAL, LayoutUnavailable
 from creation.post.ambience import (
     AMBIENCE_DUCK_DB,
     AMBIENCE_GAP_DB,
@@ -1883,11 +1884,7 @@ def run_finish(
         if lb.is_letterbox_take(spine, (info.width, info.height)):
             picture = picture_shape(info.width, info.height)
     if picture == "16:9":
-        from creation.post.letterbox_rows import (
-            LAYOUT_REFUSAL,
-            LayoutUnavailable,
-            server_layout,
-        )
+        from creation.post.letterbox_rows import server_layout
 
         if server_layout(picture, desk) is None:
             raise LayoutUnavailable(LAYOUT_REFUSAL)
@@ -3363,6 +3360,14 @@ def run_finish(
                     else {}
                 ),
             )  # fmt: skip
+        except LayoutUnavailable as exc:
+            why = (
+                "Sokii's server didn't lay them out; run captions again later"
+                if str(exc) == LAYOUT_REFUSAL
+                else str(exc)
+            )
+            append_run_note(run_dir, f"Finish · captions: skipped, not burned — {why}")
+            return StepReport("captions", "skipped", f"!! captions not burned: {why}")
         except ValueError as exc:
             if "no dialogue lines" in str(exc):
                 return StepReport(

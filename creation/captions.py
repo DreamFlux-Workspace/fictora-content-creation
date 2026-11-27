@@ -2340,12 +2340,24 @@ def portrait_caption_ass(
                 print(f"WARNING server caption check: {finding}", file=sys.stderr)
             return text
         if wide:
-            from creation.post.letterbox_rows import LAYOUT_REFUSAL, LayoutUnavailable
-
-            raise LayoutUnavailable(LAYOUT_REFUSAL)
+            raise _wide_refusal(cues, whole_lines=whole_lines)
     return build_ass(
         cues, width=width, height=height, style=style, size_scale=size_scale
     )
+
+
+def _wide_refusal(cues: Sequence[Cue], *, whole_lines: bool) -> Exception:
+    from creation.caption_server import MAX_CHUNKS, caption_chunks
+    from creation.post.letterbox_rows import LAYOUT_REFUSAL, LayoutUnavailable
+
+    pieces = len(caption_chunks(cues, whole_lines=whole_lines))
+    if not pieces:
+        return LayoutUnavailable("no captions to lay out")
+    if pieces > MAX_CHUNKS:
+        return LayoutUnavailable(
+            f"too many caption pieces for one take ({pieces}); split the take"
+        )
+    return LayoutUnavailable(LAYOUT_REFUSAL)
 
 
 def find_ffmpeg() -> tuple[str, str]:
