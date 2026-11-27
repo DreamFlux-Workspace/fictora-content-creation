@@ -61,7 +61,6 @@ from creation.post.delivery_geometry import (
     DEFAULT_CAPTION_COLOUR,
     TITLE_HOOK_COLOUR,
     TITLE_SETUP_COLOUR,
-    SERVER_TITLE_BOTTOM,
     LetterboxLayout,
     Picture,
     layout,
@@ -356,16 +355,12 @@ def _block_height(place: LetterboxLayout, size: int, lines: int) -> float:
 
 
 def under_server_anchor(
-    place: LetterboxLayout, title_bottom: int | None, height: int
+    place: LetterboxLayout, title_bottom: int | None
 ) -> LetterboxLayout:
     """The layout with its title box moved down to the server's anchor (``None``: unchanged)."""
 
     if title_bottom is None:
         return place
-    if title_bottom < place.title_anchor:
-        title_bottom += place.title_anchor - round(
-            SERVER_TITLE_BOTTOM * height / CANVAS_HEIGHT
-        )
     delta = title_bottom - place.title_anchor
     if delta == 0:
         return place
@@ -442,7 +437,7 @@ def title_ass(
     ``place`` is the picture shape's layout (default the 4:3 one).
     """
 
-    place = under_server_anchor(place or layout(width, height), title_bottom, height)
+    place = under_server_anchor(place or layout(width, height), title_bottom)
     # The words as the server draws them, no em or en dash (creation.on_screen_text).
     setup, hook = drawn_texts([block.setup, block.hook], kind="title")
     block = replace(block, setup=setup, hook=hook)

@@ -70,10 +70,6 @@ MARK_TITLE_GAP = 20
 #: layout from the server (``GET /v1/letterbox/layouts``) moves the title block by its own
 #: ``title_bottom``'s distance from this one.
 SERVER_TITLE_BOTTOM = 448
-#: Fallback only, for a server without ``GET /v1/letterbox/layouts``: a 16:9 picture's whole block
-#: (title, mark, picture) sits this many rows lower than the 4:3 one (fictora-drama #1854, founder,
-#: 27 Nov 2026), and its caption rows hang from the picture's bottom edge as the 4:3 ones do.
-FALLBACK_16_9_DROP = 96
 #: Title block: ASS size 62 (Not Home's 56 px Arial Bold), stepping down 2 at a time to a 52 floor (then
 #: fewer words); each part (setup line white, hook line yellow) on at most two lines; centred; the last
 #: line's baseline at y 435 (the block grows upward); lines 63 px apart at 62 (the pitch scales with the
@@ -333,15 +329,19 @@ def layout(
         The take's shape: ``4:3`` or ``16:9``.
     rows
         The server's layout for that shape on 1080x1920 (:data:`creation.post.letterbox_rows.LAYOUT_KEYS`:
-        :func:`creation.post.letterbox_rows.server_layout`); ``None`` uses the kit's copy.
+        :func:`creation.post.letterbox_rows.server_layout`); ``None`` uses the kit's copy, which has
+        4:3 only.
 
     Returns
     -------
     LetterboxLayout
         On 1080x1920 at 4:3: picture 1080x810 at y 555-1365; last title baseline y 435; caption box from
-        y 1407 (ink top 1417), x 60-950, above y 1536; mark placed at (32, 583), inside the picture. The
-        kit's copy at 16:9: the block 96 rows lower (picture 1080x608 at y 651-1259, mark and title with
-        it) and the caption rows 106 px higher, as they hang from the picture's bottom edge.
+        y 1407 (ink top 1417), x 60-950, above y 1536; mark placed at (32, 583), inside the picture.
+
+    Raises
+    ------
+    ValueError
+        For a shape other than 4:3 or 16:9, or a 16:9 picture without ``rows``.
     """
 
     def y(value: float) -> int:
@@ -357,8 +357,6 @@ def layout(
 
     if picture not in PICTURE_RATIOS:
         raise ValueError(f"no letterbox layout for a {picture} picture")
-    four_three_h = fitted("4:3")[1]
-    four_three_top = (height - four_three_h) // 2
     caption_size = y(CAPTION_SIZE)
     if rows is not None:
         anchor_rows = rows["title_bottom"]
@@ -368,18 +366,15 @@ def layout(
         title_drop = y(rows["title_bottom"] - SERVER_TITLE_BOTTOM)
         caption_top = y(rows["caption_top"])
         floor, highest = y(rows["caption_bottom_limit"]), y(rows["caption_highest_top"])
-    else:
+    elif picture == "4:3":
+        anchor_rows, title_drop = SERVER_TITLE_BOTTOM, 0
         picture_w, picture_h = fitted(picture)
-        title_drop = 0 if picture == "4:3" else y(FALLBACK_16_9_DROP)
-        anchor_rows = SERVER_TITLE_BOTTOM + (
-            0 if picture == "4:3" else FALLBACK_16_9_DROP
-        )
-        picture_top = four_three_top + title_drop
+        picture_top = (height - picture_h) // 2
         mark = (round(width * MARK_X_FRACTION), picture_top + y(MARK_PICTURE_INSET))
-        gap = (four_three_top + four_three_h) - (picture_top + picture_h)
-        rise = round(gap * CANVAS_HEIGHT / height) if height else 0
-        caption_top = round(y(CAPTION_INK_TOP - rise) - ink_offset(caption_size))
-        floor, highest = y(CAPTION_FLOOR - rise), y(CAPTION_HIGHEST_TOP - rise)
+        caption_top = round(y(CAPTION_INK_TOP) - ink_offset(caption_size))
+        floor, highest = y(CAPTION_FLOOR), y(CAPTION_HIGHEST_TOP)
+    else:
+        raise ValueError(f"a {picture} letterbox is laid out by Sokii's server only")
     picture_box = Box((width - picture_w) // 2, picture_top, picture_w, picture_h)
     title_top = y(MARK_Y) + y(MARK_HEIGHT + MARK_TITLE_GAP) + title_drop
     title_w = x(TITLE_WIDTH)
