@@ -330,7 +330,7 @@ def layout(
         The take's shape: ``4:3`` or ``16:9``.
     rows
         The server's layout for that shape on 1080x1920 (:data:`creation.post.letterbox_rows.LAYOUT_KEYS`:
-        :func:`creation.post.letterbox_rows.server_rows`); ``None`` uses the kit's copy.
+        :func:`creation.post.letterbox_rows.server_layout`); ``None`` uses the kit's copy.
 
     Returns
     -------
@@ -369,8 +369,8 @@ def layout(
         title_drop = 0 if picture == "4:3" else y(FALLBACK_16_9_DROP)
         picture_top = four_three_top + title_drop
         mark = (round(width * MARK_X_FRACTION), picture_top + y(MARK_PICTURE_INSET))
-        rise = (four_three_top + four_three_h) - (picture_top + picture_h)
-        rise = round(rise * CANVAS_HEIGHT / height) if height else 0
+        gap = (four_three_top + four_three_h) - (picture_top + picture_h)
+        rise = round(gap * CANVAS_HEIGHT / height) if height else 0
         caption_top = round(y(CAPTION_INK_TOP - rise) - ink_offset(caption_size))
         floor, highest = y(CAPTION_FLOOR - rise), y(CAPTION_HIGHEST_TOP - rise)
     picture_box = Box((width - picture_w) // 2, picture_top, picture_w, picture_h)

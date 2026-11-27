@@ -38,7 +38,7 @@ LAYOUT_KEYS = (
 _read: dict[Path, dict[str, dict[str, int]] | None] = {}
 
 
-def server_rows(picture: Picture, desk: Path | None) -> dict[str, int] | None:
+def server_layout(picture: Picture, desk: Path | None) -> dict[str, int] | None:
     """The server's layout for one picture shape, or ``None`` (no desk, older server, no connection).
 
     Parameters
@@ -93,7 +93,7 @@ def letterbox_layout(
         The layout.
     """
 
-    return layout(width, height, picture=picture, rows=server_rows(picture, desk))
+    return layout(width, height, picture=picture, rows=server_layout(picture, desk))
 
 
 def _ask(desk: Path) -> dict[str, dict[str, int]] | None:
@@ -129,10 +129,15 @@ def _layouts(answer: Any) -> dict[str, dict[str, int]] | None:
 
 def _fallback(why: str) -> None:
     print(
-        f"NOTE: {why}; the letterbox picture, title, mark and captions use the kit's copy of the server's layout",
+        f"NOTE: {why}; the letterbox uses the kit's copy of the server's layout",
         file=sys.stderr,
     )
     return None
 
 
-__all__ = ["LAYOUT_KEYS", "LETTERBOX_LAYOUTS_ROUTE", "letterbox_layout", "server_rows"]
+__all__ = [
+    "LAYOUT_KEYS",
+    "LETTERBOX_LAYOUTS_ROUTE",
+    "letterbox_layout",
+    "server_layout",
+]

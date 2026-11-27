@@ -1867,7 +1867,7 @@ def picture_crop(
     A file is letterbox when its finish record (or a joined episode's takes'
     records) or its reel plan says so (:func:`creation.post.safe_zones.letterbox_picture_of`):
     nothing is measured to decide, so a portrait take reads exactly as before.
-    The picture is the 4:3 or 16:9 take on the canvas (y 555-1365, or the server's 16:9 rows, 651-1259 today, on 1080x1920)
+    The picture is the 4:3 or 16:9 take on the canvas (y 555-1365 at 4:3, where the server's 16:9 layout puts it at 16:9)
     (:mod:`creation.post.delivery_geometry`).
     """
 

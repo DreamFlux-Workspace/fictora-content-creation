@@ -12,7 +12,7 @@ What ``finish`` and ``join`` make for such a show (positions in
 2026-10-06; fictora-drama's letterbox delivery uses the same numbers):
 
 * **Canvas.** 1080x1920, pure black; a 4:3 picture scaled to 1080x810 at
-  y 555-1365, a 16:9 one where the server's 16:9 layout puts it (1080x608 at y 651-1259 today). ``finish`` puts the picture on the canvas right after
+  y 555-1365, a 16:9 one where the server's 16:9 layout puts it. ``finish`` puts the picture on the canvas right after
   the mix (:func:`pad_to_canvas`); the takes before it stay on the desk.
 * **Captions** in the band under the picture, burned on the canvas by the
   captions step (``caption_take(layout="letterbox")``): Arial Bold (ASS 62),
