@@ -197,6 +197,7 @@ from creation.harness.raw_video import fetch_take_facts
 from creation.ops.floor import record_spend
 from creation.ops.folder import next_versioned_path
 from creation.ops.notes import append_run_note
+from creation.post.letterbox_rows import LAYOUT_REFUSAL, LayoutUnavailable
 from creation.post.ambience import (
     AMBIENCE_DUCK_DB,
     AMBIENCE_GAP_DB,
@@ -1548,6 +1549,8 @@ def run_finish(
         When a mute, voice or cue cannot go on the
         take (outside it, silent), or the voices of a locked-voice take would be
         changed without ``over_locked_voices``; checked before any step runs.
+    creation.post.letterbox_rows.LayoutUnavailable
+        When the server sent no layout for a 16:9 letterbox take; nothing is made.
     """
 
     out = stream or sys.stderr
@@ -1880,6 +1883,11 @@ def run_finish(
         info = probe_video(source)
         if lb.is_letterbox_take(spine, (info.width, info.height)):
             picture = picture_shape(info.width, info.height)
+    if picture == "16:9":
+        from creation.post.letterbox_rows import server_layout
+
+        if server_layout(picture, desk) is None:
+            raise LayoutUnavailable(LAYOUT_REFUSAL)
     letterbox = picture is not None
     if caption_colour is not None and not letterbox:
         raise ValueError(
@@ -3352,6 +3360,14 @@ def run_finish(
                     else {}
                 ),
             )  # fmt: skip
+        except LayoutUnavailable as exc:
+            why = (
+                "Sokii's server didn't lay them out; run captions again later"
+                if str(exc) == LAYOUT_REFUSAL
+                else str(exc)
+            )
+            append_run_note(run_dir, f"Finish · captions: skipped, not burned — {why}")
+            return StepReport("captions", "skipped", f"!! captions not burned: {why}")
         except ValueError as exc:
             if "no dialogue lines" in str(exc):
                 return StepReport(

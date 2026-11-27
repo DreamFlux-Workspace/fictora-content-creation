@@ -77,7 +77,7 @@ def test_the_letterbox_title_block_never_touches_the_mark_and_ends_above_the_pic
     place = layout(width, height)
     if anchor is not None:
         anchor = round(anchor * height / 1920)
-    place = under_server_anchor(place, anchor, height)
+    place = under_server_anchor(place, anchor)
     fitted = fit_title(block, place)
     lines = len(fitted.setup) + len(fitted.hook)
     # The first line's cap top; the line box itself (its ascent above the cap) is empty space.
