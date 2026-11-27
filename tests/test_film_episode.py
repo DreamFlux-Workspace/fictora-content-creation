@@ -1019,10 +1019,9 @@ def test_a_wan_film_files_each_shot_under_its_take_and_books_the_servers_price(
 
 
 def _wan_film_one_clip_per_take(api: FakeApi) -> None:
-    """The same episode filmed as Wan films it since 27 Nov 2026: one 15 s clip per take (``_setNN``)."""
-
     video_job = WAN_FILM["video_job_id"]
-    first_shots = WAN_FILM["parent"]["depends_on"][::3]
+    shots = WAN_FILM["parent"]["depends_on"]
+    first_shots = [shots[0], shots[3]]
     api.routes[("POST", VIDEO)] = {"job_id": video_job}
     api.routes[("GET", f"/v1/jobs/{video_job}")] = {
         **WAN_FILM["parent"],

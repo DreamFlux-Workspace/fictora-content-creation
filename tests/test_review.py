@@ -555,30 +555,6 @@ def test_the_shots_of_a_wan_take_share_one_card(
 
 
 @pytest.mark.real_take_card
-def test_a_wan_take_filmed_as_one_clip_has_its_own_card(
-    desk: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from creation.post.server_finish import server_take_card
-
-    _desk_ready(desk)
-    _clip_record(desk, [
-        {"job_id": "w1", "url": "https://media.test/w1.mp4", "relation_id": "episode_01_set01", "set_index": 1, "episode_id": "episode_01"},
-        {"job_id": "w2", "url": "https://media.test/w2.mp4", "relation_id": "episode_01_set02", "set_index": 2, "episode_id": "episode_01"},
-    ])  # fmt: skip
-    _read_cards(
-        monkeypatch,
-        [
-            {"take_index": 1, "line_check": "clean"},
-            {"take_index": 2, "line_check": "found"},
-        ],
-    )
-
-    card, _why = server_take_card(desk, 1, "t2")
-
-    assert card == {"take_index": 2, "line_check": "found"}
-
-
-@pytest.mark.real_take_card
 def test_a_take_with_no_film_run_on_the_desk_is_not_read(desk: Path) -> None:
     from creation.post.server_finish import server_take_card
 

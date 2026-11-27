@@ -8068,7 +8068,7 @@ def _price_film(
         *warnings,
         next_take_voices_line(desk, run, spine),
         f"Film {scope}: about ${usd:.2f} ({source}){earlier}{others}.",
-        # A Wan one-take re-film: what it films again, in the server's words (fictora-drama wan_refilm_scope).
+        # A Wan one-take re-film: which shots it films, in the server's words (fictora-drama wan_refilm_scope).
         *refilm_recap_lines(estimate),
         envelope_line(desk, episode=episode, next_usd=usd),
     ]

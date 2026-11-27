@@ -16,9 +16,7 @@ from creation.production_state import load_production
 from creation.spine_view import episode_id_for
 
 
-#: A shot of an older Wan take (``…_setNN_beatNN``, filmed one 5 s call per beat until 27 Nov 2026).
-#: A Wan take filmed since is one 15 s clip (``…_setNN``), like any other take.
-_WAN_SHOT = re.compile(r"_set\d+_beat\d+$")
+_PER_BEAT_WAN_SHOT = re.compile(r"_set\d+_beat\d+$")
 
 
 def open_api(desk: Path, episode: int) -> DramaApiRunSession:
@@ -394,8 +392,8 @@ def take_run(desk: Path, episode: int, take_id: str) -> tuple[str, int] | None:
 
     The run is the clip record's ``coordinator_job_id``. Its clips are in the run's
     ``depends_on`` order, and the server numbers its cards by each take's first clip:
-    the shots of an older Wan take (``…_setNN_beatNN``, one episode and board) share a card, every other
-    clip (a Wan take filmed as one clip included) has its own.
+    the shots of one Wan take (``…_setNN_beatNN``, one episode and board) share a card, every other
+    clip has its own.
     """
 
     found = _take_in_records(desk, episode, take_id)
@@ -406,7 +404,7 @@ def take_run(desk: Path, episode: int, take_id: str) -> tuple[str, int] | None:
     for position, each in enumerate(raw.get("clips") or []):
         key = (
             (each.get("episode_id"), each.get("set_index"))
-            if _WAN_SHOT.search(str(each.get("relation_id") or ""))
+            if _PER_BEAT_WAN_SHOT.search(str(each.get("relation_id") or ""))
             else position
         )
         number = takes.setdefault(key, len(takes) + 1)
